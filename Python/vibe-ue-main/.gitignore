@@ -1,0 +1,162 @@
+# Unreal MCP
+Python/vibe_ue.log
+
+# AI-related files
+.cursorrules
+.cursorignore
+CLAUDE.md
+
+# Code-copy related files
+.codeignore
+*codeclip*
+
+# Python-generated files
+__pycache__/
+__pycache__.meta
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Unity Editor
+*.unitypackage
+*.asset
+
+# IDE
+.idea/
+.vscode/
+
+# Unreal Engine generated files
+Binaries/
+Build/
+DerivedDataCache/
+Intermediate/
+Saved/
+Content/StarterContent/
+
+# Visual Studio files
+.vs/
+*.vspscc
+*.vssscc
+*.suo
+*.csproj.user
+*.vcxproj.user
+*.vcproj.user
+*.sln.docstates
+*.VC.db
+*.VC.opendb
+
+# Visual Studio Code files
+.vscode/
+
+# Rider files
+.idea/
+*.sln.iml
+
+# Compiled source files
+*.o
+*.obj
+*.exe
+*.dll
+*.so
+*.dylib
+*.lib
+*.a
+*.exp
+*.pdb
+*.ilk
+*.aps
+*.ncb
+
+# Compiled Python files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Python virtual environments
+venv/
+ENV/
+.env
+.venv
+env/
+env.bak/
+venv.bak/
+
+# Packaging
+Packaged/
+*.zip
+*.7z
+*.tar.gz
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project specific files
+MCPGAMEProject/Config/DefaultEditorPerProjectUserSettings.ini
+
+# MCP specific files
+MCP/logs/
+MCP/temp/
+*.mcp.json
+
+# Unreal Engine 5 specific
+.uproject.DotSettings.user
+*.VC.db-*
+*.VC.*.db-*
+
+# Large media files
+Content/Movies/
+Content/Audio/
+*.uasset
+*.umap
+*.mp4
+*.mp3
+*.wav
+*.psd
+*.tga
+*.exr
+*.hdr
+
+# Exception for .gitkeep files
+!**/[Bb]inaries/**/.gitkeep
+!**/[Bb]uild/**/.gitkeep
+
+# Exceptions for tracking certain binaries if needed
+# !Binaries/Win64/MyImportantDLL.dll
+
+# Backup files
+*.bak
+*.backup
+*.TMP
+*.temp
+Backup/ 
+
+#
+UNREAL/Source/
+UNREAL/SOURCE/
