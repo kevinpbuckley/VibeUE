@@ -173,4 +173,4 @@ MIT
 
 ## Questions
 
-For questions, you can reach me on X/Twitter: [@chongdashu](https://www.x.com/chongdashu)
+For questions, you can reach me on Discord Buckley603
