@@ -19,7 +19,7 @@ It's not perfect but it's a glimpse of a vision of how to better deal with No-Co
 
 This project has split off of https://github.com/chongdashu/unreal-mcp
 
-This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows.
+This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows. The other project was focused on Assets and Level Design and appeared stale.  There's a limit to how many tools an LLM can handle so it seemed best to move in a different direction for my use cases.
 
 ## ⚠️ Experimental Status
 
