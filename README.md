@@ -14,13 +14,6 @@ This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and
 
 It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
 
-
-## Credits
-
-This project has split off of https://github.com/chongdashu/unreal-mcp
-
-This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows. The other project was focused on Assets and Level Design and appeared stale.  There's a limit to how many tools an LLM can handle so it seemed best to move in a different direction for my use cases.
-
 ## ⚠️ Experimental Status
 
 This project is currently in an **EXPERIMENTAL** state. The API, functionality, and implementation details are subject to significant changes. While we encourage testing and feedback, please be aware that:
@@ -398,9 +391,15 @@ Simply place the configuration in the appropriate location for your MCP client.
 ## License
 MIT
 
-## Questions
+## Questions and Contributions
 
-For questions, you can reach me on Discord - Buckley603
+For questions and contributions, you can reach me on Discord - Buckley603
+
+## Credits
+
+This project has split off of https://github.com/chongdashu/unreal-mcp
+
+This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows. The other project was focused on Assets and Level Design and appeared stale.  There's a limit to how many tools an LLM can handle so it seemed best to move in a different direction for my use cases.
 
 ## Thank you
 Thank you to everyone who helped teach me coding, Unreal Engine and AI.
