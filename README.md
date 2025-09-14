@@ -1,6 +1,6 @@
 <div align="center">
 
-# Model Context Protocol for Unreal Engine
+# VibeUE - Model Context Protocol for Unreal Engine
 <span style="color: #555555">Vibe UE</span>
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -17,7 +17,7 @@ It's not perfect but it's a glimpse of a vision of how to better deal with No-Co
 
 ## Credits
 
-This project has forked off of https://github.com/chongdashu/unreal-mcp
+This project has split off of https://github.com/chongdashu/unreal-mcp
 
 This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows.
 
@@ -405,3 +405,4 @@ For questions, you can reach me on Discord - Buckley603
 ## Thank you
 Thank you to everyone who helped teach me coding, Unreal Engine and AI.
 Thank you to everyone who tries this product and contributes.
+Thank you to the team that started the original project I split this off of.
