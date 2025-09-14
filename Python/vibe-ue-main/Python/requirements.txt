@@ -1,0 +1,20 @@
+# VibeUE Python MCP Server Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core MCP dependencies
+mcp[cli]>=1.4.1
+fastmcp>=0.2.0
+
+# Web server dependencies
+uvicorn
+fastapi
+
+# Data validation and HTTP
+pydantic>=2.6.1
+requests
+
+# Optional development dependencies
+# Uncomment if you plan to develop or extend VibeUE
+# pytest>=7.0.0
+# black>=22.0.0
+# mypy>=1.0.0

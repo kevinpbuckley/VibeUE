@@ -12,6 +12,8 @@
 
 This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and Claude Desktop to control Unreal Engine through natural language using the Model Context Protocol (MCP). With seamless VS Code integration, you can manipulate Blueprints, UMG widgets, and Unreal Engine assets directly from your code editor.
 
+It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
+
 
 ## Credits
 
@@ -26,7 +28,86 @@ This project is currently in an **EXPERIMENTAL** state. The API, functionality, 
 - Breaking changes may occur without notice
 - Features may be incomplete or unstable
 - Documentation may be outdated or missing
-- Production use is not recommended at this time
+
+## 🚀 Installation & Quick Start
+
+### Prerequisites
+- Unreal Engine 5.6+
+- Python 3.12+
+- Git
+- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf)
+
+### 1. Clone the Repository
+
+**Clone directly into your Unreal Engine project's Plugins folder:**
+
+```bash
+cd /path/to/your/unreal/project/Plugins
+git clone https://github.com/kevinpbuckley/VibeUE.git
+```
+
+**Example for Windows:**
+```cmd
+cd C:\MyProject\Plugins
+git clone https://github.com/kevinpbuckley/VibeUE.git
+```
+
+This will create the plugin structure at `YourProject/Plugins/VibeUE/`
+
+### 2. Enable the Plugin in Unreal Engine
+
+1. **Open your Unreal Engine project**
+2. **Go to Edit > Plugins**
+3. **Find "VibeUE" in the Editor category**
+4. **Check the box to enable it**
+5. **Restart the editor when prompted**
+
+The plugin will build automatically when enabled.
+
+### 3. Configure MCP Client
+
+#### VS Code (Recommended)
+1. **Install the "Model Context Protocol" extension** from the VS Code marketplace
+2. **Create or update `.vscode/mcp.json`** in your project root:
+   ```json
+   {
+     "servers": {
+       "VibeUE": {
+         "type": "stdio",
+         "command": "python",
+         "args": ["Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"],
+         "env": {},
+         "cwd": "${workspaceFolder}"
+       }
+     },
+     "inputs": []
+   }
+   ```
+3. **Reload VS Code** - The MCP server will start automatically
+
+#### Other MCP Clients
+Use this configuration for Claude Desktop, Cursor, or Windsurf:
+
+```json
+{
+  "mcpServers": {
+    "VibeUE": {
+      "command": "python",
+      "args": ["Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"],
+      "cwd": "<path/to/your/unreal/project>"
+    }
+  }
+}
+```
+
+### 4. Test the Installation
+
+1. **Open Unreal Engine** with your project
+2. **Open your MCP client** (VS Code, Claude Desktop, etc.)
+3. **Ask your AI assistant**: "Search for widgets in my project"
+4. **Success!** If it returns widget information, VibeUE is working
+
+For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-guide) below.
 
 ## 🌟 Overview
 
@@ -251,63 +332,29 @@ The tools are specifically designed for AI assistants with:
 - **Docs/** - Comprehensive documentation
   - See [Docs/README.md](Docs/README.md) for documentation index
 
-## 🚀 Quick Start Guide
+## �️ Complete Setup Guide
 
-### Prerequisites
-- Unreal Engine 5.6+
-- Python 3.12+
-- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf)
+### Advanced Plugin Configuration
 
-### VS Code Setup
+For developers who need more detailed setup instructions or want to customize the installation:
 
-1. **Install VS Code Extensions**
-   - Install the "Model Context Protocol" extension from the VS Code marketplace
-   - This enables MCP server integration within VS Code
+#### Manual Build (Optional)
+If you prefer to build the plugin manually:
 
-2. **Configure MCP in VS Code**
-   - Copy the `mcp.json` file from this project to your VS Code workspace
-   - Or create `.vscode/mcp.json` in your project root with the following content:
-   ```json
-   {
-     "servers": {
-       "VibeUE": {
-         "type": "stdio",
-         "command": "python",
-         "args": ["Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"],
-         "env": {},
-         "cwd": "${workspaceFolder}"
-       }
-     },
-     "inputs": []
-   }
-   ```
+1. **Generate Visual Studio project files**
+   - Right-click your `.uproject` file
+   - Select "Generate Visual Studio project files"
 
-3. **Start the MCP Server**
-   - The MCP server will automatically start when VS Code loads
-   - Check the VS Code output panel for MCP server status messages
+2. **Build in Visual Studio**
+   - Open the generated `.sln` file
+   - Build with your target platform (Win64, Development/DebugGame)
 
-### Plugin Setup
 
-1. **Copy the plugin to your project**
-   - Copy `Plugins/VibeUE` to your Unreal project's Plugins folder
-   - Or use the existing VibeUE plugin if already installed
+### Python Environment Setup
 
-2. **Enable the plugin**
-   - Edit > Plugins
-   - Find "VibeUE" in Editor category
-   - Enable the plugin
-   - Restart editor when prompted
-
-3. **Build the plugin**
-   - Right-click your .uproject file
-   - Generate Visual Studio project files
-   - Open solution (`.sln`)
-   - Build with your target platform and output settings
-
-### Python Server Setup
-
-See [Python/README.md](Python/README.md) for detailed Python setup instructions, including:
+For detailed Python setup instructions, see [Python/vibe-ue-main/Python/README.md](Python/vibe-ue-main/Python/README.md), including:
 - Setting up your Python environment
+- Installing dependencies  
 - Running the MCP server
 - Using direct or server-based connections
 
@@ -353,4 +400,8 @@ MIT
 
 ## Questions
 
-For questions, you can reach me on Discord Buckley603
+For questions, you can reach me on Discord - Buckley603
+
+## Thank you
+Thank you to everyone who helped teach me coding, Unreal Engine and AI.
+Thank you to everyone who tries this product and contributes.
