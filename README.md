@@ -273,7 +273,6 @@ All capabilities are accessible through natural language commands via AI assista
 ### Utility & System Tools
 | Tool | Purpose | Key Features |
 |------|---------|--------------|
-| `add_widget_to_viewport` | 🖥️ Widget display | Show widgets in game viewport |
 | `convert_svg_to_png` | 🔄 Format conversion | SVG to PNG with customization |
 | `get_umg_guide` | 📚 Styling reference | Comprehensive UMG styling guide |
 | `check_unreal_connection` | 🔧 Diagnostics | Test plugin connectivity |

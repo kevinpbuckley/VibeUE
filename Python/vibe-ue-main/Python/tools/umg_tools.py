@@ -190,54 +190,6 @@ def register_umg_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
 
-    @mcp.tool()
-    def add_widget_to_viewport(
-        ctx: Context,
-        widget_name: str,
-        z_order: int = 0
-    ) -> Dict[str, Any]:
-        """
-        Add a Widget Blueprint instance to the viewport.
-        
-        Args:
-            widget_name: Name of the Widget Blueprint to add
-            z_order: Z-order for the widget (higher numbers appear on top)
-            
-        Returns:
-            Dict containing success status and widget instance information
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": widget_name,
-                "widget_name": widget_name,
-                "z_order": z_order
-            }
-            
-            logger.info(f"Adding widget to viewport with params: {params}")
-            response = unreal.send_command("add_widget_to_viewport", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Add widget to viewport response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding widget to viewport: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    logger.info("UMG tools registered successfully")
-
-
 
     @mcp.tool()
     def get_umg_guide(ctx: Context) -> Dict[str, Any]:

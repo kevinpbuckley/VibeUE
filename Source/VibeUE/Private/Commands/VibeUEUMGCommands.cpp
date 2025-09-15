@@ -429,10 +429,6 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCommand(const FString& Command
 	{
 		return HandleAddTextBlockToWidget(Params);
 	}
-	else if (CommandName == TEXT("add_widget_to_viewport"))
-	{
-		return HandleAddWidgetToViewport(Params);
-	}
 	else if (CommandName == TEXT("add_button_to_widget"))
 	{
 		return HandleAddButtonToWidget(Params);
@@ -785,45 +781,6 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTextBlockToWidget(const TSh
 	return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetToViewport(const TSharedPtr<FJsonObject>& Params)
-{
-	// Get required parameters
-	FString BlueprintName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-	}
-
-	// Find the Widget Blueprint
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(BlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *BlueprintName));
-	}
-
-	// Get optional Z-order parameter
-	int32 ZOrder = 0;
-	Params->TryGetNumberField(TEXT("z_order"), ZOrder);
-
-	// Create widget instance
-	UClass* WidgetClass = WidgetBlueprint->GeneratedClass;
-	if (!WidgetClass)
-	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get widget class"));
-	}
-
-	// Note: This creates the widget but doesn't add it to viewport
-	// The actual addition to viewport should be done through Blueprint nodes
-	// as it requires a game context
-
-	// Create success response with instructions
-	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-	ResultObj->SetStringField(TEXT("blueprint_name"), BlueprintName);
-	ResultObj->SetStringField(TEXT("class_path"), WidgetClass->GetPathName());
-	ResultObj->SetNumberField(TEXT("z_order"), ZOrder);
-	ResultObj->SetStringField(TEXT("note"), TEXT("Widget class ready. Use CreateWidget and AddToViewport nodes in Blueprint to display in game."));
-	return ResultObj;
-}
 
 TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddButtonToWidget(const TSharedPtr<FJsonObject>& Params)
 {

@@ -266,7 +266,6 @@ FString UVibeUEBridge::ExecuteCommand(const FString& CommandType, const TSharedP
             else if (CommandType == TEXT("create_umg_widget_blueprint") ||
                      CommandType == TEXT("add_text_block_to_widget") ||
                      CommandType == TEXT("add_button_to_widget") ||
-                     CommandType == TEXT("add_widget_to_viewport") ||
                      // UMG Discovery Commands
                      CommandType == TEXT("search_items") ||
                      CommandType == TEXT("get_widget_blueprint_info") ||

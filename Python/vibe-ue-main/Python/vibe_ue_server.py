@@ -1092,7 +1092,7 @@ def info():
     
     ## 🎬 Widget Animations
     ## 🖥️ Viewport & Display
-    - `add_widget_to_viewport(widget_name, z_order=0)`
+    
       Add widget instance to game viewport
     
     ## 📝 Editor Tools
@@ -1194,7 +1194,6 @@ def info():
     3. Use enhanced layout tools for nested structures
     4. `create_widget_style_set()` for consistent theming
     5. `apply_widget_theme()` to components
-    7. `add_widget_to_viewport()` to display
     
     **Modifying Existing Widgets:**
     1. `search_items()` - Find widget

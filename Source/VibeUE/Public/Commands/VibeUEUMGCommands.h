@@ -11,7 +11,7 @@ class UUserWidget;
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
  * Responsible for creating and modifying UMG Widget Blueprints,
- * adding widget components, and managing widget instances in the viewport.
+ * adding widget components
  */
 class VIBEUE_API FVibeUEUMGCommands
 {
@@ -44,16 +44,7 @@ private:
      * @return JSON response with the added widget details
      */
     TSharedPtr<FJsonObject> HandleAddTextBlockToWidget(const TSharedPtr<FJsonObject>& Params);
-
-    /**
-     * Add a widget instance to the game viewport
-     * @param Params - Must include:
-     *                "blueprint_name" - Name of the Widget Blueprint to instantiate
-     *                "z_order" - Z-order for widget display (optional)
-     * @return JSON response with the widget instance details
-     */
-    TSharedPtr<FJsonObject> HandleAddWidgetToViewport(const TSharedPtr<FJsonObject>& Params);
-
+    
     /**
      * Add a Button widget to a UMG Widget Blueprint
      * @param Params - Must include:
