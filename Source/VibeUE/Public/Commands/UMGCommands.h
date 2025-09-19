@@ -76,6 +76,7 @@ private:
     
     // UMG Layout Methods
     TSharedPtr<FJsonObject> HandleAddCanvasPanel(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleAddSizeBox(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddOverlay(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddHorizontalBox(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddVerticalBox(const TSharedPtr<FJsonObject>& Params);

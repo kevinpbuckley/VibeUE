@@ -25,6 +25,7 @@
 #include "Components/Image.h"
 #include "Components/Border.h"
 #include "Components/Spacer.h"
+#include "Components/SizeBox.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateTypes.h"
 #include "Components/HorizontalBox.h"
@@ -496,6 +497,10 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	{
 		return HandleAddCanvasPanel(Params);
 	}
+	else if (CommandName == TEXT("add_size_box"))
+	{
+		return HandleAddSizeBox(Params);
+	}
 	else if (CommandName == TEXT("add_overlay"))
 	{
 		return HandleAddOverlay(Params);
@@ -598,8 +603,16 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
 	}
 
-	// Create the full asset path
-	FString PackagePath = TEXT("/Game/Widgets/");
+	// Get optional path parameter, default to /Game/UI
+	FString PackagePath = TEXT("/Game/UI/");
+	Params->TryGetStringField(TEXT("path"), PackagePath);
+	
+	// Ensure path ends with /
+	if (!PackagePath.EndsWith(TEXT("/")))
+	{
+		PackagePath += TEXT("/");
+	}
+	
 	FString AssetName = BlueprintName;
 	FString FullPath = PackagePath + AssetName;
 
@@ -2211,6 +2224,119 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddCanvasPanel(const TSharedPtr<FJso
 		else
 		{
 			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Canvas Panel"));
+		}
+	}
+	
+	return FCommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
+}
+
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddSizeBox(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WidgetBlueprintName;
+	FString SizeBoxName;
+	FString ParentName;
+	
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+	}
+	
+	if (!Params->TryGetStringField(TEXT("size_box_name"), SizeBoxName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing size_box_name parameter"));
+	}
+	
+	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Size Box"));
+	}
+	
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+	
+	// Find or create parent panel
+	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
+	if (!ParentPanel)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+	}
+	
+	// Add to widget blueprint's designer
+	if (UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree)
+	{
+		USizeBox* CreatedSizeBox = WidgetTree->ConstructWidget<USizeBox>(USizeBox::StaticClass(), *SizeBoxName);
+		if (CreatedSizeBox)
+		{
+			CreatedSizeBox->SetVisibility(ESlateVisibility::Visible);
+			
+			// Set optional size constraints from parameters
+			double MinDesiredWidth = 0.0;
+			if (Params->TryGetNumberField(TEXT("min_desired_width"), MinDesiredWidth))
+			{
+				CreatedSizeBox->SetMinDesiredWidth(MinDesiredWidth);
+			}
+			
+			double MinDesiredHeight = 0.0;
+			if (Params->TryGetNumberField(TEXT("min_desired_height"), MinDesiredHeight))
+			{
+				CreatedSizeBox->SetMinDesiredHeight(MinDesiredHeight);
+			}
+			
+			double MaxDesiredWidth = 0.0;
+			if (Params->TryGetNumberField(TEXT("max_desired_width"), MaxDesiredWidth))
+			{
+				CreatedSizeBox->SetMaxDesiredWidth(MaxDesiredWidth);
+			}
+			
+			double MaxDesiredHeight = 0.0;
+			if (Params->TryGetNumberField(TEXT("max_desired_height"), MaxDesiredHeight))
+			{
+				CreatedSizeBox->SetMaxDesiredHeight(MaxDesiredHeight);
+			}
+			
+			double WidthOverride = 0.0;
+			if (Params->TryGetNumberField(TEXT("width_override"), WidthOverride))
+			{
+				CreatedSizeBox->SetWidthOverride(WidthOverride);
+			}
+			
+			double HeightOverride = 0.0;
+			if (Params->TryGetNumberField(TEXT("height_override"), HeightOverride))
+			{
+				CreatedSizeBox->SetHeightOverride(HeightOverride);
+			}
+			
+			// Set variable flag
+			bool bIsVariable = true;
+			if (Params->TryGetBoolField(TEXT("is_variable"), bIsVariable))
+			{
+				CreatedSizeBox->bIsVariable = bIsVariable;
+			}
+			
+			// Add to parent panel
+			UPanelSlot* PanelSlot = ParentPanel->AddChild(CreatedSizeBox);
+			if (PanelSlot)
+			{
+				TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+				Result->SetBoolField(TEXT("success"), true);
+				Result->SetStringField(TEXT("size_box_name"), SizeBoxName);
+				Result->SetStringField(TEXT("size_box_type"), TEXT("SizeBox"));
+				Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+				Result->SetStringField(TEXT("parent_name"), ParentName);
+				
+				return Result;
+			}
+			else
+			{
+				return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Size Box to parent"));
+			}
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Size Box"));
 		}
 	}
 	

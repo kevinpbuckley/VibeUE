@@ -79,6 +79,85 @@ def register_umg_layout_tools(mcp: FastMCP):
             return {"success": False, "error": error_msg}
 
     @mcp.tool()
+    def add_size_box(
+        ctx: Context,
+        widget_name: str,
+        size_box_name: str,
+        parent_name: str,
+        min_desired_width: Optional[float] = None,
+        min_desired_height: Optional[float] = None,
+        max_desired_width: Optional[float] = None,
+        max_desired_height: Optional[float] = None,
+        width_override: Optional[float] = None,
+        height_override: Optional[float] = None,
+        is_variable: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Add a Size Box for size constraint management.
+        
+        Size Box widgets allow you to set minimum/maximum sizes and override specific dimensions.
+        They are useful for controlling widget sizing behavior in responsive layouts.
+        
+        Args:
+            widget_name: Name of the target Widget Blueprint
+            size_box_name: Name for the new Size Box
+            parent_name: Name of the parent container to add the Size Box to
+            min_desired_width: Minimum width constraint (optional)
+            min_desired_height: Minimum height constraint (optional)
+            max_desired_width: Maximum width constraint (optional)
+            max_desired_height: Maximum height constraint (optional)
+            width_override: Override width to specific value (optional)
+            height_override: Override height to specific value (optional)
+            is_variable: Whether the Size Box should be a variable (default: True)
+            
+        Returns:
+            Dict containing success status and Size Box properties
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "error": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "widget_name": widget_name,
+                "size_box_name": size_box_name,
+                "parent_name": parent_name,
+                "is_variable": is_variable
+            }
+            
+            # Add optional size constraints
+            if min_desired_width is not None:
+                params["min_desired_width"] = min_desired_width
+            if min_desired_height is not None:
+                params["min_desired_height"] = min_desired_height
+            if max_desired_width is not None:
+                params["max_desired_width"] = max_desired_width
+            if max_desired_height is not None:
+                params["max_desired_height"] = max_desired_height
+            if width_override is not None:
+                params["width_override"] = width_override
+            if height_override is not None:
+                params["height_override"] = height_override
+            
+            logger.info(f"Adding Size Box '{size_box_name}' to parent '{parent_name}' in widget '{widget_name}'")
+            response = unreal.send_command("add_size_box", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "error": "No response from Unreal Engine"}
+            
+            logger.info(f"Add size box response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error adding size box: {e}"
+            logger.error(error_msg)
+            return {"success": False, "error": error_msg}
+
+    @mcp.tool()
     def add_overlay(
         ctx: Context,
         widget_name: str,

@@ -432,6 +432,9 @@ from tools.umg_events import register_umg_event_tools               # Event bind
 from tools.umg_data_binding import register_umg_data_binding_tools   # MVVM and data sources
 from tools.umg_graph_introspection import register_umg_graph_introspection_tools  # Blueprint graph analysis
 
+# UMG REFLECTION SYSTEM (Generic widget creation using Unreal's reflection)
+from tools.umg_reflection import register_umg_reflection_tools       # Reflection-based widget discovery and creation
+
 
 # ENHANCED ASSET SYSTEM (Advanced asset management capabilities)
 from tools.asset_discovery import register_asset_discovery_tools     # Smart asset search, import, export, application
@@ -472,6 +475,9 @@ register_umg_styling_tools(mcp)       # Style sets, theming, property management
 register_umg_event_tools(mcp)         # Event binding, delegates, interactivity
 register_umg_data_binding_tools(mcp)  # Data binding, MVVM patterns
 register_umg_graph_introspection_tools(mcp)  # Blueprint analysis and introspection
+
+# UMG Reflection System (Generic Widget Creation) - FUTURE-PROOF APPROACH
+register_umg_reflection_tools(mcp)    # Reflection-based widget discovery and creation using Widget Palette patterns
 
 # Enhanced Asset Management System (Advanced Capabilities)
 register_asset_discovery_tools(mcp)   # Smart asset search, import, export, AI analysis

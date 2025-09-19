@@ -11,6 +11,7 @@
 #include "Commands/BlueprintCommands.h"
 #include "Commands/BlueprintNodeCommands.h"
 #include "Commands/UMGCommands.h"
+#include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
 #include "Bridge.generated.h"
 
@@ -58,5 +59,6 @@ private:
 	TSharedPtr<FBlueprintCommands> BlueprintCommands;
 	TSharedPtr<FBlueprintNodeCommands> BlueprintNodeCommands;
 	TSharedPtr<FUMGCommands> UMGCommands;
+	TSharedPtr<FUMGReflectionCommands> UMGReflectionCommands;
 	TSharedPtr<FAssetCommands> AssetCommands;
 }; 

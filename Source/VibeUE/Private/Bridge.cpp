@@ -55,6 +55,7 @@
 #include "Commands/BlueprintNodeCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Commands/UMGCommands.h"
+#include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
 
 // Default settings
@@ -66,6 +67,7 @@ UBridge::UBridge()
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
     UMGCommands = MakeShared<FUMGCommands>();
+    UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
 }
 
@@ -74,6 +76,7 @@ UBridge::~UBridge()
     BlueprintCommands.Reset();
     BlueprintNodeCommands.Reset();
     UMGCommands.Reset();
+    UMGReflectionCommands.Reset();
     AssetCommands.Reset();
 }
 
@@ -289,6 +292,7 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("remove_widget_component") ||
                      // UMG Layout Commands
                      CommandType == TEXT("add_canvas_panel") ||
+                     CommandType == TEXT("add_size_box") ||
                      CommandType == TEXT("add_overlay") ||
                      CommandType == TEXT("add_horizontal_box") ||
                      CommandType == TEXT("add_vertical_box") ||
@@ -316,6 +320,12 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("add_widget_switcher_slot"))
             {
                 ResultJson = UMGCommands->HandleCommand(CommandType, Params);
+            }
+            // UMG Reflection Commands
+            else if (CommandType == TEXT("get_available_widgets") ||
+                     CommandType == TEXT("add_widget_component"))
+            {
+                ResultJson = UMGReflectionCommands->HandleCommand(CommandType, Params);
             }
             // Asset Discovery and Procedural Generation Commands
             else if (CommandType == TEXT("import_texture_asset") ||
