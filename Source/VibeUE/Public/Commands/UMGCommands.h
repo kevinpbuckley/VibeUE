@@ -13,10 +13,10 @@ class UUserWidget;
  * Responsible for creating and modifying UMG Widget Blueprints,
  * adding widget components
  */
-class VIBEUE_API FVibeUEUMGCommands
+class VIBEUE_API FUMGCommands
 {
 public:
-    FVibeUEUMGCommands();
+    FUMGCommands();
 
     /**
      * Handle UMG-related commands

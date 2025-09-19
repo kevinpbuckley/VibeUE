@@ -6,10 +6,10 @@
 /**
  * Handler class for Asset Discovery and Procedural Generation MCP commands
  */
-class VIBEUE_API FVibeUEAssetCommands
+class VIBEUE_API FAssetCommands
 {
 public:
-    FVibeUEAssetCommands();
+    FAssetCommands();
 
     // Handle asset commands
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);

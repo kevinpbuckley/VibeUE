@@ -1,4 +1,4 @@
-#include "VibeUEBridge.h"
+#include "Bridge.h"
 #include "MCPServerRunnable.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
@@ -51,25 +51,25 @@
 #include "EditorSubsystem.h"
 #include "Subsystems/EditorActorSubsystem.h"
 // Include our new command handler classes
-#include "Commands/VibeUEBlueprintCommands.h"
-#include "Commands/VibeUEBlueprintNodeCommands.h"
-#include "Commands/VibeUECommonUtils.h"
-#include "Commands/VibeUEUMGCommands.h"
-#include "Commands/VibeUEAssetCommands.h"
+#include "Commands/BlueprintCommands.h"
+#include "Commands/BlueprintNodeCommands.h"
+#include "Commands/CommonUtils.h"
+#include "Commands/UMGCommands.h"
+#include "Commands/AssetCommands.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
 #define MCP_SERVER_PORT 55557
 
-UVibeUEBridge::UVibeUEBridge()
+UBridge::UBridge()
 {
-    BlueprintCommands = MakeShared<FVibeUEBlueprintCommands>();
-    BlueprintNodeCommands = MakeShared<FVibeUEBlueprintNodeCommands>();
-    UMGCommands = MakeShared<FVibeUEUMGCommands>();
-    AssetCommands = MakeShared<FVibeUEAssetCommands>();
+    BlueprintCommands = MakeShared<FBlueprintCommands>();
+    BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
+    UMGCommands = MakeShared<FUMGCommands>();
+    AssetCommands = MakeShared<FAssetCommands>();
 }
 
-UVibeUEBridge::~UVibeUEBridge()
+UBridge::~UBridge()
 {
     BlueprintCommands.Reset();
     BlueprintNodeCommands.Reset();
@@ -78,7 +78,7 @@ UVibeUEBridge::~UVibeUEBridge()
 }
 
 // Initialize subsystem
-void UVibeUEBridge::Initialize(FSubsystemCollectionBase& Collection)
+void UBridge::Initialize(FSubsystemCollectionBase& Collection)
 {
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Initializing"));
     
@@ -94,14 +94,14 @@ void UVibeUEBridge::Initialize(FSubsystemCollectionBase& Collection)
 }
 
 // Clean up resources when subsystem is destroyed
-void UVibeUEBridge::Deinitialize()
+void UBridge::Deinitialize()
 {
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Shutting down"));
     StopServer();
 }
 
 // Start the MCP server
-void UVibeUEBridge::StartServer()
+void UBridge::StartServer()
 {
     if (bIsRunning)
     {
@@ -164,7 +164,7 @@ void UVibeUEBridge::StartServer()
 }
 
 // Stop the MCP server
-void UVibeUEBridge::StopServer()
+void UBridge::StopServer()
 {
     if (!bIsRunning)
     {
@@ -198,7 +198,7 @@ void UVibeUEBridge::StopServer()
 }
 
 // Execute a command received from a client
-FString UVibeUEBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
+FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogTemp, Display, TEXT("MCP: VibeUEBridge: Executing command: %s"), *CommandType);
     

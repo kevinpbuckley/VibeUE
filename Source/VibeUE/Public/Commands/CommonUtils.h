@@ -22,7 +22,7 @@ class FWidgetBlueprintEditor;
 /**
  * Common utilities for VibeUE commands
  */
-class VIBEUE_API FVibeUECommonUtils
+class VIBEUE_API FCommonUtils
 {
 public:
     // JSON utilities

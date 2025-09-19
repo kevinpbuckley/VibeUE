@@ -6,10 +6,10 @@
 /**
  * Handler class for Blueprint-related MCP commands
  */
-class VIBEUE_API FVibeUEBlueprintCommands
+class VIBEUE_API FBlueprintCommands
 {
 public:
-    FVibeUEBlueprintCommands();
+    FBlueprintCommands();
 
     // Handle blueprint commands
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);

@@ -1,5 +1,5 @@
 #include "MCPServerRunnable.h"
-#include "VibeUEBridge.h"
+#include "Bridge.h"
 #include "Sockets.h"
 #include "SocketSubsystem.h"
 #include "Interfaces/IPv4/IPv4Address.h"
@@ -14,7 +14,7 @@
 // Buffer size for receiving data
 const int32 MCPBufferSize = 8192;
 
-FMCPServerRunnable::FMCPServerRunnable(UVibeUEBridge* InBridge, TSharedPtr<FSocket> InListenerSocket)
+FMCPServerRunnable::FMCPServerRunnable(UBridge* InBridge, TSharedPtr<FSocket> InListenerSocket)
     : Bridge(InBridge)
     , ListenerSocket(InListenerSocket)
     , bRunning(true)

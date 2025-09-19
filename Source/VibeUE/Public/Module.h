@@ -3,16 +3,16 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
-class FVibeUEModule : public IModuleInterface
+class FModule : public IModuleInterface
 {
 public:
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
-	static inline FVibeUEModule& Get()
+	static inline FModule& Get()
 	{
-		return FModuleManager::LoadModuleChecked<FVibeUEModule>("VibeUE");
+		return FModuleManager::LoadModuleChecked<FModule>("VibeUE");
 	}
 
 	static inline bool IsAvailable()

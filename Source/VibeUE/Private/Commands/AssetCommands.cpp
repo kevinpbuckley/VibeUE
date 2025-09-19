@@ -1,5 +1,5 @@
-#include "Commands/VibeUEAssetCommands.h"
-#include "Commands/VibeUECommonUtils.h"
+#include "Commands/AssetCommands.h"
+#include "Commands/CommonUtils.h"
 #include "Engine/Engine.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor/EditorEngine.h"
@@ -27,11 +27,11 @@
 // Reentrancy guard for texture import to avoid TaskGraph recursion/assertions
 static FThreadSafeBool GVibeUE_ImportInProgress(false);
 
-FVibeUEAssetCommands::FVibeUEAssetCommands()
+FAssetCommands::FAssetCommands()
 {
 }
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     if (CommandType == TEXT("import_texture_asset"))
     {
@@ -50,7 +50,7 @@ TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleCommand(const FString& Comma
 }
 
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params)
 {
     // IMPORT-ONLY: All rasterization / SVG / procedural generation moved to Python side.
     FString SourceFile;
@@ -182,7 +182,7 @@ TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleImportTextureAsset(const TSh
     return Resp;
 }
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract parameters
     FString AssetPath = TEXT("");
@@ -429,7 +429,7 @@ TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleExportTextureForAnalysis(con
     return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract parameters
     FString AssetPath = TEXT("");
@@ -582,7 +582,7 @@ TSharedPtr<FJsonObject> FVibeUEAssetCommands::HandleOpenAssetInEditor(const TSha
     return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::CreateSuccessResponse(const FString& Message)
+TSharedPtr<FJsonObject> FAssetCommands::CreateSuccessResponse(const FString& Message)
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField(TEXT("success"), true);
@@ -590,7 +590,7 @@ TSharedPtr<FJsonObject> FVibeUEAssetCommands::CreateSuccessResponse(const FStrin
     return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEAssetCommands::CreateErrorResponse(const FString& ErrorMessage)
+TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& ErrorMessage)
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField(TEXT("success"), false);

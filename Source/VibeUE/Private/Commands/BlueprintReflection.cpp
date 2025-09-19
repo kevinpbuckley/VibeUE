@@ -1,4 +1,4 @@
-#include "Commands/VibeUEBlueprintReflection.h"
+#include "Commands/BlueprintReflection.h"
 #include "Engine/Blueprint.h"
 #include "K2Node.h"
 #include "K2Node_Event.h"
@@ -24,11 +24,11 @@
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUEReflection, Log, All);
 
 // Static member initialization - simplified
-TArray<FVibeUEBlueprintReflection::FNodeCategory> FVibeUEBlueprintReflection::CachedNodeCategories;
-bool FVibeUEBlueprintReflection::bCategoriesInitialized = false;
-TMap<FString, UClass*> FVibeUEBlueprintReflection::NodeTypeMap;
+TArray<FBlueprintReflection::FNodeCategory> FBlueprintReflection::CachedNodeCategories;
+bool FBlueprintReflection::bCategoriesInitialized = false;
+TMap<FString, UClass*> FBlueprintReflection::NodeTypeMap;
 
-FVibeUEBlueprintReflection::FVibeUEBlueprintReflection()
+FBlueprintReflection::FBlueprintReflection()
 {
     if (!bCategoriesInitialized)
     {
@@ -37,7 +37,7 @@ FVibeUEBlueprintReflection::FVibeUEBlueprintReflection()
     }
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category, const FString& Context)
+TSharedPtr<FJsonObject> FBlueprintReflection::GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category, const FString& Context)
 {
     TSharedPtr<FJsonObject> ResponseObject = MakeShareable(new FJsonObject);
     
@@ -190,7 +190,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetAvailableBlueprintNodes(U
     return ResponseObject;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams)
+TSharedPtr<FJsonObject> FBlueprintReflection::CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams)
 {
     TSharedPtr<FJsonObject> ResponseObject = MakeShareable(new FJsonObject);
     
@@ -256,7 +256,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::CreateBlueprintNode(UBluepri
         // Configure node-specific properties if provided
         if (NodeParams.IsValid())
         {
-            FVibeUEBlueprintReflection::ConfigureNodeFromParameters(NewNode, NodeParams);
+            FBlueprintReflection::ConfigureNodeFromParameters(NewNode, NodeParams);
         }
         
         // Reconstruct the node to ensure proper setup
@@ -290,7 +290,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::CreateBlueprintNode(UBluepri
     return ResponseObject;
 }
 
-void FVibeUEBlueprintReflection::PopulateNodeCategories()
+void FBlueprintReflection::PopulateNodeCategories()
 {
     CachedNodeCategories.Empty();
     NodeTypeMap.Empty();
@@ -323,7 +323,7 @@ void FVibeUEBlueprintReflection::PopulateNodeCategories()
     UE_LOG(LogVibeUEReflection, Log, TEXT("Populated %d simplified node categories"), CachedNodeCategories.Num());
 }
 
-TArray<FVibeUEBlueprintReflection::FNodeMetadata> FVibeUEBlueprintReflection::DiscoverNodesForBlueprint(UBlueprint* Blueprint, const FString& Category)
+TArray<FBlueprintReflection::FNodeMetadata> FBlueprintReflection::DiscoverNodesForBlueprint(UBlueprint* Blueprint, const FString& Category)
 {
     TArray<FNodeMetadata> DiscoveredNodes;
     
@@ -343,7 +343,7 @@ TArray<FVibeUEBlueprintReflection::FNodeMetadata> FVibeUEBlueprintReflection::Di
     return DiscoveredNodes;
 }
 
-TArray<FVibeUEBlueprintReflection::FNodeCategory> FVibeUEBlueprintReflection::GetNodeCategories()
+TArray<FBlueprintReflection::FNodeCategory> FBlueprintReflection::GetNodeCategories()
 {
     if (!bCategoriesInitialized)
     {
@@ -355,7 +355,7 @@ TArray<FVibeUEBlueprintReflection::FNodeCategory> FVibeUEBlueprintReflection::Ge
 
 // === NODE CONFIGURATION SYSTEM ===
 
-void FVibeUEBlueprintReflection::ConfigureNodeFromParameters(UK2Node* Node, const TSharedPtr<FJsonObject>& NodeParams)
+void FBlueprintReflection::ConfigureNodeFromParameters(UK2Node* Node, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!Node || !NodeParams.IsValid())
         return;
@@ -396,7 +396,7 @@ void FVibeUEBlueprintReflection::ConfigureNodeFromParameters(UK2Node* Node, cons
     }
 }
 
-void FVibeUEBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionNode, const TSharedPtr<FJsonObject>& NodeParams)
+void FBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionNode, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!FunctionNode)
         return;
@@ -423,7 +423,7 @@ void FVibeUEBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* Fun
     }
 }
 
-void FVibeUEBlueprintReflection::ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams)
+void FBlueprintReflection::ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!VariableNode)
         return;
@@ -441,7 +441,7 @@ void FVibeUEBlueprintReflection::ConfigureVariableNode(UK2Node_VariableGet* Vari
     }
 }
 
-void FVibeUEBlueprintReflection::ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams)
+void FBlueprintReflection::ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!VariableNode)
         return;
@@ -459,7 +459,7 @@ void FVibeUEBlueprintReflection::ConfigureVariableSetNode(UK2Node_VariableSet* V
     }
 }
 
-void FVibeUEBlueprintReflection::ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams)
+void FBlueprintReflection::ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!EventNode)
         return;
@@ -486,7 +486,7 @@ void FVibeUEBlueprintReflection::ConfigureEventNode(UK2Node_Event* EventNode, co
 
 // === PLACEHOLDER IMPLEMENTATIONS FOR DECLARED METHODS ===
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodeProperties(UK2Node* Node)
+TSharedPtr<FJsonObject> FBlueprintReflection::GetNodeProperties(UK2Node* Node)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -505,7 +505,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodeProperties(UK2Node* N
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::SetPinDefaultValue(UEdGraphPin* Pin, const FString& PinName, const FString& Value)
+TSharedPtr<FJsonObject> FBlueprintReflection::SetPinDefaultValue(UEdGraphPin* Pin, const FString& PinName, const FString& Value)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -621,7 +621,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::SetPinDefaultValue(UEdGraphP
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodeProperty(UK2Node* Node, const FString& PropertyName)
+TSharedPtr<FJsonObject> FBlueprintReflection::GetNodeProperty(UK2Node* Node, const FString& PropertyName)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -804,7 +804,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodeProperty(UK2Node* Nod
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::SetNodeProperty(UK2Node* Node, const FString& PropertyName, const FString& PropertyValue)
+TSharedPtr<FJsonObject> FBlueprintReflection::SetNodeProperty(UK2Node* Node, const FString& PropertyName, const FString& PropertyValue)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -1004,7 +1004,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::SetNodeProperty(UK2Node* Nod
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodePinDetails(UK2Node* Node)
+TSharedPtr<FJsonObject> FBlueprintReflection::GetNodePinDetails(UK2Node* Node)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -1025,7 +1025,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::GetNodePinDetails(UK2Node* N
 
 // === PRIVATE HELPER METHOD IMPLEMENTATIONS ===
 
-bool FVibeUEBlueprintReflection::ValidateNodeCreation(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams)
+bool FBlueprintReflection::ValidateNodeCreation(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams)
 {
     if (!Blueprint)
     {
@@ -1037,7 +1037,7 @@ bool FVibeUEBlueprintReflection::ValidateNodeCreation(UBlueprint* Blueprint, con
     return true;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::ReflectNodeProperties(UK2Node* Node)
+TSharedPtr<FJsonObject> FBlueprintReflection::ReflectNodeProperties(UK2Node* Node)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -1055,7 +1055,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::ReflectNodeProperties(UK2Nod
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::AnalyzeNodePins(UK2Node* Node)
+TSharedPtr<FJsonObject> FBlueprintReflection::AnalyzeNodePins(UK2Node* Node)
 {
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
@@ -1073,7 +1073,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::AnalyzeNodePins(UK2Node* Nod
     return Result;
 }
 
-FString FVibeUEBlueprintReflection::GetPinTypeDescription(const FEdGraphPinType& PinType)
+FString FBlueprintReflection::GetPinTypeDescription(const FEdGraphPinType& PinType)
 {
     FString TypeDescription = PinType.PinCategory.ToString();
     
@@ -1087,7 +1087,7 @@ FString FVibeUEBlueprintReflection::GetPinTypeDescription(const FEdGraphPinType&
 
 // === BLUEPRINT NODE DISCOVERY SYSTEM ===
 
-void FVibeUEBlueprintReflection::GetBlueprintActionMenuItems(UBlueprint* Blueprint, TArray<TSharedPtr<FEdGraphSchemaAction>>& Actions)
+void FBlueprintReflection::GetBlueprintActionMenuItems(UBlueprint* Blueprint, TArray<TSharedPtr<FEdGraphSchemaAction>>& Actions)
 {
     if (!Blueprint || !Blueprint->UbergraphPages.Num()) 
     {
@@ -1377,7 +1377,7 @@ void FVibeUEBlueprintReflection::GetBlueprintActionMenuItems(UBlueprint* Bluepri
 }
 
 // Helper function to check for high-priority keywords
-bool FVibeUEBlueprintReflection::ContainsHighPriorityKeywords(const FString& DisplayName, const FString& Keywords, const TSet<FString>& HighPriorityKeywords)
+bool FBlueprintReflection::ContainsHighPriorityKeywords(const FString& DisplayName, const FString& Keywords, const TSet<FString>& HighPriorityKeywords)
 {
     FString SearchText = DisplayName.ToLower() + TEXT(" ") + Keywords.ToLower();
     
@@ -1392,7 +1392,7 @@ bool FVibeUEBlueprintReflection::ContainsHighPriorityKeywords(const FString& Dis
 }
 
 // Helper function to calculate search relevance score like the Unreal Editor
-int32 FVibeUEBlueprintReflection::CalculateSearchRelevance(const FString& ActionName, const FString& Keywords, const FString& Tooltip, const FString& SearchTerm)
+int32 FBlueprintReflection::CalculateSearchRelevance(const FString& ActionName, const FString& Keywords, const FString& Tooltip, const FString& SearchTerm)
 {
     if (SearchTerm.IsEmpty())
     {
@@ -1433,7 +1433,7 @@ int32 FVibeUEBlueprintReflection::CalculateSearchRelevance(const FString& Action
     return Score;
 }
 
-UK2Node* FVibeUEBlueprintReflection::CreateNodeFromIdentifier(UBlueprint* Blueprint, const FString& NodeIdentifier, const TSharedPtr<FJsonObject>& Config)
+UK2Node* FBlueprintReflection::CreateNodeFromIdentifier(UBlueprint* Blueprint, const FString& NodeIdentifier, const TSharedPtr<FJsonObject>& Config)
 {
     if (!Blueprint)
     {
@@ -1543,7 +1543,7 @@ UK2Node* FVibeUEBlueprintReflection::CreateNodeFromIdentifier(UBlueprint* Bluepr
     return NewNode;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::ProcessActionToJson(TSharedPtr<FEdGraphSchemaAction> Action)
+TSharedPtr<FJsonObject> FBlueprintReflection::ProcessActionToJson(TSharedPtr<FEdGraphSchemaAction> Action)
 {
     if (!Action.IsValid())
     {
@@ -1594,7 +1594,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflection::ProcessActionToJson(TSharedP
     return ActionInfo;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUEReflection, Log, TEXT("HandleGetAvailableBlueprintNodes called"));
     
@@ -1618,7 +1618,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetAvailableBl
     UE_LOG(LogVibeUEReflection, Log, TEXT("Search params - Category: '%s', SearchTerm: '%s'"), *Category, *SearchTerm);
     
     // Find the Blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
         Result->SetBoolField(TEXT("success"), false);
@@ -1628,7 +1628,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetAvailableBl
     
     // Discover all available actions using Unreal's reflection system
     TArray<TSharedPtr<FEdGraphSchemaAction>> AllActions;
-    FVibeUEBlueprintReflection::GetBlueprintActionMenuItems(Blueprint, AllActions);
+    FBlueprintReflection::GetBlueprintActionMenuItems(Blueprint, AllActions);
     
     // Organize actions by category
     TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
@@ -1639,7 +1639,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetAvailableBl
         if (!Action.IsValid()) continue;
         
         // Process action to JSON
-        TSharedPtr<FJsonObject> ActionJson = FVibeUEBlueprintReflection::ProcessActionToJson(Action);
+        TSharedPtr<FJsonObject> ActionJson = FBlueprintReflection::ProcessActionToJson(Action);
         if (!ActionJson.IsValid()) continue;
         
         FString ActionCategory = ActionJson->GetStringField(TEXT("category"));
@@ -1696,14 +1696,14 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetAvailableBl
     return Result;
 }
 
-// === FVIBEUEBLUEPRINT REFLECTION COMMANDS IMPLEMENTATION ===
+// === BLUEPRINT REFLECTION COMMANDS IMPLEMENTATION ===
 
-FVibeUEBlueprintReflectionCommands::FVibeUEBlueprintReflectionCommands()
+FBlueprintReflectionCommands::FBlueprintReflectionCommands()
 {
     // Constructor - no initialization needed for now
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUEReflection, Warning, TEXT("HandleAddBlueprintNode called - implementing real node creation"));
     
@@ -1915,7 +1915,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleAddBlueprintNo
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
     if (!Params.IsValid())
     {
@@ -1959,10 +1959,10 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleSetBlueprintNo
     }
     
     // Use the reflection system to set property
-    return FVibeUEBlueprintReflection::SetNodeProperty(Node, PropertyName, PropertyValue);
+    return FBlueprintReflection::SetNodeProperty(Node, PropertyName, PropertyValue);
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
     if (!Params.IsValid())
     {
@@ -2000,10 +2000,10 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetBlueprintNo
     }
     
     // Use the reflection system to get property
-    return FVibeUEBlueprintReflection::GetNodeProperty(Node, PropertyName);
+    return FBlueprintReflection::GetNodeProperty(Node, PropertyName);
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params)
 {
     if (!Params.IsValid())
     {
@@ -2038,8 +2038,8 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetEnhancedNod
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     
     // Basic node info
-    TSharedPtr<FJsonObject> NodeInfo = FVibeUEBlueprintReflection::GetNodeProperties(Node);
-    TSharedPtr<FJsonObject> PinInfo = FVibeUEBlueprintReflection::GetNodePinDetails(Node);
+    TSharedPtr<FJsonObject> NodeInfo = FBlueprintReflection::GetNodeProperties(Node);
+    TSharedPtr<FJsonObject> PinInfo = FBlueprintReflection::GetNodePinDetails(Node);
     
     Result->SetBoolField("success", true);
     Result->SetObjectField("node_properties", NodeInfo);
@@ -2052,20 +2052,20 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::HandleGetEnhancedNod
 
 // === HELPER METHODS ===
 
-UBlueprint* FVibeUEBlueprintReflectionCommands::FindBlueprint(const FString& BlueprintName)
+UBlueprint* FBlueprintReflectionCommands::FindBlueprint(const FString& BlueprintName)
 {
     // Use the working implementation from CommonUtils
-    return FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    return FCommonUtils::FindBlueprint(BlueprintName);
 }
 
-UK2Node* FVibeUEBlueprintReflectionCommands::FindNodeInBlueprint(UBlueprint* Blueprint, const FString& NodeId)
+UK2Node* FBlueprintReflectionCommands::FindNodeInBlueprint(UBlueprint* Blueprint, const FString& NodeId)
 {
     if (!Blueprint)
         return nullptr;
         
     // Node IDs in our system are NodeGuid strings (hex format), not integer UniqueIDs
     // Use the same approach as other commands - check the event graph first
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (EventGraph)
     {
         for (UEdGraphNode* Node : EventGraph->Nodes)
@@ -2100,7 +2100,7 @@ UK2Node* FVibeUEBlueprintReflectionCommands::FindNodeInBlueprint(UBlueprint* Blu
     return nullptr;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::CreateErrorResponse(const FString& Message)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::CreateErrorResponse(const FString& Message)
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField("success", false);
@@ -2108,7 +2108,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::CreateErrorResponse(
     return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintReflectionCommands::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField("success", true);

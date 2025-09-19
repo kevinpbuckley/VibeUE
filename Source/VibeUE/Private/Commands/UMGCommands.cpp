@@ -1,5 +1,5 @@
-#include "Commands/VibeUEUMGCommands.h"
-#include "Commands/VibeUECommonUtils.h"
+#include "Commands/UMGCommands.h"
+#include "Commands/CommonUtils.h"
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -102,7 +102,7 @@ namespace UMGHelpers
 	WidgetType* CreateWidgetWithParent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FString& ParentName = TEXT(""));
 }
 
-FVibeUEUMGCommands::FVibeUEUMGCommands()
+FUMGCommands::FUMGCommands()
 {
 }
 
@@ -418,7 +418,7 @@ namespace UMGHelpers
 	}
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
 {
 	// Original UMG Commands
 	if (CommandName == TEXT("create_umg_widget_blueprint"))
@@ -586,16 +586,16 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCommand(const FString& Command
 	// All event handling, data binding, animation, and bulk operations have been removed
 	// Only keeping core working functions
 
-	return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown UMG command: %s"), *CommandName));
+	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown UMG command: %s"), *CommandName));
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCreateUMGWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
 	// Get required parameters
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
 	}
 
 	// Create the full asset path
@@ -606,14 +606,14 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCreateUMGWidgetBlueprint(const
 	// Check if asset already exists
 	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *BlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *BlueprintName));
 	}
 
 	// Create package
 	UPackage* Package = CreatePackage(*FullPath);
 	if (!Package)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create package"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create package"));
 	}
 
 	// Create Widget Blueprint using WidgetBlueprintFactory
@@ -633,7 +633,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCreateUMGWidgetBlueprint(const
 	UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Widget Blueprint"));
 	}
 
 	// Add a default Canvas Panel if one doesn't exist
@@ -657,32 +657,32 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCreateUMGWidgetBlueprint(const
 	return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTextBlockToWidget(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddTextBlockToWidget(const TSharedPtr<FJsonObject>& Params)
 {
 	// Get required parameters
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
 	}
 
 	FString WidgetName;
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
 	}
 
 	FString ParentName;
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the text block"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the text block"));
 	}
 
 	// Find the Widget Blueprint (accept name or full path)
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(BlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(BlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'. Tip: pass /Game/.../WBP_Name or /Game/.../WBP_Name.WBP_Name"), *BlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'. Tip: pass /Game/.../WBP_Name or /Game/.../WBP_Name.WBP_Name"), *BlueprintName));
 	}
 
 	// Get optional parameters
@@ -704,7 +704,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTextBlockToWidget(const TSh
 	UTextBlock* TextBlock = WidgetBlueprint->WidgetTree->ConstructWidget<UTextBlock>(UTextBlock::StaticClass(), *WidgetName);
 	if (!TextBlock)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Text Block widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Text Block widget"));
 	}
 
 	// Set initial text
@@ -724,11 +724,11 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTextBlockToWidget(const TSh
 	// Defensive check: ensure WidgetTree exists before proceeding to avoid crashes in editor
 	if (!WidgetBlueprint->WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' has no WidgetTree"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' has no WidgetTree"), *WidgetName));
 	}
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 
 	// Add to parent panel
@@ -755,7 +755,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTextBlockToWidget(const TSh
 }
 
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddButtonToWidget(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddButtonToWidget(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 
@@ -789,7 +789,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddButtonToWidget(const TShare
 	}
 
 	// Load the Widget Blueprint
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(BlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(BlueprintName);
 	if (!WidgetBlueprint)
 	{
 		Response->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to load Widget Blueprint: %s"), *BlueprintName));
@@ -856,7 +856,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddButtonToWidget(const TShare
 // UMG Discovery Methods Implementation
 // ===================================================================
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSearchItems(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1032,7 +1032,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSearchItems(const TSharedPtr<F
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetBlueprintInfo(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     
@@ -1048,18 +1048,18 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetBlueprintInfo(const T
 		}
 		if (WidgetName.IsEmpty())
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
 		}
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Looking for widget '%s'"), *WidgetName);
 	
 	// Find widget blueprint (same as working version)
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Found widget '%s' at path '%s'"), 
@@ -1311,7 +1311,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetBlueprintInfo(const T
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetComponents(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetComponents(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1327,16 +1327,16 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetComponents(const TSh
 		}
 		if (WidgetName.IsEmpty())
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
 		}
 	}
 	
 	// Find widget blueprint
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
 	}
 	
 	// Get all widgets in the tree
@@ -1364,7 +1364,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetComponents(const TSh
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetComponentProperties(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1373,7 +1373,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetComponentProperties(c
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("component_name"), ComponentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' or 'component_name' parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' or 'component_name' parameter"));
 	}
 	
 	// Fall back to alternates if widget_name is not provided as expected
@@ -1386,18 +1386,18 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetComponentProperties(c
 		}
 	}
 	// Find widget blueprint
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
 	}
 	
 	// Find the specific widget component
 	UWidget* TargetWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*ComponentName));
 	if (!TargetWidget)
 	{
-	return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in widget"), *ComponentName));
+	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in widget"), *ComponentName));
 	}
 	
 	// Get component properties - simplified version
@@ -1411,7 +1411,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetComponentProperties(c
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetAvailableWidgetTypes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableWidgetTypes(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1451,7 +1451,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetAvailableWidgetTypes(const 
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleValidateWidgetHierarchy(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1459,7 +1459,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleValidateWidgetHierarchy(const 
 	FString WidgetName;
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
 	}
 	
 	// Find widget blueprint
@@ -1468,7 +1468,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleValidateWidgetHierarchy(const 
 	
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Basic validation - check if widget tree exists and has root
@@ -1485,7 +1485,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleValidateWidgetHierarchy(const 
 // UMG Component Methods Implementation
 // ===================================================================
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableText(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddEditableText(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1494,25 +1494,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableText(const TSharedP
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("editable_text_name"), EditableTextName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the editable text"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the editable text"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create EditableText widget
 	UEditableText* EditableText = WidgetBlueprint->WidgetTree->ConstructWidget<UEditableText>(UEditableText::StaticClass(), *EditableTextName);
 	if (!EditableText)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create EditableText widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create EditableText widget"));
 	}
 	
 	// Set optional properties
@@ -1527,7 +1527,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableText(const TSharedP
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1566,7 +1566,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableText(const TSharedP
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableTextBox(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddEditableTextBox(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1575,25 +1575,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableTextBox(const TShar
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("text_box_name"), TextBoxName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the editable text box"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the editable text box"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create EditableTextBox widget
 	UEditableTextBox* TextBox = WidgetBlueprint->WidgetTree->ConstructWidget<UEditableTextBox>(UEditableTextBox::StaticClass(), *TextBoxName);
 	if (!TextBox)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create EditableTextBox widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create EditableTextBox widget"));
 	}
 	
 	// Set optional properties
@@ -1615,7 +1615,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableTextBox(const TShar
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1645,7 +1645,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddEditableTextBox(const TShar
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddRichTextBlock(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddRichTextBlock(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1654,25 +1654,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddRichTextBlock(const TShared
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("rich_text_name"), RichTextName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the rich text block"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the rich text block"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create RichTextBlock widget
 	URichTextBlock* RichText = WidgetBlueprint->WidgetTree->ConstructWidget<URichTextBlock>(URichTextBlock::StaticClass(), *RichTextName);
 	if (!RichText)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create RichTextBlock widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create RichTextBlock widget"));
 	}
 	
 	// Set optional properties
@@ -1687,7 +1687,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddRichTextBlock(const TShared
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1717,7 +1717,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddRichTextBlock(const TShared
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCheckBox(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddCheckBox(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1726,25 +1726,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCheckBox(const TSharedPtr<F
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("check_box_name"), CheckBoxName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the check box"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the check box"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create CheckBox widget
 	UCheckBox* CheckBox = WidgetBlueprint->WidgetTree->ConstructWidget<UCheckBox>(UCheckBox::StaticClass(), *CheckBoxName);
 	if (!CheckBox)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create CheckBox widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create CheckBox widget"));
 	}
 	
 	// Set optional properties
@@ -1756,7 +1756,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCheckBox(const TSharedPtr<F
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1786,7 +1786,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCheckBox(const TSharedPtr<F
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSlider(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddSlider(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1795,25 +1795,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSlider(const TSharedPtr<FJs
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("slider_name"), SliderName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the slider"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the slider"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create Slider widget
 	USlider* Slider = WidgetBlueprint->WidgetTree->ConstructWidget<USlider>(USlider::StaticClass(), *SliderName);
 	if (!Slider)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Slider widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Slider widget"));
 	}
 	
 	// Set optional properties
@@ -1830,7 +1830,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSlider(const TSharedPtr<FJs
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1860,7 +1860,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSlider(const TSharedPtr<FJs
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddProgressBar(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddProgressBar(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -1869,25 +1869,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddProgressBar(const TSharedPt
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("progress_bar_name"), ProgressBarName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the progress bar"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the progress bar"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create ProgressBar widget
 	UProgressBar* ProgressBar = WidgetBlueprint->WidgetTree->ConstructWidget<UProgressBar>(UProgressBar::StaticClass(), *ProgressBarName);
 	if (!ProgressBar)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create ProgressBar widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create ProgressBar widget"));
 	}
 	
 	// Set optional properties
@@ -1899,7 +1899,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddProgressBar(const TSharedPt
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -1929,50 +1929,50 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddProgressBar(const TSharedPt
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddImage(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddImage(const TSharedPtr<FJsonObject>& Params)
 {
 	// Check if we're in a serialization context to prevent crashes
 	if (IsGarbageCollecting() || GIsSavingPackage || IsLoading())
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Cannot add image during serialization"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Cannot add image during serialization"));
 	}
 
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	if (!Response.IsValid())
 	{
 		UE_LOG(LogTemp, Error, TEXT("MCP: Failed to create Response object"));
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Internal error: Failed to create response object"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Internal error: Failed to create response object"));
 	}
 
 	FString WidgetName, ImageName, ParentName;
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("image_name"), ImageName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the image"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the image"));
 	}
 
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint || !WidgetBlueprint->WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found or widget tree is null"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found or widget tree is null"), *WidgetName));
 	}
 
 	UImage* Image = WidgetBlueprint->WidgetTree->ConstructWidget<UImage>(UImage::StaticClass(), *ImageName);
 	if (!Image)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Image widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Image widget"));
 	}
 
 	// Find or create the specified parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 
 	bool Added = false;
@@ -2036,7 +2036,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddImage(const TSharedPtr<FJso
 
 	if (!Added)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add image to panel"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add image to panel"));
 	}
 
 	if (Params->HasField(TEXT("color_tint")))
@@ -2068,7 +2068,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddImage(const TSharedPtr<FJso
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSpacer(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddSpacer(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	
@@ -2077,25 +2077,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSpacer(const TSharedPtr<FJs
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
 		!Params->TryGetStringField(TEXT("spacer_name"), SpacerName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing required parameters"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the spacer"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the spacer"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
 	}
 	
 	// Create Spacer widget
 	USpacer* Spacer = WidgetBlueprint->WidgetTree->ConstructWidget<USpacer>(USpacer::StaticClass(), *SpacerName);
 	if (!Spacer)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Spacer widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Spacer widget"));
 	}
 	
 	// Set optional size
@@ -2115,7 +2115,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSpacer(const TSharedPtr<FJs
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to parent panel
@@ -2148,7 +2148,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddSpacer(const TSharedPtr<FJs
 // UMG Layout Methods Implementation (Stub implementations)
 // ===================================================================
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCanvasPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddCanvasPanel(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString PanelName;
@@ -2156,30 +2156,30 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCanvasPanel(const TSharedPt
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("panel_name"), PanelName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing panel_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing panel_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Canvas Panel"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Canvas Panel"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to widget blueprint's designer
@@ -2205,19 +2205,19 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddCanvasPanel(const TSharedPt
 			}
 			else
 			{
-				return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Canvas Panel to parent"));
+				return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Canvas Panel to parent"));
 			}
 		}
 		else
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Canvas Panel"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Canvas Panel"));
 		}
 	}
 	
-	return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
+	return FCommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString OverlayName;
@@ -2225,36 +2225,36 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddOverlay(const TSharedPtr<FJ
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("overlay_name"), OverlayName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing overlay_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing overlay_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the overlay. Use list_widget_components to see available parent containers."));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the overlay. Use list_widget_components to see available parent containers."));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 	
 	// Create the overlay widget using the widget tree
 	UOverlay* CreatedOverlay = WidgetTree->ConstructWidget<UOverlay>(UOverlay::StaticClass(), *OverlayName);
 	if (!CreatedOverlay)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Overlay widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Overlay widget"));
 	}
 	
 	UE_LOG(LogTemp, Warning, TEXT("MCP: Created overlay '%s' successfully"), *OverlayName);
@@ -2276,7 +2276,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddOverlay(const TSharedPtr<FJ
 			}
 		}
 		UE_LOG(LogTemp, Error, TEXT("MCP: Parent panel '%s' not found. %s"), *ParentName, *AvailableComponents);
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found. %s"), *ParentName, *AvailableComponents));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found. %s"), *ParentName, *AvailableComponents));
 	}
 	
 	// Add overlay to parent panel
@@ -2299,7 +2299,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddOverlay(const TSharedPtr<FJ
 		else
 		{
 			UE_LOG(LogTemp, Error, TEXT("MCP: Failed to create canvas slot"));
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add overlay to canvas panel"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to add overlay to canvas panel"));
 		}
 	}
 	else
@@ -2323,7 +2323,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddOverlay(const TSharedPtr<FJ
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddHorizontalBox(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddHorizontalBox(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString BoxName;
@@ -2331,30 +2331,30 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddHorizontalBox(const TShared
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("box_name"), BoxName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing box_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing box_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Horizontal Box"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Horizontal Box"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to widget blueprint's designer
@@ -2380,19 +2380,19 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddHorizontalBox(const TShared
 			}
 			else
 			{
-				return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Horizontal Box to parent"));
+				return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Horizontal Box to parent"));
 			}
 		}
 		else
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Horizontal Box"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Horizontal Box"));
 		}
 	}
 	
-	return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
+	return FCommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddVerticalBox(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddVerticalBox(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString BoxName;
@@ -2400,30 +2400,30 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddVerticalBox(const TSharedPt
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("box_name"), BoxName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing box_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing box_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Vertical Box"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Vertical Box"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to widget blueprint's designer
@@ -2449,19 +2449,19 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddVerticalBox(const TSharedPt
 			}
 			else
 			{
-				return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Vertical Box to parent"));
+				return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Vertical Box to parent"));
 			}
 		}
 		else
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Vertical Box"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Vertical Box"));
 		}
 	}
 	
-	return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
+	return FCommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddScrollBox(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddScrollBox(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString ScrollBoxName;
@@ -2470,32 +2470,32 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddScrollBox(const TSharedPtr<
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("scroll_box_name"), ScrollBoxName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing scroll_box_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing scroll_box_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Scroll Box"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Scroll Box"));
 	}
 	
 	Params->TryGetStringField(TEXT("orientation"), Orientation);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Add to widget blueprint's designer
@@ -2531,19 +2531,19 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddScrollBox(const TSharedPtr<
 			}
 			else
 			{
-				return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Scroll Box to parent"));
+				return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Scroll Box to parent"));
 			}
 		}
 		else
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Scroll Box"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Scroll Box"));
 		}
 	}
 	
-	return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
+	return FCommonUtils::CreateErrorResponse(TEXT("Widget Tree not found"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddGridPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddGridPanel(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString GridPanelName;
@@ -2553,45 +2553,45 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddGridPanel(const TSharedPtr<
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("grid_panel_name"), GridPanelName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing grid_panel_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing grid_panel_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Grid Panel"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Grid Panel"));
 	}
 	
 	Params->TryGetNumberField(TEXT("column_count"), ColumnCount);
 	Params->TryGetNumberField(TEXT("row_count"), RowCount);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 	
 	UGridPanel* GridPanel = WidgetTree->ConstructWidget<UGridPanel>(UGridPanel::StaticClass(), *GridPanelName);
 	if (!GridPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create Grid Panel"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Grid Panel"));
 	}
 	
 	GridPanel->SetVisibility(ESlateVisibility::Visible);
@@ -2616,11 +2616,11 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddGridPanel(const TSharedPtr<
 	}
 	else
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Grid Panel to parent"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Grid Panel to parent"));
 	}
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString ParentPanelName;
@@ -2629,49 +2629,49 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddChildToPanel(const TSharedP
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_panel_name"), ParentPanelName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
 	}
 	
 	Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 
 	UWidget* ParentPanel = WidgetTree->FindWidget(FName(*ParentPanelName));
 	UWidget* ChildWidget = WidgetTree->FindWidget(FName(*ChildWidgetName));
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
 	}
 	if (!ChildWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
 	}
 
 	UPanelWidget* PanelWidget = Cast<UPanelWidget>(ParentPanel);
 	if (!PanelWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
 	}
 
 	if (SlotIndex < 0 || SlotIndex >= PanelWidget->GetChildrenCount())
@@ -2707,7 +2707,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddChildToPanel(const TSharedP
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleRemoveChildFromPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveChildFromPanel(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString ParentPanelName;
@@ -2715,47 +2715,47 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleRemoveChildFromPanel(const TSh
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_panel_name"), ParentPanelName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 
 	UWidget* ParentPanel = WidgetTree->FindWidget(FName(*ParentPanelName));
 	UWidget* ChildWidget = WidgetTree->FindWidget(FName(*ChildWidgetName));
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
 	}
 	if (!ChildWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
 	}
 
 	UPanelWidget* PanelWidget = Cast<UPanelWidget>(ParentPanel);
 	if (!PanelWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
 	}
 
 	PanelWidget->RemoveChild(ChildWidget);
@@ -2772,7 +2772,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleRemoveChildFromPanel(const TSh
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
@@ -2781,7 +2781,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetSlotProperties(const 
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("target_widget_name"), WidgetName))
@@ -2789,36 +2789,36 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetSlotProperties(const 
 		// Try alternative parameter name
 		if (!Params->TryGetStringField(TEXT("widget_component_name"), WidgetName))
 		{
-			return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing target_widget_name or widget_component_name parameter"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing target_widget_name or widget_component_name parameter"));
 		}
 	}
 	
 	Params->TryGetStringField(TEXT("slot_type"), SlotType);
 	SlotProperties = Params->GetObjectField(TEXT("slot_properties"));
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 
 	UWidget* TargetWidget = WidgetTree->FindWidget(FName(*WidgetName));
 	if (!TargetWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Target widget '%s' not found"), *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Target widget '%s' not found"), *WidgetName));
 	}
 
 	UPanelSlot* PanelSlot = TargetWidget->Slot;
 	if (!PanelSlot)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget does not have a panel slot"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Widget does not have a panel slot"));
 	}
 
 	// Example: Set padding if provided
@@ -3314,7 +3314,7 @@ bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, FPropert
 	return false;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
@@ -3322,17 +3322,17 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
 	}
 	
 	// Support both string and JSON object values
@@ -3343,7 +3343,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 	
 	if (!bHasStringValue && !bHasJsonValue)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
 	}
 	
 	if (bHasJsonValue)
@@ -3351,10 +3351,10 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 		PropertyValueJson = Params->Values[TEXT("property_value")];
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 
 	// Find the widget component in the widget tree
@@ -3376,14 +3376,14 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	// Use reflection to find and set the property
 	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
 	if (!Property)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
 	}
 
 	// Handle different property types
@@ -3474,7 +3474,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 		{
 			ErrorMessage = FString::Printf(TEXT("Unsupported property type for '%s'"), *PropertyName);
 		}
-		return FVibeUECommonUtils::CreateErrorResponse(ErrorMessage);
+		return FCommonUtils::CreateErrorResponse(ErrorMessage);
 	}
 
 	// Mark the blueprint as modified and compile
@@ -3519,7 +3519,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetProperty(const TShare
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
@@ -3527,23 +3527,23 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetProperty(const TShare
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 
 	// Find the widget component in the widget tree
@@ -3565,14 +3565,14 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetProperty(const TShare
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	// Use reflection to find and get the property
 	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
 	if (!Property)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
 	}
 
 	// Get property value based on type
@@ -3639,25 +3639,25 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetWidgetProperty(const TShare
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 
 	// Find the widget component in the widget tree
@@ -3679,7 +3679,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetProperties(const TSh
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	// Get all properties via reflection
@@ -3768,12 +3768,12 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleListWidgetProperties(const TSh
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params)
 {
 	// Check if we're in a serialization context to prevent crashes
 	if (IsGarbageCollecting() || GIsSavingPackage || IsLoading())
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Cannot set widget transform during serialization"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Cannot set widget transform during serialization"));
 	}
 
 	FString WidgetBlueprintName;
@@ -3785,12 +3785,12 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetTransform(const TShar
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
 	// Parse transform values
@@ -3817,10 +3817,10 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetTransform(const TShar
 	
 	Params->TryGetNumberField(TEXT("rotation"), Rotation);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
@@ -3841,7 +3841,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetTransform(const TShar
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	// Set slot properties for position and size if possible
@@ -3890,7 +3890,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetTransform(const TShar
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
@@ -3898,23 +3898,23 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetVisibility(const TSha
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("visibility"), VisibilityString))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing visibility parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing visibility parameter"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
@@ -3935,7 +3935,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetVisibility(const TSha
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	ESlateVisibility Visibility = ESlateVisibility::Visible;
@@ -3968,7 +3968,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetVisibility(const TSha
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetZOrder(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetZOrder(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetName;
@@ -3976,23 +3976,23 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetZOrder(const TSharedP
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
 	if (!Params->TryGetNumberField(TEXT("z_order"), ZOrder))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing z_order parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing z_order parameter"));
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 
@@ -4013,7 +4013,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetZOrder(const TSharedP
 
 	if (!FoundWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
 	UPanelSlot* PanelSlot = FoundWidget->Slot;
@@ -4041,28 +4041,28 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleSetWidgetZOrder(const TSharedP
 // UMG Event Methods Implementation (Stub implementations)
 // ===================================================================
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	TArray<TSharedPtr<FJsonValue>> InputMappings;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	const TArray<TSharedPtr<FJsonValue>>* InputMappingsArray;
 	if (!Params->TryGetArrayField(TEXT("input_mappings"), InputMappingsArray))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing input_mappings parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing input_mappings parameter"));
 	}
 	
 	InputMappings = *InputMappingsArray;
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// This would require complex input event binding
@@ -4092,22 +4092,22 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleBindInputEvents(const TSharedP
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString WidgetType;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	Params->TryGetStringField(TEXT("widget_type"), WidgetType);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Use reflection to discover Blueprint events and callable functions
@@ -4146,7 +4146,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleGetAvailableEvents(const TShar
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddListView(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddListView(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString ListViewName;
@@ -4155,39 +4155,39 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddListView(const TSharedPtr<F
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("list_view_name"), ListViewName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing list_view_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing list_view_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the List View"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the List View"));
 	}
 	
 	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Create ListView widget
 	UListView* ListView = WidgetBlueprint->WidgetTree->ConstructWidget<UListView>(UListView::StaticClass(), *ListViewName);
 	if (!ListView)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create ListView widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create ListView widget"));
 	}
 	
 	// Set item height if provided
@@ -4233,11 +4233,11 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddListView(const TSharedPtr<F
 	}
 	else
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add List View to parent"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add List View to parent"));
 	}
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTileView(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddTileView(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString TileViewName;
@@ -4246,39 +4246,39 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTileView(const TSharedPtr<F
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("tile_view_name"), TileViewName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing tile_view_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing tile_view_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Tile View"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Tile View"));
 	}
 	
 	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Find or create parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 	if (!ParentPanel)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
 	}
 	
 	// Create TileView widget
 	UTileView* TileView = WidgetBlueprint->WidgetTree->ConstructWidget<UTileView>(UTileView::StaticClass(), *TileViewName);
 	if (!TileView)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create TileView widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create TileView widget"));
 	}
 	
 	// Set tile dimensions if provided
@@ -4320,11 +4320,11 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTileView(const TSharedPtr<F
 	}
 	else
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add Tile View to parent"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Tile View to parent"));
 	}
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTreeView(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddTreeView(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString TreeViewName;
@@ -4334,12 +4334,12 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTreeView(const TSharedPtr<F
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("tree_view_name"), TreeViewName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing tree_view_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing tree_view_name parameter"));
 	}
 	
 	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
@@ -4356,17 +4356,17 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTreeView(const TSharedPtr<F
 		Size = *SizeArray;
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Create TreeView widget
 	UTreeView* TreeView = WidgetBlueprint->WidgetTree->ConstructWidget<UTreeView>(UTreeView::StaticClass(), *TreeViewName);
 	if (!TreeView)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create TreeView widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create TreeView widget"));
 	}
 	
 	// Set item height if provided
@@ -4416,7 +4416,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddTreeView(const TSharedPtr<F
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString SwitcherName;
@@ -4425,12 +4425,12 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcher(const TShare
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("switcher_name"), SwitcherName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing switcher_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing switcher_name parameter"));
 	}
 	
 	const TArray<TSharedPtr<FJsonValue>>* PositionArray;
@@ -4447,17 +4447,17 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcher(const TShare
 		Size[1] = (*SizeArray)[1]->AsNumber();
 	}
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	// Create WidgetSwitcher widget
 	UWidgetSwitcher* WidgetSwitcher = WidgetBlueprint->WidgetTree->ConstructWidget<UWidgetSwitcher>(UWidgetSwitcher::StaticClass(), *SwitcherName);
 	if (!WidgetSwitcher)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create WidgetSwitcher widget"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create WidgetSwitcher widget"));
 	}
 	
 	// Set active widget index if provided
@@ -4506,7 +4506,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcher(const TShare
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
 	FString SwitcherName;
@@ -4515,31 +4515,31 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcherSlot(const TS
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("switcher_name"), SwitcherName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing switcher_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing switcher_name parameter"));
 	}
 	
 	if (!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
 	}
 	
 	Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
 	
-	UWidgetBlueprint* WidgetBlueprint = FVibeUECommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Widget Blueprint has no WidgetTree"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Widget Blueprint has no WidgetTree"));
 	}
 	
 	// Find the widget switcher
@@ -4558,7 +4558,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcherSlot(const TS
 	
 	if (!WidgetSwitcher)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Switcher '%s' not found"), *SwitcherName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Switcher '%s' not found"), *SwitcherName));
 	}
 	
 	// Find the child widget to add
@@ -4574,7 +4574,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcherSlot(const TS
 	
 	if (!ChildWidget)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
 	}
 	
 	// Add the child to the widget switcher at the specified index
@@ -4609,7 +4609,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleAddWidgetSwitcherSlot(const TS
 	}
 	catch (...)
 	{
-		return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to add widget to switcher"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add widget to switcher"));
 	}
 }
 

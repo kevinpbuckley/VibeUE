@@ -4,16 +4,16 @@
 #include "Json.h"
 
 // Forward declare reflection commands
-class FVibeUEBlueprintReflectionCommands;
+class FBlueprintReflectionCommands;
 
 /**
  * Handler class for Blueprint Node-related MCP commands
  * Enhanced with reflection-based node discovery and manipulation
  */
-class VIBEUE_API FVibeUEBlueprintNodeCommands
+class VIBEUE_API FBlueprintNodeCommands
 {
 public:
-    FVibeUEBlueprintNodeCommands();
+    FBlueprintNodeCommands();
 
     // Handle blueprint node commands
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
@@ -41,5 +41,5 @@ private:
     
 private:
     // Reflection system helper
-    TSharedPtr<FVibeUEBlueprintReflectionCommands> ReflectionCommands;
+    TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
 }; 

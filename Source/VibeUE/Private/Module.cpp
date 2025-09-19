@@ -1,21 +1,21 @@
-#include "VibeUEModule.h"
-#include "VibeUEBridge.h"
+#include "Module.h"
+#include "Bridge.h"
 #include "Modules/ModuleManager.h"
 #include "EditorSubsystem.h"
 #include "Editor.h"
 
-#define LOCTEXT_NAMESPACE "FVibeUEModule"
+#define LOCTEXT_NAMESPACE "FModule"
 
-void FVibeUEModule::StartupModule()
+void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
 }
 
-void FVibeUEModule::ShutdownModule()
+void FModule::ShutdownModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
 }
 
 #undef LOCTEXT_NAMESPACE
 	
-IMPLEMENT_MODULE(FVibeUEModule, VibeUE) 
+IMPLEMENT_MODULE(FModule, VibeUE) 

@@ -8,11 +8,11 @@
 #include "Json.h"
 #include "Interfaces/IPv4/IPv4Address.h"
 #include "Interfaces/IPv4/IPv4Endpoint.h"
-#include "Commands/VibeUEBlueprintCommands.h"
-#include "Commands/VibeUEBlueprintNodeCommands.h"
-#include "Commands/VibeUEUMGCommands.h"
-#include "Commands/VibeUEAssetCommands.h"
-#include "VibeUEBridge.generated.h"
+#include "Commands/BlueprintCommands.h"
+#include "Commands/BlueprintNodeCommands.h"
+#include "Commands/UMGCommands.h"
+#include "Commands/AssetCommands.h"
+#include "Bridge.generated.h"
 
 class FMCPServerRunnable;
 
@@ -23,13 +23,13 @@ class FMCPServerRunnable;
  * routed to appropriate command handlers.
  */
 UCLASS()
-class VIBEUE_API UVibeUEBridge : public UEditorSubsystem
+class VIBEUE_API UBridge : public UEditorSubsystem
 {
 	GENERATED_BODY()
 
 public:
-	UVibeUEBridge();
-	virtual ~UVibeUEBridge();
+	UBridge();
+	virtual ~UBridge();
 
 	// UEditorSubsystem implementation
 	virtual void Initialize(FSubsystemCollectionBase& Collection) override;
@@ -55,8 +55,8 @@ private:
 	uint16 Port;
 
 	// Command handler instances
-	TSharedPtr<FVibeUEBlueprintCommands> BlueprintCommands;
-	TSharedPtr<FVibeUEBlueprintNodeCommands> BlueprintNodeCommands;
-	TSharedPtr<FVibeUEUMGCommands> UMGCommands;
-	TSharedPtr<FVibeUEAssetCommands> AssetCommands;
+	TSharedPtr<FBlueprintCommands> BlueprintCommands;
+	TSharedPtr<FBlueprintNodeCommands> BlueprintNodeCommands;
+	TSharedPtr<FUMGCommands> UMGCommands;
+	TSharedPtr<FAssetCommands> AssetCommands;
 }; 

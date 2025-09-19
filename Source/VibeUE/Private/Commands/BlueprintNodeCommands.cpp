@@ -1,6 +1,6 @@
-#include "Commands/VibeUEBlueprintNodeCommands.h"
-#include "Commands/VibeUEBlueprintReflection.h"
-#include "Commands/VibeUECommonUtils.h"
+#include "Commands/BlueprintNodeCommands.h"
+#include "Commands/BlueprintReflection.h"
+#include "Commands/CommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -26,13 +26,13 @@
 // Declare the log category
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
 
-FVibeUEBlueprintNodeCommands::FVibeUEBlueprintNodeCommands()
+FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
     // Initialize reflection system
-    ReflectionCommands = MakeShareable(new FVibeUEBlueprintReflectionCommands());
+    ReflectionCommands = MakeShareable(new FBlueprintReflectionCommands());
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: BlueprintNodeCommands::HandleCommand called with CommandType: %s"), *CommandType);
     
@@ -119,54 +119,54 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleCommand(const FStrin
     }
     
     UE_LOG(LogVibeUE, Error, TEXT("MCP: Unknown blueprint node command: %s"), *CommandType);
-    return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint node command: %s"), *CommandType));
+    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint node command: %s"), *CommandType));
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleConnectBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString SourceNodeId;
     if (!Params->TryGetStringField(TEXT("source_node_id"), SourceNodeId))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'source_node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_node_id' parameter"));
     }
 
     FString TargetNodeId;
     if (!Params->TryGetStringField(TEXT("target_node_id"), TargetNodeId))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'target_node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_node_id' parameter"));
     }
 
     FString SourcePinName;
     if (!Params->TryGetStringField(TEXT("source_pin"), SourcePinName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'source_pin' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_pin' parameter"));
     }
 
     FString TargetPinName;
     if (!Params->TryGetStringField(TEXT("target_pin"), TargetPinName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'target_pin' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_pin' parameter"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Find the nodes
@@ -186,11 +186,11 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleConnectBlueprintNode
 
     if (!SourceNode || !TargetNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Source or target node not found"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Source or target node not found"));
     }
 
     // Enhanced connection with reflection-based pin discovery
-    TSharedPtr<FJsonObject> ConnectionResult = FVibeUECommonUtils::ConnectGraphNodesWithReflection(
+    TSharedPtr<FJsonObject> ConnectionResult = FCommonUtils::ConnectGraphNodesWithReflection(
         EventGraph, SourceNode, SourcePinName, TargetNode, TargetPinName);
     
     bool bSuccess = false;
@@ -211,40 +211,40 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleConnectBlueprintNode
     }
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintGetSelfComponentReference(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintGetSelfComponentReference(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentName;
     if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
     }
 
     // Get position parameters (optional)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
-        NodePosition = FVibeUECommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
     
     // We'll skip component verification since the GetAllNodes API may have changed in UE5.5
@@ -253,7 +253,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintGetSelfC
     UK2Node_VariableGet* GetComponentNode = NewObject<UK2Node_VariableGet>(EventGraph);
     if (!GetComponentNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create get component node"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create get component node"));
     }
     
     // Set up the variable reference properly for UE5.5
@@ -281,47 +281,47 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintGetSelfC
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString EventName;
     if (!Params->TryGetStringField(TEXT("event_name"), EventName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
     }
 
     // Get position parameters (optional)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
-        NodePosition = FVibeUECommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Create the event node
-    UK2Node_Event* EventNode = FVibeUECommonUtils::CreateEventNode(EventGraph, EventName, NodePosition);
+    UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(EventGraph, EventName, NodePosition);
     if (!EventNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create event node"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create event node"));
     }
 
     // Mark the blueprint as modified
@@ -332,26 +332,26 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintEvent(co
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunctionCall(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintFunctionCall(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString FunctionName;
     if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
     }
 
     // Get position parameters (optional)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
-        NodePosition = FVibeUECommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
     // Check for target parameter (optional)
@@ -359,17 +359,17 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunction
     Params->TryGetStringField(TEXT("target"), Target);
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Find the function
@@ -521,12 +521,12 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunction
     // Create the function call node if we found the function
     if (Function && !FunctionNode)
     {
-        FunctionNode = FVibeUECommonUtils::CreateFunctionCallNode(EventGraph, Function, NodePosition);
+        FunctionNode = FCommonUtils::CreateFunctionCallNode(EventGraph, Function, NodePosition);
     }
     
     if (!FunctionNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function not found: %s in target %s"), *FunctionName, Target.IsEmpty() ? TEXT("Blueprint") : *Target));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function not found: %s in target %s"), *FunctionName, Target.IsEmpty() ? TEXT("Blueprint") : *Target));
     }
 
     // Set parameters if provided
@@ -542,7 +542,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunction
                 const TSharedPtr<FJsonValue>& ParamValue = Param.Value;
                 
                 // Find the parameter pin
-                UEdGraphPin* ParamPin = FVibeUECommonUtils::FindPin(FunctionNode, ParamName, EGPD_Input);
+                UEdGraphPin* ParamPin = FCommonUtils::FindPin(FunctionNode, ParamName, EGPD_Input);
                 if (ParamPin)
                 {
                     UE_LOG(LogTemp, Display, TEXT("Found parameter pin '%s' of category '%s'"), 
@@ -589,21 +589,21 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunction
                             if (!Class)
                             {
                                 UE_LOG(LogVibeUE, Error, TEXT("Failed to find class '%s'. Make sure to use the exact class name with proper prefix (A for actors, U for non-actors)"), *ClassName);
-                                return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find class '%s'"), *ClassName));
+                                return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find class '%s'"), *ClassName));
                             }
 
                             const UEdGraphSchema_K2* K2Schema = Cast<const UEdGraphSchema_K2>(EventGraph->GetSchema());
                             if (!K2Schema)
                             {
                                 UE_LOG(LogVibeUE, Error, TEXT("Failed to get K2Schema"));
-                                return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get K2Schema"));
+                                return FCommonUtils::CreateErrorResponse(TEXT("Failed to get K2Schema"));
                             }
 
                             K2Schema->TrySetDefaultObject(*ParamPin, Class);
                             if (ParamPin->DefaultObject != Class)
                             {
                                 UE_LOG(LogVibeUE, Error, TEXT("Failed to set class reference for pin '%s' to '%s'"), *ParamPin->PinName.ToString(), *ClassName);
-                                return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to set class reference for pin '%s'"), *ParamPin->PinName.ToString()));
+                                return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to set class reference for pin '%s'"), *ParamPin->PinName.ToString()));
                             }
 
                             UE_LOG(LogVibeUE, Log, TEXT("Successfully set class reference for pin '%s' to '%s'"), *ParamPin->PinName.ToString(), *ClassName);
@@ -737,25 +737,25 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintFunction
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
     }
 
     FString VariableType;
     if (!Params->TryGetStringField(TEXT("variable_type"), VariableType))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'variable_type' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_type' parameter"));
     }
 
     // Get optional parameters
@@ -766,10 +766,10 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintVariable
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Create variable based on type
@@ -799,7 +799,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintVariable
     }
     else
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unsupported variable type: %s"), *VariableType));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unsupported variable type: %s"), *VariableType));
     }
 
     // Create the variable
@@ -834,47 +834,47 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintVariable
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ActionName;
     if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'action_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action_name' parameter"));
     }
 
     // Get position parameters (optional)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
-        NodePosition = FVibeUECommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Create the input action node
-    UK2Node_InputAction* InputActionNode = FVibeUECommonUtils::CreateInputActionNode(EventGraph, ActionName, NodePosition);
+    UK2Node_InputAction* InputActionNode = FCommonUtils::CreateInputActionNode(EventGraph, ActionName, NodePosition);
     if (!InputActionNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create input action node"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create input action node"));
     }
 
     // Mark the blueprint as modified
@@ -885,41 +885,41 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintInputAct
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintSelfReference(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintSelfReference(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     // Get position parameters (optional)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
-        NodePosition = FVibeUECommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Create the self node
-    UK2Node_Self* SelfNode = FVibeUECommonUtils::CreateSelfReferenceNode(EventGraph, NodePosition);
+    UK2Node_Self* SelfNode = FCommonUtils::CreateSelfReferenceNode(EventGraph, NodePosition);
     if (!SelfNode)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to create self node"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create self node"));
     }
 
     // Mark the blueprint as modified
@@ -930,33 +930,33 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintSelfRefe
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString NodeType;
     if (!Params->TryGetStringField(TEXT("node_type"), NodeType))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
     }
 
     // Find the blueprint
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     // Get the event graph
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     // Create a JSON array for the node GUIDs
@@ -973,7 +973,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleFindBlueprintNodes(c
         }
         if (EventName.IsEmpty())
         {
-            return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' (or legacy 'event_type') parameter for Event node search"));
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' (or legacy 'event_type') parameter for Event node search"));
         }
         
         // Look for nodes with exact event name (e.g., ReceiveBeginPlay)
@@ -1038,12 +1038,12 @@ static TSharedPtr<FJsonObject> MakePinJson(const UEdGraphPin* Pin)
     return PinObj;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
@@ -1051,16 +1051,16 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListEventGraphNodes(
     Params->TryGetBoolField(TEXT("include_macros"), bIncludeMacros);
     Params->TryGetBoolField(TEXT("include_timeline"), bIncludeTimeline);
 
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
 
     TArray<TSharedPtr<FJsonValue>> NodeArray;
@@ -1090,7 +1090,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListEventGraphNodes(
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails called"));
     
@@ -1102,12 +1102,12 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing blueprint_name parameter"));
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
     if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
     {
         UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing node_id parameter"));
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
     
     // Enhanced: Support optional parameters
@@ -1119,16 +1119,16 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
         *BlueprintName, *NodeId, bIncludeProperties ? TEXT("true") : TEXT("false"), 
         bIncludePins ? TEXT("true") : TEXT("false"), bIncludeConnections ? TEXT("true") : TEXT("false"));
     
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
         UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Blueprint not found: %s"), *BlueprintName);
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
     UEdGraphNode* Found = nullptr;
     for (UEdGraphNode* Node : EventGraph->Nodes)
@@ -1140,7 +1140,7 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
     }
     if (!Found)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Node not found"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Node not found"));
     }
     
     // Enhanced: Create comprehensive node information
@@ -1304,20 +1304,20 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListBlueprintFunctions(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListBlueprintFunctions(const TSharedPtr<FJsonObject>& Params)
 {
     FString BlueprintName;
     bool bIncludeOverrides = true;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
     Params->TryGetBoolField(TEXT("include_overrides"), bIncludeOverrides);
 
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
     TArray<TSharedPtr<FJsonValue>> Funcs;
@@ -1374,22 +1374,22 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListBlueprintFunctio
     return Result;
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params)
 {
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
-    UEdGraph* EventGraph = FVibeUECommonUtils::FindOrCreateEventGraph(Blueprint);
+    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
     if (!EventGraph)
     {
-        return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
     }
     TArray<TSharedPtr<FJsonValue>> Events;
     for (UEdGraphNode* Node : EventGraph->Nodes)
@@ -1407,38 +1407,38 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListCustomEvents(con
 }
 
 // NEW: Reflection-based command implementations
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
     if (ReflectionCommands.IsValid())
     {
         return ReflectionCommands->HandleGetAvailableBlueprintNodes(Params);
     }
-    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
     if (ReflectionCommands.IsValid())
     {
         return ReflectionCommands->HandleAddBlueprintNode(Params);
     }
-    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
     if (ReflectionCommands.IsValid())
     {
         return ReflectionCommands->HandleSetBlueprintNodeProperty(Params);
     }
-    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
-TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
     if (ReflectionCommands.IsValid())
     {
         return ReflectionCommands->HandleGetBlueprintNodeProperty(Params);
     }
-    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }

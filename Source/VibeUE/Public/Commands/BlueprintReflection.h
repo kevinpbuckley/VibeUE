@@ -11,10 +11,10 @@
  * Blueprint reflection helper for dynamic node discovery and manipulation
  * Uses Unreal's native reflection system to provide comprehensive Blueprint node access
  */
-class VIBEUE_API FVibeUEBlueprintReflection
+class VIBEUE_API FBlueprintReflection
 {
 public:
-    FVibeUEBlueprintReflection();
+    FBlueprintReflection();
 
     // Core reflection methods
     static TSharedPtr<FJsonObject> GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category = TEXT(""), const FString& Context = TEXT(""));
@@ -92,10 +92,10 @@ private:
  * Enhanced Blueprint node commands with reflection support
  * Extends existing functionality with dynamic node discovery
  */
-class VIBEUE_API FVibeUEBlueprintReflectionCommands
+class VIBEUE_API FBlueprintReflectionCommands
 {
 public:
-    FVibeUEBlueprintReflectionCommands();
+    FBlueprintReflectionCommands();
 
     // Enhanced MCP command handlers
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params);

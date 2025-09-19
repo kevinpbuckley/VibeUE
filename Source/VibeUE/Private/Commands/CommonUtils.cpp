@@ -1,4 +1,4 @@
-#include "Commands/VibeUECommonUtils.h"
+#include "Commands/CommonUtils.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Blueprint.h"
 #include "WidgetBlueprint.h"
@@ -38,7 +38,7 @@
 #include "WidgetBlueprintEditor.h"
 
 // JSON Utilities
-TSharedPtr<FJsonObject> FVibeUECommonUtils::CreateErrorResponse(const FString& Message)
+TSharedPtr<FJsonObject> FCommonUtils::CreateErrorResponse(const FString& Message)
 {
     TSharedPtr<FJsonObject> ResponseObject = MakeShared<FJsonObject>();
     ResponseObject->SetBoolField(TEXT("success"), false);
@@ -46,7 +46,7 @@ TSharedPtr<FJsonObject> FVibeUECommonUtils::CreateErrorResponse(const FString& M
     return ResponseObject;
 }
 
-TSharedPtr<FJsonObject> FVibeUECommonUtils::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
+TSharedPtr<FJsonObject> FCommonUtils::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
 {
     TSharedPtr<FJsonObject> ResponseObject = MakeShared<FJsonObject>();
     ResponseObject->SetBoolField(TEXT("success"), true);
@@ -59,7 +59,7 @@ TSharedPtr<FJsonObject> FVibeUECommonUtils::CreateSuccessResponse(const TSharedP
     return ResponseObject;
 }
 
-void FVibeUECommonUtils::GetIntArrayFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName, TArray<int32>& OutArray)
+void FCommonUtils::GetIntArrayFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName, TArray<int32>& OutArray)
 {
     OutArray.Reset();
     
@@ -78,7 +78,7 @@ void FVibeUECommonUtils::GetIntArrayFromJson(const TSharedPtr<FJsonObject>& Json
     }
 }
 
-void FVibeUECommonUtils::GetFloatArrayFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName, TArray<float>& OutArray)
+void FCommonUtils::GetFloatArrayFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName, TArray<float>& OutArray)
 {
     OutArray.Reset();
     
@@ -97,7 +97,7 @@ void FVibeUECommonUtils::GetFloatArrayFromJson(const TSharedPtr<FJsonObject>& Js
     }
 }
 
-FVector2D FVibeUECommonUtils::GetVector2DFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
+FVector2D FCommonUtils::GetVector2DFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
 {
     FVector2D Result(0.0f, 0.0f);
     
@@ -116,7 +116,7 @@ FVector2D FVibeUECommonUtils::GetVector2DFromJson(const TSharedPtr<FJsonObject>&
     return Result;
 }
 
-FVector FVibeUECommonUtils::GetVectorFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
+FVector FCommonUtils::GetVectorFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
 {
     FVector Result(0.0f, 0.0f, 0.0f);
     
@@ -136,7 +136,7 @@ FVector FVibeUECommonUtils::GetVectorFromJson(const TSharedPtr<FJsonObject>& Jso
     return Result;
 }
 
-FRotator FVibeUECommonUtils::GetRotatorFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
+FRotator FCommonUtils::GetRotatorFromJson(const TSharedPtr<FJsonObject>& JsonObject, const FString& FieldName)
 {
     FRotator Result(0.0f, 0.0f, 0.0f);
     
@@ -157,12 +157,12 @@ FRotator FVibeUECommonUtils::GetRotatorFromJson(const TSharedPtr<FJsonObject>& J
 }
 
 // Blueprint Utilities
-UBlueprint* FVibeUECommonUtils::FindBlueprint(const FString& BlueprintName)
+UBlueprint* FCommonUtils::FindBlueprint(const FString& BlueprintName)
 {
     return FindBlueprintByName(BlueprintName);
 }
 
-UBlueprint* FVibeUECommonUtils::FindBlueprintByName(const FString& BlueprintName)
+UBlueprint* FCommonUtils::FindBlueprintByName(const FString& BlueprintName)
 {
     // First try direct path loading for exact matches
     UBlueprint* DirectLoad = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BlueprintName));
@@ -210,7 +210,7 @@ UBlueprint* FVibeUECommonUtils::FindBlueprintByName(const FString& BlueprintName
     return nullptr;
 }
 
-UEdGraph* FVibeUECommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
+UEdGraph* FCommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
 {
     if (!Blueprint)
     {
@@ -233,7 +233,7 @@ UEdGraph* FVibeUECommonUtils::FindOrCreateEventGraph(UBlueprint* Blueprint)
 }
 
 // Safely compile a blueprint and return an error string on failure
-bool FVibeUECommonUtils::SafeCompileBlueprint(UBlueprint* Blueprint, FString& OutError)
+bool FCommonUtils::SafeCompileBlueprint(UBlueprint* Blueprint, FString& OutError)
 {
     OutError.Empty();
     if (!Blueprint || !IsValid(Blueprint))
@@ -361,7 +361,7 @@ bool FVibeUECommonUtils::SafeCompileBlueprint(UBlueprint* Blueprint, FString& Ou
 }
 
 // Blueprint node utilities
-UK2Node_Event* FVibeUECommonUtils::CreateEventNode(UEdGraph* Graph, const FString& EventName, const FVector2D& Position)
+UK2Node_Event* FCommonUtils::CreateEventNode(UEdGraph* Graph, const FString& EventName, const FVector2D& Position)
 {
     if (!Graph)
     {
@@ -413,7 +413,7 @@ UK2Node_Event* FVibeUECommonUtils::CreateEventNode(UEdGraph* Graph, const FStrin
     return EventNode;
 }
 
-UK2Node_CallFunction* FVibeUECommonUtils::CreateFunctionCallNode(UEdGraph* Graph, UFunction* Function, const FVector2D& Position)
+UK2Node_CallFunction* FCommonUtils::CreateFunctionCallNode(UEdGraph* Graph, UFunction* Function, const FVector2D& Position)
 {
     if (!Graph || !Function)
     {
@@ -432,7 +432,7 @@ UK2Node_CallFunction* FVibeUECommonUtils::CreateFunctionCallNode(UEdGraph* Graph
     return FunctionNode;
 }
 
-UK2Node_VariableGet* FVibeUECommonUtils::CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
+UK2Node_VariableGet* FCommonUtils::CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
 {
     if (!Graph || !Blueprint)
     {
@@ -459,7 +459,7 @@ UK2Node_VariableGet* FVibeUECommonUtils::CreateVariableGetNode(UEdGraph* Graph, 
     return nullptr;
 }
 
-UK2Node_VariableSet* FVibeUECommonUtils::CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
+UK2Node_VariableSet* FCommonUtils::CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
 {
     if (!Graph || !Blueprint)
     {
@@ -486,7 +486,7 @@ UK2Node_VariableSet* FVibeUECommonUtils::CreateVariableSetNode(UEdGraph* Graph, 
     return nullptr;
 }
 
-UK2Node_InputAction* FVibeUECommonUtils::CreateInputActionNode(UEdGraph* Graph, const FString& ActionName, const FVector2D& Position)
+UK2Node_InputAction* FCommonUtils::CreateInputActionNode(UEdGraph* Graph, const FString& ActionName, const FVector2D& Position)
 {
     if (!Graph)
     {
@@ -505,7 +505,7 @@ UK2Node_InputAction* FVibeUECommonUtils::CreateInputActionNode(UEdGraph* Graph, 
     return InputActionNode;
 }
 
-UK2Node_Self* FVibeUECommonUtils::CreateSelfReferenceNode(UEdGraph* Graph, const FVector2D& Position)
+UK2Node_Self* FCommonUtils::CreateSelfReferenceNode(UEdGraph* Graph, const FVector2D& Position)
 {
     if (!Graph)
     {
@@ -523,7 +523,7 @@ UK2Node_Self* FVibeUECommonUtils::CreateSelfReferenceNode(UEdGraph* Graph, const
     return SelfNode;
 }
 
-bool FVibeUECommonUtils::ConnectGraphNodes(UEdGraph* Graph, UEdGraphNode* SourceNode, const FString& SourcePinName, 
+bool FCommonUtils::ConnectGraphNodes(UEdGraph* Graph, UEdGraphNode* SourceNode, const FString& SourcePinName, 
                                            UEdGraphNode* TargetNode, const FString& TargetPinName)
 {
     UE_LOG(LogTemp, Warning, TEXT("ConnectGraphNodes: Starting connection attempt"));
@@ -556,7 +556,7 @@ bool FVibeUECommonUtils::ConnectGraphNodes(UEdGraph* Graph, UEdGraphNode* Source
     return false;
 }
 
-UEdGraphPin* FVibeUECommonUtils::FindPin(UEdGraphNode* Node, const FString& PinName, EEdGraphPinDirection Direction)
+UEdGraphPin* FCommonUtils::FindPin(UEdGraphNode* Node, const FString& PinName, EEdGraphPinDirection Direction)
 {
     if (!Node)
     {
@@ -612,7 +612,7 @@ UEdGraphPin* FVibeUECommonUtils::FindPin(UEdGraphNode* Node, const FString& PinN
 }
 
 // Enhanced connection with reflection-based pin discovery and validation
-TSharedPtr<FJsonObject> FVibeUECommonUtils::ConnectGraphNodesWithReflection(UEdGraph* Graph, UEdGraphNode* SourceNode, 
+TSharedPtr<FJsonObject> FCommonUtils::ConnectGraphNodesWithReflection(UEdGraph* Graph, UEdGraphNode* SourceNode, 
                                                                               const FString& SourcePinName, UEdGraphNode* TargetNode, 
                                                                               const FString& TargetPinName)
 {
@@ -691,7 +691,7 @@ TSharedPtr<FJsonObject> FVibeUECommonUtils::ConnectGraphNodesWithReflection(UEdG
 }
 
 // Get available pin names for a node
-TArray<FString> FVibeUECommonUtils::GetAvailablePinNames(UEdGraphNode* Node, EEdGraphPinDirection Direction)
+TArray<FString> FCommonUtils::GetAvailablePinNames(UEdGraphNode* Node, EEdGraphPinDirection Direction)
 {
     TArray<FString> PinNames;
     
@@ -712,7 +712,7 @@ TArray<FString> FVibeUECommonUtils::GetAvailablePinNames(UEdGraphNode* Node, EEd
 }
 
 // Validate if two pins can be connected
-bool FVibeUECommonUtils::ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin)
+bool FCommonUtils::ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin)
 {
     if (!SourcePin || !TargetPin)
     {
@@ -744,7 +744,7 @@ bool FVibeUECommonUtils::ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphP
 }
 
 // Suggest best pin match using fuzzy matching
-FString FVibeUECommonUtils::SuggestBestPinMatch(UEdGraphNode* Node, const FString& RequestedPinName, EEdGraphPinDirection Direction)
+FString FCommonUtils::SuggestBestPinMatch(UEdGraphNode* Node, const FString& RequestedPinName, EEdGraphPinDirection Direction)
 {
     if (!Node)
     {
@@ -808,7 +808,7 @@ FString FVibeUECommonUtils::SuggestBestPinMatch(UEdGraphNode* Node, const FStrin
 }
 
 // Actor utilities
-TSharedPtr<FJsonValue> FVibeUECommonUtils::ActorToJson(AActor* Actor)
+TSharedPtr<FJsonValue> FCommonUtils::ActorToJson(AActor* Actor)
 {
     if (!Actor)
     {
@@ -843,7 +843,7 @@ TSharedPtr<FJsonValue> FVibeUECommonUtils::ActorToJson(AActor* Actor)
     return MakeShared<FJsonValueObject>(ActorObject);
 }
 
-TSharedPtr<FJsonObject> FVibeUECommonUtils::ActorToJsonObject(AActor* Actor, bool bDetailed)
+TSharedPtr<FJsonObject> FCommonUtils::ActorToJsonObject(AActor* Actor, bool bDetailed)
 {
     if (!Actor)
     {
@@ -878,7 +878,7 @@ TSharedPtr<FJsonObject> FVibeUECommonUtils::ActorToJsonObject(AActor* Actor, boo
     return ActorObject;
 }
 
-UK2Node_Event* FVibeUECommonUtils::FindExistingEventNode(UEdGraph* Graph, const FString& EventName)
+UK2Node_Event* FCommonUtils::FindExistingEventNode(UEdGraph* Graph, const FString& EventName)
 {
     if (!Graph)
     {
@@ -899,7 +899,7 @@ UK2Node_Event* FVibeUECommonUtils::FindExistingEventNode(UEdGraph* Graph, const 
     return nullptr;
 }
 
-bool FVibeUECommonUtils::SetObjectProperty(UObject* Object, const FString& PropertyName, 
+bool FCommonUtils::SetObjectProperty(UObject* Object, const FString& PropertyName, 
                                      const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage)
 {
     if (!Object)
@@ -1098,7 +1098,7 @@ bool FVibeUECommonUtils::SetObjectProperty(UObject* Object, const FString& Prope
     return false;
 }
 
-UWidgetBlueprint* FVibeUECommonUtils::FindWidgetBlueprint(const FString& WidgetBlueprintName)
+UWidgetBlueprint* FCommonUtils::FindWidgetBlueprint(const FString& WidgetBlueprintName)
 {
     // Check if we're in a serialization context to prevent crashes
     if (IsGarbageCollecting() || GIsSavingPackage || IsLoading())
@@ -1244,7 +1244,7 @@ UWidgetBlueprint* FVibeUECommonUtils::FindWidgetBlueprint(const FString& WidgetB
     return nullptr;
 }
 
-FWidgetBlueprintEditor* FVibeUECommonUtils::GetWidgetBlueprintEditor(UWidgetBlueprint* WidgetBlueprint)
+FWidgetBlueprintEditor* FCommonUtils::GetWidgetBlueprintEditor(UWidgetBlueprint* WidgetBlueprint)
 {
     if (!WidgetBlueprint)
     {
