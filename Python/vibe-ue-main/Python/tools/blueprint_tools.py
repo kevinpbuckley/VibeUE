@@ -373,4 +373,200 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    logger.info("Blueprint tools registered successfully") 
+    # NEW: Reflection-based Blueprint tools
+    @mcp.tool()
+    def get_available_blueprint_nodes(
+        ctx: Context,
+        blueprint_name: str,
+        category: str = "",
+        context: str = ""
+    ) -> Dict[str, Any]:
+        """
+        Discover all available Blueprint nodes using Unreal's reflection system.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            category: Optional category filter (Flow Control, Variables, Functions, etc.)
+            context: Optional context for node filtering
+            
+        Returns:
+            Dict containing categorized list of available nodes with metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "blueprint_name": blueprint_name
+            }
+            if category:
+                params["category"] = category
+            if context:
+                params["context"] = context
+                
+            response = unreal.send_command("get_available_blueprint_nodes", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Discovered {response.get('total_nodes', 0)} Blueprint nodes for {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error discovering Blueprint nodes: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def add_blueprint_node(
+        ctx: Context,
+        blueprint_name: str,
+        node_type: str,
+        position: List[float] = None,
+        node_params: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Blueprint node using Unreal's reflection system.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            node_type: Type of node to create (Branch, CallFunction, GetVariable, etc.)
+            position: [X, Y] position for the node (optional)
+            node_params: Additional parameters for node configuration
+            
+        Returns:
+            Dict containing created node information and ID
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "blueprint_name": blueprint_name,
+                "node_identifier": node_type  # ✅ FIXED: Map node_type to node_identifier
+            }
+            
+            if position:
+                params["node_params"] = params.get("node_params", {})
+                params["node_params"]["position"] = position
+                
+            if node_params:
+                existing_params = params.get("node_params", {})
+                existing_params.update(node_params)
+                params["node_params"] = existing_params
+                
+            response = unreal.send_command("add_blueprint_node", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Created {node_type} node in Blueprint {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error creating Blueprint node: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def set_blueprint_node_property(
+        ctx: Context,
+        blueprint_name: str,
+        node_id: str,
+        property_name: str,
+        property_value: str
+    ) -> Dict[str, Any]:
+        """
+        Set a property on a Blueprint node using reflection.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            node_id: ID of the node to modify
+            property_name: Name of the property to set
+            property_value: Value to set (will be converted to appropriate type)
+            
+        Returns:
+            Dict containing success status and property information
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            response = unreal.send_command("set_blueprint_node_property", {
+                "blueprint_name": blueprint_name,
+                "node_id": node_id,
+                "property_name": property_name,
+                "property_value": property_value
+            })
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set property {property_name} on node {node_id} in Blueprint {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting Blueprint node property: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def get_blueprint_node_property(
+        ctx: Context,
+        blueprint_name: str,
+        node_id: str,
+        property_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get a property value from a Blueprint node using reflection.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            node_id: ID of the node to read from
+            property_name: Name of the property to get
+            
+        Returns:
+            Dict containing success status, property value, and metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            response = unreal.send_command("get_blueprint_node_property", {
+                "blueprint_name": blueprint_name,
+                "node_id": node_id,
+                "property_name": property_name
+            })
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Got property {property_name} from node {node_id} in Blueprint {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting Blueprint node property: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    logger.info("Blueprint tools (including reflection-based tools) registered successfully") 

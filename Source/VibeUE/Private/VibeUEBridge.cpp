@@ -251,13 +251,17 @@ FString UVibeUEBridge::ExecuteCommand(const FString& CommandType, const TSharedP
                      CommandType == TEXT("find_blueprint_nodes") ||
                      CommandType == TEXT("list_event_graph_nodes") ||
                      CommandType == TEXT("get_node_details") ||
+                     CommandType == TEXT("set_blueprint_node_property") ||
+                     CommandType == TEXT("get_blueprint_node_property") ||
                      CommandType == TEXT("list_blueprint_functions") ||
                      CommandType == TEXT("list_custom_events") ||
                      CommandType == TEXT("add_blueprint_event_node") ||
                      CommandType == TEXT("add_blueprint_input_action_node") ||
                      CommandType == TEXT("add_blueprint_function_node") ||
                      CommandType == TEXT("add_blueprint_get_component_node") ||
-                     CommandType == TEXT("add_blueprint_variable"))
+                     CommandType == TEXT("add_blueprint_variable") ||
+                     CommandType == TEXT("get_available_blueprint_nodes") ||
+                     CommandType == TEXT("add_blueprint_node"))
             {
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
@@ -304,12 +308,9 @@ FString UVibeUEBridge::ExecuteCommand(const FString& CommandType, const TSharedP
                      CommandType == TEXT("bind_input_events") ||
                      CommandType == TEXT("get_available_events") ||
                      // UMG Data Binding Commands
-                     CommandType == TEXT("create_data_binding_context") ||
-                     CommandType == TEXT("setup_list_item_template") ||
                      CommandType == TEXT("add_list_view") ||
                      CommandType == TEXT("add_tile_view") ||
                      CommandType == TEXT("add_tree_view") ||
-                     CommandType == TEXT("populate_list_with_data") ||
                      // Widget Switcher Commands (relocated from animation)
                      CommandType == TEXT("add_widget_switcher") ||
                      CommandType == TEXT("add_widget_switcher_slot"))

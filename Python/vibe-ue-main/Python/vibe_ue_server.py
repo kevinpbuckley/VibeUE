@@ -13,6 +13,7 @@ Features:
 - Widget animation and event handling
 - Blueprint graph introspection and node management
 - Actor spawning and property manipulation
+- Enhanced Blueprint node property system with pin value support
 
 Architecture:
 - FastMCP framework with async context management
@@ -227,6 +228,14 @@ class UnrealConnection:
             # Send without newline, exactly like Unity
             command_json = json.dumps(command_obj)
             logger.info(f"Sending command: {command_json}")
+            
+            # DEBUG: Extra logging for node creation commands
+            if command == "add_blueprint_node":
+                import sys
+                print(f"DEBUG: Sending add_blueprint_node command to Unreal Engine", file=sys.stderr)
+                print(f"DEBUG: Command JSON: {command_json}", file=sys.stderr)
+                sys.stderr.flush()
+            
             self.socket.sendall(command_json.encode('utf-8'))
             
             # Read response using improved handler
@@ -244,6 +253,15 @@ class UnrealConnection:
             
             # Log complete response for debugging
             logger.info(f"Complete response from Unreal: {response}")
+            
+            # DEBUG: Extra logging for node creation responses
+            if command == "add_blueprint_node":
+                import sys
+                print(f"DEBUG: Received response for add_blueprint_node: {response}", file=sys.stderr)
+                print(f"DEBUG: Response type: {type(response)}", file=sys.stderr)
+                if isinstance(response, dict) and "result" in response:
+                    print(f"DEBUG: Response result: {response['result']}", file=sys.stderr)
+                sys.stderr.flush()
             
             # Enhanced error format handling
             # Check for nested result structures first
@@ -1078,19 +1096,6 @@ def info():
     - `bind_input_events(widget_name, component_name, input_events)`
       Bind multiple input events at once
 
-    ### Blueprint Function Integration    
-    ## 🔗 Data Binding & MVVM
-    ### Property Binding
-    - `create_data_binding_context(widget_name, context_name, data_class)`
-      Create data binding context for MVVM pattern
-    
-    ### List Data Management
-    - `setup_list_item_template(widget_name, list_component_name, item_template_widget, data_binding_map)`
-      Setup data templates for list/tree view items
-    - `populate_list_with_data(widget_name, list_component_name, data_items)`
-      Populate list views with data items
-    
-    ## 🎬 Widget Animations
     ## 🖥️ Viewport & Display
     
       Add widget instance to game viewport

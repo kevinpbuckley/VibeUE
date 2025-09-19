@@ -232,7 +232,7 @@ All capabilities are accessible through natural language commands via AI assista
 | `add_list_view` | 📋 Data lists | Scrollable data-driven lists |
 | `add_tile_view` | 🎯 Grid display | Grid-based data visualization |
 | `add_tree_view` | 🌳 Hierarchical data | Tree structure display |
-| `populate_list_with_data` | 📊 Data binding | Fill lists with data items |
+
 
 ### Widget Property Management
 | Tool | Purpose | Key Features |
@@ -258,8 +258,6 @@ All capabilities are accessible through natural language commands via AI assista
 |------|---------|--------------|
 | `bind_input_events` | 🎮 Event handling | Mouse, keyboard, focus events |
 | `get_available_events` | 📋 Event discovery | List available events per component |
-| `create_data_binding_context` | 🔗 MVVM pattern | Data context creation |
-| `setup_list_item_template` | 🎨 List templates | Data-driven list item design |
 
 ### Graph Analysis & Debugging
 | Tool | Purpose | Key Features |

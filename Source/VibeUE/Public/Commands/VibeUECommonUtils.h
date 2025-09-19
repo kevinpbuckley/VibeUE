@@ -57,6 +57,16 @@ public:
     static UEdGraphPin* FindPin(UEdGraphNode* Node, const FString& PinName, EEdGraphPinDirection Direction = EGPD_MAX);
     static UK2Node_Event* FindExistingEventNode(UEdGraph* Graph, const FString& EventName);
 
+    // Enhanced connection with reflection-based pin discovery and validation
+    static TSharedPtr<FJsonObject> ConnectGraphNodesWithReflection(UEdGraph* Graph, UEdGraphNode* SourceNode, 
+                                                                    const FString& SourcePinName, UEdGraphNode* TargetNode, 
+                                                                    const FString& TargetPinName);
+    
+    // Pin discovery and validation utilities  
+    static TArray<FString> GetAvailablePinNames(UEdGraphNode* Node, EEdGraphPinDirection Direction);
+    static bool ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin);
+    static FString SuggestBestPinMatch(UEdGraphNode* Node, const FString& RequestedPinName, EEdGraphPinDirection Direction);
+
     // Property utilities
     static bool SetObjectProperty(UObject* Object, const FString& PropertyName, 
                                  const TSharedPtr<FJsonValue>& Value, FString& OutErrorMessage);

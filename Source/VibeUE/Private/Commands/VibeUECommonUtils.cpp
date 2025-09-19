@@ -18,6 +18,10 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/LightComponent.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonWriter.h"
 #include "Components/PrimitiveComponent.h"
 #include "Components/SceneComponent.h"
 #include "UObject/UObjectIterator.h"
@@ -26,7 +30,6 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "BlueprintNodeSpawner.h"
-#include "BlueprintActionDatabase.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "MessageLogModule.h"
@@ -606,6 +609,202 @@ UEdGraphPin* FVibeUECommonUtils::FindPin(UEdGraphNode* Node, const FString& PinN
     
     UE_LOG(LogTemp, Warning, TEXT("  - No matching pin found for '%s'"), *PinName);
     return nullptr;
+}
+
+// Enhanced connection with reflection-based pin discovery and validation
+TSharedPtr<FJsonObject> FVibeUECommonUtils::ConnectGraphNodesWithReflection(UEdGraph* Graph, UEdGraphNode* SourceNode, 
+                                                                              const FString& SourcePinName, UEdGraphNode* TargetNode, 
+                                                                              const FString& TargetPinName)
+{
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    
+    if (!Graph || !SourceNode || !TargetNode)
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), TEXT("Invalid parameters provided"));
+        return Result;
+    }
+    
+    // Enhanced pin discovery
+    UEdGraphPin* SourcePin = FindPin(SourceNode, SourcePinName, EGPD_Output);
+    UEdGraphPin* TargetPin = FindPin(TargetNode, TargetPinName, EGPD_Input);
+    
+    // If exact pins not found, suggest alternatives
+    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
+    
+    if (!SourcePin)
+    {
+        FString BestMatch = SuggestBestPinMatch(SourceNode, SourcePinName, EGPD_Output);
+        PinInfo->SetStringField(TEXT("suggested_source_pin"), BestMatch);
+        
+        TArray<FString> AvailablePins = GetAvailablePinNames(SourceNode, EGPD_Output);
+        FString PinsListString = FString::Join(AvailablePins, TEXT(", "));
+        PinInfo->SetStringField(TEXT("available_source_pins"), PinsListString);
+    }
+    
+    if (!TargetPin)
+    {
+        FString BestMatch = SuggestBestPinMatch(TargetNode, TargetPinName, EGPD_Input);
+        PinInfo->SetStringField(TEXT("suggested_target_pin"), BestMatch);
+        
+        TArray<FString> AvailablePins = GetAvailablePinNames(TargetNode, EGPD_Input);
+        FString PinsListString = FString::Join(AvailablePins, TEXT(", "));
+        PinInfo->SetStringField(TEXT("available_target_pins"), PinsListString);
+    }
+    
+    // If either pin not found, return helpful error with suggestions
+    if (!SourcePin || !TargetPin)
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Pin(s) not found - Source: %s, Target: %s"), 
+                                                                SourcePin ? TEXT("Found") : TEXT("Missing"),
+                                                                TargetPin ? TEXT("Found") : TEXT("Missing")));
+        Result->SetObjectField(TEXT("pin_suggestions"), PinInfo);
+        return Result;
+    }
+    
+    // Validate pin connection compatibility
+    if (!ValidatePinConnection(SourcePin, TargetPin))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Incompatible pin types - Source: %s (%s), Target: %s (%s)"),
+                                                                *SourcePin->PinName.ToString(), *SourcePin->PinType.PinCategory.ToString(),
+                                                                *TargetPin->PinName.ToString(), *TargetPin->PinType.PinCategory.ToString()));
+        return Result;
+    }
+    
+    // Make the connection
+    SourcePin->MakeLinkTo(TargetPin);
+    
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("source_node_id"), SourceNode->NodeGuid.ToString());
+    Result->SetStringField(TEXT("target_node_id"), TargetNode->NodeGuid.ToString());
+    Result->SetStringField(TEXT("source_pin"), SourcePin->PinName.ToString());
+    Result->SetStringField(TEXT("target_pin"), TargetPin->PinName.ToString());
+    Result->SetStringField(TEXT("connection_type"), SourcePin->PinType.PinCategory.ToString());
+    
+    UE_LOG(LogTemp, Log, TEXT("Enhanced connection successful: %s[%s] -> %s[%s]"), 
+           *SourceNode->GetName(), *SourcePin->PinName.ToString(),
+           *TargetNode->GetName(), *TargetPin->PinName.ToString());
+    
+    return Result;
+}
+
+// Get available pin names for a node
+TArray<FString> FVibeUECommonUtils::GetAvailablePinNames(UEdGraphNode* Node, EEdGraphPinDirection Direction)
+{
+    TArray<FString> PinNames;
+    
+    if (!Node)
+    {
+        return PinNames;
+    }
+    
+    for (UEdGraphPin* Pin : Node->Pins)
+    {
+        if (Direction == EGPD_MAX || Pin->Direction == Direction)
+        {
+            PinNames.Add(Pin->PinName.ToString());
+        }
+    }
+    
+    return PinNames;
+}
+
+// Validate if two pins can be connected
+bool FVibeUECommonUtils::ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin)
+{
+    if (!SourcePin || !TargetPin)
+    {
+        return false;
+    }
+    
+    // Check direction compatibility
+    if (SourcePin->Direction != EGPD_Output || TargetPin->Direction != EGPD_Input)
+    {
+        return false;
+    }
+    
+    // Check if target pin already has a connection (some pins allow multiple connections)
+    if (TargetPin->LinkedTo.Num() > 0 && TargetPin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+    {
+        // Most data pins only allow one connection, exec pins can have multiple
+        return false;
+    }
+    
+    // Basic type compatibility check
+    const UEdGraphSchema* Schema = SourcePin->GetSchema();
+    if (Schema)
+    {
+        FPinConnectionResponse Response = Schema->CanCreateConnection(SourcePin, TargetPin);
+        return Response.Response == CONNECT_RESPONSE_MAKE;
+    }
+    
+    return true;
+}
+
+// Suggest best pin match using fuzzy matching
+FString FVibeUECommonUtils::SuggestBestPinMatch(UEdGraphNode* Node, const FString& RequestedPinName, EEdGraphPinDirection Direction)
+{
+    if (!Node)
+    {
+        return FString();
+    }
+    
+    TArray<FString> AvailablePins = GetAvailablePinNames(Node, Direction);
+    
+    if (AvailablePins.Num() == 0)
+    {
+        return FString();
+    }
+    
+    // Common pin name mappings for better user experience
+    static TMap<FString, TArray<FString>> PinAliases = {
+        {TEXT("exec"), {TEXT("execute"), TEXT("then"), TEXT("output")}},
+        {TEXT("execute"), {TEXT("exec"), TEXT("then"), TEXT("input")}}, 
+        {TEXT("then"), {TEXT("exec"), TEXT("execute"), TEXT("output")}},
+        {TEXT("return"), {TEXT("ReturnValue"), TEXT("Return Value"), TEXT("output")}},
+        {TEXT("ReturnValue"), {TEXT("return"), TEXT("Return Value"), TEXT("output")}},
+        {TEXT("target"), {TEXT("Target"), TEXT("self"), TEXT("Self")}}
+    };
+    
+    // First try exact match (case insensitive)
+    for (const FString& PinName : AvailablePins)
+    {
+        if (PinName.Equals(RequestedPinName, ESearchCase::IgnoreCase))
+        {
+            return PinName;
+        }
+    }
+    
+    // Try alias matching
+    if (PinAliases.Contains(RequestedPinName.ToLower()))
+    {
+        const TArray<FString>& Aliases = PinAliases[RequestedPinName.ToLower()];
+        for (const FString& Alias : Aliases)
+        {
+            for (const FString& PinName : AvailablePins)
+            {
+                if (PinName.Equals(Alias, ESearchCase::IgnoreCase))
+                {
+                    return PinName;
+                }
+            }
+        }
+    }
+    
+    // Try partial matching (contains)
+    for (const FString& PinName : AvailablePins)
+    {
+        if (PinName.Contains(RequestedPinName, ESearchCase::IgnoreCase) || 
+            RequestedPinName.Contains(PinName, ESearchCase::IgnoreCase))
+        {
+            return PinName;
+        }
+    }
+    
+    // If no good match found, return first available pin of the right direction
+    return AvailablePins.Num() > 0 ? AvailablePins[0] : FString();
 }
 
 // Actor utilities

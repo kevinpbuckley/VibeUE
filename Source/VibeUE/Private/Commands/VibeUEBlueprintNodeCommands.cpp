@@ -1,4 +1,5 @@
 #include "Commands/VibeUEBlueprintNodeCommands.h"
+#include "Commands/VibeUEBlueprintReflection.h"
 #include "Commands/VibeUECommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -27,6 +28,8 @@ DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
 
 FVibeUEBlueprintNodeCommands::FVibeUEBlueprintNodeCommands()
 {
+    // Initialize reflection system
+    ReflectionCommands = MakeShareable(new FVibeUEBlueprintReflectionCommands());
 }
 
 TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -92,6 +95,27 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleCommand(const FStrin
     {
         UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleListCustomEvents"));
         return HandleListCustomEvents(Params);
+    }
+    // NEW: Reflection-based commands
+    else if (CommandType == TEXT("get_available_blueprint_nodes"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetAvailableBlueprintNodes (Reflection)"));
+        return HandleGetAvailableBlueprintNodes(Params);
+    }
+    else if (CommandType == TEXT("add_blueprint_node"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintNode (Reflection)"));
+        return HandleAddBlueprintNode(Params);
+    }
+    else if (CommandType == TEXT("set_blueprint_node_property"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleSetBlueprintNodeProperty (Reflection)"));
+        return HandleSetBlueprintNodeProperty(Params);
+    }
+    else if (CommandType == TEXT("get_blueprint_node_property"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetBlueprintNodeProperty (Reflection)"));
+        return HandleGetBlueprintNodeProperty(Params);
     }
     
     UE_LOG(LogVibeUE, Error, TEXT("MCP: Unknown blueprint node command: %s"), *CommandType);
@@ -165,19 +189,26 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleConnectBlueprintNode
         return FVibeUECommonUtils::CreateErrorResponse(TEXT("Source or target node not found"));
     }
 
-    // Connect the nodes
-    if (FVibeUECommonUtils::ConnectGraphNodes(EventGraph, SourceNode, SourcePinName, TargetNode, TargetPinName))
+    // Enhanced connection with reflection-based pin discovery
+    TSharedPtr<FJsonObject> ConnectionResult = FVibeUECommonUtils::ConnectGraphNodesWithReflection(
+        EventGraph, SourceNode, SourcePinName, TargetNode, TargetPinName);
+    
+    bool bSuccess = false;
+    ConnectionResult->TryGetBoolField(TEXT("success"), bSuccess);
+    
+    if (bSuccess)
     {
         // Mark the blueprint as modified
         FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-        ResultObj->SetStringField(TEXT("source_node_id"), SourceNodeId);
-        ResultObj->SetStringField(TEXT("target_node_id"), TargetNodeId);
-        return ResultObj;
+        
+        // Return the enhanced connection result with detailed information
+        return ConnectionResult;
     }
-
-    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Failed to connect nodes"));
+    else
+    {
+        // Return detailed error with suggestions
+        return ConnectionResult;
+    }
 }
 
 TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintGetSelfComponentReference(const TSharedPtr<FJsonObject>& Params)
@@ -1064,6 +1095,10 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails called"));
     
     FString BlueprintName, NodeId;
+    bool bIncludeProperties = true;
+    bool bIncludePins = true;
+    bool bIncludeConnections = true;
+    
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing blueprint_name parameter"));
@@ -1075,7 +1110,14 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
         return FVibeUECommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
     
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Blueprint: %s, NodeId: %s"), *BlueprintName, *NodeId);
+    // Enhanced: Support optional parameters
+    Params->TryGetBoolField(TEXT("include_properties"), bIncludeProperties);
+    Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
+    Params->TryGetBoolField(TEXT("include_connections"), bIncludeConnections);
+    
+    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Blueprint: %s, NodeId: %s, Props: %s, Pins: %s, Conns: %s"), 
+        *BlueprintName, *NodeId, bIncludeProperties ? TEXT("true") : TEXT("false"), 
+        bIncludePins ? TEXT("true") : TEXT("false"), bIncludeConnections ? TEXT("true") : TEXT("false"));
     
     UBlueprint* Blueprint = FVibeUECommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
@@ -1100,20 +1142,165 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetNodeDetails(const
     {
         return FVibeUECommonUtils::CreateErrorResponse(TEXT("Node not found"));
     }
-    TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-    Obj->SetStringField(TEXT("id"), Found->NodeGuid.ToString());
-    Obj->SetStringField(TEXT("node_class"), Found->GetClass()->GetName());
-    Obj->SetStringField(TEXT("title"), Found->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
-
-    TArray<TSharedPtr<FJsonValue>> Pins;
-    for (UEdGraphPin* Pin : Found->Pins)
+    
+    // Enhanced: Create comprehensive node information
+    TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
+    NodeInfo->SetStringField(TEXT("id"), Found->NodeGuid.ToString());
+    NodeInfo->SetStringField(TEXT("node_class"), Found->GetClass()->GetName());
+    NodeInfo->SetStringField(TEXT("title"), Found->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+    
+    // Enhanced: Add position information
+    TArray<TSharedPtr<FJsonValue>> Position;
+    Position.Add(MakeShared<FJsonValueNumber>(Found->NodePosX));
+    Position.Add(MakeShared<FJsonValueNumber>(Found->NodePosY));
+    NodeInfo->SetArrayField(TEXT("position"), Position);
+    
+    // Enhanced: Add category and metadata
+    if (UK2Node* K2Node = Cast<UK2Node>(Found))
     {
-        Pins.Add(MakeShared<FJsonValueObject>(MakePinJson(Pin)));
+        NodeInfo->SetStringField(TEXT("category"), K2Node->GetMenuCategory().ToString());
+        NodeInfo->SetStringField(TEXT("tooltip"), K2Node->GetTooltipText().ToString());
+        NodeInfo->SetStringField(TEXT("keywords"), K2Node->GetKeywords().ToString());
     }
-    Obj->SetArrayField(TEXT("pins"), Pins);
-
+    
+    // Enhanced: Add node state information
+    NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Found->CanUserDeleteNode());
+    // Note: Comment node checking requires specific include - simplified for now
+    NodeInfo->SetStringField(TEXT("node_class_simple"), Found->GetClass()->GetName().Contains(TEXT("Comment")) ? TEXT("Comment") : TEXT("Other"));
+    
+    // Enhanced: Try to get additional node properties safely
+    if (UK2Node* K2Node = Cast<UK2Node>(Found))
+    {
+        // Color information might not be available on all node types
+        NodeInfo->SetStringField(TEXT("node_type"), TEXT("Blueprint"));
+    }
+    
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetObjectField(TEXT("node"), Obj);
+    Result->SetObjectField(TEXT("node_info"), NodeInfo);
+    
+    // Enhanced: Include detailed pins if requested
+    if (bIncludePins)
+    {
+        TArray<TSharedPtr<FJsonValue>> InputPins;
+        TArray<TSharedPtr<FJsonValue>> OutputPins;
+        
+        for (UEdGraphPin* Pin : Found->Pins)
+        {
+            TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
+            PinInfo->SetStringField(TEXT("name"), Pin->PinName.ToString());
+            PinInfo->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+            PinInfo->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("Input") : TEXT("Output"));
+            PinInfo->SetBoolField(TEXT("is_hidden"), Pin->bHidden);
+            PinInfo->SetBoolField(TEXT("is_connected"), Pin->LinkedTo.Num() > 0);
+            
+            // Enhanced: Add default value information
+            if (!Pin->DefaultValue.IsEmpty())
+            {
+                PinInfo->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+            }
+            if (Pin->DefaultObject)
+            {
+                PinInfo->SetStringField(TEXT("default_object"), Pin->DefaultObject->GetName());
+            }
+            if (!Pin->DefaultTextValue.IsEmpty())
+            {
+                PinInfo->SetStringField(TEXT("default_text"), Pin->DefaultTextValue.ToString());
+            }
+            
+            // Enhanced: Add connection information if requested
+            if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
+            {
+                TArray<TSharedPtr<FJsonValue>> Connections;
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    {
+                        TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
+                        Connection->SetStringField(TEXT("to_node_id"), LinkedPin->GetOwningNode()->NodeGuid.ToString());
+                        Connection->SetStringField(TEXT("to_pin"), LinkedPin->PinName.ToString());
+                        Connections.Add(MakeShared<FJsonValueObject>(Connection));
+                    }
+                }
+                PinInfo->SetArrayField(TEXT("connections"), Connections);
+            }
+            
+            // Enhanced: Add pin type details
+            if (Pin->PinType.PinSubCategory.IsNone() == false)
+            {
+                PinInfo->SetStringField(TEXT("sub_category"), Pin->PinType.PinSubCategory.ToString());
+            }
+            if (Pin->PinType.PinSubCategoryObject.IsValid())
+            {
+                PinInfo->SetStringField(TEXT("sub_category_object"), Pin->PinType.PinSubCategoryObject->GetName());
+            }
+            PinInfo->SetBoolField(TEXT("is_array"), Pin->PinType.IsArray());
+            PinInfo->SetBoolField(TEXT("is_reference"), Pin->PinType.bIsReference);
+            
+            if (Pin->Direction == EGPD_Input)
+            {
+                InputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
+            }
+            else
+            {
+                OutputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
+            }
+        }
+        
+        TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
+        PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
+        PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
+        Result->SetObjectField(TEXT("pins"), PinsInfo);
+    }
+    
+    // Enhanced: Include node properties if requested
+    if (bIncludeProperties)
+    {
+        TArray<TSharedPtr<FJsonValue>> Properties;
+        
+        // Get reflection-based properties
+        UClass* NodeClass = Found->GetClass();
+        for (TFieldIterator<FProperty> PropIt(NodeClass); PropIt; ++PropIt)
+        {
+            FProperty* Property = *PropIt;
+            if (!Property || Property->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient))
+            {
+                continue;
+            }
+            
+            // Enhanced: Include editable properties
+            if (Property->HasAnyPropertyFlags(CPF_Edit))
+            {
+                TSharedPtr<FJsonObject> PropInfo = MakeShared<FJsonObject>();
+                PropInfo->SetStringField(TEXT("name"), Property->GetName());
+                PropInfo->SetStringField(TEXT("type"), Property->GetClass()->GetName());
+                PropInfo->SetBoolField(TEXT("editable"), true);
+                
+                // Enhanced: Try to get current property value as string
+                FString PropertyValue;
+                if (const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Found))
+                {
+                    // Use simpler text export method
+                    PropertyValue = Property->GetNameCPP();
+                    PropInfo->SetStringField(TEXT("current_value"), PropertyValue);
+                }
+                
+                // Enhanced: Add property metadata
+                if (Property->HasMetaData(TEXT("Tooltip")))
+                {
+                    PropInfo->SetStringField(TEXT("tooltip"), Property->GetMetaData(TEXT("Tooltip")));
+                }
+                if (Property->HasMetaData(TEXT("Category")))
+                {
+                    PropInfo->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
+                }
+                
+                Properties.Add(MakeShared<FJsonValueObject>(PropInfo));
+            }
+        }
+        
+        Result->SetArrayField(TEXT("properties"), Properties);
+    }
+    
     return Result;
 }
 
@@ -1217,4 +1404,41 @@ TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleListCustomEvents(con
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetArrayField(TEXT("events"), Events);
     return Result;
+}
+
+// NEW: Reflection-based command implementations
+TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+{
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleGetAvailableBlueprintNodes(Params);
+    }
+    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+}
+
+TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+{
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleAddBlueprintNode(Params);
+    }
+    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+}
+
+TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleSetBlueprintNodeProperty(Params);
+    }
+    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+}
+
+TSharedPtr<FJsonObject> FVibeUEBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleGetBlueprintNodeProperty(Params);
+    }
+    return FVibeUECommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }

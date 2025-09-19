@@ -610,6 +610,7 @@ TSharedPtr<FJsonObject> FVibeUEUMGCommands::HandleCommand(const FString& Command
 	{
 		return HandleGetAvailableEvents(Params);
 	}
+
 	// All event handling, data binding, animation, and bulk operations have been removed
 	// Only keeping core working functions
 

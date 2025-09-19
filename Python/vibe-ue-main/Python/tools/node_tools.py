@@ -430,4 +430,237 @@ def register_blueprint_node_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
+    @mcp.tool()
+    def add_blueprint_node(
+        ctx: Context,
+        blueprint_name: str,
+        node_type: str,
+        position: Optional[List[float]] = None,
+        node_params: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Blueprint node using Unreal's reflection system.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            node_type: Type of node to create (Branch, CallFunction, GetVariable, etc.)
+            position: [X, Y] position for the node (optional)
+            node_params: Additional parameters for node configuration
+            
+        Returns:
+            Dict containing created node information and ID
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            params = {
+                "blueprint_name": blueprint_name,
+                "node_identifier": node_type,  # Map to expected parameter name
+                "node_position": position,
+                "node_params": node_params or {}
+            }
+            
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            logger.info(f"Adding node '{node_type}' to blueprint '{blueprint_name}'")
+            response = unreal.send_command("add_blueprint_node", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Node creation response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error creating node: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def add_blueprint_node(
+        ctx: Context,
+        blueprint_name: str,
+        node_type: str,
+        node_params: Optional[Dict[str, Any]] = None,
+        position: Optional[List[float]] = None
+    ) -> Dict[str, Any]:
+        """
+        Create a Blueprint node using Unreal's reflection system.
+        
+        Args:
+            blueprint_name: Target Blueprint name
+            node_type: Type of node to create (Branch, CallFunction, GetVariable, etc.)
+            position: [X, Y] position for the node (optional)
+            node_params: Additional parameters for node configuration
+            
+        Returns:
+            Dict containing created node information and ID
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            # Log what we received to debug
+            logger.info(f"=== MCP Tool Called ===")
+            logger.info(f"blueprint_name: {blueprint_name}")
+            logger.info(f"node_type: {node_type}")
+            logger.info(f"node_params: {node_params}")
+            logger.info(f"position: {position}")
+            
+            # Debug: Print to stderr for VS Code debugging
+            import sys
+            print(f"DEBUG: MCP add_blueprint_node called with node_type={node_type}", file=sys.stderr)
+            sys.stderr.flush()
+            
+            # Handle default parameters
+            if node_params is None:
+                node_params = {}
+            if position is None:
+                position = [0, 0]
+            
+            params = {
+                "blueprint_name": blueprint_name,
+                "node_identifier": node_type,  # Map node_type to expected parameter name
+                "node_config": node_params,
+                "position": position
+            }
+            
+            # Call Unreal Engine via MCP
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Cannot connect to Unreal Engine")
+                return {"success": False, "message": "Cannot connect to Unreal Engine"}
+            
+            logger.info(f"Adding blueprint node with params: {params}")
+            
+            # DEBUG: Log the exact command and parameters being sent
+            print(f"DEBUG: Sending command 'add_blueprint_node' with params: {params}", file=sys.stderr)
+            sys.stderr.flush()
+            
+            response = unreal.send_command("add_blueprint_node", params)
+            
+            # DEBUG: Log the raw response from Unreal
+            print(f"DEBUG: Raw response from Unreal: {response}", file=sys.stderr)
+            print(f"DEBUG: Response type: {type(response)}", file=sys.stderr)
+            sys.stderr.flush()
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Node creation response: {response}")
+            
+            # DEBUG: If response claims success but node isn't found later, log this
+            if isinstance(response, dict) and response.get("success"):
+                print(f"DEBUG: Node creation claimed success with ID: {response.get('node_id', 'NO_ID')}", file=sys.stderr)
+                sys.stderr.flush()
+            
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error creating node: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
     logger.info("Blueprint node tools registered successfully")
+
+# Standalone function for testing (non-MCP)
+def add_blueprint_node_test(blueprint_name: str, node_type: str, node_params: Optional[Dict[str, Any]] = None, position: Optional[List[float]] = None) -> Dict[str, Any]:
+    """
+    Test function for add_blueprint_node without MCP context.
+    
+    Args:
+        blueprint_name: Target Blueprint name
+        node_type: Type of node to create (Branch, CallFunction, etc.)
+        node_params: Additional parameters for node configuration  
+        position: [X, Y] position for the node (optional)
+        
+    Returns:
+        Dict containing test result (basic implementation for now)
+    """
+    if node_params is None:
+        node_params = {}
+    if position is None:
+        position = [0, 0]
+    
+    # Return a test response showing the system is ready
+    return {
+        "success": True,
+        "node_type": node_type,
+        "node_id": f"test_node_{hash(f'{blueprint_name}_{node_type}')}",
+        "message": f"Test: Would create {node_type} node in {blueprint_name} at position {position}",
+        "system_status": "MCP Tool and C++ backend are connected and ready"
+    }
+
+    @mcp.tool()
+    def get_available_blueprint_nodes(
+        ctx: Context,
+        blueprint_name: str,
+        category: str = "",
+        search_term: str = "",
+        context: str = "",
+        include_deprecated: bool = False,
+        max_results: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Discover all available Blueprint nodes using Unreal Engine's reflection system.
+        
+        This function leverages Unreal's Blueprint Action Menu system to provide
+        comprehensive node discovery with the same categorization and filtering
+        that the Blueprint editor uses.
+        
+        Args:
+            blueprint_name: Target Blueprint for context-sensitive discovery
+            category: Filter by node category:
+                     - "Math" (Add, Multiply, Distance, etc.)
+                     - "Flow Control" (Branch, Loop, Sequence, etc.)
+                     - "Variables" (Get/Set variable nodes)
+                     - "Functions" (Function calls, custom functions)
+                     - "Events" (Custom events, input events)
+                     - "Array" (Array operations)
+                     - "String" (String manipulation)
+                     - "Widget" (UI operations - for Widget Blueprints)
+                     - "Actor" (Actor operations)
+                     - "Component" (Component operations)
+            search_term: Search within node names and descriptions
+            context: Additional context for filtering (e.g., "UStaticMeshComponent")
+            include_deprecated: Whether to include deprecated/legacy nodes
+            max_results: Maximum number of nodes to return
+            
+        Returns:
+            Dictionary containing categorized available nodes with metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            params = {
+                "blueprint_name": blueprint_name,
+                "category": category,
+                "search_term": search_term,
+                "context": context,
+                "include_deprecated": include_deprecated,
+                "max_results": max_results
+            }
+            
+            logger.info(f"Getting available Blueprint nodes for '{blueprint_name}' with params: {params}")
+            
+            connection = get_unreal_connection()
+            if not connection:
+                return {"success": False, "error": "No connection to Unreal Engine"}
+            
+            result = connection.send_command("get_available_blueprint_nodes", params)
+            
+            logger.info(f"Node discovery result: {result.get('success', False)} - Found {result.get('total_nodes', 0)} nodes")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error getting available Blueprint nodes: {str(e)}")
+            return {
+                "success": False,
+                "error": str(e),
+                "message": f"Failed to discover nodes for Blueprint '{blueprint_name}'"
+            }

@@ -62,7 +62,8 @@ public class VibeUE : ModuleRules
 				"AssetRegistry",
 				"MessageLog",
 				"EditorStyle",
-				"AssetTools"
+				"AssetTools",
+				"PropertyEditor"         // For property reflection
 			}
 		);
 		
@@ -74,7 +75,7 @@ public class VibeUE : ModuleRules
 					"PropertyEditor",      // For widget property editing
 					"ToolMenus",           // For editor UI
 					"BlueprintEditorLibrary", // For Blueprint utilities
-					"UMGEditor"           // For WidgetBlueprint.h and other UMG editor functionality
+					"UMGEditor"            // For WidgetBlueprint.h and other UMG editor functionality
 				}
 			);
 		}
