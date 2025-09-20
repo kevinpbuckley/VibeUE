@@ -23,8 +23,9 @@
 #include "Components/SizeBox.h"
 #include "WidgetBlueprint.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "CommonUtils.h"
+#include "../../Public/Commands/CommonUtils.h"
 
 FUMGReflectionCommands::FUMGReflectionCommands()
 {
@@ -97,7 +98,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleGetAvailableWidgets(const 
 		if (!ParentCompatibility.IsEmpty())
 		{
 			// Find parent class
-			UClass* ParentClass = FindObject<UClass>(ANY_PACKAGE, *ParentCompatibility);
+			UClass* ParentClass = FindFirstObject<UClass>(*ParentCompatibility);
 			if (ParentClass && !IsParentChildCompatible(ParentClass, WidgetClass))
 			{
 				continue;
@@ -200,7 +201,7 @@ TArray<UClass*> FUMGReflectionCommands::DiscoverWidgetClasses(bool bIncludeEngin
 		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
 
 		TArray<FAssetData> WidgetBlueprints;
-		AssetRegistry.GetAssetsByClass(UWidgetBlueprint::StaticClass()->GetFName(), WidgetBlueprints);
+		AssetRegistry.GetAssetsByClass(UWidgetBlueprint::StaticClass()->GetClassPathName(), WidgetBlueprints);
 
 		for (const FAssetData& AssetData : WidgetBlueprints)
 		{
@@ -386,8 +387,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const T
 	bool bIsVariable = false;
 	Params->TryGetBoolField(TEXT("is_variable"), bIsVariable);
 
-	TSharedPtr<FJsonObject> Properties;
-	Params->TryGetObjectField(TEXT("properties"), Properties);
+	TSharedPtr<FJsonObject> Properties = Params->GetObjectField(TEXT("properties"));
 
 	// Find widget blueprint
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
@@ -397,12 +397,12 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const T
 	}
 
 	// Find component class
-	UClass* ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ComponentType);
+	UClass* ComponentClass = FindFirstObject<UClass>(*ComponentType);
 	if (!ComponentClass)
 	{
 		// Try with U prefix for engine classes
 		FString ClassNameWithPrefix = FString::Printf(TEXT("U%s"), *ComponentType);
-		ComponentClass = FindObject<UClass>(ANY_PACKAGE, *ClassNameWithPrefix);
+		ComponentClass = FindFirstObject<UClass>(*ClassNameWithPrefix);
 	}
 
 	if (!ComponentClass || !ComponentClass->IsChildOf<UWidget>())
@@ -440,7 +440,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::ValidateWidgetCreation(UWidgetBl
 	}
 
 	// Find parent widget in the widget tree
-	UWidget* ParentWidget = FCommonUtils::FindWidgetInTree(WidgetBlueprint, ParentName);
+	UWidget* ParentWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*ParentName));
 	if (!ParentWidget)
 	{
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' not found"), *ParentName));
@@ -482,17 +482,30 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateAndAddWidgetComponent(UWid
 	}
 
 	// Create the widget component
-	UWidget* NewWidget = CreateWidget<UWidget>(GetTransientPackage(), ComponentClass, *ComponentName);
-	if (!NewWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create widget component of type '%s'"), *ComponentClass->GetName()));
-	}
-
 	// Add to widget tree
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Widget Blueprint has no widget tree"));
+	}
+
+	// Create widget using proper NewObject pattern for widget blueprint editing
+	UWidget* NewWidget = nullptr;
+	try
+	{
+		NewWidget = NewObject<UWidget>(WidgetTree, ComponentClass, FName(*ComponentName));
+		UE_LOG(LogTemp, Warning, TEXT("Widget creation attempt completed, NewWidget: %s"), NewWidget ? TEXT("Valid") : TEXT("Null"));
+	}
+	catch (...)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Exception during widget creation"));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Exception during widget creation of type '%s'"), *ComponentClass->GetName()));
+	}
+	
+	if (!NewWidget)
+	{
+		UE_LOG(LogTemp, Error, TEXT("Failed to create widget component of type '%s'"), *ComponentClass->GetName());
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create widget component of type '%s'"), *ComponentClass->GetName()));
 	}
 
 	// Add to parent or set as root
@@ -502,7 +515,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateAndAddWidgetComponent(UWid
 	}
 	else
 	{
-		UWidget* ParentWidget = FCommonUtils::FindWidgetInTree(WidgetBlueprint, ParentName);
+		UWidget* ParentWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*ParentName));
 		if (!ParentWidget)
 		{
 			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' not found"), *ParentName));
@@ -537,7 +550,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateAndAddWidgetComponent(UWid
 	}
 
 	// Mark blueprint as modified
-	FKismetEditorUtilities::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
 
 	// Create success response
 	TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();

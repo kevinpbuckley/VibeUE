@@ -6,8 +6,14 @@ GENERIC WIDGET CREATION SYSTEM FOR AI ASSISTANTS
 This module provides a reflection-based widget system that mirrors Unreal's Widget Palette:
 - Automatic widget class discovery using UClass reflection
 - Category-based widget filtering and organization  
-- Parent-child compatibility validation
-- Generic widget component creation with property support
+- Parent-child compatibility valid        except Exception as e:
+            logger.error(f"Error adding widget component: {str(e)}")
+            return {
+                "success": False,
+                "error": f"Component creation failed: {str(e)}",
+                "component_name": component_name,
+                "component_type": component_type
+            }eneric widget component creation with property support
 - Type-safe parameter validation and error handling
 
 CRITICAL FOR AI WORKFLOW:
@@ -122,12 +128,12 @@ def register_umg_reflection_tools(mcp: FastMCP):
         - Custom widgets appear in "User Created" category
         """
         
-        from ..utils.unreal_connection import UnrealConnection
-        
-        connection = UnrealConnection()
+        from vibe_ue_server import get_unreal_connection
         
         try:
-            if not connection.connect():
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
                 return {
                     "success": False,
                     "error": "Failed to connect to Unreal Engine. Ensure Unreal is running with VibeUE plugin loaded.",
@@ -137,22 +143,51 @@ def register_umg_reflection_tools(mcp: FastMCP):
                 }
             
             command_data = {
-                "command": "get_available_widgets",
                 "category": category,
                 "include_custom": include_custom,
                 "include_engine": include_engine,
                 "parent_compatibility": parent_compatibility
             }
             
-            response = connection.send_command(command_data)
+            logger.info(f"Getting available widgets with filters: category={category}, include_custom={include_custom}, include_engine={include_engine}")
+            response = unreal.send_command("get_available_widgets", command_data)
+            
+            logger.debug(f"Raw response from get_available_widgets: {response}")
             
             if not response.get("success", False):
+                error_msg = response.get("error", "Unknown error during widget discovery")
+                logger.error(f"Widget discovery failed: {error_msg}")
+                logger.error(f"Full response: {response}")
+                
+                # Check if we got a completely empty response
+                if not response:
+                    error_msg = "No response received from Unreal Engine. Command may not be implemented or plugin not loaded."
+                elif error_msg == "Unknown error during widget discovery":
+                    # This means C++ returned success=false with no error message
+                    error_msg = "C++ command returned failure with no error details. Check Unreal Engine Output Log for C++ errors or exceptions."
+                    if "command" in response.get("error", "").lower():
+                        error_msg += " The get_available_widgets command may not be properly registered in Bridge.cpp."
+                
+                # Provide more specific error messages based on common issues
+                if "not found" in error_msg.lower():
+                    error_msg = f"Command handler not found: {error_msg}. Ensure VibeUE plugin is loaded and UMGReflectionCommands are registered."
+                elif "connection" in error_msg.lower():
+                    error_msg = f"Connection issue: {error_msg}. Check if Unreal Engine is running and MCP server is connected."
+                elif "exception" in error_msg.lower():
+                    error_msg = f"C++ exception occurred: {error_msg}. Check Unreal Engine Output Log for details."
+                
                 return {
                     "success": False,
-                    "error": response.get("error", "Unknown error during widget discovery"),
+                    "error": error_msg,
                     "widgets": [],
                     "categories": [],
-                    "count": 0
+                    "count": 0,
+                    "debug_info": {
+                        "raw_response": response,
+                        "command_sent": "get_available_widgets",
+                        "parameters": command_data,
+                        "suggestion": "Check Unreal Engine Output Log window for C++ error messages"
+                    }
                 }
             
             widgets = response.get("widgets", [])
@@ -175,15 +210,30 @@ def register_umg_reflection_tools(mcp: FastMCP):
             
         except Exception as e:
             logger.error(f"Error during widget discovery: {str(e)}")
+            logger.error(f"Exception type: {type(e).__name__}")
+            logger.error(f"Command data: {command_data}")
+            
+            # Check if it's a connection issue
+            if "connection" in str(e).lower() or "timeout" in str(e).lower():
+                error_msg = f"Connection failed: {str(e)}. Ensure Unreal Engine is running and VibeUE plugin is loaded."
+            elif "command" in str(e).lower():
+                error_msg = f"Command execution failed: {str(e)}. Check if get_available_widgets is implemented in C++."
+            else:
+                error_msg = f"Unexpected error during widget discovery: {str(e)}"
+            
             return {
                 "success": False,
-                "error": f"Widget discovery failed: {str(e)}",
+                "error": error_msg,
                 "widgets": [],
                 "categories": [],
-                "count": 0
+                "count": 0,
+                "debug_info": {
+                    "exception_type": type(e).__name__,
+                    "exception_message": str(e),
+                    "command_sent": "get_available_widgets",
+                    "parameters": command_data
+                }
             }
-        finally:
-            connection.disconnect()
     
     @mcp.tool()
     def add_widget_component(
@@ -276,12 +326,12 @@ def register_umg_reflection_tools(mcp: FastMCP):
         5. Set is_variable=True for components you'll interact with in code
         """
         
-        from ..utils.unreal_connection import UnrealConnection
-        
-        connection = UnrealConnection()
+        from vibe_ue_server import get_unreal_connection
         
         try:
-            if not connection.connect():
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
                 return {
                     "success": False,
                     "error": "Failed to connect to Unreal Engine. Ensure Unreal is running with VibeUE plugin loaded.",
@@ -293,7 +343,6 @@ def register_umg_reflection_tools(mcp: FastMCP):
             properties_dict = properties if properties else {}
             
             command_data = {
-                "command": "add_widget_component",
                 "widget_name": widget_name,
                 "component_type": component_type,
                 "component_name": component_name,
@@ -302,12 +351,28 @@ def register_umg_reflection_tools(mcp: FastMCP):
                 "properties": properties_dict
             }
             
-            response = connection.send_command(command_data)
+            logger.info(f"Adding widget component '{component_name}' of type '{component_type}' to widget '{widget_name}'")
+            response = unreal.send_command("add_widget_component", command_data)
+            
+            # DEBUG: Log the actual response structure
+            logger.info(f"DEBUG: Received response from add_widget_component: {response}")
+            logger.info(f"DEBUG: Response type: {type(response)}")
+            if response:
+                logger.info(f"DEBUG: Response keys: {response.keys() if hasattr(response, 'keys') else 'No keys method'}")
+                logger.info(f"DEBUG: Success value: {response.get('success')} (type: {type(response.get('success'))})")
             
             if not response.get("success", False):
+                # More detailed error information
+                error_details = {
+                    "raw_response": response,
+                    "success_value": response.get("success"),
+                    "success_type": str(type(response.get("success"))),
+                    "response_keys": list(response.keys()) if hasattr(response, 'keys') else None,
+                    "response_type": str(type(response))
+                }
                 return {
                     "success": False,
-                    "error": response.get("error", "Unknown error during widget creation"),
+                    "error": "DEBUGGING: This error message should show if changes are taking effect. Response was: " + str(response),
                     "component_name": component_name,
                     "component_type": component_type
                 }
@@ -336,5 +401,3 @@ def register_umg_reflection_tools(mcp: FastMCP):
                 "component_name": component_name,
                 "component_type": component_type
             }
-        finally:
-            connection.disconnect()

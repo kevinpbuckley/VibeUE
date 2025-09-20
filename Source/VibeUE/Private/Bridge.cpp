@@ -269,10 +269,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
             }
-            // UMG Commands
+            // UMG Commands (Reflection-based system)
             else if (CommandType == TEXT("create_umg_widget_blueprint") ||
-                     CommandType == TEXT("add_text_block_to_widget") ||
-                     CommandType == TEXT("add_button_to_widget") ||
                      // UMG Discovery Commands
                      CommandType == TEXT("search_items") ||
                      CommandType == TEXT("get_widget_blueprint_info") ||
@@ -280,24 +278,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("get_widget_component_properties") ||
                      CommandType == TEXT("get_available_widget_types") ||
                      CommandType == TEXT("validate_widget_hierarchy") ||
-                     // UMG Component Commands
-                     CommandType == TEXT("add_editable_text") ||
-                     CommandType == TEXT("add_editable_text_box") ||
-                     CommandType == TEXT("add_rich_text_block") ||
-                     CommandType == TEXT("add_check_box") ||
-                     CommandType == TEXT("add_slider") ||
-                     CommandType == TEXT("add_progress_bar") ||
-                     CommandType == TEXT("add_image") ||
-                     CommandType == TEXT("add_spacer") ||
                      CommandType == TEXT("remove_widget_component") ||
-                     // UMG Layout Commands
-                     CommandType == TEXT("add_canvas_panel") ||
-                     CommandType == TEXT("add_size_box") ||
-                     CommandType == TEXT("add_overlay") ||
-                     CommandType == TEXT("add_horizontal_box") ||
-                     CommandType == TEXT("add_vertical_box") ||
-                     CommandType == TEXT("add_scroll_box") ||
-                     CommandType == TEXT("add_grid_panel") ||
+                     // UMG Child Management
                      CommandType == TEXT("add_child_to_panel") ||
                      CommandType == TEXT("remove_child_from_panel") ||
                      CommandType == TEXT("set_widget_slot_properties") ||
@@ -310,14 +292,7 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("set_widget_z_order") ||
                      // UMG Event Commands
                      CommandType == TEXT("bind_input_events") ||
-                     CommandType == TEXT("get_available_events") ||
-                     // UMG Data Binding Commands
-                     CommandType == TEXT("add_list_view") ||
-                     CommandType == TEXT("add_tile_view") ||
-                     CommandType == TEXT("add_tree_view") ||
-                     // Widget Switcher Commands (relocated from animation)
-                     CommandType == TEXT("add_widget_switcher") ||
-                     CommandType == TEXT("add_widget_switcher_slot"))
+                     CommandType == TEXT("get_available_events"))
             {
                 ResultJson = UMGCommands->HandleCommand(CommandType, Params);
             }

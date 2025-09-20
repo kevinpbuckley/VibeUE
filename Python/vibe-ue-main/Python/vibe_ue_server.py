@@ -320,6 +320,15 @@ class UnrealConnection:
                     "widgets": []
                 }
             
+            # Handle successful responses - if we get here and no error conditions were met,
+            # check if we have a successful result to return
+            if result and result.get("success") is True:
+                logger.info(f"Unreal command succeeded: {command}")
+                return result
+            elif response.get("status") == "success":
+                logger.info(f"Unreal command succeeded: {command}")
+                return response.get("result", response)
+            
             # Always close the connection after command is complete
             # since Unreal will close it on its side anyway
             try:
@@ -420,13 +429,13 @@ from tools.editor_tools import register_editor_tools          # Viewport, screen
 from tools.blueprint_tools import register_blueprint_tools    # Blueprint creation, compilation, components
 from tools.node_tools import register_blueprint_node_tools    # Blueprint graph nodes and connections
 
-# BASIC UMG TOOLS (Legacy widget system)
-from tools.umg_tools import register_umg_tools               # Basic widget creation and events
+# BASIC UMG TOOLS (UMG guide + deprecated tools)
+from tools.umg_tools import register_umg_tools               # UMG guide and deprecated legacy tools
 
 # ENHANCED UMG SYSTEM (Advanced widget capabilities)
 from tools.umg_discovery import register_umg_discovery_tools         # Widget search and inspection
-from tools.umg_components import register_umg_component_tools        # All widget types and creation
-from tools.umg_layout import register_umg_layout_tools              # Layout panels and hierarchy
+from tools.umg_components import register_umg_component_tools        # DEPRECATED - All replaced by reflection system
+from tools.umg_layout import register_umg_layout_tools              # DEPRECATED - All replaced by reflection system
 from tools.umg_styling import register_umg_styling_tools            # Style sets and theming system
 from tools.umg_events import register_umg_event_tools               # Event binding and interaction
 from tools.umg_data_binding import register_umg_data_binding_tools   # MVVM and data sources
@@ -434,6 +443,9 @@ from tools.umg_graph_introspection import register_umg_graph_introspection_tools
 
 # UMG REFLECTION SYSTEM (Generic widget creation using Unreal's reflection)
 from tools.umg_reflection import register_umg_reflection_tools       # Reflection-based widget discovery and creation
+
+# TEST REFLECTION TOOLS
+from tools.test_reflection import register_test_reflection_tools
 
 
 # ENHANCED ASSET SYSTEM (Advanced asset management capabilities)
@@ -465,12 +477,12 @@ register_blueprint_tools(mcp)      # Blueprint creation, compilation, component 
 register_blueprint_node_tools(mcp) # Event graph manipulation, node connections
 
 # Basic UMG Widget Tools (includes get_umg_guide() tool)
-register_umg_tools(mcp)            # Legacy widget creation, basic events, and UMG guide
+register_umg_tools(mcp)            # UMG guide and deprecated legacy tools (now references reflection system)
 
 # Enhanced UMG Widget System (Advanced Features) - REQUIRES UMG GUIDE FIRST
 register_umg_discovery_tools(mcp)     # Widget search, inspection, validation
-register_umg_component_tools(mcp)     # Complete widget type library - REQUIRES GUIDE
-register_umg_layout_tools(mcp)        # Layout panels, hierarchical construction - REQUIRES GUIDE  
+register_umg_component_tools(mcp)     # DEPRECATED - All tools replaced by reflection system
+register_umg_layout_tools(mcp)        # DEPRECATED - All tools replaced by reflection system
 register_umg_styling_tools(mcp)       # Style sets, theming, property management - REQUIRES GUIDE
 register_umg_event_tools(mcp)         # Event binding, delegates, interactivity
 register_umg_data_binding_tools(mcp)  # Data binding, MVVM patterns
@@ -478,6 +490,9 @@ register_umg_graph_introspection_tools(mcp)  # Blueprint analysis and introspect
 
 # UMG Reflection System (Generic Widget Creation) - FUTURE-PROOF APPROACH
 register_umg_reflection_tools(mcp)    # Reflection-based widget discovery and creation using Widget Palette patterns
+
+# Test reflection tools
+register_test_reflection_tools(mcp)   # Test tools for debugging import issues
 
 # Enhanced Asset Management System (Advanced Capabilities)
 register_asset_discovery_tools(mcp)   # Smart asset search, import, export, AI analysis
