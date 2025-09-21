@@ -444,10 +444,6 @@ from tools.umg_graph_introspection import register_umg_graph_introspection_tools
 # UMG REFLECTION SYSTEM (Generic widget creation using Unreal's reflection)
 from tools.umg_reflection import register_umg_reflection_tools       # Reflection-based widget discovery and creation
 
-# TEST REFLECTION TOOLS
-from tools.test_reflection import register_test_reflection_tools
-
-
 # ENHANCED ASSET SYSTEM (Advanced asset management capabilities)
 from tools.asset_discovery import register_asset_discovery_tools     # Smart asset search, import, export, application
 
@@ -490,9 +486,6 @@ register_umg_graph_introspection_tools(mcp)  # Blueprint analysis and introspect
 
 # UMG Reflection System (Generic Widget Creation) - FUTURE-PROOF APPROACH
 register_umg_reflection_tools(mcp)    # Reflection-based widget discovery and creation using Widget Palette patterns
-
-# Test reflection tools
-register_test_reflection_tools(mcp)   # Test tools for debugging import issues
 
 # Enhanced Asset Management System (Advanced Capabilities)
 register_asset_discovery_tools(mcp)   # Smart asset search, import, export, AI analysis

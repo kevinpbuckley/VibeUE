@@ -7,6 +7,12 @@
 #include "EdGraph/EdGraphPin.h"
 #include "Engine/Blueprint.h"
 
+// Forward declarations
+class UK2Node_CallFunction;
+class UK2Node_VariableGet;
+class UK2Node_VariableSet;
+class UK2Node_Event;
+
 /**
  * Blueprint reflection helper for dynamic node discovery and manipulation
  * Uses Unreal's native reflection system to provide comprehensive Blueprint node access
@@ -52,6 +58,16 @@ public:
     static TSharedPtr<FJsonObject> ProcessActionToJson(TSharedPtr<FEdGraphSchemaAction> Action);
     static UK2Node* CreateNodeFromIdentifier(UBlueprint* Blueprint, const FString& NodeIdentifier, const TSharedPtr<FJsonObject>& Config);
     static void ConfigureNodeFromParameters(UK2Node* Node, const TSharedPtr<FJsonObject>& NodeParams);
+    
+    // NEW: Optimized search methods
+    static void GetFilteredBlueprintActions(UBlueprint* Blueprint, const FString& SearchTerm, const FString& Category, int32 MaxResults, TArray<TSharedPtr<FEdGraphSchemaAction>>& OutActions);
+    static void GetCommonBlueprintActions(UBlueprint* Blueprint, const FString& Category, int32 MaxResults, TArray<TSharedPtr<FEdGraphSchemaAction>>& OutActions);
+    
+    // Node configuration helpers (moved to public for reflection system access)
+    static void ConfigureFunctionNode(UK2Node_CallFunction* FunctionNode, const TSharedPtr<FJsonObject>& NodeParams);
+    static void ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
+    static void ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
+    static void ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams);
 
 private:
     // Internal reflection helpers (simplified)
@@ -62,12 +78,6 @@ private:
     
     // Node discovery system using Unreal's action menu
     static UK2Node* CreateNodeFromBlueprintAction(UBlueprint* Blueprint, TSharedPtr<FEdGraphSchemaAction> Action);
-    
-    // Node configuration helpers
-    static void ConfigureFunctionNode(UK2Node_CallFunction* FunctionNode, const TSharedPtr<FJsonObject>& NodeParams);
-    static void ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
-    static void ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
-    static void ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams);
     
     // Property reflection helpers (basic implementation)
     static TSharedPtr<FJsonObject> ReflectNodeProperties(UK2Node* Node);
