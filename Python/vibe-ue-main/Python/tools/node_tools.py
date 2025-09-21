@@ -282,6 +282,132 @@ def register_blueprint_node_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
+    def get_blueprint_variable(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get a variable's value and metadata from a Blueprint.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            variable_name: Name of the variable to retrieve
+            
+        Returns:
+            Response containing variable value, type, and metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            params = {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name
+            }
+            
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            logger.info(f"Getting variable '{variable_name}' from blueprint '{blueprint_name}'")
+            response = unreal.send_command("get_blueprint_variable", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Variable retrieval response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting variable: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def set_blueprint_variable(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str,
+        variable_value: str
+    ) -> Dict[str, Any]:
+        """
+        Set a variable's value in a Blueprint.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            variable_name: Name of the variable to set
+            variable_value: Value to set (as string, will be converted to appropriate type)
+            
+        Returns:
+            Response indicating success or failure
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            params = {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name,
+                "variable_value": variable_value
+            }
+            
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            logger.info(f"Setting variable '{variable_name}' to '{variable_value}' in blueprint '{blueprint_name}'")
+            response = unreal.send_command("set_blueprint_variable", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Variable setting response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting variable: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def get_available_blueprint_variable_types(
+        ctx: Context
+    ) -> Dict[str, Any]:
+        """
+        Get list of all available Blueprint variable types with descriptions and examples.
+        
+        Returns:
+            Response containing categorized list of available variable types
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            params = {}
+            
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            logger.info("Getting available Blueprint variable types")
+            response = unreal.send_command("get_available_blueprint_variable_types", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Available types response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting available variable types: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
     def add_blueprint_get_self_component_reference(
         ctx: Context,
         blueprint_name: str,

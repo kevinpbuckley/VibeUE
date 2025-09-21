@@ -243,7 +243,12 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("compile_blueprint") || 
                      CommandType == TEXT("set_blueprint_property") || 
                      CommandType == TEXT("set_static_mesh_properties") ||
-                     CommandType == TEXT("reparent_blueprint"))
+                     CommandType == TEXT("reparent_blueprint") ||
+                     // Blueprint Variable Commands
+                     CommandType == TEXT("add_blueprint_variable") ||
+                     CommandType == TEXT("get_blueprint_variable") ||
+                     CommandType == TEXT("set_blueprint_variable") ||
+                     CommandType == TEXT("get_available_blueprint_variable_types"))
             {
                 ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
             }
@@ -262,7 +267,6 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("add_blueprint_input_action_node") ||
                      CommandType == TEXT("add_blueprint_function_node") ||
                      CommandType == TEXT("add_blueprint_get_component_node") ||
-                     CommandType == TEXT("add_blueprint_variable") ||
                      CommandType == TEXT("get_available_blueprint_nodes") ||
                      CommandType == TEXT("add_blueprint_node"))
             {

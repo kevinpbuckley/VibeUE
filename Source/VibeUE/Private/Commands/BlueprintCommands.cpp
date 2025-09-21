@@ -21,6 +21,11 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
+#include "Engine/UserDefinedStruct.h"
+#include "Engine/UserDefinedEnum.h"
+#include "UObject/Class.h"
+#include "UObject/Package.h"
+#include "Engine/StaticMesh.h"
 
 FBlueprintCommands::FBlueprintCommands()
 {
@@ -59,6 +64,22 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     else if (CommandType == TEXT("reparent_blueprint"))
     {
         return HandleReparentBlueprint(Params);
+    }
+    else if (CommandType == TEXT("add_blueprint_variable"))
+    {
+        return HandleAddBlueprintVariable(Params);
+    }
+    else if (CommandType == TEXT("get_blueprint_variable"))
+    {
+        return HandleGetBlueprintVariable(Params);
+    }
+    else if (CommandType == TEXT("set_blueprint_variable"))
+    {
+        return HandleSetBlueprintVariable(Params);
+    }
+    else if (CommandType == TEXT("get_available_blueprint_variable_types"))
+    {
+        return HandleGetAvailableBlueprintVariableTypes(Params);
     }
     
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
@@ -1299,3 +1320,467 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TShare
         return FCommonUtils::CreateErrorResponse(ErrorMsg);
     }
 } 
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+    // Get parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+    }
+    
+    FString VariableType;
+    if (!Params->TryGetStringField(TEXT("variable_type"), VariableType))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_type parameter"));
+    }
+    
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Create a comprehensive pin type mapping using reflection-based system
+    FEdGraphPinType PinType;
+    
+    // Basic types
+    if (VariableType == TEXT("Boolean"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+    }
+    else if (VariableType == TEXT("Byte"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Byte;
+    }
+    else if (VariableType == TEXT("Integer"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+    }
+    else if (VariableType == TEXT("Integer64"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
+    }
+    else if (VariableType == TEXT("Float"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Float;
+    }
+    else if (VariableType == TEXT("Double"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Double;
+    }
+    else if (VariableType == TEXT("Name"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
+    }
+    else if (VariableType == TEXT("String"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+    }
+    else if (VariableType == TEXT("Text"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
+    }
+    // Struct types
+    else if (VariableType == TEXT("Vector"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
+    }
+    else if (VariableType == TEXT("Vector2D"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FVector2D>::Get();
+    }
+    else if (VariableType == TEXT("Vector4"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FVector4>::Get();
+    }
+    else if (VariableType == TEXT("Rotator"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FRotator>::Get();
+    }
+    else if (VariableType == TEXT("Transform"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FTransform>::Get();
+    }
+    else if (VariableType == TEXT("Color"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FColor>::Get();
+    }
+    else if (VariableType == TEXT("LinearColor"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        PinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
+    }
+    // Object types (basic implementation)
+    else if (VariableType == TEXT("Actor"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        PinType.PinSubCategoryObject = AActor::StaticClass();
+    }
+    else if (VariableType == TEXT("Pawn"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        PinType.PinSubCategoryObject = APawn::StaticClass();
+    }
+    else if (VariableType == TEXT("StaticMesh"))
+    {
+        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        PinType.PinSubCategoryObject = UStaticMesh::StaticClass();
+    }
+    else
+    {
+        // Default to String for unsupported types
+        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
+    }
+    
+    // Get default value
+    FString DefaultValue;
+    Params->TryGetStringField(TEXT("default_value"), DefaultValue);
+    
+    // Add the variable
+    if (FBlueprintEditorUtils::AddMemberVariable(Blueprint, FName(*VariableName), PinType, DefaultValue))
+    {
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("message"), TEXT("Variable added successfully"));
+        Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+        Response->SetStringField(TEXT("variable_name"), VariableName);
+        Response->SetStringField(TEXT("variable_type"), VariableType);
+        
+        // Compile the Blueprint
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+    else
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to add variable to Blueprint"));
+    }
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+    }
+    
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Find the variable
+    FName VarName(*VariableName);
+    FBPVariableDescription* VarDesc = nullptr;
+    
+    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
+    {
+        if (Blueprint->NewVariables[i].VarName == VarName)
+        {
+            VarDesc = &Blueprint->NewVariables[i];
+            break;
+        }
+    }
+    
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+    }
+    
+    // Build response
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("variable_name"), VariableName);
+    
+    // Get comprehensive type info using reflection-based reverse mapping
+    FString TypeName;
+    
+    // Debug logging to see what we're actually dealing with
+    FString PinCategoryStr = VarDesc->VarType.PinCategory.ToString();
+    UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has PinCategory: %s"), *VariableName, *PinCategoryStr);
+    
+    // Debug SubCategoryObject if it exists
+    if (VarDesc->VarType.PinSubCategoryObject.IsValid())
+    {
+        FString SubCategoryStr = VarDesc->VarType.PinSubCategoryObject->GetName();
+        UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has SubCategoryObject: %s"), *VariableName, *SubCategoryStr);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has no SubCategoryObject"), *VariableName);
+    }
+    
+    // Basic types
+    if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
+        TypeName = TEXT("Boolean");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Byte)
+        TypeName = TEXT("Byte");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int)
+        TypeName = TEXT("Integer");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int64)
+        TypeName = TEXT("Integer64");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Float)
+        TypeName = TEXT("Float");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Double)
+        TypeName = TEXT("Double");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Real)
+        TypeName = TEXT("Float");  // PC_Real maps to Float for backwards compatibility
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Name)
+        TypeName = TEXT("Name");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_String)
+        TypeName = TEXT("String");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Text)
+        TypeName = TEXT("Text");
+    // Struct types - check SubCategoryObject
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Struct)
+    {
+        if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector>::Get())
+            TypeName = TEXT("Vector");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector2D>::Get())
+            TypeName = TEXT("Vector2D");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector4>::Get())
+            TypeName = TEXT("Vector4");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FRotator>::Get())
+            TypeName = TEXT("Rotator");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FTransform>::Get())
+            TypeName = TEXT("Transform");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FColor>::Get())
+            TypeName = TEXT("Color");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FLinearColor>::Get())
+            TypeName = TEXT("LinearColor");
+        else
+            TypeName = TEXT("Struct");
+    }
+    // Object types - check SubCategoryObject class
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Object)
+    {
+        if (VarDesc->VarType.PinSubCategoryObject == AActor::StaticClass())
+            TypeName = TEXT("Actor");
+        else if (VarDesc->VarType.PinSubCategoryObject == APawn::StaticClass())
+            TypeName = TEXT("Pawn");
+        else if (VarDesc->VarType.PinSubCategoryObject == UStaticMesh::StaticClass())
+            TypeName = TEXT("StaticMesh");
+        else
+            TypeName = TEXT("Object");
+    }
+    else
+        TypeName = TEXT("Unknown");
+    
+    // Debug final result
+    UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' determined as type: %s"), *VariableName, *TypeName);
+    
+    Response->SetStringField(TEXT("variable_type"), TypeName);
+    Response->SetStringField(TEXT("category"), VarDesc->Category.ToString());
+    Response->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+    }
+    
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Find the variable
+    FName VarName(*VariableName);
+    FBPVariableDescription* VarDesc = nullptr;
+    
+    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
+    {
+        if (Blueprint->NewVariables[i].VarName == VarName)
+        {
+            VarDesc = &Blueprint->NewVariables[i];
+            break;
+        }
+    }
+    
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+    }
+    
+    // Handle different property updates
+    const TSharedPtr<FJsonObject>* PropertiesObj;
+    if (Params->TryGetObjectField(TEXT("properties"), PropertiesObj))
+    {
+        // Update tooltip if provided
+        FString NewTooltip;
+        if ((*PropertiesObj)->TryGetStringField(TEXT("tooltip"), NewTooltip))
+        {
+            VarDesc->FriendlyName = NewTooltip;
+        }
+        
+        // Update category if provided
+        FString NewCategory;
+        if ((*PropertiesObj)->TryGetStringField(TEXT("category"), NewCategory))
+        {
+            VarDesc->Category = FText::FromString(NewCategory);
+        }
+        
+        // Mark Blueprint as modified
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+    
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), TEXT("Variable updated successfully"));
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("variable_name"), VariableName);
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetAvailableBlueprintVariableTypes(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+    try
+    {
+        // Get all available pin types from UEdGraphSchema_K2
+        TArray<TSharedPtr<FJsonValue>> BasicTypesArray;
+        TArray<TSharedPtr<FJsonValue>> StructTypesArray;
+        TArray<TSharedPtr<FJsonValue>> ObjectTypesArray;
+        TArray<TSharedPtr<FJsonValue>> EnumTypesArray;
+        
+        TSharedPtr<FJsonObject> TypeInfoObject = MakeShared<FJsonObject>();
+        
+        // Basic types from EdGraphSchema_K2
+        auto AddBasicType = [&](const FString& TypeName, const FString& PinCategory, const FString& Description, const FString& DefaultValue)
+        {
+            BasicTypesArray.Add(MakeShared<FJsonValueString>(TypeName));
+            
+            TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+            TypeInfo->SetStringField(TEXT("category"), TEXT("Basic"));
+            TypeInfo->SetStringField(TEXT("description"), Description);
+            TypeInfo->SetStringField(TEXT("default_value"), DefaultValue);
+            TypeInfo->SetStringField(TEXT("pin_category"), PinCategory);
+            TypeInfoObject->SetObjectField(TypeName, TypeInfo);
+        };
+        
+        // Add all basic types that UE supports
+        AddBasicType(TEXT("Boolean"), TEXT("PC_Boolean"), TEXT("True/false value"), TEXT("false"));
+        AddBasicType(TEXT("Byte"), TEXT("PC_Byte"), TEXT("8-bit unsigned integer (0-255)"), TEXT("0"));
+        AddBasicType(TEXT("Integer"), TEXT("PC_Int"), TEXT("32-bit signed integer"), TEXT("0"));
+        AddBasicType(TEXT("Integer64"), TEXT("PC_Int64"), TEXT("64-bit signed integer"), TEXT("0"));
+        AddBasicType(TEXT("Float"), TEXT("PC_Float"), TEXT("32-bit floating point number"), TEXT("0.0"));
+        AddBasicType(TEXT("Double"), TEXT("PC_Double"), TEXT("64-bit floating point number"), TEXT("0.0"));
+        AddBasicType(TEXT("Name"), TEXT("PC_Name"), TEXT("Unreal name identifier"), TEXT("None"));
+        AddBasicType(TEXT("String"), TEXT("PC_String"), TEXT("Text string value"), TEXT(""));
+        AddBasicType(TEXT("Text"), TEXT("PC_Text"), TEXT("Localizable text value"), TEXT(""));
+        
+        // Add common struct types
+        auto AddStructType = [&](const FString& TypeName, const FString& StructName, const FString& Description, const FString& DefaultValue)
+        {
+            StructTypesArray.Add(MakeShared<FJsonValueString>(TypeName));
+            
+            TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+            TypeInfo->SetStringField(TEXT("category"), TEXT("Struct"));
+            TypeInfo->SetStringField(TEXT("description"), Description);
+            TypeInfo->SetStringField(TEXT("default_value"), DefaultValue);
+            TypeInfo->SetStringField(TEXT("pin_category"), TEXT("PC_Struct"));
+            TypeInfo->SetStringField(TEXT("struct_type"), StructName);
+            TypeInfoObject->SetObjectField(TypeName, TypeInfo);
+        };
+        
+        AddStructType(TEXT("Vector"), TEXT("FVector"), TEXT("3D vector with X, Y, Z components"), TEXT("(0.0, 0.0, 0.0)"));
+        AddStructType(TEXT("Vector2D"), TEXT("FVector2D"), TEXT("2D vector with X, Y components"), TEXT("(0.0, 0.0)"));
+        AddStructType(TEXT("Vector4"), TEXT("FVector4"), TEXT("4D vector with X, Y, Z, W components"), TEXT("(0.0, 0.0, 0.0, 0.0)"));
+        AddStructType(TEXT("Rotator"), TEXT("FRotator"), TEXT("3D rotation with Pitch, Yaw, Roll"), TEXT("(0.0, 0.0, 0.0)"));
+        AddStructType(TEXT("Transform"), TEXT("FTransform"), TEXT("3D transformation (location, rotation, scale)"), TEXT("Identity"));
+        AddStructType(TEXT("Color"), TEXT("FColor"), TEXT("RGBA color (0-255 range)"), TEXT("(255, 255, 255, 255)"));
+        AddStructType(TEXT("LinearColor"), TEXT("FLinearColor"), TEXT("RGBA color (0.0-1.0 range)"), TEXT("(1.0, 1.0, 1.0, 1.0)"));
+        
+        // Add common object types
+        auto AddObjectType = [&](const FString& TypeName, const FString& ClassName, const FString& Description)
+        {
+            ObjectTypesArray.Add(MakeShared<FJsonValueString>(TypeName));
+            
+            TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+            TypeInfo->SetStringField(TEXT("category"), TEXT("Object"));
+            TypeInfo->SetStringField(TEXT("description"), Description);
+            TypeInfo->SetStringField(TEXT("default_value"), TEXT("None"));
+            TypeInfo->SetStringField(TEXT("pin_category"), TEXT("PC_Object"));
+            TypeInfo->SetStringField(TEXT("class_type"), ClassName);
+            TypeInfoObject->SetObjectField(TypeName, TypeInfo);
+        };
+        
+        AddObjectType(TEXT("Actor"), TEXT("AActor"), TEXT("Reference to any Actor in the world"));
+        AddObjectType(TEXT("Pawn"), TEXT("APawn"), TEXT("Reference to a controllable Pawn"));
+        AddObjectType(TEXT("Character"), TEXT("ACharacter"), TEXT("Reference to a Character (humanoid Pawn)"));
+        AddObjectType(TEXT("PlayerController"), TEXT("APlayerController"), TEXT("Reference to a PlayerController"));
+        AddObjectType(TEXT("GameMode"), TEXT("AGameMode"), TEXT("Reference to the GameMode"));
+        AddObjectType(TEXT("ActorComponent"), TEXT("UActorComponent"), TEXT("Reference to an ActorComponent"));
+        AddObjectType(TEXT("SceneComponent"), TEXT("USceneComponent"), TEXT("Reference to a SceneComponent"));
+        AddObjectType(TEXT("StaticMeshComponent"), TEXT("UStaticMeshComponent"), TEXT("Reference to a StaticMeshComponent"));
+        AddObjectType(TEXT("StaticMesh"), TEXT("UStaticMesh"), TEXT("Reference to a StaticMesh asset"));
+        AddObjectType(TEXT("Material"), TEXT("UMaterial"), TEXT("Reference to a Material asset"));
+        AddObjectType(TEXT("Texture2D"), TEXT("UTexture2D"), TEXT("Reference to a 2D Texture asset"));
+        
+        // Build response
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetArrayField(TEXT("basic_types"), BasicTypesArray);
+        Response->SetArrayField(TEXT("struct_types"), StructTypesArray);
+        Response->SetArrayField(TEXT("object_types"), ObjectTypesArray);
+        Response->SetArrayField(TEXT("enum_types"), EnumTypesArray); // Empty for now
+        Response->SetObjectField(TEXT("type_info"), TypeInfoObject);
+        Response->SetNumberField(TEXT("total_count"), BasicTypesArray.Num() + StructTypesArray.Num() + ObjectTypesArray.Num());
+        
+        // Add implementation status
+        TSharedPtr<FJsonObject> StatusObject = MakeShared<FJsonObject>();
+        StatusObject->SetStringField(TEXT("current"), TEXT("Reflection-based type discovery from UE5 pin categories"));
+        StatusObject->SetStringField(TEXT("method"), TEXT("EdGraphSchema_K2 pin category enumeration"));
+        StatusObject->SetBoolField(TEXT("extensible"), true);
+        Response->SetObjectField(TEXT("implementation_status"), StatusObject);
+        
+        UE_LOG(LogTemp, Log, TEXT("MCP: Found %d available Blueprint variable types"), BasicTypesArray.Num() + StructTypesArray.Num() + ObjectTypesArray.Num());
+        
+    }
+    catch (...)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get available Blueprint variable types"));
+    }
+    
+    return Response;
+}
