@@ -26,7 +26,7 @@ private:
 
     // Variable management commands
     TSharedPtr<FJsonObject> HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleGetBlueprintVariable(const TSharedPtr<FJsonObject>& Params);  
+    TSharedPtr<FJsonObject> HandleGetBlueprintVariableInfo(const TSharedPtr<FJsonObject>& Params);  
     TSharedPtr<FJsonObject> HandleDeleteBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintVariableTypes(const TSharedPtr<FJsonObject>& Params);
 
@@ -34,9 +34,9 @@ private:
     TSharedPtr<FJsonObject> HandleGetVariableProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetVariableProperty(const TSharedPtr<FJsonObject>& Params);
     
-    // Blueprint variable metadata management
-    TSharedPtr<FJsonObject> HandleGetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleSetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
+    // Internal Blueprint variable metadata management
+    TSharedPtr<FJsonObject> GetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> SetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
 
     // Helper functions
     TSharedPtr<FJsonObject> AddComponentToBlueprint(const FString& BlueprintName, const FString& ComponentType, 

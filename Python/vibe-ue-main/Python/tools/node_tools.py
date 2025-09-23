@@ -278,20 +278,27 @@ def register_blueprint_node_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
-    def get_blueprint_variable(
+    def get_blueprint_variable_info(
         ctx: Context,
         blueprint_name: str,
         variable_name: str
     ) -> Dict[str, Any]:
         """
-        Get a variable's value and metadata from a Blueprint.
+        Get comprehensive information about a Blueprint variable including value, type, metadata, and property flags.
         
         Args:
             blueprint_name: Name of the target Blueprint
-            variable_name: Name of the variable to retrieve
+            variable_name: Name of the variable to retrieve information about
             
         Returns:
-            Response containing variable value, type, and metadata
+            Response containing:
+            - value: The current variable value
+            - variable_type: Type of the variable (Float, Integer, Vector, etc.)
+            - category: Variable category in the Blueprint editor
+            - tooltip: Variable description/tooltip
+            - metadata: Complete metadata including instance_editable, blueprint_readonly, etc.
+            - container_type: Array/Set/Map information if applicable
+            - property_flags: Detailed property flag information
         """
         from vibe_ue_server import get_unreal_connection
         
@@ -306,18 +313,18 @@ def register_blueprint_node_tools(mcp: FastMCP):
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
             
-            logger.info(f"Getting variable '{variable_name}' from blueprint '{blueprint_name}'")
-            response = unreal.send_command("get_blueprint_variable", params)
+            logger.info(f"Getting comprehensive variable info for '{variable_name}' from blueprint '{blueprint_name}'")
+            response = unreal.send_command("get_blueprint_variable_info", params)
             
             if not response:
                 logger.error("No response from Unreal Engine")
                 return {"success": False, "message": "No response from Unreal Engine"}
             
-            logger.info(f"Variable retrieval response: {response}")
+            logger.info(f"Variable info response: {response}")
             return response
             
         except Exception as e:
-            error_msg = f"Error getting variable: {e}"
+            error_msg = f"Error getting variable info: {e}"
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     

@@ -335,6 +335,57 @@ def register_blueprint_tools(mcp: FastMCP):
             error_msg = f"Error setting variable property: {e}"
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_blueprint_variable_info(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get comprehensive information about a Blueprint variable including value, type, metadata, and property flags.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            variable_name: Name of the variable to retrieve information about
+            
+        Returns:
+            Response containing:
+            - value: The current variable value
+            - variable_type: Type of the variable (Float, Integer, Vector, etc.)
+            - category: Variable category in the Blueprint editor
+            - tooltip: Variable description/tooltip
+            - metadata: Complete metadata including instance_editable, blueprint_readonly, etc.
+            - container_type: Array/Set/Map information if applicable
+            - property_flags: Detailed property flag information
+        """
+        from vibe_ue_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name
+            }
+
+            logger.info(f"Getting blueprint variable info for '{variable_name}' on blueprint '{blueprint_name}'")
+            response = unreal.send_command("get_blueprint_variable_info", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"Get blueprint variable info response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error getting blueprint variable info: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
     
     @mcp.tool()
     def reparent_blueprint(
@@ -575,97 +626,4 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def get_blueprint_variable_metadata(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str
-    ) -> Dict[str, Any]:
-        """
-        Get Blueprint variable metadata (Instance Editable, Category, Tooltip, etc.).
-        
-        Args:
-            blueprint_name: Name of the Blueprint
-            variable_name: Name of the variable
-            
-        Returns:
-            Dict containing variable metadata
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            response = unreal.send_command("get_blueprint_variable_metadata", {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name
-            })
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Got metadata for variable {variable_name} in Blueprint {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting Blueprint variable metadata: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def set_blueprint_variable_metadata(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        metadata: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        """
-        Set Blueprint variable metadata (Instance Editable, Category, Tooltip, etc.).
-        
-        Args:
-            blueprint_name: Name of the Blueprint
-            variable_name: Name of the variable
-            metadata: Dict with metadata fields to set:
-                - instance_editable: bool - Show in Details panel
-                - blueprint_readonly: bool - Read-only in Blueprints
-                - expose_on_spawn: bool - Show when spawning
-                - private: bool - Hide from other Blueprints
-                - category: str - Category in Details panel
-                - tooltip: str - Tooltip text
-                - slider_min: str - Minimum slider value
-                - slider_max: str - Maximum slider value
-            
-        Returns:
-            Dict containing success status
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            response = unreal.send_command("set_blueprint_variable_metadata", {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "metadata": metadata
-            })
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Set metadata for variable {variable_name} in Blueprint {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting Blueprint variable metadata: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    logger.info("Blueprint tools (including metadata tools) registered successfully") 
+    logger.info("Blueprint tools registered successfully") 

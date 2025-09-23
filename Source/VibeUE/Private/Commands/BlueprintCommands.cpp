@@ -73,9 +73,9 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleAddBlueprintVariable(Params);
     }
-    else if (CommandType == TEXT("get_blueprint_variable"))
+    else if (CommandType == TEXT("get_blueprint_variable_info"))
     {
-        return HandleGetBlueprintVariable(Params);
+        return HandleGetBlueprintVariableInfo(Params);
     }
     else if (CommandType == TEXT("delete_blueprint_variable"))
     {
@@ -92,14 +92,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     else if (CommandType == TEXT("set_variable_property"))
     {
         return HandleSetVariableProperty(Params);
-    }
-    else if (CommandType == TEXT("get_blueprint_variable_metadata"))
-    {
-        return HandleGetBlueprintVariableMetadata(Params);
-    }
-    else if (CommandType == TEXT("set_blueprint_variable_metadata"))
-    {
-        return HandleSetBlueprintVariableMetadata(Params);
     }
     
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
@@ -1351,7 +1343,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSh
     return Response;
 }
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const TSharedPtr<FJsonObject>& Params)
 {
     TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     
@@ -1366,13 +1358,13 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSh
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
     }
-    
+
     UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
     if (!Blueprint)
     {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
-    
+
     // Find the variable
     FName VarName(*VariableName);
     FBPVariableDescription* VarDesc = nullptr;
@@ -1385,34 +1377,42 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSh
             break;
         }
     }
-    
+
     if (!VarDesc)
     {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
     }
-    
-    // Build response
+
+    // Build comprehensive response
     Response->SetBoolField(TEXT("success"), true);
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Response->SetStringField(TEXT("variable_name"), VariableName);
     
-    // Get comprehensive type info using reflection-based reverse mapping
-    FString TypeName;
+    // Get the actual variable value using our enhanced reflection system
+    TSharedPtr<FJsonObject> ValueParams = MakeShared<FJsonObject>();
+    ValueParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    ValueParams->SetStringField(TEXT("path"), VariableName);
+    TSharedPtr<FJsonObject> ValueResponse = HandleGetVariableProperty(ValueParams);
     
-    // Debug logging to see what we're actually dealing with
-    FString PinCategoryStr = VarDesc->VarType.PinCategory.ToString();
-    UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has PinCategory: %s"), *VariableName, *PinCategoryStr);
-    
-    // Debug SubCategoryObject if it exists
-    if (VarDesc->VarType.PinSubCategoryObject.IsValid())
+    if (ValueResponse->GetBoolField(TEXT("success")))
     {
-        FString SubCategoryStr = VarDesc->VarType.PinSubCategoryObject->GetName();
-        UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has SubCategoryObject: %s"), *VariableName, *SubCategoryStr);
+        TSharedPtr<FJsonValue> ValueField = ValueResponse->TryGetField(TEXT("value"));
+        if (ValueField.IsValid())
+        {
+            Response->SetField(TEXT("value"), ValueField);
+        }
+        else
+        {
+            Response->SetStringField(TEXT("value"), TEXT("Value not found"));
+        }
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' has no SubCategoryObject"), *VariableName);
+        Response->SetStringField(TEXT("value"), TEXT("Unable to retrieve value"));
     }
+
+    // Get comprehensive type info using reflection-based reverse mapping
+    FString TypeName;
     
     // Basic types
     if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
@@ -1469,13 +1469,70 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSh
     }
     else
         TypeName = TEXT("Unknown");
-    
-    // Debug final result
-    UE_LOG(LogTemp, Warning, TEXT("MCP: Variable '%s' determined as type: %s"), *VariableName, *TypeName);
-    
+
     Response->SetStringField(TEXT("variable_type"), TypeName);
     Response->SetStringField(TEXT("category"), VarDesc->Category.ToString());
     Response->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
+
+    // Get all metadata using our internal metadata system (efficient internal call)
+    TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
+    MetadataParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    MetadataParams->SetStringField(TEXT("variable_name"), VariableName);
+    TSharedPtr<FJsonObject> MetadataResponse = GetBlueprintVariableMetadata(MetadataParams);
+    
+    if (MetadataResponse->GetBoolField(TEXT("success")))
+    {
+        const TSharedPtr<FJsonObject>* MetadataObj;
+        if (MetadataResponse->TryGetObjectField(TEXT("metadata"), MetadataObj))
+        {
+            Response->SetObjectField(TEXT("metadata"), *MetadataObj);
+        }
+        else
+        {
+            Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
+        }
+    }
+    else
+    {
+        Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
+    }
+
+    // Add array/container information if applicable
+    if (VarDesc->VarType.ContainerType != EPinContainerType::None)
+    {
+        FString ContainerType;
+        switch (VarDesc->VarType.ContainerType)
+        {
+        case EPinContainerType::Array:
+            ContainerType = TEXT("Array");
+            break;
+        case EPinContainerType::Set:
+            ContainerType = TEXT("Set");
+            break;
+        case EPinContainerType::Map:
+            ContainerType = TEXT("Map");
+            break;
+        default:
+            ContainerType = TEXT("None");
+            break;
+        }
+        Response->SetStringField(TEXT("container_type"), ContainerType);
+    }
+    else
+    {
+        Response->SetStringField(TEXT("container_type"), TEXT("None"));
+    }
+
+    // Add property flags information
+    TSharedPtr<FJsonObject> FlagsInfo = MakeShared<FJsonObject>();
+    FlagsInfo->SetBoolField(TEXT("is_editable"), (VarDesc->PropertyFlags & CPF_Edit) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc->PropertyFlags & CPF_BlueprintReadOnly) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_expose_on_spawn"), (VarDesc->PropertyFlags & CPF_ExposeOnSpawn) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_private"), (VarDesc->PropertyFlags & CPF_DisableEditOnInstance) != 0);
+    Response->SetObjectField(TEXT("property_flags"), FlagsInfo);
+
+    UE_LOG(LogTemp, Warning, TEXT("MCP: Enhanced variable info for '%s': Type=%s, Container=%s"), 
+           *VariableName, *TypeName, *Response->GetStringField(TEXT("container_type")));
     
     return Response;
 }
@@ -2098,7 +2155,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSha
             MetadataParams->SetStringField(TEXT("blueprint_name"), BPName);
             MetadataParams->SetStringField(TEXT("variable_name"), VarName);
             
-            TSharedPtr<FJsonObject> MetadataResponse = HandleGetBlueprintVariableMetadata(MetadataParams);
+            TSharedPtr<FJsonObject> MetadataResponse = GetBlueprintVariableMetadata(MetadataParams);
             if (MetadataResponse->GetBoolField(TEXT("success")))
             {
                 const TSharedPtr<FJsonObject>* MetadataObj;
@@ -2154,7 +2211,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSha
             MetadataParams->SetStringField(TEXT("variable_name"), VarName);
             MetadataParams->SetObjectField(TEXT("metadata"), MetadataUpdate);
             
-            TSharedPtr<FJsonObject> MetadataResponse = HandleSetBlueprintVariableMetadata(MetadataParams);
+            TSharedPtr<FJsonObject> MetadataResponse = SetBlueprintVariableMetadata(MetadataParams);
             if (MetadataResponse->GetBoolField(TEXT("success")))
             {
                 TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
@@ -2244,7 +2301,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSha
     return Out;
 }
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintCommands::GetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
 {
     FString BPName, VarName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
@@ -2310,7 +2367,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableMetadata(c
     return Response;
 }
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FBlueprintCommands::SetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
 {
     FString BPName, VarName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
