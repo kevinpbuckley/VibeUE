@@ -83,7 +83,7 @@ private:
     TSharedPtr<FJsonObject> HandleAddScrollBox(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddGridPanel(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleRemoveChildFromPanel(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params);  // Universal component removal
     TSharedPtr<FJsonObject> HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params);
 
     // Property Management Methods
@@ -106,6 +106,9 @@ private:
     // Advanced Widget Methods (Active)
     TSharedPtr<FJsonObject> HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params);
+
+    // NEW: Deletion Methods (Active)
+    TSharedPtr<FJsonObject> HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
 
 private:
     

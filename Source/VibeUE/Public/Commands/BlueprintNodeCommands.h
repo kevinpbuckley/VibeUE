@@ -39,6 +39,10 @@ private:
     TSharedPtr<FJsonObject> HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
     
+    // NEW: Deletion command handlers
+    TSharedPtr<FJsonObject> HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params);
+    
 private:
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;

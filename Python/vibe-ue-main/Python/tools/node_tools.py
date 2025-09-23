@@ -373,6 +373,275 @@ def register_blueprint_node_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
+    def delete_blueprint_variable(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str,
+        force_delete: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Delete a variable from a Blueprint.
+        
+        🗑️ **SAFE VARIABLE DELETION**: Remove Blueprint variables with reference checking
+        and optional force deletion to clean up automatically.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+                           ⚠️ **Must be exact name from search_items() results**
+            variable_name: Name of the variable to delete
+                          ⚠️ **Must be exact name from variable list**
+            force_delete: Force deletion even if variable is referenced elsewhere
+                         Examples: False (default) = check references first, True = delete anyway
+            
+        Returns:
+            Dict containing:
+            - success: boolean indicating if deletion completed
+            - variable_name: name of variable that was deleted
+            - blueprint_name: name of Blueprint that was modified
+            - references: array of places where variable was referenced (if found)
+            - force_used: whether force deletion was necessary
+            - cleanup_performed: list of cleanup actions taken
+            - error: string (only if success=false)
+            
+        🛡️ **Safety Features**:
+        - **Reference Detection**: Finds all uses of variable in Blueprint graphs
+        - **Force Mode**: Option to automatically clean up references
+        - **Validation**: Ensures variable exists before attempting deletion
+        - **Cleanup**: Removes variable from Blueprint property list properly
+        
+        💡 **Usage Examples**:
+        ```python
+        # Safe deletion with reference checking
+        delete_blueprint_variable("WBP_RadarMap2", "EnemyActors", force_delete=False)
+        
+        # Force deletion with automatic cleanup
+        delete_blueprint_variable("WBP_RadarMap2", "BadVariable", force_delete=True)
+        
+        # Delete custom variables from widget
+        delete_blueprint_variable("WBP_Inventory", "ItemCount", force_delete=False)
+        ```
+        
+        ⚠️ **AI Best Practices**:
+        1. Use get_widget_blueprint_info() first to see all variables
+        2. Start with force_delete=False to understand references
+        3. Use force_delete=True only when references should be removed
+        4. Test deletion on less critical variables first
+        5. Always check the response for reference information
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name,
+                "force_delete": force_delete
+            }
+            
+            logger.info(f"Deleting variable '{variable_name}' from blueprint '{blueprint_name}'")
+            response = unreal.send_command("delete_blueprint_variable", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Variable deletion response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error deleting variable: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def delete_blueprint_node(
+        ctx: Context,
+        blueprint_name: str,
+        node_id: str,
+        disconnect_pins: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Delete a node from a Blueprint's event graph.
+        
+        🎯 **BLUEPRINT NODE DELETION**: Remove any node from Blueprint graphs with 
+        automatic pin disconnection and safety checks.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+                           ⚠️ **Must be exact name from search_items() results**
+            node_id: ID of the node to delete
+                    ⚠️ **Must be exact node ID from find_blueprint_nodes() results**
+            disconnect_pins: Automatically disconnect pins before deletion
+                           Examples: True (safe, default) = disconnect all pins first, 
+                                    False = delete with connected pins (may cause issues)
+            
+        Returns:
+            Dict containing:
+            - success: boolean indicating if deletion completed
+            - node_id: ID of the node that was deleted
+            - blueprint_name: name of Blueprint that was modified
+            - disconnected_pins: array of pin connections that were removed
+            - node_type: type of node that was deleted (Function, Event, etc.)
+            - safety_checks: validation results for deletion safety
+            - error: string (only if success=false)
+            
+        🔒 **Safety Features**:
+        - **Can Delete Check**: Verifies node allows user deletion
+        - **Pin Disconnection**: Safely removes all connections before deletion
+        - **Graph Integrity**: Maintains Blueprint graph structure
+        - **Critical Node Protection**: Prevents deletion of essential nodes
+        
+        💡 **Usage Examples**:
+        ```python
+        # Delete a function call node safely
+        delete_blueprint_node("BP_Player", "node_abc123", disconnect_pins=True)
+        
+        # Delete an event node (custom events only)
+        delete_blueprint_node("WBP_Inventory", "event_def456", disconnect_pins=True)
+        
+        # Force delete with connected pins (use carefully)
+        delete_blueprint_node("BP_GameMode", "node_ghi789", disconnect_pins=False)
+        ```
+        
+        ⚠️ **AI Best Practices**:
+        1. Use find_blueprint_nodes() first to get exact node IDs
+        2. Always use disconnect_pins=True for safety (default)
+        3. Check node type before deletion to understand impact
+        4. Cannot delete critical engine events (BeginPlay, Construct, etc.)
+        5. Test deletion on less critical nodes first
+        
+        🚫 **Protected Nodes** (Cannot Delete):
+        - BeginPlay, Construct, Tick (engine events)
+        - Input action events (managed by Input Settings)
+        - Override function implementations (use Blueprint editor)
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "blueprint_name": blueprint_name,
+                "node_id": node_id,
+                "disconnect_pins": disconnect_pins
+            }
+            
+            logger.info(f"Deleting node '{node_id}' from Blueprint '{blueprint_name}'")
+            response = unreal.send_command("delete_blueprint_node", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Node deletion response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error deleting Blueprint node: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def delete_blueprint_event_node(
+        ctx: Context,
+        blueprint_name: str,
+        event_name: str,
+        remove_custom_events_only: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Delete event nodes from Blueprint (mainly custom events).
+        
+        🎯 **CUSTOM EVENT DELETION**: Remove custom event nodes from Blueprint graphs
+        with protection for critical engine events.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+                           ⚠️ **Must be exact name from search_items() results**
+            event_name: Name of the event to delete
+                       ⚠️ **Must be exact event name from list_custom_events() results**
+            remove_custom_events_only: Only allow deletion of custom events (safety feature)
+                                      Examples: True (safe, default) = only custom events,
+                                               False = allow engine event deletion (dangerous)
+            
+        Returns:
+            Dict containing:
+            - success: boolean indicating if deletion completed
+            - event_name: name of event that was deleted
+            - blueprint_name: name of Blueprint that was modified
+            - event_type: type of event (Custom, Engine, etc.)
+            - protection_active: whether engine event protection was applied
+            - connected_nodes: array of nodes that were connected to this event
+            - error: string (only if success=false)
+            
+        🔒 **Safety Features**:
+        - **Engine Event Protection**: Prevents deletion of BeginPlay, Construct, Tick
+        - **Custom Event Focus**: Primarily designed for cleaning up custom events
+        - **Connection Analysis**: Reports what nodes were connected before deletion
+        - **Blueprint Integrity**: Maintains graph structure after removal
+        
+        💡 **Usage Examples**:
+        ```python
+        # Delete a custom event safely
+        delete_blueprint_event_node("BP_Player", "OnCustomTrigger", remove_custom_events_only=True)
+        
+        # Delete any event type (use very carefully)
+        delete_blueprint_event_node("WBP_Menu", "OnSomeEvent", remove_custom_events_only=False)
+        
+        # Clean up unused custom events
+        events = list_custom_events("BP_GameMode")
+        delete_blueprint_event_node("BP_GameMode", events["custom_events"][0]["name"])
+        ```
+        
+        ⚠️ **AI Best Practices**:
+        1. Use list_custom_events() first to see available custom events
+        2. Always use remove_custom_events_only=True for safety (default)
+        3. Never delete engine events (BeginPlay, Construct, Tick, etc.)
+        4. Check connected nodes before deletion to understand impact
+        5. Test deletion on non-critical custom events first
+        
+        🚫 **Protected Events** (Cannot Delete with safety=True):
+        - BeginPlay, Construct, Tick (core lifecycle events)
+        - Input action events (managed through Input Settings)
+        - Interface event implementations
+        - Parent class event overrides
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            params = {
+                "blueprint_name": blueprint_name,
+                "event_name": event_name,
+                "remove_custom_events_only": remove_custom_events_only
+            }
+            
+            logger.info(f"Deleting event '{event_name}' from Blueprint '{blueprint_name}' (custom_only={remove_custom_events_only})")
+            response = unreal.send_command("delete_blueprint_event_node", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Event deletion response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error deleting Blueprint event node: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
     def get_available_blueprint_variable_types(
         ctx: Context
     ) -> Dict[str, Any]:

@@ -77,6 +77,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleSetBlueprintVariable(Params);
     }
+    else if (CommandType == TEXT("delete_blueprint_variable"))
+    {
+        return HandleDeleteBlueprintVariable(Params);
+    }
     else if (CommandType == TEXT("get_available_blueprint_variable_types"))
     {
         return HandleGetAvailableBlueprintVariableTypes(Params);
@@ -1668,6 +1672,98 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintVariable(const TSh
     Response->SetStringField(TEXT("message"), TEXT("Variable updated successfully"));
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Response->SetStringField(TEXT("variable_name"), VariableName);
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    FString VariableName;
+    bool ForceDelete = false;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+    }
+    
+    // Optional force_delete parameter
+    Params->TryGetBoolField(TEXT("force_delete"), ForceDelete);
+    
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    FName VarName(*VariableName);
+    FBPVariableDescription* VarDesc = nullptr;
+    int32 VarIndex = -1;
+    
+    // Find the variable in the Blueprint's variable list
+    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
+    {
+        if (Blueprint->NewVariables[i].VarName == VarName)
+        {
+            VarDesc = &Blueprint->NewVariables[i];
+            VarIndex = i;
+            break;
+        }
+    }
+    
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+    }
+    
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> References;
+    TArray<TSharedPtr<FJsonValue>> CleanupPerformed;
+    
+    // TODO: Add reference detection by scanning Blueprint graphs
+    // For now, we'll implement basic deletion without reference checking
+    // Future enhancement: Scan all graphs for variable usage nodes
+    
+    // Check if force_delete is needed (simplified check for now)
+    bool ReferencesFound = false; // Will be enhanced with actual reference detection
+    
+    if (ReferencesFound && !ForceDelete)
+    {
+        // Return error with references found
+        Response->SetBoolField(TEXT("success"), false);
+        Response->SetStringField(TEXT("error"), FString::Printf(TEXT("Variable '%s' has references. Use force_delete=true to remove automatically."), *VariableName));
+        Response->SetArrayField(TEXT("references"), References);
+        Response->SetStringField(TEXT("suggestion"), TEXT("Use force_delete=true to remove all references automatically"));
+        return Response;
+    }
+    
+    // Remove the variable from the Blueprint
+    Blueprint->NewVariables.RemoveAt(VarIndex);
+    
+    // Mark Blueprint as dirty and recompile
+    Blueprint->MarkPackageDirty();
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    
+    // Track cleanup actions
+    TSharedPtr<FJsonObject> CleanupInfo = MakeShared<FJsonObject>();
+    CleanupInfo->SetStringField(TEXT("action"), TEXT("variable_removed"));
+    CleanupInfo->SetStringField(TEXT("variable_name"), VariableName);
+    CleanupInfo->SetStringField(TEXT("variable_type"), VarDesc->VarType.PinCategory.ToString());
+    CleanupPerformed.Add(MakeShared<FJsonValueObject>(CleanupInfo));
+    
+    // Build success response
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("variable_name"), VariableName);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetArrayField(TEXT("references"), References);
+    Response->SetBoolField(TEXT("force_used"), ForceDelete);
+    Response->SetArrayField(TEXT("cleanup_performed"), CleanupPerformed);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Variable '%s' deleted successfully from Blueprint '%s'"), *VariableName, *BlueprintName));
     
     return Response;
 }

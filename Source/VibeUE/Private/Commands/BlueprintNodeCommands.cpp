@@ -112,6 +112,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& Com
         UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetBlueprintNodeProperty (Reflection)"));
         return HandleGetBlueprintNodeProperty(Params);
     }
+    // NEW: Deletion commands
+    else if (CommandType == TEXT("delete_blueprint_node"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleDeleteBlueprintNode"));
+        return HandleDeleteBlueprintNode(Params);
+    }
+    else if (CommandType == TEXT("delete_blueprint_event_node"))
+    {
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleDeleteBlueprintEventNode"));
+        return HandleDeleteBlueprintEventNode(Params);
+    }
     
     UE_LOG(LogVibeUE, Error, TEXT("MCP: Unknown blueprint node command: %s"), *CommandType);
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint node command: %s"), *CommandType));
@@ -1339,4 +1350,276 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(c
         return ReflectionCommands->HandleGetBlueprintNodeProperty(Params);
     }
     return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    FString NodeID;
+    bool DisconnectPins = true;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing node_id parameter"));
+    }
+    
+    // Optional parameter with default
+    Params->TryGetBoolField(TEXT("disconnect_pins"), DisconnectPins);
+    
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Find the Event Graph
+    UEdGraph* EventGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph && Graph->GetFName() == "EventGraph")
+        {
+            EventGraph = Graph;
+            break;
+        }
+    }
+    
+    if (!EventGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found in Blueprint"));
+    }
+    
+    // Find the node by ID
+    UEdGraphNode* NodeToDelete = nullptr;
+    for (UEdGraphNode* Node : EventGraph->Nodes)
+    {
+        if (Node && Node->GetName() == NodeID)
+        {
+            NodeToDelete = Node;
+            break;
+        }
+    }
+    
+    if (!NodeToDelete)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
+    }
+    
+    // Safety check: Can the user delete this node?
+    if (!NodeToDelete->CanUserDeleteNode())
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeID));
+    }
+    
+    // Collect information about disconnected pins for response
+    TArray<TSharedPtr<FJsonValue>> DisconnectedPins;
+    
+    if (DisconnectPins)
+    {
+        // Disconnect all pins before deletion
+        for (UEdGraphPin* Pin : NodeToDelete->Pins)
+        {
+            if (Pin && Pin->LinkedTo.Num() > 0)
+            {
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    TSharedPtr<FJsonObject> PinInfo = MakeShareable(new FJsonObject);
+                    PinInfo->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
+                    PinInfo->SetStringField(TEXT("pin_type"), Pin->PinType.PinCategory.ToString());
+                    PinInfo->SetStringField(TEXT("linked_node"), LinkedPin->GetOwningNode()->GetName());
+                    PinInfo->SetStringField(TEXT("linked_pin"), LinkedPin->PinName.ToString());
+                    DisconnectedPins.Add(MakeShareable(new FJsonValueObject(PinInfo)));
+                }
+                
+                // Break all connections
+                Pin->BreakAllPinLinks();
+            }
+        }
+    }
+    
+    // Store node information before deletion
+    FString NodeType = NodeToDelete->GetClass()->GetName();
+    
+    // Remove the node from the graph
+    EventGraph->RemoveNode(NodeToDelete, true);
+    
+    // Mark Blueprint as modified and recompile
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    
+    // Create success response
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Result->SetStringField(TEXT("node_id"), NodeID);
+    Result->SetStringField(TEXT("node_type"), NodeType);
+    Result->SetArrayField(TEXT("disconnected_pins"), DisconnectedPins);
+    Result->SetBoolField(TEXT("pins_disconnected"), DisconnectPins);
+    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
+    
+    TSharedPtr<FJsonObject> SafetyChecks = MakeShareable(new FJsonObject);
+    SafetyChecks->SetBoolField(TEXT("can_delete_check_passed"), true);
+    SafetyChecks->SetBoolField(TEXT("is_protected_node"), false);
+    SafetyChecks->SetNumberField(TEXT("pins_disconnected_count"), DisconnectedPins.Num());
+    Result->SetObjectField(TEXT("safety_checks"), SafetyChecks);
+    
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    FString EventName;
+    bool RemoveCustomEventsOnly = true;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+    }
+    
+    if (!Params->TryGetStringField(TEXT("event_name"), EventName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing event_name parameter"));
+    }
+    
+    // Optional parameter with default
+    Params->TryGetBoolField(TEXT("remove_custom_events_only"), RemoveCustomEventsOnly);
+    
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Find the Event Graph
+    UEdGraph* EventGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph && Graph->GetFName() == "EventGraph")
+        {
+            EventGraph = Graph;
+            break;
+        }
+    }
+    
+    if (!EventGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found in Blueprint"));
+    }
+    
+    // Find the event node
+    UK2Node_Event* EventNode = nullptr;
+    UK2Node_CustomEvent* CustomEventNode = nullptr;
+    FString EventType = TEXT("Unknown");
+    
+    for (UEdGraphNode* Node : EventGraph->Nodes)
+    {
+        if (UK2Node_Event* Event = Cast<UK2Node_Event>(Node))
+        {
+            FString NodeEventName = Event->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+            if (NodeEventName.Contains(EventName) || Event->EventReference.GetMemberName().ToString() == EventName)
+            {
+                EventNode = Event;
+                
+                // Check if it's a custom event
+                if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Event))
+                {
+                    CustomEventNode = CustomEvent;
+                    EventType = TEXT("Custom");
+                }
+                else
+                {
+                    EventType = TEXT("Engine");
+                }
+                break;
+            }
+        }
+    }
+    
+    if (!EventNode)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Event '%s' not found in Blueprint"), *EventName));
+    }
+    
+    // Safety check: Protect engine events if safety is enabled
+    if (RemoveCustomEventsOnly && EventType == TEXT("Engine"))
+    {
+        // Check for protected engine events
+        FString EventMemberName = EventNode->EventReference.GetMemberName().ToString();
+        if (EventMemberName == TEXT("ReceiveBeginPlay") || 
+            EventMemberName == TEXT("ReceiveConstruct") || 
+            EventMemberName == TEXT("ReceiveTick") ||
+            EventMemberName == TEXT("ReceiveEndPlay") ||
+            EventMemberName.StartsWith(TEXT("InputAction")) ||
+            EventMemberName.StartsWith(TEXT("InputAxis")))
+        {
+            return FCommonUtils::CreateErrorResponse(FString::Printf(
+                TEXT("Cannot delete protected engine event '%s'. Use remove_custom_events_only=false to override (not recommended)"), 
+                *EventName
+            ));
+        }
+    }
+    
+    // Safety check: Can the user delete this node?
+    if (!EventNode->CanUserDeleteNode())
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Event node '%s' cannot be deleted (protected)"), *EventName));
+    }
+    
+    // Collect information about connected nodes
+    TArray<TSharedPtr<FJsonValue>> ConnectedNodes;
+    
+    for (UEdGraphPin* Pin : EventNode->Pins)
+    {
+        if (Pin && Pin->LinkedTo.Num() > 0)
+        {
+            for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+            {
+                TSharedPtr<FJsonObject> NodeInfo = MakeShareable(new FJsonObject);
+                NodeInfo->SetStringField(TEXT("connected_node"), LinkedPin->GetOwningNode()->GetName());
+                NodeInfo->SetStringField(TEXT("connected_node_type"), LinkedPin->GetOwningNode()->GetClass()->GetName());
+                NodeInfo->SetStringField(TEXT("pin_name"), LinkedPin->PinName.ToString());
+                ConnectedNodes.Add(MakeShareable(new FJsonValueObject(NodeInfo)));
+            }
+            
+            // Break all connections
+            Pin->BreakAllPinLinks();
+        }
+    }
+    
+    // Remove the event node from the graph
+    EventGraph->RemoveNode(EventNode, true);
+    
+    // Mark Blueprint as modified and recompile
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    
+    // Create success response
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Result->SetStringField(TEXT("event_name"), EventName);
+    Result->SetStringField(TEXT("event_type"), EventType);
+    Result->SetBoolField(TEXT("protection_active"), RemoveCustomEventsOnly);
+    Result->SetArrayField(TEXT("connected_nodes"), ConnectedNodes);
+    Result->SetNumberField(TEXT("connected_nodes_count"), ConnectedNodes.Num());
+    Result->SetStringField(TEXT("message"), FString::Printf(
+        TEXT("%s event '%s' successfully deleted from Blueprint '%s'"), 
+        *EventType, *EventName, *BlueprintName
+    ));
+    
+    // Add safety information
+    TSharedPtr<FJsonObject> SafetyInfo = MakeShareable(new FJsonObject);
+    SafetyInfo->SetBoolField(TEXT("custom_events_only"), RemoveCustomEventsOnly);
+    SafetyInfo->SetBoolField(TEXT("is_custom_event"), EventType == TEXT("Custom"));
+    SafetyInfo->SetBoolField(TEXT("is_protected_event"), false);  // If we got here, it wasn't protected
+    Result->SetObjectField(TEXT("safety_info"), SafetyInfo);
+    
+    return Result;
 }

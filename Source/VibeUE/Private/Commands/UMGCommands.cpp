@@ -545,9 +545,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	{
 		return HandleAddChildToPanel(Params);
 	}
-	else if (CommandName == TEXT("remove_child_from_panel"))
+	else if (CommandName == TEXT("remove_umg_component"))
 	{
-		return HandleRemoveChildFromPanel(Params);
+		return HandleRemoveUMGComponent(Params);
 	}
 	else if (CommandName == TEXT("set_widget_slot_properties"))
 	{
@@ -586,6 +586,10 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	else if (CommandName == TEXT("get_available_events"))
 	{
 		return HandleGetAvailableEvents(Params);
+	}
+	else if (CommandName == TEXT("delete_widget_blueprint"))
+	{
+		return HandleDeleteWidgetBlueprint(Params);
 	}
 
 	// All event handling, data binding, animation, and bulk operations have been removed
@@ -2833,26 +2837,26 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJs
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveChildFromPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
-	FString ParentPanelName;
-	FString ChildWidgetName;
+	FString ComponentName;
+	bool RemoveChildren = true;
+	bool RemoveFromVariables = true;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
-	if (!Params->TryGetStringField(TEXT("parent_panel_name"), ParentPanelName))
+	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
 	
-	if (!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
-	}
+	// Optional parameters with defaults
+	Params->TryGetBoolField(TEXT("remove_children"), RemoveChildren);
+	Params->TryGetBoolField(TEXT("remove_from_variables"), RemoveFromVariables);
 	
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
@@ -2860,41 +2864,154 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveChildFromPanel(const TSharedPt
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 	
-
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
 	if (!WidgetTree)
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
 	}
 
-	UWidget* ParentPanel = WidgetTree->FindWidget(FName(*ParentPanelName));
-	UWidget* ChildWidget = WidgetTree->FindWidget(FName(*ChildWidgetName));
-	if (!ParentPanel)
+	// Find the target component
+	UWidget* TargetComponent = WidgetTree->FindWidget(FName(*ComponentName));
+	if (!TargetComponent)
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
-	}
-	if (!ChildWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
 	}
 
-	UPanelWidget* PanelWidget = Cast<UPanelWidget>(ParentPanel);
-	if (!PanelWidget)
+	// Prepare response data
+	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+	TArray<TSharedPtr<FJsonValue>> RemovedComponents;
+	TArray<TSharedPtr<FJsonValue>> OrphanedChildren;
+	
+	// Function to recursively collect all child components
+	TFunction<void(UWidget*, TArray<UWidget*>&)> CollectChildren = [&](UWidget* Widget, TArray<UWidget*>& Children) -> void
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				UWidget* Child = Panel->GetChildAt(i);
+				if (Child)
+				{
+					Children.Add(Child);
+					CollectChildren(Child, Children);  // Recursive collection
+				}
+			}
+		}
+	};
+
+	// Collect all children of the target component
+	TArray<UWidget*> AllChildren;
+	CollectChildren(TargetComponent, AllChildren);
+	
+	// Handle children based on remove_children flag
+	if (!RemoveChildren && AllChildren.Num() > 0)
+	{
+		// Reparent children to root (or appropriate parent)
+		UWidget* RootWidget = WidgetTree->RootWidget;
+		if (UPanelWidget* RootPanel = Cast<UPanelWidget>(RootWidget))
+		{
+			for (UWidget* Child : AllChildren)
+			{
+				// Remove from current parent first
+				if (UWidget* CurrentParent = Child->GetParent())
+				{
+					if (UPanelWidget* CurrentPanel = Cast<UPanelWidget>(CurrentParent))
+					{
+						CurrentPanel->RemoveChild(Child);
+					}
+				}
+				
+				// Add to root panel
+				RootPanel->AddChild(Child);
+				
+				// Track orphaned children
+				TSharedPtr<FJsonObject> OrphanInfo = MakeShareable(new FJsonObject);
+				OrphanInfo->SetStringField(TEXT("name"), Child->GetName());
+				OrphanInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
+				OrphanedChildren.Add(MakeShared<FJsonValueObject>(OrphanInfo));
+			}
+		}
 	}
-
-	PanelWidget->RemoveChild(ChildWidget);
-
+	
+	// Remove the target component from its parent
+	UWidget* ParentWidget = TargetComponent->GetParent();
+	FString ParentName = ParentWidget ? ParentWidget->GetName() : TEXT("Root");
+	FString ParentType = ParentWidget ? ParentWidget->GetClass()->GetName() : TEXT("N/A");
+	
+	if (ParentWidget)
+	{
+		if (UPanelWidget* ParentPanel = Cast<UPanelWidget>(ParentWidget))
+		{
+			ParentPanel->RemoveChild(TargetComponent);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
+		}
+	}
+	else
+	{
+		// Removing root widget
+		if (WidgetTree->RootWidget == TargetComponent)
+		{
+			WidgetTree->RootWidget = nullptr;
+		}
+	}
+	
+	// Track the main removed component
+	TSharedPtr<FJsonObject> MainComponentInfo = MakeShareable(new FJsonObject);
+	MainComponentInfo->SetStringField(TEXT("name"), ComponentName);
+	MainComponentInfo->SetStringField(TEXT("type"), TargetComponent->GetClass()->GetName());
+	RemovedComponents.Add(MakeShared<FJsonValueObject>(MainComponentInfo));
+	
+	// Add children to removed components if they were removed
+	if (RemoveChildren)
+	{
+		for (UWidget* Child : AllChildren)
+		{
+			TSharedPtr<FJsonObject> ChildInfo = MakeShareable(new FJsonObject);
+			ChildInfo->SetStringField(TEXT("name"), Child->GetName());
+			ChildInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
+			RemovedComponents.Add(MakeShared<FJsonValueObject>(ChildInfo));
+		}
+	}
+	
+	// Handle variable cleanup if requested
+	bool VariableCleanupPerformed = false;
+	if (RemoveFromVariables)
+	{
+		// Find and remove the Blueprint variable for this component
+		for (int32 i = WidgetBlueprint->NewVariables.Num() - 1; i >= 0; i--)
+		{
+			if (WidgetBlueprint->NewVariables[i].VarName.ToString() == ComponentName)
+			{
+				WidgetBlueprint->NewVariables.RemoveAt(i);
+				VariableCleanupPerformed = true;
+				break;
+			}
+		}
+	}
+	
+	// Mark Blueprint as dirty and recompile
 	WidgetBlueprint->MarkPackageDirty();
 	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+	
+	// Build response
 	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("parent_panel_name"), ParentPanelName);
-	Result->SetStringField(TEXT("child_widget_name"), ChildWidgetName);
 	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("note"), TEXT("Child widget removed from parent panel"));
+	Result->SetStringField(TEXT("component_name"), ComponentName);
+	Result->SetArrayField(TEXT("removed_components"), RemovedComponents);
+	Result->SetArrayField(TEXT("orphaned_children"), OrphanedChildren);
+	Result->SetBoolField(TEXT("variable_cleanup"), VariableCleanupPerformed);
+	
+	// Parent info
+	TSharedPtr<FJsonObject> ParentInfo = MakeShareable(new FJsonObject);
+	ParentInfo->SetStringField(TEXT("name"), ParentName);
+	ParentInfo->SetStringField(TEXT("type"), ParentType);
+	Result->SetObjectField(TEXT("parent_info"), ParentInfo);
+	
+	Result->SetStringField(TEXT("note"), FString::Printf(TEXT("Universal component removal completed. Removed %d components, orphaned %d children"), RemovedComponents.Num(), OrphanedChildren.Num()));
+	
 	return Result;
 }
 
@@ -4742,3 +4859,119 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedP
 // ============================================================================
 // NEW BULK OPERATIONS AND IMPROVED FUNCTIONALITY - Added based on Issues Report
 // ============================================================================
+
+TSharedPtr<FJsonObject> FUMGCommands::HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
+{
+    FString WidgetName;
+    bool CheckReferences = true;
+    
+    if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+    }
+    
+    // Optional parameter with default
+    Params->TryGetBoolField(TEXT("check_references"), CheckReferences);
+    
+    // Find the Widget Blueprint asset
+    UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
+    if (!WidgetBlueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
+    }
+    
+    // Get the asset path
+    FString AssetPath = WidgetBlueprint->GetPathName();
+    
+    // Reference checking (if requested)
+    TArray<TSharedPtr<FJsonValue>> ReferencesFound;
+    int32 ReferenceCount = 0;
+    
+    if (CheckReferences)
+    {
+        // Use the Asset Registry to find references
+        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+        IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+        
+        TArray<FName> PackageNamesReferencingAsset;
+        AssetRegistry.GetReferencers(WidgetBlueprint->GetPackage()->GetFName(), PackageNamesReferencingAsset);
+        
+        for (const FName& PackageName : PackageNamesReferencingAsset)
+        {
+            // Skip self-references
+            if (PackageName == WidgetBlueprint->GetPackage()->GetFName())
+            {
+                continue;
+            }
+            
+            TSharedPtr<FJsonObject> RefInfo = MakeShareable(new FJsonObject);
+            RefInfo->SetStringField(TEXT("package_name"), PackageName.ToString());
+            RefInfo->SetStringField(TEXT("reference_type"), TEXT("Asset Registry"));
+            ReferencesFound.Add(MakeShareable(new FJsonValueObject(RefInfo)));
+            ReferenceCount++;
+        }
+        
+        // If references found and we want to check, report but don't block deletion
+        // (User can decide based on the reference information)
+    }
+    
+    // Check if asset is currently open in editor (skip check for now)
+    bool IsOpenInEditor = false;
+    
+    // Perform the deletion using UEditorAssetLibrary
+    bool DeletionSuccess = false;
+    FString DeletionError;
+    
+    try
+    {
+        // Use the Editor Asset Library to delete the asset
+        TArray<FString> AssetsToDelete;
+        AssetsToDelete.Add(AssetPath);
+        
+        // Delete the asset
+        DeletionSuccess = UEditorAssetLibrary::DeleteAsset(AssetsToDelete[0]);
+        
+        if (!DeletionSuccess)
+        {
+            DeletionError = TEXT("UEditorAssetLibrary::DeleteAsset returned false");
+        }
+    }
+    catch (const std::exception& e)
+    {
+        DeletionError = FString::Printf(TEXT("Exception during deletion: %s"), ANSI_TO_TCHAR(e.what()));
+    }
+    
+    // Create response
+    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+    Result->SetBoolField(TEXT("success"), DeletionSuccess);
+    Result->SetStringField(TEXT("widget_name"), WidgetName);
+    Result->SetStringField(TEXT("asset_path"), AssetPath);
+    Result->SetArrayField(TEXT("references_found"), ReferencesFound);
+    Result->SetNumberField(TEXT("reference_count"), ReferenceCount);
+    Result->SetBoolField(TEXT("deletion_blocked"), !DeletionSuccess);
+    Result->SetBoolField(TEXT("was_open_in_editor"), IsOpenInEditor);
+    Result->SetBoolField(TEXT("references_checked"), CheckReferences);
+    
+    if (DeletionSuccess)
+    {
+        Result->SetStringField(TEXT("message"), FString::Printf(
+            TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName
+        ));
+        
+        // Add reference warning if any were found
+        if (ReferenceCount > 0)
+        {
+            Result->SetStringField(TEXT("warning"), FString::Printf(
+                TEXT("Widget was referenced by %d other assets - those references may now be broken"), ReferenceCount
+            ));
+        }
+    }
+    else
+    {
+        Result->SetStringField(TEXT("error"), DeletionError.IsEmpty() ? 
+            TEXT("Failed to delete Widget Blueprint for unknown reason") : DeletionError
+        );
+    }
+    
+    return Result;
+}

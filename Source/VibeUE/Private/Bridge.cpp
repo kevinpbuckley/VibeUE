@@ -248,6 +248,7 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("add_blueprint_variable") ||
                      CommandType == TEXT("get_blueprint_variable") ||
                      CommandType == TEXT("set_blueprint_variable") ||
+                     CommandType == TEXT("delete_blueprint_variable") ||
                      CommandType == TEXT("get_available_blueprint_variable_types"))
             {
                 ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
@@ -268,13 +269,16 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("add_blueprint_function_node") ||
                      CommandType == TEXT("add_blueprint_get_component_node") ||
                      CommandType == TEXT("get_available_blueprint_nodes") ||
-                     CommandType == TEXT("add_blueprint_node"))
+                     CommandType == TEXT("add_blueprint_node") ||
+                     CommandType == TEXT("delete_blueprint_node") ||
+                     CommandType == TEXT("delete_blueprint_event_node"))
             {
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
             }
             // UMG Commands (Reflection-based system)
             else if (CommandType == TEXT("create_umg_widget_blueprint") ||
+                     CommandType == TEXT("delete_widget_blueprint") ||
                      // UMG Discovery Commands
                      CommandType == TEXT("search_items") ||
                      CommandType == TEXT("get_widget_blueprint_info") ||
@@ -285,7 +289,7 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("remove_widget_component") ||
                      // UMG Child Management
                      CommandType == TEXT("add_child_to_panel") ||
-                     CommandType == TEXT("remove_child_from_panel") ||
+                     CommandType == TEXT("remove_umg_component") ||  // Universal component removal
                      CommandType == TEXT("set_widget_slot_properties") ||
                      // UMG Styling Commands
                      CommandType == TEXT("set_widget_property") ||
