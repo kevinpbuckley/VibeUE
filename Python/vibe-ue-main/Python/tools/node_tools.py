@@ -77,43 +77,39 @@ def register_blueprint_node_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """
         Add an input action event node to a Blueprint's event graph.
-        
+
         Args:
             blueprint_name: Name of the target Blueprint
             action_name: Name of the input action to respond to
             node_position: Optional [X, Y] position in the graph
-            
-        Returns:
-            Response containing the node ID and success status
         """
         from vibe_ue_server import get_unreal_connection
-        
+
         try:
-            # Handle default value within the method body
             if node_position is None:
                 node_position = [0, 0]
-            
+
             params = {
                 "blueprint_name": blueprint_name,
                 "action_name": action_name,
                 "node_position": node_position
             }
-            
+
             unreal = get_unreal_connection()
             if not unreal:
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
+
             logger.info(f"Adding input action node for '{action_name}' to blueprint '{blueprint_name}'")
             response = unreal.send_command("add_blueprint_input_action_node", params)
-            
+
             if not response:
                 logger.error("No response from Unreal Engine")
                 return {"success": False, "message": "No response from Unreal Engine"}
-            
+
             logger.info(f"Input action node creation response: {response}")
             return response
-            
+
         except Exception as e:
             error_msg = f"Error adding input action node: {e}"
             logger.error(error_msg)
@@ -142,14 +138,14 @@ def register_blueprint_node_tools(mcp: FastMCP):
             Response containing the node ID and success status
         """
         from vibe_ue_server import get_unreal_connection
-        
+
         try:
             # Handle default values within the method body
             if params is None:
                 params = {}
             if node_position is None:
                 node_position = [0, 0]
-            
+
             command_params = {
                 "blueprint_name": blueprint_name,
                 "target": target,
@@ -157,22 +153,22 @@ def register_blueprint_node_tools(mcp: FastMCP):
                 "params": params,
                 "node_position": node_position
             }
-            
+
             unreal = get_unreal_connection()
             if not unreal:
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
+
             logger.info(f"Adding function node '{function_name}' to blueprint '{blueprint_name}'")
             response = unreal.send_command("add_blueprint_function_node", command_params)
-            
+
             if not response:
                 logger.error("No response from Unreal Engine")
                 return {"success": False, "message": "No response from Unreal Engine"}
-            
+
             logger.info(f"Function node creation response: {response}")
             return response
-            
+
         except Exception as e:
             error_msg = f"Error adding function node: {e}"
             logger.error(error_msg)
@@ -688,104 +684,7 @@ def register_blueprint_node_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def add_blueprint_get_self_component_reference(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        node_position = None
-    ) -> Dict[str, Any]:
-        """
-        Add a node that gets a reference to a component owned by the current Blueprint.
-        This creates a node similar to what you get when dragging a component from the Components panel.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_name: Name of the component to get a reference to
-            node_position: Optional [X, Y] position in the graph
-            
-        Returns:
-            Response containing the node ID and success status
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            # Handle None case explicitly in the function
-            if node_position is None:
-                node_position = [0, 0]
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "node_position": node_position
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Adding self component reference node for '{component_name}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_get_self_component_reference", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Self component reference node creation response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding self component reference node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def add_blueprint_self_reference(
-        ctx: Context,
-        blueprint_name: str,
-        node_position = None
-    ) -> Dict[str, Any]:
-        """
-        Add a 'Get Self' node to a Blueprint's event graph that returns a reference to this actor.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            node_position: Optional [X, Y] position in the graph
-            
-        Returns:
-            Response containing the node ID and success status
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            if node_position is None:
-                node_position = [0, 0]
-                
-            params = {
-                "blueprint_name": blueprint_name,
-                "node_position": node_position
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Adding self reference node to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_self_reference", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Self reference node creation response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding self reference node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
     
     @mcp.tool()
     def find_blueprint_nodes(

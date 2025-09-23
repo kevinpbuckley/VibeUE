@@ -133,7 +133,13 @@ def main():
                 "static_mesh": "/Engine/BasicShapes/Cube.Cube"
             }
             
-            response = send_command(sock, "set_static_mesh_properties", mesh_params)
+            # Use generic component property setter now
+            response = send_command(sock, "set_component_property", {
+                "blueprint_name": mesh_params["blueprint_name"],
+                "component_name": mesh_params["component_name"],
+                "property_name": "StaticMesh",
+                "property_value": mesh_params["static_mesh"]
+            })
             
             # Fixed response check to handle nested structure
             if not response or response.get("status") != "success":

@@ -90,18 +90,14 @@ private:
     TSharedPtr<FJsonObject> HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleSetWidgetZOrder(const TSharedPtr<FJsonObject>& Params);
+    // set_widget_transform/visibility/z_order removed
 
     // Event and Data Binding Methods (Active)
     TSharedPtr<FJsonObject> HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params);
 
     // List and View Methods (Active)
-    TSharedPtr<FJsonObject> HandleAddListView(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleAddTileView(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleAddTreeView(const TSharedPtr<FJsonObject>& Params);
+    // add_list_view/add_tile_view/add_tree_view removed
 
     // Advanced Widget Methods (Active)
     TSharedPtr<FJsonObject> HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params);

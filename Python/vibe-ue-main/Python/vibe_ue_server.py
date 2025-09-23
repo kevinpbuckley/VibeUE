@@ -1031,10 +1031,8 @@ def info():
     - `add_widget_switcher(widget_name, switcher_name, position=[0,0], size=[400,300], active_widget_index=0)`
       Tab-like switching container
     
-    ### Data Visualization
-    - `add_list_view(widget_name, list_name, position=[0,0], size=[300,200], item_height=32, selection_mode="Single")`
-    - `add_tile_view(widget_name, tile_name, position=[0,0], size=[400,300], tile_width=128, tile_height=128)`
-    - `add_tree_view(widget_name, tree_name, position=[0,0], size=[300,250], item_height=24)`
+  ### Data Visualization
+  - (removed) List/Tile/Tree view helpers — use `add_widget_component` and `set_widget_property` instead
     
     ### Advanced Layout Management
     - `add_child_to_panel(widget_name, parent_panel_name, child_widget_name, slot_index=-1, position=None, size=None)`
@@ -1079,12 +1077,7 @@ def info():
       Set any property on any widget component (supports complex types)
     - `set_widget_style(widget_name, component_name, style_properties)`
       Set multiple style properties at once
-    - `set_widget_transform(widget_name, component_name, position=None, size=None, scale=None, rotation=None, anchor_min=None, anchor_max=None, alignment=None)`
-      Set comprehensive transform and layout properties
-    - `set_widget_visibility(widget_name, component_name, visibility="Visible")`
-      Control widget visibility ("Visible", "Hidden", "Collapsed", "HitTestInvisible")
-    - `set_widget_z_order(widget_name, component_name, z_order)`
-      Set widget layering order
+    - (removed) Transform/visibility/z-order helpers — set slot and render properties via `set_widget_property`
     - `set_widget_slot_properties(widget_name, widget_component_name, slot_properties)`
       Set slot-specific properties (padding, alignment, etc.)
     
@@ -1147,10 +1140,7 @@ def info():
     ### Component Management
     - `add_component_to_blueprint(blueprint_name, component_type, component_name, location=[], rotation=[], scale=[], component_properties={})`
       Add components to Blueprints
-    - `set_static_mesh_properties(blueprint_name, component_name, static_mesh="/Engine/BasicShapes/Cube.Cube")`
-      Configure static mesh components
-    - `set_physics_properties(blueprint_name, component_name, simulate_physics=True, mass=1, linear_damping=0.01, angular_damping=0, gravity_enabled=True)`
-      Configure physics properties
+    - (removed) Static mesh/physics helpers — use `set_component_property` and reflection tools
     - `set_blueprint_property(blueprint_name, property_name, property_value)`
       Set Blueprint class default properties
     - `set_component_property(blueprint_name, component_name, property_name, property_value)`
@@ -1184,10 +1174,7 @@ def info():
       Add function call nodes
     - `add_blueprint_variable(blueprint_name, variable_name, variable_type, is_exposed=False)`
       Add variables to Blueprint
-    - `add_blueprint_get_self_component_reference(blueprint_name, component_name, node_position=None)`
-      Add component reference nodes
-    - `add_blueprint_self_reference(blueprint_name, node_position=None)`
-      Add self reference nodes
+    - (removed) Self/component reference helpers — use reflection-based node creation
     - `connect_blueprint_nodes(blueprint_name, source_node_id, source_pin, target_node_id, target_pin)`
       Connect nodes in Blueprint graphs
     

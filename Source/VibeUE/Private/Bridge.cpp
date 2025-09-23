@@ -239,10 +239,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             else if (CommandType == TEXT("create_blueprint") || 
                      CommandType == TEXT("add_component_to_blueprint") || 
                      CommandType == TEXT("set_component_property") || 
-                     CommandType == TEXT("set_physics_properties") || 
                      CommandType == TEXT("compile_blueprint") || 
                      CommandType == TEXT("set_blueprint_property") || 
-                     CommandType == TEXT("set_static_mesh_properties") ||
                      CommandType == TEXT("reparent_blueprint") ||
                      // Blueprint Variable Commands
                      CommandType == TEXT("add_blueprint_variable") ||
@@ -255,8 +253,6 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             }
             // Blueprint Node Commands
             else if (CommandType == TEXT("connect_blueprint_nodes") || 
-                     CommandType == TEXT("add_blueprint_get_self_component_reference") ||
-                     CommandType == TEXT("add_blueprint_self_reference") ||
                      CommandType == TEXT("find_blueprint_nodes") ||
                      CommandType == TEXT("list_event_graph_nodes") ||
                      CommandType == TEXT("get_node_details") ||
@@ -295,9 +291,6 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("set_widget_property") ||
                      CommandType == TEXT("get_widget_property") ||
                      CommandType == TEXT("list_widget_properties") ||
-                     CommandType == TEXT("set_widget_transform") ||
-                     CommandType == TEXT("set_widget_visibility") ||
-                     CommandType == TEXT("set_widget_z_order") ||
                      // UMG Event Commands
                      CommandType == TEXT("bind_input_events") ||
                      CommandType == TEXT("get_available_events"))

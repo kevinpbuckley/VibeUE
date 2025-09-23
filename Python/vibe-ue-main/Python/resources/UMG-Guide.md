@@ -173,12 +173,13 @@ compile_blueprint("WBP_Inventory")
 - **add_overlay()** - Creates proper Overlay widgets for layering (essential for Canvas backgrounds)
 - **add_canvas_panel()** - Creates Canvas panels for absolute positioning  
 - **add_image()** - Adds image widgets for backgrounds and decorations
-- **set_widget_transform()** - Sets position, size, anchors properly
-- **set_widget_z_order()** - Controls layering order
+- 
+    Use `set_widget_property()` for layout-related struct values and slot configuration:
+    - Position/Size/Anchors/Alignment via `Slot.*` and transform-related properties
+    - Z-order via `Slot.ZOrder` or parent-specific slot properties
 
 ### Styling Tools
-- **set_widget_property()** - Sets individual widget properties
-- **set_widget_visibility()** - Controls widget visibility states
+- **set_widget_property()** - Sets individual widget and slot properties
 - **compile_blueprint()** - REQUIRED: Compiles widget after styling changes
 - **add_child_to_panel()** - Properly parents widgets to containers
 
@@ -222,21 +223,18 @@ set_widget_property("Widget", "Background", "ColorAndOpacity", {"R": 0.05, "G": 
 add_overlay(widget_name="MyWidget", overlay_name="Overlay_MainBackground", parent_name="CanvasPanel_Body")
 ```
 
-**Step 2**: Size Overlay to fill entire Canvas Panel
+**Step 2**: Size Overlay to fill entire Canvas Panel (via slot and render transform)
 ```python
-set_widget_transform(
-    widget_name="MyWidget", 
-    component_name="Overlay_MainBackground",
-    anchor_min=[0, 0], 
-    anchor_max=[1, 1], 
-    position=[0, 0], 
-    size=[0, 0]
-)
+set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.Anchors.Minimum", [0, 0])
+set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.Anchors.Maximum", [1, 1])
+set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.Alignment", [0, 0])
+set_widget_property("MyWidget", "Overlay_MainBackground", "RenderTransform.Translation", [0, 0])
+set_widget_property("MyWidget", "Overlay_MainBackground", "RenderTransform.Scale", [1, 1])
 ```
 
 **Step 3**: Set Overlay Z-order behind content
 ```python
-set_widget_z_order(widget_name="MyWidget", component_name="Overlay_MainBackground", z_order=-15)
+set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.ZOrder", -15)
 ```
 
 **Step 4**: Add background image to Overlay
@@ -244,34 +242,23 @@ set_widget_z_order(widget_name="MyWidget", component_name="Overlay_MainBackgroun
 add_image(widget_name="MyWidget", image_name="MainBackground", parent_name="Overlay_MainBackground", ...)
 ```
 
-**Step 5**: Set background image transform with large size
+**Step 5**: Set background image fill via slot properties
 ```python
-set_widget_transform(
-    widget_name="MyWidget",
-    component_name="MainBackground",
-    anchor_min=[0, 0], 
-    anchor_max=[1, 1], 
-    position=[0, 0], 
-    size=[10000, 10000]  # Large size ensures complete fill
-)
+set_widget_property("MyWidget", "MainBackground", "Slot.Anchors.Minimum", [0, 0])
+set_widget_property("MyWidget", "MainBackground", "Slot.Anchors.Maximum", [1, 1])
+set_widget_property("MyWidget", "MainBackground", "Slot.Alignment", [0, 0])
+set_widget_property("MyWidget", "MainBackground", "Slot.Offset", [0, 0, 0, 0])
 ```
 
-**Step 6**: **CRITICAL** - Set slot properties for proper Fill behavior
+**Step 6**: Ensure fill behavior and visibility via properties
 ```python
-set_widget_slot_properties(
-    widget_name="MyWidget",
-    widget_component_name="MainBackground",
-    slot_properties={
-        "HorizontalAlignment": "Fill",
-        "VerticalAlignment": "Fill", 
-        "SizeRule": "Fill"
-    }
-)
+set_widget_property("MyWidget", "MainBackground", "Visibility", "Visible")
+set_widget_property("MyWidget", "MainBackground", "ColorAndOpacity", [1, 1, 1, 1])
 ```
 
 **Step 7**: Set background image Z-order
 ```python
-set_widget_z_order(widget_name="MyWidget", component_name="MainBackground", z_order=-10)
+set_widget_property("MyWidget", "MainBackground", "Slot.ZOrder", -10)
 ```
 
 - **Note**: Canvas panels require Overlay wrapper for proper background layering
@@ -290,16 +277,11 @@ set_widget_z_order(widget_name="MyWidget", component_name="MainBackground", z_or
 add_image(widget_name="MyWidget", image_name="ScrollBackground", parent_name="MyScrollBox")
 ```
 
-**Step 2**: Set transform with large size for guaranteed coverage
+**Step 2**: Configure anchors and offsets for coverage
 ```python
-set_widget_transform(
-    widget_name="MyWidget",
-    component_name="ScrollBackground",
-    anchor_min=[0, 0],
-    anchor_max=[1, 1],
-    position=[0, 0],
-    size=[10000, 10000]  # Large size ensures complete fill
-)
+set_widget_property("MyWidget", "ScrollBackground", "Slot.Anchors.Minimum", [0, 0])
+set_widget_property("MyWidget", "ScrollBackground", "Slot.Anchors.Maximum", [1, 1])
+set_widget_property("MyWidget", "ScrollBackground", "Slot.Offset", [0, 0, 0, 0])
 ```
 
 **Step 3**: Set slot properties for Fill behavior
@@ -317,7 +299,7 @@ set_widget_slot_properties(
 
 **Step 4**: Set proper Z-order behind content
 ```python
-set_widget_z_order(widget_name="MyWidget", component_name="ScrollBackground", z_order=-6)
+set_widget_property("MyWidget", "ScrollBackground", "Slot.ZOrder", -6)
 ```
 
 **Step 5**: Apply theme color
@@ -824,8 +806,8 @@ set_widget_slot_properties(widget_name="Widget", widget_component_name="Backgrou
                           slot_properties={"SizeRule": "Fill", 
                                          "HorizontalAlignment": "Fill", 
                                          "VerticalAlignment": "Fill"})
-set_widget_transform(widget_name="Widget", component_name="Background",
-                    anchor_min=[0,0], anchor_max=[1,1], size=[10000,10000])
+set_widget_property("Widget", "Background", "Slot.Anchors.Minimum", [0,0])
+set_widget_property("Widget", "Background", "Slot.Anchors.Maximum", [1,1])
 ```
 
 #### **❌ MISTAKE: Missing SizeRule Property**
@@ -885,18 +867,12 @@ set_widget_transform(widget_name="Widget", component_name="Background",
   # Step 1: Add Overlay to Canvas Panel
   add_overlay(widget_name="MyWidget", overlay_name="Overlay_MainBackground", parent_name="CanvasPanel_Body")
   
-  # Step 2: CRITICAL - Size the Overlay to fill the Canvas Panel
-  set_widget_transform(
-      widget_name="MyWidget", 
-      component_name="Overlay_MainBackground",
-      anchor_min=[0, 0], 
-      anchor_max=[1, 1], 
-      position=[0, 0], 
-      size=[0, 0]  # Size is ignored when anchors are set to fill
-  )
+    # Step 2: CRITICAL - Size the Overlay to fill the Canvas Panel
+    set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.Anchors.Minimum", [0,0])
+    set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.Anchors.Maximum", [1,1])
   
-  # Step 3: Set Overlay behind content
-  set_widget_z_order(widget_name="MyWidget", component_name="Overlay_MainBackground", z_order=-15)
+    # Step 3: Set Overlay behind content
+    set_widget_property("MyWidget", "Overlay_MainBackground", "Slot.ZOrder", -15)
   
   # Step 4: Add background image to Overlay
   add_image(widget_name="MyWidget", image_name="MainBackground", parent_name="Overlay_MainBackground", ...)
@@ -908,8 +884,8 @@ set_widget_transform(widget_name="Widget", component_name="Background",
       slot_properties={"HorizontalAlignment": "Fill", "VerticalAlignment": "Fill"}
   )
   
-  # Step 6: Set background image Z-order
-  set_widget_z_order(widget_name="MyWidget", component_name="MainBackground", z_order=-10)
+    # Step 6: Set background image Z-order
+    set_widget_property("MyWidget", "MainBackground", "Slot.ZOrder", -10)
   
   # Step 7: VERIFY MANUALLY - Check Details panel shows "Fill" alignment
   # If alignment is not "Fill", manually set it in Unreal Editor Details panel
@@ -1011,16 +987,11 @@ property_value=[0, 1, 1, 1]  # This will NOT work!
 add_image(widget_name="MyWidget", image_name="Background", parent_name="ScrollBox")
 ```
 
-**2. Configure Transform (Large Size for Guaranteed Fill)**
+**2. Configure Anchors and Offsets (Coverage)**
 ```python
-set_widget_transform(
-    widget_name="MyWidget",
-    component_name="Background",
-    anchor_min=[0, 0],
-    anchor_max=[1, 1],
-    position=[0, 0],
-    size=[10000, 10000]  # CRITICAL: Large size ensures complete coverage
-)
+set_widget_property("MyWidget", "Background", "Slot.Anchors.Minimum", [0, 0])
+set_widget_property("MyWidget", "Background", "Slot.Anchors.Maximum", [1, 1])
+set_widget_property("MyWidget", "Background", "Slot.Offset", [0, 0, 0, 0])
 ```
 
 **3. Set Slot Properties (Fill Configuration)**
@@ -1038,7 +1009,7 @@ set_widget_slot_properties(
 
 **4. Set Z-Order (Behind Content)**
 ```python
-set_widget_z_order(widget_name="MyWidget", component_name="Background", z_order=-6)
+set_widget_property("MyWidget", "Background", "Slot.ZOrder", -6)
 ```
 
 **5. Apply Color**

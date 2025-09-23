@@ -175,7 +175,12 @@ def set_static_mesh(
         "static_mesh": static_mesh
     }
     
-    response = send_command("set_static_mesh_properties", params)
+    response = send_command("set_component_property", {
+        "blueprint_name": params["blueprint_name"],
+        "component_name": params["component_name"],
+        "property_name": "StaticMesh",
+        "property_value": params["static_mesh"]
+    })
     
     # Check response
     if not response or response.get("status") != "success":

@@ -183,9 +183,8 @@ All capabilities are accessible through natural language commands via AI assista
 | `compile_blueprint` | ⚙️ Blueprint compilation | Compile and validate Blueprint changes |
 | `reparent_blueprint` | 🔄 Class hierarchy | Change Blueprint parent classes |
 | `add_component_to_blueprint` | 🧩 Component system | Add mesh, camera, light, physics components |
-| `set_static_mesh_properties` | 📐 Mesh configuration | Configure static mesh components |
+| (removed) static mesh/physics helpers | — | Use `set_component_property` and reflection tools |
 | `set_component_property` | 🎛️ Property control | Set any component property |
-| `set_physics_properties` | ⚛️ Physics setup | Configure collision, gravity, mass |
 | `set_blueprint_property` | 📋 Class properties | Modify Blueprint class defaults |
 
 ### Blueprint Node Graph
@@ -196,8 +195,7 @@ All capabilities are accessible through natural language commands via AI assista
 | `add_blueprint_function_node` | ⚡ Function calls | Call Blueprint or C++ functions |
 | `connect_blueprint_nodes` | 🔗 Node wiring | Connect execution and data pins |
 | `add_blueprint_variable` | 📊 Data storage | Add typed variables with editor exposure |
-| `add_blueprint_get_self_component_reference` | 🧭 Component refs | Get references to owned components |
-| `add_blueprint_self_reference` | 🎯 Actor refs | Get reference to Blueprint actor |
+| (removed) self/component reference helpers | — | Use reflection-based node creation |
 | `find_blueprint_nodes` | 🔍 Node discovery | Find existing nodes by type/name |
 
 ### UMG Widget Creation
@@ -229,9 +227,7 @@ All capabilities are accessible through natural language commands via AI assista
 ### UMG Advanced Components
 | Tool | Purpose | Key Features |
 |------|---------|--------------|
-| `add_list_view` | 📋 Data lists | Scrollable data-driven lists |
-| `add_tile_view` | 🎯 Grid display | Grid-based data visualization |
-| `add_tree_view` | 🌳 Hierarchical data | Tree structure display |
+| (removed) List/Tile/Tree view helpers | — | Use `add_widget_component` + `set_widget_property` |
 
 
 ### Widget Property Management
@@ -240,9 +236,7 @@ All capabilities are accessible through natural language commands via AI assista
 | `set_widget_property` | 🎛️ Universal setter | Set any widget property with type detection |
 | `get_widget_property` | 🔍 Property inspection | Get current property values |
 | `list_widget_properties` | 📋 Property discovery | List all available properties |
-| `set_widget_transform` | 📐 Layout control | Position, size, scale, rotation, anchoring |
-| `set_widget_visibility` | 👁️ Visibility control | Visible, hidden, collapsed states |
-| `set_widget_z_order` | 📚 Layer management | Control rendering order |
+| (removed) transform/visibility/z-order helpers | — | Use `set_widget_property` for slot/render properties |
 
 ### Widget Analysis & Discovery
 | Tool | Purpose | Key Features |
@@ -280,7 +274,7 @@ The tools are designed for intelligent workflows:
 
 1. **Discovery Flow**: `search_items` → `get_widget_blueprint_info` → `list_widget_components`
 2. **Creation Flow**: `create_umg_widget_blueprint` → `add_[component]_to_widget` → `set_widget_property`
-3. **Styling Flow**: `get_umg_guide` → `set_widget_property` → `set_widget_transform`
+3. **Styling Flow**: `get_umg_guide` → `set_widget_property` (including `Slot.*`)
 4. **Analysis Flow**: `list_event_graph_nodes` → `get_node_details` → `summarize_event_graph`
 
 ## 💡 Best Practices & AI Integration

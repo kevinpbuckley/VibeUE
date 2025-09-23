@@ -839,18 +839,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	{
 		return HandleAddGridPanel(Params);
 	}
-	else if (CommandName == TEXT("add_list_view"))
-	{
-		return HandleAddListView(Params);
-	}
-	else if (CommandName == TEXT("add_tile_view"))
-	{
-		return HandleAddTileView(Params);
-	}
-	else if (CommandName == TEXT("add_tree_view"))
-	{
-		return HandleAddTreeView(Params);
-	}
+	// add_list_view/add_tile_view/add_tree_view removed
 	else if (CommandName == TEXT("add_widget_switcher"))
 	{
 		return HandleAddWidgetSwitcher(Params);
@@ -885,18 +874,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	{
 		return HandleListWidgetProperties(Params);
 	}
-	else if (CommandName == TEXT("set_widget_transform"))
-	{
-		return HandleSetWidgetTransform(Params);
-	}
-	else if (CommandName == TEXT("set_widget_visibility"))
-	{
-		return HandleSetWidgetVisibility(Params);
-	}
-	else if (CommandName == TEXT("set_widget_z_order"))
-	{
-		return HandleSetWidgetZOrder(Params);
-	}
+	// set_widget_transform/set_widget_visibility/set_widget_z_order removed
 	else if (CommandName == TEXT("bind_input_events"))
 	{
 		return HandleBindInputEvents(Params);
@@ -1048,13 +1026,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddTextBlockToWidget(const TSharedPt
 	// Find or create the specified parent panel
 	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
 
-	// Diagnostic log to help trace unexpected debugger breaks or null references
-	UE_LOG(LogTemp, Log, TEXT("MCP: HandleAddSpacer called. widget='%s' parent='%s' blueprint='%s' widgetTreeValid=%s"),
-		*WidgetName,
-		*ParentName,
-		WidgetBlueprint ? *WidgetBlueprint->GetName() : TEXT("<null>"),
-		(WidgetBlueprint && WidgetBlueprint->WidgetTree) ? TEXT("true") : TEXT("false")
-	);
+	// Note: ensure WidgetTree exists; avoid stray logging args without UE_LOG
 
 	// Defensive check: ensure WidgetTree exists before proceeding to avoid crashes in editor
 	if (!WidgetBlueprint->WidgetTree)
@@ -1387,7 +1359,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Looking for widget '%s'"), *WidgetName);
+
 	
 	// Find widget blueprint (same as working version)
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
@@ -1397,8 +1369,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Found widget '%s' at path '%s'"), 
-	       *WidgetBlueprint->GetName(), *WidgetBlueprint->GetPathName());
+
 	
 	// Create widget_info object (SIMPLIFIED - no complex nested structures)
 	TSharedPtr<FJsonObject> WidgetInfo = MakeShared<FJsonObject>();
@@ -1425,7 +1396,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		TArray<UWidget*> AllWidgets;
 		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
 		
-		UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Processing %d widgets"), AllWidgets.Num());
+
 		
 		// Process all widgets for comprehensive info
 		for (UWidget* Widget : AllWidgets)
@@ -1500,7 +1471,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 		
 		// Get Variables (from the blueprint)
-		UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Processing variables"));
 		if (UBlueprintGeneratedClass* BlueprintClass = Cast<UBlueprintGeneratedClass>(WidgetBlueprint->GeneratedClass))
 		{
 			for (TFieldIterator<FProperty> PropertyIt(BlueprintClass); PropertyIt; ++PropertyIt)
@@ -1522,7 +1492,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 		
 		// Get Events (from function graph nodes)
-		UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Processing events"));
 		if (WidgetBlueprint->UbergraphPages.Num() > 0)
 		{
 			for (UEdGraph* Graph : WidgetBlueprint->UbergraphPages)
@@ -1559,7 +1528,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 		
 		// Get Animations
-		UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Processing animations"));
 		for (UWidgetAnimation* Animation : WidgetBlueprint->Animations)
 		{
 			if (Animation)
@@ -1640,8 +1608,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetObjectField(TEXT("widget_info"), WidgetInfo);
 	
-	UE_LOG(LogTemp, Warning, TEXT("HandleGetWidgetBlueprintInfo: Success - returning %d components"), 
-	       ComponentArray.Num());
+
 	
 	return Response;
 }
@@ -2394,8 +2361,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddImage(const TSharedPtr<FJsonObjec
 	// Don't compile immediately - let Unreal handle it when safe
 	// FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
 
-	UE_LOG(LogTemp, Log, TEXT("MCP: Successfully added image '%s' to widget '%s' in panel '%s'"), 
-		*ImageName, *WidgetName, *ParentPanel->GetName());
+
 
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetStringField(TEXT("image_name"), ImageName);
@@ -2705,7 +2671,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObj
 		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Overlay widget"));
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("MCP: Created overlay '%s' successfully"), *OverlayName);
+	/* cleanup: removed verbose debug log */
 	CreatedOverlay->SetVisibility(ESlateVisibility::Visible);
 	
 	// Find or create the specified parent panel
@@ -2728,13 +2694,12 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObj
 	}
 	
 	// Add overlay to parent panel
-	UE_LOG(LogTemp, Warning, TEXT("MCP: Adding overlay to parent panel '%s' of type '%s'"), 
-		*ParentPanel->GetName(), *ParentPanel->GetClass()->GetName());
+	/* cleanup: removed verbose debug log */
 	
 	// Special handling for Canvas Panel
 	if (UCanvasPanel* CanvasPanel = Cast<UCanvasPanel>(ParentPanel))
 	{
-		UE_LOG(LogTemp, Warning, TEXT("MCP: Adding to Canvas Panel with special slot handling"));
+
 		UCanvasPanelSlot* CanvasSlot = CanvasPanel->AddChildToCanvas(CreatedOverlay);
 		if (CanvasSlot)
 		{
@@ -2742,7 +2707,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObj
 			CanvasSlot->SetPosition(FVector2D(0, 0));
 			CanvasSlot->SetSize(FVector2D(400, 300));
 			CanvasSlot->SetAnchors(FAnchors(0.0f, 0.0f, 1.0f, 1.0f)); // Fill parent
-			UE_LOG(LogTemp, Warning, TEXT("MCP: Canvas slot created successfully"));
+
 		}
 		else
 		{
@@ -2756,7 +2721,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObj
 		ParentPanel->AddChild(CreatedOverlay);
 	}
 	
-	UE_LOG(LogTemp, Warning, TEXT("MCP: Added overlay as child. Parent now has %d children"), ParentPanel->GetChildrenCount());
+
 	
 	// Mark blueprint as modified and compile
 	WidgetBlueprint->MarkPackageDirty();
@@ -3663,11 +3628,11 @@ bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, FPropert
 							{
 								SlateBrush->SetResourceObject(Texture);
 								bModified = true;
-								UE_LOG(LogTemp, Log, TEXT("Set texture resource: %s"), *ResourcePath);
+
 							}
 							else
 							{
-								UE_LOG(LogTemp, Warning, TEXT("Failed to load texture: %s"), *ResourcePath);
+
 							}
 						}
 					}
@@ -4213,7 +4178,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 	bool bPropertySet = false;
 	FString ErrorMessage;
 
-	// First: handle struct properties with JSON data reflectively (works for dotted paths and direct names)
+	// First: handle struct properties with JSON reflectively.
+	// IMPORTANT: If ResolvePath was used, ContainerPtrForSet may already be the struct VALUE pointer.
+	// In that case, do NOT call ContainerPtrToValuePtr again (avoids double-offset into memory).
 	if (!bPropertySet && bHasJsonValue && PropertyValueJson.IsValid())
 	{
 		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
@@ -4583,7 +4550,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 	}
 	else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
 	{
-		// Respect resolver semantics: Target.ContainerPtr for a struct is the struct value pointer.
+		// IMPORTANT: Respect resolver semantics.
+		// When ResolvePath targets a struct field, Target.ContainerPtr is the struct VALUE pointer.
+		// Otherwise, derive the value pointer from the owning object via ContainerPtrToValuePtr.
 		void* ValuePtr = Target.ContainerPtr ? Target.ContainerPtr
 											 : StructProperty->ContainerPtrToValuePtr<void>((void*)FoundWidget);
 		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject);
@@ -4979,274 +4948,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPt
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetTransform(const TSharedPtr<FJsonObject>& Params)
-{
-	// Check if we're in a serialization context to prevent crashes
-	if (IsGarbageCollecting() || GIsSavingPackage || IsLoading())
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Cannot set widget transform during serialization"));
-	}
-
-	FString WidgetBlueprintName;
-	FString WidgetName;
-	FVector2D Position = FVector2D::ZeroVector;
-	FVector2D Size = FVector2D(100, 100);
-	FVector2D Scale = FVector2D(1, 1);
-	float Rotation = 0.0f;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
-	}
-	
-	// Parse transform values
-	const TArray<TSharedPtr<FJsonValue>>* PositionArray;
-	if (Params->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray->Num() >= 2)
-	{
-		Position.X = (*PositionArray)[0]->AsNumber();
-		Position.Y = (*PositionArray)[1]->AsNumber();
-	}
-	
-	const TArray<TSharedPtr<FJsonValue>>* SizeArray;
-	if (Params->TryGetArrayField(TEXT("size"), SizeArray) && SizeArray->Num() >= 2)
-	{
-		Size.X = (*SizeArray)[0]->AsNumber();
-		Size.Y = (*SizeArray)[1]->AsNumber();
-	}
-	
-	const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-	if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 2)
-	{
-		Scale.X = (*ScaleArray)[0]->AsNumber();
-		Scale.Y = (*ScaleArray)[1]->AsNumber();
-	}
-	
-	Params->TryGetNumberField(TEXT("rotation"), Rotation);
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
-	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
-	}
-
-	if (!FoundWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
-	}
-
-	// Set slot properties for position and size if possible
-	UPanelSlot* PanelSlot = FoundWidget->Slot;
-	if (PanelSlot)
-	{
-		// CanvasPanelSlot supports position and size
-		if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(PanelSlot))
-		{
-			CanvasSlot->SetPosition(Position);
-			CanvasSlot->SetSize(Size);
-			CanvasSlot->SetAlignment(FVector2D(0.5f, 0.5f));
-		}
-	}
-
-	// Set render transform for scale and rotation
-	FWidgetTransform RenderTransform;
-	RenderTransform.Scale = Scale;
-	RenderTransform.Angle = Rotation;
-	FoundWidget->SetRenderTransform(RenderTransform);
-
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-
-	TArray<TSharedPtr<FJsonValue>> PositionResult;
-	PositionResult.Add(MakeShareable(new FJsonValueNumber(Position.X)));
-	PositionResult.Add(MakeShareable(new FJsonValueNumber(Position.Y)));
-	Result->SetArrayField(TEXT("position"), PositionResult);
-
-	TArray<TSharedPtr<FJsonValue>> SizeResult;
-	SizeResult.Add(MakeShareable(new FJsonValueNumber(Size.X)));
-	SizeResult.Add(MakeShareable(new FJsonValueNumber(Size.Y)));
-	Result->SetArrayField(TEXT("size"), SizeResult);
-
-	TArray<TSharedPtr<FJsonValue>> ScaleResult;
-	ScaleResult.Add(MakeShareable(new FJsonValueNumber(Scale.X)));
-	ScaleResult.Add(MakeShareable(new FJsonValueNumber(Scale.Y)));
-	Result->SetArrayField(TEXT("scale"), ScaleResult);
-
-	Result->SetNumberField(TEXT("rotation"), Rotation);
-	Result->SetStringField(TEXT("note"), TEXT("Widget transform applied successfully"));
-	return Result;
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetVisibility(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString WidgetName;
-	FString VisibilityString;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("visibility"), VisibilityString))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing visibility parameter"));
-	}
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
-	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
-	}
-
-	if (!FoundWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
-	}
-
-	ESlateVisibility Visibility = ESlateVisibility::Visible;
-	if (VisibilityString == TEXT("Hidden"))
-	{
-		Visibility = ESlateVisibility::Hidden;
-	}
-	else if (VisibilityString == TEXT("Collapsed"))
-	{
-		Visibility = ESlateVisibility::Collapsed;
-	}
-	else if (VisibilityString == TEXT("HitTestInvisible"))
-	{
-		Visibility = ESlateVisibility::HitTestInvisible;
-	}
-	else if (VisibilityString == TEXT("SelfHitTestInvisible"))
-	{
-		Visibility = ESlateVisibility::SelfHitTestInvisible;
-	}
-
-	FoundWidget->SetVisibility(Visibility);
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-	Result->SetStringField(TEXT("visibility"), VisibilityString);
-	Result->SetStringField(TEXT("note"), TEXT("Widget visibility set successfully"));
-	return Result;
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetZOrder(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString WidgetName;
-	int32 ZOrder = 0;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
-	}
-	
-	if (!Params->TryGetNumberField(TEXT("z_order"), ZOrder))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing z_order parameter"));
-	}
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
-	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
-	}
-
-	if (!FoundWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
-	}
-
-	UPanelSlot* PanelSlot = FoundWidget->Slot;
-	if (PanelSlot)
-	{
-		// Only Canvas Panel slots support Z-order
-		if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(PanelSlot))
-		{
-			CanvasSlot->SetZOrder(ZOrder);
-		}
-	}
-
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-	Result->SetNumberField(TEXT("z_order"), ZOrder);
-	Result->SetStringField(TEXT("note"), TEXT("Widget Z-order set successfully"));
-	return Result;
-}
 
 // ===================================================================
 // UMG Event Methods Implementation (Stub implementations)
@@ -5357,275 +5058,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 	return Result;
 }
 
-TSharedPtr<FJsonObject> FUMGCommands::HandleAddListView(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString ListViewName;
-	FString ParentName;
-	FString ItemTemplate;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("list_view_name"), ListViewName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing list_view_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the List View"));
-	}
-	
-	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-	// Find or create parent panel
-	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
-	if (!ParentPanel)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
-	}
-	
-	// Create ListView widget
-	UListView* ListView = WidgetBlueprint->WidgetTree->ConstructWidget<UListView>(UListView::StaticClass(), *ListViewName);
-	if (!ListView)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create ListView widget"));
-	}
-	
-	// Set item height if provided
-	double ItemHeight = 32.0;
-	Params->TryGetNumberField(TEXT("item_height"), ItemHeight);
-	// Note: ListView item height is typically controlled by the list entry widget template
-	
-	// Set selection mode if provided
-	FString SelectionMode;
-	if (Params->TryGetStringField(TEXT("selection_mode"), SelectionMode))
-	{
-		if (SelectionMode == TEXT("Single"))
-		{
-			ListView->SetSelectionMode(ESelectionMode::Single);
-		}
-		else if (SelectionMode == TEXT("Multi"))
-		{
-			ListView->SetSelectionMode(ESelectionMode::Multi);
-		}
-		else if (SelectionMode == TEXT("None"))
-		{
-			ListView->SetSelectionMode(ESelectionMode::None);
-		}
-	}
-	
-	// Add to parent panel
-	UPanelSlot* PanelSlot = ParentPanel->AddChild(ListView);
-	if (PanelSlot)
-	{
-		// Mark dirty and compile
-		WidgetBlueprint->MarkPackageDirty();
-		FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-		
-		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-		Result->SetBoolField(TEXT("success"), true);
-		Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-		Result->SetStringField(TEXT("list_view_name"), ListViewName);
-		Result->SetStringField(TEXT("widget_type"), TEXT("ListView"));
-		Result->SetStringField(TEXT("parent_name"), ParentName);
-		Result->SetNumberField(TEXT("item_height"), ItemHeight);
-		
-		return Result;
-	}
-	else
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add List View to parent"));
-	}
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleAddTileView(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString TileViewName;
-	FString ParentName;
-	FString ItemTemplate;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("tile_view_name"), TileViewName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing tile_view_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_name parameter - you must specify where to add the Tile View"));
-	}
-	
-	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-	// Find or create parent panel
-	UPanelWidget* ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName);
-	if (!ParentPanel)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to find or create parent panel '%s'"), *ParentName));
-	}
-	
-	// Create TileView widget
-	UTileView* TileView = WidgetBlueprint->WidgetTree->ConstructWidget<UTileView>(UTileView::StaticClass(), *TileViewName);
-	if (!TileView)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create TileView widget"));
-	}
-	
-	// Set tile dimensions if provided
-	double TileWidth = 128.0;
-	double TileHeight = 128.0;
-	const TArray<TSharedPtr<FJsonValue>>* TileSizeArray;
-	if (Params->TryGetArrayField(TEXT("tile_size"), TileSizeArray) && TileSizeArray->Num() >= 2)
-	{
-		TileWidth = (*TileSizeArray)[0]->AsNumber();
-		TileHeight = (*TileSizeArray)[1]->AsNumber();
-	}
-	else
-	{
-		Params->TryGetNumberField(TEXT("tile_width"), TileWidth);
-		Params->TryGetNumberField(TEXT("tile_height"), TileHeight);
-	}
-	
-	// Note: TileView dimensions are typically controlled by the entry widget template
-	// Store tile dimensions for response
-	
-	// Add to parent panel
-	UPanelSlot* PanelSlot = ParentPanel->AddChild(TileView);
-	if (PanelSlot)
-	{
-		// Mark dirty and compile
-		WidgetBlueprint->MarkPackageDirty();
-		FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-		
-		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-		Result->SetBoolField(TEXT("success"), true);
-		Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-		Result->SetStringField(TEXT("tile_view_name"), TileViewName);
-		Result->SetStringField(TEXT("widget_type"), TEXT("TileView"));
-		Result->SetStringField(TEXT("parent_name"), ParentName);
-		Result->SetNumberField(TEXT("tile_width"), TileWidth);
-		Result->SetNumberField(TEXT("tile_height"), TileHeight);
-		
-		return Result;
-	}
-	else
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to add Tile View to parent"));
-	}
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleAddTreeView(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString TreeViewName;
-	FString ItemTemplate;
-	TArray<TSharedPtr<FJsonValue>> Position;
-	TArray<TSharedPtr<FJsonValue>> Size;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("tree_view_name"), TreeViewName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing tree_view_name parameter"));
-	}
-	
-	Params->TryGetStringField(TEXT("item_template"), ItemTemplate);
-	
-	const TArray<TSharedPtr<FJsonValue>>* PositionArray;
-	if (Params->TryGetArrayField(TEXT("position"), PositionArray))
-	{
-		Position = *PositionArray;
-	}
-	
-	const TArray<TSharedPtr<FJsonValue>>* SizeArray;
-	if (Params->TryGetArrayField(TEXT("size"), SizeArray))
-	{
-		Size = *SizeArray;
-	}
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
-	// Create TreeView widget
-	UTreeView* TreeView = WidgetBlueprint->WidgetTree->ConstructWidget<UTreeView>(UTreeView::StaticClass(), *TreeViewName);
-	if (!TreeView)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create TreeView widget"));
-	}
-	
-	// Set item height if provided
-	double ItemHeight = 24.0;
-	Params->TryGetNumberField(TEXT("item_height"), ItemHeight);
-	// Note: TreeView item height is typically controlled by the entry widget template
-	
-	// Add to root canvas panel
-	UCanvasPanel* RootCanvas = Cast<UCanvasPanel>(WidgetBlueprint->WidgetTree->RootWidget);
-	if (RootCanvas)
-	{
-		UCanvasPanelSlot* Slot = RootCanvas->AddChildToCanvas(TreeView);
-		
-		// Set position if provided
-		if (Position.Num() >= 2)
-		{
-			FVector2D TreePosition(Position[0]->AsNumber(), Position[1]->AsNumber());
-			Slot->SetPosition(TreePosition);
-		}
-		
-		// Set size if provided
-		if (Size.Num() >= 2)
-		{
-			FVector2D TreeSize(Size[0]->AsNumber(), Size[1]->AsNumber());
-			Slot->SetSize(TreeSize);
-		}
-		else
-		{
-			// Default size
-			Slot->SetSize(FVector2D(300.0f, 250.0f));
-		}
-	}
-	
-	// Mark dirty and compile
-	WidgetBlueprint->MarkPackageDirty();
-	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-	
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("tree_view_name"), TreeViewName);
-	Result->SetStringField(TEXT("widget_type"), TEXT("TreeView"));
-	Result->SetArrayField(TEXT("position"), Position);
-	Result->SetArrayField(TEXT("size"), Size);
-	Result->SetNumberField(TEXT("item_height"), ItemHeight);
-	
-	return Result;
-}
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params)
 {

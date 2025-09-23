@@ -119,52 +119,7 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def set_static_mesh_properties(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        static_mesh: str = "/Engine/BasicShapes/Cube.Cube"
-    ) -> Dict[str, Any]:
-        """
-        Set static mesh properties on a StaticMeshComponent.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_name: Name of the StaticMeshComponent
-            static_mesh: Path to the static mesh asset (e.g., "/Engine/BasicShapes/Cube.Cube")
-            
-        Returns:
-            Response indicating success or failure
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "static_mesh": static_mesh
-            }
-            
-            logger.info(f"Setting static mesh properties with params: {params}")
-            response = unreal.send_command("set_static_mesh_properties", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Set static mesh properties response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting static mesh properties: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+    
     
     @mcp.tool()
     def set_component_property(
@@ -205,50 +160,6 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def set_physics_properties(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        simulate_physics: bool = True,
-        gravity_enabled: bool = True,
-        mass: float = 1.0,
-        linear_damping: float = 0.01,
-        angular_damping: float = 0.0
-    ) -> Dict[str, Any]:
-        """Set physics properties on a component."""
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "simulate_physics": simulate_physics,
-                "gravity_enabled": gravity_enabled,
-                "mass": float(mass),
-                "linear_damping": float(linear_damping),
-                "angular_damping": float(angular_damping)
-            }
-            
-            logger.info(f"Setting physics properties with params: {params}")
-            response = unreal.send_command("set_physics_properties", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Set physics properties response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting physics properties: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
     
     @mcp.tool()
     def compile_blueprint(

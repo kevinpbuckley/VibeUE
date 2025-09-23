@@ -45,10 +45,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleSetComponentProperty(Params);
     }
-    else if (CommandType == TEXT("set_physics_properties"))
-    {
-        return HandleSetPhysicsProperties(Params);
-    }
     else if (CommandType == TEXT("compile_blueprint"))
     {
         return HandleCompileBlueprint(Params);
@@ -56,10 +52,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     else if (CommandType == TEXT("set_blueprint_property"))
     {
         return HandleSetBlueprintProperty(Params);
-    }
-    else if (CommandType == TEXT("set_static_mesh_properties"))
-    {
-        return HandleSetStaticMeshProperties(Params);
     }
     else if (CommandType == TEXT("reparent_blueprint"))
     {
@@ -164,12 +156,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedP
         if (FoundClass)
         {
             SelectedParentClass = FoundClass;
-            UE_LOG(LogTemp, Log, TEXT("Successfully set parent class to '%s'"), *ClassName);
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("Could not find specified parent class '%s' at paths: /Script/Engine.%s or /Script/Game.%s, defaulting to AActor"), 
-                *ClassName, *ClassName, *ClassName);
+            /* cleanup: keep defaulting silently when class not found */
         }
     }
     
@@ -315,9 +305,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_name' parameter"));
     }
 
-    // Log all input parameters for debugging
-    UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - Blueprint: %s, Component: %s, Property: %s"), 
-        *BlueprintName, *ComponentName, *PropertyName);
+    
     
     // Log property_value if available
     if (Params->HasField(TEXT("property_value")))
@@ -335,34 +323,32 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             default: ValueType = TEXT("Unknown"); break;
         }
         
-        UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - Value Type: %s"), *ValueType);
+    
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - No property_value provided"));
+    
     }
 
     // Find the blueprint
     UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Blueprint not found: %s"), *BlueprintName);
+    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Blueprint not found: %s"), *BlueprintName);
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Blueprint found: %s (Class: %s)"), 
-            *BlueprintName, 
-            Blueprint->GeneratedClass ? *Blueprint->GeneratedClass->GetName() : TEXT("NULL"));
+        
     }
 
     // Find the component
     USCS_Node* ComponentNode = nullptr;
-    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Searching for component %s in blueprint nodes"), *ComponentName);
+    
     
     if (!Blueprint->SimpleConstructionScript)
     {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - SimpleConstructionScript is NULL for blueprint %s"), *BlueprintName);
+    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - SimpleConstructionScript is NULL for blueprint %s"), *BlueprintName);
         return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint construction script"));
     }
     
@@ -370,7 +356,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
     {
         if (Node)
         {
-            UE_LOG(LogTemp, Verbose, TEXT("SetComponentProperty - Found node: %s"), *Node->GetVariableName().ToString());
+            
             if (Node->GetVariableName().ToString() == ComponentName)
             {
                 ComponentNode = Node;
@@ -379,42 +365,39 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - Found NULL node in blueprint"));
+            
         }
     }
 
     if (!ComponentNode)
     {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component not found: %s"), *ComponentName);
+    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component not found: %s"), *ComponentName);
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
     }
     else
     {
-        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Component found: %s (Class: %s)"), 
-            *ComponentName, 
-            ComponentNode->ComponentTemplate ? *ComponentNode->ComponentTemplate->GetClass()->GetName() : TEXT("NULL"));
+        
     }
 
     // Get the component template
     UObject* ComponentTemplate = ComponentNode->ComponentTemplate;
     if (!ComponentTemplate)
     {
-        UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component template is NULL for %s"), *ComponentName);
+    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component template is NULL for %s"), *ComponentName);
         return FCommonUtils::CreateErrorResponse(TEXT("Invalid component template"));
     }
 
     // Check if this is a Spring Arm component and log special debug info
     if (ComponentTemplate->GetClass()->GetName().Contains(TEXT("SpringArm")))
     {
-        UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - SpringArm component detected! Class: %s"), 
-            *ComponentTemplate->GetClass()->GetPathName());
+        
             
         // Log all properties of the SpringArm component class
-        UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - SpringArm properties:"));
+    
         for (TFieldIterator<FProperty> PropIt(ComponentTemplate->GetClass()); PropIt; ++PropIt)
         {
             FProperty* Prop = *PropIt;
-            UE_LOG(LogTemp, Warning, TEXT("  - %s (%s)"), *Prop->GetName(), *Prop->GetCPPType());
+            
         }
 
         // Special handling for Spring Arm properties
@@ -460,7 +443,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 if (JsonValue->Type == EJson::Number)
                 {
                     const float Value = JsonValue->AsNumber();
-                    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting float property %s to %f"), *PropertyName, Value);
+                    
                     FloatProp->SetPropertyValue_InContainer(ComponentTemplate, Value);
                     bSuccess = true;
                 }
@@ -470,15 +453,14 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 if (JsonValue->Type == EJson::Boolean)
                 {
                     const bool Value = JsonValue->AsBool();
-                    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting bool property %s to %d"), *PropertyName, Value);
+                    
                     BoolProp->SetPropertyValue_InContainer(ComponentTemplate, Value);
                     bSuccess = true;
                 }
             }
             else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
             {
-                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Handling struct property %s of type %s"), 
-                    *PropertyName, *StructProp->Struct->GetName());
+                
                 
                 // Special handling for common Spring Arm struct properties
                 if (StructProp->Struct == TBaseStructure<FVector>::Get())
@@ -522,7 +504,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             if (bSuccess)
             {
                 // Mark the blueprint as modified
-                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Successfully set SpringArm property %s"), *PropertyName);
                 FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
                 TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
@@ -555,11 +536,11 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 *PropertyName, *ComponentName);
             
             // List all available properties for this component
-            UE_LOG(LogTemp, Warning, TEXT("SetComponentProperty - Available properties for %s:"), *ComponentName);
+            
             for (TFieldIterator<FProperty> PropIt(ComponentTemplate->GetClass()); PropIt; ++PropIt)
             {
                 FProperty* Prop = *PropIt;
-                UE_LOG(LogTemp, Warning, TEXT("  - %s (%s)"), *Prop->GetName(), *Prop->GetCPPType());
+                
             }
             
             return FCommonUtils::CreateErrorResponse(
@@ -567,15 +548,14 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         }
         else
         {
-            UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Property found: %s (Type: %s)"), 
-                *PropertyName, *Property->GetCPPType());
+            
         }
 
         bool bSuccess = false;
         FString ErrorMessage;
 
         // Handle different property types
-        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Attempting to set property %s"), *PropertyName);
+    
         
         // Add try-catch block to catch and log any crashes
         try
@@ -583,8 +563,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
             {
                 // Handle vector properties
-                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Property is a struct: %s"), 
-                    StructProp->Struct ? *StructProp->Struct->GetName() : TEXT("NULL"));
+                
                     
                 if (StructProp->Struct == TBaseStructure<FVector>::Get())
                 {
@@ -600,8 +579,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                                 Arr[2]->AsNumber()
                             );
                             void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting Vector(%f, %f, %f)"), 
-                                Vec.X, Vec.Y, Vec.Z);
+                            
                             StructProp->CopySingleValue(PropertyAddr, &Vec);
                             bSuccess = true;
                         }
@@ -617,8 +595,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                         float Value = JsonValue->AsNumber();
                         FVector Vec(Value, Value, Value);
                         void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting Vector(%f, %f, %f) from scalar"), 
-                            Vec.X, Vec.Y, Vec.Z);
+                        
                         StructProp->CopySingleValue(PropertyAddr, &Vec);
                         bSuccess = true;
                     }
@@ -631,8 +608,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 else
                 {
                     // Handle other struct properties using default handler
-                    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Using generic struct handler for %s"), 
-                        *PropertyName);
+                    
                     bSuccess = FCommonUtils::SetObjectProperty(ComponentTemplate, PropertyName, JsonValue, ErrorMessage);
                     if (!bSuccess)
                     {
@@ -643,12 +619,12 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
             {
                 // Handle enum properties
-                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Property is an enum"));
+                
                 if (JsonValue->Type == EJson::String)
                 {
                     FString EnumValueName = JsonValue->AsString();
                     UEnum* Enum = EnumProp->GetEnum();
-                    UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Setting enum from string: %s"), *EnumValueName);
+                    
                     
                     if (Enum)
                     {
@@ -656,7 +632,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                         
                         if (EnumValue != INDEX_NONE)
                         {
-                            UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Found enum value: %lld"), EnumValue);
+                            
                             EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(
                                 ComponentTemplate, 
                                 EnumValue
@@ -783,81 +759,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
     return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_value' parameter"));
 }
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPhysicsProperties(const TSharedPtr<FJsonObject>& Params)
-{
-    // Get required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-
-    FString ComponentName;
-    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
-    }
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-    }
-
-    // Find the component
-    USCS_Node* ComponentNode = nullptr;
-    for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
-    {
-        if (Node && Node->GetVariableName().ToString() == ComponentName)
-        {
-            ComponentNode = Node;
-            break;
-        }
-    }
-
-    if (!ComponentNode)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
-    }
-
-    UPrimitiveComponent* PrimComponent = Cast<UPrimitiveComponent>(ComponentNode->ComponentTemplate);
-    if (!PrimComponent)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Component is not a primitive component"));
-    }
-
-    // Set physics properties
-    if (Params->HasField(TEXT("simulate_physics")))
-    {
-        PrimComponent->SetSimulatePhysics(Params->GetBoolField(TEXT("simulate_physics")));
-    }
-
-    if (Params->HasField(TEXT("mass")))
-    {
-        float Mass = Params->GetNumberField(TEXT("mass"));
-        // In UE5.5, use proper overrideMass instead of just scaling
-        PrimComponent->SetMassOverrideInKg(NAME_None, Mass);
-        UE_LOG(LogTemp, Display, TEXT("Set mass for component %s to %f kg"), *ComponentName, Mass);
-    }
-
-    if (Params->HasField(TEXT("linear_damping")))
-    {
-        PrimComponent->SetLinearDamping(Params->GetNumberField(TEXT("linear_damping")));
-    }
-
-    if (Params->HasField(TEXT("angular_damping")))
-    {
-        PrimComponent->SetAngularDamping(Params->GetNumberField(TEXT("angular_damping")));
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("component"), ComponentName);
-    return ResultObj;
-}
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCompileBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
@@ -945,78 +846,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
     return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_value' parameter"));
 }
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetStaticMeshProperties(const TSharedPtr<FJsonObject>& Params)
-{
-    // Get required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-
-    FString ComponentName;
-    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
-    }
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-    }
-
-    // Find the component
-    USCS_Node* ComponentNode = nullptr;
-    for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
-    {
-        if (Node && Node->GetVariableName().ToString() == ComponentName)
-        {
-            ComponentNode = Node;
-            break;
-        }
-    }
-
-    if (!ComponentNode)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
-    }
-
-    UStaticMeshComponent* MeshComponent = Cast<UStaticMeshComponent>(ComponentNode->ComponentTemplate);
-    if (!MeshComponent)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Component is not a static mesh component"));
-    }
-
-    // Set static mesh properties
-    if (Params->HasField(TEXT("static_mesh")))
-    {
-        FString MeshPath = Params->GetStringField(TEXT("static_mesh"));
-        UStaticMesh* Mesh = Cast<UStaticMesh>(UEditorAssetLibrary::LoadAsset(MeshPath));
-        if (Mesh)
-        {
-            MeshComponent->SetStaticMesh(Mesh);
-        }
-    }
-
-    if (Params->HasField(TEXT("material")))
-    {
-        FString MaterialPath = Params->GetStringField(TEXT("material"));
-        UMaterialInterface* Material = Cast<UMaterialInterface>(UEditorAssetLibrary::LoadAsset(MaterialPath));
-        if (Material)
-        {
-            MeshComponent->SetMaterial(0, Material);
-        }
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("component"), ComponentName);
-    return ResultObj;
-}
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TSharedPtr<FJsonObject>& Params)
 {

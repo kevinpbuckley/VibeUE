@@ -151,9 +151,9 @@ UNREAL_MCP_INTEGRATION_GUIDE = {
             "example": "set_widget_property(..., 'Color', [1, 0, 0, 1])"
         },
         "transforms": {
-            "types": ["Position", "Size", "Scale"],
-            "format": "[X, Y] or [X, Y, Z] arrays",
-            "example": "set_widget_transform(..., position=[100, 50], size=[200, 30])"
+            "types": ["Anchors", "Alignment", "RenderTransform"],
+            "format": "Use Slot.* and RenderTransform.* via set_widget_property()",
+            "example": "set_widget_property(..., 'Slot.ZOrder', -1)"
         },
         "fonts": {
             "types": ["Font objects"],

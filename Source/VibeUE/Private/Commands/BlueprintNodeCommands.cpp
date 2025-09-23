@@ -41,11 +41,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& Com
         UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleConnectBlueprintNodes"));
         return HandleConnectBlueprintNodes(Params);
     }
-    else if (CommandType == TEXT("add_blueprint_get_self_component_reference"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintGetSelfComponentReference"));
-        return HandleAddBlueprintGetSelfComponentReference(Params);
-    }
     else if (CommandType == TEXT("add_blueprint_event_node"))
     {
         UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintEvent"));
@@ -60,11 +55,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& Com
     {
         UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintInputActionNode"));
         return HandleAddBlueprintInputActionNode(Params);
-    }
-    else if (CommandType == TEXT("add_blueprint_self_reference"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintSelfReference"));
-        return HandleAddBlueprintSelfReference(Params);
     }
     else if (CommandType == TEXT("find_blueprint_nodes"))
     {
@@ -217,75 +207,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(cons
     }
 }
 
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintGetSelfComponentReference(const TSharedPtr<FJsonObject>& Params)
-{
-    // Get required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-
-    FString ComponentName;
-    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
-    }
-
-    // Get position parameters (optional)
-    FVector2D NodePosition(0.0f, 0.0f);
-    if (Params->HasField(TEXT("node_position")))
-    {
-        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
-    }
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-    }
-
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
-    
-    // We'll skip component verification since the GetAllNodes API may have changed in UE5.5
-    
-    // Create the variable get node directly
-    UK2Node_VariableGet* GetComponentNode = NewObject<UK2Node_VariableGet>(EventGraph);
-    if (!GetComponentNode)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create get component node"));
-    }
-    
-    // Set up the variable reference properly for UE5.5
-    FMemberReference& VarRef = GetComponentNode->VariableReference;
-    VarRef.SetSelfMember(FName(*ComponentName));
-    
-    // Set node position
-    GetComponentNode->NodePosX = NodePosition.X;
-    GetComponentNode->NodePosY = NodePosition.Y;
-    
-    // Add to graph
-    EventGraph->AddNode(GetComponentNode);
-    GetComponentNode->CreateNewGuid();
-    GetComponentNode->PostPlacedNewNode();
-    GetComponentNode->AllocateDefaultPins();
-    
-    // Explicitly reconstruct node for UE5.5
-    GetComponentNode->ReconstructNode();
-    
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("node_id"), GetComponentNode->NodeGuid.ToString());
-    return ResultObj;
-}
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
@@ -794,50 +715,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
     return ResultObj;
 }
 
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintSelfReference(const TSharedPtr<FJsonObject>& Params)
-{
-    // Get required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-
-    // Get position parameters (optional)
-    FVector2D NodePosition(0.0f, 0.0f);
-    if (Params->HasField(TEXT("node_position")))
-    {
-        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
-    }
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-    }
-
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
-
-    // Create the self node
-    UK2Node_Self* SelfNode = FCommonUtils::CreateSelfReferenceNode(EventGraph, NodePosition);
-    if (!SelfNode)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create self node"));
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("node_id"), SelfNode->NodeGuid.ToString());
-    return ResultObj;
-}
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
