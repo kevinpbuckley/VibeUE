@@ -386,7 +386,11 @@ def register_blueprint_node_tools(mcp: FastMCP):
         and optional force deletion to clean up automatically.
         
         Args:
-            blueprint_name: Name of the target Blueprint
+            blueprint_name: Name or full path of the target Blueprint
+                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
+                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
+                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
+                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
                            ⚠️ **Must be exact name from search_items() results**
             variable_name: Name of the variable to delete
                           ⚠️ **Must be exact name from variable list**
@@ -471,7 +475,11 @@ def register_blueprint_node_tools(mcp: FastMCP):
         automatic pin disconnection and safety checks.
         
         Args:
-            blueprint_name: Name of the target Blueprint
+            blueprint_name: Name or full path of the target Blueprint
+                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
+                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
+                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
+                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
                            ⚠️ **Must be exact name from search_items() results**
             node_id: ID of the node to delete
                     ⚠️ **Must be exact node ID from find_blueprint_nodes() results**
@@ -562,7 +570,11 @@ def register_blueprint_node_tools(mcp: FastMCP):
         with protection for critical engine events.
         
         Args:
-            blueprint_name: Name of the target Blueprint
+            blueprint_name: Name or full path of the target Blueprint
+                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
+                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
+                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
+                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
                            ⚠️ **Must be exact name from search_items() results**
             event_name: Name of the event to delete
                        ⚠️ **Must be exact event name from list_custom_events() results**

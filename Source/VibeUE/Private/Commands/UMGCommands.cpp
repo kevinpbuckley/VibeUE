@@ -28,6 +28,324 @@
 #include "Components/SizeBox.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateTypes.h"
+#include "UObject/UnrealType.h"
+#include "Containers/Map.h"
+#include "Containers/Set.h"
+
+namespace
+{
+struct FPathSegment
+{
+	FString Name;
+	bool bHasIndex = false;
+	int32 Index = INDEX_NONE;
+	bool bHasKey = false;
+	FString Key; // serialized key for maps/sets
+};
+
+static bool ParsePropertyPath(const FString& InPath, bool& bSlotRoot, TArray<FPathSegment>& Out)
+{
+	bSlotRoot = false;
+	Out.Reset();
+	TArray<FString> Parts;
+	InPath.ParseIntoArray(Parts, TEXT("."), true);
+	if (Parts.Num() == 0) return false;
+	int32 Start = 0;
+	if (Parts[0].Equals(TEXT("Slot"), ESearchCase::IgnoreCase))
+	{
+		bSlotRoot = true;
+		Start = 1;
+		if (Parts.Num() == 1)
+		{
+			return false; // Slot alone not valid
+		}
+	}
+	for (int32 i = Start; i < Parts.Num(); ++i)
+	{
+		FPathSegment Seg;
+		const FString& P = Parts[i];
+		int32 BracketIdx;
+		if (P.FindChar('[', BracketIdx) && P.EndsWith("]"))
+		{
+			Seg.Name = P.Left(BracketIdx);
+			FString Inside = P.Mid(BracketIdx + 1, P.Len() - BracketIdx - 2);
+			// inside could be index or key
+			if (Inside.IsNumeric())
+			{
+				Seg.bHasIndex = true;
+				Seg.Index = FCString::Atoi(*Inside);
+			}
+			else
+			{
+				Seg.bHasKey = true;
+				Seg.Key = Inside;
+			}
+		}
+		else
+		{
+			Seg.Name = P;
+		}
+		Out.Add(Seg);
+	}
+	return Out.Num() > 0;
+}
+
+static void AddEnumConstraints(FProperty* Prop, TSharedPtr<FJsonObject>& Constraints)
+{
+	if (FByteProperty* ByteProperty = CastField<FByteProperty>(Prop))
+	{
+		if (UEnum* Enum = ByteProperty->Enum)
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			for (int32 i = 0; i < Enum->NumEnums() - 1; ++i) // skip _MAX if present
+			{
+				FString Name = Enum->GetNameStringByIndex(i);
+				if (!Name.EndsWith(TEXT("_MAX")))
+				{
+					Values.Add(MakeShared<FJsonValueString>(Name));
+				}
+			}
+			Constraints->SetArrayField(TEXT("enum_values"), Values);
+		}
+	}
+	else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Prop))
+	{
+		if (UEnum* Enum = EnumProperty->GetEnum())
+		{
+			TArray<TSharedPtr<FJsonValue>> Values;
+			for (int32 i = 0; i < Enum->NumEnums() - 1; ++i) // skip _MAX if present
+			{
+				FString Name = Enum->GetNameStringByIndex(i);
+				if (!Name.EndsWith(TEXT("_MAX")))
+				{
+					Values.Add(MakeShared<FJsonValueString>(Name));
+				}
+			}
+			Constraints->SetArrayField(TEXT("enum_values"), Values);
+		}
+	}
+}
+
+static void AddNumericConstraints(FProperty* Prop, TSharedPtr<FJsonObject>& Constraints)
+{
+	auto TryNumberMeta = [&](const TCHAR* Key, const TCHAR* OutKey)
+	{
+		if (Prop->HasMetaData(Key))
+		{
+			FString S = Prop->GetMetaData(Key);
+			double V = FCString::Atod(*S);
+			Constraints->SetNumberField(OutKey, V);
+		}
+	};
+	TryNumberMeta(TEXT("ClampMin"), TEXT("min"));
+	TryNumberMeta(TEXT("ClampMax"), TEXT("max"));
+	TryNumberMeta(TEXT("UIMin"), TEXT("uiMin"));
+	TryNumberMeta(TEXT("UIMax"), TEXT("uiMax"));
+}
+
+struct FResolvedTarget
+{
+	UObject* RootObject = nullptr; // starting object (widget or slot or subobject)
+	void* ContainerPtr = nullptr;  // container pointer for owning object/struct
+	FProperty* Property = nullptr; // final property at path end
+	bool bIsSyntheticChildOrder = false;
+};
+
+static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segs, bool bSlotRoot, FResolvedTarget& Out, FString& Error)
+{
+	UObject* CurrentObject = bSlotRoot ? (UObject*)Widget->Slot : (UObject*)Widget;
+	void* CurrentPtr = CurrentObject;
+	FProperty* CurrentProp = nullptr;
+	if (!CurrentObject)
+	{
+		Error = TEXT("Slot is null for this widget (no parent panel)");
+		return false;
+	}
+	for (int32 i = 0; i < Segs.Num(); ++i)
+	{
+		const FPathSegment& Seg = Segs[i];
+		if (i == Segs.Num() - 1)
+		{
+			// final segment, allow synthetic ChildOrder on slot
+			if (bSlotRoot && Seg.Name.Equals(TEXT("ChildOrder"), ESearchCase::IgnoreCase))
+			{
+				Out.RootObject = CurrentObject;
+				Out.ContainerPtr = CurrentPtr;
+				Out.Property = nullptr;
+				Out.bIsSyntheticChildOrder = true;
+				return true;
+			}
+		}
+
+		// find property on current object/struct
+		if (UObject* Obj = Cast<UObject>((UObject*)CurrentObject))
+		{
+			CurrentProp = Obj->GetClass()->FindPropertyByName(*Seg.Name);
+		}
+		else if (CurrentProp && CurrentProp->IsA<FStructProperty>())
+		{
+			FStructProperty* SP = CastFieldChecked<FStructProperty>(CurrentProp);
+			CurrentProp = SP->Struct->FindPropertyByName(*Seg.Name);
+		}
+		else
+		{
+			// treat CurrentPtr as a struct; find by scanning owner struct
+			return false;
+		}
+
+		if (!CurrentProp)
+		{
+			// Common alias mapping
+			if (!bSlotRoot && Seg.Name.Equals(TEXT("IsVariable"), ESearchCase::IgnoreCase))
+			{
+				CurrentProp = Widget->GetClass()->FindPropertyByName(TEXT("bIsVariable"));
+			}
+		}
+
+		if (!CurrentProp)
+		{
+			Error = FString::Printf(TEXT("Property '%s' not found"), *Seg.Name);
+			return false;
+		}
+
+		// step into property
+		if (FStructProperty* SP = CastField<FStructProperty>(CurrentProp))
+		{
+			CurrentPtr = SP->ContainerPtrToValuePtr<void>(CurrentPtr);
+			CurrentObject = nullptr; // now in struct
+		}
+		else if (FObjectProperty* OP = CastField<FObjectProperty>(CurrentProp))
+		{
+			UObject* const* ObjPtr = OP->ContainerPtrToValuePtr<UObject*>(CurrentPtr);
+			CurrentObject = *ObjPtr;
+			CurrentPtr = CurrentObject;
+			if (!CurrentObject)
+			{
+				// stop here; allow set to construct later if needed
+			}
+		}
+		else if (FArrayProperty* AP = CastField<FArrayProperty>(CurrentProp))
+		{
+			void* ArrPtr = AP->ContainerPtrToValuePtr<void>(CurrentPtr);
+			FScriptArrayHelper Helper(AP, ArrPtr);
+			if (Seg.bHasIndex)
+			{
+				if (!Helper.IsValidIndex(Seg.Index))
+				{
+					Error = FString::Printf(TEXT("Array index out of bounds: %d (len=%d)"), Seg.Index, Helper.Num());
+					return false;
+				}
+				CurrentPtr = Helper.GetRawPtr(Seg.Index);
+				CurrentProp = AP->Inner;
+				// continue deeper; CurrentObject remains null
+			}
+			else
+			{
+				// array as a whole; remain on AP for final
+				if (i != Segs.Num() - 1)
+				{
+					Error = TEXT("Array path must specify index to access elements");
+					return false;
+				}
+			}
+		}
+		else if (FMapProperty* MP = CastField<FMapProperty>(CurrentProp))
+		{
+			void* MapPtr = MP->ContainerPtrToValuePtr<void>(CurrentPtr);
+			FScriptMapHelper Helper(MP, MapPtr);
+			if (Seg.bHasKey)
+			{
+				// build key from string
+				TArray<uint8> KeyStorage;
+				KeyStorage.SetNumUninitialized(MP->KeyProp->GetSize());
+				MP->KeyProp->InitializeValue(KeyStorage.GetData());
+				// simple conversion: string/name/int/enum
+				if (FNameProperty* KP = CastField<FNameProperty>(MP->KeyProp))
+				{
+					FName ValueName(*Seg.Key);
+					KP->CopyCompleteValue(KeyStorage.GetData(), &ValueName);
+				}
+				else if (FStrProperty* KP2 = CastField<FStrProperty>(MP->KeyProp))
+				{
+					FString S = Seg.Key;
+					KP2->CopyCompleteValue(KeyStorage.GetData(), &S);
+				}
+				else if (FIntProperty* KP3 = CastField<FIntProperty>(MP->KeyProp))
+				{
+					int32 I = FCString::Atoi(*Seg.Key);
+					KP3->CopyCompleteValue(KeyStorage.GetData(), &I);
+				}
+				else if (FByteProperty* KP4 = CastField<FByteProperty>(MP->KeyProp))
+				{
+					uint8 B = 0;
+					if (KP4->Enum)
+					{
+						int64 EnumVal = KP4->Enum->GetValueByNameString(Seg.Key);
+						B = EnumVal == INDEX_NONE ? (uint8)FCString::Atoi(*Seg.Key) : (uint8)EnumVal;
+					}
+					else
+					{
+						B = (uint8)FCString::Atoi(*Seg.Key);
+					}
+					KP4->CopyCompleteValue(KeyStorage.GetData(), &B);
+				}
+				else
+				{
+					Error = TEXT("Unsupported map key type");
+					return false;
+				}
+
+				int32 Index = INDEX_NONE;
+				for (int32 It = 0; It < Helper.GetMaxIndex(); ++It)
+				{
+					if (!Helper.IsValidIndex(It)) continue;
+					uint8* Pair = (uint8*)Helper.GetPairPtr(It);
+					void* ExistingKeyPtr = Pair; // key at start of pair
+					if (MP->KeyProp->Identical(KeyStorage.GetData(), ExistingKeyPtr))
+					{
+						Index = It;
+						break;
+					}
+				}
+				if (Index == INDEX_NONE)
+				{
+					Error = TEXT("Map key not found");
+					return false;
+				}
+				CurrentPtr = Helper.GetPairPtr(Index) + MP->MapLayout.ValueOffset;
+				CurrentProp = MP->ValueProp;
+			}
+			else if (i != Segs.Num() - 1)
+			{
+				Error = TEXT("Map path must specify [Key] to access value");
+				return false;
+			}
+		}
+		else if (FSetProperty* SetP = CastField<FSetProperty>(CurrentProp))
+		{
+			// cannot traverse into set without value; only whole-set supported
+			if (i != Segs.Num() - 1)
+			{
+				Error = TEXT("Set path cannot traverse into elements; use collection_op");
+				return false;
+			}
+		}
+		else
+		{
+			// primitive leaf; only okay if last
+			if (i != Segs.Num() - 1)
+			{
+				Error = FString::Printf(TEXT("Cannot traverse into non-composite property '%s'"), *Seg.Name);
+				return false;
+			}
+		}
+	}
+	Out.RootObject = Cast<UObject>(CurrentObject) ? Cast<UObject>(CurrentObject) : Widget;
+	Out.ContainerPtr = CurrentPtr;
+	Out.Property = CurrentProp;
+	return true;
+}
+}
 #include "Components/HorizontalBox.h"
 #include "Components/VerticalBox.h"
 #include "Components/ScrollBox.h"
@@ -3624,19 +3942,310 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 
 	// Use reflection to find and set the property
 	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
+	void* ContainerPtrForSet = (void*)FoundWidget;
+	bool bUsedResolver = false;
 	if (!Property)
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
+		// We now support dotted paths and Slot.* context, plus IsVariable alias
+		// Resolve path
+		bool bSlotRoot = false;
+		TArray<FPathSegment> Segs;
+		if (!ParsePropertyPath(PropertyName, bSlotRoot, Segs))
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Invalid property_name path"));
+		}
+		FString ResolveError;
+		FResolvedTarget Target;
+		if (!ResolvePath(FoundWidget, Segs, bSlotRoot, Target, ResolveError))
+		{
+			return FCommonUtils::CreateErrorResponse(ResolveError);
+		}
+
+	bUsedResolver = true;
+	// Synthetic child order setter
+		if (Target.bIsSyntheticChildOrder)
+		{
+			int32 DesiredIndex = INDEX_NONE;
+			if (bHasStringValue)
+			{
+				DesiredIndex = FCString::Atoi(*PropertyValue);
+			}
+			else if (bHasJsonValue && PropertyValueJson.IsValid() && PropertyValueJson->Type == EJson::Number)
+			{
+				DesiredIndex = (int32)PropertyValueJson->AsNumber();
+			}
+			else
+			{
+				return FCommonUtils::CreateErrorResponse(TEXT("ChildOrder requires integer value"));
+			}
+			UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
+			if (!Slot || !Slot->Parent)
+			{
+				return FCommonUtils::CreateErrorResponse(TEXT("Widget has no parent panel for ChildOrder"));
+			}
+			UPanelWidget* Parent = Slot->Parent;
+			int32 CurrentIndex = Parent->GetChildIndex(FoundWidget);
+			DesiredIndex = FMath::Clamp(DesiredIndex, 0, Parent->GetChildrenCount() - 1);
+			if (CurrentIndex != DesiredIndex)
+			{
+				Parent->RemoveChildAt(CurrentIndex);
+				Parent->InsertChildAt(DesiredIndex, FoundWidget);
+			}
+			FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+			if (GEditor)
+			{
+				GEditor->NoteSelectionChange();
+				TArray<IAssetEditorInstance*> AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAsset(WidgetBlueprint);
+				for (IAssetEditorInstance* Editor : AssetEditors)
+				{
+					if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(Editor))
+					{
+						WidgetEditor->RefreshEditors();
+					}
+				}
+			}
+			TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+			Result->SetBoolField(TEXT("success"), true);
+			Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+			Result->SetStringField(TEXT("component_name"), WidgetName);
+			Result->SetStringField(TEXT("property_name"), PropertyName);
+			Result->SetNumberField(TEXT("property_value"), DesiredIndex);
+			Result->SetStringField(TEXT("note"), TEXT("ChildOrder updated"));
+			return Result;
+		}
+
+		FProperty* ResolvedProperty = Target.Property;
+		if (!ResolvedProperty)
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on target"), *PropertyName));
+		}
+		Property = ResolvedProperty;
+		ContainerPtrForSet = Target.ContainerPtr ? Target.ContainerPtr : (void*)FoundWidget;
+	}
+
+	// Optional collection operation (for arrays/sets/maps)
+	FString CollectionOp;
+	Params->TryGetStringField(TEXT("collection_op"), CollectionOp);
+
+	// Flag for structural modification (e.g., IsVariable toggles)
+	bool bStructuralChange = false;
+
+	// Handle collection operations first when applicable
+	if (!CollectionOp.IsEmpty())
+	{
+		if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+		{
+			void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+			FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
+
+			auto ConvertAndAssignElement = [&](int32 DestIndex, const TSharedPtr<FJsonValue>& JsonElem, FString& OutErrStr) -> bool
+			{
+				ArrayHelper.ExpandForIndex(DestIndex);
+				void* ElemPtr = ArrayHelper.GetRawPtr(DestIndex);
+				FProperty* ElemProp = ArrayProperty->Inner;
+
+				if (FStrProperty* PropStr = CastField<FStrProperty>(ElemProp))
+				{
+					FString V;
+					if (JsonElem->Type == EJson::String) V = JsonElem->AsString();
+					else if (JsonElem->Type == EJson::Number) V = FString::SanitizeFloat(JsonElem->AsNumber());
+					else if (JsonElem->Type == EJson::Boolean) V = JsonElem->AsBool() ? TEXT("true") : TEXT("false");
+					else V = JsonElem->AsString();
+					PropStr->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FTextProperty* PropText = CastField<FTextProperty>(ElemProp))
+				{
+					FText V = FText::FromString(JsonElem->AsString());
+					PropText->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FBoolProperty* PropBool = CastField<FBoolProperty>(ElemProp))
+				{
+					bool V = (JsonElem->Type == EJson::Boolean) ? JsonElem->AsBool() : JsonElem->AsString().Equals(TEXT("true"), ESearchCase::IgnoreCase);
+					PropBool->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FFloatProperty* PropFloat = CastField<FFloatProperty>(ElemProp))
+				{
+					float V = (float)((JsonElem->Type == EJson::Number) ? JsonElem->AsNumber() : FCString::Atof(*JsonElem->AsString()));
+					PropFloat->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FIntProperty* PropInt = CastField<FIntProperty>(ElemProp))
+				{
+					int32 V = (int32)((JsonElem->Type == EJson::Number) ? JsonElem->AsNumber() : FCString::Atoi(*JsonElem->AsString()));
+					PropInt->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FByteProperty* PropByte = CastField<FByteProperty>(ElemProp))
+				{
+					if (PropByte->Enum)
+					{
+						FString NameStr = JsonElem->AsString();
+						int64 EnumVal = PropByte->Enum->GetValueByNameString(NameStr);
+						if (EnumVal == INDEX_NONE)
+						{
+							OutErrStr = FString::Printf(TEXT("Invalid enum value '%s'"), *NameStr);
+							return false;
+						}
+						PropByte->SetPropertyValue(ElemPtr, (uint8)EnumVal);
+						return true;
+					}
+					uint8 V = (uint8)((JsonElem->Type == EJson::Number) ? (int32)JsonElem->AsNumber() : FCString::Atoi(*JsonElem->AsString()));
+					PropByte->SetPropertyValue(ElemPtr, V);
+					return true;
+				}
+				if (FStructProperty* PropStruct = CastField<FStructProperty>(ElemProp))
+				{
+					if (JsonElem->Type != EJson::Object)
+					{
+						OutErrStr = TEXT("Struct array element requires JSON object");
+						return false;
+					}
+					TSharedPtr<FJsonObject> Obj = JsonElem->AsObject();
+					return FJsonObjectConverter::JsonObjectToUStruct(Obj.ToSharedRef(), PropStruct->Struct, ElemPtr, 0, 0);
+				}
+				OutErrStr = TEXT("Unsupported array element type");
+				return false;
+			};
+
+			FString Op = CollectionOp.ToLower();
+			if (Op == TEXT("clear"))
+			{
+				ArrayHelper.Resize(0);
+			}
+			else if (Op == TEXT("set") || Op == TEXT("append"))
+			{
+				const TArray<TSharedPtr<FJsonValue>>* JsonArr = nullptr;
+				if (!bHasJsonValue || !PropertyValueJson.IsValid() || PropertyValueJson->Type != EJson::Array)
+				{
+					return FCommonUtils::CreateErrorResponse(TEXT("collection_op requires property_value to be an array"));
+				}
+				JsonArr = &PropertyValueJson->AsArray();
+				int32 StartIndex = (Op == TEXT("set")) ? 0 : ArrayHelper.Num();
+				if (Op == TEXT("set"))
+				{
+					ArrayHelper.Resize(0);
+				}
+				for (int32 i = 0; i < JsonArr->Num(); ++i)
+				{
+					FString CErr;
+					if (!ConvertAndAssignElement(StartIndex + i, (*JsonArr)[i], CErr))
+					{
+						return FCommonUtils::CreateErrorResponse(CErr);
+					}
+				}
+			}
+			else if (Op == TEXT("insert") || Op == TEXT("updateat") || Op == TEXT("removeat"))
+			{
+				int32 Index = 0;
+				if (!Params->TryGetNumberField(TEXT("index"), Index))
+				{
+					return FCommonUtils::CreateErrorResponse(TEXT("collection_op requires 'index' parameter"));
+				}
+				if (Op == TEXT("removeat"))
+				{
+					if (Index < 0 || Index >= ArrayHelper.Num())
+					{
+						return FCommonUtils::CreateErrorResponse(TEXT("removeAt index out of range"));
+					}
+					ArrayHelper.RemoveValues(Index, 1);
+				}
+				else
+				{
+					if (!bHasJsonValue)
+					{
+						return FCommonUtils::CreateErrorResponse(TEXT("insert/updateAt requires JSON property_value for element"));
+					}
+					if (Op == TEXT("insert"))
+					{
+						Index = FMath::Clamp(Index, 0, ArrayHelper.Num());
+						ArrayHelper.InsertValues(Index, 1);
+					}
+					else
+					{
+						if (Index < 0 || Index >= ArrayHelper.Num())
+						{
+							return FCommonUtils::CreateErrorResponse(TEXT("updateAt index out of range"));
+						}
+					}
+					FString CErr;
+					if (!ConvertAndAssignElement(Index, PropertyValueJson, CErr))
+					{
+						return FCommonUtils::CreateErrorResponse(CErr);
+					}
+				}
+			}
+			else
+			{
+				return FCommonUtils::CreateErrorResponse(TEXT("Unsupported collection_op for arrays"));
+			}
+
+			// Mark and refresh
+			FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+			if (GEditor)
+			{
+				GEditor->NoteSelectionChange();
+				TArray<IAssetEditorInstance*> AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAsset(WidgetBlueprint);
+				for (IAssetEditorInstance* Editor : AssetEditors)
+				{
+					if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(Editor))
+					{
+						WidgetEditor->RefreshEditors();
+					}
+				}
+			}
+			TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+			Result->SetBoolField(TEXT("success"), true);
+			Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+			Result->SetStringField(TEXT("component_name"), WidgetName);
+			Result->SetStringField(TEXT("property_name"), PropertyName);
+			Result->SetStringField(TEXT("collection_op"), CollectionOp);
+			Result->SetStringField(TEXT("note"), TEXT("Array collection operation applied"));
+			return Result;
+		}
+		// TODO: Add TSet/TMap support
+		return FCommonUtils::CreateErrorResponse(TEXT("collection_op currently supports TArray only"));
 	}
 
 	// Handle different property types
 	bool bPropertySet = false;
 	FString ErrorMessage;
 
-	// First try complex types if we have JSON data
-	if (bHasJsonValue && PropertyValueJson.IsValid())
+	// First: handle struct properties with JSON data reflectively (works for dotted paths and direct names)
+	if (!bPropertySet && bHasJsonValue && PropertyValueJson.IsValid())
 	{
-		bPropertySet = ParseComplexPropertyValue(PropertyValueJson, Property, FoundWidget, ErrorMessage);
+		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+		{
+			if (PropertyValueJson->Type != EJson::Object)
+			{
+				ErrorMessage = FString::Printf(TEXT("Struct property '%s' requires JSON object"), *PropertyName);
+			}
+			else
+			{
+				TSharedPtr<FJsonObject> JsonObj = PropertyValueJson->AsObject();
+				// If we resolved via dotted path, ContainerPtrForSet points to the VALUE already.
+				// Otherwise it's the owning object; derive value pointer via reflection.
+				void* ValuePtr = bUsedResolver
+					? ContainerPtrForSet
+					: StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+				bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+				if (!bPropertySet)
+				{
+					ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct for property '%s'"), *PropertyName);
+				}
+			}
+		}
+	}
+
+	// Next: try complex non-struct types when JSON is provided
+	if (!bPropertySet && bHasJsonValue && PropertyValueJson.IsValid())
+	{
+		if (!CastField<FStructProperty>(Property))
+		{
+			bPropertySet = ParseComplexPropertyValue(PropertyValueJson, Property, FoundWidget, ErrorMessage);
+		}
 	}
 	
 	// If complex type parsing failed or we have string data, try basic types
@@ -3644,31 +4253,31 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 	{
 		if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
 		{
-			StrProperty->SetPropertyValue_InContainer(FoundWidget, PropertyValue);
+			StrProperty->SetPropertyValue_InContainer(ContainerPtrForSet, PropertyValue);
 			bPropertySet = true;
 		}
 		else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
 		{
 			FText TextValue = FText::FromString(PropertyValue);
-			TextProperty->SetPropertyValue_InContainer(FoundWidget, TextValue);
+			TextProperty->SetPropertyValue_InContainer(ContainerPtrForSet, TextValue);
 			bPropertySet = true;
 		}
 		else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
 		{
 			bool BoolValue = PropertyValue.Equals(TEXT("true"), ESearchCase::IgnoreCase) || PropertyValue.Equals(TEXT("1"));
-			BoolProperty->SetPropertyValue_InContainer(FoundWidget, BoolValue);
+			BoolProperty->SetPropertyValue_InContainer(ContainerPtrForSet, BoolValue);
 			bPropertySet = true;
 		}
 		else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
 		{
 			float FloatValue = FCString::Atof(*PropertyValue);
-			FloatProperty->SetPropertyValue_InContainer(FoundWidget, FloatValue);
+			FloatProperty->SetPropertyValue_InContainer(ContainerPtrForSet, FloatValue);
 			bPropertySet = true;
 		}
 		else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
 		{
 			int32 IntValue = FCString::Atoi(*PropertyValue);
-			IntProperty->SetPropertyValue_InContainer(FoundWidget, IntValue);
+			IntProperty->SetPropertyValue_InContainer(ContainerPtrForSet, IntValue);
 			bPropertySet = true;
 		}
 		else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
@@ -3679,7 +4288,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 				int64 EnumValue = ByteProperty->Enum->GetValueByNameString(PropertyValue);
 				if (EnumValue != INDEX_NONE)
 				{
-					ByteProperty->SetPropertyValue_InContainer(FoundWidget, (uint8)EnumValue);
+					ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, (uint8)EnumValue);
 					bPropertySet = true;
 				}
 				else
@@ -3690,8 +4299,29 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 			else
 			{
 				uint8 ByteValue = (uint8)FCString::Atoi(*PropertyValue);
-				ByteProperty->SetPropertyValue_InContainer(FoundWidget, ByteValue);
+				ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, ByteValue);
 				bPropertySet = true;
+			}
+		}
+		else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+		{
+			if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
+			{
+				int64 EnumValue = EnumProperty->GetEnum()->GetValueByNameString(PropertyValue);
+				if (EnumValue != INDEX_NONE)
+				{
+					uint8* EnumValuePtr = (uint8*)EnumProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+					EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(EnumValuePtr, EnumValue);
+					bPropertySet = true;
+				}
+				else
+				{
+					ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property '%s'"), *PropertyValue, *PropertyName);
+				}
+			}
+			else
+			{
+				ErrorMessage = FString::Printf(TEXT("Cannot set enum property '%s' - missing underlying property or enum"), *PropertyName);
 			}
 		}
 		else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
@@ -3701,13 +4331,40 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertyValue);
 			if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
 			{
-				TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
-				bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+				void* ValuePtr = bUsedResolver
+					? ContainerPtrForSet
+					: StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+				bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+				if (!bPropertySet)
+				{
+					// Fallback to legacy complex parser for non-standard shapes
+					TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
+					bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+				}
 			}
 			else
 			{
 				ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *PropertyName);
 			}
+		}
+	}
+
+	// Special handling: IsVariable toggle should be structural
+	if (bPropertySet)
+	{
+		// Notify the widget that a property has changed (similar to Details Panel)
+		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+		{
+			// Create a property change event for struct properties
+			FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
+			PropertyChangedEvent.MemberProperty = Property;
+			
+			// Call PostEditChangeProperty on the widget to trigger proper notifications
+			FoundWidget->PostEditChangeProperty(PropertyChangedEvent);
+		}
+		if (Property->GetFName() == TEXT("bIsVariable") || PropertyName.Equals(TEXT("IsVariable"), ESearchCase::IgnoreCase))
+		{
+			bStructuralChange = true;
 		}
 	}
 
@@ -3721,7 +4378,14 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 	}
 
 	// Mark the blueprint as modified and compile
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+	if (bStructuralChange)
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+	}
+	else
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+	}
 	
 	// Force refresh the widget in the designer
 	if (GEditor)
@@ -3758,6 +4422,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 	}
 	
 	Result->SetStringField(TEXT("note"), TEXT("Property set successfully"));
+	
+	// Mark the widget blueprint as dirty so changes persist
+	WidgetBlueprint->MarkPackageDirty();
 	
 	return Result;
 }
@@ -3811,59 +4478,288 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
 	}
 
-	// Use reflection to find and get the property
-	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
+	// Resolve dotted path with Slot prefix and aliases
+	bool bSlotRoot = false;
+	TArray<FPathSegment> Segs;
+	if (!ParsePropertyPath(PropertyName, bSlotRoot, Segs))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Invalid property_name path"));
+	}
+	FString ResolveError;
+	FResolvedTarget Target;
+	if (!ResolvePath(FoundWidget, Segs, bSlotRoot, Target, ResolveError))
+	{
+		return FCommonUtils::CreateErrorResponse(ResolveError);
+	}
+
+	// Synthetic ChildOrder
+	if (Target.bIsSyntheticChildOrder)
+	{
+		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+		Result->SetBoolField(TEXT("success"), true);
+		Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+		Result->SetStringField(TEXT("component_name"), WidgetName);
+		Result->SetStringField(TEXT("property_name"), PropertyName);
+		UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
+		UPanelWidget* Parent = Slot ? Slot->Parent : nullptr;
+		int32 Index = (Parent) ? Parent->GetChildIndex(FoundWidget) : 0;
+		Result->SetNumberField(TEXT("property_value"), Index);
+		Result->SetStringField(TEXT("property_type"), TEXT("int"));
+		TSharedPtr<FJsonObject> Constraints = MakeShareable(new FJsonObject);
+		Constraints->SetNumberField(TEXT("child_count"), Parent ? Parent->GetChildrenCount() : 0);
+		Result->SetObjectField(TEXT("constraints"), Constraints);
+		Result->SetBoolField(TEXT("editable"), true);
+		return Result;
+	}
+
+	FProperty* Property = Target.Property;
 	if (!Property)
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on widget '%s'"), *PropertyName, *WidgetName));
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on target"), *PropertyName));
 	}
 
 	// Get property value based on type
 	FString PropertyValue;
 	FString PropertyType;
+	TSharedPtr<FJsonValue> PropertyJson; // prefer structured JSON when applicable
 
 	if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
 	{
-		PropertyValue = StrProperty->GetPropertyValue_InContainer(FoundWidget);
+		PropertyValue = StrProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		PropertyType = TEXT("String");
 	}
 	else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
 	{
-		FText TextValue = TextProperty->GetPropertyValue_InContainer(FoundWidget);
+		FText TextValue = TextProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		PropertyValue = TextValue.ToString();
 		PropertyType = TEXT("Text");
 	}
 	else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
 	{
-		bool BoolValue = BoolProperty->GetPropertyValue_InContainer(FoundWidget);
+		bool BoolValue = BoolProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		PropertyValue = BoolValue ? TEXT("true") : TEXT("false");
 		PropertyType = TEXT("bool");
 	}
 	else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
 	{
-		float FloatValue = FloatProperty->GetPropertyValue_InContainer(FoundWidget);
+		float FloatValue = FloatProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		PropertyValue = FString::SanitizeFloat(FloatValue);
 		PropertyType = TEXT("float");
 	}
 	else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
 	{
-		int32 IntValue = IntProperty->GetPropertyValue_InContainer(FoundWidget);
+		int32 IntValue = IntProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		PropertyValue = FString::FromInt(IntValue);
-		PropertyType = TEXT("int32");
+		PropertyType = TEXT("int");
 	}
 	else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
 	{
-		uint8 ByteValue = ByteProperty->GetPropertyValue_InContainer(FoundWidget);
+		uint8 ByteValue = ByteProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
 		if (ByteProperty->Enum)
 		{
 			PropertyValue = ByteProperty->Enum->GetNameStringByValue(ByteValue);
-			PropertyType = ByteProperty->Enum->GetName();
+			PropertyType = FString::Printf(TEXT("Enum<%s>"), *ByteProperty->Enum->GetName());
 		}
 		else
 		{
 			PropertyValue = FString::FromInt(ByteValue);
-			PropertyType = TEXT("uint8");
+			PropertyType = TEXT("byte");
 		}
+	}
+	else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+	{
+		if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
+		{
+			uint8* EnumValuePtr = (uint8*)EnumProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+			int64 EnumValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(EnumValuePtr);
+			PropertyValue = EnumProperty->GetEnum()->GetNameStringByValue(EnumValue);
+			PropertyType = FString::Printf(TEXT("Enum<%s>"), *EnumProperty->GetEnum()->GetName());
+		}
+		else
+		{
+			PropertyValue = TEXT("UnknownEnum");
+			PropertyType = TEXT("EnumProperty");
+		}
+	}
+	else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		// Respect resolver semantics: Target.ContainerPtr for a struct is the struct value pointer.
+		void* ValuePtr = Target.ContainerPtr ? Target.ContainerPtr
+											 : StructProperty->ContainerPtrToValuePtr<void>((void*)FoundWidget);
+		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject);
+		if (FJsonObjectConverter::UStructToJsonObject(StructProperty->Struct, ValuePtr, Obj.ToSharedRef(), 0, 0))
+		{
+			PropertyJson = MakeShareable(new FJsonValueObject(Obj));
+			PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
+		}
+		else
+		{
+			PropertyValue = TEXT("StructSerializationFailed");
+			PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
+		}
+	}
+	else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+	{
+		void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
+		TArray<TSharedPtr<FJsonValue>> JsonArr;
+		for (int32 i = 0; i < ArrayHelper.Num(); ++i)
+		{
+			void* ElemPtr = ArrayHelper.GetRawPtr(i);
+			FProperty* ElemProp = ArrayProperty->Inner;
+			if (FStrProperty* PStr = CastField<FStrProperty>(ElemProp))
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueString(PStr->GetPropertyValue(ElemPtr))));
+			}
+			else if (FTextProperty* PText = CastField<FTextProperty>(ElemProp))
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueString(PText->GetPropertyValue(ElemPtr).ToString())));
+			}
+			else if (FBoolProperty* PBool = CastField<FBoolProperty>(ElemProp))
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueBoolean(PBool->GetPropertyValue(ElemPtr))));
+			}
+			else if (FFloatProperty* PFloat = CastField<FFloatProperty>(ElemProp))
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueNumber(PFloat->GetPropertyValue(ElemPtr))));
+			}
+			else if (FIntProperty* PInt = CastField<FIntProperty>(ElemProp))
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueNumber(PInt->GetPropertyValue(ElemPtr))));
+			}
+			else if (FByteProperty* PByte = CastField<FByteProperty>(ElemProp))
+			{
+				if (PByte->Enum)
+				{
+					uint8 V = PByte->GetPropertyValue(ElemPtr);
+					JsonArr.Add(MakeShareable(new FJsonValueString(PByte->Enum->GetNameStringByValue(V))));
+				}
+				else
+				{
+					JsonArr.Add(MakeShareable(new FJsonValueNumber(PByte->GetPropertyValue(ElemPtr))));
+				}
+			}
+			else if (FStructProperty* PStruct = CastField<FStructProperty>(ElemProp))
+			{
+				TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
+				FJsonObjectConverter::UStructToJsonObject(PStruct->Struct, ElemPtr, ElemObj.ToSharedRef(), 0, 0);
+				JsonArr.Add(MakeShareable(new FJsonValueObject(ElemObj)));
+			}
+			else
+			{
+				JsonArr.Add(MakeShareable(new FJsonValueString(TEXT("UnsupportedArrayElemType"))));
+			}
+		}
+		PropertyJson = MakeShareable(new FJsonValueArray(JsonArr));
+		PropertyType = TEXT("Array");
+	}
+	else if (FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+	{
+		void* SetAddr = SetProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptSetHelper SetHelper(SetProperty, SetAddr);
+		TArray<TSharedPtr<FJsonValue>> JsonArr;
+		for (int32 Idx = 0; Idx < SetHelper.Num(); ++Idx)
+		{
+			if (!SetHelper.IsValidIndex(Idx)) continue;
+			void* ElemPtr = SetHelper.GetElementPtr(Idx);
+			FProperty* ElemProp = SetProperty->ElementProp;
+			if (FStrProperty* SProp = CastField<FStrProperty>(ElemProp))
+				JsonArr.Add(MakeShareable(new FJsonValueString(SProp->GetPropertyValue(ElemPtr))));
+			else if (FTextProperty* TProp = CastField<FTextProperty>(ElemProp))
+				JsonArr.Add(MakeShareable(new FJsonValueString(TProp->GetPropertyValue(ElemPtr).ToString())));
+			else if (FBoolProperty* BProp = CastField<FBoolProperty>(ElemProp))
+				JsonArr.Add(MakeShareable(new FJsonValueBoolean(BProp->GetPropertyValue(ElemPtr))));
+			else if (FFloatProperty* FProp = CastField<FFloatProperty>(ElemProp))
+				JsonArr.Add(MakeShareable(new FJsonValueNumber(FProp->GetPropertyValue(ElemPtr))));
+			else if (FIntProperty* IProp = CastField<FIntProperty>(ElemProp))
+				JsonArr.Add(MakeShareable(new FJsonValueNumber(IProp->GetPropertyValue(ElemPtr))));
+			else if (FByteProperty* ByProp = CastField<FByteProperty>(ElemProp))
+			{
+				if (ByProp->Enum)
+				{
+					uint8 V = ByProp->GetPropertyValue(ElemPtr);
+					JsonArr.Add(MakeShareable(new FJsonValueString(ByProp->Enum->GetNameStringByValue(V))));
+				}
+				else
+				{
+					JsonArr.Add(MakeShareable(new FJsonValueNumber(ByProp->GetPropertyValue(ElemPtr))));
+				}
+			}
+			else if (FStructProperty* StProp = CastField<FStructProperty>(ElemProp))
+			{
+				TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
+				FJsonObjectConverter::UStructToJsonObject(StProp->Struct, ElemPtr, ElemObj.ToSharedRef(), 0, 0);
+				JsonArr.Add(MakeShareable(new FJsonValueObject(ElemObj)));
+			}
+		}
+		PropertyJson = MakeShareable(new FJsonValueArray(JsonArr));
+		PropertyType = TEXT("Set");
+	}
+	else if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+	{
+		void* MapAddr = MapProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptMapHelper MapHelper(MapProperty, MapAddr);
+		TSharedPtr<FJsonObject> MapObj = MakeShareable(new FJsonObject);
+		for (int32 Idx = 0; Idx < MapHelper.GetMaxIndex(); ++Idx)
+		{
+			if (!MapHelper.IsValidIndex(Idx)) continue;
+			uint8* PairPtr = (uint8*)MapHelper.GetPairPtr(Idx);
+			void* KeyPtr = PairPtr;
+			void* ValPtr = PairPtr + MapProperty->MapLayout.ValueOffset;
+
+			// Key to string
+			FString KeyStr;
+			if (FNameProperty* KP = CastField<FNameProperty>(MapProperty->KeyProp))
+				KeyStr = KP->GetPropertyValue(KeyPtr).ToString();
+			else if (FStrProperty* KP2 = CastField<FStrProperty>(MapProperty->KeyProp))
+				KeyStr = KP2->GetPropertyValue(KeyPtr);
+			else if (FIntProperty* KP3 = CastField<FIntProperty>(MapProperty->KeyProp))
+				KeyStr = FString::FromInt(KP3->GetPropertyValue(KeyPtr));
+			else if (FByteProperty* KP4 = CastField<FByteProperty>(MapProperty->KeyProp))
+			{
+				if (KP4->Enum)
+					KeyStr = KP4->Enum->GetNameStringByValue(KP4->GetPropertyValue(KeyPtr));
+				else
+					KeyStr = FString::FromInt(KP4->GetPropertyValue(KeyPtr));
+			}
+			else
+				KeyStr = TEXT("UnsupportedKey");
+
+			// Value to JSON
+			TSharedPtr<FJsonValue> ValJson;
+			FProperty* VP = MapProperty->ValueProp;
+			if (FStrProperty* VPStr = CastField<FStrProperty>(VP))
+				ValJson = MakeShareable(new FJsonValueString(VPStr->GetPropertyValue(ValPtr)));
+			else if (FTextProperty* VPText = CastField<FTextProperty>(VP))
+				ValJson = MakeShareable(new FJsonValueString(VPText->GetPropertyValue(ValPtr).ToString()));
+			else if (FBoolProperty* VPBool = CastField<FBoolProperty>(VP))
+				ValJson = MakeShareable(new FJsonValueBoolean(VPBool->GetPropertyValue(ValPtr)));
+			else if (FFloatProperty* VPFloat = CastField<FFloatProperty>(VP))
+				ValJson = MakeShareable(new FJsonValueNumber(VPFloat->GetPropertyValue(ValPtr)));
+			else if (FIntProperty* VPInt = CastField<FIntProperty>(VP))
+				ValJson = MakeShareable(new FJsonValueNumber(VPInt->GetPropertyValue(ValPtr)));
+			else if (FByteProperty* VPByte = CastField<FByteProperty>(VP))
+			{
+				if (VPByte->Enum)
+					ValJson = MakeShareable(new FJsonValueString(VPByte->Enum->GetNameStringByValue(VPByte->GetPropertyValue(ValPtr))));
+				else
+					ValJson = MakeShareable(new FJsonValueNumber(VPByte->GetPropertyValue(ValPtr)));
+			}
+			else if (FStructProperty* VPStruct = CastField<FStructProperty>(VP))
+			{
+				TSharedPtr<FJsonObject> VObj = MakeShareable(new FJsonObject);
+				FJsonObjectConverter::UStructToJsonObject(VPStruct->Struct, ValPtr, VObj.ToSharedRef(), 0, 0);
+				ValJson = MakeShareable(new FJsonValueObject(VObj));
+			}
+			else
+			{
+				ValJson = MakeShareable(new FJsonValueString(TEXT("UnsupportedValueType")));
+			}
+
+			MapObj->SetField(KeyStr, ValJson);
+		}
+		PropertyJson = MakeShareable(new FJsonValueObject(MapObj));
+		PropertyType = TEXT("Map");
 	}
 	else
 	{
@@ -3876,8 +4772,80 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
 	Result->SetStringField(TEXT("component_name"), WidgetName);
 	Result->SetStringField(TEXT("property_name"), PropertyName);
-	Result->SetStringField(TEXT("property_value"), PropertyValue);
+	if (PropertyJson.IsValid())
+	{
+		Result->SetField(TEXT("property_value"), PropertyJson);
+	}
+	else
+	{
+		Result->SetStringField(TEXT("property_value"), PropertyValue);
+	}
 	Result->SetStringField(TEXT("property_type"), PropertyType);
+	// Constraints and editable metadata
+	TSharedPtr<FJsonObject> Constraints = MakeShareable(new FJsonObject);
+	AddEnumConstraints(Property, Constraints);
+	AddNumericConstraints(Property, Constraints);
+	// Add collection lengths
+	if (FArrayProperty* APc = CastField<FArrayProperty>(Property))
+	{
+		void* ArrayAddr = APc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptArrayHelper H(APc, ArrayAddr);
+		Constraints->SetNumberField(TEXT("length"), H.Num());
+	}
+	else if (FSetProperty* SPc = CastField<FSetProperty>(Property))
+	{
+		void* SetAddr = SPc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptSetHelper H(SPc, SetAddr);
+		Constraints->SetNumberField(TEXT("length"), H.Num());
+	}
+	else if (FMapProperty* MPc = CastField<FMapProperty>(Property))
+	{
+		void* MapAddr = MPc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
+		FScriptMapHelper H(MPc, MapAddr);
+		Constraints->SetNumberField(TEXT("length"), H.Num());
+	}
+	Result->SetObjectField(TEXT("constraints"), Constraints);
+	Result->SetBoolField(TEXT("editable"), Property->HasAnyPropertyFlags(CPF_Edit));
+	// Adapter info
+	TSharedPtr<FJsonObject> AdapterInfo = MakeShareable(new FJsonObject);
+	AdapterInfo->SetStringField(TEXT("component_kind"), TEXT("UMG"));
+	if (FoundWidget->Slot)
+	{
+		AdapterInfo->SetStringField(TEXT("slot_class"), FoundWidget->Slot->GetClass()->GetName());
+	}
+	else
+	{
+		AdapterInfo->SetStringField(TEXT("slot_class"), TEXT(""));
+	}
+	Result->SetObjectField(TEXT("adapter_info"), AdapterInfo);
+	// Schema hints
+	TSharedPtr<FJsonObject> Schema = MakeShareable(new FJsonObject);
+	if (FStructProperty* SPC = CastField<FStructProperty>(Property))
+	{
+		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
+		S->SetStringField(TEXT("name"), SPC->Struct->GetName());
+		Schema->SetObjectField(TEXT("struct"), S);
+	}
+	else if (FArrayProperty* APC = CastField<FArrayProperty>(Property))
+	{
+		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
+		S->SetStringField(TEXT("element_type"), APC->Inner->GetClass()->GetName());
+		Schema->SetObjectField(TEXT("array"), S);
+	}
+	else if (FSetProperty* SETC = CastField<FSetProperty>(Property))
+	{
+		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
+		S->SetStringField(TEXT("element_type"), SETC->ElementProp->GetClass()->GetName());
+		Schema->SetObjectField(TEXT("set"), S);
+	}
+	else if (FMapProperty* MPC = CastField<FMapProperty>(Property))
+	{
+		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
+		S->SetStringField(TEXT("key_type"), MPC->KeyProp->GetClass()->GetName());
+		S->SetStringField(TEXT("value_type"), MPC->ValueProp->GetClass()->GetName());
+		Schema->SetObjectField(TEXT("map"), S);
+	}
+	Result->SetObjectField(TEXT("schema"), Schema);
 	
 	return Result;
 }
