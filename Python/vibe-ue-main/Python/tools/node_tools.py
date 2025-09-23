@@ -322,53 +322,6 @@ def register_blueprint_node_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
-    def set_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        variable_value: str
-    ) -> Dict[str, Any]:
-        """
-        Set a variable's value in a Blueprint.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            variable_name: Name of the variable to set
-            variable_value: Value to set (as string, will be converted to appropriate type)
-            
-        Returns:
-            Response indicating success or failure
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "variable_value": variable_value
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Setting variable '{variable_name}' to '{variable_value}' in blueprint '{blueprint_name}'")
-            response = unreal.send_command("set_blueprint_variable", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Variable setting response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting variable: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
     def delete_blueprint_variable(
         ctx: Context,
         blueprint_name: str,

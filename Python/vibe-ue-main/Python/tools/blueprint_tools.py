@@ -240,6 +240,101 @@ def register_blueprint_tools(mcp: FastMCP):
             error_msg = f"Error setting blueprint property: {e}"
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_variable_property(
+        ctx: Context,
+        blueprint_name: str,
+        path: str
+    ) -> Dict[str, Any]:
+        """
+        Get a nested Blueprint variable property via reflection.
+
+        Args:
+            blueprint_name: Target Blueprint name or full path
+            path: Dotted path to variable and subfields (arrays/maps/structs). Examples:
+                  "RadarSettings.Range"
+                  "Inventory.Items[2].ID"
+                  "Config.Values[KeyName]"
+
+        Returns:
+            Dict with success flag and value payload (reflection-serialized)
+        """
+        from vibe_ue_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "blueprint_name": blueprint_name,
+                "path": path
+            }
+
+            logger.info(f"Getting variable property '{path}' from blueprint '{blueprint_name}'")
+            response = unreal.send_command("get_variable_property", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"Get variable property response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error getting variable property: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def set_variable_property(
+        ctx: Context,
+        blueprint_name: str,
+        path: str,
+        value
+    ) -> Dict[str, Any]:
+        """
+        Set a nested Blueprint variable property via reflection.
+
+        Args:
+            blueprint_name: Target Blueprint name or full path
+            path: Dotted path to variable and subfields (arrays/maps/structs). Examples:
+                  "RadarSettings.Range", "Inventory.Items[2].ID", "Config.Values[KeyName]"
+            value: JSON-serializable value to apply (supports structs/arrays/maps/enums)
+
+        Returns:
+            Dict with success flag and normalized_value payload (reflection-applied)
+        """
+        from vibe_ue_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "blueprint_name": blueprint_name,
+                "path": path,
+                "value": value
+            }
+
+            logger.info(f"Setting variable property '{path}' on blueprint '{blueprint_name}' to '{value}'")
+            response = unreal.send_command("set_variable_property", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"Set variable property response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error setting variable property: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
     
     @mcp.tool()
     def reparent_blueprint(
@@ -480,4 +575,97 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    logger.info("Blueprint tools (including reflection-based tools) registered successfully") 
+    @mcp.tool()
+    def get_blueprint_variable_metadata(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get Blueprint variable metadata (Instance Editable, Category, Tooltip, etc.).
+        
+        Args:
+            blueprint_name: Name of the Blueprint
+            variable_name: Name of the variable
+            
+        Returns:
+            Dict containing variable metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            response = unreal.send_command("get_blueprint_variable_metadata", {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name
+            })
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Got metadata for variable {variable_name} in Blueprint {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting Blueprint variable metadata: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    @mcp.tool()
+    def set_blueprint_variable_metadata(
+        ctx: Context,
+        blueprint_name: str,
+        variable_name: str,
+        metadata: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """
+        Set Blueprint variable metadata (Instance Editable, Category, Tooltip, etc.).
+        
+        Args:
+            blueprint_name: Name of the Blueprint
+            variable_name: Name of the variable
+            metadata: Dict with metadata fields to set:
+                - instance_editable: bool - Show in Details panel
+                - blueprint_readonly: bool - Read-only in Blueprints
+                - expose_on_spawn: bool - Show when spawning
+                - private: bool - Hide from other Blueprints
+                - category: str - Category in Details panel
+                - tooltip: str - Tooltip text
+                - slider_min: str - Minimum slider value
+                - slider_max: str - Maximum slider value
+            
+        Returns:
+            Dict containing success status
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            response = unreal.send_command("set_blueprint_variable_metadata", {
+                "blueprint_name": blueprint_name,
+                "variable_name": variable_name,
+                "metadata": metadata
+            })
+            
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set metadata for variable {variable_name} in Blueprint {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting Blueprint variable metadata: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    logger.info("Blueprint tools (including metadata tools) registered successfully") 

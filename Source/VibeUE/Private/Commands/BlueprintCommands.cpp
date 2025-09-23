@@ -17,6 +17,9 @@
 #include "UObject/Field.h"
 #include "UObject/FieldPath.h"
 #include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h" 
+#include "Serialization/JsonSerializer.h"
+#include "Serialization/JsonReader.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "GameFramework/Actor.h"
@@ -26,6 +29,15 @@
 #include "UObject/Class.h"
 #include "UObject/Package.h"
 #include "Engine/StaticMesh.h"
+#include "UObject/UnrealType.h"
+#include "Containers/Map.h"
+#include "Containers/Set.h"
+#include "Math/Vector.h"
+#include "Math/Vector2D.h"
+#include "Math/Vector4.h"
+#include "Math/Rotator.h"
+#include "Math/Transform.h"
+#include "Math/Color.h"
 
 FBlueprintCommands::FBlueprintCommands()
 {
@@ -65,10 +77,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleGetBlueprintVariable(Params);
     }
-    else if (CommandType == TEXT("set_blueprint_variable"))
-    {
-        return HandleSetBlueprintVariable(Params);
-    }
     else if (CommandType == TEXT("delete_blueprint_variable"))
     {
         return HandleDeleteBlueprintVariable(Params);
@@ -76,6 +84,22 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     else if (CommandType == TEXT("get_available_blueprint_variable_types"))
     {
         return HandleGetAvailableBlueprintVariableTypes(Params);
+    }
+    else if (CommandType == TEXT("get_variable_property"))
+    {
+        return HandleGetVariableProperty(Params);
+    }
+    else if (CommandType == TEXT("set_variable_property"))
+    {
+        return HandleSetVariableProperty(Params);
+    }
+    else if (CommandType == TEXT("get_blueprint_variable_metadata"))
+    {
+        return HandleGetBlueprintVariableMetadata(Params);
+    }
+    else if (CommandType == TEXT("set_blueprint_variable_metadata"))
+    {
+        return HandleSetBlueprintVariableMetadata(Params);
     }
     
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
@@ -1286,14 +1310,35 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSh
     FString DefaultValue;
     Params->TryGetStringField(TEXT("default_value"), DefaultValue);
     
+    // Get is_exposed parameter
+    bool bIsExposed = false;
+    Params->TryGetBoolField(TEXT("is_exposed"), bIsExposed);
+    
     // Add the variable
     if (FBlueprintEditorUtils::AddMemberVariable(Blueprint, FName(*VariableName), PinType, DefaultValue))
     {
+        // Set the Instance Editable flag if specified
+        if (bIsExposed)
+        {
+            FName VarName(*VariableName);
+            for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+            {
+                if (Variable.VarName == VarName)
+                {
+                    Variable.PropertyFlags |= CPF_Edit;
+                    Variable.PropertyFlags |= CPF_BlueprintVisible;
+                    Variable.RepNotifyFunc = FName(); // Clear rep notify
+                    break;
+                }
+            }
+        }
+        
         Response->SetBoolField(TEXT("success"), true);
         Response->SetStringField(TEXT("message"), TEXT("Variable added successfully"));
         Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
         Response->SetStringField(TEXT("variable_name"), VariableName);
         Response->SetStringField(TEXT("variable_type"), VariableType);
+        Response->SetBoolField(TEXT("is_exposed"), bIsExposed);
         
         // Compile the Blueprint
         FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
@@ -1431,76 +1476,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariable(const TSh
     Response->SetStringField(TEXT("variable_type"), TypeName);
     Response->SetStringField(TEXT("category"), VarDesc->Category.ToString());
     Response->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
-    
-    return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
-{
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
-    }
-    
-    FString VariableName;
-    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
-    }
-    
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-    
-    // Find the variable
-    FName VarName(*VariableName);
-    FBPVariableDescription* VarDesc = nullptr;
-    
-    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
-    {
-        if (Blueprint->NewVariables[i].VarName == VarName)
-        {
-            VarDesc = &Blueprint->NewVariables[i];
-            break;
-        }
-    }
-    
-    if (!VarDesc)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
-    }
-    
-    // Handle different property updates
-    const TSharedPtr<FJsonObject>* PropertiesObj;
-    if (Params->TryGetObjectField(TEXT("properties"), PropertiesObj))
-    {
-        // Update tooltip if provided
-        FString NewTooltip;
-        if ((*PropertiesObj)->TryGetStringField(TEXT("tooltip"), NewTooltip))
-        {
-            VarDesc->FriendlyName = NewTooltip;
-        }
-        
-        // Update category if provided
-        FString NewCategory;
-        if ((*PropertiesObj)->TryGetStringField(TEXT("category"), NewCategory))
-        {
-            VarDesc->Category = FText::FromString(NewCategory);
-        }
-        
-        // Mark Blueprint as modified
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    }
-    
-    Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("message"), TEXT("Variable updated successfully"));
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("variable_name"), VariableName);
     
     return Response;
 }
@@ -1706,6 +1681,775 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetAvailableBlueprintVariableT
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Failed to get available Blueprint variable types"));
     }
+    
+    return Response;
+}
+
+// --- Reflection-based variable property access ---
+namespace
+{
+    static bool SplitVarPath(const FString& In, FString& OutVar, TArray<FString>& OutSegs)
+    {
+        OutVar.Empty();
+        OutSegs.Reset();
+        TArray<FString> Parts; In.ParseIntoArray(Parts, TEXT("."), true);
+        if (Parts.Num() == 0) return false;
+        OutVar = Parts[0];
+        for (int32 i=1;i<Parts.Num();++i) OutSegs.Add(Parts[i]);
+        return true;
+    }
+
+    struct FResolvedVarProp { FProperty* Prop=nullptr; void* Ptr=nullptr; FString Canonical; };
+
+    static bool ResolveOnCDO(UObject* CDO, const FString& Var, const TArray<FString>& Segs, FResolvedVarProp& Out)
+    {
+        if (!CDO) return false;
+        FProperty* P = CDO->GetClass()->FindPropertyByName(*Var);
+        if (!P) return false;
+        void* Cur = P->ContainerPtrToValuePtr<void>(CDO);
+        FString Canonical = Var;
+        for (const FString& Seg : Segs)
+        {
+            if (FArrayProperty* AP = CastField<FArrayProperty>(P))
+            {
+                FScriptArrayHelper H(AP, Cur);
+                int32 Idx = FCString::Atoi(*Seg);
+                if (!H.IsValidIndex(Idx)) return false;
+                Cur = H.GetRawPtr(Idx);
+                P = AP->Inner;
+                Canonical += FString::Printf(TEXT(".%d"), Idx);
+                continue;
+            }
+            if (FMapProperty* MP = CastField<FMapProperty>(P))
+            {
+                FScriptMapHelper H(MP, Cur);
+                // Only support string/int/name/enum keys via text coercion
+                TArray<uint8> Key; Key.SetNumUninitialized(MP->KeyProp->GetSize());
+                MP->KeyProp->InitializeValue(Key.GetData());
+                bool bOk = false;
+                if (FStrProperty* SP = CastField<FStrProperty>(MP->KeyProp)) { FString S=Seg; SP->CopyCompleteValue(Key.GetData(), &S); bOk=true; }
+                else if (FNameProperty* NP = CastField<FNameProperty>(MP->KeyProp)) { FName N(*Seg); NP->CopyCompleteValue(Key.GetData(), &N); bOk=true; }
+                else if (FIntProperty* IP = CastField<FIntProperty>(MP->KeyProp)) { int32 V=FCString::Atoi(*Seg); IP->CopyCompleteValue(Key.GetData(), &V); bOk=true; }
+                else if (FByteProperty* BP = CastField<FByteProperty>(MP->KeyProp)) { uint8 V=0; if (UEnum* E=BP->Enum){int64 EV=E->GetValueByNameString(Seg); V=(EV==INDEX_NONE)?(uint8)FCString::Atoi(*Seg):(uint8)EV;} else {V=(uint8)FCString::Atoi(*Seg);} BP->CopyCompleteValue(Key.GetData(), &V); bOk=true; }
+                if (!bOk) { MP->KeyProp->DestroyValue(Key.GetData()); return false; }
+                int32 PairIdx = INDEX_NONE;
+                for (int32 It=0; It<H.GetMaxIndex(); ++It) { if (!H.IsValidIndex(It)) continue; uint8* Pair=(uint8*)H.GetPairPtr(It); if (MP->KeyProp->Identical(Pair, Key.GetData())) { PairIdx=It; break; } }
+                MP->KeyProp->DestroyValue(Key.GetData());
+                if (PairIdx==INDEX_NONE) return false;
+                Cur = H.GetPairPtr(PairIdx) + MP->MapLayout.ValueOffset;
+                P = MP->ValueProp;
+                Canonical += TEXT(".") + Seg;
+                continue;
+            }
+            if (FSetProperty* SP = CastField<FSetProperty>(P))
+            {
+                // Expose whole set only; traversal into elements unsupported here
+                return false;
+            }
+            if (FStructProperty* StP = CastField<FStructProperty>(P))
+            {
+                FProperty* Inner = StP->Struct->FindPropertyByName(*Seg);
+                if (!Inner) return false;
+                Cur = Inner->ContainerPtrToValuePtr<void>(Cur);
+                P = Inner;
+                Canonical += TEXT(".") + Seg;
+                continue;
+            }
+            // not traversable further
+            return false;
+        }
+        Out.Prop = P; Out.Ptr = Cur; Out.Canonical = Canonical; return true;
+    }
+
+    // --- JSON Serialization Helpers ---
+    static FString EnumToString(FProperty* Prop, void* Ptr)
+    {
+        if (FEnumProperty* EP = CastField<FEnumProperty>(Prop))
+        {
+            UEnum* E = EP->GetEnum();
+            int64 V = EP->GetUnderlyingProperty()->GetSignedIntPropertyValue(Ptr);
+            return E ? E->GetNameStringByValue(V) : FString::FromInt((int32)V);
+        }
+        if (FByteProperty* BP = CastField<FByteProperty>(Prop))
+        {
+            if (UEnum* E = BP->Enum)
+            {
+                uint8 V = *(uint8*)Ptr;
+                return E->GetNameStringByValue(V);
+            }
+        }
+        return TEXT("");
+    }
+
+    static FString KeyToString(FProperty* KeyProp, void* KeyPtr)
+    {
+        if (FStrProperty* SP = CastField<FStrProperty>(KeyProp)) return SP->GetPropertyValue(KeyPtr);
+        if (FNameProperty* NP = CastField<FNameProperty>(KeyProp)) return NP->GetPropertyValue(KeyPtr).ToString();
+        if (FIntProperty* IP = CastField<FIntProperty>(KeyProp)) return FString::FromInt(IP->GetPropertyValue(KeyPtr));
+        if (FByteProperty* BP = CastField<FByteProperty>(KeyProp))
+        {
+            if (BP->Enum) return EnumToString(KeyProp, KeyPtr);
+            return FString::FromInt((int32)*(uint8*)KeyPtr);
+        }
+        if (FEnumProperty* EP = CastField<FEnumProperty>(KeyProp)) return EnumToString(KeyProp, KeyPtr);
+        return TEXT("");
+    }
+
+    static TSharedPtr<FJsonValue> SerializeProperty(FProperty* Prop, void* Ptr);
+
+    static TSharedPtr<FJsonValue> SerializeStruct(FStructProperty* SP, void* Ptr)
+    {
+        UScriptStruct* SS = SP->Struct;
+        // Common structs with compact representations
+        if (SS->GetFName() == NAME_Vector)
+        {
+            FVector V = *(FVector*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>(V.X), MakeShared<FJsonValueNumber>(V.Y), MakeShared<FJsonValueNumber>(V.Z) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (SS->GetFName() == NAME_Vector2D)
+        {
+            FVector2D V = *(FVector2D*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>(V.X), MakeShared<FJsonValueNumber>(V.Y) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (SS->GetFName() == NAME_Vector4)
+        {
+            FVector4d V = *(FVector4d*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>(V.X), MakeShared<FJsonValueNumber>(V.Y), MakeShared<FJsonValueNumber>(V.Z), MakeShared<FJsonValueNumber>(V.W) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (SS->GetFName() == NAME_Rotator)
+        {
+            FRotator R = *(FRotator*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>(R.Pitch), MakeShared<FJsonValueNumber>(R.Yaw), MakeShared<FJsonValueNumber>(R.Roll) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (SS->GetFName() == NAME_Transform)
+        {
+            FTransform T = *(FTransform*)Ptr;
+            TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+            FVector L = T.GetLocation(); FRotator R = T.Rotator(); FVector S = T.GetScale3D();
+            Obj->SetArrayField(TEXT("location"), { MakeShared<FJsonValueNumber>(L.X), MakeShared<FJsonValueNumber>(L.Y), MakeShared<FJsonValueNumber>(L.Z) });
+            Obj->SetArrayField(TEXT("rotation"), { MakeShared<FJsonValueNumber>(R.Pitch), MakeShared<FJsonValueNumber>(R.Yaw), MakeShared<FJsonValueNumber>(R.Roll) });
+            Obj->SetArrayField(TEXT("scale"), { MakeShared<FJsonValueNumber>(S.X), MakeShared<FJsonValueNumber>(S.Y) , MakeShared<FJsonValueNumber>(S.Z) });
+            return MakeShared<FJsonValueObject>(Obj);
+        }
+        if (SS->GetFName() == NAME_Color)
+        {
+            FColor C = *(FColor*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>((double)C.R), MakeShared<FJsonValueNumber>((double)C.G), MakeShared<FJsonValueNumber>((double)C.B), MakeShared<FJsonValueNumber>((double)C.A) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (SS->GetFName() == NAME_LinearColor)
+        {
+            FLinearColor C = *(FLinearColor*)Ptr;
+            TArray<TSharedPtr<FJsonValue>> Arr{ MakeShared<FJsonValueNumber>(C.R), MakeShared<FJsonValueNumber>(C.G), MakeShared<FJsonValueNumber>(C.B), MakeShared<FJsonValueNumber>(C.A) };
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        // Generic struct to object
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        for (TFieldIterator<FProperty> It(SS); It; ++It)
+        {
+            FProperty* Inner = *It;
+            void* InnerPtr = (uint8*)Ptr + Inner->GetOffset_ForInternal();
+            Obj->SetField(Inner->GetName(), SerializeProperty(Inner, InnerPtr));
+        }
+        return MakeShared<FJsonValueObject>(Obj);
+    }
+
+    static TSharedPtr<FJsonValue> SerializeProperty(FProperty* Prop, void* Ptr)
+    {
+        if (FIntProperty* IP = CastField<FIntProperty>(Prop)) return MakeShared<FJsonValueNumber>((double)IP->GetPropertyValue(Ptr));
+        if (FFloatProperty* FP = CastField<FFloatProperty>(Prop)) return MakeShared<FJsonValueNumber>((double)FP->GetFloatingPointPropertyValue(Ptr));
+        if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop)) return MakeShared<FJsonValueNumber>(DP->GetFloatingPointPropertyValue(Ptr));
+        if (FBoolProperty* BP = CastField<FBoolProperty>(Prop)) return MakeShared<FJsonValueBoolean>(BP->GetPropertyValue(Ptr));
+        if (FStrProperty* SP = CastField<FStrProperty>(Prop)) return MakeShared<FJsonValueString>(SP->GetPropertyValue(Ptr));
+        if (FNameProperty* NP = CastField<FNameProperty>(Prop)) return MakeShared<FJsonValueString>(NP->GetPropertyValue(Ptr).ToString());
+        if (FTextProperty* TP = CastField<FTextProperty>(Prop)) return MakeShared<FJsonValueString>(TP->GetPropertyValue(Ptr).ToString());
+        if (FEnumProperty* EP = CastField<FEnumProperty>(Prop)) return MakeShared<FJsonValueString>(EnumToString(Prop, Ptr));
+        if (FByteProperty* BP2 = CastField<FByteProperty>(Prop))
+        {
+            if (BP2->Enum) return MakeShared<FJsonValueString>(EnumToString(Prop, Ptr));
+            return MakeShared<FJsonValueNumber>((double)*(uint8*)Ptr);
+        }
+        if (FArrayProperty* AP = CastField<FArrayProperty>(Prop))
+        {
+            FScriptArrayHelper H(AP, Ptr);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (int32 i=0;i<H.Num();++i) Arr.Add(SerializeProperty(AP->Inner, H.GetRawPtr(i)));
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (FMapProperty* MP = CastField<FMapProperty>(Prop))
+        {
+            FScriptMapHelper H(MP, Ptr);
+            TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+            for (int32 It=0; It<H.GetMaxIndex(); ++It)
+            {
+                if (!H.IsValidIndex(It)) continue;
+                uint8* Pair = (uint8*)H.GetPairPtr(It);
+                void* KeyPtr = Pair; void* ValPtr = Pair + MP->MapLayout.ValueOffset;
+                FString K = KeyToString(MP->KeyProp, KeyPtr);
+                Obj->SetField(K, SerializeProperty(MP->ValueProp, ValPtr));
+            }
+            return MakeShared<FJsonValueObject>(Obj);
+        }
+        if (FSetProperty* SetP = CastField<FSetProperty>(Prop))
+        {
+            FScriptSetHelper H(SetP, Ptr);
+            TArray<TSharedPtr<FJsonValue>> Arr;
+            for (int32 It=0; It<H.GetMaxIndex(); ++It)
+            {
+                if (!H.IsValidIndex(It)) continue;
+                Arr.Add(SerializeProperty(SetP->ElementProp, H.GetElementPtr(It)));
+            }
+            return MakeShared<FJsonValueArray>(Arr);
+        }
+        if (FStructProperty* StP = CastField<FStructProperty>(Prop))
+        {
+            return SerializeStruct(StP, Ptr);
+        }
+        // unsupported object refs for variable CDOs return string path if non-null
+        if (FObjectProperty* OP = CastField<FObjectProperty>(Prop))
+        {
+            UObject* const* ObjPtr = (UObject* const*)Ptr;
+            return MakeShared<FJsonValueString>((*ObjPtr) ? (*ObjPtr)->GetPathName() : FString("None"));
+        }
+        return MakeShared<FJsonValueNull>();
+    }
+
+    static bool ApplyJsonToProperty(const TSharedPtr<FJsonValue>& J, FProperty* Prop, void* Ptr);
+
+    static bool ApplyJsonToStruct(const TSharedPtr<FJsonValue>& J, FStructProperty* SP, void* Ptr)
+    {
+        UScriptStruct* SS = SP->Struct;
+        if (SS->GetFName() == NAME_Vector)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<3) return false;
+            FVector V((float)(*A)[0]->AsNumber(), (float)(*A)[1]->AsNumber(), (float)(*A)[2]->AsNumber());
+            *(FVector*)Ptr = V; return true;
+        }
+        if (SS->GetFName() == NAME_Vector2D)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<2) return false;
+            FVector2D V((float)(*A)[0]->AsNumber(), (float)(*A)[1]->AsNumber());
+            *(FVector2D*)Ptr = V; return true;
+        }
+        if (SS->GetFName() == NAME_Vector4)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<4) return false;
+            FVector4d V((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber(), (*A)[3]->AsNumber());
+            *(FVector4d*)Ptr = V; return true;
+        }
+        if (SS->GetFName() == NAME_Rotator)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<3) return false;
+            FRotator R((float)(*A)[0]->AsNumber(), (float)(*A)[1]->AsNumber(), (float)(*A)[2]->AsNumber());
+            *(FRotator*)Ptr = R; return true;
+        }
+        if (SS->GetFName() == NAME_Transform)
+        {
+            const TSharedPtr<FJsonObject>* Obj; if (!J->TryGetObject(Obj)) return false;
+            FVector L(0); FRotator R(0); FVector S(1);
+            const TArray<TSharedPtr<FJsonValue>>* LA; if ((*Obj)->TryGetArrayField(TEXT("location"), LA) && LA->Num()>=3) { L=FVector((float)(*LA)[0]->AsNumber(), (float)(*LA)[1]->AsNumber(), (float)(*LA)[2]->AsNumber()); }
+            const TArray<TSharedPtr<FJsonValue>>* RA; if ((*Obj)->TryGetArrayField(TEXT("rotation"), RA) && RA->Num()>=3) { R=FRotator((float)(*RA)[0]->AsNumber(), (float)(*RA)[1]->AsNumber(), (float)(*RA)[2]->AsNumber()); }
+            const TArray<TSharedPtr<FJsonValue>>* SA; if ((*Obj)->TryGetArrayField(TEXT("scale"), SA) && SA->Num()>=3) { S=FVector((float)(*SA)[0]->AsNumber(), (float)(*SA)[1]->AsNumber(), (float)(*SA)[2]->AsNumber()); }
+            *(FTransform*)Ptr = FTransform(R, L, S); return true;
+        }
+        if (SS->GetFName() == NAME_Color)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<4) return false;
+            FColor C((uint8)(*A)[0]->AsNumber(), (uint8)(*A)[1]->AsNumber(), (uint8)(*A)[2]->AsNumber(), (uint8)(*A)[3]->AsNumber());
+            *(FColor*)Ptr = C; return true;
+        }
+        if (SS->GetFName() == NAME_LinearColor)
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A) || A->Num()<4) return false;
+            FLinearColor C((*A)[0]->AsNumber(), (*A)[1]->AsNumber(), (*A)[2]->AsNumber(), (*A)[3]->AsNumber());
+            *(FLinearColor*)Ptr = C; return true;
+        }
+        // Generic by field names
+        const TSharedPtr<FJsonObject>* Obj; if (!J->TryGetObject(Obj)) return false;
+        for (TFieldIterator<FProperty> It(SS); It; ++It)
+        {
+            FProperty* Inner = *It;
+            if (!(*Obj)->HasField(Inner->GetName())) continue;
+            void* InnerPtr = (uint8*)Ptr + Inner->GetOffset_ForInternal();
+            if (!ApplyJsonToProperty((*Obj)->TryGetField(Inner->GetName()), Inner, InnerPtr)) return false;
+        }
+        return true;
+    }
+
+    static bool ApplyJsonToProperty(const TSharedPtr<FJsonValue>& J, FProperty* Prop, void* Ptr)
+    {
+        if (FIntProperty* IP = CastField<FIntProperty>(Prop)) { if (J->Type==EJson::Number){ IP->SetPropertyValue(Ptr, (int32)J->AsNumber()); return true; } return false; }
+        if (FFloatProperty* FP = CastField<FFloatProperty>(Prop)) { if (J->Type==EJson::Number){ FP->SetFloatingPointPropertyValue(Ptr, (float)J->AsNumber()); return true; } return false; }
+        if (FDoubleProperty* DP = CastField<FDoubleProperty>(Prop)) { if (J->Type==EJson::Number){ DP->SetFloatingPointPropertyValue(Ptr, J->AsNumber()); return true; } return false; }
+        if (FBoolProperty* BP = CastField<FBoolProperty>(Prop)) { if (J->Type==EJson::Boolean){ BP->SetPropertyValue(Ptr, J->AsBool()); return true; } return false; }
+        if (FStrProperty* SP = CastField<FStrProperty>(Prop)) { if (J->Type==EJson::String){ SP->SetPropertyValue(Ptr, J->AsString()); return true; } return false; }
+        if (FNameProperty* NP = CastField<FNameProperty>(Prop)) { if (J->Type==EJson::String){ NP->SetPropertyValue(Ptr, FName(*J->AsString())); return true; } return false; }
+        if (FTextProperty* TP = CastField<FTextProperty>(Prop)) { if (J->Type==EJson::String){ TP->SetPropertyValue(Ptr, FText::FromString(J->AsString())); return true; } return false; }
+        if (FEnumProperty* EP = CastField<FEnumProperty>(Prop))
+        {
+            if (J->Type==EJson::String)
+            {
+                UEnum* E = EP->GetEnum(); int64 V = E?E->GetValueByNameString(J->AsString()):INDEX_NONE; if (V==INDEX_NONE) V=(int64)FCString::Atoi(*J->AsString());
+                EP->GetUnderlyingProperty()->SetIntPropertyValue(Ptr, V); return true;
+            }
+            if (J->Type==EJson::Number)
+            {
+                EP->GetUnderlyingProperty()->SetIntPropertyValue(Ptr, (int64)J->AsNumber()); return true;
+            }
+            return false;
+        }
+        if (FByteProperty* BP2 = CastField<FByteProperty>(Prop))
+        {
+            if (BP2->Enum)
+            {
+                if (J->Type==EJson::String){ int64 V = BP2->Enum->GetValueByNameString(J->AsString()); if (V==INDEX_NONE) V=(int64)FCString::Atoi(*J->AsString()); *(uint8*)Ptr=(uint8)V; return true; }
+                if (J->Type==EJson::Number){ *(uint8*)Ptr=(uint8)J->AsNumber(); return true; }
+                return false;
+            }
+            if (J->Type==EJson::Number){ *(uint8*)Ptr=(uint8)J->AsNumber(); return true; }
+            return false;
+        }
+        if (FArrayProperty* AP = CastField<FArrayProperty>(Prop))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A)) return false;
+            FScriptArrayHelper H(AP, Ptr);
+            H.EmptyValues();
+            for (const auto& Elem : *A)
+            {
+                int32 NewIdx = H.AddValue();
+                void* ElemPtr = H.GetRawPtr(NewIdx);
+                if (!ApplyJsonToProperty(Elem, AP->Inner, ElemPtr)) return false;
+            }
+            return true;
+        }
+        if (FMapProperty* MP = CastField<FMapProperty>(Prop))
+        {
+            const TSharedPtr<FJsonObject>* Obj; if (!J->TryGetObject(Obj)) return false;
+            FScriptMapHelper H(MP, Ptr);
+            H.EmptyValues();
+            for (const auto& Pair : (*Obj)->Values)
+            {
+                int32 PairIdx = H.AddDefaultValue_Invalid_NeedsRehash();
+                uint8* PairPtr = (uint8*)H.GetPairPtr(PairIdx);
+                // key
+                if (FStrProperty* SP2 = CastField<FStrProperty>(MP->KeyProp)) { FString S = Pair.Key; SP2->CopyCompleteValue(PairPtr, &S); }
+                else if (FNameProperty* NP2 = CastField<FNameProperty>(MP->KeyProp)) { FName N(*Pair.Key); NP2->CopyCompleteValue(PairPtr, &N); }
+                else if (FIntProperty* IP2 = CastField<FIntProperty>(MP->KeyProp)) { int32 I = FCString::Atoi(*Pair.Key); IP2->CopyCompleteValue(PairPtr, &I); }
+                else if (FByteProperty* BP3 = CastField<FByteProperty>(MP->KeyProp)) { uint8 B=0; if (BP3->Enum){ int64 EV=BP3->Enum->GetValueByNameString(Pair.Key); B=(EV==INDEX_NONE)?(uint8)FCString::Atoi(*Pair.Key):(uint8)EV; } else { B=(uint8)FCString::Atoi(*Pair.Key);} BP3->CopyCompleteValue(PairPtr, &B); }
+                else if (FEnumProperty* EP2 = CastField<FEnumProperty>(MP->KeyProp)) { int64 EV=0; if (Pair.Value->Type==EJson::String){ if (UEnum* E=EP2->GetEnum()){ EV=E->GetValueByNameString(Pair.Key); if (EV==INDEX_NONE) EV=(int64)FCString::Atoi(*Pair.Key);} } else { EV=(int64)FCString::Atoi(*Pair.Key);} EP2->GetUnderlyingProperty()->SetIntPropertyValue(PairPtr, EV); }
+                else { return false; }
+                // value
+                void* ValPtr = PairPtr + MP->MapLayout.ValueOffset;
+                if (!ApplyJsonToProperty(Pair.Value, MP->ValueProp, ValPtr)) return false;
+            }
+            H.Rehash();
+            return true;
+        }
+        if (FSetProperty* SetP = CastField<FSetProperty>(Prop))
+        {
+            const TArray<TSharedPtr<FJsonValue>>* A; if (!J->TryGetArray(A)) return false;
+            FScriptSetHelper H(SetP, Ptr);
+            H.EmptyElements();
+            for (const auto& Elem : *A)
+            {
+                int32 Idx = H.AddDefaultValue_Invalid_NeedsRehash();
+                void* ElemPtr = H.GetElementPtr(Idx);
+                if (!ApplyJsonToProperty(Elem, SetP->ElementProp, ElemPtr)) return false;
+            }
+            H.Rehash();
+            return true;
+        }
+        if (FStructProperty* StP = CastField<FStructProperty>(Prop))
+        {
+            return ApplyJsonToStruct(J, StP, Ptr);
+        }
+        if (FObjectProperty* OP = CastField<FObjectProperty>(Prop))
+        {
+            if (J->Type==EJson::String)
+            {
+                FString Path = J->AsString();
+                UObject* Obj = Path.Equals(TEXT("None"), ESearchCase::IgnoreCase) ? nullptr : StaticLoadObject(OP->PropertyClass, nullptr, *Path);
+                OP->SetObjectPropertyValue(Ptr, Obj);
+                return true;
+            }
+            return false;
+        }
+        return false;
+    }
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BPName, Path; if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("path"), Path))
+    { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'path'")); }
+
+    // Check if this is a metadata path (e.g., "MyVar.@metadata.instance_editable")
+    if (Path.Contains(TEXT(".@metadata.")))
+    {
+        FString VarName, MetadataKey;
+        if (Path.Split(TEXT(".@metadata."), &VarName, &MetadataKey))
+        {
+            // Get variable metadata
+            TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
+            MetadataParams->SetStringField(TEXT("blueprint_name"), BPName);
+            MetadataParams->SetStringField(TEXT("variable_name"), VarName);
+            
+            TSharedPtr<FJsonObject> MetadataResponse = HandleGetBlueprintVariableMetadata(MetadataParams);
+            if (MetadataResponse->GetBoolField(TEXT("success")))
+            {
+                const TSharedPtr<FJsonObject>* MetadataObj;
+                if (MetadataResponse->TryGetObjectField(TEXT("metadata"), MetadataObj))
+                {
+                    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+                    Result->SetBoolField(TEXT("success"), true);
+                    Result->SetStringField(TEXT("canonical_path"), Path);
+                    Result->SetField(TEXT("value"), (*MetadataObj)->TryGetField(MetadataKey));
+                    return Result;
+                }
+            }
+            return FCommonUtils::CreateErrorResponse(TEXT("Failed to get metadata"));
+        }
+    }
+
+    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
+    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    if (!BP->GeneratedClass) { FKismetEditorUtilities::CompileBlueprint(BP); }
+    if (!BP->GeneratedClass) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to compile blueprint")); }
+    UObject* CDO = BP->GeneratedClass->GetDefaultObject();
+
+    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return FCommonUtils::CreateErrorResponse(TEXT("Invalid path format")); }
+    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to resolve property path")); }
+
+    TSharedPtr<FJsonValue> JVal = SerializeProperty(Res.Prop, Res.Ptr);
+
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("success"), true);
+    Out->SetStringField(TEXT("canonical_path"), Res.Canonical);
+    Out->SetField(TEXT("value"), JVal);
+    return Out;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BPName, Path; if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("path"), Path))
+    { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'path'")); }
+    if (!Params->HasField(TEXT("value"))) { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value'")); }
+    
+    // Check if this is a metadata path (e.g., "MyVar.@metadata.instance_editable")
+    if (Path.Contains(TEXT(".@metadata.")))
+    {
+        FString VarName, MetadataKey;
+        if (Path.Split(TEXT(".@metadata."), &VarName, &MetadataKey))
+        {
+            // Create metadata object with single field
+            TSharedPtr<FJsonObject> MetadataUpdate = MakeShared<FJsonObject>();
+            MetadataUpdate->SetField(MetadataKey, Params->Values.FindRef(TEXT("value")));
+            
+            TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
+            MetadataParams->SetStringField(TEXT("blueprint_name"), BPName);
+            MetadataParams->SetStringField(TEXT("variable_name"), VarName);
+            MetadataParams->SetObjectField(TEXT("metadata"), MetadataUpdate);
+            
+            TSharedPtr<FJsonObject> MetadataResponse = HandleSetBlueprintVariableMetadata(MetadataParams);
+            if (MetadataResponse->GetBoolField(TEXT("success")))
+            {
+                TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+                Result->SetBoolField(TEXT("success"), true);
+                Result->SetStringField(TEXT("canonical_path"), Path);
+                Result->SetField(TEXT("normalized_value"), Params->Values.FindRef(TEXT("value")));
+                return Result;
+            }
+            return FCommonUtils::CreateErrorResponse(TEXT("Failed to set metadata"));
+        }
+    }
+    
+    // Get the value - it might be a JSON value or a string that needs parsing
+    TSharedPtr<FJsonValue> InVal = Params->Values.FindRef(TEXT("value"));
+    
+    // If the value is a string, try to parse it as JSON for arrays/objects, or convert to appropriate type
+    if (InVal->Type == EJson::String)
+    {
+        FString ValueStr = InVal->AsString();
+        
+        // Try to parse as JSON if it looks like JSON (starts with [ or {)
+        if (ValueStr.StartsWith(TEXT("[")) || ValueStr.StartsWith(TEXT("{")))
+        {
+            TSharedPtr<FJsonValue> ParsedValue;
+            TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ValueStr);
+            if (FJsonSerializer::Deserialize(Reader, ParsedValue) && ParsedValue.IsValid())
+            {
+                InVal = ParsedValue;
+            }
+        }
+        // Try to convert numeric strings to numbers
+        else if (ValueStr.IsNumeric())
+        {
+            if (ValueStr.Contains(TEXT(".")))
+            {
+                // Float/Double
+                double NumValue = FCString::Atod(*ValueStr);
+                InVal = MakeShared<FJsonValueNumber>(NumValue);
+            }
+            else
+            {
+                // Integer
+                int32 IntValue = FCString::Atoi(*ValueStr);
+                InVal = MakeShared<FJsonValueNumber>((double)IntValue);
+            }
+        }
+        // Try to convert boolean strings
+        else if (ValueStr.Equals(TEXT("true"), ESearchCase::IgnoreCase))
+        {
+            InVal = MakeShared<FJsonValueBoolean>(true);
+        }
+        else if (ValueStr.Equals(TEXT("false"), ESearchCase::IgnoreCase))
+        {
+            InVal = MakeShared<FJsonValueBoolean>(false);
+        }
+    }
+
+    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
+    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    if (!BP->GeneratedClass) { FKismetEditorUtilities::CompileBlueprint(BP); }
+    if (!BP->GeneratedClass) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to compile blueprint")); }
+    UObject* CDO = BP->GeneratedClass->GetDefaultObject();
+
+    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return FCommonUtils::CreateErrorResponse(TEXT("Invalid path format")); }
+    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to resolve property path")); }
+
+    auto Fail = [&](const TCHAR* Msg){ return FCommonUtils::CreateErrorResponse(Msg); };
+
+    if (!ApplyJsonToProperty(InVal, Res.Prop, Res.Ptr)) { return Fail(TEXT("Unsupported property type or value kind")); }
+
+    // Compile to propagate CDO changes
+    FString CompileError; FCommonUtils::SafeCompileBlueprint(BP, CompileError);
+
+    // Return normalized value via get
+    TSharedPtr<FJsonObject> Out = MakeShared<FJsonObject>();
+    Out->SetBoolField(TEXT("success"), true);
+    Out->SetStringField(TEXT("canonical_path"), Res.Canonical);
+    // reuse getter to normalize
+    TSharedPtr<FJsonObject> GetParams = MakeShared<FJsonObject>();
+    GetParams->SetStringField(TEXT("blueprint_name"), BPName);
+    GetParams->SetStringField(TEXT("path"), Res.Canonical);
+    TSharedPtr<FJsonObject> Norm = HandleGetVariableProperty(GetParams);
+    if (Norm.IsValid() && Norm->HasField(TEXT("value")))
+    {
+        Out->SetField(TEXT("normalized_value"), Norm->TryGetField(TEXT("value")));
+    }
+    return Out;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BPName, VarName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'variable_name'"));
+    }
+
+    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
+    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+
+    // Find the variable in Blueprint's NewVariables
+    FName VarFName(*VarName);
+    FBPVariableDescription* VarDesc = nullptr;
+    for (FBPVariableDescription& Var : BP->NewVariables)
+    {
+        if (Var.VarName == VarFName)
+        {
+            VarDesc = &Var;
+            break;
+        }
+    }
+
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Variable not found"));
+    }
+
+    // Build metadata response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BPName);
+    Response->SetStringField(TEXT("variable_name"), VarName);
+    
+    TSharedPtr<FJsonObject> Metadata = MakeShared<FJsonObject>();
+    
+    // Basic properties
+    Metadata->SetBoolField(TEXT("instance_editable"), (VarDesc->PropertyFlags & CPF_Edit) != 0);
+    Metadata->SetBoolField(TEXT("blueprint_readonly"), (VarDesc->PropertyFlags & CPF_BlueprintReadOnly) != 0);
+    Metadata->SetBoolField(TEXT("expose_on_spawn"), (VarDesc->PropertyFlags & CPF_ExposeOnSpawn) != 0);
+    Metadata->SetBoolField(TEXT("private"), (VarDesc->PropertyFlags & CPF_DisableEditOnInstance) != 0);
+    Metadata->SetBoolField(TEXT("expose_to_matinee"), (VarDesc->PropertyFlags & CPF_Interp) != 0);
+    
+    // Category and tooltip
+    Metadata->SetStringField(TEXT("category"), VarDesc->Category.ToString());
+    Metadata->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
+    
+    // Replication
+    Metadata->SetBoolField(TEXT("replicated"), (VarDesc->PropertyFlags & CPF_Net) != 0);
+    Metadata->SetStringField(TEXT("replication_condition"), 
+        (VarDesc->PropertyFlags & CPF_RepNotify) ? TEXT("RepNotify") : TEXT("None"));
+    
+    // Slider settings (if applicable)
+    if (VarDesc->HasMetaData(TEXT("UIMin")))
+    {
+        Metadata->SetStringField(TEXT("slider_min"), VarDesc->GetMetaData(TEXT("UIMin")));
+    }
+    if (VarDesc->HasMetaData(TEXT("UIMax")))
+    {
+        Metadata->SetStringField(TEXT("slider_max"), VarDesc->GetMetaData(TEXT("UIMax")));
+    }
+    
+    Response->SetObjectField(TEXT("metadata"), Metadata);
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BPName, VarName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'variable_name'"));
+    }
+
+    const TSharedPtr<FJsonObject>* MetadataObj;
+    if (!Params->TryGetObjectField(TEXT("metadata"), MetadataObj))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'metadata' object"));
+    }
+
+    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
+    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+
+    // Find the variable
+    FName VarFName(*VarName);
+    FBPVariableDescription* VarDesc = nullptr;
+    for (FBPVariableDescription& Var : BP->NewVariables)
+    {
+        if (Var.VarName == VarFName)
+        {
+            VarDesc = &Var;
+            break;
+        }
+    }
+
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Variable not found"));
+    }
+
+    // Apply metadata changes
+    bool bChanged = false;
+
+    // Instance Editable
+    if ((*MetadataObj)->HasField(TEXT("instance_editable")))
+    {
+        bool bInstanceEditable = (*MetadataObj)->GetBoolField(TEXT("instance_editable"));
+        if (bInstanceEditable)
+        {
+            VarDesc->PropertyFlags |= CPF_Edit;
+            VarDesc->PropertyFlags |= CPF_BlueprintVisible;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_Edit;
+        }
+        bChanged = true;
+    }
+
+    // Blueprint Read Only
+    if ((*MetadataObj)->HasField(TEXT("blueprint_readonly")))
+    {
+        bool bReadOnly = (*MetadataObj)->GetBoolField(TEXT("blueprint_readonly"));
+        if (bReadOnly)
+        {
+            VarDesc->PropertyFlags |= CPF_BlueprintReadOnly;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_BlueprintReadOnly;
+        }
+        bChanged = true;
+    }
+
+    // Expose on Spawn
+    if ((*MetadataObj)->HasField(TEXT("expose_on_spawn")))
+    {
+        bool bExposeOnSpawn = (*MetadataObj)->GetBoolField(TEXT("expose_on_spawn"));
+        if (bExposeOnSpawn)
+        {
+            VarDesc->PropertyFlags |= CPF_ExposeOnSpawn;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_ExposeOnSpawn;
+        }
+        bChanged = true;
+    }
+
+    // Private
+    if ((*MetadataObj)->HasField(TEXT("private")))
+    {
+        bool bPrivate = (*MetadataObj)->GetBoolField(TEXT("private"));
+        if (bPrivate)
+        {
+            VarDesc->PropertyFlags |= CPF_DisableEditOnInstance;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_DisableEditOnInstance;
+        }
+        bChanged = true;
+    }
+
+    // Category
+    if ((*MetadataObj)->HasField(TEXT("category")))
+    {
+        FString Category = (*MetadataObj)->GetStringField(TEXT("category"));
+        VarDesc->Category = FText::FromString(Category);
+        bChanged = true;
+    }
+
+    // Tooltip
+    if ((*MetadataObj)->HasField(TEXT("tooltip")))
+    {
+        FString Tooltip = (*MetadataObj)->GetStringField(TEXT("tooltip"));
+        VarDesc->FriendlyName = Tooltip;
+        bChanged = true;
+    }
+
+    // Slider range
+    if ((*MetadataObj)->HasField(TEXT("slider_min")))
+    {
+        FString SliderMin = (*MetadataObj)->GetStringField(TEXT("slider_min"));
+        VarDesc->SetMetaData(TEXT("UIMin"), *SliderMin);
+        bChanged = true;
+    }
+    if ((*MetadataObj)->HasField(TEXT("slider_max")))
+    {
+        FString SliderMax = (*MetadataObj)->GetStringField(TEXT("slider_max"));
+        VarDesc->SetMetaData(TEXT("UIMax"), *SliderMax);
+        bChanged = true;
+    }
+
+    if (bChanged)
+    {
+        // Mark Blueprint as modified and recompile
+        BP->MarkPackageDirty();
+        FKismetEditorUtilities::CompileBlueprint(BP);
+    }
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BPName);
+    Response->SetStringField(TEXT("variable_name"), VarName);
+    Response->SetStringField(TEXT("message"), TEXT("Variable metadata updated successfully"));
     
     return Response;
 }

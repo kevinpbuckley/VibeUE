@@ -27,9 +27,16 @@ private:
     // Variable management commands
     TSharedPtr<FJsonObject> HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetBlueprintVariable(const TSharedPtr<FJsonObject>& Params);  
-    TSharedPtr<FJsonObject> HandleSetBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDeleteBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintVariableTypes(const TSharedPtr<FJsonObject>& Params);
+
+    // Reflection-based variable property access (two-method API)
+    TSharedPtr<FJsonObject> HandleGetVariableProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetVariableProperty(const TSharedPtr<FJsonObject>& Params);
+    
+    // Blueprint variable metadata management
+    TSharedPtr<FJsonObject> HandleGetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
 
     // Helper functions
     TSharedPtr<FJsonObject> AddComponentToBlueprint(const FString& BlueprintName, const FString& ComponentType, 
