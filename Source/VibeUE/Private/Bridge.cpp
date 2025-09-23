@@ -249,7 +249,9 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("get_available_blueprint_variable_types") ||
                      // Reflection-based variable property API (two-method)
                      CommandType == TEXT("get_variable_property") ||
-                     CommandType == TEXT("set_variable_property"))
+                     CommandType == TEXT("set_variable_property") ||
+                     // Comprehensive Blueprint information
+                     CommandType == TEXT("get_blueprint_info"))
             {
                 ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
             }

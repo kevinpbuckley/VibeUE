@@ -386,6 +386,92 @@ def register_blueprint_tools(mcp: FastMCP):
             error_msg = f"Error getting blueprint variable info: {e}"
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_blueprint_info(
+        ctx: Context,
+        blueprint_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get comprehensive information about any Blueprint using reflection.
+        
+        🔍 **UNIVERSAL BLUEPRINT INSPECTOR**: Get complete information about any Blueprint type
+        - Regular Blueprints, Widget Blueprints, Actor Blueprints, etc.
+        - Variables, Components, UMG Components, Functions, Events, Properties
+        - All information gathered through reflection, not hardcoded
+        
+        Args:
+            blueprint_name: Name or full path of the Blueprint to inspect. Can be:
+                          - Full asset path (e.g., "/Game/Blueprints/BP_Player")
+                          - Package path (e.g., "/Game/Blueprints/BP_Player.BP_Player") 
+                          - Blueprint name only (e.g., "BP_Player") - slower search
+                          
+        Returns:
+            Dict containing:
+            - success: boolean indicating if inspection completed
+            - blueprint_info: comprehensive blueprint metadata including:
+              - name: blueprint name
+              - path: full asset path  
+              - blueprint_type: UBlueprint, UWidgetBlueprint, etc.
+              - parent_class: base class
+              - is_widget_blueprint: boolean flag
+              - variables: array of all Blueprint variables with types and metadata
+              - components: array of all components (mesh, camera, light, etc.)
+              - widget_components: array of UMG widgets (if widget blueprint)
+              - functions: array of Blueprint functions
+              - event_graphs: array of event graphs with node statistics
+              - blueprint_properties: array of Class Default Object properties
+            - error: string (only if success=false)
+        
+        🎯 **Comprehensive Information Includes**:
+        
+        **Variables**: Type, container type, category, editability, flags
+        **Components**: Name, type, parent relationships, native status  
+        **Widget Components**: Name, type, parent, visibility, enabled state
+        **Functions**: Name, node count, graph type
+        **Event Graphs**: Node counts by type (events, function calls, variables)
+        **Properties**: Class default properties with metadata
+        
+        💡 **Usage Examples**:
+        ```python
+        # Get info for any Blueprint type
+        get_blueprint_info("BP_Player")        # Actor Blueprint
+        get_blueprint_info("WBP_MainMenu")     # Widget Blueprint  
+        get_blueprint_info("BP_GameMode")      # GameMode Blueprint
+        
+        # Use full paths for best performance
+        get_blueprint_info("/Game/Blueprints/BP_Player")
+        ```
+        
+        ⚡ **Performance**: Use full paths for instant loading, partial names trigger expensive searches
+        🔄 **Replaces**: get_widget_blueprint_info - this works for ALL Blueprint types
+        """
+        from vibe_ue_server import get_unreal_connection
+
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+
+            params = {
+                "blueprint_name": blueprint_name
+            }
+
+            logger.info(f"Getting comprehensive blueprint info for '{blueprint_name}'")
+            response = unreal.send_command("get_blueprint_info", params)
+
+            if not response:
+                logger.error("No response from Unreal Engine")
+                return {"success": False, "message": "No response from Unreal Engine"}
+
+            logger.info(f"Get blueprint info response: {response}")
+            return response
+
+        except Exception as e:
+            error_msg = f"Error getting blueprint info: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
     
     @mcp.tool()
     def reparent_blueprint(
