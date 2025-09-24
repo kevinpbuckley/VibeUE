@@ -53,6 +53,7 @@
 // Include our new command handler classes
 #include "Commands/BlueprintCommands.h"
 #include "Commands/BlueprintNodeCommands.h"
+#include "Commands/BlueprintComponentReflection.h"
 #include "Commands/CommonUtils.h"
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
@@ -66,6 +67,7 @@ UBridge::UBridge()
 {
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
+    BlueprintComponentReflection = MakeShared<FBlueprintComponentReflection>();
     UMGCommands = MakeShared<FUMGCommands>();
     UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
@@ -75,6 +77,7 @@ UBridge::~UBridge()
 {
     BlueprintCommands.Reset();
     BlueprintNodeCommands.Reset();
+    BlueprintComponentReflection.Reset();
     UMGCommands.Reset();
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
@@ -234,6 +237,18 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                 AvailableTools->SetBoolField(TEXT("actor_tools"), true);
                 AvailableTools->SetBoolField(TEXT("editor_tools"), true);
                 ResultJson->SetObjectField(TEXT("available_tools"), AvailableTools);
+            }
+            // Blueprint Component Reflection Commands
+            else if (CommandType == TEXT("get_available_components") ||
+                     CommandType == TEXT("get_component_info") ||
+                     CommandType == TEXT("get_property_metadata") ||
+                     CommandType == TEXT("get_component_hierarchy") ||
+                     CommandType == TEXT("add_component") ||
+                     CommandType == TEXT("set_component_property") ||
+                     CommandType == TEXT("remove_component") ||
+                     CommandType == TEXT("reorder_components"))
+            {
+                ResultJson = BlueprintComponentReflection->HandleCommand(CommandType, Params);
             }
             // Blueprint Commands
             else if (CommandType == TEXT("create_blueprint") || 

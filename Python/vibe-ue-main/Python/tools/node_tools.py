@@ -116,65 +116,6 @@ def register_blueprint_node_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
-    def add_blueprint_function_node(
-        ctx: Context,
-        blueprint_name: str,
-        target: str,
-        function_name: str,
-        params = None,
-        node_position = None
-    ) -> Dict[str, Any]:
-        """
-        Add a function call node to a Blueprint's event graph.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            target: Target object for the function (component name or self)
-            function_name: Name of the function to call
-            params: Optional parameters to set on the function node
-            node_position: Optional [X, Y] position in the graph
-            
-        Returns:
-            Response containing the node ID and success status
-        """
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            # Handle default values within the method body
-            if params is None:
-                params = {}
-            if node_position is None:
-                node_position = [0, 0]
-
-            command_params = {
-                "blueprint_name": blueprint_name,
-                "target": target,
-                "function_name": function_name,
-                "params": params,
-                "node_position": node_position
-            }
-
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            logger.info(f"Adding function node '{function_name}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_function_node", command_params)
-
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            logger.info(f"Function node creation response: {response}")
-            return response
-
-        except Exception as e:
-            error_msg = f"Error adding function node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-            
-    @mcp.tool()
     def connect_blueprint_nodes(
         ctx: Context,
         blueprint_name: str,

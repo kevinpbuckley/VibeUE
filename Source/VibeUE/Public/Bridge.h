@@ -10,6 +10,7 @@
 #include "Interfaces/IPv4/IPv4Endpoint.h"
 #include "Commands/BlueprintCommands.h"
 #include "Commands/BlueprintNodeCommands.h"
+#include "Commands/BlueprintComponentReflection.h"
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
@@ -58,6 +59,7 @@ private:
 	// Command handler instances
 	TSharedPtr<FBlueprintCommands> BlueprintCommands;
 	TSharedPtr<FBlueprintNodeCommands> BlueprintNodeCommands;
+	TSharedPtr<FBlueprintComponentReflection> BlueprintComponentReflection;
 	TSharedPtr<FUMGCommands> UMGCommands;
 	TSharedPtr<FUMGReflectionCommands> UMGReflectionCommands;
 	TSharedPtr<FAssetCommands> AssetCommands;

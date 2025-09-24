@@ -48,6 +48,385 @@ def register_blueprint_tools(mcp: FastMCP):
             return {"success": False, "message": error_msg}
     
     @mcp.tool()
+    def get_available_components(
+        ctx: Context,
+        category: str = "",
+        base_class: str = "",
+        search_text: str = "",
+        include_abstract: bool = False,
+        include_deprecated: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Discover all available component types using Unreal's reflection system.
+        
+        🔍 **100% REFLECTION-BASED DISCOVERY**: Uses TObjectIterator to find all component classes
+        with comprehensive metadata including properties, methods, hierarchy rules, and usage examples.
+        
+        Args:
+            category: Filter by component category (optional)
+            base_class: Filter by base class (optional)
+            search_text: Text to search for in component names (optional)
+            include_abstract: Whether to include abstract component types (default: False)
+            include_deprecated: Whether to include deprecated component types (default: False)
+            
+        Returns:
+            Dict containing:
+            - success: boolean indicating if discovery completed
+            - components: array of component objects with comprehensive metadata
+            - categories: array of all available categories
+            - total_count: total number of components found
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            params = {
+                "category": category,
+                "base_class": base_class,
+                "search_text": search_text,
+                "include_abstract": include_abstract,
+                "include_deprecated": include_deprecated
+            }
+            
+            response = unreal.send_command("get_available_components", params)
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Found {response.get('total_count', 0)} component types via reflection")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error discovering components: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_component_info(
+        ctx: Context,
+        component_type: str
+    ) -> Dict[str, Any]:
+        """
+        Get comprehensive information about a specific component type using reflection.
+        
+        🔍 **COMPLETE COMPONENT ANALYSIS**: Extracts all metadata including properties,
+        methods, hierarchy rules, compatibility, and usage examples.
+        
+        Args:
+            component_type: Name of the component type to analyze
+            
+        Returns:
+            Dict containing complete component information with reflection-based metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("get_component_info", {
+                "component_type": component_type
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Retrieved component info for: {component_type}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting component info: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_property_metadata(
+        ctx: Context,
+        component_type: str,
+        property_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get detailed metadata for a specific property on a component type.
+        
+        🔍 **PROPERTY REFLECTION**: Extracts complete property information including
+        type, constraints, flags, and metadata from UPROPERTY tags.
+        
+        Args:
+            component_type: Name of the component type
+            property_name: Name of the property to analyze
+            
+        Returns:
+            Dict containing comprehensive property metadata
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("get_property_metadata", {
+                "component_type": component_type,
+                "property_name": property_name
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Retrieved property metadata for {component_type}.{property_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting property metadata: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def get_component_hierarchy(
+        ctx: Context,
+        blueprint_name: str
+    ) -> Dict[str, Any]:
+        """
+        Get the component hierarchy of a specific Blueprint.
+        
+        🏗️ **HIERARCHY ANALYSIS**: Extracts complete component tree with parent-child
+        relationships, transforms, and component metadata.
+        
+        Args:
+            blueprint_name: Name of the Blueprint to analyze
+            
+        Returns:
+            Dict containing complete component hierarchy information
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("get_component_hierarchy", {
+                "blueprint_name": blueprint_name
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Retrieved component hierarchy for Blueprint: {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error getting component hierarchy: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def add_component(
+        ctx: Context,
+        blueprint_name: str,
+        component_type: str,
+        component_name: str,
+        parent_name: str = "",
+        properties: Dict[str, Any] = {},
+        location: List[float] = [],
+        rotation: List[float] = [],
+        scale: List[float] = []
+    ) -> Dict[str, Any]:
+        """
+        Add a component to a Blueprint with full hierarchy and property support.
+        
+        🔧 **REFLECTION-BASED COMPONENT CREATION**: Uses validated component types and
+        supports complete property initialization and hierarchy placement.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            component_type: Type of component to add (discovered via get_available_components)
+            component_name: Name for the new component
+            parent_name: Name of parent component for attachment (optional)
+            properties: Initial properties to set on the component (optional)
+            location: [X, Y, Z] transform location for scene components (optional)
+            rotation: [Pitch, Yaw, Roll] transform rotation for scene components (optional)
+            scale: [X, Y, Z] transform scale for scene components (optional)
+            
+        Returns:
+            Dict containing information about the created component
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            params = {
+                "blueprint_name": blueprint_name,
+                "component_type": component_type,
+                "component_name": component_name
+            }
+            
+            if parent_name:
+                params["parent_name"] = parent_name
+            if properties:
+                params["properties"] = properties
+            if location:
+                params["location"] = [float(x) for x in location]
+            if rotation:
+                params["rotation"] = [float(x) for x in rotation] 
+            if scale:
+                params["scale"] = [float(x) for x in scale]
+                
+            response = unreal.send_command("add_component", params)
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Added component {component_name} ({component_type}) to {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error adding component: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def set_component_property(
+        ctx: Context,
+        blueprint_name: str,
+        component_name: str,
+        property_name: str,
+        property_value: Any
+    ) -> Dict[str, Any]:
+        """
+        Set a property on a Blueprint component using reflection-based type conversion.
+        
+        🔧 **REFLECTION-BASED PROPERTY SETTING**: Uses component property metadata to
+        perform intelligent type conversion and validation.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            component_name: Name of the target component
+            property_name: Name of the property to set
+            property_value: Value to set (auto-converted to appropriate type)
+            
+        Returns:
+            Dict containing success status and property information
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("set_component_property", {
+                "blueprint_name": blueprint_name,
+                "component_name": component_name,
+                "property_name": property_name,
+                "property_value": property_value
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Set property {component_name}.{property_name} in {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error setting component property: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def remove_component(
+        ctx: Context,
+        blueprint_name: str,
+        component_name: str,
+        remove_children: bool = True
+    ) -> Dict[str, Any]:
+        """
+        Remove a component from a Blueprint with intelligent child handling.
+        
+        🗑️ **SAFE COMPONENT REMOVAL**: Handles child components and hierarchy
+        preservation with options for recursive removal or reparenting.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            component_name: Name of the component to remove
+            remove_children: Whether to remove child components recursively (default: True)
+            
+        Returns:
+            Dict containing information about removed and orphaned components
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("remove_component", {
+                "blueprint_name": blueprint_name,
+                "component_name": component_name,
+                "remove_children": remove_children
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Removed component {component_name} from {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error removing component: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
+    def reorder_components(
+        ctx: Context,
+        blueprint_name: str,
+        component_order: List[str]
+    ) -> Dict[str, Any]:
+        """
+        Reorder components in a Blueprint's component hierarchy.
+        
+        🔄 **HIERARCHY REORDERING**: Changes the order of components in the Blueprint's
+        Simple Construction Script with hierarchy preservation.
+        
+        Args:
+            blueprint_name: Name of the target Blueprint
+            component_order: Array of component names in desired order
+            
+        Returns:
+            Dict containing success status and final component order
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+                
+            response = unreal.send_command("reorder_components", {
+                "blueprint_name": blueprint_name,
+                "component_order": component_order
+            })
+            
+            if not response:
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Reordered components in {blueprint_name}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error reordering components: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+
+    @mcp.tool()
     def add_component_to_blueprint(
         ctx: Context,
         blueprint_name: str,
