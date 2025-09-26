@@ -271,22 +271,9 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                 ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
             }
             // Blueprint Node Commands
-            else if (CommandType == TEXT("connect_blueprint_nodes") || 
-                     CommandType == TEXT("find_blueprint_nodes") ||
-                     CommandType == TEXT("list_event_graph_nodes") ||
-                     CommandType == TEXT("get_node_details") ||
-                     CommandType == TEXT("set_blueprint_node_property") ||
-                     CommandType == TEXT("get_blueprint_node_property") ||
-                     CommandType == TEXT("list_blueprint_functions") ||
-                     CommandType == TEXT("list_custom_events") ||
-                     CommandType == TEXT("add_blueprint_event_node") ||
-                     CommandType == TEXT("add_blueprint_input_action_node") ||
-                     CommandType == TEXT("add_blueprint_function_node") ||
-                     CommandType == TEXT("add_blueprint_get_component_node") ||
-                     CommandType == TEXT("get_available_blueprint_nodes") ||
-                     CommandType == TEXT("add_blueprint_node") ||
-                     CommandType == TEXT("delete_blueprint_node") ||
-                     CommandType == TEXT("delete_blueprint_event_node"))
+            else if (CommandType == TEXT("manage_blueprint_node") ||
+                     CommandType == TEXT("manage_blueprint_function") ||
+                     CommandType == TEXT("get_available_blueprint_nodes"))
             {
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);

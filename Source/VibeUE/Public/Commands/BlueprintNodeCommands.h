@@ -27,8 +27,11 @@ private:
     TSharedPtr<FJsonObject> HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleListBlueprintFunctions(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params);
+    // New unified function management (list/get/create/delete) Phase 1
+    TSharedPtr<FJsonObject> HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleManageBlueprintNode(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleMoveBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     
     // NEW: Reflection-based command handlers
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
@@ -39,6 +42,28 @@ private:
     // NEW: Deletion command handlers
     TSharedPtr<FJsonObject> HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params);
+
+private:
+    // Internal helpers (Phase 1 minimal)
+    TSharedPtr<FJsonObject> BuildFunctionSummary(UBlueprint* Blueprint);
+    TSharedPtr<FJsonObject> BuildSingleFunctionInfo(UBlueprint* Blueprint, const FString& FunctionName);
+    bool FindUserFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName, UEdGraph*& OutGraph) const;
+    TSharedPtr<FJsonObject> CreateFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName);
+    bool RemoveFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName, FString& OutError);
+
+    // Function parameter & property helpers (simplified initial implementation)
+    TArray<TSharedPtr<FJsonValue>> ListFunctionParameters(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const;
+    TSharedPtr<FJsonObject> AddFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& TypeDesc, const FString& Direction);
+    TSharedPtr<FJsonObject> RemoveFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction);
+    TSharedPtr<FJsonObject> UpdateFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction, const FString& NewType, const FString& NewName);
+    TSharedPtr<FJsonObject> UpdateFunctionProperties(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const TSharedPtr<FJsonObject>& Params);
+    bool ParseTypeDescriptor(const FString& TypeDesc, FEdGraphPinType& OutType, FString& OutError) const;
+
+    // Graph scoping helper for node operations
+    UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params, FString& OutError) const;
+    void GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const;
+    bool ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, UEdGraphNode*& OutNode, UEdGraph*& OutGraph) const;
+    FString DescribeAvailableNodes(const TArray<UEdGraph*>& Graphs) const;
     
 private:
     // Reflection system helper

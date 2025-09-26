@@ -100,8 +100,8 @@ UNREAL_MCP_INTEGRATION_GUIDE = {
         "blueprint_development": [
             "create_blueprint() or find existing",
             "add_component_to_blueprint() for components",
-            "add_blueprint_event_node() for events",
-            "connect_blueprint_nodes() for logic",
+            "manage_blueprint_node(action='add') for events/nodes",
+            "manage_blueprint_node(action='connect') for logic wiring",
             "compile_blueprint() - CRITICAL final step"
         ]
     },

@@ -1,873 +1,304 @@
 """
-Blueprint Node Tools for Unreal MCP.
+Unified Blueprint node management tools for the VibeUE MCP server.
 
-This module provides tools for manipulating Blueprint graph nodes and connections.
+This module provides a unified interface for performing various operations on Blueprint nodes,
+such as adding, removing, and connecting nodes, as well as managing Blueprint functions and variables.
 """
 
-import logging
-from typing import Dict, List, Any, Optional
-from mcp.server.fastmcp import FastMCP, Context
+from __future__ import annotations
 
-# Get logger
+import logging
+from typing import Any, Dict, List, Optional
+
+from mcp.server.fastmcp import Context, FastMCP
+
 logger = logging.getLogger("UnrealMCP")
 
-def register_blueprint_node_tools(mcp: FastMCP):
-    """Register Blueprint node manipulation tools with the MCP server."""
-    
-    @mcp.tool()
-    def add_blueprint_event_node(
-        ctx: Context,
-        blueprint_name: str,
-        event_name: str,
-        node_position = None
-    ) -> Dict[str, Any]:
-        """
-        Add an event node to a Blueprint's event graph.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            event_name: Name of the event. Use 'Receive' prefix for standard events:
-                       - 'ReceiveBeginPlay' for Begin Play
-                       - 'ReceiveTick' for Tick
-                       - etc.
-            node_position: Optional [X, Y] position in the graph
-            
-        Returns:
-            Response containing the node ID and success status
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            # Handle default value within the method body
-            if node_position is None:
-                node_position = [0, 0]
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "event_name": event_name,
-                "node_position": node_position
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Adding event node '{event_name}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_event_node", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Event node creation response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding event node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def add_blueprint_input_action_node(
-        ctx: Context,
-        blueprint_name: str,
-        action_name: str,
-        node_position = None
-    ) -> Dict[str, Any]:
-        """
-        Add an input action event node to a Blueprint's event graph.
 
-        Args:
-            blueprint_name: Name of the target Blueprint
-            action_name: Name of the input action to respond to
-            node_position: Optional [X, Y] position in the graph
-        """
+def _merge(target: Dict[str, Any], values: Dict[str, Any]) -> None:
+    """Merge non-``None`` values into ``target`` in-place."""
+    for key, value in values.items():
+        if value is not None:
+            target[key] = value
+
+
+def register_blueprint_node_tools(mcp: FastMCP) -> None:
+    """Register unified Blueprint node MCP tools."""
+
+    def _dispatch(command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         from vibe_ue_server import get_unreal_connection
 
-        try:
-            if node_position is None:
-                node_position = [0, 0]
+        unreal = get_unreal_connection()
+        if not unreal:
+            logger.error("Failed to connect to Unreal Engine")
+            return {"success": False, "message": "Failed to connect to Unreal Engine"}
 
-            params = {
-                "blueprint_name": blueprint_name,
-                "action_name": action_name,
-                "node_position": node_position
-            }
+        logger.info("Dispatching %s with payload: %s", command, payload)
+        response = unreal.send_command(command, payload)
+        if not response:
+            logger.error("No response from Unreal Engine")
+            return {"success": False, "message": "No response from Unreal Engine"}
 
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+        logger.debug("%s response: %s", command, response)
+        return response
 
-            logger.info(f"Adding input action node for '{action_name}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_input_action_node", params)
-
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            logger.info(f"Input action node creation response: {response}")
-            return response
-
-        except Exception as e:
-            error_msg = f"Error adding input action node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
     @mcp.tool()
-    def connect_blueprint_nodes(
+    def manage_blueprint_node(
         ctx: Context,
         blueprint_name: str,
-        source_node_id: str,
-        source_pin: str,
-        target_node_id: str,
-        target_pin: str
+        action: str,
+        graph_scope: str = "event",
+        function_name: Optional[str] = None,
+        node_id: Optional[str] = None,
+        node_identifier: Optional[str] = None,
+        node_type: Optional[str] = None,
+        node_params: Optional[Dict[str, Any]] = None,
+        node_config: Optional[Dict[str, Any]] = None,
+        position: Optional[List[float]] = None,
+        node_position: Optional[List[float]] = None,
+        source_node_id: Optional[str] = None,
+        source_pin: Optional[str] = None,
+        target_node_id: Optional[str] = None,
+        target_pin: Optional[str] = None,
+        disconnect_pins: Optional[bool] = None,
+        property_name: Optional[str] = None,
+        property_value: Optional[Any] = None,
+        include_functions: Optional[bool] = None,
+        include_macros: Optional[bool] = None,
+        include_timeline: Optional[bool] = None,
+        extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Connect two nodes in a Blueprint's event graph.
+        Perform Blueprint node operations via a single unified tool.
         
-        Args:
-            blueprint_name: Name of the target Blueprint
-            source_node_id: ID of the source node
-            source_pin: Name of the output pin on the source node
-            target_node_id: ID of the target node
-            target_pin: Name of the input pin on the target node
-            
-        Returns:
-            Response indicating success or failure
+        ⚠️ **IMPORTANT**: Before creating nodes (action='create'), ALWAYS use get_available_blueprint_nodes()
+        first to discover exact node type names. This prevents errors and ensures reliable node creation.
+        
+        🔄 **RECOMMENDED WORKFLOW**:
+        1. Call get_available_blueprint_nodes() to discover available node types
+        2. Use exact node names from discovery results in node_type parameter
+        3. Create nodes with precise type names for guaranteed success
+        
+        **Actions**:
+        - create: Create new nodes (requires exact node_type from get_available_blueprint_nodes)
+        - connect: Connect node pins
+        - delete: Remove nodes
+        - move: Reposition nodes
+        - configure: Set node properties
+        
+        **Examples**:
+        ```python
+        # Step 1: Discover available nodes
+        nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
+        
+        # Step 2: Use exact node name from discovery
+        manage_blueprint_node(
+            blueprint_name="BP_Player",
+            action="create", 
+            node_type="Branch",  # Exact name from discovery
+            position=[200, 100]
+        )
+        ```
+        
+        🎯 **Node Type Discovery**: Use get_available_blueprint_nodes() with search terms like:
+        - "Flow Control" category for branches, loops
+        - "Math" category for calculations  
+        - "Variables" category for get/set operations
+        - "Functions" category for custom functions
         """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
+
+        payload: Dict[str, Any] = {
+            "blueprint_name": blueprint_name,
+            "action": action,
+            "graph_scope": graph_scope,
+        }
+
+        resolved_node_type = node_type or node_identifier
+        _merge(
+            payload,
+            {
+                "function_name": function_name,
+                "node_id": node_id,
+                "node_type": resolved_node_type,
+                "node_identifier": resolved_node_type,
+                "node_params": node_params,
+                "node_config": node_config,
+                "position": position,
+                "node_position": node_position,
                 "source_node_id": source_node_id,
                 "source_pin": source_pin,
                 "target_node_id": target_node_id,
-                "target_pin": target_pin
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Connecting nodes in blueprint '{blueprint_name}'")
-            response = unreal.send_command("connect_blueprint_nodes", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Node connection response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error connecting nodes: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def add_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        variable_type: str,
-        is_exposed: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Add a variable to a Blueprint.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            variable_name: Name of the variable
-            variable_type: Type of the variable (Boolean, Integer, Float, Vector, etc.)
-            is_exposed: Whether to expose the variable to the editor
-            
-        Returns:
-            Response indicating success or failure
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "variable_type": variable_type,
-                "is_exposed": is_exposed
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Adding variable '{variable_name}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_variable", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Variable creation response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding variable: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def get_blueprint_variable_info(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str
-    ) -> Dict[str, Any]:
-        """
-        Get comprehensive information about a Blueprint variable including value, type, metadata, and property flags.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            variable_name: Name of the variable to retrieve information about
-            
-        Returns:
-            Response containing:
-            - value: The current variable value
-            - variable_type: Type of the variable (Float, Integer, Vector, etc.)
-            - category: Variable category in the Blueprint editor
-            - tooltip: Variable description/tooltip
-            - metadata: Complete metadata including instance_editable, blueprint_readonly, etc.
-            - container_type: Array/Set/Map information if applicable
-            - property_flags: Detailed property flag information
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Getting comprehensive variable info for '{variable_name}' from blueprint '{blueprint_name}'")
-            response = unreal.send_command("get_blueprint_variable_info", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Variable info response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting variable info: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def delete_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        force_delete: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Delete a variable from a Blueprint.
-        
-        🗑️ **SAFE VARIABLE DELETION**: Remove Blueprint variables with reference checking
-        and optional force deletion to clean up automatically.
-        
-        Args:
-            blueprint_name: Name or full path of the target Blueprint
-                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
-                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
-                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
-                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
-                           ⚠️ **Must be exact name from search_items() results**
-            variable_name: Name of the variable to delete
-                          ⚠️ **Must be exact name from variable list**
-            force_delete: Force deletion even if variable is referenced elsewhere
-                         Examples: False (default) = check references first, True = delete anyway
-            
-        Returns:
-            Dict containing:
-            - success: boolean indicating if deletion completed
-            - variable_name: name of variable that was deleted
-            - blueprint_name: name of Blueprint that was modified
-            - references: array of places where variable was referenced (if found)
-            - force_used: whether force deletion was necessary
-            - cleanup_performed: list of cleanup actions taken
-            - error: string (only if success=false)
-            
-        🛡️ **Safety Features**:
-        - **Reference Detection**: Finds all uses of variable in Blueprint graphs
-        - **Force Mode**: Option to automatically clean up references
-        - **Validation**: Ensures variable exists before attempting deletion
-        - **Cleanup**: Removes variable from Blueprint property list properly
-        
-        💡 **Usage Examples**:
-        ```python
-        # Safe deletion with reference checking
-        delete_blueprint_variable("WBP_RadarMap2", "EnemyActors", force_delete=False)
-        
-        # Force deletion with automatic cleanup
-        delete_blueprint_variable("WBP_RadarMap2", "BadVariable", force_delete=True)
-        
-        # Delete custom variables from widget
-        delete_blueprint_variable("WBP_Inventory", "ItemCount", force_delete=False)
-        ```
-        
-        ⚠️ **AI Best Practices**:
-        1. Use get_widget_blueprint_info() first to see all variables
-        2. Start with force_delete=False to understand references
-        3. Use force_delete=True only when references should be removed
-        4. Test deletion on less critical variables first
-        5. Always check the response for reference information
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "force_delete": force_delete
-            }
-            
-            logger.info(f"Deleting variable '{variable_name}' from blueprint '{blueprint_name}'")
-            response = unreal.send_command("delete_blueprint_variable", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Variable deletion response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error deleting variable: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+                "target_pin": target_pin,
+                "disconnect_pins": disconnect_pins,
+                "property_name": property_name,
+                "property_value": property_value,
+                "include_functions": include_functions,
+                "include_macros": include_macros,
+                "include_timeline": include_timeline,
+            },
+        )
 
-    @mcp.tool()
-    def delete_blueprint_node(
-        ctx: Context,
-        blueprint_name: str,
-        node_id: str,
-        disconnect_pins: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Delete a node from a Blueprint's event graph.
-        
-        🎯 **BLUEPRINT NODE DELETION**: Remove any node from Blueprint graphs with 
-        automatic pin disconnection and safety checks.
-        
-        Args:
-            blueprint_name: Name or full path of the target Blueprint
-                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
-                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
-                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
-                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
-                           ⚠️ **Must be exact name from search_items() results**
-            node_id: ID of the node to delete
-                    ⚠️ **Must be exact node ID from find_blueprint_nodes() results**
-            disconnect_pins: Automatically disconnect pins before deletion
-                           Examples: True (safe, default) = disconnect all pins first, 
-                                    False = delete with connected pins (may cause issues)
-            
-        Returns:
-            Dict containing:
-            - success: boolean indicating if deletion completed
-            - node_id: ID of the node that was deleted
-            - blueprint_name: name of Blueprint that was modified
-            - disconnected_pins: array of pin connections that were removed
-            - node_type: type of node that was deleted (Function, Event, etc.)
-            - safety_checks: validation results for deletion safety
-            - error: string (only if success=false)
-            
-        🔒 **Safety Features**:
-        - **Can Delete Check**: Verifies node allows user deletion
-        - **Pin Disconnection**: Safely removes all connections before deletion
-        - **Graph Integrity**: Maintains Blueprint graph structure
-        - **Critical Node Protection**: Prevents deletion of essential nodes
-        
-        💡 **Usage Examples**:
-        ```python
-        # Delete a function call node safely
-        delete_blueprint_node("BP_Player", "node_abc123", disconnect_pins=True)
-        
-        # Delete an event node (custom events only)
-        delete_blueprint_node("WBP_Inventory", "event_def456", disconnect_pins=True)
-        
-        # Force delete with connected pins (use carefully)
-        delete_blueprint_node("BP_GameMode", "node_ghi789", disconnect_pins=False)
-        ```
-        
-        ⚠️ **AI Best Practices**:
-        1. Use find_blueprint_nodes() first to get exact node IDs
-        2. Always use disconnect_pins=True for safety (default)
-        3. Check node type before deletion to understand impact
-        4. Cannot delete critical engine events (BeginPlay, Construct, etc.)
-        5. Test deletion on less critical nodes first
-        
-        🚫 **Protected Nodes** (Cannot Delete):
-        - BeginPlay, Construct, Tick (engine events)
-        - Input action events (managed by Input Settings)
-        - Override function implementations (use Blueprint editor)
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "node_id": node_id,
-                "disconnect_pins": disconnect_pins
-            }
-            
-            logger.info(f"Deleting node '{node_id}' from Blueprint '{blueprint_name}'")
-            response = unreal.send_command("delete_blueprint_node", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Node deletion response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error deleting Blueprint node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+        if extra:
+            _merge(payload, extra)
 
-    @mcp.tool()
-    def delete_blueprint_event_node(
-        ctx: Context,
-        blueprint_name: str,
-        event_name: str,
-        remove_custom_events_only: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Delete event nodes from Blueprint (mainly custom events).
-        
-        🎯 **CUSTOM EVENT DELETION**: Remove custom event nodes from Blueprint graphs
-        with protection for critical engine events.
-        
-        Args:
-            blueprint_name: Name or full path of the target Blueprint
-                           ⚡ **PERFORMANCE**: Use full paths for instant loading!
-                           - **NAME**: "WBP_RadarMap" (slow, searches Asset Registry)
-                           - **PATH**: "/Game/UI/WBP_RadarMap" (fast, direct loading)
-                           - **PACKAGE**: "/Game/UI/WBP_RadarMap.WBP_RadarMap" (fastest)
-                           ⚠️ **Must be exact name from search_items() results**
-            event_name: Name of the event to delete
-                       ⚠️ **Must be exact event name from list_custom_events() results**
-            remove_custom_events_only: Only allow deletion of custom events (safety feature)
-                                      Examples: True (safe, default) = only custom events,
-                                               False = allow engine event deletion (dangerous)
-            
-        Returns:
-            Dict containing:
-            - success: boolean indicating if deletion completed
-            - event_name: name of event that was deleted
-            - blueprint_name: name of Blueprint that was modified
-            - event_type: type of event (Custom, Engine, etc.)
-            - protection_active: whether engine event protection was applied
-            - connected_nodes: array of nodes that were connected to this event
-            - error: string (only if success=false)
-            
-        🔒 **Safety Features**:
-        - **Engine Event Protection**: Prevents deletion of BeginPlay, Construct, Tick
-        - **Custom Event Focus**: Primarily designed for cleaning up custom events
-        - **Connection Analysis**: Reports what nodes were connected before deletion
-        - **Blueprint Integrity**: Maintains graph structure after removal
-        
-        💡 **Usage Examples**:
-        ```python
-        # Delete a custom event safely
-        delete_blueprint_event_node("BP_Player", "OnCustomTrigger", remove_custom_events_only=True)
-        
-        # Delete any event type (use very carefully)
-        delete_blueprint_event_node("WBP_Menu", "OnSomeEvent", remove_custom_events_only=False)
-        
-        # Clean up unused custom events
-        events = list_custom_events("BP_GameMode")
-        delete_blueprint_event_node("BP_GameMode", events["custom_events"][0]["name"])
-        ```
-        
-        ⚠️ **AI Best Practices**:
-        1. Use list_custom_events() first to see available custom events
-        2. Always use remove_custom_events_only=True for safety (default)
-        3. Never delete engine events (BeginPlay, Construct, Tick, etc.)
-        4. Check connected nodes before deletion to understand impact
-        5. Test deletion on non-critical custom events first
-        
-        🚫 **Protected Events** (Cannot Delete with safety=True):
-        - BeginPlay, Construct, Tick (core lifecycle events)
-        - Input action events (managed through Input Settings)
-        - Interface event implementations
-        - Parent class event overrides
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "event_name": event_name,
-                "remove_custom_events_only": remove_custom_events_only
-            }
-            
-            logger.info(f"Deleting event '{event_name}' from Blueprint '{blueprint_name}' (custom_only={remove_custom_events_only})")
-            response = unreal.send_command("delete_blueprint_event_node", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Event deletion response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error deleting Blueprint event node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def get_available_blueprint_variable_types(
-        ctx: Context
-    ) -> Dict[str, Any]:
-        """
-        Get list of all available Blueprint variable types with descriptions and examples.
-        
-        Returns:
-            Response containing categorized list of available variable types
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {}
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info("Getting available Blueprint variable types")
-            response = unreal.send_command("get_available_blueprint_variable_types", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Available types response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting available variable types: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    
-    
-    @mcp.tool()
-    def find_blueprint_nodes(
-        ctx: Context,
-        blueprint_name: str,
-        node_type: Optional[str] = None,
-        event_type: Optional[str] = None,
-        event_name: Optional[str] = None
-    ) -> Dict[str, Any]:
-        """
-        Find nodes in a Blueprint's event graph.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            node_type: Optional type of node to find (Event, Function, Variable, etc.)
-            event_type: Optional specific event type to find (BeginPlay, Tick, etc.)
-            event_name: Optional exact event node name required by some engine implementations
-            
-        Returns:
-            Response containing array of found node IDs and success status
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "node_type": node_type,
-                "event_type": event_type,
-                "event_name": event_name
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Finding nodes in blueprint '{blueprint_name}'")
-            response = unreal.send_command("find_blueprint_nodes", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Node find response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error finding nodes: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def add_blueprint_node(
-        ctx: Context,
-        blueprint_name: str,
-        node_type: str,
-        position: Optional[List[float]] = None,
-        node_params: Optional[Dict[str, Any]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create a Blueprint node using Unreal's reflection system.
-        
-        Args:
-            blueprint_name: Target Blueprint name
-            node_type: Type of node to create (Branch, CallFunction, GetVariable, etc.)
-            position: [X, Y] position for the node (optional)
-            node_params: Additional parameters for node configuration
-            
-        Returns:
-            Dict containing created node information and ID
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "node_identifier": node_type,  # Map to expected parameter name
-                "node_position": position,
-                "node_params": node_params or {}
-            }
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            logger.info(f"Adding node '{node_type}' to blueprint '{blueprint_name}'")
-            response = unreal.send_command("add_blueprint_node", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Node creation response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error creating node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    @mcp.tool()
-    def add_blueprint_node(
-        ctx: Context,
-        blueprint_name: str,
-        node_type: str,
-        node_params: Optional[Dict[str, Any]] = None,
-        position: Optional[List[float]] = None
-    ) -> Dict[str, Any]:
-        """
-        Create a Blueprint node using Unreal's reflection system.
-        
-        Args:
-            blueprint_name: Target Blueprint name
-            node_type: Type of node to create (Branch, CallFunction, GetVariable, etc.)
-            position: [X, Y] position for the node (optional)
-            node_params: Additional parameters for node configuration
-            
-        Returns:
-            Dict containing created node information and ID
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            # Log what we received to debug
-            logger.info(f"=== MCP Tool Called ===")
-            logger.info(f"blueprint_name: {blueprint_name}")
-            logger.info(f"node_type: {node_type}")
-            logger.info(f"node_params: {node_params}")
-            logger.info(f"position: {position}")
-            
-            # Debug: Print to stderr for VS Code debugging
-            import sys
-            print(f"DEBUG: MCP add_blueprint_node called with node_type={node_type}", file=sys.stderr)
-            sys.stderr.flush()
-            
-            # Handle default parameters
-            if node_params is None:
-                node_params = {}
-            if position is None:
-                position = [0, 0]
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "node_identifier": node_type,  # Map node_type to expected parameter name
-                "node_config": node_params,
-                "position": position
-            }
-            
-            # Call Unreal Engine via MCP
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Cannot connect to Unreal Engine")
-                return {"success": False, "message": "Cannot connect to Unreal Engine"}
-            
-            logger.info(f"Adding blueprint node with params: {params}")
-            
-            # DEBUG: Log the exact command and parameters being sent
-            print(f"DEBUG: Sending command 'add_blueprint_node' with params: {params}", file=sys.stderr)
-            sys.stderr.flush()
-            
-            response = unreal.send_command("add_blueprint_node", params)
-            
-            # DEBUG: Log the raw response from Unreal
-            print(f"DEBUG: Raw response from Unreal: {response}", file=sys.stderr)
-            print(f"DEBUG: Response type: {type(response)}", file=sys.stderr)
-            sys.stderr.flush()
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Node creation response: {response}")
-            
-            # DEBUG: If response claims success but node isn't found later, log this
-            if isinstance(response, dict) and response.get("success"):
-                print(f"DEBUG: Node creation claimed success with ID: {response.get('node_id', 'NO_ID')}", file=sys.stderr)
-                sys.stderr.flush()
-            
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error creating node: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
+        # Debug logging to understand parameter passing
+        logger.info(f"manage_blueprint_node final payload: {payload}")
 
-    logger.info("Blueprint node tools registered successfully")
+        # Avoid duplicating identical node configuration dictionaries
+        if payload.get("node_config") is payload.get("node_params"):
+            payload.pop("node_config", None)
 
-# Standalone function for testing (non-MCP)
-def add_blueprint_node_test(blueprint_name: str, node_type: str, node_params: Optional[Dict[str, Any]] = None, position: Optional[List[float]] = None) -> Dict[str, Any]:
-    """
-    Test function for add_blueprint_node without MCP context.
-    
-    Args:
-        blueprint_name: Target Blueprint name
-        node_type: Type of node to create (Branch, CallFunction, etc.)
-        node_params: Additional parameters for node configuration  
-        position: [X, Y] position for the node (optional)
-        
-    Returns:
-        Dict containing test result (basic implementation for now)
-    """
-    if node_params is None:
-        node_params = {}
-    if position is None:
-        position = [0, 0]
-    
-    # Return a test response showing the system is ready
-    return {
-        "success": True,
-        "node_type": node_type,
-        "node_id": f"test_node_{hash(f'{blueprint_name}_{node_type}')}",
-        "message": f"Test: Would create {node_type} node in {blueprint_name} at position {position}",
-        "system_status": "MCP Tool and C++ backend are connected and ready"
-    }
+        return _dispatch("manage_blueprint_node", payload)
 
     @mcp.tool()
     def get_available_blueprint_nodes(
-        ctx: Context,
         blueprint_name: str,
         category: str = "",
-        search_term: str = "",
-        context: str = "",
-        include_deprecated: bool = False,
-        max_results: int = 100
+        graph_scope: str = "event",
+        include_functions: bool = True,
+        include_variables: bool = True,
+        include_events: bool = True,
+        max_results: int = 100,
     ) -> Dict[str, Any]:
         """
-        Discover all available Blueprint nodes using Unreal Engine's reflection system.
+        🔍 **ESSENTIAL NODE DISCOVERY TOOL**: Get all available Blueprint node types using Unreal's reflection system.
         
-        This function leverages Unreal's Blueprint Action Menu system to provide
-        comprehensive node discovery with the same categorization and filtering
-        that the Blueprint editor uses.
+        ⚠️ **USE THIS FIRST**: Always call this before manage_blueprint_node(action='create') to discover
+        exact node type names. This prevents "unknown node type" errors and ensures reliable node creation.
+        
+        🎯 **PRIMARY USE CASES**:
+        - **Before Creating Nodes**: Find exact node type names (e.g., "Branch", "Print String", "Cast To Object")
+        - **Node Type Resolution**: When you know what you want to do but need the precise node name
+        - **Category Exploration**: Browse available nodes by category (Flow Control, Math, Variables, etc.)
+        - **Function-Specific Nodes**: Discover nodes available in different graph contexts
+        
+        🔄 **TYPICAL AI WORKFLOW**:
+        ```python
+        # 1. User says: "Create a branch node"
+        nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
+        # Result: Find "Branch" in the node list
+        
+        # 2. Use exact name for creation
+        manage_blueprint_node(blueprint_name="BP_Player", action="create", 
+                            node_type="Branch", position=[200, 100])
+        ```
+        
+        📊 **Search Strategies**:
+        - **By Intent**: category="Flow Control" for conditionals, loops
+        - **By Function**: category="Math" for calculations
+        - **By Action**: category="Variables" for data operations  
+        - **By Context**: graph_scope="function" vs "event" for appropriate nodes
         
         Args:
-            blueprint_name: Target Blueprint for context-sensitive discovery
-            category: Filter by node category:
-                     - "Math" (Add, Multiply, Distance, etc.)
-                     - "Flow Control" (Branch, Loop, Sequence, etc.)
-                     - "Variables" (Get/Set variable nodes)
-                     - "Functions" (Function calls, custom functions)
-                     - "Events" (Custom events, input events)
-                     - "Array" (Array operations)
-                     - "String" (String manipulation)
-                     - "Widget" (UI operations - for Widget Blueprints)
-                     - "Actor" (Actor operations)
-                     - "Component" (Component operations)
-            search_term: Search within node names and descriptions
-            context: Additional context for filtering (e.g., "UStaticMeshComponent")
-            include_deprecated: Whether to include deprecated/legacy nodes
-            max_results: Maximum number of nodes to return
+            blueprint_name: Name of the target Blueprint to get nodes for
+            category: Filter by node category (Flow Control, Math, Variables, Functions, etc.)
+            graph_scope: Context for node discovery ("event" for Event Graph, "function" for Function Graph)
+            include_functions: Whether to include function call nodes
+            include_variables: Whether to include variable get/set nodes
+            include_events: Whether to include event nodes  
+            max_results: Maximum number of nodes to return (default: 100)
             
         Returns:
-            Dictionary containing categorized available nodes with metadata
-        """
-        from vibe_ue_server import get_unreal_connection
+            Dict containing:
+            - success: boolean indicating if discovery completed
+            - categories: dict of node categories with arrays of available nodes
+            - total_nodes: total number of nodes found
+            - error: string (only if success=false)
+            
+        � **Node Metadata Structure**:
+        Each discovered node includes:
+        - name: Exact node type name to use in manage_blueprint_node
+        - category: Node category for organization
+        - description: What the node does
+        - keywords: Search terms for semantic discovery
+        - type: Node classification (node, function, variable, etc.)
         
-        try:
-            params = {
-                "blueprint_name": blueprint_name,
-                "category": category,
-                "search_term": search_term,
-                "context": context,
-                "include_deprecated": include_deprecated,
-                "max_results": max_results
-            }
-            
-            logger.info(f"Getting available Blueprint nodes for '{blueprint_name}' with params: {params}")
-            
-            connection = get_unreal_connection()
-            if not connection:
-                return {"success": False, "error": "No connection to Unreal Engine"}
-            
-            result = connection.send_command("get_available_blueprint_nodes", params)
-            
-            logger.info(f"Node discovery result: {result.get('success', False)} - Found {result.get('total_nodes', 0)} nodes")
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Error getting available Blueprint nodes: {str(e)}")
-            return {
-                "success": False,
-                "error": str(e),
-                "message": f"Failed to discover nodes for Blueprint '{blueprint_name}'"
-            }
+        💡 **Smart Usage Examples**:
+        ```python
+        # Find print/debug nodes
+        get_available_blueprint_nodes("BP_Player", category="Development")
+        
+        # Find mathematical operations
+        get_available_blueprint_nodes("BP_Player", category="Math")
+        
+        # Find conditional logic nodes
+        get_available_blueprint_nodes("BP_Player", category="Flow Control")
+        
+        # Find variable operations
+        get_available_blueprint_nodes("BP_Player", category="Variables")
+        ```
+        
+        🎯 **AI Integration**: This tool enables data-driven Blueprint development by providing
+        exact node names that work reliably, eliminating guesswork and trial-and-error.
+        """
+        
+        payload = {
+            "blueprint_name": blueprint_name,
+            "category": category,
+            "graph_scope": graph_scope,
+            "include_functions": include_functions,
+            "include_variables": include_variables,
+            "include_events": include_events,
+            "max_results": max_results,
+        }
+
+        return _dispatch("get_available_blueprint_nodes", payload)
+
+    @mcp.tool()
+    def manage_blueprint_function(
+        ctx: Context,
+        blueprint_name: str,
+        action: str,
+        function_name: Optional[str] = None,
+        param_name: Optional[str] = None,
+        direction: Optional[str] = None,
+        type: Optional[str] = None,
+        new_type: Optional[str] = None,
+        new_name: Optional[str] = None,
+        properties: Optional[Dict[str, Any]] = None,
+        extra: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Unified tool for Blueprint function graph operations."""
+
+        payload: Dict[str, Any] = {
+            "blueprint_name": blueprint_name,
+            "action": action,
+        }
+
+        _merge(
+            payload,
+            {
+                "function_name": function_name,
+                "param_name": param_name,
+                "direction": direction,
+                "type": type,
+                "new_type": new_type,
+                "new_name": new_name,
+                "properties": properties,
+            },
+        )
+
+        if extra:
+            _merge(payload, extra)
+
+        return _dispatch("manage_blueprint_function", payload)
+
+    logger.info("Unified Blueprint node tools registered")
+
+
+def manage_blueprint_node_test(
+    blueprint_name: str,
+    action: str,
+    **params: Any,
+) -> Dict[str, Any]:
+    """Lightweight helper for exercising the MCP contract in tests."""
+
+    result = {
+        "success": True,
+        "blueprint_name": blueprint_name,
+        "action": action,
+        "params": params,
+        "message": "Test helper executed successfully.",
+    }
+    logger.debug("manage_blueprint_node_test payload: %s", result)
+    return result

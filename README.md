@@ -190,13 +190,11 @@ All capabilities are accessible through natural language commands via AI assista
 ### Blueprint Node Graph
 | Tool | Purpose | Key Features |
 |------|---------|--------------|
-| `add_blueprint_event_node` | 🎬 Event handling | BeginPlay, Tick, custom events |
-| `add_blueprint_input_action_node` | 🎮 Input binding | Keyboard, mouse, gamepad inputs |
-| `add_blueprint_function_node` | ⚡ Function calls | Call Blueprint or C++ functions |
-| `connect_blueprint_nodes` | 🔗 Node wiring | Connect execution and data pins |
+| `manage_blueprint_node` | 🧠 Unified node ops | List, add, delete, connect, move, find, inspect |
+| `manage_blueprint_function` | 🧩 Function graphs | List/create/delete functions, parameter CRUD |
 | `add_blueprint_variable` | 📊 Data storage | Add typed variables with editor exposure |
-| (removed) self/component reference helpers | — | Use reflection-based node creation |
-| `find_blueprint_nodes` | 🔍 Node discovery | Find existing nodes by type/name |
+| `get_blueprint_variable` | 🔍 Variable introspection | Read Blueprint variable metadata |
+| `get_available_blueprint_variable_types` | � Type catalog | Discover supported variable types |
 
 ### UMG Widget Creation
 | Tool | Purpose | Key Features |

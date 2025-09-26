@@ -25,6 +25,8 @@ public:
     // Core reflection methods
     static TSharedPtr<FJsonObject> GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category = TEXT(""), const FString& Context = TEXT(""));
     static TSharedPtr<FJsonObject> CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams = nullptr);
+    static TSharedPtr<FJsonObject> CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams, UEdGraph* TargetGraph);
+    static UClass* ResolveNodeClass(const FString& NodeType);
     static TSharedPtr<FJsonObject> GetNodeProperties(UK2Node* Node);
     static TSharedPtr<FJsonObject> SetNodeProperty(UK2Node* Node, const FString& PropertyName, const FString& PropertyValue);
     static TSharedPtr<FJsonObject> GetNodeProperty(UK2Node* Node, const FString& PropertyName);

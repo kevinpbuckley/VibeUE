@@ -5,6 +5,7 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
+#include "Containers/Set.h"
 #include "EdGraph/EdGraphPin.h"
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
@@ -13,6 +14,8 @@
 #include "K2Node_Self.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_IfThenElse.h"
+#include "K2Node_FunctionEntry.h"
+#include "K2Node_FunctionResult.h"
 // #include "K2Node_ForEachLoop.h"  // Commented out - header not found
 #include "K2Node_Timeline.h"
 #include "K2Node_MacroInstance.h"
@@ -22,6 +25,9 @@
 #include "Camera/CameraActor.h"
 #include "Kismet/GameplayStatics.h"
 #include "EdGraphSchema_K2.h"
+#include "ScopedTransaction.h"
+#include "Math/UnrealMathUtility.h"
+#include "Internationalization/Text.h"
 
 // Declare the log category
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
@@ -35,173 +41,124 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: BlueprintNodeCommands::HandleCommand called with CommandType: %s"), *CommandType);
-    
-    if (CommandType == TEXT("connect_blueprint_nodes"))
+    if (CommandType == TEXT("manage_blueprint_node"))
     {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleConnectBlueprintNodes"));
-        return HandleConnectBlueprintNodes(Params);
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleManageBlueprintNode"));
+        return HandleManageBlueprintNode(Params);
     }
-    else if (CommandType == TEXT("add_blueprint_event_node"))
+    if (CommandType == TEXT("manage_blueprint_function"))
     {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintEvent"));
-        return HandleAddBlueprintEvent(Params);
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleManageBlueprintFunction"));
+        return HandleManageBlueprintFunction(Params);
     }
-    else if (CommandType == TEXT("add_blueprint_input_action_node"))
+    if (CommandType == TEXT("get_available_blueprint_nodes"))
     {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintInputActionNode"));
-        return HandleAddBlueprintInputActionNode(Params);
-    }
-    else if (CommandType == TEXT("find_blueprint_nodes"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleFindBlueprintNodes"));
-        return HandleFindBlueprintNodes(Params);
-    }
-    else if (CommandType == TEXT("list_event_graph_nodes"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleListEventGraphNodes"));
-        return HandleListEventGraphNodes(Params);
-    }
-    else if (CommandType == TEXT("get_node_details"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetNodeDetails"));
-        return HandleGetNodeDetails(Params);
-    }
-    else if (CommandType == TEXT("list_blueprint_functions"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleListBlueprintFunctions"));
-        return HandleListBlueprintFunctions(Params);
-    }
-    else if (CommandType == TEXT("list_custom_events"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleListCustomEvents"));
-        return HandleListCustomEvents(Params);
-    }
-    // NEW: Reflection-based commands
-    else if (CommandType == TEXT("get_available_blueprint_nodes"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetAvailableBlueprintNodes (Reflection)"));
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetAvailableBlueprintNodes"));
         return HandleGetAvailableBlueprintNodes(Params);
     }
-    else if (CommandType == TEXT("add_blueprint_node"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleAddBlueprintNode (Reflection)"));
-        return HandleAddBlueprintNode(Params);
-    }
-    else if (CommandType == TEXT("set_blueprint_node_property"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleSetBlueprintNodeProperty (Reflection)"));
-        return HandleSetBlueprintNodeProperty(Params);
-    }
-    else if (CommandType == TEXT("get_blueprint_node_property"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleGetBlueprintNodeProperty (Reflection)"));
-        return HandleGetBlueprintNodeProperty(Params);
-    }
-    // NEW: Deletion commands
-    else if (CommandType == TEXT("delete_blueprint_node"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleDeleteBlueprintNode"));
-        return HandleDeleteBlueprintNode(Params);
-    }
-    else if (CommandType == TEXT("delete_blueprint_event_node"))
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: Calling HandleDeleteBlueprintEventNode"));
-        return HandleDeleteBlueprintEventNode(Params);
-    }
-    
-    UE_LOG(LogVibeUE, Error, TEXT("MCP: Unknown blueprint node command: %s"), *CommandType);
-    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint node command: %s"), *CommandType));
+
+    const FString ErrorMessage = FString::Printf(TEXT("Unknown command: %s. Use manage_blueprint_node, manage_blueprint_function, or get_available_blueprint_nodes."), *CommandType);
+    return FCommonUtils::CreateErrorResponse(ErrorMessage);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
     FString BlueprintName;
+    FString SourceNodeId;
+    FString TargetNodeId;
+    FString SourcePinName;
+    FString TargetPinName;
+
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-
-    FString SourceNodeId;
     if (!Params->TryGetStringField(TEXT("source_node_id"), SourceNodeId))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_node_id' parameter"));
     }
-
-    FString TargetNodeId;
     if (!Params->TryGetStringField(TEXT("target_node_id"), TargetNodeId))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_node_id' parameter"));
     }
-
-    FString SourcePinName;
     if (!Params->TryGetStringField(TEXT("source_pin"), SourcePinName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_pin' parameter"));
+        if (!Params->TryGetStringField(TEXT("source_pin_name"), SourcePinName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'source_pin' parameter"));
+        }
     }
-
-    FString TargetPinName;
     if (!Params->TryGetStringField(TEXT("target_pin"), TargetPinName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_pin' parameter"));
+        if (!Params->TryGetStringField(TEXT("target_pin_name"), TargetPinName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'target_pin' parameter"));
+        }
     }
 
-    // Find the blueprint
     UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
+    FString ScopeError;
+    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!PreferredGraph && !ScopeError.IsEmpty())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(ScopeError);
     }
 
-    // Find the nodes
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+
     UEdGraphNode* SourceNode = nullptr;
     UEdGraphNode* TargetNode = nullptr;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
-    {
-        if (Node->NodeGuid.ToString() == SourceNodeId)
-        {
-            SourceNode = Node;
-        }
-        else if (Node->NodeGuid.ToString() == TargetNodeId)
-        {
-            TargetNode = Node;
-        }
-    }
+    UEdGraph* SourceNodeGraph = nullptr;
+    UEdGraph* TargetNodeGraph = nullptr;
+
+    ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceNodeGraph);
+    ResolveNodeIdentifier(TargetNodeId, CandidateGraphs, TargetNode, TargetNodeGraph);
 
     if (!SourceNode || !TargetNode)
     {
+        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
+        UE_LOG(LogVibeUE, Error, TEXT("ConnectBlueprintNodes: Failed to resolve nodes. SourceId=%s TargetId=%s. Available: %s"),
+               *SourceNodeId, *TargetNodeId, *AvailableNodes);
         return FCommonUtils::CreateErrorResponse(TEXT("Source or target node not found"));
     }
 
-    // Enhanced connection with reflection-based pin discovery
+    if (SourceNodeGraph != TargetNodeGraph)
+    {
+        const FString SourceGraphName = SourceNodeGraph ? SourceNodeGraph->GetName() : TEXT("<unknown>");
+        const FString TargetGraphName = TargetNodeGraph ? TargetNodeGraph->GetName() : TEXT("<unknown>");
+        UE_LOG(LogVibeUE, Error, TEXT("ConnectBlueprintNodes: Source and target nodes resolved in different graphs (Source: %s, Target: %s)."),
+               *SourceGraphName, *TargetGraphName);
+        return FCommonUtils::CreateErrorResponse(TEXT("Source and target nodes are not in the same graph"));
+    }
+
+    UEdGraph* TargetGraph = SourceNodeGraph ? SourceNodeGraph : PreferredGraph;
+    if (!TargetGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to determine target graph for connection"));
+    }
+
+    UE_LOG(LogVibeUE, Warning, TEXT("ConnectBlueprintNodes: Resolved both nodes in graph '%s'."),
+           *TargetGraph->GetName());
+
     TSharedPtr<FJsonObject> ConnectionResult = FCommonUtils::ConnectGraphNodesWithReflection(
-        EventGraph, SourceNode, SourcePinName, TargetNode, TargetPinName);
-    
+        TargetGraph, SourceNode, SourcePinName, TargetNode, TargetPinName);
+
     bool bSuccess = false;
     ConnectionResult->TryGetBoolField(TEXT("success"), bSuccess);
-    
+
     if (bSuccess)
     {
-        // Mark the blueprint as modified
         FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-        
-        // Return the enhanced connection result with detailed information
-        return ConnectionResult;
     }
-    else
-    {
-        // Return detailed error with suggestions
-        return ConnectionResult;
-    }
-}
 
+    return ConnectionResult;
+}
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
@@ -232,12 +189,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TS
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
+    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
 
     // Create the event node
     UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(EventGraph, EventName, NodePosition);
@@ -283,12 +236,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
+    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
 
     // Create the input action node
     UK2Node_InputAction* InputActionNode = FCommonUtils::CreateInputActionNode(EventGraph, ActionName, NodePosition);
@@ -328,42 +277,42 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const T
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the event graph
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
+    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
 
     // Create a JSON array for the node GUIDs
     TArray<TSharedPtr<FJsonValue>> NodeGuidArray;
     
-    // Filter nodes by the exact requested type
-    if (NodeType == TEXT("Event"))
+    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching for node type: %s"), *NodeType);
+    
+    // Use pure reflection-based node type resolution
+    UClass* TargetNodeClass = FBlueprintReflection::ResolveNodeClass(NodeType);
+    
+    if (TargetNodeClass)
     {
-        FString EventName;
-        // Prefer 'event_name', but allow legacy 'event_type' for compatibility
-        if (!Params->TryGetStringField(TEXT("event_name"), EventName))
-        {
-            Params->TryGetStringField(TEXT("event_type"), EventName);
-        }
-        if (EventName.IsEmpty())
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' (or legacy 'event_type') parameter for Event node search"));
-        }
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Resolved node class via reflection: %s"), *TargetNodeClass->GetName());
         
-        // Look for nodes with exact event name (e.g., ReceiveBeginPlay)
+        // Search through nodes using reflection-based type matching
+        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching %d nodes for type: %s"), EventGraph->Nodes.Num(), *TargetNodeClass->GetName());
+        
         for (UEdGraphNode* Node : EventGraph->Nodes)
         {
-            UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node);
-            if (EventNode && EventNode->EventReference.GetMemberName() == FName(*EventName))
+            if (Node && Node->IsA(TargetNodeClass))
             {
-                UE_LOG(LogTemp, Display, TEXT("Found event node with name %s: %s"), *EventName, *EventNode->NodeGuid.ToString());
-                NodeGuidArray.Add(MakeShared<FJsonValueString>(EventNode->NodeGuid.ToString()));
+                UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found matching node: %s"), *Node->NodeGuid.ToString());
+                NodeGuidArray.Add(MakeShared<FJsonValueString>(Node->NodeGuid.ToString()));
             }
         }
     }
-    // Add other node types as needed (InputAction, etc.)
+    else
+    {
+        UE_LOG(LogVibeUE, Error, TEXT("MCP: FindBlueprintNodes - Failed to resolve node type via reflection: %s"), *NodeType);
+        
+        // Since we don't want hardcoded fallbacks, return an error if reflection fails
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown node type '%s' - reflection system could not resolve this node type"), *NodeType));
+    }
+    
+    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found %d matching nodes for type: %s"), NodeGuidArray.Num(), *NodeType);
     
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetArrayField(TEXT("node_guids"), NodeGuidArray);
@@ -433,11 +382,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
-    }
+    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
 
     TArray<TSharedPtr<FJsonValue>> NodeArray;
     for (UEdGraphNode* Node : EventGraph->Nodes)
@@ -501,13 +447,19 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
         UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Blueprint not found: %s"), *BlueprintName);
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
+    
+    // Enhanced: Use ResolveTargetGraph to support function scope
+    FString GraphError;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Params, GraphError);
+    if (!TargetGraph)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Failed to resolve target graph: %s"), *GraphError);
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to resolve target graph: %s"), *GraphError));
     }
+    
+    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Using graph: %s"), *TargetGraph->GetName());
     UEdGraphNode* Found = nullptr;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
+    for (UEdGraphNode* Node : TargetGraph->Nodes)
     {
         if (Node->NodeGuid.ToString() == NodeId)
         {
@@ -680,74 +632,632 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
     return Result;
 }
 
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListBlueprintFunctions(const TSharedPtr<FJsonObject>& Params)
+// --- Unified Function Management (Phase 1) ---
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    bool bIncludeOverrides = true;
+    FString BlueprintName; FString Action;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-    Params->TryGetBoolField(TEXT("include_overrides"), bIncludeOverrides);
+    if (!Params->TryGetStringField(TEXT("action"), Action))
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter"));
 
     UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
-    {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+
+    // Core CRUD
+    if (Action.Equals(TEXT("list"), ESearchCase::IgnoreCase))
+        return BuildFunctionSummary(Blueprint);
+    if (Action.Equals(TEXT("get"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        return BuildSingleFunctionInfo(Blueprint, FunctionName);
+    }
+    if (Action.Equals(TEXT("create"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        return CreateFunctionGraph(Blueprint, FunctionName);
+    }
+    if (Action.Equals(TEXT("delete"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        FString Err; if (!RemoveFunctionGraph(Blueprint, FunctionName, Err))
+            return FCommonUtils::CreateErrorResponse(Err);
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>(); R->SetBoolField(TEXT("success"), true); R->SetStringField(TEXT("function_name"), FunctionName); return R;
     }
 
+    // Parameter operations
+    if (Action.Equals(TEXT("list_params"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_params"));
+        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetBoolField(TEXT("success"), true);
+        R->SetStringField(TEXT("function_name"), FunctionName);
+        R->SetArrayField(TEXT("parameters"), ListFunctionParameters(Blueprint, Graph));
+        return R;
+    }
+    if (Action.Equals(TEXT("add_param"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName, ParamName, TypeDesc, Direction;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        return AddFunctionParameter(Blueprint, Graph, ParamName, TypeDesc, Direction);
+    }
+    if (Action.Equals(TEXT("remove_param"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName, ParamName, Direction;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        return RemoveFunctionParameter(Blueprint, Graph, ParamName, Direction);
+    }
+    if (Action.Equals(TEXT("update_param"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName, ParamName, Direction, NewType, NewName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        Params->TryGetStringField(TEXT("new_type"), NewType);
+        Params->TryGetStringField(TEXT("new_name"), NewName);
+        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        return UpdateFunctionParameter(Blueprint, Graph, ParamName, Direction, NewType, NewName);
+    }
+    if (Action.Equals(TEXT("update_properties"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        return UpdateFunctionProperties(Blueprint, Graph, Params);
+    }
+
+    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown function action: %s"), *Action));
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString Action;
+    if (!Params->TryGetStringField(TEXT("action"), Action))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter"));
+    }
+
+    const FString NormalizedAction = Action.ToLower();
+
+    if (NormalizedAction == TEXT("list") || NormalizedAction == TEXT("list_nodes") || NormalizedAction == TEXT("enumerate"))
+    {
+        return HandleListEventGraphNodes(Params);
+    }
+    if (NormalizedAction == TEXT("find") || NormalizedAction == TEXT("search") || NormalizedAction == TEXT("locate"))
+    {
+        return HandleFindBlueprintNodes(Params);
+    }
+    if (NormalizedAction == TEXT("add") || NormalizedAction == TEXT("create") || NormalizedAction == TEXT("spawn"))
+    {
+        return HandleAddBlueprintNode(Params);
+    }
+    if (NormalizedAction == TEXT("delete") || NormalizedAction == TEXT("remove") || NormalizedAction == TEXT("destroy"))
+    {
+        return HandleDeleteBlueprintNode(Params);
+    }
+    if (NormalizedAction == TEXT("connect") || NormalizedAction == TEXT("link") || NormalizedAction == TEXT("wire"))
+    {
+        return HandleConnectBlueprintNodes(Params);
+    }
+    if (NormalizedAction == TEXT("move") || NormalizedAction == TEXT("reposition") || NormalizedAction == TEXT("translate") || NormalizedAction == TEXT("set_position"))
+    {
+        return HandleMoveBlueprintNode(Params);
+    }
+    if (NormalizedAction == TEXT("details") || NormalizedAction == TEXT("get") || NormalizedAction == TEXT("info"))
+    {
+        return HandleGetNodeDetails(Params);
+    }
+    if (NormalizedAction == TEXT("available") || NormalizedAction == TEXT("catalog") || NormalizedAction == TEXT("palette"))
+    {
+        return HandleGetAvailableBlueprintNodes(Params);
+    }
+    if (NormalizedAction == TEXT("set_property") || NormalizedAction == TEXT("update_property"))
+    {
+        return HandleSetBlueprintNodeProperty(Params);
+    }
+    if (NormalizedAction == TEXT("get_property") || NormalizedAction == TEXT("property"))
+    {
+        return HandleGetBlueprintNodeProperty(Params);
+    }
+    if (NormalizedAction == TEXT("list_custom_events") || NormalizedAction == TEXT("events"))
+    {
+        return HandleListCustomEvents(Params);
+    }
+
+    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown node action: %s"), *Action));
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::BuildFunctionSummary(UBlueprint* Blueprint)
+{
     TArray<TSharedPtr<FJsonValue>> Funcs;
     for (UEdGraph* Graph : Blueprint->FunctionGraphs)
     {
         if (!Graph) continue;
         TSharedPtr<FJsonObject> F = MakeShared<FJsonObject>();
         F->SetStringField(TEXT("name"), Graph->GetName());
+        F->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
+        Funcs.Add(MakeShared<FJsonValueObject>(F));
+    }
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetArrayField(TEXT("functions"), Funcs);
+    return Result;
+}
 
-        // Gather entry pins
-        TArray<FString> Inputs, Outputs;
-        for (UEdGraphNode* Node : Graph->Nodes)
+bool FBlueprintNodeCommands::FindUserFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName, UEdGraph*& OutGraph) const
+{
+    OutGraph = nullptr; if (!Blueprint) return false;
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase)) { OutGraph = Graph; return true; }
+    }
+    return false;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::BuildSingleFunctionInfo(UBlueprint* Blueprint, const FString& FunctionName)
+{
+    UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Function not found: %s"), *FunctionName));
+    TSharedPtr<FJsonObject> Info = MakeShared<FJsonObject>();
+    Info->SetStringField(TEXT("name"), FunctionName);
+    Info->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
+    Info->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString());
+    return Info;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName)
+{
+    UEdGraph* Existing = nullptr; if (FindUserFunctionGraph(Blueprint, FunctionName, Existing))
+        return FCommonUtils::CreateErrorResponse(TEXT("Function already exists"));
+    // Create new graph then add as function
+    UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(Blueprint, FName(*FunctionName), UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+    if (!NewGraph)
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to allocate new function graph"));
+    // Use non-templated form: explicitly specify nullptr as UFunction signature (template parameter cannot deduce from nullptr directly)
+    FBlueprintEditorUtils::AddFunctionGraph<UFunction>(Blueprint, NewGraph, /*bIsUserCreated*/ true, (UFunction*)nullptr);
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    TSharedPtr<FJsonObject> Res = MakeShared<FJsonObject>();
+    Res->SetBoolField(TEXT("success"), true);
+    Res->SetStringField(TEXT("function_name"), FunctionName);
+    Res->SetStringField(TEXT("graph_guid"), NewGraph->GraphGuid.ToString());
+    return Res;
+}
+
+bool FBlueprintNodeCommands::RemoveFunctionGraph(UBlueprint* Blueprint, const FString& FunctionName, FString& OutError)
+{
+    UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph)) { OutError = TEXT("Function not found"); return false; }
+    FBlueprintEditorUtils::RemoveGraph(Blueprint, Graph, EGraphRemoveFlags::Recompile);
+    return true;
+}
+
+TArray<TSharedPtr<FJsonValue>> FBlueprintNodeCommands::ListFunctionParameters(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const
+{
+    TArray<TSharedPtr<FJsonValue>> Result;
+    if (!Blueprint || !FunctionGraph) return Result;
+    UK2Node_FunctionEntry* EntryNode = nullptr;
+    TArray<UK2Node_FunctionResult*> ResultNodes;
+    for (UEdGraphNode* Node : FunctionGraph->Nodes)
+    {
+        if (UK2Node_FunctionEntry* AsEntry = Cast<UK2Node_FunctionEntry>(Node)) { EntryNode = AsEntry; }
+        else if (UK2Node_FunctionResult* AsRes = Cast<UK2Node_FunctionResult>(Node)) { ResultNodes.Add(AsRes); }
+    }
+    if (!EntryNode) return Result; // malformed function graph
+
+    auto SerializePin = [](const UEdGraphPin* Pin, const FString& Dir)->TSharedPtr<FJsonObject>
+    {
+        TSharedPtr<FJsonObject> P = MakeShared<FJsonObject>();
+        P->SetStringField(TEXT("name"), Pin->GetFName().ToString());
+        P->SetStringField(TEXT("direction"), Dir);
+        FString TypeStr = Pin->PinType.PinCategory.ToString();
+        if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object && Pin->PinType.PinSubCategoryObject.IsValid())
+        { TypeStr = FString::Printf(TEXT("object:%s"), *Pin->PinType.PinSubCategoryObject->GetName()); }
+        else if (Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Struct && Pin->PinType.PinSubCategoryObject.IsValid())
+        { TypeStr = FString::Printf(TEXT("struct:%s"), *Pin->PinType.PinSubCategoryObject->GetName()); }
+        if (Pin->PinType.ContainerType == EPinContainerType::Array)
+        { TypeStr = FString::Printf(TEXT("array<%s>"), *TypeStr); }
+        P->SetStringField(TEXT("type"), TypeStr);
+        return P;
+    };
+
+    // Inputs (entry node outputs)
+    for (UEdGraphPin* Pin : EntryNode->Pins)
+    {
+        if (Pin->Direction == EGPD_Output && Pin->PinName != UEdGraphSchema_K2::PN_Then)
         {
-            // TODO: Fix UK2Node_FunctionEntry compilation issue
-            /*
-            if (UK2Node_FunctionEntry* Entry = Cast<UK2Node_FunctionEntry>(Node))
-            {
-                for (const FEdGraphPinType& PinType : Entry->UserDefinedPins)
-                {
-                    Inputs.Add(PinType.PinCategory.ToString());
-                }
-            }
-            */
+            Result.Add(MakeShared<FJsonValueObject>(SerializePin(Pin, TEXT("input"))));
         }
-        // Attempt to find result node types
-        for (UEdGraphNode* Node : Graph->Nodes)
+    }
+    // Return / out params (result node inputs)
+    for (UK2Node_FunctionResult* RNode : ResultNodes)
+    {
+        for (UEdGraphPin* Pin : RNode->Pins)
         {
-            if (Node->GetClass()->GetName().Contains(TEXT("FunctionResult")))
+            if (Pin->Direction == EGPD_Input && Pin->PinName != UEdGraphSchema_K2::PN_Then)
             {
-                for (UEdGraphPin* Pin : Node->Pins)
+                const bool bIsReturn = (Pin->PinName == UEdGraphSchema_K2::PN_ReturnValue);
+                Result.Add(MakeShared<FJsonValueObject>(SerializePin(Pin, bIsReturn ? TEXT("return") : TEXT("out"))));
+            }
+        }
+    }
+    return Result;
+}
+
+static UK2Node_FunctionEntry* FindFunctionEntry(UEdGraph* Graph)
+{
+    for (UEdGraphNode* Node : Graph->Nodes)
+    { if (UK2Node_FunctionEntry* E = Cast<UK2Node_FunctionEntry>(Node)) return E; }
+    return nullptr;
+}
+static UK2Node_FunctionResult* FindOrCreateResultNode(UBlueprint* Blueprint, UEdGraph* Graph)
+{
+    for (UEdGraphNode* Node : Graph->Nodes) if (UK2Node_FunctionResult* R = Cast<UK2Node_FunctionResult>(Node)) return R;
+    FGraphNodeCreator<UK2Node_FunctionResult> Creator(*Graph); UK2Node_FunctionResult* NewNode = Creator.CreateNode(); Creator.Finalize();
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    return NewNode;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::AddFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& TypeDesc, const FString& Direction)
+{
+    if (!Blueprint || !FunctionGraph) return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint/graph"));
+    FString DirLower = Direction.ToLower();
+    if (!(DirLower == TEXT("input") || DirLower == TEXT("out") || DirLower == TEXT("return")))
+        return FCommonUtils::CreateErrorResponse(TEXT("Invalid direction (expected input|out|return)"));
+
+    // Check existing
+    auto Existing = ListFunctionParameters(Blueprint, FunctionGraph);
+    for (auto& V : Existing)
+    {
+        const TSharedPtr<FJsonObject>* ObjPtr; if (V->TryGetObject(ObjPtr))
+        { if ((*ObjPtr)->GetStringField(TEXT("name")).Equals(ParamName, ESearchCase::IgnoreCase)) return FCommonUtils::CreateErrorResponse(TEXT("Parameter already exists")); }
+    }
+
+    FEdGraphPinType PinType; FString TypeErr; if (!ParseTypeDescriptor(TypeDesc, PinType, TypeErr)) return FCommonUtils::CreateErrorResponse(TypeErr);
+
+    UK2Node_FunctionEntry* Entry = FindFunctionEntry(FunctionGraph);
+    if (!Entry) return FCommonUtils::CreateErrorResponse(TEXT("Function entry node not found"));
+
+    if (DirLower == TEXT("input"))
+    {
+        UEdGraphPin* NewPin = Entry->CreateUserDefinedPin(FName(*ParamName), PinType, EGPD_Output, false);
+        if (!NewPin) return FCommonUtils::CreateErrorResponse(TEXT("Failed to create input pin"));
+    }
+    else // out or return
+    {
+        UK2Node_FunctionResult* ResultNode = FindOrCreateResultNode(Blueprint, FunctionGraph);
+        if (!ResultNode) return FCommonUtils::CreateErrorResponse(TEXT("Failed to resolve/create result node"));
+        FName NewPinName = (DirLower == TEXT("return")) ? UEdGraphSchema_K2::PN_ReturnValue : FName(*ParamName);
+        if (DirLower == TEXT("return"))
+        {
+            // If return already exists, error
+            for (UEdGraphPin* P : ResultNode->Pins)
+            { if (P->PinName == UEdGraphSchema_K2::PN_ReturnValue) return FCommonUtils::CreateErrorResponse(TEXT("Return value already exists")); }
+        }
+        UEdGraphPin* NewPin = ResultNode->CreateUserDefinedPin(NewPinName, PinType, EGPD_Input, false);
+        if (!NewPin) return FCommonUtils::CreateErrorResponse(TEXT("Failed to create result pin"));
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetArrayField(TEXT("parameters"), ListFunctionParameters(Blueprint, FunctionGraph));
+    return R;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::RemoveFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction)
+{
+    if (!Blueprint || !FunctionGraph) return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint/graph"));
+    FString DirLower = Direction.ToLower();
+    bool bFound = false;
+    if (DirLower == TEXT("input"))
+    {
+        if (UK2Node_FunctionEntry* Entry = FindFunctionEntry(FunctionGraph))
+        {
+            for (int32 i=Entry->Pins.Num()-1;i>=0;--i)
+            {
+                UEdGraphPin* P = Entry->Pins[i];
+                if (P->Direction==EGPD_Output && P->PinName.ToString().Equals(ParamName, ESearchCase::IgnoreCase))
+                { P->BreakAllPinLinks(); Entry->Pins.RemoveAt(i); bFound=true; }
+            }
+        }
+    }
+    else // out or return
+    {
+        for (UEdGraphNode* Node : FunctionGraph->Nodes)
+        {
+            if (UK2Node_FunctionResult* RNode = Cast<UK2Node_FunctionResult>(Node))
+            {
+                for (int32 i=RNode->Pins.Num()-1;i>=0;--i)
                 {
-                    if (Pin->Direction == EGPD_Input)
+                    UEdGraphPin* P = RNode->Pins[i];
+                    if (P->Direction==EGPD_Input)
                     {
-                        Outputs.Add(Pin->PinType.PinCategory.ToString());
+                        bool bNameMatch = false;
+                        if (DirLower==TEXT("return")) bNameMatch = (P->PinName == UEdGraphSchema_K2::PN_ReturnValue);
+                        else bNameMatch = P->PinName.ToString().Equals(ParamName, ESearchCase::IgnoreCase);
+                        if (bNameMatch)
+                        { P->BreakAllPinLinks(); RNode->Pins.RemoveAt(i); bFound=true; }
                     }
                 }
             }
         }
-        if (Inputs.Num() > 0)
+    }
+    if (!bFound) return FCommonUtils::CreateErrorResponse(TEXT("Parameter not found"));
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+    R->SetBoolField(TEXT("success"), true);
+    R->SetArrayField(TEXT("parameters"), ListFunctionParameters(Blueprint, FunctionGraph));
+    return R;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::UpdateFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction, const FString& NewType, const FString& NewName)
+{
+    if (!Blueprint || !FunctionGraph) return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint/graph"));
+    FString DirLower = Direction.ToLower();
+    FEdGraphPinType NewPinType; bool bTypeChange=false; if (!NewType.IsEmpty()) { FString Err; if (!ParseTypeDescriptor(NewType, NewPinType, Err)) return FCommonUtils::CreateErrorResponse(Err); bTypeChange=true; }
+    bool bModified=false;
+
+    auto ApplyChanges = [&](UEdGraphPin* P)
+    {
+        if (bTypeChange) P->PinType = NewPinType;
+        if (!NewName.IsEmpty() && P->PinName.ToString() != NewName && P->PinName != UEdGraphSchema_K2::PN_ReturnValue)
+        { P->PinName = FName(*NewName); }
+        bModified=true;
+    };
+
+    if (DirLower==TEXT("input"))
+    {
+        if (UK2Node_FunctionEntry* Entry = FindFunctionEntry(FunctionGraph))
         {
-            TArray<TSharedPtr<FJsonValue>> InVals; for (const FString& S : Inputs) InVals.Add(MakeShared<FJsonValueString>(S));
-            F->SetArrayField(TEXT("inputs"), InVals);
+            for (UEdGraphPin* P : Entry->Pins)
+            {
+                if (P->Direction==EGPD_Output && P->PinName.ToString().Equals(ParamName, ESearchCase::IgnoreCase)) { ApplyChanges(P); }
+            }
         }
-        if (Outputs.Num() > 0)
+    }
+    else
+    {
+        for (UEdGraphNode* Node : FunctionGraph->Nodes)
         {
-            TArray<TSharedPtr<FJsonValue>> OutVals; for (const FString& S : Outputs) OutVals.Add(MakeShared<FJsonValueString>(S));
-            F->SetArrayField(TEXT("outputs"), OutVals);
+            if (UK2Node_FunctionResult* RNode = Cast<UK2Node_FunctionResult>(Node))
+            {
+                for (UEdGraphPin* P : RNode->Pins)
+                {
+                    if (P->Direction==EGPD_Input)
+                    {
+                        bool bMatch=false;
+                        if (DirLower==TEXT("return")) bMatch = (P->PinName==UEdGraphSchema_K2::PN_ReturnValue);
+                        else bMatch = P->PinName.ToString().Equals(ParamName, ESearchCase::IgnoreCase);
+                        if (bMatch) { ApplyChanges(P); }
+                    }
+                }
+            }
         }
-        Funcs.Add(MakeShared<FJsonValueObject>(F));
+    }
+    if (!bModified) return FCommonUtils::CreateErrorResponse(TEXT("Parameter not found"));
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>(); R->SetBoolField(TEXT("success"), true); R->SetArrayField(TEXT("parameters"), ListFunctionParameters(Blueprint, FunctionGraph)); return R;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::UpdateFunctionProperties(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Blueprint || !FunctionGraph) return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint or function graph"));
+    // Only 'is_pure' supported currently; others require metadata API adaptation
+    bool bPure=false; bool bHas=false; bHas = Params->TryGetBoolField(TEXT("is_pure"), bPure);
+    if (bHas)
+    {
+        // Pure flag requires locating entry node & adjusting function flags post-compile; stub for now
+        return FCommonUtils::CreateErrorResponse(TEXT("Setting is_pure not yet implemented"));
+    }
+    return FCommonUtils::CreateErrorResponse(TEXT("No supported properties provided"));
+}
+
+bool FBlueprintNodeCommands::ParseTypeDescriptor(const FString& TypeDesc, FEdGraphPinType& OutType, FString& OutError) const
+{
+    FString Lower = TypeDesc.ToLower(); OutType.ResetToDefaults();
+    if (Lower.StartsWith(TEXT("array<")) && Lower.EndsWith(TEXT(">")))
+    { FString Inner=TypeDesc.Mid(6, TypeDesc.Len()-7); FEdGraphPinType InnerType; FString Err; if (!ParseTypeDescriptor(Inner, InnerType, Err)) { OutError=Err; return false;} OutType=InnerType; OutType.ContainerType=EPinContainerType::Array; return true; }
+    if (Lower==TEXT("bool")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Boolean; return true; }
+    if (Lower==TEXT("int")||Lower==TEXT("int32")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Int; return true; }
+    if (Lower==TEXT("float")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Float; return true; }
+    if (Lower==TEXT("string")) { OutType.PinCategory=UEdGraphSchema_K2::PC_String; return true; }
+    if (Lower==TEXT("name")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Name; return true; }
+    if (Lower==TEXT("vector")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FVector>::Get(); return true; }
+    if (Lower==TEXT("rotator")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FRotator>::Get(); return true; }
+    if (Lower==TEXT("transform")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FTransform>::Get(); return true; }
+    if (Lower.StartsWith(TEXT("object:"))) { FString ClassName=TypeDesc.Mid(7); UClass* C=FindFirstObject<UClass>(*ClassName); if(!C){OutError=FString::Printf(TEXT("Class '%s' not found"),*ClassName);return false;} OutType.PinCategory=UEdGraphSchema_K2::PC_Object; OutType.PinSubCategoryObject=C; return true; }
+    if (Lower.StartsWith(TEXT("struct:"))) { FString StructName=TypeDesc.Mid(7); UScriptStruct* S=FindFirstObject<UScriptStruct>(*StructName); if(!S){OutError=FString::Printf(TEXT("Struct '%s' not found"),*StructName);return false;} OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=S; return true; }
+    OutError = FString::Printf(TEXT("Unsupported type descriptor '%s'"), *TypeDesc); return false;
+}
+
+UEdGraph* FBlueprintNodeCommands::ResolveTargetGraph(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params, FString& OutError) const
+{
+    OutError.Reset(); if (!Blueprint) { OutError=TEXT("Invalid blueprint"); return nullptr; }
+    FString Scope; if (!Params->TryGetStringField(TEXT("graph_scope"), Scope) || Scope.IsEmpty())
+        return FCommonUtils::FindOrCreateEventGraph(Blueprint);
+    if (Scope.Equals(TEXT("event"), ESearchCase::IgnoreCase)) return FCommonUtils::FindOrCreateEventGraph(Blueprint);
+    if (Scope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    { FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) { OutError=TEXT("Missing 'function_name' for function scope"); return nullptr; } UEdGraph* G=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, G)) { OutError=TEXT("Function not found"); return nullptr; } return G; }
+    OutError = FString::Printf(TEXT("Unsupported graph_scope '%s'"), *Scope); return nullptr;
+}
+
+void FBlueprintNodeCommands::GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const
+{
+    OutGraphs.Reset();
+
+    if (!Blueprint)
+    {
+        return;
     }
 
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetArrayField(TEXT("functions"), Funcs);
-    return Result;
+    TSet<UEdGraph*> Seen;
+    auto AddGraph = [&OutGraphs, &Seen](UEdGraph* Graph)
+    {
+        if (Graph && !Seen.Contains(Graph))
+        {
+            Seen.Add(Graph);
+            OutGraphs.Add(Graph);
+        }
+    };
+
+    AddGraph(PreferredGraph);
+
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        AddGraph(Graph);
+    }
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        AddGraph(Graph);
+    }
+    for (UEdGraph* Graph : Blueprint->MacroGraphs)
+    {
+        AddGraph(Graph);
+    }
+    for (UEdGraph* Graph : Blueprint->IntermediateGeneratedGraphs)
+    {
+        AddGraph(Graph);
+    }
+}
+
+bool FBlueprintNodeCommands::ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, UEdGraphNode*& OutNode, UEdGraph*& OutGraph) const
+{
+    OutNode = nullptr;
+    OutGraph = nullptr;
+
+    if (Identifier.IsEmpty())
+    {
+        return false;
+    }
+
+    FString NormalizedIdentifier = Identifier;
+    NormalizedIdentifier.ReplaceInline(TEXT("{"), TEXT(""));
+    NormalizedIdentifier.ReplaceInline(TEXT("}"), TEXT(""));
+    FString HyphenlessIdentifier = NormalizedIdentifier;
+    HyphenlessIdentifier.ReplaceInline(TEXT("-"), TEXT(""));
+
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph)
+        {
+            continue;
+        }
+
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node)
+            {
+                continue;
+            }
+
+            FString GuidString = Node->NodeGuid.ToString();
+            GuidString.ReplaceInline(TEXT("{"), TEXT(""));
+            GuidString.ReplaceInline(TEXT("}"), TEXT(""));
+            FString HyphenlessGuid = GuidString;
+            HyphenlessGuid.ReplaceInline(TEXT("-"), TEXT(""));
+
+            if (GuidString.Equals(NormalizedIdentifier, ESearchCase::IgnoreCase) ||
+                HyphenlessGuid.Equals(HyphenlessIdentifier, ESearchCase::IgnoreCase))
+            {
+                OutNode = Node;
+                OutGraph = Graph;
+                return true;
+            }
+
+            FString LexGuidString = LexToString(Node->NodeGuid);
+            FString HyphenlessLexGuid = LexGuidString;
+            HyphenlessLexGuid.ReplaceInline(TEXT("-"), TEXT(""));
+
+            if (LexGuidString.Equals(NormalizedIdentifier, ESearchCase::IgnoreCase) ||
+                HyphenlessLexGuid.Equals(HyphenlessIdentifier, ESearchCase::IgnoreCase))
+            {
+                OutNode = Node;
+                OutGraph = Graph;
+                return true;
+            }
+
+            const FString NodeName = Node->GetName();
+            if (NodeName.Equals(NormalizedIdentifier, ESearchCase::IgnoreCase))
+            {
+                OutNode = Node;
+                OutGraph = Graph;
+                return true;
+            }
+
+            const FString UniqueIdString = FString::FromInt(Node->GetUniqueID());
+            if (UniqueIdString.Equals(NormalizedIdentifier, ESearchCase::IgnoreCase))
+            {
+                OutNode = Node;
+                OutGraph = Graph;
+                return true;
+            }
+
+            const FString TitleString = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+            if (TitleString.Equals(NormalizedIdentifier, ESearchCase::IgnoreCase))
+            {
+                OutNode = Node;
+                OutGraph = Graph;
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+FString FBlueprintNodeCommands::DescribeAvailableNodes(const TArray<UEdGraph*>& Graphs) const
+{
+    FString Description;
+
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph)
+        {
+            continue;
+        }
+
+        const FString GraphName = Graph->GetName();
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node)
+            {
+                continue;
+            }
+
+            if (!Description.IsEmpty())
+            {
+                Description += TEXT(" | ");
+            }
+
+            Description += FString::Printf(TEXT("%s (Graph=%s, Guid=%s, Name=%s, UniqueId=%d)"),
+                                           *Node->GetNodeTitle(ENodeTitleType::ListView).ToString(),
+                                           *GraphName,
+                                           *Node->NodeGuid.ToString(),
+                                           *Node->GetName(),
+                                           Node->GetUniqueID());
+        }
+    }
+
+    return Description;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params)
@@ -845,96 +1355,217 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const 
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     
-    // Find the Event Graph
-    UEdGraph* EventGraph = nullptr;
-    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    FString ScopeError;
+    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!PreferredGraph && !ScopeError.IsEmpty())
     {
-        if (Graph && Graph->GetFName() == "EventGraph")
-        {
-            EventGraph = Graph;
-            break;
-        }
+        return FCommonUtils::CreateErrorResponse(ScopeError);
     }
-    
-    if (!EventGraph)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found in Blueprint"));
-    }
-    
-    // Find the node by ID
+
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+
     UEdGraphNode* NodeToDelete = nullptr;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
-    {
-        if (Node && Node->GetName() == NodeID)
-        {
-            NodeToDelete = Node;
-            break;
-        }
-    }
-    
+    UEdGraph* NodeGraph = nullptr;
+    ResolveNodeIdentifier(NodeID, CandidateGraphs, NodeToDelete, NodeGraph);
+
     if (!NodeToDelete)
     {
+        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
+        UE_LOG(LogVibeUE, Error, TEXT("DeleteBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
     }
-    
-    // Safety check: Can the user delete this node?
+
     if (!NodeToDelete->CanUserDeleteNode())
     {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeID));
     }
-    
-    // Collect information about disconnected pins for response
+
     TArray<TSharedPtr<FJsonValue>> DisconnectedPins;
-    
     if (DisconnectPins)
     {
-        // Disconnect all pins before deletion
         for (UEdGraphPin* Pin : NodeToDelete->Pins)
         {
             if (Pin && Pin->LinkedTo.Num() > 0)
             {
                 for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
                 {
-                    TSharedPtr<FJsonObject> PinInfo = MakeShareable(new FJsonObject);
+                    if (!LinkedPin)
+                    {
+                        continue;
+                    }
+
+                    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
                     PinInfo->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
                     PinInfo->SetStringField(TEXT("pin_type"), Pin->PinType.PinCategory.ToString());
                     PinInfo->SetStringField(TEXT("linked_node"), LinkedPin->GetOwningNode()->GetName());
                     PinInfo->SetStringField(TEXT("linked_pin"), LinkedPin->PinName.ToString());
-                    DisconnectedPins.Add(MakeShareable(new FJsonValueObject(PinInfo)));
+                    DisconnectedPins.Add(MakeShared<FJsonValueObject>(PinInfo));
                 }
-                
-                // Break all connections
+
                 Pin->BreakAllPinLinks();
             }
         }
     }
-    
-    // Store node information before deletion
-    FString NodeType = NodeToDelete->GetClass()->GetName();
-    
-    // Remove the node from the graph
-    EventGraph->RemoveNode(NodeToDelete, true);
-    
-    // Mark Blueprint as modified and recompile
+
+    const FString NodeType = NodeToDelete->GetClass()->GetName();
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "MCP Delete Blueprint Node"));
+
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+    }
+    NodeToDelete->Modify();
+
+    if (NodeGraph)
+    {
+        NodeGraph->RemoveNode(NodeToDelete, true);
+        NodeGraph->NotifyGraphChanged();
+    }
+    else
+    {
+        NodeToDelete->DestroyNode();
+    }
+
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
     FKismetEditorUtilities::CompileBlueprint(Blueprint);
-    
-    // Create success response
-    TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeID);
+    Result->SetStringField(TEXT("node_guid"), NodeID);
     Result->SetStringField(TEXT("node_type"), NodeType);
+    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
     Result->SetArrayField(TEXT("disconnected_pins"), DisconnectedPins);
     Result->SetBoolField(TEXT("pins_disconnected"), DisconnectPins);
     Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
-    
-    TSharedPtr<FJsonObject> SafetyChecks = MakeShareable(new FJsonObject);
+
+    TSharedPtr<FJsonObject> SafetyChecks = MakeShared<FJsonObject>();
     SafetyChecks->SetBoolField(TEXT("can_delete_check_passed"), true);
     SafetyChecks->SetBoolField(TEXT("is_protected_node"), false);
     SafetyChecks->SetNumberField(TEXT("pins_disconnected_count"), DisconnectedPins.Num());
     Result->SetObjectField(TEXT("safety_checks"), SafetyChecks);
-    
+
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    FString NodeID;
+
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+    }
+
+    FVector2D NewPosition(0.0f, 0.0f);
+    bool bHasPosition = false;
+
+    auto TryLoadPosition = [&](const FString& FieldName) -> bool
+    {
+        if (Params->HasField(FieldName))
+        {
+            NewPosition = FCommonUtils::GetVector2DFromJson(Params, FieldName);
+            return true;
+        }
+        return false;
+    };
+
+    bHasPosition = TryLoadPosition(TEXT("position")) ||
+                   TryLoadPosition(TEXT("node_position")) ||
+                   TryLoadPosition(TEXT("new_position"));
+
+    if (!bHasPosition)
+    {
+        double PosX = 0.0;
+        double PosY = 0.0;
+        const bool bHasX = Params->TryGetNumberField(TEXT("x"), PosX) || Params->TryGetNumberField(TEXT("pos_x"), PosX);
+        const bool bHasY = Params->TryGetNumberField(TEXT("y"), PosY) || Params->TryGetNumberField(TEXT("pos_y"), PosY);
+
+        if (bHasX && bHasY)
+        {
+            NewPosition.X = static_cast<float>(PosX);
+            NewPosition.Y = static_cast<float>(PosY);
+            bHasPosition = true;
+        }
+    }
+
+    if (!bHasPosition)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
+    }
+
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    FString ScopeError;
+    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!PreferredGraph && !ScopeError.IsEmpty())
+    {
+        return FCommonUtils::CreateErrorResponse(ScopeError);
+    }
+
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+
+    UEdGraphNode* TargetNode = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    ResolveNodeIdentifier(NodeID, CandidateGraphs, TargetNode, NodeGraph);
+
+    if (!TargetNode)
+    {
+        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
+        UE_LOG(LogVibeUE, Error, TEXT("MoveBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
+    }
+
+    if (!NodeGraph)
+    {
+        NodeGraph = PreferredGraph;
+    }
+
+    const int32 PreviousX = TargetNode->NodePosX;
+    const int32 PreviousY = TargetNode->NodePosY;
+    const int32 RoundedX = FMath::RoundToInt(NewPosition.X);
+    const int32 RoundedY = FMath::RoundToInt(NewPosition.Y);
+
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "MoveBlueprintNode", "MCP Move Blueprint Node"));
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+    }
+    TargetNode->Modify();
+
+    TargetNode->NodePosX = RoundedX;
+    TargetNode->NodePosY = RoundedY;
+
+    if (NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Result->SetStringField(TEXT("node_id"), NodeID);
+    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
+    Result->SetNumberField(TEXT("previous_x"), PreviousX);
+    Result->SetNumberField(TEXT("previous_y"), PreviousY);
+    Result->SetNumberField(TEXT("new_x"), RoundedX);
+    Result->SetNumberField(TEXT("new_y"), RoundedY);
+    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
+
     return Result;
 }
 

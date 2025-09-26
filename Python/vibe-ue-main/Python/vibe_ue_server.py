@@ -229,10 +229,13 @@ class UnrealConnection:
             command_json = json.dumps(command_obj)
             logger.info(f"Sending command: {command_json}")
             
-            # DEBUG: Extra logging for node creation commands
-            if command == "add_blueprint_node":
+            # DEBUG: Extra logging for node management commands
+            if command == "manage_blueprint_node":
                 import sys
-                print(f"DEBUG: Sending add_blueprint_node command to Unreal Engine", file=sys.stderr)
+                print(
+                    f"DEBUG: Sending manage_blueprint_node command to Unreal Engine",
+                    file=sys.stderr,
+                )
                 print(f"DEBUG: Command JSON: {command_json}", file=sys.stderr)
                 sys.stderr.flush()
             
@@ -254,19 +257,23 @@ class UnrealConnection:
             # Log complete response for debugging
             logger.info(f"Complete response from Unreal: {response}")
             
-            # DEBUG: Extra logging for node creation responses
-            if command == "add_blueprint_node":
+            # DEBUG: Extra logging for node management responses
+            if command == "manage_blueprint_node":
                 import sys
-                print(f"DEBUG: Received response for add_blueprint_node: {response}", file=sys.stderr)
+
+                print(
+                    f"DEBUG: Received response for manage_blueprint_node: {response}",
+                    file=sys.stderr,
+                )
                 print(f"DEBUG: Response type: {type(response)}", file=sys.stderr)
                 if isinstance(response, dict) and "result" in response:
                     print(f"DEBUG: Response result: {response['result']}", file=sys.stderr)
                 sys.stderr.flush()
             
-            # Enhanced error format handling
-            # Check for nested result structures first
-            if "result" in response and isinstance(response["result"], dict):
-                result = response["result"]
+      # Enhanced error format handling
+      # Check for nested result structures first
+            result = response.get("result") if isinstance(response, dict) else None
+            if isinstance(result, dict):
                 # Check if the result has error information
                 if result.get("success") is False:
                     error_message = result.get("error") or result.get("message")
@@ -1151,32 +1158,20 @@ def info():
       Spawn Blueprint actors in the level
     
     ## 🔗 Blueprint Graph & Node Management
-    ### Event Graph Inspection
-    - `list_event_graph_nodes(blueprint_name, include_functions=True, include_macros=True, include_timeline=True)`
-      List all nodes in Blueprint event graph
-    - `find_blueprint_nodes(blueprint_name, node_type=None, event_type=None, event_name=None)`
-      Find specific nodes in Blueprint graphs
-    - `get_node_details(blueprint_name, node_id)`
-      Get detailed node information (pins, connections, properties)
-    - `summarize_event_graph(blueprint_name, max_nodes=200)`
-      Get readable overview of event graph structure
-    - `list_blueprint_functions(blueprint_name, include_overrides=True)`
-      List functions defined on Blueprint
-    - `list_custom_events(blueprint_name)`
-      List custom events in event graph
-    
-    ### Node Creation & Connection
-    - `add_blueprint_event_node(blueprint_name, event_name, node_position=None)`
-      Add event nodes (use 'ReceiveBeginPlay', 'ReceiveTick' for standard events)
-    - `add_blueprint_input_action_node(blueprint_name, action_name, node_position=None)`
-      Add input action event nodes
-    - `add_blueprint_function_node(blueprint_name, target, function_name, params=None, node_position=None)`
-      Add function call nodes
+    ### Unified Node Orchestration
+    - `manage_blueprint_node(blueprint_name, action, **kwargs)`
+      One command for listing, adding, deleting, connecting, moving, finding, and inspecting nodes.
+      Supported actions include `list`, `add`, `delete`, `connect`, `move`, `details`, `available`, `find`, `set_property`, `get_property`, and `list_custom_events`.
+    - `manage_blueprint_function(blueprint_name, action, **kwargs)`
+      Single entry point for Blueprint function graphs: `list`, `get`, `create`, `delete`, `list_params`, `add_param`, `remove_param`, `update_param`, `update_properties`.
     - `add_blueprint_variable(blueprint_name, variable_name, variable_type, is_exposed=False)`
-      Add variables to Blueprint
-    - (removed) Self/component reference helpers — use reflection-based node creation
-    - `connect_blueprint_nodes(blueprint_name, source_node_id, source_pin, target_node_id, target_pin)`
-      Connect nodes in Blueprint graphs
+      Add variables to Blueprint classes.
+    - `get_blueprint_variable(blueprint_name, variable_name)`
+      Inspect existing Blueprint variables.
+    - `get_available_blueprint_variable_types()`
+      Discover supported Blueprint variable types.
+    - `summarize_event_graph(blueprint_name, max_nodes=200)`
+      Get a readable overview of event graph structure.
     
 
     ## ⚙️ Project Tools
