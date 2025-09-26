@@ -24,6 +24,14 @@ def register_umg_tools(mcp: FastMCP):
         """
         Create a new UMG Widget Blueprint.
         
+        ⚠️ CRITICAL DEPENDENCY ORDER: After creating the Widget Blueprint, you MUST create elements in this order:
+        1) Variables FIRST - Create all Blueprint variables before any Event Graph nodes
+        2) Widget Components SECOND - Add all UMG components (Button, TextBlock, etc.)  
+        3) Functions THIRD - Implement all custom functions
+        4) Event Graph nodes LAST - Create logic that references the above elements
+        
+        This order prevents dependency failures and ensures proper Blueprint compilation.
+        
         Args:
             name: Name of the widget blueprint to create
             parent_class: Parent class for the widget (default: UserWidget)
@@ -54,7 +62,15 @@ def register_umg_tools(mcp: FastMCP):
                 return {"success": False, "message": "No response from Unreal Engine"}
             
             logger.info(f"Create UMG Widget Blueprint response: {response}")
-            return response
+            
+            # Add dependency order reminder to response
+            result = response or {}
+            if result.get("path") or result.get("name"):  # If Widget Blueprint was created successfully
+                logger.info("⚠️ REMINDER: Create Widget Blueprint elements in DEPENDENCY ORDER: 1) Variables FIRST, 2) Widget Components SECOND, 3) Functions THIRD, 4) Event Graph nodes LAST")
+                result["reminder"] = "Create in order: Variables → Widget Components → Functions → Event Graph"
+                result["critical_order"] = "Variables FIRST, then Widget Components, then Functions, then Event Graph LAST"
+            
+            return result
             
         except Exception as e:
             error_msg = f"Error creating UMG Widget Blueprint: {e}"

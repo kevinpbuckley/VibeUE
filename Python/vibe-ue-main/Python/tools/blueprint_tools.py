@@ -20,7 +20,16 @@ def register_blueprint_tools(mcp: FastMCP):
         name: str,
         parent_class: str
     ) -> Dict[str, Any]:
-        """Create a new Blueprint class."""
+        """Create a new Blueprint class.
+        
+        ⚠️ CRITICAL DEPENDENCY ORDER: After creating the Blueprint, you MUST create elements in this order:
+        1) Variables FIRST - Create all Blueprint variables before any Event Graph nodes
+        2) Components SECOND - Add all components and configure hierarchy  
+        3) Functions THIRD - Implement all custom functions
+        4) Event Graph nodes LAST - Create logic that references the above elements
+        
+        This order prevents dependency failures and ensures proper Blueprint compilation.
+        """
         # Import inside function to avoid circular imports
         from vibe_ue_server import get_unreal_connection
         
@@ -40,7 +49,16 @@ def register_blueprint_tools(mcp: FastMCP):
                 return {"success": False, "message": "No response from Unreal Engine"}
             
             logger.info(f"Blueprint creation response: {response}")
-            return response or {}
+            
+            # Add dependency order reminder to response
+            result = response or {}
+            if result.get("path") or result.get("name"):  # If Blueprint was created successfully
+                logger.info("⚠️ REMINDER: Create Blueprint elements in DEPENDENCY ORDER: 1) Variables FIRST, 2) Components SECOND, 3) Functions THIRD, 4) Event Graph nodes LAST")
+                # Try different field names to see what gets through
+                result["reminder"] = "Create in order: Variables → Components → Functions → Event Graph"
+                result["critical_order"] = "Variables FIRST, then Components, then Functions, then Event Graph LAST"
+            
+            return result
             
         except Exception as e:
             error_msg = f"Error creating blueprint: {e}"
@@ -395,7 +413,66 @@ def register_blueprint_tools(mcp: FastMCP):
         variable_type: str,
         is_exposed: bool = False,
     ) -> Dict[str, Any]:
-        """Add a new variable to the specified Blueprint."""
+        """
+        Add a new variable to the specified Blueprint with proper type validation.
+        
+        ⚠️ **CRITICAL PREREQUISITE**: Always call get_available_blueprint_variable_types() FIRST 
+        to get correct type names and avoid creating String variables when complex types are needed.
+        
+        🚫 **Common Problem**: Using incorrect type names causes variables to default to String type,
+        making them unusable in Blueprint logic. This tool requires EXACT type names from the type catalog.
+        
+        🎯 **Correct Workflow**:
+        ```python
+        # 1. FIRST: Get available types
+        types = get_available_blueprint_variable_types()
+        
+        # 2. SECOND: Use exact type name from results
+        add_blueprint_variable("BP_Player", "MyActor", "Actor")  # ✅ Correct
+        add_blueprint_variable("BP_Player", "MyWidget", "UserWidget")  # ❌ May fail - check types first
+        
+        # 3. THIRD: Verify result
+        blueprint_info = get_blueprint_info("BP_Player")
+        ```
+        
+        💡 **Type Name Examples** (verify with get_available_blueprint_variable_types):
+        - **Basic Types**: "Boolean", "Integer", "Float", "String" (usually safe)
+        - **Struct Types**: "Vector", "Rotator", "Transform", "LinearColor" (use exact names)
+        - **Object Types**: "Actor", "StaticMesh", "Material", "Texture2D" (reference types)
+        - **Custom Types**: Project-specific classes may have different names
+        
+        Args:
+            blueprint_name: Name or path of the target Blueprint
+                           Examples: "BP_Player", "/Game/Blueprints/BP_Player"
+            variable_name: Name for the new variable
+                          Examples: "Health", "PlayerWidget", "ExplosionEffect"
+            variable_type: EXACT type name from get_available_blueprint_variable_types()
+                          ⚠️ MUST match exactly or will default to String type
+                          Examples: "Float", "Actor", "UserWidget", "NiagaraSystem"
+            is_exposed: Whether variable should be editable in Blueprint editor
+                       Examples: True = shows in details panel, False = Blueprint-only
+        
+        Returns:
+            Dict containing:
+            - success: boolean indicating if variable was added successfully
+            - message: result description
+            - blueprint_name: name of Blueprint that was modified
+            - variable_name: name of variable that was created
+            - variable_type: type that was applied (verify this matches your request!)
+            - is_exposed: exposure setting that was applied
+            
+        ⚠️ **AI Best Practices**:
+        1. **Always call get_available_blueprint_variable_types() first**
+        2. **Use exact type names** from the type catalog results
+        3. **Verify success** by checking the returned variable_type matches your request
+        4. **Follow dependency order**: Create variables BEFORE Event Graph nodes that use them
+        5. **Use get_blueprint_info()** after creation to confirm variable type is correct
+        
+        🔧 **Troubleshooting Variable Type Issues**:
+        - If variable shows as "String" when it should be complex type → wrong type name used
+        - If variable creation fails → type name not available in current project
+        - If Blueprint won't compile → variable type conflicts with usage in Event Graph
+        """
 
         from vibe_ue_server import get_unreal_connection
 
@@ -504,7 +581,59 @@ def register_blueprint_tools(mcp: FastMCP):
 
     @mcp.tool()
     def get_available_blueprint_variable_types(ctx: Context) -> Dict[str, Any]:
-        """List all variable types available for Blueprint variables."""
+        """
+        List all variable types available for Blueprint variables with detailed metadata.
+        
+        ⚠️ **CRITICAL FOR VARIABLE CREATION**: ALWAYS use this tool before add_blueprint_variable() 
+        to ensure you're using correct type names and avoid creating String variables when complex 
+        types are needed.
+        
+        🎯 **Prevents Common Variable Issues**:
+        - **String Fallback Problem**: Without proper type names, variables default to String type
+        - **Complex Type Resolution**: Get exact type names for UserWidget, NiagaraSystem, etc.
+        - **Blueprint Compilation**: Ensures variables are created with correct types for logic use
+        - **Type Validation**: Confirms available types before attempting variable creation
+        
+        💡 **Essential Workflow**:
+        ```
+        1. get_available_blueprint_variable_types() ← Get correct type names
+        2. add_blueprint_variable() with exact type name ← Create with proper type
+        3. Verify with get_blueprint_info() ← Confirm variable created correctly
+        ```
+        
+        🔍 **Type Categories Discovered**:
+        - **Basic Types**: Boolean, Integer, Float, String, etc. (always safe to use)
+        - **Struct Types**: Vector, Rotator, Transform, Color, etc. (use exact names)
+        - **Object Types**: Actor, Character, StaticMesh, Material, etc. (reference types)
+        - **Custom Types**: May include project-specific classes and Blueprint types
+        
+        Returns:
+            Dict containing:
+            - success: boolean indicating if type discovery completed
+            - basic_types: array of fundamental data types (Boolean, Integer, Float, etc.)
+            - struct_types: array of Unreal struct types (Vector, Rotator, Transform, etc.)  
+            - object_types: array of UObject-derived types (Actor, Character, StaticMesh, etc.)
+            - enum_types: array of available enum types in the project
+            - type_info: detailed metadata for each type including:
+              - category: type classification
+              - description: what the type represents
+              - default_value: default value when created
+              - pin_category: Blueprint pin category for connections
+            - total_count: number of available types discovered
+            
+        ⚠️ **AI Best Practices**:
+        1. **Always call this first** before creating any Blueprint variables
+        2. **Match exact names** from the results when calling add_blueprint_variable()
+        3. **Check type_info** for descriptions and valid usage patterns
+        4. **Use object_types** for references to assets, components, or other objects
+        5. **Verify results** with get_blueprint_info() after variable creation
+        
+        🚫 **Common Mistakes to Avoid**:
+        - Using "UserWidget" when type list shows different name
+        - Guessing type names instead of checking available types
+        - Not validating complex types before using them
+        - Assuming all engine types are always available
+        """
 
         from vibe_ue_server import get_unreal_connection
 
@@ -1000,14 +1129,53 @@ def register_blueprint_tools(mcp: FastMCP):
         new_parent_class: str
     ) -> Dict[str, Any]:
         """
-        Reparent a Blueprint to a new parent class.
+        Reparent a Blueprint to a new parent class with automatic hierarchy and inheritance fixes.
+        
+        🔧 **CRITICAL BLUEPRINT CREATION FIX**: This tool solves common Blueprint creation issues:
+        - **Parent Class Problems**: Fix Blueprints that inherited wrong parent class during creation
+        - **Component Hierarchy Issues**: Reparenting often resolves component hierarchy problems automatically
+        - **Custom Class Inheritance**: Enable inheritance from custom C++ classes or other Blueprints
+        - **Blueprint Migration**: Change Blueprint inheritance without losing existing structure
+        
+        💡 **Common Use Cases**:
+        - Fix Blueprint created with "Actor" when it should inherit from custom character class
+        - Change from default parent to specialized parent (Character → MyCustomCharacter)  
+        - Migrate Blueprint from one base class to another during development
+        - Resolve component hierarchy issues that appear after Blueprint creation
+        
+        🎯 **Integration Benefits**:
+        - **Component Auto-Fix**: Often automatically resolves component parent-child relationships
+        - **Property Preservation**: Maintains existing variables and components during reparent
+        - **Compilation Safety**: Ensures Blueprint remains compilable after parent class change
+        - **Development Workflow**: Essential for iterative Blueprint development and refactoring
         
         Args:
-            blueprint_name: Name of the Blueprint to reparent
-            new_parent_class: Name of the new parent class (e.g., "Actor", "Pawn", "UserWidget")
+            blueprint_name: Name or path of the Blueprint to reparent
+                           Examples: "BP_Player", "/Game/Blueprints/Characters/BP_Player"
+            new_parent_class: Name of the new parent class
+                             Examples: "ProteusCharacter", "Character", "Pawn", "Actor", "UserWidget"
+                             Supports: Engine classes, custom C++ classes, other Blueprint classes
             
         Returns:
-            Dict containing success status and reparenting information
+            Dict containing:
+            - success: boolean indicating if reparenting completed successfully
+            - blueprint_name: name of the Blueprint that was reparented
+            - old_parent_class: previous parent class (for verification)
+            - new_parent_class: new parent class that was applied
+            - message: detailed result information
+            - additional fixes: any automatic fixes applied (component hierarchy, etc.)
+            
+        ⚠️ **AI Best Practices**:
+        1. Use this immediately after create_blueprint() if wrong parent class detected
+        2. Verify result with get_blueprint_info() to confirm parent class change
+        3. Check component hierarchy - often gets automatically fixed
+        4. Compile Blueprint after reparenting to ensure no errors
+        5. Essential tool for Blueprint creation workflows and troubleshooting
+        
+        🔄 **Workflow Integration**:
+        ```
+        create_blueprint() → Wrong parent detected → reparent_blueprint() → Verify with get_blueprint_info()
+        ```
         """
         from vibe_ue_server import get_unreal_connection
         

@@ -69,42 +69,79 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
-        Perform Blueprint node operations via a single unified tool.
+        🛠️ **MULTI-ACTION BLUEPRINT NODE MANAGER**: Universal tool for all Blueprint node operations.
         
-        ⚠️ **IMPORTANT**: Before creating nodes (action='create'), ALWAYS use get_available_blueprint_nodes()
-        first to discover exact node type names. This prevents errors and ensures reliable node creation.
+        ## Supported Actions:
+        - **create**: Create new nodes (requires node_type from get_available_blueprint_nodes())
+        - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
+        - **disconnect**: Disconnect pins (requires source/target node_id and pin names) 
+        - **delete**: Remove nodes (requires node_id)
+        - **move**: Reposition nodes (requires node_id and position)
+        - **list**: List all nodes in graph (returns node inventory)
+        - **get_details**: Get detailed node information (requires node_id)
+        - **configure**: Set node properties (requires node_id, property_name, property_value)
         
-        🔄 **RECOMMENDED WORKFLOW**:
-        1. Call get_available_blueprint_nodes() to discover available node types
-        2. Use exact node names from discovery results in node_type parameter
-        3. Create nodes with precise type names for guaranteed success
+        ## Context Requirements:
+        - **graph_scope**: "event" (Event Graph) or "function" (Function Graph) 
+        - **function_name**: Required when graph_scope="function" - specify target function name
+        - **blueprint_name**: Always required - target Blueprint name
         
-        **Actions**:
-        - create: Create new nodes (requires exact node_type from get_available_blueprint_nodes)
-        - connect: Connect node pins
-        - delete: Remove nodes
-        - move: Reposition nodes
-        - configure: Set node properties
+        ## Multi-Action Usage Patterns:
         
-        **Examples**:
+        ### Pattern 1: Node Creation Workflow
         ```python
-        # Step 1: Discover available nodes
+        # 1. Discover → 2. Create → 3. Position → 4. Configure
         nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
-        
-        # Step 2: Use exact node name from discovery
-        manage_blueprint_node(
-            blueprint_name="BP_Player",
-            action="create", 
-            node_type="Branch",  # Exact name from discovery
-            position=[200, 100]
-        )
+        result = manage_blueprint_node("BP_Player", action="create", node_type="Branch")
+        node_id = result["node_id"]
+        manage_blueprint_node("BP_Player", action="move", node_id=node_id, position=[200, 100])
         ```
         
-        🎯 **Node Type Discovery**: Use get_available_blueprint_nodes() with search terms like:
-        - "Flow Control" category for branches, loops
-        - "Math" category for calculations  
-        - "Variables" category for get/set operations
-        - "Functions" category for custom functions
+        ### Pattern 2: Node Connection Workflow
+        ```python
+        # List → Identify → Connect → Verify
+        nodes = manage_blueprint_node("BP_Player", action="list")
+        manage_blueprint_node("BP_Player", action="connect", 
+                            source_node_id="EventBeginPlay_1", source_pin="exec",
+                            target_node_id="Branch_2", target_pin="exec")
+        ```
+        
+        ### Pattern 3: Function Graph Operations
+        ```python
+        # Function context requires function_name
+        manage_blueprint_node("BP_Player", action="create", graph_scope="function",
+                            function_name="CalculateHealth", node_type="Add", position=[100, 50])
+        ```
+        
+        ## Action-Specific Parameters:
+        
+        **create**: node_type (required), position (optional), node_params (optional)
+        **connect**: source_node_id, source_pin, target_node_id, target_pin
+        **disconnect**: source_node_id, source_pin, target_node_id, target_pin  
+        **delete**: node_id
+        **move**: node_id, position
+        **list**: (no additional parameters)
+        **get_details**: node_id
+        **configure**: node_id, property_name, property_value
+        
+        ## Pin Connection Guide:
+        Common pin names for connections:
+        - **Execution**: "exec" (out) → "exec" (in)
+        - **Boolean**: "Return Value" → "Condition"  
+        - **Variables**: "Return Value" → parameter names
+        - **Function Calls**: "Return Value" → input parameter names
+        
+        ⚠️ **CRITICAL**: Always use get_available_blueprint_nodes() before action="create" to get exact node_type names.
+        
+        🔧 **Advanced Multi-Action Examples**:
+        ```python
+        # Create variable getter, position it, connect to branch
+        getter = manage_blueprint_node("BP_Player", "create", node_type="Get Health")
+        manage_blueprint_node("BP_Player", "move", node_id=getter["node_id"], position=[0, 100])
+        manage_blueprint_node("BP_Player", "connect",
+                            source_node_id=getter["node_id"], source_pin="Health",
+                            target_node_id="Branch_1", target_pin="Condition")
+        ```
         """
 
         payload: Dict[str, Any] = {
@@ -258,7 +295,88 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         properties: Optional[Dict[str, Any]] = None,
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Unified tool for Blueprint function graph operations."""
+        """
+        🔧 **MULTI-ACTION BLUEPRINT FUNCTION MANAGER**: Complete Blueprint function lifecycle management.
+        
+        ## Supported Actions:
+        - **create**: Create new custom functions (requires function_name)
+        - **delete**: Remove functions (requires function_name)
+        - **rename**: Rename functions (requires function_name, new_name)
+        - **add_param**: Add input/output parameters (requires function_name, param_name, direction, type)
+        - **remove_param**: Remove parameters (requires function_name, param_name)
+        - **modify_param**: Change parameter properties (requires function_name, param_name, new_type/new_name)
+        - **list**: List all functions in Blueprint
+        - **get_info**: Get detailed function information (requires function_name)
+        
+        ## Function Development Workflow:
+        
+        ### Pattern 1: Function Creation → Parameter Setup → Node Population
+        ```python
+        # 1. Create function
+        manage_blueprint_function("BP_Player", action="create", function_name="CalculateHealth")
+        
+        # 2. Add input parameters
+        manage_blueprint_function("BP_Player", action="add_param", function_name="CalculateHealth",
+                                param_name="BaseHealth", direction="input", type="float")
+        manage_blueprint_function("BP_Player", action="add_param", function_name="CalculateHealth",
+                                param_name="Modifier", direction="input", type="float")
+        
+        # 3. Add output parameter
+        manage_blueprint_function("BP_Player", action="add_param", function_name="CalculateHealth",
+                                param_name="FinalHealth", direction="output", type="float")
+        
+        # 4. Now populate with nodes using manage_blueprint_node
+        manage_blueprint_node("BP_Player", action="create", graph_scope="function",
+                            function_name="CalculateHealth", node_type="Multiply")
+        ```
+        
+        ### Pattern 2: Function Parameter Management
+        ```python
+        # Add various parameter types
+        manage_blueprint_function("BP_Player", "add_param", function_name="ProcessInput",
+                                param_name="InputKey", direction="input", type="string")
+        manage_blueprint_function("BP_Player", "add_param", function_name="ProcessInput", 
+                                param_name="IsValid", direction="output", type="bool")
+        manage_blueprint_function("BP_Player", "add_param", function_name="ProcessInput",
+                                param_name="Execute", direction="exec", type="exec")
+        ```
+        
+        ## Parameter Direction Types:
+        - **"input"**: Function input parameters (appear on left side of function node)
+        - **"output"**: Function return values (appear on right side of function node)
+        - **"exec"**: Execution pins for control flow (in/out execution paths)
+        
+        ## Common Parameter Types:
+        - **Basic**: "int", "float", "bool", "string"
+        - **Objects**: "AActor", "UStaticMeshComponent", "UUserWidget"
+        - **Containers**: "TArray<int>", "TMap<string,float>"
+        - **Custom**: Blueprint class names (e.g., "BP_PlayerCharacter")
+        - **Execution**: "exec" for control flow pins
+        
+        ## Action-Specific Parameters:
+        
+        **create**: function_name
+        **delete**: function_name
+        **rename**: function_name, new_name
+        **add_param**: function_name, param_name, direction, type
+        **remove_param**: function_name, param_name
+        **modify_param**: function_name, param_name, [new_type and/or new_name]
+        **list**: (no additional parameters)
+        **get_info**: function_name
+        
+        ## Function Types & Properties:
+        Functions can have additional properties set via the properties parameter:
+        - **CallInEditor**: true/false - Allow function to be called in editor
+        - **BlueprintPure**: true/false - Pure function (no execution pins)
+        - **Category**: "Combat|Health" - Function category in Blueprint palette
+        
+        🎯 **Integration with Node Management**:
+        After creating functions with parameters, use manage_blueprint_node with graph_scope="function"
+        and function_name to add nodes to the function graph.
+        
+        ⚠️ **CRITICAL WORKFLOW**: Functions must be created before they can be used in manage_blueprint_node.
+        Always create functions first, add parameters, then populate with nodes.
+        """
 
         payload: Dict[str, Any] = {
             "blueprint_name": blueprint_name,

@@ -57,7 +57,16 @@ private:
     TSharedPtr<FJsonObject> RemoveFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction);
     TSharedPtr<FJsonObject> UpdateFunctionParameter(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& ParamName, const FString& Direction, const FString& NewType, const FString& NewName);
     TSharedPtr<FJsonObject> UpdateFunctionProperties(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const TSharedPtr<FJsonObject>& Params);
+    // Local variable helpers
+    TArray<TSharedPtr<FJsonValue>> ListFunctionLocalVariables(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const;
+    TSharedPtr<FJsonObject> AddFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName, const FString& TypeDesc, const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> RemoveFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName);
+    TSharedPtr<FJsonObject> UpdateFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName, const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> BuildAvailableLocalVariableTypes() const;
     bool ParseTypeDescriptor(const FString& TypeDesc, FEdGraphPinType& OutType, FString& OutError) const;
+    FString DescribePinType(const FEdGraphPinType& PinType) const;
+    const UStruct* ResolveFunctionScopeStruct(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const;
+    class UK2Node_FunctionEntry* FindFunctionEntry(UEdGraph* FunctionGraph) const;
 
     // Graph scoping helper for node operations
     UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params, FString& OutError) const;

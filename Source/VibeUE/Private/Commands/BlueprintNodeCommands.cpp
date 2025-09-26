@@ -27,6 +27,13 @@
 #include "EdGraphSchema_K2.h"
 #include "ScopedTransaction.h"
 #include "Math/UnrealMathUtility.h"
+#include "Math/Vector.h"
+#include "Math/Vector2D.h"
+#include "Math/Vector4.h"
+#include "Math/Rotator.h"
+#include "Math/Transform.h"
+#include "Math/Color.h"
+#include "UObject/UnrealType.h"
 #include "Internationalization/Text.h"
 
 // Declare the log category
@@ -645,65 +652,90 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     if (!Blueprint)
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
 
+    const FString NormalizedAction = Action.ToLower();
+
     // Core CRUD
-    if (Action.Equals(TEXT("list"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("list"))
+    {
         return BuildFunctionSummary(Blueprint);
-    if (Action.Equals(TEXT("get"), ESearchCase::IgnoreCase))
+    }
+    if (NormalizedAction == TEXT("get"))
     {
         FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
         return BuildSingleFunctionInfo(Blueprint, FunctionName);
     }
-    if (Action.Equals(TEXT("create"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("create"))
     {
         FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
         return CreateFunctionGraph(Blueprint, FunctionName);
     }
-    if (Action.Equals(TEXT("delete"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("delete"))
     {
         FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
         FString Err; if (!RemoveFunctionGraph(Blueprint, FunctionName, Err))
+        {
             return FCommonUtils::CreateErrorResponse(Err);
-        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>(); R->SetBoolField(TEXT("success"), true); R->SetStringField(TEXT("function_name"), FunctionName); return R;
-    }
-
-    // Parameter operations
-    if (Action.Equals(TEXT("list_params"), ESearchCase::IgnoreCase))
-    {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_params"));
-        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
         TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
         R->SetBoolField(TEXT("success"), true);
         R->SetStringField(TEXT("function_name"), FunctionName);
-        R->SetArrayField(TEXT("parameters"), ListFunctionParameters(Blueprint, Graph));
         return R;
     }
-    if (Action.Equals(TEXT("add_param"), ESearchCase::IgnoreCase))
+
+    // Parameter operations
+    if (NormalizedAction == TEXT("list_params"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_params"));
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetBoolField(TEXT("success"), true);
+        R->SetStringField(TEXT("function_name"), FunctionName);
+        TArray<TSharedPtr<FJsonValue>> ParamsArray = ListFunctionParameters(Blueprint, Graph);
+        R->SetArrayField(TEXT("parameters"), ParamsArray);
+        R->SetNumberField(TEXT("count"), ParamsArray.Num());
+        return R;
+    }
+    if (NormalizedAction == TEXT("add_param"))
     {
         FString FunctionName, ParamName, TypeDesc, Direction;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
         if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
         if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type'"));
         if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
-        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
         return AddFunctionParameter(Blueprint, Graph, ParamName, TypeDesc, Direction);
     }
-    if (Action.Equals(TEXT("remove_param"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("remove_param"))
     {
         FString FunctionName, ParamName, Direction;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
         if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
         if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
-        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
         return RemoveFunctionParameter(Blueprint, Graph, ParamName, Direction);
     }
-    if (Action.Equals(TEXT("update_param"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("update_param"))
     {
         FString FunctionName, ParamName, Direction, NewType, NewName;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
@@ -711,17 +743,118 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
         Params->TryGetStringField(TEXT("new_type"), NewType);
         Params->TryGetStringField(TEXT("new_name"), NewName);
-        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
         return UpdateFunctionParameter(Blueprint, Graph, ParamName, Direction, NewType, NewName);
     }
-    if (Action.Equals(TEXT("update_properties"), ESearchCase::IgnoreCase))
+    if (NormalizedAction == TEXT("update_properties"))
     {
         FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        UEdGraph* Graph=nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
             return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
         return UpdateFunctionProperties(Blueprint, Graph, Params);
+    }
+
+    // Local variable operations
+    if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_locals"));
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, Graph);
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetArrayField(TEXT("locals"), Locals);
+        Response->SetNumberField(TEXT("count"), Locals.Num());
+        return Response;
+    }
+    if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        FString TypeDesc;
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
+        {
+            if (!Params->TryGetStringField(TEXT("local_type"), TypeDesc) && !Params->TryGetStringField(TEXT("variable_type"), TypeDesc))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' parameter for local variable"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return AddFunctionLocalVariable(Blueprint, Graph, LocalName, TypeDesc, Params);
+    }
+    if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return RemoveFunctionLocalVariable(Blueprint, Graph, LocalName);
+    }
+    if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return UpdateFunctionLocalVariable(Blueprint, Graph, LocalName, Params);
+    }
+    if (NormalizedAction == TEXT("get_available_local_types") || NormalizedAction == TEXT("list_local_types"))
+    {
+        return BuildAvailableLocalVariableTypes();
     }
 
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown function action: %s"), *Action));
@@ -899,6 +1032,577 @@ TArray<TSharedPtr<FJsonValue>> FBlueprintNodeCommands::ListFunctionParameters(UB
     return Result;
 }
 
+TArray<TSharedPtr<FJsonValue>> FBlueprintNodeCommands::ListFunctionLocalVariables(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const
+{
+    TArray<TSharedPtr<FJsonValue>> Result;
+    if (!Blueprint || !FunctionGraph)
+    {
+        return Result;
+    }
+
+    UK2Node_FunctionEntry* Entry = FindFunctionEntry(FunctionGraph);
+    if (!Entry)
+    {
+        return Result;
+    }
+
+    for (const FBPVariableDescription& VarDesc : Entry->LocalVariables)
+    {
+        TSharedPtr<FJsonObject> VarObject = MakeShared<FJsonObject>();
+        VarObject->SetStringField(TEXT("name"), VarDesc.VarName.ToString());
+        VarObject->SetStringField(TEXT("friendly_name"), VarDesc.FriendlyName);
+        VarObject->SetStringField(TEXT("type"), DescribePinType(VarDesc.VarType));
+        VarObject->SetStringField(TEXT("display_type"), UEdGraphSchema_K2::TypeToText(VarDesc.VarType).ToString());
+        VarObject->SetStringField(TEXT("default_value"), VarDesc.DefaultValue);
+        VarObject->SetStringField(TEXT("category"), VarDesc.Category.ToString());
+        VarObject->SetStringField(TEXT("pin_category"), VarDesc.VarType.PinCategory.ToString());
+        VarObject->SetStringField(TEXT("guid"), VarDesc.VarGuid.ToString());
+        VarObject->SetBoolField(TEXT("is_const"), VarDesc.VarType.bIsConst || ((VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0));
+        VarObject->SetBoolField(TEXT("is_reference"), VarDesc.VarType.bIsReference);
+        VarObject->SetBoolField(TEXT("is_editable"), (VarDesc.PropertyFlags & CPF_Edit) != 0);
+        VarObject->SetBoolField(TEXT("is_array"), VarDesc.VarType.ContainerType == EPinContainerType::Array);
+        VarObject->SetBoolField(TEXT("is_set"), VarDesc.VarType.ContainerType == EPinContainerType::Set);
+        VarObject->SetBoolField(TEXT("is_map"), VarDesc.VarType.ContainerType == EPinContainerType::Map);
+        Result.Add(MakeShared<FJsonValueObject>(VarObject));
+    }
+
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::AddFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName, const FString& TypeDesc, const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Blueprint || !FunctionGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint or function graph"));
+    }
+
+    if (VarName.TrimStartAndEnd().IsEmpty())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Local variable name cannot be empty"));
+    }
+
+    UK2Node_FunctionEntry* Entry = FindFunctionEntry(FunctionGraph);
+    if (!Entry)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Function entry node not found"));
+    }
+
+    for (const FBPVariableDescription& Local : Entry->LocalVariables)
+    {
+        if (Local.VarName.ToString().Equals(VarName, ESearchCase::IgnoreCase))
+        {
+            return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Local variable '%s' already exists"), *VarName));
+        }
+    }
+
+    FEdGraphPinType PinType;
+    FString TypeError;
+    if (!ParseTypeDescriptor(TypeDesc, PinType, TypeError))
+    {
+        return FCommonUtils::CreateErrorResponse(TypeError);
+    }
+
+    bool bIsReference = false;
+    const bool bHasReference = Params.IsValid() && Params->TryGetBoolField(TEXT("is_reference"), bIsReference);
+    bool bIsConst = false;
+    const bool bHasConst = Params.IsValid() && Params->TryGetBoolField(TEXT("is_const"), bIsConst);
+    bool bIsEditable = false;
+    const bool bHasEditable = Params.IsValid() && Params->TryGetBoolField(TEXT("is_editable"), bIsEditable);
+
+    if (bHasReference)
+    {
+        PinType.bIsReference = bIsReference;
+    }
+    if (bHasConst)
+    {
+        PinType.bIsConst = bIsConst;
+    }
+
+    FString DefaultValue;
+    bool bHasDefaultValue = false;
+    if (Params.IsValid() && Params->HasField(TEXT("default_value")))
+    {
+        bHasDefaultValue = true;
+        if (!Params->TryGetStringField(TEXT("default_value"), DefaultValue))
+        {
+            bool BoolVal = false;
+            if (Params->TryGetBoolField(TEXT("default_value"), BoolVal))
+            {
+                DefaultValue = BoolVal ? TEXT("true") : TEXT("false");
+            }
+            else
+            {
+                double NumberVal = 0.0;
+                if (Params->TryGetNumberField(TEXT("default_value"), NumberVal))
+                {
+                    DefaultValue = FString::SanitizeFloat(NumberVal);
+                }
+                else
+                {
+                    return FCommonUtils::CreateErrorResponse(TEXT("default_value must be a string, boolean, or number"));
+                }
+            }
+        }
+    }
+
+    if (!bHasDefaultValue)
+    {
+        DefaultValue.Reset();
+    }
+
+    if (!FBlueprintEditorUtils::AddLocalVariable(Blueprint, FunctionGraph, FName(*VarName), PinType, DefaultValue))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to add local variable"));
+    }
+
+    Entry = FindFunctionEntry(FunctionGraph);
+    if (Entry)
+    {
+        Entry->Modify();
+        for (FBPVariableDescription& Local : Entry->LocalVariables)
+        {
+            if (Local.VarName.ToString().Equals(VarName, ESearchCase::IgnoreCase))
+            {
+                if (bHasConst)
+                {
+                    if (bIsConst)
+                    {
+                        Local.PropertyFlags |= CPF_BlueprintReadOnly;
+                        Local.VarType.bIsConst = true;
+                    }
+                    else
+                    {
+                        Local.PropertyFlags &= ~CPF_BlueprintReadOnly;
+                        Local.VarType.bIsConst = false;
+                    }
+                }
+                if (bHasReference)
+                {
+                    Local.VarType.bIsReference = bIsReference;
+                }
+                if (bHasEditable)
+                {
+                    if (bIsEditable)
+                    {
+                        Local.PropertyFlags |= CPF_Edit;
+                        Local.PropertyFlags |= CPF_BlueprintVisible;
+                    }
+                    else
+                    {
+                        Local.PropertyFlags &= ~CPF_Edit;
+                    }
+                }
+                break;
+            }
+        }
+    }
+
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, FunctionGraph);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("local_name"), VarName);
+    Response->SetStringField(TEXT("type"), DescribePinType(PinType));
+    Response->SetArrayField(TEXT("locals"), Locals);
+    Response->SetNumberField(TEXT("count"), Locals.Num());
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::RemoveFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName)
+{
+    if (!Blueprint || !FunctionGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint or function graph"));
+    }
+
+    FName VarFName(*VarName);
+    UK2Node_FunctionEntry* Entry = nullptr;
+    FBPVariableDescription* Existing = FBlueprintEditorUtils::FindLocalVariable(Blueprint, FunctionGraph, VarFName, &Entry);
+    if (!Existing || !Entry)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Local variable '%s' not found"), *VarName));
+    }
+
+    const UStruct* Scope = ResolveFunctionScopeStruct(Blueprint, FunctionGraph);
+    if (Scope)
+    {
+        FBlueprintEditorUtils::RemoveLocalVariable(Blueprint, Scope, VarFName);
+    }
+    else
+    {
+        Entry->Modify();
+        for (int32 Index = 0; Index < Entry->LocalVariables.Num(); ++Index)
+        {
+            if (Entry->LocalVariables[Index].VarName == VarFName)
+            {
+                Entry->LocalVariables.RemoveAt(Index);
+                break;
+            }
+        }
+        FBlueprintEditorUtils::RemoveVariableNodes(Blueprint, VarFName, true, FunctionGraph);
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, FunctionGraph);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("removed_local"), VarName);
+    Response->SetArrayField(TEXT("locals"), Locals);
+    Response->SetNumberField(TEXT("count"), Locals.Num());
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::UpdateFunctionLocalVariable(UBlueprint* Blueprint, UEdGraph* FunctionGraph, const FString& VarName, const TSharedPtr<FJsonObject>& Params)
+{
+    if (!Blueprint || !FunctionGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint or function graph"));
+    }
+
+    if (!Params.IsValid())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing update parameters"));
+    }
+
+    FName CurrentName(*VarName);
+    UK2Node_FunctionEntry* Entry = nullptr;
+    FBPVariableDescription* VarDesc = FBlueprintEditorUtils::FindLocalVariable(Blueprint, FunctionGraph, CurrentName, &Entry);
+    if (!VarDesc || !Entry)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Local variable '%s' not found"), *VarName));
+    }
+
+    const UStruct* Scope = ResolveFunctionScopeStruct(Blueprint, FunctionGraph);
+
+    Entry->Modify();
+
+    FString NewName;
+    Params->TryGetStringField(TEXT("new_name"), NewName);
+
+    FString NewTypeDesc;
+    Params->TryGetStringField(TEXT("new_type"), NewTypeDesc);
+
+    FString DefaultValue;
+    bool bHasDefaultValue = false;
+    if (Params->HasField(TEXT("default_value")))
+    {
+        bHasDefaultValue = true;
+        if (!Params->TryGetStringField(TEXT("default_value"), DefaultValue))
+        {
+            bool BoolVal = false;
+            if (Params->TryGetBoolField(TEXT("default_value"), BoolVal))
+            {
+                DefaultValue = BoolVal ? TEXT("true") : TEXT("false");
+            }
+            else
+            {
+                double NumberVal = 0.0;
+                if (Params->TryGetNumberField(TEXT("default_value"), NumberVal))
+                {
+                    DefaultValue = FString::SanitizeFloat(NumberVal);
+                }
+                else
+                {
+                    return FCommonUtils::CreateErrorResponse(TEXT("default_value must be a string, boolean, or number"));
+                }
+            }
+        }
+    }
+
+    bool bIsReference = VarDesc->VarType.bIsReference;
+    const bool bHasReference = Params->TryGetBoolField(TEXT("is_reference"), bIsReference);
+    bool bIsConst = VarDesc->VarType.bIsConst || ((VarDesc->PropertyFlags & CPF_BlueprintReadOnly) != 0);
+    const bool bHasConst = Params->TryGetBoolField(TEXT("is_const"), bIsConst);
+    bool bIsEditable = (VarDesc->PropertyFlags & CPF_Edit) != 0;
+    const bool bHasEditable = Params->TryGetBoolField(TEXT("is_editable"), bIsEditable);
+
+    bool bStructuralChange = false;
+
+    if (!NewTypeDesc.IsEmpty())
+    {
+        FEdGraphPinType NewPinType;
+        FString TypeError;
+        if (!ParseTypeDescriptor(NewTypeDesc, NewPinType, TypeError))
+        {
+            return FCommonUtils::CreateErrorResponse(TypeError);
+        }
+        if (bHasReference)
+        {
+            NewPinType.bIsReference = bIsReference;
+        }
+        if (bHasConst)
+        {
+            NewPinType.bIsConst = bIsConst;
+        }
+
+        if (Scope)
+        {
+            FBlueprintEditorUtils::ChangeLocalVariableType(Blueprint, Scope, CurrentName, NewPinType);
+            bStructuralChange = true;
+        }
+        else
+        {
+            Entry->Modify();
+            VarDesc->VarType = NewPinType;
+            VarDesc->DefaultValue.Empty();
+            bStructuralChange = true;
+        }
+    }
+    else if (bHasReference || bHasConst)
+    {
+        Entry->Modify();
+        VarDesc->VarType.bIsReference = bIsReference;
+        VarDesc->VarType.bIsConst = bIsConst;
+        bStructuralChange = true;
+    }
+
+    if (!NewName.IsEmpty() && !NewName.Equals(VarName, ESearchCase::CaseSensitive))
+    {
+        if (Scope)
+        {
+            FBlueprintEditorUtils::RenameLocalVariable(Blueprint, Scope, CurrentName, FName(*NewName));
+        }
+        else
+        {
+            Entry->Modify();
+            VarDesc->VarName = FName(*NewName);
+            VarDesc->FriendlyName = FName::NameToDisplayString(NewName, VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean);
+        }
+        CurrentName = FName(*NewName);
+        bStructuralChange = true;
+    }
+
+    Entry = nullptr;
+    VarDesc = FBlueprintEditorUtils::FindLocalVariable(Blueprint, FunctionGraph, CurrentName, &Entry);
+    if (!VarDesc || !Entry)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Local variable could not be resolved after update"));
+    }
+
+    Entry->Modify();
+
+    if (bHasDefaultValue)
+    {
+        VarDesc->DefaultValue = DefaultValue;
+        bStructuralChange = true;
+    }
+
+    if (bHasConst)
+    {
+        if (bIsConst)
+        {
+            VarDesc->PropertyFlags |= CPF_BlueprintReadOnly;
+            VarDesc->VarType.bIsConst = true;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_BlueprintReadOnly;
+            VarDesc->VarType.bIsConst = false;
+        }
+        bStructuralChange = true;
+    }
+
+    if (bHasReference)
+    {
+        VarDesc->VarType.bIsReference = bIsReference;
+        bStructuralChange = true;
+    }
+
+    if (bHasEditable)
+    {
+        if (bIsEditable)
+        {
+            VarDesc->PropertyFlags |= CPF_Edit;
+            VarDesc->PropertyFlags |= CPF_BlueprintVisible;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_Edit;
+        }
+        bStructuralChange = true;
+    }
+
+    if (bStructuralChange)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, FunctionGraph);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("local_name"), CurrentName.ToString());
+    Response->SetArrayField(TEXT("locals"), Locals);
+    Response->SetNumberField(TEXT("count"), Locals.Num());
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::BuildAvailableLocalVariableTypes() const
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+
+    TArray<TSharedPtr<FJsonValue>> Types;
+    auto AddType = [&Types](const FString& Descriptor, const FString& DisplayName, const FString& Category, const FString& Notes)
+    {
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        Obj->SetStringField(TEXT("descriptor"), Descriptor);
+        Obj->SetStringField(TEXT("display_name"), DisplayName);
+        Obj->SetStringField(TEXT("category"), Category);
+        if (!Notes.IsEmpty())
+        {
+            Obj->SetStringField(TEXT("notes"), Notes);
+        }
+        Types.Add(MakeShared<FJsonValueObject>(Obj));
+    };
+
+    // Basic types
+    AddType(TEXT("bool"), TEXT("Boolean"), TEXT("basic"), TEXT("True/false value"));
+    AddType(TEXT("byte"), TEXT("Byte"), TEXT("basic"), TEXT("Unsigned 0-255"));
+    AddType(TEXT("int"), TEXT("Integer"), TEXT("basic"), TEXT("32-bit signed integer"));
+    AddType(TEXT("int64"), TEXT("Integer64"), TEXT("basic"), TEXT("64-bit signed integer"));
+    AddType(TEXT("float"), TEXT("Float"), TEXT("basic"), TEXT("Single-precision floating point"));
+    AddType(TEXT("double"), TEXT("Double"), TEXT("basic"), TEXT("Double-precision floating point"));
+    AddType(TEXT("string"), TEXT("String"), TEXT("basic"), TEXT("UTF-16 string value"));
+    AddType(TEXT("name"), TEXT("Name"), TEXT("basic"), TEXT("Name identifier"));
+    AddType(TEXT("text"), TEXT("Text"), TEXT("basic"), TEXT("Localized text"));
+
+    // Struct types
+    AddType(TEXT("struct:Vector"), TEXT("Vector"), TEXT("struct"), TEXT("3D vector (X,Y,Z)"));
+    AddType(TEXT("struct:Vector2D"), TEXT("Vector2D"), TEXT("struct"), TEXT("2D vector (X,Y)"));
+    AddType(TEXT("struct:Vector4"), TEXT("Vector4"), TEXT("struct"), TEXT("4-component vector"));
+    AddType(TEXT("struct:Rotator"), TEXT("Rotator"), TEXT("struct"), TEXT("Pitch/Yaw/Roll"));
+    AddType(TEXT("struct:Transform"), TEXT("Transform"), TEXT("struct"), TEXT("Location, rotation, scale"));
+    AddType(TEXT("struct:Color"), TEXT("Color"), TEXT("struct"), TEXT("RGBA 0-255"));
+    AddType(TEXT("struct:LinearColor"), TEXT("LinearColor"), TEXT("struct"), TEXT("RGBA 0-1"));
+
+    // Object/class types
+    AddType(TEXT("object:Actor"), TEXT("Actor"), TEXT("object"), TEXT("Reference to AActor"));
+    AddType(TEXT("object:Pawn"), TEXT("Pawn"), TEXT("object"), TEXT("Reference to APawn"));
+    AddType(TEXT("object:Character"), TEXT("Character"), TEXT("object"), TEXT("Reference to ACharacter"));
+    AddType(TEXT("object:PlayerController"), TEXT("PlayerController"), TEXT("object"), TEXT("Reference to APlayerController"));
+    AddType(TEXT("object:StaticMeshComponent"), TEXT("StaticMeshComponent"), TEXT("object"), TEXT("Reference to UStaticMeshComponent"));
+    AddType(TEXT("object:StaticMesh"), TEXT("StaticMesh"), TEXT("object"), TEXT("Reference to UStaticMesh asset"));
+    AddType(TEXT("object:Material"), TEXT("Material"), TEXT("object"), TEXT("Reference to UMaterial"));
+    AddType(TEXT("object:Texture2D"), TEXT("Texture2D"), TEXT("object"), TEXT("Reference to UTexture2D"));
+    AddType(TEXT("class:Actor"), TEXT("Actor Class"), TEXT("class"), TEXT("TSubclassOf<AActor> reference"));
+    AddType(TEXT("interface:YourInterface"), TEXT("Interface"), TEXT("interface"), TEXT("Replace 'YourInterface' with the interface class (e.g., interface:MyBlueprintInterface)"));
+
+    Response->SetArrayField(TEXT("types"), Types);
+    Response->SetNumberField(TEXT("count"), Types.Num());
+    Response->SetStringField(TEXT("usage"), TEXT("Use descriptors directly or wrap with array<...> for arrays."));
+    return Response;
+}
+
+FString FBlueprintNodeCommands::DescribePinType(const FEdGraphPinType& PinType) const
+{
+    auto DescribeCategory = [](const FName& Category, const FName& SubCategory, UObject* SubObject) -> FString
+    {
+        if (Category == UEdGraphSchema_K2::PC_Boolean) return TEXT("bool");
+        if (Category == UEdGraphSchema_K2::PC_Byte)
+        {
+            if (SubObject)
+            {
+                return FString::Printf(TEXT("enum:%s"), *SubObject->GetName());
+            }
+            return TEXT("byte");
+        }
+        if (Category == UEdGraphSchema_K2::PC_Int) return TEXT("int");
+        if (Category == UEdGraphSchema_K2::PC_Int64) return TEXT("int64");
+        if (Category == UEdGraphSchema_K2::PC_Float) return TEXT("float");
+        if (Category == UEdGraphSchema_K2::PC_Double) return TEXT("double");
+        if (Category == UEdGraphSchema_K2::PC_String) return TEXT("string");
+        if (Category == UEdGraphSchema_K2::PC_Name) return TEXT("name");
+        if (Category == UEdGraphSchema_K2::PC_Text) return TEXT("text");
+        if (Category == UEdGraphSchema_K2::PC_Struct && SubObject)
+        {
+            return FString::Printf(TEXT("struct:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_Object && SubObject)
+        {
+            return FString::Printf(TEXT("object:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_Class && SubObject)
+        {
+            return FString::Printf(TEXT("class:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_SoftObject && SubObject)
+        {
+            return FString::Printf(TEXT("soft_object:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_SoftClass && SubObject)
+        {
+            return FString::Printf(TEXT("soft_class:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_Interface && SubObject)
+        {
+            return FString::Printf(TEXT("interface:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_Enum && SubObject)
+        {
+            return FString::Printf(TEXT("enum:%s"), *SubObject->GetName());
+        }
+        if (Category == UEdGraphSchema_K2::PC_Wildcard) return TEXT("wildcard");
+        return Category.ToString();
+    };
+
+    FString Base = DescribeCategory(PinType.PinCategory, PinType.PinSubCategory, PinType.PinSubCategoryObject.Get());
+
+    if (PinType.ContainerType == EPinContainerType::Array)
+    {
+        return FString::Printf(TEXT("array<%s>"), *Base);
+    }
+    if (PinType.ContainerType == EPinContainerType::Set)
+    {
+        return FString::Printf(TEXT("set<%s>"), *Base);
+    }
+    if (PinType.ContainerType == EPinContainerType::Map)
+    {
+        FString ValueDesc = DescribeCategory(PinType.PinValueType.TerminalCategory, PinType.PinValueType.TerminalSubCategory, PinType.PinValueType.TerminalSubCategoryObject.Get());
+        return FString::Printf(TEXT("map<%s,%s>"), *Base, *ValueDesc);
+    }
+    return Base;
+}
+
+const UStruct* FBlueprintNodeCommands::ResolveFunctionScopeStruct(UBlueprint* Blueprint, UEdGraph* FunctionGraph) const
+{
+    if (!Blueprint || !FunctionGraph)
+    {
+        return nullptr;
+    }
+
+    auto FindScope = [FunctionGraph](UClass* InClass) -> const UStruct*
+    {
+        if (!InClass)
+        {
+            return nullptr;
+        }
+        return InClass->FindFunctionByName(FunctionGraph->GetFName());
+    };
+
+    if (const UStruct* Scope = FindScope(Blueprint->SkeletonGeneratedClass))
+    {
+        return Scope;
+    }
+    if (const UStruct* Scope = FindScope(Blueprint->GeneratedClass))
+    {
+        return Scope;
+    }
+
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    if (const UStruct* Scope = FindScope(Blueprint->SkeletonGeneratedClass))
+    {
+        return Scope;
+    }
+    return FindScope(Blueprint->GeneratedClass);
+}
+
 static UK2Node_FunctionEntry* FindFunctionEntry(UEdGraph* Graph)
 {
     for (UEdGraphNode* Node : Graph->Nodes)
@@ -1073,20 +1777,162 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::UpdateFunctionProperties(UBluepr
 
 bool FBlueprintNodeCommands::ParseTypeDescriptor(const FString& TypeDesc, FEdGraphPinType& OutType, FString& OutError) const
 {
-    FString Lower = TypeDesc.ToLower(); OutType.ResetToDefaults();
+    FString Lower = TypeDesc.ToLower();
+    OutType.ResetToDefaults();
+
     if (Lower.StartsWith(TEXT("array<")) && Lower.EndsWith(TEXT(">")))
-    { FString Inner=TypeDesc.Mid(6, TypeDesc.Len()-7); FEdGraphPinType InnerType; FString Err; if (!ParseTypeDescriptor(Inner, InnerType, Err)) { OutError=Err; return false;} OutType=InnerType; OutType.ContainerType=EPinContainerType::Array; return true; }
-    if (Lower==TEXT("bool")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Boolean; return true; }
-    if (Lower==TEXT("int")||Lower==TEXT("int32")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Int; return true; }
-    if (Lower==TEXT("float")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Float; return true; }
-    if (Lower==TEXT("string")) { OutType.PinCategory=UEdGraphSchema_K2::PC_String; return true; }
-    if (Lower==TEXT("name")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Name; return true; }
-    if (Lower==TEXT("vector")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FVector>::Get(); return true; }
-    if (Lower==TEXT("rotator")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FRotator>::Get(); return true; }
-    if (Lower==TEXT("transform")) { OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=TBaseStructure<FTransform>::Get(); return true; }
-    if (Lower.StartsWith(TEXT("object:"))) { FString ClassName=TypeDesc.Mid(7); UClass* C=FindFirstObject<UClass>(*ClassName); if(!C){OutError=FString::Printf(TEXT("Class '%s' not found"),*ClassName);return false;} OutType.PinCategory=UEdGraphSchema_K2::PC_Object; OutType.PinSubCategoryObject=C; return true; }
-    if (Lower.StartsWith(TEXT("struct:"))) { FString StructName=TypeDesc.Mid(7); UScriptStruct* S=FindFirstObject<UScriptStruct>(*StructName); if(!S){OutError=FString::Printf(TEXT("Struct '%s' not found"),*StructName);return false;} OutType.PinCategory=UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject=S; return true; }
-    OutError = FString::Printf(TEXT("Unsupported type descriptor '%s'"), *TypeDesc); return false;
+    {
+        FString Inner = TypeDesc.Mid(6, TypeDesc.Len() - 7);
+        Inner.TrimStartAndEndInline();
+        FEdGraphPinType InnerType; FString Err;
+        if (!ParseTypeDescriptor(Inner, InnerType, Err)) { OutError = Err; return false; }
+        OutType = InnerType; OutType.ContainerType = EPinContainerType::Array; return true;
+    }
+    if (Lower.StartsWith(TEXT("set<")) && Lower.EndsWith(TEXT(">")))
+    {
+        FString Inner = TypeDesc.Mid(4, TypeDesc.Len() - 5);
+        Inner.TrimStartAndEndInline();
+        FEdGraphPinType InnerType; FString Err;
+        if (!ParseTypeDescriptor(Inner, InnerType, Err)) { OutError = Err; return false; }
+        OutType = InnerType; OutType.ContainerType = EPinContainerType::Set; return true;
+    }
+    if (Lower.StartsWith(TEXT("map<")) && Lower.EndsWith(TEXT(">")))
+    {
+        FString Inner = TypeDesc.Mid(4, TypeDesc.Len() - 5);
+        Inner.TrimStartAndEndInline();
+        FString KeyDesc, ValueDesc;
+        if (!Inner.Split(TEXT(","), &KeyDesc, &ValueDesc))
+        {
+            OutError = TEXT("Map descriptors must use the format map<key,value>");
+            return false;
+        }
+        KeyDesc.TrimStartAndEndInline();
+        ValueDesc.TrimStartAndEndInline();
+
+        FEdGraphPinType KeyType; FString Err;
+        if (!ParseTypeDescriptor(KeyDesc, KeyType, Err)) { OutError = Err; return false; }
+        FEdGraphPinType ValueType;
+        if (!ParseTypeDescriptor(ValueDesc, ValueType, Err)) { OutError = Err; return false; }
+
+        OutType = KeyType;
+        OutType.ContainerType = EPinContainerType::Map;
+        OutType.PinValueType.TerminalCategory = ValueType.PinCategory;
+        OutType.PinValueType.TerminalSubCategory = ValueType.PinSubCategory;
+        OutType.PinValueType.TerminalSubCategoryObject = ValueType.PinSubCategoryObject;
+        OutType.PinValueType.bTerminalIsConst = ValueType.bIsConst;
+        OutType.PinValueType.bTerminalIsWeakPointer = ValueType.bIsWeakPointer;
+        OutType.PinValueType.bTerminalIsUObjectWrapper = ValueType.bIsUObjectWrapper;
+        return true;
+    }
+    if (Lower == TEXT("bool")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Boolean; return true; }
+    if (Lower == TEXT("byte")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Byte; return true; }
+    if (Lower == TEXT("int") || Lower == TEXT("int32")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Int; return true; }
+    if (Lower == TEXT("int64") || Lower == TEXT("integer64")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Int64; return true; }
+    if (Lower == TEXT("float")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Float; return true; }
+    if (Lower == TEXT("double")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Double; return true; }
+    if (Lower == TEXT("string")) { OutType.PinCategory = UEdGraphSchema_K2::PC_String; return true; }
+    if (Lower == TEXT("name")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Name; return true; }
+    if (Lower == TEXT("text")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Text; return true; }
+    if (Lower == TEXT("vector")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FVector>::Get(); return true; }
+    if (Lower == TEXT("vector2d")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FVector2D>::Get(); return true; }
+    if (Lower == TEXT("vector4")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FVector4>::Get(); return true; }
+    if (Lower == TEXT("rotator")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FRotator>::Get(); return true; }
+    if (Lower == TEXT("transform")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FTransform>::Get(); return true; }
+    if (Lower == TEXT("color")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FColor>::Get(); return true; }
+    if (Lower == TEXT("linearcolor")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Struct; OutType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get(); return true; }
+    if (Lower.StartsWith(TEXT("enum:")))
+    {
+        FString EnumName = TypeDesc.Mid(5);
+        UEnum* EnumObj = FindFirstObject<UEnum>(*EnumName);
+        if (!EnumObj)
+        {
+            OutError = FString::Printf(TEXT("Enum '%s' not found"), *EnumName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_Enum;
+        OutType.PinSubCategoryObject = EnumObj;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("object:")))
+    {
+        FString ClassName = TypeDesc.Mid(7);
+        UClass* C = FindFirstObject<UClass>(*ClassName);
+        if (!C)
+        {
+            OutError = FString::Printf(TEXT("Class '%s' not found"), *ClassName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        OutType.PinSubCategoryObject = C;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("class:")))
+    {
+        FString ClassName = TypeDesc.Mid(6);
+        UClass* C = FindFirstObject<UClass>(*ClassName);
+        if (!C)
+        {
+            OutError = FString::Printf(TEXT("Class '%s' not found"), *ClassName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_Class;
+        OutType.PinSubCategoryObject = C;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("soft_object:")))
+    {
+        FString ClassName = TypeDesc.Mid(12);
+        UClass* C = FindFirstObject<UClass>(*ClassName);
+        if (!C)
+        {
+            OutError = FString::Printf(TEXT("Class '%s' not found"), *ClassName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_SoftObject;
+        OutType.PinSubCategoryObject = C;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("soft_class:")))
+    {
+        FString ClassName = TypeDesc.Mid(11);
+        UClass* C = FindFirstObject<UClass>(*ClassName);
+        if (!C)
+        {
+            OutError = FString::Printf(TEXT("Class '%s' not found"), *ClassName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_SoftClass;
+        OutType.PinSubCategoryObject = C;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("interface:")))
+    {
+        FString ClassName = TypeDesc.Mid(10);
+        UClass* C = FindFirstObject<UClass>(*ClassName);
+        if (!C)
+        {
+            OutError = FString::Printf(TEXT("Interface '%s' not found"), *ClassName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_Interface;
+        OutType.PinSubCategoryObject = C;
+        return true;
+    }
+    if (Lower.StartsWith(TEXT("struct:")))
+    {
+        FString StructName = TypeDesc.Mid(7);
+        UScriptStruct* S = FindFirstObject<UScriptStruct>(*StructName);
+        if (!S)
+        {
+            OutError = FString::Printf(TEXT("Struct '%s' not found"), *StructName);
+            return false;
+        }
+        OutType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        OutType.PinSubCategoryObject = S;
+        return true;
+    }
+    OutError = FString::Printf(TEXT("Unsupported type descriptor '%s'"), *TypeDesc);
+    return false;
 }
 
 UEdGraph* FBlueprintNodeCommands::ResolveTargetGraph(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params, FString& OutError) const
@@ -1720,4 +2566,22 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintEventNode(c
     Result->SetObjectField(TEXT("safety_info"), SafetyInfo);
     
     return Result;
+}
+
+UK2Node_FunctionEntry* FBlueprintNodeCommands::FindFunctionEntry(UEdGraph* FunctionGraph) const
+{
+    if (!FunctionGraph)
+    {
+        return nullptr;
+    }
+    
+    for (UEdGraphNode* Node : FunctionGraph->Nodes)
+    {
+        if (UK2Node_FunctionEntry* Entry = Cast<UK2Node_FunctionEntry>(Node))
+        {
+            return Entry;
+        }
+    }
+    
+    return nullptr;
 }
