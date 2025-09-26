@@ -176,11 +176,11 @@ def register_umg_discovery_tools(mcp: FastMCP):
         
         Args:
             widget_name: Full path or name of the widget to inspect. Can be:
-                        - **RECOMMENDED**: Full asset path (e.g., "/Game/Blueprints/UI/WBP_Inventory")
-                        - **RECOMMENDED**: Package path (e.g., "/Game/Blueprints/UI/WBP_Inventory.WBP_Inventory")
+                        - **RECOMMENDED**: Package path (e.g., "/Game/Blueprints/UI/WBP_Inventory") - FAST & RELIABLE
+                        - **TIMEOUT RISK**: Full object path (e.g., "/Game/Blueprints/UI/WBP_Inventory.WBP_Inventory") - Can cause timeouts
                         - **SLOW**: Widget name only (e.g., "WBP_Inventory") - triggers expensive search
                         
-                        ⚡ **BEST PRACTICE**: Use search_items() first to get exact path!
+                        ⚡ **BEST PRACTICE**: Use search_items() first to get the package_path field!
             
         Returns:
             Dict containing:
@@ -221,26 +221,31 @@ def register_umg_discovery_tools(mcp: FastMCP):
         
         📝 **Usage Examples**:
         ```python
-        # ✅ FAST: Use exact path from search_items()
+        # ✅ FAST & RELIABLE: Use package_path from search_items()
         search_result = search_items(search_term="Inventory", asset_type="Widget")
-        widget_path = search_result["items"][0]["path"]
-        get_widget_blueprint_info(widget_path)
+        widget_package_path = search_result["items"][0]["package_path"]  # Use package_path, not path!
+        get_widget_blueprint_info(widget_package_path)
         
-        # ✅ FAST: Use known full path
+        # ✅ FAST: Use known package path
         get_widget_blueprint_info("/Game/Blueprints/UI/WBP_Inventory")
         
-        # ❌ SLOW: Partial name triggers expensive search
+        # ❌ TIMEOUT RISK: Full object path with duplication
+        get_widget_blueprint_info("/Game/Blueprints/UI/WBP_Inventory.WBP_Inventory")  # Can timeout!
+        
+        # ⚠️ SLOW: Partial name triggers expensive search
         get_widget_blueprint_info("WBP_Inventory")  # Can timeout on large projects
         ```
         
         🚨 **AI Workflow Tips**:
-        1. **ALWAYS use search_items() first** to get exact widget path
-        2. **Pass full paths** from search results for instant loading
-        3. **Avoid partial names** unless absolutely necessary
-        4. Use this info to plan your modifications intelligently
+        1. **ALWAYS use search_items() first** to get exact widget paths
+        2. **Use package_path field** from search results (NOT path field with duplicated name)
+        3. **Avoid duplicated object paths** (e.g., "/Game/UI/Widget.Widget") - causes timeouts
+        4. **Avoid partial names** unless absolutely necessary
+        5. Use this info to plan your modifications intelligently
         
         💡 **Performance Optimization**:
-        - Full paths: ~50ms (direct asset loading)
+        - Package paths: ~50ms (direct asset loading)
+        - Duplicated object paths: Can timeout (5-60+ seconds)  
         - Partial names: ~5-60+ seconds (Asset Registry scan)
         """
         from vibe_ue_server import get_unreal_connection

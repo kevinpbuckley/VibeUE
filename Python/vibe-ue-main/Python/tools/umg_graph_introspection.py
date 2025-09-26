@@ -14,36 +14,8 @@ logger = logging.getLogger("UnrealMCP")
 def register_umg_graph_introspection_tools(mcp: FastMCP):
     """Register graph introspection tools with the MCP server."""
 
-    @mcp.tool()
-    def list_event_graph_nodes(
-        ctx: Context,
-        blueprint_name: str,
-        include_functions: bool = True,
-        include_macros: bool = True,
-        include_timeline: bool = True
-    ) -> Dict[str, Any]:
-        """
-        List nodes in the Event Graph of a Blueprint/Widget Blueprint.
-
-        Returns per-node id, type (Event, FunctionCall, Branch, ForEach, Timeline, MacroInstance, etc.),
-        title, and pin summaries.
-        """
-        from vibe_ue_server import get_unreal_connection
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "error": "Failed to connect to Unreal Engine", "nodes": []}
-            params = {
-                "blueprint_name": blueprint_name,
-                "include_functions": include_functions,
-                "include_macros": include_macros,
-                "include_timeline": include_timeline,
-            }
-            logger.info(f"Listing event graph nodes for '{blueprint_name}'")
-            return unreal.send_command("list_event_graph_nodes", params) or {"success": False, "error": "No response", "nodes": []}
-        except Exception as e:
-            logger.exception("list_event_graph_nodes failed")
-            return {"success": False, "error": str(e), "nodes": []}
+    # REMOVED: list_event_graph_nodes - Use manage_blueprint_node with action="list" instead
+    # This functionality is now provided by the manage_blueprint_node tool with action="list"
 
     @mcp.tool()
     def get_node_details(
@@ -124,7 +96,17 @@ def register_umg_graph_introspection_tools(mcp: FastMCP):
             unreal = get_unreal_connection()
             if not unreal:
                 return {"success": False, "error": "Failed to connect to Unreal Engine", "summary": ""}
-            nodes_resp = list_event_graph_nodes(ctx, blueprint_name)
+            
+            # Use manage_blueprint_node with action="list" instead of the removed list_event_graph_nodes
+            params = {
+                "action": "list",
+                "blueprint_name": blueprint_name,
+                "include_functions": True,
+                "include_macros": True,
+                "include_timeline": True,
+            }
+            nodes_resp = unreal.send_command("manage_blueprint_node", params) or {"success": False, "error": "No response", "nodes": []}
+            
             if not nodes_resp or nodes_resp.get("success") is False:
                 return {"success": False, "error": nodes_resp.get("error", "No nodes"), "summary": ""}
             nodes = nodes_resp.get("nodes", [])[:max_nodes]
