@@ -498,7 +498,7 @@ register_umg_reflection_tools(mcp)    # Reflection-based widget discovery and cr
 register_asset_discovery_tools(mcp)   # Smart asset search, import, export, AI analysis
 
 # System Diagnostics and AI Support Tools
-register_system_diagnostic_tools(mcp)  # Connection testing, validation, troubleshooting guides  
+register_system_diagnostic_tools(mcp)  # Connection testing, validation, troubleshooting guides, get_help() tool  
 
 # Image Conversion Tools
 @mcp.tool()
@@ -1164,12 +1164,8 @@ def info():
       Supported actions include `list`, `add`, `delete`, `connect`, `move`, `details`, `available`, `find`, `set_property`, `get_property`, and `list_custom_events`.
     - `manage_blueprint_function(blueprint_name, action, **kwargs)`
       Single entry point for Blueprint function graphs: `list`, `get`, `create`, `delete`, `list_params`, `add_param`, `remove_param`, `update_param`, `update_properties`.
-    - `add_blueprint_variable(blueprint_name, variable_name, variable_type, is_exposed=False)`
-      Add variables to Blueprint classes.
-    - `get_blueprint_variable(blueprint_name, variable_name)`
-      Inspect existing Blueprint variables.
-    - `get_available_blueprint_variable_types()`
-      Discover supported Blueprint variable types.
+    - `manage_blueprint_variables(blueprint_name, action, **kwargs)`
+      Unified Blueprint variable operations covering creation, deletion, info, property access, modification, listing, and type discovery via actions like `create`, `delete`, `get_info`, `get_property`, `set_property`, `list`, `modify`, and `search_types`.
     - `summarize_event_graph(blueprint_name, max_nodes=200)`
       Get a readable overview of event graph structure.
     
@@ -1245,6 +1241,24 @@ def info():
     - Error recovery and troubleshooting guidance
     
     **This ensures professional results and prevents common mistakes!**
+
+    ## 🆘 WHEN STUCK: USE GET_HELP TOOL
+    **Call `get_help()` immediately when you:**
+    - Can't find the right tool for your task
+    - Don't know which parameters a tool needs
+    - Get errors and need troubleshooting guidance
+    - Need examples of multi-action tools (manage_blueprint_function, manage_blueprint_node)
+    - Want to understand tool workflows and usage patterns
+    - Are unsure about best practices or performance tips
+    
+    **The help tool contains complete documentation for ALL 50+ VibeUE MCP tools with:**
+    - Detailed parameter lists and examples
+    - Multi-action tool documentation with all available actions
+    - Common usage patterns and workflows
+    - Error troubleshooting guides
+    - Performance optimization tips
+    
+    **Always check help BEFORE asking users for clarification on tool usage!**
     """
 
 # ============================================================================
@@ -1266,12 +1280,21 @@ if __name__ == "__main__":
     - Use search/inspect tools before making modifications
     - Compile Blueprints after graph changes
     - Handle connection failures gracefully (retry or guide user)
+    - **CRITICAL: Call get_help() when stuck or need tool guidance**
+    
+    When You Need Help:
+    - Can't find the right tool? → Call get_help()
+    - Don't know tool parameters? → Call get_help()
+    - Getting errors? → Call get_help() for troubleshooting
+    - Need multi-action tool examples? → Call get_help()
+    - Want workflow guidance? → Call get_help()
     
     Common Issues:
     - "Failed to connect" = Start Unreal Engine with plugin
     - Tools return None = Check log for specific error
     - Partial responses = Network timeout, retry operation
     - JSON errors = Plugin communication issue, restart Unreal
+    - **Tool confusion = Call get_help() for complete documentation**
     
     Success Indicators:
     - Log shows "Connected to Unreal Engine on startup"
@@ -1280,7 +1303,7 @@ if __name__ == "__main__":
     """
     
     logger.info("Starting Unreal MCP server with stdio transport")
-    logger.info("AI Assistant Guide: Use info() prompt for complete tool documentation")
+    logger.info("AI Assistant Guide: Use get_help() for complete tool documentation and troubleshooting")
     logger.info("Prerequisites: Unreal Engine 5.6 running with VibeUE plugin loaded")
     
     mcp.run(transport='stdio') 

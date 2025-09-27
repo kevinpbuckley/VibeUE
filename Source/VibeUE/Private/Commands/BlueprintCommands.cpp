@@ -7,30 +7,25 @@
 class UWidgetBlueprint;
 #include "Factories/BlueprintFactory.h"
 #include "EdGraphSchema_K2.h"
-#include "K2Node_Event.h"
-#include "K2Node_VariableGet.h"
-#include "K2Node_VariableSet.h"
-#include "Components/StaticMeshComponent.h"
-#include "Components/BoxComponent.h"
-#include "Components/SphereComponent.h"
+#include "Blueprint/UserWidget.h"
+#include "Components/ActorComponent.h"
 #include "Components/Widget.h"
-#include "Components/PanelWidget.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "UObject/Field.h"
-#include "UObject/FieldPath.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h" 
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
+#include "Serialization/JsonWriter.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "GameFramework/Actor.h"
 #include "GameFramework/Pawn.h"
-#include "Engine/UserDefinedStruct.h"
 #include "Engine/UserDefinedEnum.h"
+#include "Engine/UserDefinedStruct.h"
 #include "UObject/Class.h"
 #include "UObject/Package.h"
 #include "Engine/StaticMesh.h"
@@ -43,6 +38,7 @@ class UWidgetBlueprint;
 #include "Math/Rotator.h"
 #include "Math/Transform.h"
 #include "Math/Color.h"
+#include "UObject/UObjectGlobals.h"
 
 FBlueprintCommands::FBlueprintCommands()
 {
@@ -77,6 +73,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     else if (CommandType == TEXT("add_blueprint_variable"))
     {
         return HandleAddBlueprintVariable(Params);
+    }
+    else if (CommandType == TEXT("manage_blueprint_variables"))
+    {
+        return HandleManageBlueprintVariables(Params);
     }
     else if (CommandType == TEXT("get_blueprint_variable_info"))
     {
@@ -1403,7 +1403,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const
     ValueParams->SetStringField(TEXT("path"), VariableName);
     TSharedPtr<FJsonObject> ValueResponse = HandleGetVariableProperty(ValueParams);
     
-    if (ValueResponse->GetBoolField(TEXT("success")))
+    if (ValueResponse.IsValid() && ValueResponse->GetBoolField(TEXT("success")))
     {
         TSharedPtr<FJsonValue> ValueField = ValueResponse->TryGetField(TEXT("value"));
         if (ValueField.IsValid())
@@ -1417,7 +1417,21 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const
     }
     else
     {
-        Response->SetStringField(TEXT("value"), TEXT("Unable to retrieve value"));
+        FString FallbackValue = VarDesc->DefaultValue;
+        if (FallbackValue.IsEmpty())
+        {
+            FallbackValue = TEXT("None");
+        }
+
+        Response->SetStringField(TEXT("value"), FallbackValue);
+        if (ValueResponse.IsValid() && ValueResponse->HasField(TEXT("error")))
+        {
+            Response->SetStringField(TEXT("value_error"), ValueResponse->GetStringField(TEXT("error")));
+        }
+        else
+        {
+            Response->SetStringField(TEXT("value_error"), TEXT("Value resolved from blueprint defaults"));
+        }
     }
 
     // Get comprehensive type info using reflection-based reverse mapping
@@ -1850,18 +1864,22 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const 
         return Response;
     }
     
+    // Cache the variable description before removal to avoid dangling pointers
+    const FBPVariableDescription RemovedVariable = *VarDesc;
+
     // Remove the variable from the Blueprint
     Blueprint->NewVariables.RemoveAt(VarIndex);
     
     // Mark Blueprint as dirty and recompile
     Blueprint->MarkPackageDirty();
-    FKismetEditorUtilities::CompileBlueprint(Blueprint);
-    
+    FString CompileError;
+    FCommonUtils::SafeCompileBlueprint(Blueprint, CompileError);
+
     // Track cleanup actions
     TSharedPtr<FJsonObject> CleanupInfo = MakeShared<FJsonObject>();
     CleanupInfo->SetStringField(TEXT("action"), TEXT("variable_removed"));
     CleanupInfo->SetStringField(TEXT("variable_name"), VariableName);
-    CleanupInfo->SetStringField(TEXT("variable_type"), VarDesc->VarType.PinCategory.ToString());
+    CleanupInfo->SetStringField(TEXT("variable_type"), UEdGraphSchema_K2::TypeToText(RemovedVariable.VarType).ToString());
     CleanupPerformed.Add(MakeShared<FJsonValueObject>(CleanupInfo));
     
     // Build success response
@@ -1872,6 +1890,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const 
     Response->SetBoolField(TEXT("force_used"), ForceDelete);
     Response->SetArrayField(TEXT("cleanup_performed"), CleanupPerformed);
     Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Variable '%s' deleted successfully from Blueprint '%s'"), *VariableName, *BlueprintName));
+    if (!CompileError.IsEmpty())
+    {
+        Response->SetStringField(TEXT("compile_warning"), CompileError);
+    }
     
     return Response;
 }
@@ -2384,6 +2406,63 @@ namespace
         }
         return false;
     }
+
+    static FString ContainerTypeToString(EPinContainerType ContainerType)
+    {
+        switch (ContainerType)
+        {
+        case EPinContainerType::Array:
+            return TEXT("Array");
+        case EPinContainerType::Set:
+            return TEXT("Set");
+        case EPinContainerType::Map:
+            return TEXT("Map");
+        default:
+            return TEXT("None");
+        }
+    }
+
+    static FString JsonValueToString(const TSharedPtr<FJsonValue>& JsonValue)
+    {
+        if (!JsonValue.IsValid())
+        {
+            return TEXT("");
+        }
+
+        switch (JsonValue->Type)
+        {
+        case EJson::String:
+            return JsonValue->AsString();
+        case EJson::Number:
+            return FString::SanitizeFloat(JsonValue->AsNumber());
+        case EJson::Boolean:
+            return JsonValue->AsBool() ? TEXT("true") : TEXT("false");
+        case EJson::Null:
+            return TEXT("null");
+        case EJson::Array:
+        {
+            FString Serialized;
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Serialized);
+            FJsonSerializer::Serialize(JsonValue->AsArray(), Writer);
+            Writer->Close();
+            return Serialized;
+        }
+        case EJson::Object:
+        {
+            FString Serialized;
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Serialized);
+            TSharedPtr<FJsonObject> ObjectValue = JsonValue->AsObject();
+            if (ObjectValue.IsValid())
+            {
+                FJsonSerializer::Serialize(ObjectValue.ToSharedRef(), Writer);
+            }
+            Writer->Close();
+            return Serialized;
+        }
+        default:
+            return TEXT("");
+        }
+    }
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSharedPtr<FJsonObject>& Params)
@@ -2755,5 +2834,1249 @@ TSharedPtr<FJsonObject> FBlueprintCommands::SetBlueprintVariableMetadata(const T
     Response->SetStringField(TEXT("variable_name"), VarName);
     Response->SetStringField(TEXT("message"), TEXT("Variable metadata updated successfully"));
     
+    return Response;
+}
+
+// ============================================================================
+// NEW UNIFIED BLUEPRINT VARIABLE MANAGEMENT SYSTEM
+// ============================================================================
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const TSharedPtr<FJsonObject>& Params)
+{
+    // Get the action parameter
+    FString Action;
+    if (!Params->TryGetStringField(TEXT("action"), Action))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"));
+    }
+
+    // Route to appropriate operation based on action
+    if (Action == TEXT("create"))
+    {
+        return HandleCreateVariableOperation(Params);
+    }
+    else if (Action == TEXT("delete"))
+    {
+        return HandleDeleteVariableOperation(Params);
+    }
+    else if (Action == TEXT("modify"))
+    {
+        return HandleModifyVariableOperation(Params);
+    }
+    else if (Action == TEXT("list"))
+    {
+        return HandleListVariablesOperation(Params);
+    }
+    else if (Action == TEXT("get_info"))
+    {
+        return HandleGetVariableInfoOperation(Params);
+    }
+    else if (Action == TEXT("get_property"))
+    {
+        return HandleGetPropertyOperation(Params);
+    }
+    else if (Action == TEXT("set_property"))
+    {
+        return HandleSetPropertyOperation(Params);
+    }
+    else if (Action == TEXT("search_types"))
+    {
+        return HandleSearchTypesOperation(Params);
+    }
+    else
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"), *Action));
+    }
+}
+
+// ============================================================================
+// REFLECTION-BASED TYPE DISCOVERY SYSTEM
+// ============================================================================
+
+TArray<UClass*> FBlueprintCommands::DiscoverAllVariableTypes()
+{
+    TArray<UClass*> VariableTypes;
+    
+    // Iterate through all UClass objects using reflection
+    for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
+    {
+        UClass* Class = *ClassIterator;
+        
+        // Skip abstract classes and deprecated classes
+        if (Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+        {
+            continue;
+        }
+        
+        // Check if this class can be used as a Blueprint variable type
+        if (IsValidBlueprintVariableType(Class))
+        {
+            VariableTypes.Add(Class);
+        }
+    }
+    
+    return VariableTypes;
+}
+
+bool FBlueprintCommands::IsValidBlueprintVariableType(UClass* Class)
+{
+    if (!Class)
+    {
+        return false;
+    }
+
+    const FString ClassName = Class->GetName();
+
+    if (ClassName.StartsWith(TEXT("SKEL_")) ||
+        ClassName.StartsWith(TEXT("REINST_")) ||
+        ClassName.StartsWith(TEXT("HOTRELOAD_")) ||
+        ClassName.StartsWith(TEXT("TRASHCLASS_")) ||
+        ClassName.StartsWith(TEXT("PLACEHOLDER-CLASS")))
+    {
+        return false;
+    }
+
+    if (Class->HasAnyClassFlags(CLASS_Deprecated | CLASS_NewerVersionExists))
+    {
+        return false;
+    }
+
+    // Transient types generated during compilation shouldn't appear in search results
+    if (Class->HasAnyFlags(RF_Transient) && Class->ClassGeneratedBy == nullptr)
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool FBlueprintCommands::ResolveVariableType(const FString& TypeName, const FString& TypePath, FEdGraphPinType& OutPinType)
+{
+    OutPinType = FEdGraphPinType();
+
+    const FString NormalizedName = TypeName.TrimStartAndEnd();
+    const FString NormalizedPath = TypePath.TrimStartAndEnd();
+
+    auto MatchesName = [&NormalizedName](const FString& Candidate)
+    {
+        return Candidate.Equals(NormalizedName, ESearchCase::IgnoreCase);
+    };
+
+    auto SetStructPin = [&OutPinType](UScriptStruct* Struct) -> bool
+    {
+        if (!Struct)
+        {
+            return false;
+        }
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+        OutPinType.PinSubCategoryObject = Struct;
+        return true;
+    };
+
+    auto SetEnumPin = [&OutPinType](UEnum* Enum) -> bool
+    {
+        if (!Enum)
+        {
+            return false;
+        }
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Enum;
+        OutPinType.PinSubCategoryObject = Enum;
+        return true;
+    };
+
+    auto SetClassPin = [&OutPinType](UClass* Class) -> bool
+    {
+        if (!Class)
+        {
+            return false;
+        }
+
+        if (Class->HasAnyClassFlags(CLASS_Interface))
+        {
+            OutPinType.PinCategory = UEdGraphSchema_K2::PC_Interface;
+        }
+        else
+        {
+            OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+        }
+        OutPinType.PinSubCategoryObject = Class;
+        return true;
+    };
+
+    // Basic types (case-insensitive for convenience)
+    if (MatchesName(TEXT("Boolean")) || MatchesName(TEXT("Bool")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
+        return true;
+    }
+    else if (MatchesName(TEXT("Byte")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Byte;
+        return true;
+    }
+    else if (MatchesName(TEXT("Integer")) || MatchesName(TEXT("Int")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Int;
+        return true;
+    }
+    else if (MatchesName(TEXT("Integer64")) || MatchesName(TEXT("Int64")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
+        return true;
+    }
+    else if (MatchesName(TEXT("Float")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Float;
+        return true;
+    }
+    else if (MatchesName(TEXT("Double")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Double;
+        return true;
+    }
+    else if (MatchesName(TEXT("Name")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Name;
+        return true;
+    }
+    else if (MatchesName(TEXT("String")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_String;
+        return true;
+    }
+    else if (MatchesName(TEXT("Text")))
+    {
+        OutPinType.PinCategory = UEdGraphSchema_K2::PC_Text;
+        return true;
+    }
+
+    // Common engine structs via TBaseStructure (fast path)
+    if (MatchesName(TEXT("Vector")))
+    {
+        return SetStructPin(TBaseStructure<FVector>::Get());
+    }
+    else if (MatchesName(TEXT("Vector2D")))
+    {
+        return SetStructPin(TBaseStructure<FVector2D>::Get());
+    }
+    else if (MatchesName(TEXT("Vector4")))
+    {
+        return SetStructPin(TBaseStructure<FVector4>::Get());
+    }
+    else if (MatchesName(TEXT("Rotator")))
+    {
+        return SetStructPin(TBaseStructure<FRotator>::Get());
+    }
+    else if (MatchesName(TEXT("Transform")))
+    {
+        return SetStructPin(TBaseStructure<FTransform>::Get());
+    }
+    else if (MatchesName(TEXT("Color")))
+    {
+        return SetStructPin(TBaseStructure<FColor>::Get());
+    }
+    else if (MatchesName(TEXT("LinearColor")))
+    {
+        return SetStructPin(TBaseStructure<FLinearColor>::Get());
+    }
+
+    // Resolve using explicit path first (structs, enums, classes)
+    if (!NormalizedPath.IsEmpty())
+    {
+        if (UScriptStruct* StructFromPath = UClass::TryFindTypeSlow<UScriptStruct>(NormalizedPath, EFindFirstObjectOptions::EnsureIfAmbiguous))
+        {
+            return SetStructPin(StructFromPath);
+        }
+
+        if (UEnum* EnumFromPath = UClass::TryFindTypeSlow<UEnum>(NormalizedPath, EFindFirstObjectOptions::EnsureIfAmbiguous))
+        {
+            return SetEnumPin(EnumFromPath);
+        }
+
+        if (UClass* ClassFromPath = UClass::TryFindTypeSlow<UClass>(NormalizedPath, EFindFirstObjectOptions::EnsureIfAmbiguous))
+        {
+            return SetClassPin(ClassFromPath);
+        }
+    }
+
+    // Resolve structs / enums / classes by name fallback
+    if (UScriptStruct* StructByName = FindStructByName(NormalizedName))
+    {
+        return SetStructPin(StructByName);
+    }
+
+    if (UEnum* EnumByName = FindEnumByName(NormalizedName))
+    {
+        return SetEnumPin(EnumByName);
+    }
+
+    if (UClass* ClassByName = FindClassByName(NormalizedName))
+    {
+        return SetClassPin(ClassByName);
+    }
+
+    return false;
+}
+
+UClass* FBlueprintCommands::FindClassByName(const FString& ClassName)
+{
+    if (ClassName.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    if (ClassName.Equals(TEXT("UserWidget"), ESearchCase::IgnoreCase))
+    {
+        return UUserWidget::StaticClass();
+    }
+    if (ClassName.Equals(TEXT("Widget"), ESearchCase::IgnoreCase))
+    {
+        return UWidget::StaticClass();
+    }
+
+    static const TMap<FString, FString> PreferredClassPaths = {
+        { TEXT("NiagaraSystem"), TEXT("/Script/Niagara.NiagaraSystem") },
+        { TEXT("SoundBase"), TEXT("/Script/Engine.SoundBase") },
+        { TEXT("SoundWave"), TEXT("/Script/Engine.SoundWave") },
+        { TEXT("SoundCue"), TEXT("/Script/Engine.SoundCue") },
+        { TEXT("StaticMesh"), TEXT("/Script/Engine.StaticMesh") },
+        { TEXT("Material"), TEXT("/Script/Engine.Material") },
+        { TEXT("MaterialInstance"), TEXT("/Script/Engine.MaterialInstance") },
+        { TEXT("Texture2D"), TEXT("/Script/Engine.Texture2D") },
+        { TEXT("Actor"), TEXT("/Script/Engine.Actor") },
+        { TEXT("Pawn"), TEXT("/Script/Engine.Pawn") }
+    };
+
+    if (const FString* PreferredPath = PreferredClassPaths.Find(ClassName))
+    {
+        if (UClass* LoadedPreferred = UClass::TryFindTypeSlow<UClass>(*PreferredPath, EFindFirstObjectOptions::EnsureIfAmbiguous))
+        {
+            return LoadedPreferred;
+        }
+    }
+
+    if (UClass* LoadedByName = UClass::TryFindTypeSlow<UClass>(ClassName, EFindFirstObjectOptions::EnsureIfAmbiguous))
+    {
+        if (IsValidBlueprintVariableType(LoadedByName))
+        {
+            return LoadedByName;
+        }
+    }
+
+    for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
+    {
+        UClass* Candidate = *ClassIterator;
+        if (!IsValidBlueprintVariableType(Candidate))
+        {
+            continue;
+        }
+
+        if (Candidate->GetName().Equals(ClassName, ESearchCase::IgnoreCase))
+        {
+            return Candidate;
+        }
+    }
+
+    return nullptr;
+}
+
+UScriptStruct* FBlueprintCommands::FindStructByName(const FString& StructName)
+{
+    if (StructName.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    if (UScriptStruct* StructFromPath = UClass::TryFindTypeSlow<UScriptStruct>(StructName, EFindFirstObjectOptions::EnsureIfAmbiguous))
+    {
+        return StructFromPath;
+    }
+
+    for (TObjectIterator<UScriptStruct> StructIterator; StructIterator; ++StructIterator)
+    {
+        if (StructIterator->GetName().Equals(StructName, ESearchCase::IgnoreCase))
+        {
+            return *StructIterator;
+        }
+    }
+
+    return nullptr;
+}
+
+UEnum* FBlueprintCommands::FindEnumByName(const FString& EnumName)
+{
+    if (EnumName.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    if (UEnum* EnumFromPath = UClass::TryFindTypeSlow<UEnum>(EnumName, EFindFirstObjectOptions::EnsureIfAmbiguous))
+    {
+        return EnumFromPath;
+    }
+
+    for (TObjectIterator<UEnum> EnumIterator; EnumIterator; ++EnumIterator)
+    {
+        if (EnumIterator->GetName().Equals(EnumName, ESearchCase::IgnoreCase))
+        {
+            return *EnumIterator;
+        }
+    }
+
+    return nullptr;
+}
+
+// ============================================================================
+// OPERATION HANDLERS
+// ============================================================================
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateVariableOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+    // Get required parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+    
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+    }
+    
+    // Get variable config
+    const TSharedPtr<FJsonObject>* VariableConfigPtr;
+    if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigPtr) || !VariableConfigPtr || !VariableConfigPtr->IsValid())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing or invalid 'variable_config' parameter"));
+    }
+    
+    TSharedPtr<FJsonObject> VariableConfig = *VariableConfigPtr;
+    
+    FString VariableType;
+    if (!VariableConfig->TryGetStringField(TEXT("type"), VariableType))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' in variable_config"));
+    }
+
+    FString VariableTypePath;
+    VariableConfig->TryGetStringField(TEXT("type_path"), VariableTypePath);
+    
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    
+    // Resolve the variable type using the enhanced system
+    FEdGraphPinType PinType;
+    if (!ResolveVariableType(VariableType, VariableTypePath, PinType))
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown or invalid variable type: %s"), *VariableType));
+    }
+    
+    // Get optional parameters
+    FString DefaultValue;
+    VariableConfig->TryGetStringField(TEXT("default_value"), DefaultValue);
+    
+    bool bIsEditable = true;
+    VariableConfig->TryGetBoolField(TEXT("is_editable"), bIsEditable);
+    
+    FString Category = TEXT("Default");
+    VariableConfig->TryGetStringField(TEXT("category"), Category);
+    
+    FString Tooltip;
+    VariableConfig->TryGetStringField(TEXT("tooltip"), Tooltip);
+    
+    // Add the variable
+    if (FBlueprintEditorUtils::AddMemberVariable(Blueprint, FName(*VariableName), PinType, DefaultValue))
+    {
+        // Configure variable properties
+        FName VarName(*VariableName);
+        for (FBPVariableDescription& Variable : Blueprint->NewVariables)
+        {
+            if (Variable.VarName == VarName)
+            {
+                if (bIsEditable)
+                {
+                    Variable.PropertyFlags |= CPF_Edit;
+                    Variable.PropertyFlags |= CPF_BlueprintVisible;
+                }
+                
+                Variable.Category = FText::FromString(Category);
+                if (!Tooltip.IsEmpty())
+                {
+                    // Explicitly set FriendlyName to the tooltip string
+                    Variable.FriendlyName = Tooltip;
+                }
+                break;
+            }
+        }
+        
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("action"), TEXT("create"));
+        Response->SetStringField(TEXT("message"), TEXT("Variable created successfully"));
+        Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+        Response->SetStringField(TEXT("variable_name"), VariableName);
+        Response->SetStringField(TEXT("variable_type"), VariableType);
+        Response->SetBoolField(TEXT("is_editable"), bIsEditable);
+        Response->SetStringField(TEXT("category"), Category);
+        
+        // Mark Blueprint as modified and compile to ensure CDO is up to date for subsequent queries
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+        FString CompileError;
+        if (!FCommonUtils::SafeCompileBlueprint(Blueprint, CompileError) && !CompileError.IsEmpty())
+        {
+            Response->SetStringField(TEXT("compile_warning"), CompileError);
+        }
+    }
+    else
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create variable in Blueprint"));
+    }
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+
+    FString CategoryFilter;
+    Params->TryGetStringField(TEXT("category"), CategoryFilter);
+    CategoryFilter.TrimStartAndEndInline();
+
+    FString SearchText;
+    Params->TryGetStringField(TEXT("search_text"), SearchText);
+    SearchText.TrimStartAndEndInline();
+
+    bool bIncludeBlueprints = true;
+    Params->TryGetBoolField(TEXT("include_blueprints"), bIncludeBlueprints);
+
+    bool bIncludeEngine = true;
+    Params->TryGetBoolField(TEXT("include_engine_types"), bIncludeEngine);
+
+    auto IsTransientTypeName = [](const FString& InName) -> bool
+    {
+        return InName.StartsWith(TEXT("SKEL_")) ||
+               InName.StartsWith(TEXT("REINST_")) ||
+               InName.StartsWith(TEXT("HOTRELOAD_")) ||
+               InName.StartsWith(TEXT("TRASHCLASS_")) ||
+               InName.StartsWith(TEXT("TRASHSTRUCT_")) ||
+               InName.StartsWith(TEXT("PLACEHOLDER-"));
+    };
+
+    auto GetCategoryRank = [](const FString& Category) -> int32
+    {
+        if (Category.Equals(TEXT("Basic"), ESearchCase::IgnoreCase)) { return 0; }
+        if (Category.Equals(TEXT("Structure"), ESearchCase::IgnoreCase)) { return 1; }
+        if (Category.Equals(TEXT("Interface"), ESearchCase::IgnoreCase)) { return 2; }
+        if (Category.Equals(TEXT("Object Types"), ESearchCase::IgnoreCase)) { return 3; }
+        if (Category.Equals(TEXT("Enum"), ESearchCase::IgnoreCase)) { return 4; }
+        return 5;
+    };
+
+    struct FVariableTypeRecord
+    {
+        FString Name;
+        FString DisplayName;
+        FString Category;
+        FString TypeKind;
+        FString Description;
+        FString Path;
+        bool bIsBlueprintType = false;
+        bool bIsAssetType = false;
+        bool bIsEngineType = false;
+        bool bSupportsVariables = true;
+    };
+
+    TMap<FString, FVariableTypeRecord> RecordsByName;
+
+    auto TryInsertRecord = [&RecordsByName](FVariableTypeRecord&& Record)
+    {
+        if (Record.DisplayName.IsEmpty())
+        {
+            Record.DisplayName = Record.Name;
+        }
+        if (Record.Description.IsEmpty())
+        {
+            Record.Description = Record.DisplayName;
+        }
+
+        if (FVariableTypeRecord* Existing = RecordsByName.Find(Record.Name))
+        {
+            const bool bExistingIsEngine = Existing->bIsEngineType;
+            const bool bNewIsProject = !Record.bIsEngineType;
+            const bool bUpgradeBlueprint = !Existing->bIsBlueprintType && Record.bIsBlueprintType;
+
+            if ((bExistingIsEngine && bNewIsProject) || bUpgradeBlueprint)
+            {
+                *Existing = MoveTemp(Record);
+            }
+        }
+        else
+        {
+            RecordsByName.Add(Record.Name, MoveTemp(Record));
+        }
+    };
+
+    auto IsEnginePackage = [](const FString& PackageName) -> bool
+    {
+        return !PackageName.StartsWith(TEXT("/Game/"));
+    };
+
+    // ---------------------------------------------------------------------
+    // Basic types (always available)
+    // ---------------------------------------------------------------------
+    auto AddBasicType = [&TryInsertRecord](const TCHAR* Name, const TCHAR* Description)
+    {
+        FVariableTypeRecord Record;
+        Record.Name = Name;
+        Record.DisplayName = Name;
+        Record.Description = Description;
+        Record.Category = TEXT("Basic");
+        Record.TypeKind = TEXT("basic");
+        Record.bIsEngineType = false;
+        Record.bIsAssetType = false;
+        Record.bIsBlueprintType = false;
+        TryInsertRecord(MoveTemp(Record));
+    };
+
+    AddBasicType(TEXT("Boolean"), TEXT("True/false value"));
+    AddBasicType(TEXT("Byte"), TEXT("8-bit unsigned integer (0-255)"));
+    AddBasicType(TEXT("Integer"), TEXT("32-bit signed integer"));
+    AddBasicType(TEXT("Integer64"), TEXT("64-bit signed integer"));
+    AddBasicType(TEXT("Float"), TEXT("32-bit floating point number"));
+    AddBasicType(TEXT("Double"), TEXT("64-bit floating point number"));
+    AddBasicType(TEXT("Name"), TEXT("Unreal name identifier"));
+    AddBasicType(TEXT("String"), TEXT("Text string value"));
+    AddBasicType(TEXT("Text"), TEXT("Localizable text value"));
+
+    // ---------------------------------------------------------------------
+    // Struct types (native + user defined)
+    // ---------------------------------------------------------------------
+    for (TObjectIterator<UScriptStruct> StructIterator; StructIterator; ++StructIterator)
+    {
+        UScriptStruct* Struct = *StructIterator;
+        if (!Struct || Struct->HasAnyFlags(RF_Transient))
+        {
+            continue;
+        }
+
+        const FString StructName = Struct->GetName();
+        if (IsTransientTypeName(StructName))
+        {
+            continue;
+        }
+
+        const FString PackageName = Struct->GetOutermost()->GetName();
+        const bool bIsEngineStruct = IsEnginePackage(PackageName);
+        const bool bIsProjectStruct = !bIsEngineStruct;
+
+        if (!bIncludeEngine && bIsEngineStruct)
+        {
+            continue;
+        }
+
+        if (!bIncludeBlueprints && bIsProjectStruct)
+        {
+            continue;
+        }
+
+        const bool bBlueprintVisible = Struct->HasMetaData(TEXT("BlueprintType")) ||
+            Struct->GetBoolMetaDataHierarchical(TEXT("BlueprintType"));
+
+        if (!bBlueprintVisible)
+        {
+            continue;
+        }
+
+        FVariableTypeRecord Record;
+        Record.Name = StructName;
+        Record.DisplayName = Struct->GetDisplayNameText().ToString();
+        Record.Category = TEXT("Structure");
+        Record.TypeKind = TEXT("struct");
+        Record.Description = Struct->GetToolTipText().ToString();
+        Record.Path = Struct->GetPathName();
+        Record.bIsBlueprintType = bIsProjectStruct;
+        Record.bIsAssetType = false;
+        Record.bIsEngineType = bIsEngineStruct;
+        TryInsertRecord(MoveTemp(Record));
+    }
+
+    // ---------------------------------------------------------------------
+    // Class types (native + blueprint generated)
+    // ---------------------------------------------------------------------
+    for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
+    {
+        UClass* Class = *ClassIterator;
+        if (!IsValidBlueprintVariableType(Class))
+        {
+            continue;
+        }
+
+        const FString ClassName = Class->GetName();
+        if (IsTransientTypeName(ClassName))
+        {
+            continue;
+        }
+
+        const bool bIsBlueprintClass = Class->ClassGeneratedBy != nullptr;
+        if (!bIncludeBlueprints && bIsBlueprintClass)
+        {
+            continue;
+        }
+
+        const FString PackageName = Class->GetOutermost()->GetName();
+        const bool bIsEngineClass = IsEnginePackage(PackageName);
+        if (!bIncludeEngine && bIsEngineClass)
+        {
+            continue;
+        }
+
+        FVariableTypeRecord Record;
+        Record.Name = ClassName;
+        Record.DisplayName = Class->GetDisplayNameText().ToString();
+        Record.Description = Class->GetToolTipText().ToString();
+        Record.Path = Class->GetPathName();
+        Record.bIsBlueprintType = bIsBlueprintClass;
+        Record.bIsEngineType = bIsEngineClass;
+        Record.bIsAssetType = !Class->IsChildOf(AActor::StaticClass()) && !Class->IsChildOf(UActorComponent::StaticClass());
+        Record.Category = Class->HasAnyClassFlags(CLASS_Interface) ? TEXT("Interface") : TEXT("Object Types");
+        Record.TypeKind = Class->HasAnyClassFlags(CLASS_Interface) ? TEXT("interface") : TEXT("class");
+        TryInsertRecord(MoveTemp(Record));
+    }
+
+    // ---------------------------------------------------------------------
+    // Enum types (native + user defined)
+    // ---------------------------------------------------------------------
+    for (TObjectIterator<UEnum> EnumIterator; EnumIterator; ++EnumIterator)
+    {
+        UEnum* Enum = *EnumIterator;
+        if (!Enum || Enum->HasAnyFlags(RF_Transient))
+        {
+            continue;
+        }
+
+        const FString EnumName = Enum->GetName();
+        if (IsTransientTypeName(EnumName))
+        {
+            continue;
+        }
+
+        const bool bIsUserDefinedEnum = Enum->IsA<UUserDefinedEnum>();
+        const bool bBlueprintVisible = bIsUserDefinedEnum || Enum->HasMetaData(TEXT("BlueprintType"));
+
+        if (!bBlueprintVisible)
+        {
+            continue;
+        }
+
+        if (!bIncludeBlueprints && bIsUserDefinedEnum)
+        {
+            continue;
+        }
+
+        const FString PackageName = Enum->GetOutermost()->GetName();
+        const bool bIsEngineEnum = IsEnginePackage(PackageName);
+        if (!bIncludeEngine && bIsEngineEnum)
+        {
+            continue;
+        }
+
+        FVariableTypeRecord Record;
+        Record.Name = EnumName;
+        Record.DisplayName = Enum->GetDisplayNameText().ToString();
+        Record.Description = Enum->GetToolTipText().ToString();
+        Record.Path = Enum->GetPathName();
+        Record.Category = TEXT("Enum");
+        Record.TypeKind = TEXT("enum");
+        Record.bIsBlueprintType = bIsUserDefinedEnum;
+        Record.bIsAssetType = false;
+        Record.bIsEngineType = bIsEngineEnum;
+        TryInsertRecord(MoveTemp(Record));
+    }
+
+    // Convert map to array and sort
+    TArray<FVariableTypeRecord> SortedRecords;
+    RecordsByName.GenerateValueArray(SortedRecords);
+
+    SortedRecords.Sort([&GetCategoryRank](const FVariableTypeRecord& A, const FVariableTypeRecord& B)
+    {
+        const int32 RankA = GetCategoryRank(A.Category);
+        const int32 RankB = GetCategoryRank(B.Category);
+
+        if (RankA != RankB)
+        {
+            return RankA < RankB;
+        }
+
+        return A.DisplayName.Compare(B.DisplayName, ESearchCase::IgnoreCase) < 0;
+    });
+
+    TArray<TSharedPtr<FJsonValue>> TypesArray;
+    TSet<FString> Categories;
+
+    const bool bHasCategoryFilter = !CategoryFilter.IsEmpty();
+    const bool bHasSearchFilter = !SearchText.IsEmpty();
+
+    for (const FVariableTypeRecord& Record : SortedRecords)
+    {
+        if (!Record.bSupportsVariables)
+        {
+            continue;
+        }
+
+        if (bHasCategoryFilter && !Record.Category.Equals(CategoryFilter, ESearchCase::IgnoreCase))
+        {
+            continue;
+        }
+
+        if (bHasSearchFilter)
+        {
+            const bool bMatches =
+                Record.Name.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.DisplayName.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.Description.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.Path.Contains(SearchText, ESearchCase::IgnoreCase);
+
+            if (!bMatches)
+            {
+                continue;
+            }
+        }
+
+        TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+        TypeInfo->SetStringField(TEXT("name"), Record.Name);
+        TypeInfo->SetStringField(TEXT("display_name"), Record.DisplayName);
+        TypeInfo->SetStringField(TEXT("category"), Record.Category);
+        TypeInfo->SetStringField(TEXT("description"), Record.Description);
+        TypeInfo->SetBoolField(TEXT("is_blueprint_class"), Record.bIsBlueprintType);
+        TypeInfo->SetBoolField(TEXT("is_asset_type"), Record.bIsAssetType);
+        TypeInfo->SetBoolField(TEXT("supports_variables"), Record.bSupportsVariables);
+        TypeInfo->SetBoolField(TEXT("is_engine_type"), Record.bIsEngineType);
+        TypeInfo->SetStringField(TEXT("type_kind"), Record.TypeKind);
+
+        if (!Record.Path.IsEmpty())
+        {
+            TypeInfo->SetStringField(TEXT("type_path"), Record.Path);
+        }
+
+        TypesArray.Add(MakeShared<FJsonValueObject>(TypeInfo));
+        Categories.Add(Record.Category);
+    }
+
+    // Build sorted category list for UI parity
+    TArray<FString> SortedCategories = Categories.Array();
+    SortedCategories.Sort([&GetCategoryRank](const FString& A, const FString& B)
+    {
+        const int32 RankA = GetCategoryRank(A);
+        const int32 RankB = GetCategoryRank(B);
+
+        if (RankA != RankB)
+        {
+            return RankA < RankB;
+        }
+
+        return A.Compare(B, ESearchCase::IgnoreCase) < 0;
+    });
+
+    TArray<TSharedPtr<FJsonValue>> CategoriesArray;
+    for (const FString& Category : SortedCategories)
+    {
+        CategoriesArray.Add(MakeShared<FJsonValueString>(Category));
+    }
+
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("action"), TEXT("search_types"));
+    Response->SetArrayField(TEXT("types"), TypesArray);
+    Response->SetArrayField(TEXT("categories"), CategoriesArray);
+    Response->SetNumberField(TEXT("total_count"), TypesArray.Num());
+
+    return Response;
+}
+
+// Placeholder implementations for remaining operations
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteVariableOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    // Delegate to existing implementation for now
+    return HandleDeleteBlueprintVariable(Params);
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableInfoOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    // Delegate to existing implementation for now
+    return HandleGetBlueprintVariableInfo(Params);
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetPropertyOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+    }
+
+    FString PropertyPath;
+    if (!Params->TryGetStringField(TEXT("property_path"), PropertyPath))
+    {
+        Params->TryGetStringField(TEXT("path"), PropertyPath);
+    }
+
+    // Build the full path: VariableName.PropertyPath (or just VariableName if no property path)
+    FString FullPath = VariableName;
+    if (!PropertyPath.IsEmpty())
+    {
+        FullPath += TEXT(".") + PropertyPath;
+    }
+
+    TSharedPtr<FJsonObject> NormalizedParams = MakeShared<FJsonObject>();
+    NormalizedParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    NormalizedParams->SetStringField(TEXT("path"), FullPath);
+
+    return HandleGetVariableProperty(NormalizedParams);
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPropertyOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+    }
+
+    FString PropertyPath;
+    if (!Params->TryGetStringField(TEXT("property_path"), PropertyPath))
+    {
+        Params->TryGetStringField(TEXT("path"), PropertyPath);
+    }
+
+    TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+    if (!ValueField.IsValid())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value' parameter"));
+    }
+
+    // Build the full path: VariableName.PropertyPath (or just VariableName if no property path)
+    FString FullPath = VariableName;
+    if (!PropertyPath.IsEmpty())
+    {
+        FullPath += TEXT(".") + PropertyPath;
+    }
+
+    TSharedPtr<FJsonObject> NormalizedParams = MakeShared<FJsonObject>();
+    NormalizedParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    NormalizedParams->SetStringField(TEXT("path"), FullPath);
+    NormalizedParams->SetField(TEXT("value"), ValueField);
+
+    return HandleSetVariableProperty(NormalizedParams);
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleModifyVariableOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+    }
+
+    const TSharedPtr<FJsonObject>* VariableConfig = nullptr;
+    if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfig))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_config' object"));
+    }
+
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    FName VarName(*VariableName);
+    FBPVariableDescription* VarDesc = nullptr;
+    for (FBPVariableDescription& Description : Blueprint->NewVariables)
+    {
+        if (Description.VarName == VarName)
+        {
+            VarDesc = &Description;
+            break;
+        }
+    }
+
+    if (!VarDesc)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+    }
+
+    bool bAnyChanges = false;
+    TArray<TSharedPtr<FJsonValue>> UpdatedFields;
+
+    auto TrackChange = [&UpdatedFields](const FString& FieldName)
+    {
+        UpdatedFields.Add(MakeShared<FJsonValueString>(FieldName));
+    };
+
+    FString NewCategory;
+    if ((*VariableConfig)->TryGetStringField(TEXT("category"), NewCategory))
+    {
+        VarDesc->Category = FText::FromString(NewCategory);
+        bAnyChanges = true;
+        TrackChange(TEXT("category"));
+    }
+
+    FString NewTooltip;
+    if ((*VariableConfig)->TryGetStringField(TEXT("tooltip"), NewTooltip))
+    {
+        VarDesc->FriendlyName = NewTooltip;
+        bAnyChanges = true;
+        TrackChange(TEXT("tooltip"));
+    }
+
+    auto SetFlag = [&](uint64 Flag, bool bEnable)
+    {
+        if (bEnable)
+        {
+            VarDesc->PropertyFlags |= Flag;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~Flag;
+        }
+    };
+
+    bool bTempBool = false;
+    if ((*VariableConfig)->TryGetBoolField(TEXT("is_editable"), bTempBool))
+    {
+        if (bTempBool)
+        {
+            VarDesc->PropertyFlags |= CPF_Edit;
+            VarDesc->PropertyFlags |= CPF_BlueprintVisible;
+            VarDesc->PropertyFlags &= ~CPF_DisableEditOnInstance;
+        }
+        else
+        {
+            VarDesc->PropertyFlags &= ~CPF_Edit;
+            VarDesc->PropertyFlags &= ~CPF_BlueprintVisible;
+            VarDesc->PropertyFlags |= CPF_DisableEditOnInstance;
+        }
+        bAnyChanges = true;
+        TrackChange(TEXT("is_editable"));
+    }
+
+    if ((*VariableConfig)->TryGetBoolField(TEXT("is_blueprint_readonly"), bTempBool))
+    {
+        SetFlag(CPF_BlueprintReadOnly, bTempBool);
+        bAnyChanges = true;
+        TrackChange(TEXT("is_blueprint_readonly"));
+    }
+
+    if ((*VariableConfig)->TryGetBoolField(TEXT("is_expose_on_spawn"), bTempBool))
+    {
+        SetFlag(CPF_ExposeOnSpawn, bTempBool);
+        bAnyChanges = true;
+        TrackChange(TEXT("is_expose_on_spawn"));
+    }
+
+    if ((*VariableConfig)->TryGetBoolField(TEXT("is_private"), bTempBool))
+    {
+        SetFlag(CPF_DisableEditOnInstance, bTempBool);
+        bAnyChanges = true;
+        TrackChange(TEXT("is_private"));
+    }
+
+    if ((*VariableConfig)->TryGetBoolField(TEXT("replicated"), bTempBool))
+    {
+        SetFlag(CPF_Net, bTempBool);
+        bAnyChanges = true;
+        TrackChange(TEXT("replicated"));
+    }
+
+    FString DefaultValue;
+    bool bDefaultValueUpdated = false;
+    if ((*VariableConfig)->TryGetStringField(TEXT("default_value"), DefaultValue))
+    {
+        TSharedPtr<FJsonObject> SetParams = MakeShared<FJsonObject>();
+        SetParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+        SetParams->SetStringField(TEXT("path"), VariableName);
+        SetParams->SetField(TEXT("value"), MakeShared<FJsonValueString>(DefaultValue));
+        TSharedPtr<FJsonObject> SetResponse = HandleSetVariableProperty(SetParams);
+        if (SetResponse.IsValid() && SetResponse->GetBoolField(TEXT("success")))
+        {
+            bAnyChanges = true;
+            bDefaultValueUpdated = true;
+            TrackChange(TEXT("default_value"));
+        }
+        else
+        {
+            FString ErrorMessage = TEXT("Failed to update default value for variable");
+            if (SetResponse.IsValid() && SetResponse->HasField(TEXT("error")))
+            {
+                ErrorMessage = SetResponse->GetStringField(TEXT("error"));
+            }
+            return FCommonUtils::CreateErrorResponse(ErrorMessage);
+        }
+    }
+
+    const TSharedPtr<FJsonObject>* MetadataObject = nullptr;
+    if ((*VariableConfig)->TryGetObjectField(TEXT("metadata"), MetadataObject))
+    {
+        for (const auto& Pair : (*MetadataObject)->Values)
+        {
+            FString ValueString = JsonValueToString(Pair.Value);
+            FBlueprintEditorUtils::SetBlueprintVariableMetaData(Blueprint, VarName, nullptr, FName(*Pair.Key), ValueString);
+            TrackChange(FString::Printf(TEXT("metadata.%s"), *Pair.Key));
+        }
+        bAnyChanges = true;
+    }
+
+    if (!bAnyChanges)
+    {
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("message"), TEXT("No changes were applied"));
+        Response->SetArrayField(TEXT("updated_fields"), UpdatedFields);
+        Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+        Response->SetStringField(TEXT("variable_name"), VariableName);
+        return Response;
+    }
+
+    Blueprint->MarkPackageDirty();
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+    FString CompileError;
+    FCommonUtils::SafeCompileBlueprint(Blueprint, CompileError);
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("variable_name"), VariableName);
+    Response->SetArrayField(TEXT("updated_fields"), UpdatedFields);
+    Response->SetBoolField(TEXT("default_value_updated"), bDefaultValueUpdated);
+    Response->SetStringField(TEXT("message"), TEXT("Variable updated successfully"));
+    if (!CompileError.IsEmpty())
+    {
+        Response->SetStringField(TEXT("compile_warning"), CompileError);
+    }
+
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleListVariablesOperation(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    FString CategoryFilter;
+    FString NameContains;
+    bool bIncludePrivate = true;
+    bool bIncludeMetadata = false;
+
+    const TSharedPtr<FJsonObject>* ListCriteria = nullptr;
+    if (Params->TryGetObjectField(TEXT("list_criteria"), ListCriteria))
+    {
+        (*ListCriteria)->TryGetStringField(TEXT("category"), CategoryFilter);
+        (*ListCriteria)->TryGetStringField(TEXT("name_contains"), NameContains);
+        (*ListCriteria)->TryGetBoolField(TEXT("include_private"), bIncludePrivate);
+        (*ListCriteria)->TryGetBoolField(TEXT("include_metadata"), bIncludeMetadata);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> VariablesArray;
+
+    for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+    {
+        const FString VarName = VarDesc.VarName.ToString();
+        const FString VarCategory = VarDesc.Category.ToString();
+
+        if (!CategoryFilter.IsEmpty() && !VarCategory.Equals(CategoryFilter, ESearchCase::IgnoreCase))
+        {
+            continue;
+        }
+
+        if (!NameContains.IsEmpty() && !VarName.Contains(NameContains, ESearchCase::IgnoreCase))
+        {
+            continue;
+        }
+
+        if (!bIncludePrivate && (VarDesc.PropertyFlags & CPF_DisableEditOnInstance))
+        {
+            continue;
+        }
+
+        TSharedPtr<FJsonObject> VarInfo = MakeShared<FJsonObject>();
+        VarInfo->SetStringField(TEXT("name"), VarName);
+        VarInfo->SetStringField(TEXT("display_type"), UEdGraphSchema_K2::TypeToText(VarDesc.VarType).ToString());
+        VarInfo->SetStringField(TEXT("pin_category"), VarDesc.VarType.PinCategory.ToString());
+
+        if (VarDesc.VarType.PinSubCategoryObject.IsValid())
+        {
+            VarInfo->SetStringField(TEXT("sub_category_object"), VarDesc.VarType.PinSubCategoryObject->GetPathName());
+        }
+
+        VarInfo->SetStringField(TEXT("category"), VarCategory);
+        VarInfo->SetStringField(TEXT("tooltip"), VarDesc.FriendlyName);
+        VarInfo->SetStringField(TEXT("default_value"), VarDesc.DefaultValue);
+        VarInfo->SetStringField(TEXT("container_type"), ContainerTypeToString(VarDesc.VarType.ContainerType));
+        VarInfo->SetBoolField(TEXT("is_editable"), (VarDesc.PropertyFlags & CPF_Edit) != 0);
+        VarInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0);
+        VarInfo->SetBoolField(TEXT("is_expose_on_spawn"), (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0);
+        VarInfo->SetBoolField(TEXT("is_private"), (VarDesc.PropertyFlags & CPF_DisableEditOnInstance) != 0);
+        VarInfo->SetBoolField(TEXT("is_replicated"), (VarDesc.PropertyFlags & CPF_Net) != 0);
+
+        if (bIncludeMetadata)
+        {
+            TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
+            MetadataParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+            MetadataParams->SetStringField(TEXT("variable_name"), VarName);
+            TSharedPtr<FJsonObject> MetadataResponse = GetBlueprintVariableMetadata(MetadataParams);
+            if (MetadataResponse->GetBoolField(TEXT("success")))
+            {
+                const TSharedPtr<FJsonObject>* MetadataObjectPtr = nullptr;
+                if (MetadataResponse->TryGetObjectField(TEXT("metadata"), MetadataObjectPtr))
+                {
+                    VarInfo->SetObjectField(TEXT("metadata"), *MetadataObjectPtr);
+                }
+            }
+        }
+
+        VariablesArray.Add(MakeShared<FJsonValueObject>(VarInfo));
+    }
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetNumberField(TEXT("total_count"), VariablesArray.Num());
+    Response->SetArrayField(TEXT("variables"), VariablesArray);
+
     return Response;
 }

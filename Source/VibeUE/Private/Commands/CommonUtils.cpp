@@ -164,21 +164,74 @@ UBlueprint* FCommonUtils::FindBlueprint(const FString& BlueprintName)
 
 UBlueprint* FCommonUtils::FindBlueprintByName(const FString& BlueprintName)
 {
-    // First try direct path loading for exact matches
-    UBlueprint* DirectLoad = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BlueprintName));
-    if (DirectLoad)
+    FString NormalizedName = BlueprintName.TrimStartAndEnd();
+    UBlueprint* LoadedBlueprint = nullptr;
+
+    auto ExtractAssetName = [](const FString& Path) -> FString
     {
-        return DirectLoad;
-    }
-    
-    // Try legacy path for backwards compatibility
-    FString LegacyAssetPath = TEXT("/Game/Blueprints/") + BlueprintName;
-    UBlueprint* LegacyLoad = LoadObject<UBlueprint>(nullptr, *LegacyAssetPath);
-    if (LegacyLoad)
+        int32 SlashIndex = INDEX_NONE;
+        if (Path.FindLastChar(TEXT('/'), SlashIndex))
+        {
+            return Path.Mid(SlashIndex + 1);
+        }
+        return Path;
+    };
+
+    auto TryLoadByPath = [&LoadedBlueprint](const FString& AssetPath)
     {
-        return LegacyLoad;
+        if (!LoadedBlueprint)
+        {
+            LoadedBlueprint = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
+        }
+        if (!LoadedBlueprint)
+        {
+            LoadedBlueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
+        }
+    };
+
+    // Handle full or partial asset paths
+    if (NormalizedName.StartsWith(TEXT("/")))
+    {
+        FString AssetPath = NormalizedName;
+        if (!AssetPath.Contains(TEXT(".")))
+        {
+            const FString AssetName = ExtractAssetName(AssetPath);
+            if (!AssetName.IsEmpty())
+            {
+                AssetPath += TEXT(".") + AssetName;
+            }
+        }
+
+        TryLoadByPath(AssetPath);
+        if (LoadedBlueprint)
+        {
+            return LoadedBlueprint;
+        }
     }
-    
+    else
+    {
+        TryLoadByPath(NormalizedName);
+        if (LoadedBlueprint)
+        {
+            return LoadedBlueprint;
+        }
+
+        // Try default path under /Game/Blueprints/
+        const FString DefaultPackage = FString::Printf(TEXT("/Game/Blueprints/%s"), *NormalizedName);
+        FString DefaultAssetPath = DefaultPackage;
+        if (!DefaultAssetPath.Contains(TEXT(".")))
+        {
+            const FString AssetName = ExtractAssetName(DefaultPackage);
+            DefaultAssetPath += TEXT(".") + AssetName;
+        }
+
+        TryLoadByPath(DefaultAssetPath);
+        if (LoadedBlueprint)
+        {
+            return LoadedBlueprint;
+        }
+    }
+
     // Use Asset Registry for recursive search like Unreal's UI
     FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
     IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();

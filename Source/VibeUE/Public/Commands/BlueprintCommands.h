@@ -30,6 +30,9 @@ private:
     TSharedPtr<FJsonObject> HandleDeleteBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintVariableTypes(const TSharedPtr<FJsonObject>& Params);
 
+    // NEW: Unified Variable Management System
+    TSharedPtr<FJsonObject> HandleManageBlueprintVariables(const TSharedPtr<FJsonObject>& Params);
+
     // Comprehensive Blueprint information
     TSharedPtr<FJsonObject> HandleGetBlueprintInfo(const TSharedPtr<FJsonObject>& Params);
 
@@ -40,6 +43,30 @@ private:
     // Internal Blueprint variable metadata management
     TSharedPtr<FJsonObject> GetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> SetBlueprintVariableMetadata(const TSharedPtr<FJsonObject>& Params);
+
+    // NEW: Variable Management System Support Functions
+    TSharedPtr<FJsonObject> HandleCreateVariableOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDeleteVariableOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleModifyVariableOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleListVariablesOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetVariableInfoOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetPropertyOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetPropertyOperation(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSearchTypesOperation(const TSharedPtr<FJsonObject>& Params);
+
+    // NEW: Reflection-based Type Discovery System
+    TArray<UClass*> DiscoverAllVariableTypes();
+    TArray<UClass*> FilterVariableTypes(const TSharedPtr<FJsonObject>& SearchCriteria);
+    TSharedPtr<FJsonObject> GetTypeMetadata(UClass* VariableClass);
+    bool IsValidBlueprintVariableType(UClass* Class);
+    TArray<FAssetData> FindBlueprintAssetClasses(UClass* BaseClass);
+    
+    // NEW: Enhanced Type Resolution System
+    bool ResolveVariableType(const FString& TypeName, const FString& TypePath, FEdGraphPinType& OutPinType);
+    FString GetTypeDisplayName(const FEdGraphPinType& PinType);
+    UClass* FindClassByName(const FString& ClassName);
+    UScriptStruct* FindStructByName(const FString& StructName);
+    UEnum* FindEnumByName(const FString& EnumName);
 
     // Helper functions
     TSharedPtr<FJsonObject> AddComponentToBlueprint(const FString& BlueprintName, const FString& ComponentType, 

@@ -39,28 +39,6 @@ def register_umg_graph_introspection_tools(mcp: FastMCP):
             return {"success": False, "error": str(e), "node": {}}
 
     @mcp.tool()
-    def list_blueprint_functions(
-        ctx: Context,
-        blueprint_name: str,
-        include_overrides: bool = True
-    ) -> Dict[str, Any]:
-        """
-        List functions defined on the Blueprint, including overrides if requested.
-        Returns name, input/output params, access specifiers, and metadata when available.
-        """
-        from vibe_ue_server import get_unreal_connection
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "error": "Failed to connect to Unreal Engine", "functions": []}
-            params = {"blueprint_name": blueprint_name, "include_overrides": include_overrides}
-            logger.info(f"Listing functions for '{blueprint_name}'")
-            return unreal.send_command("list_blueprint_functions", params) or {"success": False, "error": "No response", "functions": []}
-        except Exception as e:
-            logger.exception("list_blueprint_functions failed")
-            return {"success": False, "error": str(e), "functions": []}
-
-    @mcp.tool()
     def list_custom_events(
         ctx: Context,
         blueprint_name: str

@@ -406,255 +406,6 @@ def register_blueprint_tools(mcp: FastMCP):
     # --- Blueprint variable management -------------------------------------------------
 
     @mcp.tool()
-    def add_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        variable_type: str,
-        is_exposed: bool = False,
-    ) -> Dict[str, Any]:
-        """
-        Add a new variable to the specified Blueprint with proper type validation.
-        
-        ⚠️ **CRITICAL PREREQUISITE**: Always call get_available_blueprint_variable_types() FIRST 
-        to get correct type names and avoid creating String variables when complex types are needed.
-        
-        🚫 **Common Problem**: Using incorrect type names causes variables to default to String type,
-        making them unusable in Blueprint logic. This tool requires EXACT type names from the type catalog.
-        
-        🎯 **Correct Workflow**:
-        ```python
-        # 1. FIRST: Get available types
-        types = get_available_blueprint_variable_types()
-        
-        # 2. SECOND: Use exact type name from results
-        add_blueprint_variable("BP_Player", "MyActor", "Actor")  # ✅ Correct
-        add_blueprint_variable("BP_Player", "MyWidget", "UserWidget")  # ❌ May fail - check types first
-        
-        # 3. THIRD: Verify result
-        blueprint_info = get_blueprint_info("BP_Player")
-        ```
-        
-        💡 **Type Name Examples** (verify with get_available_blueprint_variable_types):
-        - **Basic Types**: "Boolean", "Integer", "Float", "String" (usually safe)
-        - **Struct Types**: "Vector", "Rotator", "Transform", "LinearColor" (use exact names)
-        - **Object Types**: "Actor", "StaticMesh", "Material", "Texture2D" (reference types)
-        - **Custom Types**: Project-specific classes may have different names
-        
-        Args:
-            blueprint_name: Name or path of the target Blueprint
-                           Examples: "BP_Player", "/Game/Blueprints/BP_Player"
-            variable_name: Name for the new variable
-                          Examples: "Health", "PlayerWidget", "ExplosionEffect"
-            variable_type: EXACT type name from get_available_blueprint_variable_types()
-                          ⚠️ MUST match exactly or will default to String type
-                          Examples: "Float", "Actor", "UserWidget", "NiagaraSystem"
-            is_exposed: Whether variable should be editable in Blueprint editor
-                       Examples: True = shows in details panel, False = Blueprint-only
-        
-        Returns:
-            Dict containing:
-            - success: boolean indicating if variable was added successfully
-            - message: result description
-            - blueprint_name: name of Blueprint that was modified
-            - variable_name: name of variable that was created
-            - variable_type: type that was applied (verify this matches your request!)
-            - is_exposed: exposure setting that was applied
-            
-        ⚠️ **AI Best Practices**:
-        1. **Always call get_available_blueprint_variable_types() first**
-        2. **Use exact type names** from the type catalog results
-        3. **Verify success** by checking the returned variable_type matches your request
-        4. **Follow dependency order**: Create variables BEFORE Event Graph nodes that use them
-        5. **Use get_blueprint_info()** after creation to confirm variable type is correct
-        
-        🔧 **Troubleshooting Variable Type Issues**:
-        - If variable shows as "String" when it should be complex type → wrong type name used
-        - If variable creation fails → type name not available in current project
-        - If Blueprint won't compile → variable type conflicts with usage in Event Graph
-        """
-
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "variable_type": variable_type,
-                "is_exposed": is_exposed,
-            }
-
-            logger.info(
-                "Adding variable '%s' (%s) to blueprint '%s'",
-                variable_name,
-                variable_type,
-                blueprint_name,
-            )
-            response = unreal.send_command("add_blueprint_variable", params)
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            return response
-
-        except Exception as e:
-            logger.exception("Error adding blueprint variable")
-            return {"success": False, "message": str(e)}
-
-    @mcp.tool()
-    def get_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-    ) -> Dict[str, Any]:
-        """Retrieve information about a Blueprint variable."""
-
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-            }
-
-            logger.info("Fetching variable '%s' from blueprint '%s'", variable_name, blueprint_name)
-            response = unreal.send_command("get_blueprint_variable", params)
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            return response
-
-        except Exception as e:
-            logger.exception("Error retrieving blueprint variable")
-            return {"success": False, "message": str(e)}
-
-    @mcp.tool()
-    def delete_blueprint_variable(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str,
-        force_delete: bool = False,
-    ) -> Dict[str, Any]:
-        """Remove a variable from a Blueprint."""
-
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name,
-                "force_delete": force_delete,
-            }
-
-            logger.info(
-                "Deleting blueprint variable '%s' from '%s' (force=%s)",
-                variable_name,
-                blueprint_name,
-                force_delete,
-            )
-            response = unreal.send_command("delete_blueprint_variable", params)
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            return response
-
-        except Exception as e:
-            logger.exception("Error deleting blueprint variable")
-            return {"success": False, "message": str(e)}
-
-    @mcp.tool()
-    def get_available_blueprint_variable_types(ctx: Context) -> Dict[str, Any]:
-        """
-        List all variable types available for Blueprint variables with detailed metadata.
-        
-        ⚠️ **CRITICAL FOR VARIABLE CREATION**: ALWAYS use this tool before add_blueprint_variable() 
-        to ensure you're using correct type names and avoid creating String variables when complex 
-        types are needed.
-        
-        🎯 **Prevents Common Variable Issues**:
-        - **String Fallback Problem**: Without proper type names, variables default to String type
-        - **Complex Type Resolution**: Get exact type names for UserWidget, NiagaraSystem, etc.
-        - **Blueprint Compilation**: Ensures variables are created with correct types for logic use
-        - **Type Validation**: Confirms available types before attempting variable creation
-        
-        💡 **Essential Workflow**:
-        ```
-        1. get_available_blueprint_variable_types() ← Get correct type names
-        2. add_blueprint_variable() with exact type name ← Create with proper type
-        3. Verify with get_blueprint_info() ← Confirm variable created correctly
-        ```
-        
-        🔍 **Type Categories Discovered**:
-        - **Basic Types**: Boolean, Integer, Float, String, etc. (always safe to use)
-        - **Struct Types**: Vector, Rotator, Transform, Color, etc. (use exact names)
-        - **Object Types**: Actor, Character, StaticMesh, Material, etc. (reference types)
-        - **Custom Types**: May include project-specific classes and Blueprint types
-        
-        Returns:
-            Dict containing:
-            - success: boolean indicating if type discovery completed
-            - basic_types: array of fundamental data types (Boolean, Integer, Float, etc.)
-            - struct_types: array of Unreal struct types (Vector, Rotator, Transform, etc.)  
-            - object_types: array of UObject-derived types (Actor, Character, StaticMesh, etc.)
-            - enum_types: array of available enum types in the project
-            - type_info: detailed metadata for each type including:
-              - category: type classification
-              - description: what the type represents
-              - default_value: default value when created
-              - pin_category: Blueprint pin category for connections
-            - total_count: number of available types discovered
-            
-        ⚠️ **AI Best Practices**:
-        1. **Always call this first** before creating any Blueprint variables
-        2. **Match exact names** from the results when calling add_blueprint_variable()
-        3. **Check type_info** for descriptions and valid usage patterns
-        4. **Use object_types** for references to assets, components, or other objects
-        5. **Verify results** with get_blueprint_info() after variable creation
-        
-        🚫 **Common Mistakes to Avoid**:
-        - Using "UserWidget" when type list shows different name
-        - Guessing type names instead of checking available types
-        - Not validating complex types before using them
-        - Assuming all engine types are always available
-        """
-
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            logger.info("Requesting available Blueprint variable types")
-            response = unreal.send_command("get_available_blueprint_variable_types", {})
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            return response
-
-        except Exception as e:
-            logger.exception("Error retrieving variable type catalog")
-            return {"success": False, "message": str(e)}
-    @mcp.tool()
     def reorder_components(
         ctx: Context,
         blueprint_name: str,
@@ -890,151 +641,6 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
 
-    @mcp.tool()
-    def get_variable_property(
-        ctx: Context,
-        blueprint_name: str,
-        path: str
-    ) -> Dict[str, Any]:
-        """
-        Get a nested Blueprint variable property via reflection.
-
-        Args:
-            blueprint_name: Target Blueprint name or full path
-            path: Dotted path to variable and subfields (arrays/maps/structs). Examples:
-                  "RadarSettings.Range"
-                  "Inventory.Items[2].ID"
-                  "Config.Values[KeyName]"
-
-        Returns:
-            Dict with success flag and value payload (reflection-serialized)
-        """
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "path": path
-            }
-
-            logger.info(f"Getting variable property '{path}' from blueprint '{blueprint_name}'")
-            response = unreal.send_command("get_variable_property", params)
-
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            logger.info(f"Get variable property response: {response}")
-            return response
-
-        except Exception as e:
-            error_msg = f"Error getting variable property: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def set_variable_property(
-        ctx: Context,
-        blueprint_name: str,
-        path: str,
-        value
-    ) -> Dict[str, Any]:
-        """
-        Set a nested Blueprint variable property via reflection.
-
-        Args:
-            blueprint_name: Target Blueprint name or full path
-            path: Dotted path to variable and subfields (arrays/maps/structs). Examples:
-                  "RadarSettings.Range", "Inventory.Items[2].ID", "Config.Values[KeyName]"
-            value: JSON-serializable value to apply (supports structs/arrays/maps/enums)
-
-        Returns:
-            Dict with success flag and normalized_value payload (reflection-applied)
-        """
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "path": path,
-                "value": value
-            }
-
-            logger.info(f"Setting variable property '{path}' on blueprint '{blueprint_name}' to '{value}'")
-            response = unreal.send_command("set_variable_property", params)
-
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            logger.info(f"Set variable property response: {response}")
-            return response
-
-        except Exception as e:
-            error_msg = f"Error setting variable property: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def get_blueprint_variable_info(
-        ctx: Context,
-        blueprint_name: str,
-        variable_name: str
-    ) -> Dict[str, Any]:
-        """
-        Get comprehensive information about a Blueprint variable including value, type, metadata, and property flags.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            variable_name: Name of the variable to retrieve information about
-            
-        Returns:
-            Response containing:
-            - value: The current variable value
-            - variable_type: Type of the variable (Float, Integer, Vector, etc.)
-            - category: Variable category in the Blueprint editor
-            - tooltip: Variable description/tooltip
-            - metadata: Complete metadata including instance_editable, blueprint_readonly, etc.
-            - container_type: Array/Set/Map information if applicable
-            - property_flags: Detailed property flag information
-        """
-        from vibe_ue_server import get_unreal_connection
-
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-
-            params = {
-                "blueprint_name": blueprint_name,
-                "variable_name": variable_name
-            }
-
-            logger.info(f"Getting blueprint variable info for '{variable_name}' on blueprint '{blueprint_name}'")
-            response = unreal.send_command("get_blueprint_variable_info", params)
-
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-
-            logger.info(f"Get blueprint variable info response: {response}")
-            return response
-
-        except Exception as e:
-            error_msg = f"Error getting blueprint variable info: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
 
     @mcp.tool()
     def get_blueprint_info(
@@ -1204,4 +810,131 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    logger.info("Blueprint tools registered successfully") 
+    @mcp.tool()
+    def manage_blueprint_variables(
+        ctx: Context,
+        blueprint_name: str,
+        action: str,
+        variable_name: Optional[str] = None,
+        variable_config: Optional[Dict[str, Any]] = None,
+        property_path: Optional[str] = None,
+        value: Optional[Any] = None,
+        delete_options: Optional[Dict[str, Any]] = None,
+        list_criteria: Optional[Dict[str, Any]] = None,
+        info_options: Optional[Dict[str, Any]] = None,
+        search_criteria: Optional[Dict[str, Any]] = None,
+        options: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        🔧 **UNIFIED BLUEPRINT VARIABLE MANAGEMENT SYSTEM** 
+        
+        **🎯 SOLVES THE BLUEPRINT CHALLENGE TYPE ISSUES**
+        This tool replaces all individual variable tools with a unified, reflection-based system
+        that properly handles UserWidget, NiagaraSystem, SoundBase, and Blueprint class types.
+        
+        **📋 Available Actions:**
+        
+        **🆕 create** - Create new Blueprint variable with proper typing
+        ```python
+        manage_blueprint_variables(
+            blueprint_name="BP_Player2",
+            action="create", 
+            variable_name="AttributeWidget",
+            variable_config={
+                "type": "UserWidget",           # ✅ Now resolves to proper UUserWidget*
+                "category": "UI",
+                "tooltip": "Player's attribute display widget",
+                "is_editable": True,
+                "default_value": None
+            }
+        )
+        ```
+        
+        **🔍 search_types** - Discover available variable types (200+ vs old 27)
+        ```python
+        manage_blueprint_variables(
+            blueprint_name="BP_Player2",
+            action="search_types",
+            search_criteria={
+                "category": "Widget|Audio|Particle|Blueprint|Basic|Struct",
+                "search_text": "Widget",
+                "include_blueprints": True,
+                "include_engine_types": True
+            }
+        )
+        ```
+        
+        **ℹ️ get_info** - Get detailed variable information
+        **🗑️ delete** - Remove variables with reference checking  
+        **📝 get_property** - Get nested property values from complex variables
+        **✏️ set_property** - Set nested property values (arrays, maps, structs)
+        **📋 list** - List all variables with filtering (FUTURE)
+        **🔧 modify** - Modify existing variable config (FUTURE)
+        
+        **🎯 Blueprint Challenge Solution:**
+        This tool fixes the exact variable type issues blocking challenge completion:
+        - AttributeWidget → UserWidget (not String) ✅
+        - Death_Niagara_System → NiagaraSystem (not String) ✅  
+        - Death_Sound → SoundBase (not String) ✅
+        - Microsub HUD → BP_MicrosubHUD_C (Blueprint class support) ✅
+        
+        **📋 Parameters:**
+        - blueprint_name: Target Blueprint name
+        - action: Operation to perform (create|delete|get_info|get_property|set_property|search_types)
+        - variable_name: Variable name (required for most actions)
+        - variable_config: Variable configuration for create action
+        - property_path: Dotted path for property operations
+        - value: Value for set_property action
+        - search_criteria: Filters for search_types action
+        - options: Additional options for various actions
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            # Build command parameters
+            params = {
+                "action": action,
+                "blueprint_name": blueprint_name
+            }
+            
+            # Add optional parameters based on action
+            if variable_name:
+                params["variable_name"] = variable_name
+            if variable_config:
+                params["variable_config"] = variable_config
+            if property_path:
+                params["property_path"] = property_path
+                params["path"] = property_path
+            if value is not None:
+                params["value"] = value
+            if delete_options:
+                params["delete_options"] = delete_options
+            if list_criteria:
+                params["list_criteria"] = list_criteria
+            if info_options:
+                params["info_options"] = info_options
+            if search_criteria:
+                params["search_criteria"] = search_criteria
+            if options:
+                params["options"] = options
+                
+            response = unreal.send_command("manage_blueprint_variables", params)
+            
+            if not response:
+                logger.error("No response from Unreal Engine for manage_blueprint_variables")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Unified variable management response: {response}")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error in unified variable management: {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    logger.info("Blueprint tools registered successfully (including NEW unified manage_blueprint_variables)") 
