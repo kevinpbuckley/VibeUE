@@ -24,7 +24,7 @@ public:
     FBlueprintReflection();
 
     // Core reflection methods
-    static TSharedPtr<FJsonObject> GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category = TEXT(""), const FString& Context = TEXT(""));
+    static TSharedPtr<FJsonObject> GetAvailableBlueprintNodes(UBlueprint* Blueprint, const FString& Category = TEXT(""), const FString& SearchTerm = TEXT(""), const FString& Context = TEXT(""));
     static TSharedPtr<FJsonObject> CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams = nullptr);
     static TSharedPtr<FJsonObject> CreateBlueprintNode(UBlueprint* Blueprint, const FString& NodeType, const TSharedPtr<FJsonObject>& NodeParams, UEdGraph* TargetGraph);
     static UClass* ResolveNodeClass(const FString& NodeType);
@@ -100,6 +100,9 @@ private:
     
     // Simplified node type mappings
     static TMap<FString, UClass*> NodeTypeMap;
+    
+    // ENHANCED: Cache node spawners for proper configuration
+    static TMap<FString, UBlueprintNodeSpawner*> CachedNodeSpawners;
 };
 
 /**

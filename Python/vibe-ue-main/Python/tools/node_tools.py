@@ -199,6 +199,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
     def get_available_blueprint_nodes(
         blueprint_name: str,
         category: str = "",
+        search_term: str = "",
         graph_scope: str = "event",
         include_functions: bool = True,
         include_variables: bool = True,
@@ -237,6 +238,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         Args:
             blueprint_name: Name of the target Blueprint to get nodes for
             category: Filter by node category (Flow Control, Math, Variables, Functions, etc.)
+            search_term: Text filter for node names, descriptions, and keywords (like Unreal's Add Action search)
             graph_scope: Context for node discovery ("event" for Event Graph, "function" for Function Graph)
             include_functions: Whether to include function call nodes
             include_variables: Whether to include variable get/set nodes
@@ -263,11 +265,17 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         # Find print/debug nodes
         get_available_blueprint_nodes("BP_Player", category="Development")
         
+        # Search for "Play Sound" nodes like Unreal's Add Action menu
+        get_available_blueprint_nodes("BP_Player", search_term="Play Sound")
+        
         # Find mathematical operations
         get_available_blueprint_nodes("BP_Player", category="Math")
         
-        # Find conditional logic nodes
-        get_available_blueprint_nodes("BP_Player", category="Flow Control")
+        # Search for specific functions - find all "Location" related nodes
+        get_available_blueprint_nodes("BP_Player", search_term="Location")
+        
+        # Combined filtering: Audio category with "Play" in the name
+        get_available_blueprint_nodes("BP_Player", category="Audio", search_term="Play")
         
         # Find variable operations
         get_available_blueprint_nodes("BP_Player", category="Variables")
@@ -280,6 +288,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         payload = {
             "blueprint_name": blueprint_name,
             "category": category,
+            "search_term": search_term,
             "graph_scope": graph_scope,
             "include_functions": include_functions,
             "include_variables": include_variables,
