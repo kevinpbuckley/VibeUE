@@ -25,6 +25,41 @@ This documentation contains everything you need to use the VibeUE MCP system eff
 3. Always check the `success` field in responses
 4. Use `get_umg_guide()` for UMG-specific workflow guidance
 
+## 🏗️ Blueprint Development Workflow
+
+**CRITICAL DEPENDENCY ORDER for Blueprint Function Development:**
+
+### Phase 1: Foundation
+1. **Create Blueprint** (`create_blueprint`)
+2. **Create Blueprint Variables** (`manage_blueprint_variables`)
+3. **Create Components** (`add_component`)
+
+### Phase 2: Function Structure
+4. **Create Functions** (`manage_blueprint_function` with `create_function`)
+5. **Add Function Parameters** (`manage_blueprint_function` with `add_parameter`)
+6. **Add Local Variables** (`manage_blueprint_function` with `add_local_variable`)
+
+### Phase 3: Function Implementation  
+7. **Create Nodes** (`manage_blueprint_node` with `create_node`)
+8. **Connect Nodes** (`manage_blueprint_node` with `connect_pins`)
+9. **Test Compilation** (`compile_blueprint`)
+
+### Phase 4: Event Graph
+10. **Create Event Graph Nodes** (using Event Graph context)
+11. **Final Compilation and Testing**
+
+**⚠️ NEVER add nodes to functions before completing phases 1-2. This causes "ERROR!" states in Blueprint graphs.**
+
+**✅ Success Pattern:**
+```
+Dependencies Ready → Structure Complete → Implementation → Testing
+```
+
+**❌ Common Failure:**
+```  
+Create Function → Add Nodes Immediately (Missing dependencies!) → Broken Blueprint
+```
+
 ---
 
 ## 📋 Tool Categories
@@ -107,6 +142,58 @@ These tools use an `action` parameter to perform different operations. Each acti
 **Purpose:** Complete function lifecycle management with local variable support.
 
 **Note:** This tool replaces the old `list_blueprint_functions` tool - use `list_functions` action instead.
+
+#### 🚨 CRITICAL: Function Building Dependencies
+
+**ALWAYS ensure these dependencies are met BEFORE adding nodes to a function:**
+
+1. **Dependent Functions**: Any functions that your function will call must already exist with their input and output parameters properly defined.
+   ```python
+   # Example: If CalculateHealth calls ValidateInput function
+   # First create ValidateInput with proper parameters
+   manage_blueprint_function(
+       blueprint_name="BP_Player",
+       action="create_function",
+       function_name="ValidateInput",
+       ctx={}
+   )
+   # Add parameters to ValidateInput...
+   # THEN create CalculateHealth that calls it
+   ```
+
+2. **Blueprint Variables**: All Blueprint-level variables that the function will reference must already exist.
+   ```python
+   # Example: If function uses Health variable
+   # First create the Blueprint variable
+   manage_blueprint_variables(
+       blueprint_name="BP_Player",
+       action="create",
+       variable_name="Health",
+       variable_config={"type": "float"}
+   )
+   # THEN create the function that references Health
+   ```
+
+3. **Local Function Variables**: Any local variables needed within the function must be created before adding nodes.
+   ```python
+   # Example: Create local variable in function first
+   manage_blueprint_function(
+       blueprint_name="BP_Player",
+       action="add_local_variable",
+       function_name="CalculateHealth",
+       variable_name="TempModifier",
+       variable_type="float"
+   )
+   # THEN add nodes that use TempModifier
+   ```
+
+**Dependency Order Workflow:**
+```
+1. Create Blueprint Variables → 2. Create Dependent Functions → 3. Add Function Parameters → 
+4. Add Local Variables → 5. Add Nodes to Function → 6. Connect Nodes
+```
+
+**Why This Matters:** Nodes that reference non-existent variables or functions will cause compilation errors and broken Blueprint graphs. Following this dependency order prevents the "ERROR!" states in functions.
 
 #### Actions Available:
 
@@ -243,6 +330,34 @@ manage_blueprint_function(
 ### `manage_blueprint_node` - Node Operations
 
 **Purpose:** Complete node lifecycle and connection management for Blueprint graphs.
+
+> ✅ **Update (Sept 2025):** The reflection layer now resolves external targets when
+> you supply class hints. Include `node_params.function_name` with
+> `node_params.function_class` (or `FunctionReference.MemberParent`) to spawn fully
+> wired static/global calls such as `GameplayStatics::GetPlayerController`. Provide
+> `node_params.cast_target` (soft class path or Blueprint class name) to configure
+> `Cast To <Class>` nodes automatically. Pins populate immediately, eliminating the
+> manual cleanup required by earlier builds.
+
+#### ⚠️ DEPENDENCY REQUIREMENTS
+
+**Before adding nodes to any function, verify:**
+
+1. **All referenced variables exist** (Blueprint variables, function parameters, local variables)
+2. **All called functions exist** with proper input/output parameters defined
+3. **Function signature is complete** (parameters added via `manage_blueprint_function`)
+4. **Dependencies are satisfied** (see manage_blueprint_function section for full workflow)
+
+**Common Node Creation Failures:**
+- `Variable Get/Set nodes`: Variable doesn't exist → Create variable first
+- `Function Call nodes`: Target function missing parameters → Add parameters first  
+- `Cast nodes`: Target class unknown → Verify class name and availability
+- `Connection failures`: Pin names don't match → Use `get_node_details` to verify pin names
+
+**Recommended Workflow:**
+```
+Dependencies Ready → Create Nodes → Connect Pins → Test Compilation
+```
 
 #### Actions Available:
 
@@ -483,6 +598,33 @@ var_types = get_available_blueprint_variable_types()
 
 ### Blueprint Issues  
 - Always `compile_blueprint()` after changes
+- Use `get_blueprint_info()` to verify Blueprint structure
+
+### Function Development Issues
+**"ERROR!" nodes in Blueprint graphs:**
+- ❌ **Root Cause**: Dependencies missing when nodes were created
+- ✅ **Solution**: Delete broken functions, recreate with proper dependency order
+
+**Function Creation Failures:**
+```python
+# ❌ WRONG: Create function and add nodes immediately
+manage_blueprint_function("BP_Player", "create_function", function_name="Test")
+manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # FAILS!
+
+# ✅ RIGHT: Follow dependency order
+# 1. Create variable first
+manage_blueprint_variables("BP_Player", "create", variable_name="Health", variable_config={"type": "float"})
+# 2. Create function
+manage_blueprint_function("BP_Player", "create_function", function_name="Test")
+# 3. Now create nodes that reference existing dependencies
+manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # SUCCESS!
+```
+
+**Function Compilation Errors:**
+- **Node reference failures**: Missing variables/functions → Create dependencies first
+- **Parameter mismatches**: Function signature incomplete → Add all parameters before nodes
+- **Connection failures**: Pin names don't exist → Use `get_node_details()` to verify pins
+- **Recovery**: Delete function with `delete_function`, recreate with proper workflow
 - Use `get_blueprint_info()` to understand structure
 - Check variable types with reflection tools
 - Test functions in isolation
@@ -490,7 +632,49 @@ var_types = get_available_blueprint_variable_types()
 
 ---
 
-## 💡 Pro Tips
+## � Function Building Quick Reference
+
+**Essential Checklist Before Adding Nodes:**
+
+```python
+# ✅ REQUIRED DEPENDENCIES CHECKLIST:
+
+# 1. Blueprint Variables Created?
+manage_blueprint_variables("BP_Player", "create", variable_name="Health", variable_config={"type": "float"})
+
+# 2. Dependent Functions Created with Parameters?  
+manage_blueprint_function("BP_Player", "create_function", function_name="ValidateInput")
+manage_blueprint_function("BP_Player", "add_parameter", function_name="ValidateInput", 
+                         param_name="InputValue", direction="input", type="float")
+
+# 3. Target Function Created with Complete Signature?
+manage_blueprint_function("BP_Player", "create_function", function_name="ProcessData") 
+manage_blueprint_function("BP_Player", "add_parameter", function_name="ProcessData",
+                         param_name="Data", direction="input", type="float")
+manage_blueprint_function("BP_Player", "add_parameter", function_name="ProcessData", 
+                         param_name="Result", direction="output", type="bool")
+
+# 4. Local Variables Added?
+manage_blueprint_function("BP_Player", "add_local_variable", function_name="ProcessData",
+                         variable_name="TempValue", variable_type="float")
+
+# ✅ NOW SAFE TO ADD NODES:
+manage_blueprint_node("BP_Player", "create_node", node_type="Get Health",
+                     graph_scope="function", function_name="ProcessData")
+```
+
+**Recovery from Broken Functions:**
+```python
+# Delete all broken functions
+manage_blueprint_function("BP_Player", "delete_function", function_name="BrokenFunction")
+# Compile to clear errors
+compile_blueprint("BP_Player") 
+# Recreate with proper workflow (dependencies first!)
+```
+
+---
+
+## �💡 Pro Tips
 
 1. **Performance**: Use full asset paths from search results for faster operations
 2. **Reliability**: Check `success` field on every tool response 

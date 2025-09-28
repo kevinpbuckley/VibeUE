@@ -327,16 +327,32 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             // Check if the result contains an error
             bool bSuccess = true;
             FString ErrorMessage;
-            
+
             if (ResultJson->HasField(TEXT("success")))
             {
                 bSuccess = ResultJson->GetBoolField(TEXT("success"));
-                if (!bSuccess && ResultJson->HasField(TEXT("error")))
+                if (!bSuccess)
                 {
-                    ErrorMessage = ResultJson->GetStringField(TEXT("error"));
+                    // Prefer explicit 'error', but fall back to 'message' or serialize full object
+                    if (ResultJson->HasField(TEXT("error")))
+                    {
+                        ErrorMessage = ResultJson->GetStringField(TEXT("error"));
+                    }
+                    else if (ResultJson->HasField(TEXT("message")))
+                    {
+                        ErrorMessage = ResultJson->GetStringField(TEXT("message"));
+                    }
+                    else
+                    {
+                        // Last resort: serialize the inner object for diagnostics
+                        FString Tmp;
+                        TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Tmp);
+                        FJsonSerializer::Serialize(ResultJson.ToSharedRef(), W);
+                        ErrorMessage = Tmp;
+                    }
                 }
             }
-            
+
             if (bSuccess)
             {
                 // Set success status and include the result
@@ -345,9 +361,16 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             }
             else
             {
-                // Set error status and include the error message
+                // Set error status and include the error message and full inner result for debugging
                 ResponseJson->SetStringField(TEXT("status"), TEXT("error"));
                 ResponseJson->SetStringField(TEXT("error"), ErrorMessage);
+                ResponseJson->SetObjectField(TEXT("result"), ResultJson);
+
+                // Optional: surface a machine-readable error code if provided by inner result
+                if (ResultJson->HasField(TEXT("code")))
+                {
+                    ResponseJson->SetField(TEXT("error_code"), ResultJson->TryGetField(TEXT("code")));
+                }
             }
         }
         catch (const std::exception& e)

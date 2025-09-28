@@ -2,9 +2,9 @@
 #include "Commands/CommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
+#include "Commands/BlueprintVariableReflectionServices.h"
 
-// Forward declarations
-class UWidgetBlueprint;
+#include "WidgetBlueprint.h"
 #include "Factories/BlueprintFactory.h"
 #include "EdGraphSchema_K2.h"
 #include "Blueprint/UserWidget.h"
@@ -109,30 +109,80 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
     // Get required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
+    FString RawBlueprintName;
+    if (!Params->TryGetStringField(TEXT("name"), RawBlueprintName))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
     }
 
-    // Check if blueprint already exists
+    auto NormalizePackagePath = [](FString InPath) -> FString
+    {
+        InPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+        InPath.TrimStartAndEndInline();
+        while (InPath.EndsWith(TEXT("/")))
+        {
+            InPath.LeftChopInline(1);
+        }
+        if (!InPath.StartsWith(TEXT("/")) && !InPath.IsEmpty())
+        {
+            InPath = TEXT("/") + InPath;
+        }
+        return InPath;
+    };
+
+    FString CleanName = RawBlueprintName;
+    CleanName.ReplaceInline(TEXT("\\"), TEXT("/"));
+    CleanName.TrimStartAndEndInline();
+
     FString PackagePath;
-    if (!Params->TryGetStringField(TEXT("path"), PackagePath))
+    FString AssetName;
+
+    if (CleanName.Contains(TEXT("/")))
     {
-        // Default to /Game/Blueprints/ if no path specified
-        PackagePath = TEXT("/Game/Blueprints/");
+        FString PackagePart = CleanName;
+        FString ObjectName;
+
+        if (CleanName.Contains(TEXT(".")))
+        {
+            CleanName.Split(TEXT("."), &PackagePart, &ObjectName);
+        }
+
+        PackagePart.TrimEndInline();
+        while (PackagePart.EndsWith(TEXT("/")))
+        {
+            PackagePart.LeftChopInline(1);
+        }
+
+        int32 LastSlashIndex = INDEX_NONE;
+        if (PackagePart.FindLastChar(TEXT('/'), LastSlashIndex))
+        {
+            AssetName = ObjectName.IsEmpty() ? PackagePart.Mid(LastSlashIndex + 1) : ObjectName;
+            PackagePath = PackagePart.Left(LastSlashIndex);
+        }
     }
-    
-    // Ensure path ends with slash
-    if (!PackagePath.EndsWith(TEXT("/")))
+
+    if (PackagePath.IsEmpty() || AssetName.IsEmpty())
     {
-        PackagePath += TEXT("/");
+        AssetName = CleanName;
+        if (!Params->TryGetStringField(TEXT("path"), PackagePath))
+        {
+            PackagePath = TEXT("/Game/Blueprints");
+        }
     }
-    
-    FString AssetName = BlueprintName;
-    if (UEditorAssetLibrary::DoesAssetExist(PackagePath + AssetName))
+
+    PackagePath = NormalizePackagePath(PackagePath);
+
+    if (PackagePath.IsEmpty())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint already exists: %s"), *BlueprintName));
+        PackagePath = TEXT("/Game/Blueprints");
+    }
+
+    const FString FullAssetPath = PackagePath + TEXT("/") + AssetName;
+
+    // Check if blueprint already exists
+    if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint already exists: %s"), *FullAssetPath));
     }
 
     // Create the blueprint factory
@@ -148,50 +198,79 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedP
     // Try to find the specified parent class
     if (!ParentClass.IsEmpty())
     {
-        FString ClassName = ParentClass;
-        if (!ClassName.StartsWith(TEXT("A")))
-        {
-            ClassName = TEXT("A") + ClassName;
-        }
-        
-        // First try direct StaticClass lookup for common classes
-        UClass* FoundClass = nullptr;
-        if (ClassName == TEXT("APawn"))
-        {
-            FoundClass = APawn::StaticClass();
-        }
-        else if (ClassName == TEXT("AActor"))
-        {
-            FoundClass = AActor::StaticClass();
-        }
-        else
-        {
-            // Try loading the class using LoadClass which is more reliable than FindObject
-            const FString ClassPath = FString::Printf(TEXT("/Script/Engine.%s"), *ClassName);
-            FoundClass = LoadClass<AActor>(nullptr, *ClassPath);
-            
-            if (!FoundClass)
-            {
-                // Try alternate paths if not found
-                const FString GameClassPath = FString::Printf(TEXT("/Script/Game.%s"), *ClassName);
-                FoundClass = LoadClass<AActor>(nullptr, *GameClassPath);
-            }
-        }
+        FString ClassDescriptor = ParentClass;
+        ClassDescriptor.TrimStartAndEndInline();
+        ClassDescriptor.ReplaceInline(TEXT("\\"), TEXT("/"));
 
-        if (FoundClass)
+        auto TryLoadParentClass = [](const FString& Descriptor) -> UClass*
         {
-            SelectedParentClass = FoundClass;
-        }
-        else
+            if (Descriptor.IsEmpty())
+            {
+                return nullptr;
+            }
+
+            // Full path descriptors can be loaded directly.
+            if (Descriptor.Contains(TEXT("/")))
+            {
+                if (UClass* Loaded = LoadObject<UClass>(nullptr, *Descriptor))
+                {
+                    return Loaded;
+                }
+            }
+
+            // Try existing objects in memory.
+            if (UClass* Existing = FindObject<UClass>(ANY_PACKAGE, *Descriptor))
+            {
+                return Existing;
+            }
+
+            // Try loading from common script modules.
+            static const TArray<FString> ModuleHints = {
+                TEXT("Engine"),
+                TEXT("Game"),
+                TEXT("PROTEUS")
+            };
+
+            FString CandidateBase = Descriptor;
+
+            // Generate a handful of permutations (with/without leading 'A').
+            TArray<FString> NamePermutations;
+            NamePermutations.Add(CandidateBase);
+            if (!CandidateBase.StartsWith(TEXT("A")))
+            {
+                NamePermutations.Add(TEXT("A") + CandidateBase);
+            }
+
+            for (const FString& NameVariant : NamePermutations)
+            {
+                if (UClass* ExistingVariant = FindObject<UClass>(ANY_PACKAGE, *NameVariant))
+                {
+                    return ExistingVariant;
+                }
+
+                for (const FString& ModuleName : ModuleHints)
+                {
+                    const FString ModulePath = FString::Printf(TEXT("/Script/%s.%s"), *ModuleName, *NameVariant);
+                    if (UClass* LoadedVariant = LoadObject<UClass>(nullptr, *ModulePath))
+                    {
+                        return LoadedVariant;
+                    }
+                }
+            }
+
+            return nullptr;
+        };
+
+        if (UClass* ResolvedParent = TryLoadParentClass(ClassDescriptor))
         {
-            /* cleanup: keep defaulting silently when class not found */
+            SelectedParentClass = ResolvedParent;
         }
     }
     
     Factory->ParentClass = SelectedParentClass;
 
     // Create the blueprint
-    UPackage* Package = CreatePackage(*(PackagePath + AssetName));
+    UPackage* Package = CreatePackage(*FullAssetPath);
     UBlueprint* NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(UBlueprint::StaticClass(), Package, *AssetName, RF_Standalone | RF_Public, nullptr, GWarn));
 
     if (NewBlueprint)
@@ -204,7 +283,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedP
 
         TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
         ResultObj->SetStringField(TEXT("name"), AssetName);
-        ResultObj->SetStringField(TEXT("path"), PackagePath + AssetName);
+        ResultObj->SetStringField(TEXT("path"), FullAssetPath);
         return ResultObj;
     }
 
@@ -1935,7 +2014,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetAvailableBlueprintVariableT
         AddBasicType(TEXT("Name"), TEXT("PC_Name"), TEXT("Unreal name identifier"), TEXT("None"));
         AddBasicType(TEXT("String"), TEXT("PC_String"), TEXT("Text string value"), TEXT(""));
         AddBasicType(TEXT("Text"), TEXT("PC_Text"), TEXT("Localizable text value"), TEXT(""));
-        
+
         // Add common struct types
         auto AddStructType = [&](const FString& TypeName, const FString& StructName, const FString& Description, const FString& DefaultValue)
         {
@@ -2552,7 +2631,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSha
     
     // Get the value - it might be a JSON value or a string that needs parsing
     TSharedPtr<FJsonValue> InVal = Params->Values.FindRef(TEXT("value"));
-    
     // If the value is a string, try to parse it as JSON for arrays/objects, or convert to appropriate type
     if (InVal->Type == EJson::String)
     {
@@ -2850,6 +2928,14 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"));
     }
 
+    // Flip: route to reflection path by default; maintains old path only if explicitly requested
+    bool bLegacyPath = false;
+    Params->TryGetBoolField(TEXT("use_legacy"), bLegacyPath);
+    if (!bLegacyPath)
+    {
+        return FBlueprintVariableCommandContext::Get().ExecuteCommand(Action, Params);
+    }
+
     // Route to appropriate operation based on action
     if (Action == TEXT("create"))
     {
@@ -2871,13 +2957,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
     {
         return HandleGetVariableInfoOperation(Params);
     }
-    else if (Action == TEXT("get_property"))
+    else if (Action == TEXT("get_property") || Action == TEXT("set_property") || Action == TEXT("diagnostics") || Action == TEXT("search_types"))
     {
-        return HandleGetPropertyOperation(Params);
-    }
-    else if (Action == TEXT("set_property"))
-    {
-        return HandleSetPropertyOperation(Params);
+        // Even if legacy is requested, these are best handled by the reflection path
+        return FBlueprintVariableCommandContext::Get().ExecuteCommand(Action, Params);
     }
     else if (Action == TEXT("search_types"))
     {
@@ -3487,8 +3570,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSh
             continue;
         }
 
-        const bool bBlueprintVisible = Struct->HasMetaData(TEXT("BlueprintType")) ||
-            Struct->GetBoolMetaDataHierarchical(TEXT("BlueprintType"));
+        const bool bBlueprintVisible = Struct->HasMetaData(TEXT("BlueprintType"));
 
         if (!bBlueprintVisible)
         {

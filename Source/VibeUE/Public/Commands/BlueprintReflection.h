@@ -12,6 +12,7 @@ class UK2Node_CallFunction;
 class UK2Node_VariableGet;
 class UK2Node_VariableSet;
 class UK2Node_Event;
+class UK2Node_DynamicCast;
 
 /**
  * Blueprint reflection helper for dynamic node discovery and manipulation
@@ -70,6 +71,7 @@ public:
     static void ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
     static void ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
     static void ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams);
+    static void ConfigureDynamicCastNode(UK2Node_DynamicCast* CastNode, const TSharedPtr<FJsonObject>& NodeParams);
 
 private:
     // Internal reflection helpers (simplified)

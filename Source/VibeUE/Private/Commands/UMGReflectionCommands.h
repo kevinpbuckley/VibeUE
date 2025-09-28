@@ -3,6 +3,10 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
+// Forward declarations to avoid heavy includes in header
+class UWidgetBlueprint;
+class UWidget;
+
 /**
  * UMG Reflection Commands - Generic widget discovery and creation using reflection
  * 

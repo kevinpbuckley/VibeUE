@@ -70,24 +70,32 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
     ) -> Dict[str, Any]:
         """
         🛠️ **MULTI-ACTION BLUEPRINT NODE MANAGER**: Universal tool for all Blueprint node operations.
-        
+
+        ✨ **External Targets Supported (Sept 2025)**: Supply the optional metadata fields below to spawn fully configured
+        nodes for engine helpers and Blueprint casts without manual cleanup.
+        - `node_params.function_name` + `node_params.function_class` (or `FunctionReference.MemberParent`) for
+          static/global calls such as `UGameplayStatics::GetPlayerController`.
+        - `node_params.cast_target` (soft class path or Blueprint class name) for `Cast To <Class>` nodes.
+        The server now resolves these descriptors, loads the referenced class, and reconstructs the node so the expected
+        pins appear immediately.
+
         ## Supported Actions:
         - **create**: Create new nodes (requires node_type from get_available_blueprint_nodes())
         - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
-        - **disconnect**: Disconnect pins (requires source/target node_id and pin names) 
+        - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
         - **delete**: Remove nodes (requires node_id)
         - **move**: Reposition nodes (requires node_id and position)
         - **list**: List all nodes in graph (returns node inventory)
         - **get_details**: Get detailed node information (requires node_id)
         - **configure**: Set node properties (requires node_id, property_name, property_value)
-        
+
         ## Context Requirements:
-        - **graph_scope**: "event" (Event Graph) or "function" (Function Graph) 
+        - **graph_scope**: "event" (Event Graph) or "function" (Function Graph)
         - **function_name**: Required when graph_scope="function" - specify target function name
         - **blueprint_name**: Always required - target Blueprint name
-        
+
         ## Multi-Action Usage Patterns:
-        
+
         ### Pattern 1: Node Creation Workflow
         ```python
         # 1. Discover → 2. Create → 3. Position → 4. Configure
@@ -96,51 +104,51 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         node_id = result["node_id"]
         manage_blueprint_node("BP_Player", action="move", node_id=node_id, position=[200, 100])
         ```
-        
+
         ### Pattern 2: Node Connection Workflow
         ```python
         # List → Identify → Connect → Verify
         nodes = manage_blueprint_node("BP_Player", action="list")
-        manage_blueprint_node("BP_Player", action="connect", 
-                            source_node_id="EventBeginPlay_1", source_pin="exec",
-                            target_node_id="Branch_2", target_pin="exec")
+        manage_blueprint_node("BP_Player", action="connect",
+                              source_node_id="EventBeginPlay_1", source_pin="exec",
+                              target_node_id="Branch_2", target_pin="exec")
         ```
-        
+
         ### Pattern 3: Function Graph Operations
         ```python
         # Function context requires function_name
         manage_blueprint_node("BP_Player", action="create", graph_scope="function",
-                            function_name="CalculateHealth", node_type="Add", position=[100, 50])
+                              function_name="CalculateHealth", node_type="Add", position=[100, 50])
         ```
-        
+
         ## Action-Specific Parameters:
-        
+
         **create**: node_type (required), position (optional), node_params (optional)
         **connect**: source_node_id, source_pin, target_node_id, target_pin
-        **disconnect**: source_node_id, source_pin, target_node_id, target_pin  
+        **disconnect**: source_node_id, source_pin, target_node_id, target_pin
         **delete**: node_id
         **move**: node_id, position
         **list**: (no additional parameters)
         **get_details**: node_id
         **configure**: node_id, property_name, property_value
-        
+
         ## Pin Connection Guide:
         Common pin names for connections:
         - **Execution**: "exec" (out) → "exec" (in)
-        - **Boolean**: "Return Value" → "Condition"  
+        - **Boolean**: "Return Value" → "Condition"
         - **Variables**: "Return Value" → parameter names
         - **Function Calls**: "Return Value" → input parameter names
-        
+
         ⚠️ **CRITICAL**: Always use get_available_blueprint_nodes() before action="create" to get exact node_type names.
-        
+
         🔧 **Advanced Multi-Action Examples**:
         ```python
         # Create variable getter, position it, connect to branch
         getter = manage_blueprint_node("BP_Player", "create", node_type="Get Health")
         manage_blueprint_node("BP_Player", "move", node_id=getter["node_id"], position=[0, 100])
         manage_blueprint_node("BP_Player", "connect",
-                            source_node_id=getter["node_id"], source_pin="Health",
-                            target_node_id="Branch_1", target_pin="Condition")
+                              source_node_id=getter["node_id"], source_pin="Health",
+                              target_node_id="Branch_1", target_pin="Condition")
         ```
         """
 

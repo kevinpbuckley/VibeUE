@@ -7,6 +7,7 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_DynamicCast.h"
+#include "K2Node_SpawnActorFromClass.h"
 #include "K2Node_Self.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraphSchema_K2.h"
@@ -20,6 +21,8 @@
 #include "BlueprintActionDatabaseRegistrar.h"
 #include "BlueprintNodeSpawner.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Commands/CommonUtils.h"
+#include "UObject/SoftObjectPath.h"
 
 // Declare the log category
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUEReflection, Log, All);
@@ -28,6 +31,124 @@ DEFINE_LOG_CATEGORY_STATIC(LogVibeUEReflection, Log, All);
 TArray<FBlueprintReflection::FNodeCategory> FBlueprintReflection::CachedNodeCategories;
 bool FBlueprintReflection::bCategoriesInitialized = false;
 TMap<FString, UClass*> FBlueprintReflection::NodeTypeMap;
+
+namespace
+{
+    UClass* ResolveClassDescriptor(const FString& Descriptor)
+    {
+        FString Trimmed = Descriptor;
+        Trimmed.TrimStartAndEndInline();
+        Trimmed.TrimQuotesInline();
+
+        if (Trimmed.IsEmpty())
+        {
+            return nullptr;
+        }
+
+        auto TryLoadClass = [](const FString& Path) -> UClass*
+        {
+            if (Path.IsEmpty())
+            {
+                return nullptr;
+            }
+
+            if (UClass* Existing = FindObject<UClass>(ANY_PACKAGE, *Path))
+            {
+                return Existing;
+            }
+
+            if (UClass* Loaded = LoadObject<UClass>(nullptr, *Path))
+            {
+                return Loaded;
+            }
+
+            return nullptr;
+        };
+
+        // Direct attempts (raw string, potential BlueprintGeneratedClass tokens)
+        if (UClass* Direct = TryLoadClass(Trimmed))
+        {
+            return Direct;
+        }
+
+        // Soft class path support
+        const FSoftClassPath SoftClassPath(Trimmed);
+        if (SoftClassPath.IsValid())
+        {
+            if (UClass* SoftClass = SoftClassPath.TryLoadClass<UObject>())
+            {
+                return SoftClass;
+            }
+        }
+
+        // Extract inner path if wrapped in type quotes (e.g. Class'/Script/Engine.GameplayStatics')
+        if (Trimmed.Contains(TEXT("'")))
+        {
+            int32 FirstQuoteIndex;
+            if (Trimmed.FindChar('\'', FirstQuoteIndex))
+            {
+                const FString AfterQuote = Trimmed.Mid(FirstQuoteIndex + 1);
+                int32 SecondQuoteIndex;
+                if (AfterQuote.FindChar('\'', SecondQuoteIndex))
+                {
+                    const FString InnerPath = AfterQuote.Left(SecondQuoteIndex);
+                    if (UClass* FromInner = TryLoadClass(InnerPath))
+                    {
+                        return FromInner;
+                    }
+                }
+            }
+        }
+
+        // Blueprint paths – add explicit type prefixes so StaticLoad can resolve them
+        if (Trimmed.Contains(TEXT("/")))
+        {
+            const FString ClassQualified = FString::Printf(TEXT("Class'%s'"), *Trimmed);
+            if (UClass* FromClassQualified = TryLoadClass(ClassQualified))
+            {
+                return FromClassQualified;
+            }
+
+            const FString BlueprintQualified = FString::Printf(TEXT("BlueprintGeneratedClass'%s'"), *Trimmed);
+            if (UClass* FromBlueprintQualified = TryLoadClass(BlueprintQualified))
+            {
+                return FromBlueprintQualified;
+            }
+        }
+
+        // Script classes without explicit path
+        if (Trimmed.StartsWith(TEXT("/Script/")))
+        {
+            const FString ClassQualified = FString::Printf(TEXT("Class'%s'"), *Trimmed);
+            if (UClass* FromScript = TryLoadClass(ClassQualified))
+            {
+                return FromScript;
+            }
+        }
+
+        // Add common suffix/prefix variants
+        if (!Trimmed.EndsWith(TEXT("_C")))
+        {
+            const FString WithSuffix = Trimmed + TEXT("_C");
+            if (UClass* WithSuffixClass = TryLoadClass(WithSuffix))
+            {
+                return WithSuffixClass;
+            }
+        }
+
+        if (!Trimmed.StartsWith(TEXT("U")) && !Trimmed.StartsWith(TEXT("A")))
+        {
+            const FString UPrefixed = TEXT("U") + Trimmed;
+            if (UClass* PrefixedClass = TryLoadClass(UPrefixed))
+            {
+                return PrefixedClass;
+            }
+        }
+
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ResolveClassDescriptor: failed to resolve class from '%s'"), *Descriptor);
+        return nullptr;
+    }
+}
 
 FBlueprintReflection::FBlueprintReflection()
 {
@@ -236,9 +357,6 @@ namespace
                 return ResponseObject;
             }
 
-            // Ensure the node has a deterministic GUID so downstream tooling can locate it
-            NewNode->CreateNewGuid();
-
             FVector2D NodePosition(200.0f, 200.0f);
             if (NodeParams.IsValid())
             {
@@ -250,17 +368,47 @@ namespace
                 }
             }
 
+            // Match standard graph spawning behavior so nodes fully initialize their state
+            NewNode->SetFlags(RF_Transactional);
+            TargetGraph->AddNode(NewNode, true, true);
+
+            // Ensure the node has a deterministic GUID so downstream tooling can locate it
+            NewNode->CreateNewGuid();
+
             NewNode->NodePosX = NodePosition.X;
             NewNode->NodePosY = NodePosition.Y;
 
-            TargetGraph->AddNode(NewNode, true, true);
+            const bool bIsCallFunctionNode = NewNode->IsA<UK2Node_CallFunction>();
+            const bool bIsSpawnActorNode = NewNode->IsA<UK2Node_SpawnActorFromClass>();
 
-            NewNode->AllocateDefaultPins();
+            if (!bIsCallFunctionNode && !bIsSpawnActorNode)
+            {
+                // Allow node classes to perform any post-placement initialization they need
+                NewNode->PostPlacedNewNode();
+            }
+
+            // Allocate baseline pins for most nodes so they start with expected default layout.
+            // Function call nodes and SpawnActor nodes defer pin allocation until after configuration
+            // to ensure the correct signature/class is available when pins are created.
+            if (!bIsCallFunctionNode && !bIsSpawnActorNode)
+            {
+                NewNode->AllocateDefaultPins();
+            }
 
             if (NodeParams.IsValid())
             {
                 FBlueprintReflection::ConfigureNodeFromParameters(NewNode, NodeParams);
             }
+
+            if (bIsCallFunctionNode || bIsSpawnActorNode)
+            {
+                // Function and SpawnActor nodes need their post-placement logic executed after 
+                // configuration so they can finish initializing pin defaults.
+                NewNode->PostPlacedNewNode();
+            }
+
+            // Function call nodes and SpawnActor nodes allocate pins during configuration.
+            // No further action needed here.
 
             NewNode->ReconstructNode();
 
@@ -448,7 +596,7 @@ void FBlueprintReflection::ConfigureNodeFromParameters(UK2Node* Node, const TSha
     if (!Node || !NodeParams.IsValid())
         return;
         
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Configuring node %s with parameters"), *Node->GetClass()->GetName());
+    UE_LOG(LogVibeUEReflection, Log, TEXT("Configuring node %s with parameters [Enhanced Reflection]"), *Node->GetClass()->GetName());
     
     // Configure node-specific properties based on node type
     if (UK2Node_CallFunction* FunctionNode = Cast<UK2Node_CallFunction>(Node))
@@ -462,6 +610,30 @@ void FBlueprintReflection::ConfigureNodeFromParameters(UK2Node* Node, const TSha
     else if (UK2Node_VariableSet* VariableSetNode = Cast<UK2Node_VariableSet>(Node))
     {
         ConfigureVariableSetNode(VariableSetNode, NodeParams);
+    }
+    else if (UK2Node_DynamicCast* CastNode = Cast<UK2Node_DynamicCast>(Node))
+    {
+        ConfigureDynamicCastNode(CastNode, NodeParams);
+    }
+    else if (UK2Node_SpawnActorFromClass* SpawnActorNode = Cast<UK2Node_SpawnActorFromClass>(Node))
+    {
+        // Configure SpawnActor node - must set class before AllocateDefaultPins
+        FString ClassDescriptor;
+        if (NodeParams->TryGetStringField(TEXT("class"), ClassDescriptor) && !ClassDescriptor.IsEmpty())
+        {
+            if (UClass* TargetClass = ResolveClassDescriptor(ClassDescriptor))
+            {
+                SpawnActorNode->Modify();
+                if (UEdGraphPin* ClassPin = SpawnActorNode->GetClassPin())
+                {
+                    ClassPin->DefaultObject = TargetClass;
+                }
+                UE_LOG(LogVibeUEReflection, Log, TEXT("Set SpawnActor class to: %s"), *TargetClass->GetName());
+            }
+        }
+        // Always allocate pins for SpawnActor nodes after class configuration
+        SpawnActorNode->AllocateDefaultPins();
+        SpawnActorNode->ReconstructNode();
     }
     else if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
     {
@@ -488,27 +660,99 @@ void FBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionN
 {
     if (!FunctionNode)
         return;
-        
+
     FString FunctionName;
-    if (NodeParams->TryGetStringField(TEXT("function_name"), FunctionName))
+    if (!NodeParams->TryGetStringField(TEXT("function_name"), FunctionName))
     {
-        // Find the function in the available functions
-        if (UClass* TargetClass = FunctionNode->GetBlueprint()->GeneratedClass)
+        const TSharedPtr<FJsonObject>* FunctionReference = nullptr;
+        if (NodeParams->TryGetObjectField(TEXT("FunctionReference"), FunctionReference) && FunctionReference && (*FunctionReference)->TryGetStringField(TEXT("MemberName"), FunctionName))
         {
-            if (UFunction* Function = TargetClass->FindFunctionByName(*FunctionName))
+            // extracted from nested reference
+        }
+    }
+
+    FString ClassDescriptor;
+    if (!NodeParams->TryGetStringField(TEXT("function_class"), ClassDescriptor))
+    {
+        const TSharedPtr<FJsonObject>* FunctionReference = nullptr;
+        if (NodeParams->TryGetObjectField(TEXT("FunctionReference"), FunctionReference) && FunctionReference)
+        {
+            (*FunctionReference)->TryGetStringField(TEXT("MemberParent"), ClassDescriptor);
+        }
+    }
+
+    if (ClassDescriptor.IsEmpty())
+    {
+        NodeParams->TryGetStringField(TEXT("target_class"), ClassDescriptor);
+    }
+
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Requested function '%s' on descriptor '%s'"), *FunctionName, *ClassDescriptor);
+
+    UClass* TargetClass = nullptr;
+    if (!ClassDescriptor.IsEmpty())
+    {
+        TargetClass = ResolveClassDescriptor(ClassDescriptor);
+        if (TargetClass)
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Resolved target class '%s'"), *TargetClass->GetName());
+        }
+    }
+
+    if (!TargetClass)
+    {
+        if (UBlueprint* Blueprint = FunctionNode->GetBlueprint())
+        {
+            TargetClass = Blueprint->GeneratedClass;
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Falling back to blueprint generated class '%s'"), TargetClass ? *TargetClass->GetName() : TEXT("<null>"));
+        }
+    }
+
+    if (!TargetClass || FunctionName.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Unable to resolve target class or function (class='%s', function='%s')"), *ClassDescriptor, *FunctionName);
+        return;
+    }
+
+    UFunction* ResolvedFunction = TargetClass->FindFunctionByName(*FunctionName);
+    if (!ResolvedFunction)
+    {
+        for (UClass* ClassIt = TargetClass->GetSuperClass(); ClassIt && !ResolvedFunction; ClassIt = ClassIt->GetSuperClass())
+        {
+            ResolvedFunction = ClassIt->FindFunctionByName(*FunctionName);
+        }
+    }
+
+    if (!ResolvedFunction)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Failed to locate function '%s' on class '%s'"), *FunctionName, *TargetClass->GetName());
+        return;
+    }
+
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Binding to '%s::%s'"), *ResolvedFunction->GetOuterUClass()->GetName(), *ResolvedFunction->GetName());
+
+    const bool bIsStaticFunction = ResolvedFunction->HasAnyFunctionFlags(FUNC_Static);
+
+    bool bShouldUseSelfContext = bIsStaticFunction;
+
+    if (!bIsStaticFunction)
+    {
+        if (UBlueprint* OwningBlueprint = FunctionNode->GetBlueprint())
+        {
+            UClass* SelfClass = OwningBlueprint->GeneratedClass ? OwningBlueprint->GeneratedClass->GetAuthoritativeClass() : nullptr;
+            if (SelfClass && TargetClass && (SelfClass == TargetClass || SelfClass->IsChildOf(TargetClass)))
             {
-                FunctionNode->SetFromFunction(Function);
-                UE_LOG(LogVibeUEReflection, Log, TEXT("Set function node to call: %s"), *FunctionName);
+                bShouldUseSelfContext = true;
             }
         }
     }
-    
-    FString TargetClass;
-    if (NodeParams->TryGetStringField(TEXT("target_class"), TargetClass))
-    {
-        // Handle target class specification for static functions
-        UE_LOG(LogVibeUEReflection, Log, TEXT("Function node target class: %s"), *TargetClass);
-    }
+
+    FunctionNode->Modify();
+    FunctionNode->SetFromFunction(ResolvedFunction);
+    FunctionNode->FunctionReference.SetFromField<UFunction>(ResolvedFunction, bShouldUseSelfContext);
+    FunctionNode->AllocateDefaultPins();
+    FunctionNode->ReconstructNode();
+
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Bound node to %s::%s"), *TargetClass->GetName(), *FunctionName);
 }
 
 void FBlueprintReflection::ConfigureVariableNode(UK2Node_VariableGet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams)
@@ -569,6 +813,46 @@ void FBlueprintReflection::ConfigureEventNode(UK2Node_Event* EventNode, const TS
             EventNode->bOverrideFunction = true;
             UE_LOG(LogVibeUEReflection, Log, TEXT("Set event node to override"));
         }
+    }
+}
+
+void FBlueprintReflection::ConfigureDynamicCastNode(UK2Node_DynamicCast* CastNode, const TSharedPtr<FJsonObject>& NodeParams)
+{
+    if (!CastNode)
+    {
+        return;
+    }
+
+    FString CastTargetDescriptor;
+    if (!NodeParams->TryGetStringField(TEXT("cast_target"), CastTargetDescriptor))
+    {
+        NodeParams->TryGetStringField(TEXT("target_class"), CastTargetDescriptor);
+    }
+
+    if (CastTargetDescriptor.IsEmpty())
+    {
+        const TSharedPtr<FJsonObject>* CastTargetObject = nullptr;
+        if (NodeParams->TryGetObjectField(TEXT("cast_target"), CastTargetObject) && CastTargetObject)
+        {
+            (*CastTargetObject)->TryGetStringField(TEXT("class"), CastTargetDescriptor);
+        }
+    }
+
+    if (CastTargetDescriptor.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureDynamicCastNode: Missing cast_target descriptor"));
+        return;
+    }
+
+    if (UClass* TargetClass = ResolveClassDescriptor(CastTargetDescriptor))
+    {
+        CastNode->TargetType = TargetClass;
+        CastNode->ReconstructNode();
+        UE_LOG(LogVibeUEReflection, Log, TEXT("ConfigureDynamicCastNode: Set cast target to %s"), *TargetClass->GetName());
+    }
+    else
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureDynamicCastNode: Failed to resolve cast target '%s'"), *CastTargetDescriptor);
     }
 }
 
