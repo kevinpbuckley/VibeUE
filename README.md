@@ -108,42 +108,70 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 VibeUE provides comprehensive AI-powered control over Unreal Engine through 60+ specialized tools organized into these major categories:
 
-### 🎯 Asset Management & Discovery
-- **Universal Asset Search**: Find any asset type (widgets, textures, materials, blueprints) with intelligent filtering
-- **Asset Editor Launcher**: Open assets directly in their appropriate editors with one command
-- **Texture Import/Export**: Smart local file import with format validation and AI-compatible export for visual analysis
+## 🛠️ Canonical Tools Reference (44 tools)
 
-### 🔧 Blueprint Development Suite
-- **Blueprint Creation & Management**: Create, compile, and reparent Blueprint classes
-- **Component System**: Add and configure mesh, camera, light, physics, and custom components
-- **Node Graph Manipulation**: Create event nodes, function calls, variables, and wire connections
-- **Property Management**: Set Blueprint properties, physics settings, and component configurations
+The running MCP server and the tool modules expose the following canonical tools. For full parameter documentation and examples, call the server's get_help() tool.
 
-### 📱 Complete UMG Widget System
-- **Widget Blueprint Creation**: Create and manage UMG widget blueprints with full hierarchy support
-- **Component Library**: 20+ widget types including text, buttons, images, sliders, progress bars, lists
-- **Layout Panels**: Canvas, overlay, horizontal/vertical boxes, scroll boxes, and grid panels
-- **Advanced Styling**: Comprehensive property system with color, font, positioning, and transform controls
-- **Data Binding & Events**: MVVM pattern support, event binding, and dynamic content management
+Core / Editor
+- open_asset_in_editor
 
-### 🔍 Discovery & Analysis Tools
-- **Component Introspection**: Detailed widget hierarchy and property analysis
-- **Event Graph Analysis**: List nodes, functions, custom events with complete graph summarization
-- **Property Discovery**: Explore available properties and current values for any component
-- **Validation Tools**: Check widget hierarchies and component relationships
+Asset & Image Tools
+- search_items
+- import_texture_asset
+- export_texture_for_analysis
+- convert_svg_to_png
 
-### 🎨 Styling & Visual Enhancement
-- **Color Management**: Full RGBA color support for text, backgrounds, and UI elements
-- **Font Control**: Typography settings with size, style, and typeface control  
-- **Transform System**: Position, size, scale, rotation, anchoring, and alignment
-- **Visibility Control**: Multiple visibility states and z-order management
-- **Image Integration**: Texture application with tinting and scaling options
+Blueprint lifecycle & components
+- create_blueprint
+- compile_blueprint
+- reparent_blueprint
+- set_blueprint_property
+- get_blueprint_info
+- add_component
+- add_component_to_blueprint
+- remove_component
+- reorder_components
+- set_component_property
+- get_component_hierarchy
+- get_available_components
+- get_component_info
+- get_property_metadata
 
-### 🔗 Integration & Connectivity
-- **Smart Workflow**: Tools designed to work together (search → inspect → modify → validate)
-- **Error Prevention**: Built-in validation and exact name matching to prevent common mistakes
-- **Performance Optimization**: Fast direct asset access vs. slow registry searches
-- **AI Guidance**: Comprehensive styling guides and best practice recommendations
+Blueprint graph & variables
+- manage_blueprint_node
+- get_available_blueprint_nodes
+- manage_blueprint_function
+- manage_blueprint_variables
+
+UMG discovery & inspection
+- search_items
+- get_widget_blueprint_info
+- list_widget_components
+- get_widget_component_properties
+- get_available_widget_types
+- validate_widget_hierarchy
+
+UMG creation & reflection
+- create_umg_widget_blueprint
+- add_widget_component
+- get_available_widgets
+
+UMG property & styling
+- set_widget_property
+- get_widget_property
+- list_widget_properties
+- get_umg_guide
+
+Events & graph analysis
+- bind_input_events
+- get_available_events
+- get_node_details
+- list_custom_events
+- summarize_event_graph
+
+System & diagnostics
+- check_unreal_connection
+- get_help
 
 All capabilities are accessible through natural language commands via AI assistants, enabling rapid prototyping, automated UI generation, and intelligent asset management workflows.
 
