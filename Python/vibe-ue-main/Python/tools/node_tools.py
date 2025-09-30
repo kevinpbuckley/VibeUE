@@ -81,11 +81,14 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
         ## Supported Actions:
         - **create**: Create new nodes (requires node_type from get_available_blueprint_nodes())
-        - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
-        - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
+    - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
+    - **connect_pins**: Batch connect pins with schema validation, conversion helpers, and diagnostics
+    - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
+    - **disconnect_pins**: Break specific links or clear entire pins using the new payload format
         - **delete**: Remove nodes (requires node_id)
         - **move**: Reposition nodes (requires node_id and position)
-        - **list**: List all nodes in graph (returns node inventory)
+    - **list**: List all nodes in graph (returns node inventory)
+    - **describe**: Rich node + pin metadata payload (deterministic ordering)
         - **get_details**: Get detailed node information (requires node_id)
         - **configure**: Set node properties (requires node_id, property_name, property_value)
 
@@ -125,7 +128,9 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
         **create**: node_type (required), position (optional), node_params (optional)
         **connect**: source_node_id, source_pin, target_node_id, target_pin
+    **connect_pins**: connections array with source/target pin identifiers plus optional conversion flags
         **disconnect**: source_node_id, source_pin, target_node_id, target_pin
+    **disconnect_pins**: connections array or pin_ids list defining which links to break
         **delete**: node_id
         **move**: node_id, position
         **list**: (no additional parameters)
