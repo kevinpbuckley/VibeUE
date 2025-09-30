@@ -27,6 +27,9 @@ private:
     TSharedPtr<FJsonObject> HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDescribeBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleConnectPins(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDisconnectPins(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params);
     // New unified function management (list/get/create/delete) Phase 1
     TSharedPtr<FJsonObject> HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params);
@@ -73,6 +76,18 @@ private:
     void GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const;
     bool ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, UEdGraphNode*& OutNode, UEdGraph*& OutGraph) const;
     FString DescribeAvailableNodes(const TArray<UEdGraph*>& Graphs) const;
+
+    struct FResolvedPinReference
+    {
+        UEdGraphPin* Pin = nullptr;
+        UEdGraphNode* Node = nullptr;
+        UEdGraph* Graph = nullptr;
+        FString Identifier;
+    };
+
+    bool ResolvePinByIdentifier(const TArray<UEdGraph*>& Graphs, const FString& Identifier, FResolvedPinReference& OutPin) const;
+    bool ResolvePinByNodeAndName(const TArray<UEdGraph*>& Graphs, const FString& NodeIdentifier, const FString& PinName, EEdGraphPinDirection DesiredDirection, FResolvedPinReference& OutPin, FString& OutError) const;
+    bool ResolvePinFromPayload(const TSharedPtr<FJsonObject>& Payload, const TArray<FString>& RolePrefixes, EEdGraphPinDirection DesiredDirection, const TArray<UEdGraph*>& Graphs, FResolvedPinReference& OutPin, FString& OutError) const;
     
 private:
     // Reflection system helper
