@@ -323,92 +323,147 @@ These tools use an `action` parameter to perform different operations. Each acti
 
 #### Actions Available:
 
-##### `list_functions`
+⚠️ **CRITICAL CORRECTIONS**: Action names were incorrect in previous documentation!
+
+##### `list` (NOT "list_functions")
 List all functions in a Blueprint.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="list_functions",
-    ctx={},
-    kwargs={"include_overrides": True}  # Optional: include inherited functions
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="list"  # ✅ CORRECT
 )
+# Returns: {"functions": [{"name": "FuncName", "node_count": 5}, ...]}
 ```
 
-##### `create_function`
+##### `get` (NOT "get_info")
+Get detailed information about a specific function.
+```python
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="get",  # ✅ CORRECT (NOT "get_info")
+    function_name="CalculateDamage"
+)
+# Returns: {"name": "CalculateDamage", "node_count": 10, "graph_guid": "..."}
+```
+
+##### `list_params` (NEW - Essential for discovering function signatures)
+List all parameters (inputs and outputs) for a function.
+```python
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="list_params",  # ✅ Use this to discover function signatures!
+    function_name="CalculateDamage"
+)
+# Returns: {
+#   "success": true,
+#   "function_name": "CalculateDamage",
+#   "parameters": [
+#     {"name": "BaseDamage", "direction": "input", "type": "float"},
+#     {"name": "Multiplier", "direction": "input", "type": "float"},
+#     {"name": "execute", "direction": "out", "type": "exec"},
+#     {"name": "FinalDamage", "direction": "out", "type": "float"}
+#   ],
+#   "count": 4
+# }
+```
+
+##### `create` (NOT "create_function")
 Create a new function in the Blueprint.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player", 
-    action="create_function",
-    function_name="CalculateDamage",
-    ctx={},
-    kwargs={"return_type": "float"}
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="create",  # ✅ CORRECT
+    function_name="CalculateDamage"
 )
+# Returns: {"success": true, "function_name": "CalculateDamage", "graph_guid": "..."}
 ```
 
-##### `delete_function`
+##### `delete` (NOT "delete_function")
 Remove a function from the Blueprint.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="delete_function", 
-    function_name="OldFunction",
-    ctx={},
-    kwargs={}
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="delete",  # ✅ CORRECT
+    function_name="OldFunction"
 )
+# Returns: {"success": true, "function_name": "OldFunction"}
 ```
 
-##### `add_parameter`
+##### `add_param` (NOT "add_parameter")
 Add input/output parameter to function.
+
+⚠️ **CRITICAL**: Direction must be "input" or "out" (NOT "output"!)
+
 ```python
+# Add INPUT parameter
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="add_parameter",
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="add_param",  # ✅ CORRECT
     function_name="CalculateDamage",
     param_name="BaseDamage",
-    direction="input",  # or "output"
-    type="float",
-    ctx={},
-    kwargs={}
+    direction="input",  # ✅ CORRECT
+    type="float"
+)
+
+# Add OUTPUT parameter (⚠️ Use "out" NOT "output"!)
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="add_param",
+    function_name="CalculateDamage",
+    param_name="FinalDamage",
+    direction="out",  # ✅ CORRECT (NOT "output"!)
+    type="float"
+)
+
+# Add object reference parameter
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="add_param",
+    function_name="ProcessActor",
+    param_name="TargetActor",
+    direction="input",
+    type="object:ABP_Enemy_C"  # ✅ Format: "object:ClassName"
 )
 ```
 
-##### `remove_parameter` 
+**Type Conversions:**
+- ⚠️ If `list_params` returns type `"real"`, use `"float"` when adding params
+- Object types use format: `"object:ClassName"`
+- Struct types use format: `"struct:StructName"`
+
+##### `remove_param` (NOT "remove_parameter")
 Remove parameter from function.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="remove_parameter",
-    function_name="CalculateDamage", 
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="remove_param",  # ✅ CORRECT
+    function_name="CalculateDamage",
     param_name="OldParam",
-    ctx={},
-    kwargs={}
+    direction="input"
 )
 ```
 
-##### `rename_parameter`
-Rename function parameter.
+##### `update_param` (NOT "rename_parameter")
+Update parameter type or name.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="rename_parameter",
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="update_param",  # ✅ CORRECT
     function_name="CalculateDamage",
-    param_name="OldName",
-    new_name="NewName", 
-    ctx={},
-    kwargs={}
+    param_name="OldParamName",
+    direction="input",
+    new_type="int",  # Optional: change type
+    new_name="NewParamName"  # Optional: rename
 )
 ```
 
-##### `list_locals` 
+##### `list_locals` (aliases: "locals", "list_local_vars")
 List all local variables in function.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="list_locals",
-    function_name="CalculateDamage",
-    ctx={},
-    kwargs={}
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="list_locals",  # ✅ CORRECT
+    function_name="CalculateDamage"
 )
 ```
 
@@ -416,13 +471,11 @@ manage_blueprint_function(
 Add local variable to function.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player", 
+    blueprint_name="/Game/Blueprints/BP_Player",
     action="add_local",
     function_name="CalculateDamage",
-    param_name="TempResult",
-    type="float", 
-    ctx={},
-    kwargs={}
+    param_name="TempResult",  # ⚠️ Uses param_name for local var name
+    type="float"
 )
 ```
 
@@ -430,12 +483,10 @@ manage_blueprint_function(
 Remove local variable from function.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
-    action="remove_local", 
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="remove_local",
     function_name="CalculateDamage",
-    param_name="TempResult",
-    ctx={},
-    kwargs={}
+    param_name="TempResult"
 )
 ```
 
@@ -443,14 +494,56 @@ manage_blueprint_function(
 Update local variable type.
 ```python
 manage_blueprint_function(
-    blueprint_name="BP_Player",
+    blueprint_name="/Game/Blueprints/BP_Player",
     action="update_local",
-    function_name="CalculateDamage", 
+    function_name="CalculateDamage",
     param_name="TempResult",
-    new_type="int",
-    ctx={},
-    kwargs={}
+    new_type="int"
 )
+```
+
+##### `update_properties`
+Update function metadata (pure, category, etc.).
+```python
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="update_properties",
+    function_name="CalculateDamage",
+    properties={
+        "CallInEditor": true,
+        "BlueprintPure": true,
+        "Category": "Combat|Health"
+    }
+)
+```
+
+**📋 Complete Function Recreation Workflow:**
+```python
+# 1. Discover original function signature
+original = manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="list_params",
+    function_name="CalculateDamage"
+)
+
+# 2. Create new function
+manage_blueprint_function(
+    blueprint_name="/Game/Blueprints/BP_Player2",
+    action="create",
+    function_name="CalculateDamage"
+)
+
+# 3. Recreate all parameters
+for param in original["parameters"]:
+    if param["name"] != "execute":  # Skip auto-generated exec pin
+        manage_blueprint_function(
+            blueprint_name="/Game/Blueprints/BP_Player2",
+            action="add_param",
+            function_name="CalculateDamage",
+            param_name=param["name"],
+            direction=param["direction"],  # Use exact value from list_params
+            type=param["type"] if param["type"] != "real" else "float"
+        )
 ```
 
 ### `manage_blueprint_node` - Node Operations
