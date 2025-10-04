@@ -44,9 +44,9 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def manage_blueprint_node(
-        ctx: Context,
-        blueprint_name: str,
-        action: str,
+        ctx: Context = None,  # ✅ Made optional - framework should inject, but AI doesn't need to pass it
+        blueprint_name: str = None,
+        action: str = None,
         graph_scope: str = "event",
         function_name: Optional[str] = None,
         node_id: Optional[str] = None,
@@ -305,9 +305,9 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
     @mcp.tool()
     def manage_blueprint_function(
-        ctx: Context,
-        blueprint_name: str,
-        action: str,
+        ctx: Context = None,  # ✅ Made optional - framework should inject, but AI doesn't need to pass it
+        blueprint_name: str = None,
+        action: str = None,
         function_name: Optional[str] = None,
         param_name: Optional[str] = None,
         direction: Optional[str] = None,

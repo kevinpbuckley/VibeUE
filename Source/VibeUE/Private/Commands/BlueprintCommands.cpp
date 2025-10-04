@@ -1689,30 +1689,82 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         
         // Get type info using reflection
         FString TypeName = TEXT("Unknown");
+        FString TypePath = TEXT("");  // Add type_path for consistency with manage_blueprint_variables
+        
         if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
+        {
             TypeName = TEXT("Boolean");
+            TypePath = TEXT("/Script/CoreUObject.BoolProperty");
+        }
         else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Float)
+        {
             TypeName = TEXT("Float");
+            TypePath = TEXT("/Script/CoreUObject.FloatProperty");
+        }
         else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Int)
+        {
             TypeName = TEXT("Integer");
+            TypePath = TEXT("/Script/CoreUObject.IntProperty");
+        }
         else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_String)
+        {
             TypeName = TEXT("String");
+            TypePath = TEXT("/Script/CoreUObject.StrProperty");
+        }
+        else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Byte)
+        {
+            TypeName = TEXT("Byte");
+            TypePath = TEXT("/Script/CoreUObject.ByteProperty");
+        }
+        else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Int64)
+        {
+            TypeName = TEXT("Int64");
+            TypePath = TEXT("/Script/CoreUObject.Int64Property");
+        }
+        else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Double)
+        {
+            TypeName = TEXT("Double");
+            TypePath = TEXT("/Script/CoreUObject.DoubleProperty");
+        }
+        else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Name)
+        {
+            TypeName = TEXT("Name");
+            TypePath = TEXT("/Script/CoreUObject.NameProperty");
+        }
+        else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Text)
+        {
+            TypeName = TEXT("Text");
+            TypePath = TEXT("/Script/CoreUObject.TextProperty");
+        }
         else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Struct)
         {
             if (VarDesc.VarType.PinSubCategoryObject == TBaseStructure<FVector>::Get())
+            {
                 TypeName = TEXT("Vector");
+                TypePath = TEXT("/Script/CoreUObject.Vector");
+            }
             else if (VarDesc.VarType.PinSubCategoryObject == TBaseStructure<FLinearColor>::Get())
+            {
                 TypeName = TEXT("LinearColor");
+                TypePath = TEXT("/Script/CoreUObject.LinearColor");
+            }
             else if (VarDesc.VarType.PinSubCategoryObject.IsValid())
+            {
                 TypeName = VarDesc.VarType.PinSubCategoryObject->GetName();
+                TypePath = VarDesc.VarType.PinSubCategoryObject->GetPathName();
+            }
         }
         else if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Object || VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Class)
         {
             if (VarDesc.VarType.PinSubCategoryObject.IsValid())
+            {
                 TypeName = VarDesc.VarType.PinSubCategoryObject->GetName();
+                TypePath = VarDesc.VarType.PinSubCategoryObject->GetPathName();
+            }
         }
         
         VarInfo->SetStringField(TEXT("type"), TypeName);
+        VarInfo->SetStringField(TEXT("type_path"), TypePath);  // ✅ ADD type_path for AI consistency
         VarInfo->SetStringField(TEXT("category"), VarDesc.Category.ToString());
         VarInfo->SetBoolField(TEXT("is_editable"), (VarDesc.PropertyFlags & CPF_Edit) != 0);
         VarInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0);

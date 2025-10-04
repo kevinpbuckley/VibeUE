@@ -186,7 +186,7 @@ def register_blueprint_tools(mcp: FastMCP):
         
         🎯 **Comprehensive Information Includes**:
         
-        **Variables**: Type, container type, category, editability, flags
+        **Variables**: Type, type_path (canonical path for use in manage_blueprint_variables), container type, category, editability, flags
         **Components**: Name, type, parent relationships, native status  
         **Widget Components**: Name, type, parent, visibility, enabled state
         **Functions**: Name, node count, graph type
@@ -334,6 +334,10 @@ def register_blueprint_tools(mcp: FastMCP):
         """
         🔧 **UNIFIED BLUEPRINT VARIABLE MANAGEMENT SYSTEM** 
         
+        ⚠️ **CRITICAL: variable_config MUST use "type_path" NOT "type"**
+        ❌ WRONG: {"type": "UserWidget"} or {"type": "float"}
+        ✅ CORRECT: {"type_path": "/Script/UMG.UserWidget"} or {"type_path": "/Script/CoreUObject.FloatProperty"}
+        
         **🎯 SOLVES THE BLUEPRINT CHALLENGE TYPE ISSUES**
         This tool replaces all individual variable tools with a unified, reflection-based system
         that properly handles UserWidget, NiagaraSystem, SoundBase, and Blueprint class types.
@@ -350,13 +354,14 @@ def register_blueprint_tools(mcp: FastMCP):
         )
         # Result includes type_path like "/Script/UMG.UserWidget"
         
+        # ⚠️ CRITICAL: Use "type_path" key, NOT "type"!
         # Then create variable with exact type_path from search results
         manage_blueprint_variables(
             blueprint_name="BP_Player2",
             action="create", 
             variable_name="AttributeWidget",
             variable_config={
-                "type_path": "/Script/UMG.UserWidget",  # ✅ REQUIRED: Canonical type path
+                "type_path": "/Script/UMG.UserWidget",  # ✅ REQUIRED: Use "type_path" NOT "type"
                 "category": "UI",
                 "tooltip": "Player's attribute display widget",
                 "is_editable": True,
@@ -428,9 +433,17 @@ def register_blueprint_tools(mcp: FastMCP):
         - blueprint_name: Target Blueprint name
         - action: Operation to perform (create|delete|get_info|get_property|set_property|search_types)
         - variable_name: Variable name (required for most actions)
-        - variable_config: Variable configuration for create action, MUST include:
-          - **type_path** (REQUIRED): Canonical type path (e.g., "/Script/UMG.UserWidget")
-            Use search_types action first to find the correct type_path
+        - variable_config: Variable configuration dict for create action
+          
+          ⚠️ **CRITICAL REQUIREMENT**: MUST use "type_path" key, NOT "type"
+          ❌ WRONG: {"type": "float"} or {"type": "UserWidget"}
+          ✅ CORRECT: {"type_path": "/Script/CoreUObject.FloatProperty"}
+          
+          **Required field:**
+          - **type_path** (REQUIRED): Canonical type path string (e.g., "/Script/UMG.UserWidget")
+            ALWAYS use search_types action first to find the correct type_path
+          
+          **Optional fields:**
           - category (optional): Variable category for organization
           - tooltip (optional): Description tooltip
           - is_editable (optional): Whether editable in editor (default: True)
@@ -453,6 +466,35 @@ def register_blueprint_tools(mcp: FastMCP):
             if not unreal:
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            # ⚠️ CRITICAL VALIDATION: Catch common "type" vs "type_path" mistake
+            if action == "create" and variable_config:
+                if "type" in variable_config and "type_path" not in variable_config:
+                    error_msg = (
+                        "❌ CRITICAL ERROR: variable_config uses 'type' but should use 'type_path'\n"
+                        f"❌ WRONG: variable_config={variable_config}\n"
+                        "✅ CORRECT: Use 'type_path' key with full canonical path:\n"
+                        "   Examples:\n"
+                        '   - {"type_path": "/Script/CoreUObject.FloatProperty"} for float\n'
+                        '   - {"type_path": "/Script/UMG.UserWidget"} for widgets\n'
+                        '   - {"type_path": "/Script/Engine.SoundBase"} for audio\n'
+                        "Use manage_blueprint_variables(action='search_types') to find correct type_path"
+                    )
+                    logger.error(error_msg)
+                    return {"success": False, "message": error_msg}
+                
+                if "type_path" not in variable_config:
+                    error_msg = (
+                        "❌ CRITICAL ERROR: variable_config missing required 'type_path' field\n"
+                        f"Current variable_config: {variable_config}\n"
+                        "✅ REQUIRED: variable_config must include 'type_path' with full canonical path:\n"
+                        "   Examples:\n"
+                        '   - {"type_path": "/Script/CoreUObject.FloatProperty"} for float\n'
+                        '   - {"type_path": "/Script/UMG.UserWidget"} for widgets\n'
+                        "Use manage_blueprint_variables(action='search_types') to find correct type_path"
+                    )
+                    logger.error(error_msg)
+                    return {"success": False, "message": error_msg}
             
             # Build command parameters
             params = {
@@ -529,6 +571,15 @@ def register_blueprint_tools(mcp: FastMCP):
         """
         🔧 **UNIFIED BLUEPRINT COMPONENT MANAGEMENT SYSTEM**
         
+        ⚠️ **CRITICAL: blueprint_name MUST be a full package path!**
+        - ✅ CORRECT: `/Game/Blueprints/BP_Player2` or `/Game/Blueprints/Characters/BP_Player`
+        - ❌ WRONG: `BP_Player2` (will fail with "Blueprint 'BP_Player2' not found")
+        
+        **How to get the correct path:**
+        1. Use `search_items(search_term="BP_Player2", asset_type="Blueprint")` first
+        2. Use the `package_path` field from results (NOT the `path` field with duplicated name)
+        3. Pass that exact path to this tool
+        
         Consolidates all Blueprint component operations into a single multi-action tool
         following the successful patterns of manage_blueprint_function and manage_blueprint_variables.
         
@@ -557,7 +608,7 @@ def register_blueprint_tools(mcp: FastMCP):
         
         # Get metadata + actual property values from instance
         manage_blueprint_components(
-            blueprint_name="BP_Player",
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
             action="get_info",
             component_type="SpotLightComponent",
             component_name="SpotLight_Top",
@@ -578,7 +629,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **list** - List all components in Blueprint
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player",
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
             action="list"
         )
         ```
@@ -588,7 +639,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **create** - Add new component to Blueprint
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path required!
             action="create",
             component_type="SpotLightComponent",
             component_name="SpotLight_Top",
@@ -602,7 +653,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **delete** - Remove component from Blueprint
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
             action="delete",
             component_name="SpotLight_Top",
             remove_children=True
@@ -614,7 +665,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **get_property** - Get single property value from component instance
         ```python
         result = manage_blueprint_components(
-            blueprint_name="BP_Player",
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
             action="get_property",
             component_name="SpotLight_Top",
             property_name="Intensity"
@@ -625,7 +676,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **set_property** - Set component property value
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
             action="set_property",
             component_name="SpotLight_Top",
             property_name="Intensity",
@@ -636,7 +687,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **get_all_properties** - Get all property values from component
         ```python
         result = manage_blueprint_components(
-            blueprint_name="BP_Player",
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
             action="get_all_properties",
             component_name="SpotLight_Top",
             include_inherited=True
@@ -647,15 +698,15 @@ def register_blueprint_tools(mcp: FastMCP):
         **compare_properties** - Compare component properties between Blueprints
         ```python
         result = manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
             action="compare_properties",
             component_name="SpotLight_Top",
             options={
-                "compare_to_blueprint": "BP_Player",
+                "compare_to_blueprint": "/Game/Blueprints/Characters/BP_Player",  # ✅ Full path
                 "compare_to_component": "SpotLight_Top"
             }
         )
-        # Returns: {"matches": True/False, "differences": [...], "matching_count": 45}
+        # Returns: {{"matches": True/False, "differences": [...], "matching_count": 45}}
         ```
         
         ## Hierarchy Operations
@@ -663,7 +714,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **reorder** - Change component order
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
             action="reorder",
             component_order=["SpotLight_Top", "SpotLight_Right", "TrailVFX"]
         )
@@ -672,7 +723,7 @@ def register_blueprint_tools(mcp: FastMCP):
         **reparent** - Change component's parent attachment
         ```python
         manage_blueprint_components(
-            blueprint_name="BP_Player2",
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
             action="reparent",
             component_name="SpotLight_Top",
             parent_name="CameraBoom"
@@ -703,7 +754,9 @@ def register_blueprint_tools(mcp: FastMCP):
         - reorder_components() → action="reorder"
         
         Args:
-            blueprint_name: Name of target Blueprint (empty for type discovery)
+            blueprint_name: ⚠️ **MUST be full package path** (e.g., "/Game/Blueprints/BP_Player2")
+                           Use search_items() to get the correct package_path first!
+                           ❌ Short names like "BP_Player2" will fail with "Blueprint not found"
             action: Action to perform (see above for available actions)
             component_type: Component class name (for get_info, create actions)
             component_name: Component instance name (for property/delete/reparent actions)

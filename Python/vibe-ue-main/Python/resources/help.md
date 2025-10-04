@@ -82,6 +82,24 @@ Create Function → Add Nodes Immediately (Missing dependencies!) → Broken Blu
 - `reparent_blueprint` - Change Blueprint parent class
 
 ### Blueprint Variables
+
+## 🚨 CRITICAL: ALWAYS Use `type_path` NOT `type` 🚨
+
+When creating variables with `manage_blueprint_variables`, the parameter name is `type_path`:
+
+❌ **WRONG - AI KEEPS DOING THIS**:
+```python
+variable_config={"type": "float"}  # ❌ WRONG! 
+variable_config={"type": "UserWidget"}  # ❌ WRONG!
+```
+
+✅ **CORRECT - DO THIS INSTEAD**:
+```python
+variable_config={"type_path": "/Script/CoreUObject.FloatProperty"}  # ✅ CORRECT
+variable_config={"type_path": "/Script/UMG.UserWidget"}  # ✅ CORRECT
+```
+
+**Available Tools:**
 - `manage_blueprint_variables` - **UNIFIED TOOL** for all variable operations (create, delete, search_types, etc.)
 - `add_blueprint_variable` - (Legacy) Add variables to Blueprint
 - `get_blueprint_variable` - Get variable information
@@ -195,6 +213,9 @@ manage_blueprint_variables(
   - **Lifecycle**: create, delete, reparent, reorder
   - **Properties**: get_property, set_property, get_all_properties, compare_properties
   - **Status**: ✅ FULLY TESTED AND WORKING (11/12 actions validated)
+  - **⚠️ CRITICAL**: `blueprint_name` parameter MUST be full package path (e.g., `/Game/Blueprints/BP_Player2`)
+    - ✅ Use `search_items()` to get `package_path` first, then pass to this tool
+    - ❌ Short names like "BP_Player2" will fail with "Blueprint not found"
   - **📖 See**: `manage_blueprint_components_guide.md` for complete action reference, examples, and best practices
 - `get_available_components` - (Legacy - use manage_blueprint_components with search_types)
 - `add_component` - (Legacy - use manage_blueprint_components with create)
@@ -620,6 +641,32 @@ set_widget_property("WBP_Menu", "Background", "Brush.Texture", "/Game/Textures/M
 ---
 
 ## ⚠️ Important Guidelines
+
+### Always Use Full Package Paths for Blueprints
+**CRITICAL**: Blueprint tools require full package paths, not short names!
+
+```python
+# ❌ WRONG - Will fail with "Blueprint 'BP_Player2' not found"
+manage_blueprint_components(
+    blueprint_name="BP_Player2",  # ❌ Short name fails!
+    action="create",
+    component_type="SpotLightComponent",
+    component_name="MyLight"
+)
+
+# ✅ CORRECT - Use search_items() first to get full path
+search_result = search_items(search_term="BP_Player2", asset_type="Blueprint")
+blueprint_path = search_result["items"][0]["package_path"]  # "/Game/Blueprints/BP_Player2"
+
+manage_blueprint_components(
+    blueprint_name=blueprint_path,  # ✅ Full package path works!
+    action="create",
+    component_type="SpotLightComponent",
+    component_name="MyLight"
+)
+```
+
+**Pro Tip**: Always use `search_items()` → get `package_path` → pass to Blueprint tools
 
 ### Always Check Success
 Every tool returns a `success` field. Always check it:
