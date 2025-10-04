@@ -56,6 +56,22 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCommand(const FStri
     {
         return HandleReorderComponents(Params);
     }
+    else if (CommandType == TEXT("get_component_property"))
+    {
+        return HandleGetComponentProperty(Params);
+    }
+    else if (CommandType == TEXT("get_all_component_properties"))
+    {
+        return HandleGetAllComponentProperties(Params);
+    }
+    else if (CommandType == TEXT("compare_component_properties"))
+    {
+        return HandleCompareComponentProperties(Params);
+    }
+    else if (CommandType == TEXT("reparent_component"))
+    {
+        return HandleReparentComponent(Params);
+    }
 
     return CreateErrorResponse(FString::Printf(TEXT("Unknown component reflection command: %s"), *CommandType));
 }
@@ -160,6 +176,53 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentInfo(co
     if (!ComponentInfo.IsValid())
     {
         return CreateErrorResponse(FString::Printf(TEXT("Failed to extract metadata for component type '%s'"), *ComponentTypeName));
+    }
+
+    // NEW: Check if property values should be included
+    bool bIncludePropertyValues = false;
+    Params->TryGetBoolField(TEXT("include_property_values"), bIncludePropertyValues);
+
+    FString BlueprintName;
+    FString ComponentName;
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
+    Params->TryGetStringField(TEXT("component_name"), ComponentName);
+
+    if (bIncludePropertyValues && !BlueprintName.IsEmpty() && !ComponentName.IsEmpty())
+    {
+        UE_LOG(LogTemp, Log, TEXT("Extracting property values for component '%s' from Blueprint '%s'"), *ComponentName, *BlueprintName);
+        
+        // Try to load the Blueprint and extract property values
+        UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
+        if (Blueprint)
+        {
+            UActorComponent* ComponentInstance = FindComponentInBlueprint(Blueprint, ComponentName, ComponentClass);
+            if (ComponentInstance)
+            {
+                TSharedPtr<FJsonObject> PropertyValues = GetComponentPropertyValues(ComponentInstance, ComponentClass);
+                ComponentInfo->SetObjectField(TEXT("property_values"), PropertyValues);
+                ComponentInfo->SetBoolField(TEXT("has_property_values"), true);
+                
+                UE_LOG(LogTemp, Log, TEXT("Successfully extracted %d property values"), PropertyValues->Values.Num());
+            }
+            else
+            {
+                ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
+                ComponentInfo->SetStringField(TEXT("property_values_error"), 
+                    FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
+                UE_LOG(LogTemp, Warning, TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName);
+            }
+        }
+        else
+        {
+            ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
+            ComponentInfo->SetStringField(TEXT("property_values_error"), 
+                FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+            UE_LOG(LogTemp, Warning, TEXT("Blueprint '%s' not found"), *BlueprintName);
+        }
+    }
+    else
+    {
+        ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
     }
 
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
@@ -1758,4 +1821,652 @@ void FBlueprintComponentReflection::ClearCache()
     CachedComponentsByCategory.Empty();
     CachedComponentMetadata.Empty();
     bCacheInitialized = false;
+}
+
+// NEW: Enhanced FindComponentInBlueprint with optional type validation
+// 2-parameter overload - calls 3-parameter version with nullptr for ExpectedClass
+UActorComponent* FBlueprintComponentReflection::FindComponentInBlueprint(
+    UBlueprint* Blueprint,
+    const FString& ComponentName)
+{
+    return FindComponentInBlueprint(Blueprint, ComponentName, nullptr);
+}
+
+// 3-parameter version with type validation
+UActorComponent* FBlueprintComponentReflection::FindComponentInBlueprint(
+    UBlueprint* Blueprint,
+    const FString& ComponentName,
+    UClass* ExpectedClass)
+{
+    if (!Blueprint)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("FindComponentInBlueprint: Blueprint is null"));
+        return nullptr;
+    }
+
+    // Search in Simple Construction Script first
+    if (Blueprint->SimpleConstructionScript)
+    {
+        const TArray<USCS_Node*>& AllNodes = Blueprint->SimpleConstructionScript->GetAllNodes();
+        for (USCS_Node* Node : AllNodes)
+        {
+            if (Node && Node->ComponentTemplate)
+            {
+                FString NodeName = Node->GetVariableName().ToString();
+                if (NodeName.Equals(ComponentName, ESearchCase::IgnoreCase))
+                {
+                    // Validate type if expected class is provided
+                    if (ExpectedClass && !Node->ComponentTemplate->IsA(ExpectedClass))
+                    {
+                        UE_LOG(LogTemp, Warning,
+                            TEXT("Found component '%s' but type mismatch: expected %s, got %s"),
+                            *ComponentName,
+                            *ExpectedClass->GetName(),
+                            *Node->ComponentTemplate->GetClass()->GetName());
+                        continue;
+                    }
+                    return Node->ComponentTemplate;
+                }
+            }
+        }
+    }
+
+    // Search in Class Default Object (for inherited components)
+    if (Blueprint->GeneratedClass)
+    {
+        AActor* CDO = Cast<AActor>(Blueprint->GeneratedClass->GetDefaultObject());
+        if (CDO)
+        {
+            TArray<UActorComponent*> Components;
+            CDO->GetComponents(Components);
+
+            for (UActorComponent* Component : Components)
+            {
+                if (Component && Component->GetName().Equals(ComponentName, ESearchCase::IgnoreCase))
+                {
+                    // Validate type if expected class is provided
+                    if (ExpectedClass && !Component->IsA(ExpectedClass))
+                    {
+                        continue;
+                    }
+                    return Component;
+                }
+            }
+        }
+    }
+
+    UE_LOG(LogTemp, Warning, TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *Blueprint->GetName());
+    return nullptr;
+}
+
+// NEW: Extract property values from component instance
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::GetComponentPropertyValues(
+    UActorComponent* Component,
+    UClass* ComponentClass)
+{
+    TSharedPtr<FJsonObject> PropertyValues = MakeShareable(new FJsonObject);
+
+    if (!Component || !ComponentClass)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("GetComponentPropertyValues: Component or ComponentClass is null"));
+        return PropertyValues;
+    }
+
+    // Iterate all properties using reflection
+    for (TFieldIterator<FProperty> PropIt(ComponentClass); PropIt; ++PropIt)
+    {
+        FProperty* Property = *PropIt;
+        if (!Property)
+        {
+            continue;
+        }
+
+        FString PropertyName = Property->GetName();
+
+        // Get property value container (the component instance)
+        const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Component);
+
+        // Convert property value to JSON
+        TSharedPtr<FJsonValue> JsonValue = PropertyToJsonValue(Property, ValuePtr);
+
+        if (JsonValue.IsValid())
+        {
+            PropertyValues->SetField(PropertyName, JsonValue);
+        }
+    }
+
+    UE_LOG(LogTemp, Log, TEXT("Extracted %d property values from component '%s'"), 
+        PropertyValues->Values.Num(), *Component->GetName());
+
+    return PropertyValues;
+}
+
+// NEW: Convert property value to JSON value using type-safe reflection
+TSharedPtr<FJsonValue> FBlueprintComponentReflection::PropertyToJsonValue(
+    const FProperty* Property,
+    const void* ValuePtr)
+{
+    if (!Property || !ValuePtr)
+    {
+        return MakeShareable(new FJsonValueNull());
+    }
+
+    // Numeric types
+    if (const FNumericProperty* NumericProp = CastField<FNumericProperty>(Property))
+    {
+        if (NumericProp->IsFloatingPoint())
+        {
+            double Value = NumericProp->GetFloatingPointPropertyValue(ValuePtr);
+            return MakeShareable(new FJsonValueNumber(Value));
+        }
+        else if (NumericProp->IsInteger())
+        {
+            int64 Value = NumericProp->GetSignedIntPropertyValue(ValuePtr);
+            return MakeShareable(new FJsonValueNumber(static_cast<double>(Value)));
+        }
+    }
+
+    // Boolean
+    if (const FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
+    {
+        bool Value = BoolProp->GetPropertyValue(ValuePtr);
+        return MakeShareable(new FJsonValueBoolean(Value));
+    }
+
+    // String
+    if (const FStrProperty* StrProp = CastField<FStrProperty>(Property))
+    {
+        FString Value = StrProp->GetPropertyValue(ValuePtr);
+        return MakeShareable(new FJsonValueString(Value));
+    }
+
+    // Name
+    if (const FNameProperty* NameProp = CastField<FNameProperty>(Property))
+    {
+        FName Value = NameProp->GetPropertyValue(ValuePtr);
+        return MakeShareable(new FJsonValueString(Value.ToString()));
+    }
+
+    // Enum
+    if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+    {
+        UEnum* EnumDef = EnumProp->GetEnum();
+        int64 EnumValue = EnumProp->GetUnderlyingProperty()->GetSignedIntPropertyValue(ValuePtr);
+        FString EnumName = EnumDef->GetNameStringByValue(EnumValue);
+        return MakeShareable(new FJsonValueString(EnumName));
+    }
+
+    // Byte Enum
+    if (const FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+    {
+        if (ByteProp->Enum)
+        {
+            uint8 ByteValue = ByteProp->GetPropertyValue(ValuePtr);
+            FString EnumName = ByteProp->Enum->GetNameStringByValue(ByteValue);
+            return MakeShareable(new FJsonValueString(EnumName));
+        }
+        else
+        {
+            uint8 Value = ByteProp->GetPropertyValue(ValuePtr);
+            return MakeShareable(new FJsonValueNumber(static_cast<double>(Value)));
+        }
+    }
+
+    // Struct (special handling for common types)
+    if (const FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        UScriptStruct* Struct = StructProp->Struct;
+
+        // FVector
+        if (Struct->GetName() == TEXT("Vector"))
+        {
+            const FVector* VectorValue = static_cast<const FVector*>(ValuePtr);
+            TArray<TSharedPtr<FJsonValue>> Array;
+            Array.Add(MakeShareable(new FJsonValueNumber(VectorValue->X)));
+            Array.Add(MakeShareable(new FJsonValueNumber(VectorValue->Y)));
+            Array.Add(MakeShareable(new FJsonValueNumber(VectorValue->Z)));
+            return MakeShareable(new FJsonValueArray(Array));
+        }
+
+        // FRotator
+        if (Struct->GetName() == TEXT("Rotator"))
+        {
+            const FRotator* RotatorValue = static_cast<const FRotator*>(ValuePtr);
+            TArray<TSharedPtr<FJsonValue>> Array;
+            Array.Add(MakeShareable(new FJsonValueNumber(RotatorValue->Pitch)));
+            Array.Add(MakeShareable(new FJsonValueNumber(RotatorValue->Yaw)));
+            Array.Add(MakeShareable(new FJsonValueNumber(RotatorValue->Roll)));
+            return MakeShareable(new FJsonValueArray(Array));
+        }
+
+        // FColor
+        if (Struct->GetName() == TEXT("Color"))
+        {
+            const FColor* ColorValue = static_cast<const FColor*>(ValuePtr);
+            TArray<TSharedPtr<FJsonValue>> Array;
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->R)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->G)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->B)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->A)));
+            return MakeShareable(new FJsonValueArray(Array));
+        }
+
+        // FLinearColor
+        if (Struct->GetName() == TEXT("LinearColor"))
+        {
+            const FLinearColor* ColorValue = static_cast<const FLinearColor*>(ValuePtr);
+            TArray<TSharedPtr<FJsonValue>> Array;
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->R)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->G)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->B)));
+            Array.Add(MakeShareable(new FJsonValueNumber(ColorValue->A)));
+            return MakeShareable(new FJsonValueArray(Array));
+        }
+
+        // FTransform
+        if (Struct->GetName() == TEXT("Transform"))
+        {
+            const FTransform* TransformValue = static_cast<const FTransform*>(ValuePtr);
+            TSharedPtr<FJsonObject> TransformObject = MakeShareable(new FJsonObject);
+
+            // Location
+            TArray<TSharedPtr<FJsonValue>> LocationArray;
+            FVector Location = TransformValue->GetLocation();
+            LocationArray.Add(MakeShareable(new FJsonValueNumber(Location.X)));
+            LocationArray.Add(MakeShareable(new FJsonValueNumber(Location.Y)));
+            LocationArray.Add(MakeShareable(new FJsonValueNumber(Location.Z)));
+            TransformObject->SetArrayField(TEXT("Location"), LocationArray);
+
+            // Rotation
+            TArray<TSharedPtr<FJsonValue>> RotationArray;
+            FRotator Rotation = TransformValue->Rotator();
+            RotationArray.Add(MakeShareable(new FJsonValueNumber(Rotation.Pitch)));
+            RotationArray.Add(MakeShareable(new FJsonValueNumber(Rotation.Yaw)));
+            RotationArray.Add(MakeShareable(new FJsonValueNumber(Rotation.Roll)));
+            TransformObject->SetArrayField(TEXT("Rotation"), RotationArray);
+
+            // Scale
+            TArray<TSharedPtr<FJsonValue>> ScaleArray;
+            FVector Scale = TransformValue->GetScale3D();
+            ScaleArray.Add(MakeShareable(new FJsonValueNumber(Scale.X)));
+            ScaleArray.Add(MakeShareable(new FJsonValueNumber(Scale.Y)));
+            ScaleArray.Add(MakeShareable(new FJsonValueNumber(Scale.Z)));
+            TransformObject->SetArrayField(TEXT("Scale"), ScaleArray);
+
+            return MakeShareable(new FJsonValueObject(TransformObject));
+        }
+
+        // Generic struct - serialize all properties recursively
+        TSharedPtr<FJsonObject> StructObject = MakeShareable(new FJsonObject);
+        for (TFieldIterator<FProperty> It(Struct); It; ++It)
+        {
+            FProperty* StructProperty = *It;
+            const void* StructValuePtr = StructProperty->ContainerPtrToValuePtr<void>(ValuePtr);
+            TSharedPtr<FJsonValue> StructPropertyValue = PropertyToJsonValue(StructProperty, StructValuePtr);
+            if (StructPropertyValue.IsValid())
+            {
+                StructObject->SetField(StructProperty->GetName(), StructPropertyValue);
+            }
+        }
+        return MakeShareable(new FJsonValueObject(StructObject));
+    }
+
+    // Object reference
+    if (const FObjectProperty* ObjectProp = CastField<FObjectProperty>(Property))
+    {
+        UObject* ObjectValue = ObjectProp->GetObjectPropertyValue(ValuePtr);
+        if (ObjectValue)
+        {
+            return MakeShareable(new FJsonValueString(ObjectValue->GetPathName()));
+        }
+        return MakeShareable(new FJsonValueNull());
+    }
+
+    // Array
+    if (const FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
+    {
+        FScriptArrayHelper ArrayHelper(ArrayProp, ValuePtr);
+        TArray<TSharedPtr<FJsonValue>> JsonArray;
+
+        for (int32 i = 0; i < ArrayHelper.Num(); ++i)
+        {
+            const void* ElementPtr = ArrayHelper.GetRawPtr(i);
+            TSharedPtr<FJsonValue> ElementValue = PropertyToJsonValue(ArrayProp->Inner, ElementPtr);
+            if (ElementValue.IsValid())
+            {
+                JsonArray.Add(ElementValue);
+            }
+        }
+
+        return MakeShareable(new FJsonValueArray(JsonArray));
+    }
+
+    // Unsupported type - return string representation using ExportTextItem
+    FString ExportedValue;
+    Property->ExportTextItem_Direct(ExportedValue, ValuePtr, nullptr, nullptr, PPF_None);
+    return MakeShareable(new FJsonValueString(ExportedValue));
+}
+
+// NEW HANDLER IMPLEMENTATIONS for manage_blueprint_components
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName, ComponentName, PropertyName;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
+        !Params->TryGetStringField(TEXT("property_name"), PropertyName))
+    {
+        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
+    }
+
+    // Load the Blueprint
+    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
+    if (!Blueprint)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    // Find the component
+    UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
+    if (!Component)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+    }
+
+    // Find the property
+    UClass* ComponentClass = Component->GetClass();
+    const FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
+    if (!Property)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentName));
+    }
+
+    // Get property value
+    const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Component);
+    TSharedPtr<FJsonValue> PropertyValue = PropertyToJsonValue(Property, ValuePtr);
+
+    if (!PropertyValue.IsValid())
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Failed to read property '%s' value"), *PropertyName));
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("property_name"), PropertyName);
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("type"), GetPropertyCPPType(Property));
+    Response->SetField(TEXT("value"), PropertyValue);
+
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAllComponentProperties(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName, ComponentName;
+    bool bIncludeInherited = true;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+        !Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name"));
+    }
+
+    Params->TryGetBoolField(TEXT("include_inherited"), bIncludeInherited);
+
+    // Load the Blueprint
+    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
+    if (!Blueprint)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    // Find the component
+    UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
+    if (!Component)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+    }
+
+    // Get all properties
+    UClass* ComponentClass = Component->GetClass();
+    TSharedPtr<FJsonObject> PropertiesObject = MakeShareable(new FJsonObject);
+    int32 PropertyCount = 0;
+
+    for (TFieldIterator<FProperty> It(ComponentClass); It; ++It)
+    {
+        FProperty* Property = *It;
+        
+        // Skip if not including inherited and property is from parent class
+        if (!bIncludeInherited && Property->GetOwnerClass() != ComponentClass)
+        {
+            continue;
+        }
+
+        // Skip properties that shouldn't be exposed
+        if (Property->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient | CPF_NonPIEDuplicateTransient))
+        {
+            continue;
+        }
+
+        const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Component);
+        TSharedPtr<FJsonValue> PropertyValue = PropertyToJsonValue(Property, ValuePtr);
+
+        if (PropertyValue.IsValid())
+        {
+            PropertiesObject->SetField(Property->GetName(), PropertyValue);
+            PropertyCount++;
+        }
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetObjectField(TEXT("properties"), PropertiesObject);
+    Response->SetNumberField(TEXT("property_count"), PropertyCount);
+    Response->SetBoolField(TEXT("include_inherited"), bIncludeInherited);
+
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentProperties(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName, ComponentName, CompareToBlueprint, CompareToComponent;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
+        !Params->TryGetStringField(TEXT("compare_to_blueprint"), CompareToBlueprint) ||
+        !Params->TryGetStringField(TEXT("compare_to_component"), CompareToComponent))
+    {
+        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, compare_to_blueprint, compare_to_component"));
+    }
+
+    // Load both Blueprints
+    UBlueprint* Blueprint1 = LoadObject<UBlueprint>(nullptr, *BlueprintName);
+    UBlueprint* Blueprint2 = LoadObject<UBlueprint>(nullptr, *CompareToBlueprint);
+    
+    if (!Blueprint1)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+    if (!Blueprint2)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *CompareToBlueprint));
+    }
+
+    // Find both components
+    UActorComponent* Component1 = FindComponentInBlueprint(Blueprint1, ComponentName);
+    UActorComponent* Component2 = FindComponentInBlueprint(Blueprint2, CompareToComponent);
+    
+    if (!Component1)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+    }
+    if (!Component2)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *CompareToComponent, *CompareToBlueprint));
+    }
+
+    // Ensure components are same type
+    if (Component1->GetClass() != Component2->GetClass())
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component types don't match: '%s' vs '%s'"), 
+            *Component1->GetClass()->GetName(), *Component2->GetClass()->GetName()));
+    }
+
+    // Compare all properties
+    UClass* ComponentClass = Component1->GetClass();
+    TArray<TSharedPtr<FJsonValue>> DifferencesArray;
+    int32 MatchingCount = 0;
+    int32 DifferenceCount = 0;
+
+    for (TFieldIterator<FProperty> It(ComponentClass); It; ++It)
+    {
+        FProperty* Property = *It;
+        
+        // Skip transient properties
+        if (Property->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient))
+        {
+            continue;
+        }
+
+        const void* ValuePtr1 = Property->ContainerPtrToValuePtr<void>(Component1);
+        const void* ValuePtr2 = Property->ContainerPtrToValuePtr<void>(Component2);
+
+        TSharedPtr<FJsonValue> Value1 = PropertyToJsonValue(Property, ValuePtr1);
+        TSharedPtr<FJsonValue> Value2 = PropertyToJsonValue(Property, ValuePtr2);
+
+        // Compare values
+        bool bValuesMatch = false;
+        if (Value1.IsValid() && Value2.IsValid())
+        {
+            // Simple string comparison of JSON representation
+            FString Value1Str, Value2Str;
+            TSharedRef<TJsonWriter<>> Writer1 = TJsonWriterFactory<>::Create(&Value1Str);
+            TSharedRef<TJsonWriter<>> Writer2 = TJsonWriterFactory<>::Create(&Value2Str);
+            FJsonSerializer::Serialize(Value1, TEXT(""), Writer1);
+            FJsonSerializer::Serialize(Value2, TEXT(""), Writer2);
+            
+            bValuesMatch = (Value1Str == Value2Str);
+        }
+
+        if (bValuesMatch)
+        {
+            MatchingCount++;
+        }
+        else
+        {
+            DifferenceCount++;
+            
+            // Add to differences array
+            TSharedPtr<FJsonObject> DiffObject = MakeShareable(new FJsonObject);
+            DiffObject->SetStringField(TEXT("property"), Property->GetName());
+            DiffObject->SetField(TEXT("source_value"), Value1);
+            DiffObject->SetField(TEXT("target_value"), Value2);
+            DifferencesArray.Add(MakeShareable(new FJsonValueObject(DiffObject)));
+        }
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetBoolField(TEXT("matches"), DifferenceCount == 0);
+    Response->SetNumberField(TEXT("matching_count"), MatchingCount);
+    Response->SetNumberField(TEXT("difference_count"), DifferenceCount);
+    Response->SetArrayField(TEXT("differences"), DifferencesArray);
+    Response->SetStringField(TEXT("source_component"), ComponentName);
+    Response->SetStringField(TEXT("target_component"), CompareToComponent);
+
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReparentComponent(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName, ComponentName, ParentName;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
+        !Params->TryGetStringField(TEXT("parent_name"), ParentName))
+    {
+        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, parent_name"));
+    }
+
+#if WITH_EDITOR
+    // Load the Blueprint
+    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
+    if (!Blueprint)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    // Find the component to reparent
+    USCS_Node* ChildNode = nullptr;
+    if (Blueprint->SimpleConstructionScript)
+    {
+        const TArray<USCS_Node*>& AllNodes = Blueprint->SimpleConstructionScript->GetAllNodes();
+        for (USCS_Node* Node : AllNodes)
+        {
+            if (Node && Node->GetVariableName() == *ComponentName)
+            {
+                ChildNode = Node;
+                break;
+            }
+        }
+    }
+
+    if (!ChildNode)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
+    }
+
+    // Find the new parent component
+    USCS_Node* NewParentNode = nullptr;
+    if (Blueprint->SimpleConstructionScript)
+    {
+        const TArray<USCS_Node*>& AllNodes = Blueprint->SimpleConstructionScript->GetAllNodes();
+        for (USCS_Node* Node : AllNodes)
+        {
+            if (Node && Node->GetVariableName() == *ParentName)
+            {
+                NewParentNode = Node;
+                break;
+            }
+        }
+    }
+
+    if (!NewParentNode)
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Parent component '%s' not found in Blueprint"), *ParentName));
+    }
+
+    // Validate that new parent is a SceneComponent
+    if (!NewParentNode->ComponentTemplate || !NewParentNode->ComponentTemplate->IsA<USceneComponent>())
+    {
+        return CreateErrorResponse(FString::Printf(TEXT("Parent component '%s' is not a SceneComponent"), *ParentName));
+    }
+
+    // Store old parent name for response
+    FString OldParentName = ChildNode->ParentComponentOrVariableName.ToString();
+
+    // Reparent using UE's built-in SetParent method
+    ChildNode->SetParent(NewParentNode);
+
+    // Mark Blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("old_parent"), OldParentName.IsEmpty() ? TEXT("None") : OldParentName);
+    Response->SetStringField(TEXT("new_parent"), ParentName);
+    Response->SetStringField(TEXT("message"), TEXT("Component reparented successfully"));
+
+    return Response;
+#else
+    return CreateErrorResponse(TEXT("Reparent component only available in Editor builds"));
+#endif
 }

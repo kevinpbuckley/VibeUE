@@ -30,6 +30,12 @@ private:
     TSharedPtr<FJsonObject> HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleRemoveComponent(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleReorderComponents(const TSharedPtr<FJsonObject>& Params);
+    
+    // Property Reading Methods (NEW for manage_blueprint_components)
+    TSharedPtr<FJsonObject> HandleGetComponentProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetAllComponentProperties(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleCompareComponentProperties(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleReparentComponent(const TSharedPtr<FJsonObject>& Params);
 
     // Core Reflection Engine
     TArray<UClass*> DiscoverComponentClasses(const TSharedPtr<FJsonObject>& Filters = nullptr);
@@ -51,8 +57,13 @@ private:
 
     // Component Instance Management
     UActorComponent* FindComponentInBlueprint(UBlueprint* Blueprint, const FString& ComponentName);
+    UActorComponent* FindComponentInBlueprint(UBlueprint* Blueprint, const FString& ComponentName, UClass* ExpectedClass);
     bool AttachComponentToParent(USceneComponent* ChildComponent, USceneComponent* ParentComponent, 
                                const FString& AttachmentRule, const FTransform& RelativeTransform);
+
+    // Property Value Extraction (NEW)
+    TSharedPtr<FJsonObject> GetComponentPropertyValues(UActorComponent* Component, UClass* ComponentClass);
+    TSharedPtr<FJsonValue> PropertyToJsonValue(const FProperty* Property, const void* ValuePtr);
 
     // Validation and Safety
     bool ValidateComponentType(const FString& ComponentTypeName, UClass*& OutComponentClass);

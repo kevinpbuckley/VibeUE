@@ -82,24 +82,129 @@ Create Function → Add Nodes Immediately (Missing dependencies!) → Broken Blu
 - `reparent_blueprint` - Change Blueprint parent class
 
 ### Blueprint Variables
-- `add_blueprint_variable` - Add variables to Blueprint
+- `manage_blueprint_variables` - **UNIFIED TOOL** for all variable operations (create, delete, search_types, etc.)
+- `add_blueprint_variable` - (Legacy) Add variables to Blueprint
 - `get_blueprint_variable` - Get variable information
 - `get_blueprint_variable_info` - Get detailed variable metadata
-- `delete_blueprint_variable` - Remove variables from Blueprint
+- `delete_blueprint_variable` - (Legacy) Remove variables from Blueprint
 - `get_available_blueprint_variable_types` - List all available variable types
 - `get_variable_property` - Get nested variable properties
 - `set_variable_property` - Set nested variable properties
 
+**⚠️ CRITICAL: Creating Blueprint Variables - REQUIRED `type_path` Parameter**
+
+❌ **COMMON MISTAKE**: Using `"type": "UserWidget"` or `"type": "float"` in variable_config
+✅ **CORRECT USAGE**: You MUST use `"type_path": "/Script/UMG.UserWidget"` or `"type_path": "/Script/CoreUObject.FloatProperty"`
+
+When using `manage_blueprint_variables` with `action="create"`, the `variable_config` dictionary **REQUIRES** a `type_path` field with the full canonical path. The field name is `type_path`, NOT `type`. Here are the correct type paths:
+
+**Quick Reference - Most Common Types:**
+
+| What You Want | Use This `type_path` |
+|--------------|---------------------|
+| Float number | `"/Script/CoreUObject.FloatProperty"` |
+| Integer number | `"/Script/CoreUObject.IntProperty"` |
+| True/False | `"/Script/CoreUObject.BoolProperty"` |
+| Text string | `"/Script/CoreUObject.StrProperty"` |
+| Widget (UI) | `"/Script/UMG.UserWidget"` |
+| Particle Effect | `"/Script/Niagara.NiagaraSystem"` |
+| Sound/Audio | `"/Script/Engine.SoundBase"` |
+| Actor reference | `"/Script/Engine.Actor"` |
+| Blueprint class | `"/Game/Path/To/BP_Name.BP_Name_C"` |
+
+**Primitive Types (Most Common):**
+- **float**: `"/Script/CoreUObject.FloatProperty"`
+- **int**: `"/Script/CoreUObject.IntProperty"`
+- **bool**: `"/Script/CoreUObject.BoolProperty"`
+- **double**: `"/Script/CoreUObject.DoubleProperty"`
+- **string**: `"/Script/CoreUObject.StrProperty"`
+- **name**: `"/Script/CoreUObject.NameProperty"`
+- **byte**: `"/Script/CoreUObject.ByteProperty"`
+
+**Object Types:**
+- **UserWidget**: `"/Script/UMG.UserWidget"`
+- **NiagaraSystem**: `"/Script/Niagara.NiagaraSystem"`
+- **SoundBase**: `"/Script/Engine.SoundBase"`
+- **Actor**: `"/Script/Engine.Actor"`
+- **Character**: `"/Script/Engine.Character"`
+- **StaticMesh**: `"/Script/Engine.StaticMesh"`
+- **Material**: `"/Script/Engine.Material"`
+- **Texture2D**: `"/Script/Engine.Texture2D"`
+
+**Blueprint Classes:**
+- Use full asset path: `"/Game/Path/To/BP_ClassName.BP_ClassName_C"`
+- Example: `"/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C"`
+
+**Container Types:**
+- Arrays, Maps, Sets: Specify base type path + container configuration
+
+**Example: Creating Variables with Correct Type Paths:**
+```python
+# ❌ WRONG - This will FAIL with "type_path required" error:
+manage_blueprint_variables(
+    blueprint_name="BP_Player",
+    action="create",
+    variable_name="Health",
+    variable_config={
+        "type": "float",  # ❌ WRONG FIELD NAME!
+        "category": "Stats"
+    }
+)
+
+# ✅ CORRECT - Use type_path, not type:
+# Float variable
+manage_blueprint_variables(
+    blueprint_name="BP_Player",
+    action="create",
+    variable_name="Health",
+    variable_config={
+        "type_path": "/Script/CoreUObject.FloatProperty",  # ✅ CORRECT!
+        "category": "Stats",
+        "is_editable": True
+    }
+)
+
+# Widget variable
+manage_blueprint_variables(
+    blueprint_name="BP_Player",
+    action="create",
+    variable_name="HUDWidget",
+    variable_config={
+        "type_path": "/Script/UMG.UserWidget",
+        "category": "UI",
+        "is_editable": True
+    }
+)
+
+# Blueprint class reference
+manage_blueprint_variables(
+    blueprint_name="BP_Player",
+    action="create",
+    variable_name="CustomHUD",
+    variable_config={
+        "type_path": "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C",
+        "category": "UI",
+        "is_editable": True
+    }
+)
+```
+
 ### Blueprint Components
-- `get_available_components` - Discover all component types via reflection
-- `add_component` - Add components using reflection-based creation
+- `manage_blueprint_components` - **UNIFIED MULTI-ACTION TOOL** for complete component management (12 actions)
+  - **Discovery**: search_types, get_info, get_property_metadata, list
+  - **Lifecycle**: create, delete, reparent, reorder
+  - **Properties**: get_property, set_property, get_all_properties, compare_properties
+  - **Status**: ✅ FULLY TESTED AND WORKING (11/12 actions validated)
+  - **📖 See**: `manage_blueprint_components_guide.md` for complete action reference, examples, and best practices
+- `get_available_components` - (Legacy - use manage_blueprint_components with search_types)
+- `add_component` - (Legacy - use manage_blueprint_components with create)
 - `add_component_to_blueprint` - Add components to Blueprint
-- `get_component_info` - Get complete component information
-- `get_component_hierarchy` - Get Blueprint component hierarchy
-- `get_property_metadata` - Get detailed property information
-- `set_component_property` - Set component properties with reflection
-- `remove_component` - Remove components with hierarchy handling
-- `reorder_components` - Reorder component hierarchy
+- `get_component_info` - (Legacy - use manage_blueprint_components with get_info)
+- `get_component_hierarchy` - (Legacy - use manage_blueprint_components with list)
+- `get_property_metadata` - (Legacy - use manage_blueprint_components with get_property_metadata)
+- `set_component_property` - (Legacy - use manage_blueprint_components with set_property)
+- `remove_component` - (Legacy - use manage_blueprint_components with delete)
+- `reorder_components` - (Legacy - use manage_blueprint_components with reorder)
 
 ### Blueprint Functions & Nodes
 - `manage_blueprint_function` - **MULTI-ACTION TOOL** for function management (includes listing functions)
@@ -169,7 +274,7 @@ These tools use an `action` parameter to perform different operations. Each acti
        blueprint_name="BP_Player",
        action="create",
        variable_name="Health",
-       variable_config={"type": "float"}
+       variable_config={"type_path": "/Script/CoreUObject.FloatProperty"}
    )
    # THEN create the function that references Health
    ```
@@ -613,7 +718,8 @@ manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # FAI
 
 # ✅ RIGHT: Follow dependency order
 # 1. Create variable first
-manage_blueprint_variables("BP_Player", "create", variable_name="Health", variable_config={"type": "float"})
+manage_blueprint_variables("BP_Player", "create", variable_name="Health", 
+                          variable_config={"type_path": "/Script/CoreUObject.FloatProperty"})
 # 2. Create function
 manage_blueprint_function("BP_Player", "create_function", function_name="Test")
 # 3. Now create nodes that reference existing dependencies
@@ -640,7 +746,8 @@ manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # SUC
 # ✅ REQUIRED DEPENDENCIES CHECKLIST:
 
 # 1. Blueprint Variables Created?
-manage_blueprint_variables("BP_Player", "create", variable_name="Health", variable_config={"type": "float"})
+manage_blueprint_variables("BP_Player", "create", variable_name="Health", 
+                          variable_config={"type_path": "/Script/CoreUObject.FloatProperty"})
 
 # 2. Dependent Functions Created with Parameters?  
 manage_blueprint_function("BP_Player", "create_function", function_name="ValidateInput")

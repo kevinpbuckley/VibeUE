@@ -245,6 +245,10 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("get_component_hierarchy") ||
                      CommandType == TEXT("add_component") ||
                      CommandType == TEXT("set_component_property") ||
+                     CommandType == TEXT("get_component_property") ||
+                     CommandType == TEXT("get_all_component_properties") ||
+                     CommandType == TEXT("compare_component_properties") ||
+                     CommandType == TEXT("reparent_component") ||
                      CommandType == TEXT("remove_component") ||
                      CommandType == TEXT("reorder_components"))
             {
