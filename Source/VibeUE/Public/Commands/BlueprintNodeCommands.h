@@ -44,6 +44,7 @@ private:
     TSharedPtr<FJsonObject> HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleResetPinDefaults(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSplitOrRecombinePins(const TSharedPtr<FJsonObject>& Params, bool bSplitPins);
     
