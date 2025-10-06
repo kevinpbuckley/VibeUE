@@ -84,12 +84,13 @@ def register_system_diagnostic_tools(mcp: FastMCP):
         - You encounter errors and need troubleshooting guidance
         - You need examples of how to use complex tools
         
-        📚 **COMPREHENSIVE COVERAGE**: 
-        - All 50+ VibeUE MCP tools with detailed parameters
-        - Multi-action tools with all available actions documented
-        - Common usage patterns and workflows
-        - Error handling and troubleshooting guides
-        - Performance tips and best practices
+    📚 **COMPREHENSIVE COVERAGE**: 
+    - All 50+ VibeUE MCP tools with detailed parameters
+    - Multi-action tools with all available actions documented
+    - Common usage patterns and workflows
+    - Error handling and troubleshooting guides
+    - Performance tips and best practices
+    - 🔄 Latest protocol changes (e.g., descriptor-only node creation with mandatory `spawner_key`)
         
         🎯 **WHEN TO USE**: Before attempting any complex operation, when stuck, or when error messages are unclear.
         

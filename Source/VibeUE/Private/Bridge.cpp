@@ -278,7 +278,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             // Blueprint Node Commands
             else if (CommandType == TEXT("manage_blueprint_node") ||
                      CommandType == TEXT("manage_blueprint_function") ||
-                     CommandType == TEXT("get_available_blueprint_nodes"))
+                     CommandType == TEXT("get_available_blueprint_nodes") ||
+                     CommandType == TEXT("discover_nodes_with_descriptors"))
             {
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);

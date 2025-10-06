@@ -22,6 +22,7 @@
 #include "BlueprintActionDatabaseRegistrar.h"
 #include "BlueprintNodeSpawner.h"
 #include "BlueprintFunctionNodeSpawner.h"
+#include "BlueprintVariableNodeSpawner.h"
 #include "BlueprintActionMenuBuilder.h"
 #include "BlueprintActionMenuUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -35,7 +36,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogVibeUEReflection, Log, All);
 TArray<FBlueprintReflection::FNodeCategory> FBlueprintReflection::CachedNodeCategories;
 bool FBlueprintReflection::bCategoriesInitialized = false;
 TMap<FString, UClass*> FBlueprintReflection::NodeTypeMap;
-TMap<FString, UBlueprintNodeSpawner*> FBlueprintReflection::CachedNodeSpawners;
+TMap<FString, TWeakObjectPtr<UBlueprintNodeSpawner>> FBlueprintReflection::CachedNodeSpawners;
 
 namespace
 {
@@ -573,7 +574,7 @@ UClass* FBlueprintReflection::ResolveNodeClass(const FString& NodeType)
                            *NodeClassName, *NodeType, *DisplayName);
                     
                     // Store the spawner for later use in configuration
-                    CachedNodeSpawners.Add(NodeType, NodeSpawner);
+                    CacheSpawner(NodeType, NodeSpawner);
                     return NodeSpawner->NodeClass;
                 }
                 
@@ -595,7 +596,7 @@ UClass* FBlueprintReflection::ResolveNodeClass(const FString& NodeType)
                                    *NodeClassName, *NodeType, *QualifiedName);
                             
                             // Store the spawner for configuration
-                            CachedNodeSpawners.Add(NodeType, NodeSpawner);
+                            CacheSpawner(NodeType, NodeSpawner);
                             return NodeSpawner->NodeClass;
                         }
                     }
@@ -736,6 +737,49 @@ void FBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionN
     if (!FunctionNode)
         return;
 
+    // 🔍 DEBUG: Log all parameters being passed
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("════════ ConfigureFunctionNode ENTRY ════════"));
+    FString DebugJson;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&DebugJson);
+    FJsonSerializer::Serialize(NodeParams.ToSharedRef(), Writer);
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("NodeParams JSON: %s"), *DebugJson);
+
+    // ═════════════════════════════════════════════════════════════════════
+    // NEW DESIGN: Priority 1 - Use exact spawner_key if provided
+    // ═════════════════════════════════════════════════════════════════════
+    FString SpawnerKey;
+    if (NodeParams->TryGetStringField(TEXT("spawner_key"), SpawnerKey) && !SpawnerKey.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Using exact spawner_key: %s"), *SpawnerKey);
+        
+        UBlueprintNodeSpawner* Spawner = GetSpawnerByKey(SpawnerKey);
+        
+        if (!Spawner)
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Spawner not cached, will search during creation"));
+            // Don't fail here - the spawner might be found during discovery
+            // Fall through to legacy configuration
+        }
+        else if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(Spawner))
+        {
+            if (const UFunction* Function = FunctionSpawner->GetFunction())
+            {
+                UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Found spawner, configuring node with %s::%s"),
+                       *Function->GetOuterUClass()->GetName(), *Function->GetName());
+                
+                FunctionNode->Modify();
+                FunctionNode->SetFromFunction(Function);
+                FunctionNode->FunctionReference.SetFromField<UFunction>(Function, Function->HasAnyFunctionFlags(FUNC_Static));
+                FunctionNode->AllocateDefaultPins();
+                FunctionNode->ReconstructNode();
+                
+                UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: ✅ SUCCESS via spawner_key with %d pins"), 
+                       FunctionNode->Pins.Num());
+                return;
+            }
+        }
+    }
+
     // ENHANCED: Try to find the function node using the BlueprintActionDatabase first
     // This integrates the discovery system with the creation system
     FString NodeTypeName;
@@ -743,10 +787,38 @@ void FBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionN
     {
         UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Attempting to configure using discovered node type: %s"), *NodeTypeName);
         
-        // ENHANCED: First check cached spawners for performance
-        if (UBlueprintNodeSpawner** CachedSpawner = CachedNodeSpawners.Find(NodeTypeName))
+        // ENHANCED: Build cache key that includes function_class to differentiate variants
+        FString CacheKey = NodeTypeName;
+        FString DesiredClass;
+        
+        // Try to get function_class from flat NodeParams first (Python flattens it)
+        if (!NodeParams->TryGetStringField(TEXT("function_class"), DesiredClass))
         {
-            if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(*CachedSpawner))
+            // Fallback: try nested node_params
+            if (NodeParams->HasField(TEXT("node_params")))
+            {
+                const TSharedPtr<FJsonObject>* NodeParamsNested;
+                if (NodeParams->TryGetObjectField(TEXT("node_params"), NodeParamsNested))
+                {
+                    (*NodeParamsNested)->TryGetStringField(TEXT("function_class"), DesiredClass);
+                }
+            }
+        }
+        
+        if (!DesiredClass.IsEmpty())
+        {
+            CacheKey = FString::Printf(TEXT("%s::%s"), *NodeTypeName, *DesiredClass);
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Using class-specific cache key: %s"), *CacheKey);
+        }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: No function_class found, using simple cache key: %s"), *CacheKey);
+        }
+        
+        // ENHANCED: Check cached spawners for performance (now with class-specific keys)
+        if (UBlueprintNodeSpawner* CachedSpawner = GetSpawnerByKey(CacheKey))
+        {
+            if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(CachedSpawner))
             {
                 if (const UFunction* FoundFunction = FunctionSpawner->GetFunction())
                 {
@@ -764,50 +836,234 @@ void FBlueprintReflection::ConfigureFunctionNode(UK2Node_CallFunction* FunctionN
         }
         
         // Fallback to full database search if not cached
-        FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
-        const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDatabase.GetAllActions();
-        
-        for (auto& ActionEntry : AllActions)
+        // SKIP simple search if we have function_class specified - use enhanced context filtering instead
+        if (DesiredClass.IsEmpty())
         {
-            const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
-            for (UBlueprintNodeSpawner* NodeSpawner : ActionList)
+            FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+            const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDatabase.GetAllActions();
+            
+            for (auto& ActionEntry : AllActions)
             {
-                if (NodeSpawner && NodeSpawner->NodeClass)
+                const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
+                for (UBlueprintNodeSpawner* NodeSpawner : ActionList)
                 {
-                    FString DisplayName = NodeSpawner->DefaultMenuSignature.MenuName.ToString();
-                    if (DisplayName.Equals(NodeTypeName, ESearchCase::IgnoreCase) ||
-                        DisplayName.Contains(NodeTypeName))
+                    if (NodeSpawner && NodeSpawner->NodeClass)
                     {
-                        // Cache this spawner for future use
-                        CachedNodeSpawners.Add(NodeTypeName, NodeSpawner);
-                        
-                        // Found matching spawner - extract function information
-                        if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner))
+                        FString DisplayName = NodeSpawner->DefaultMenuSignature.MenuName.ToString();
+                        if (DisplayName.Equals(NodeTypeName, ESearchCase::IgnoreCase) ||
+                            DisplayName.Contains(NodeTypeName))
                         {
-                            if (const UFunction* FoundFunction = FunctionSpawner->GetFunction())
+                            // Cache this spawner for future use (with class-specific key)
+                            CacheSpawner(CacheKey, NodeSpawner);
+                            
+                            // Found matching spawner - extract function information
+                            if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner))
                             {
-                                UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Found function via spawner: %s::%s"), 
-                                       *FoundFunction->GetOuterUClass()->GetName(), *FoundFunction->GetName());
-                                
-                                FunctionNode->Modify();
-                                FunctionNode->SetFromFunction(FoundFunction);
-                                FunctionNode->FunctionReference.SetFromField<UFunction>(FoundFunction, FoundFunction->HasAnyFunctionFlags(FUNC_Static));
-                                FunctionNode->AllocateDefaultPins();
-                                FunctionNode->ReconstructNode();
-                                return; // Success!
+                                if (const UFunction* FoundFunction = FunctionSpawner->GetFunction())
+                                {
+                                    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Found function via simple spawner search: %s::%s"), 
+                                           *FoundFunction->GetOuterUClass()->GetName(), *FoundFunction->GetName());
+                                    
+                                    FunctionNode->Modify();
+                                    FunctionNode->SetFromFunction(FoundFunction);
+                                    FunctionNode->FunctionReference.SetFromField<UFunction>(FoundFunction, FoundFunction->HasAnyFunctionFlags(FUNC_Static));
+                                    FunctionNode->AllocateDefaultPins();
+                                    FunctionNode->ReconstructNode();
+                                    return; // Success!
+                                }
                             }
                         }
                     }
                 }
             }
         }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Skipping simple search, using enhanced context filtering for class: %s"), *DesiredClass);
+        }
         UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Could not find spawner for node type: %s"), *NodeTypeName);
     }
 
-    // FALLBACK: Original parameter-based configuration
+    // ENHANCED: Try function_name with SPAWNER SEARCH (before fallback to manual resolution)
     FString FunctionName;
     if (!NodeParams->TryGetStringField(TEXT("function_name"), FunctionName))
     {
+        const TSharedPtr<FJsonObject>* FunctionReference = nullptr;
+        if (NodeParams->TryGetObjectField(TEXT("FunctionReference"), FunctionReference) && FunctionReference && (*FunctionReference)->TryGetStringField(TEXT("MemberName"), FunctionName))
+        {
+            // extracted from nested reference
+        }
+    }
+    
+    // NEW: If we have a function name, search for a spawner that creates this specific function
+    if (!FunctionName.IsEmpty())
+    {
+        // ENHANCED: Extract function_class parameter for filtering
+        FString DesiredFunctionClass;
+        NodeParams->TryGetStringField(TEXT("function_class"), DesiredFunctionClass);
+        
+        // Also check FunctionReference.MemberParent
+        if (DesiredFunctionClass.IsEmpty())
+        {
+            const TSharedPtr<FJsonObject>* FunctionReference = nullptr;
+            if (NodeParams->TryGetObjectField(TEXT("FunctionReference"), FunctionReference) && FunctionReference)
+            {
+                (*FunctionReference)->TryGetStringField(TEXT("MemberParent"), DesiredFunctionClass);
+            }
+        }
+        
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Searching spawners for function '%s' on class '%s'"), 
+               *FunctionName, DesiredFunctionClass.IsEmpty() ? TEXT("<any>") : *DesiredFunctionClass);
+        
+        // Build cache key that includes both function name and class for precise matching
+        FString CacheKey = DesiredFunctionClass.IsEmpty() ? FunctionName : FString::Printf(TEXT("%s::%s"), *DesiredFunctionClass, *FunctionName);
+        
+        // Check cache first for performance
+        if (UBlueprintNodeSpawner* CachedSpawner = GetSpawnerByKey(CacheKey))
+        {
+            if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(CachedSpawner))
+            {
+                if (const UFunction* FoundFunction = FunctionSpawner->GetFunction())
+                {
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Using cached spawner for function: %s::%s"), 
+                           *FoundFunction->GetOuterUClass()->GetName(), *FoundFunction->GetName());
+                    
+                    FunctionNode->Modify();
+                    FunctionNode->SetFromFunction(FoundFunction);
+                    FunctionNode->FunctionReference.SetFromField<UFunction>(FoundFunction, FoundFunction->HasAnyFunctionFlags(FUNC_Static));
+                    FunctionNode->AllocateDefaultPins();
+                    FunctionNode->ReconstructNode();
+                    return; // Success via cached spawner!
+                }
+            }
+        }
+        
+        // Not cached, search the full database
+        FBlueprintActionDatabase& ActionDatabase = FBlueprintActionDatabase::Get();
+        const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDatabase.GetAllActions();
+        
+        // ENHANCED: Collect all matching functions with context-sensitive filtering
+        TArray<TPair<const UFunction*, UBlueprintNodeSpawner*>> MatchingFunctions;
+        TArray<TPair<const UFunction*, UBlueprintNodeSpawner*>> ContextFilteredMatches;
+        
+        // Create filter context for context-sensitive filtering (like Unreal's "Context Sensitive" checkbox)
+        // NOTE: Using BPFILTER_NoFlags to allow global static functions (like UGameplayStatics)
+        FBlueprintActionFilter Filter(FBlueprintActionFilter::BPFILTER_NoFlags);
+        if (UBlueprint* Blueprint = FunctionNode->GetBlueprint())
+        {
+            Filter.Context.Blueprints.Add(Blueprint);
+            Filter.Context.Graphs.Add(FunctionNode->GetGraph());
+        }
+        
+        for (auto& ActionEntry : AllActions)
+        {
+            const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
+            for (UBlueprintNodeSpawner* NodeSpawner : ActionList)
+            {
+                if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner))
+                {
+                    if (const UFunction* Function = FunctionSpawner->GetFunction())
+                    {
+                        // Match function name (case-insensitive)
+                        if (Function->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+                        {
+                            FString FunctionClass = Function->GetOuterUClass()->GetName();
+                            FString FunctionPath = Function->GetOuterUClass()->GetPathName();
+                            UE_LOG(LogVibeUEReflection, Warning, TEXT("  Found GetPlayerController variant: %s::%s (Path: %s, IsStatic: %d)"), 
+                                   *FunctionClass, *Function->GetName(), *FunctionPath, Function->HasAnyFunctionFlags(FUNC_Static));
+                            
+                            MatchingFunctions.Add(TPair<const UFunction*, UBlueprintNodeSpawner*>(Function, NodeSpawner));
+                            
+                            // Check if this spawner passes context-sensitive filtering (like "Context Sensitive" checkbox)
+                            FBlueprintActionInfo ActionInfo(Function->GetOuterUClass(), NodeSpawner);
+                            if (!Filter.IsFiltered(ActionInfo))
+                            {
+                                ContextFilteredMatches.Add(TPair<const UFunction*, UBlueprintNodeSpawner*>(Function, NodeSpawner));
+                                UE_LOG(LogVibeUEReflection, Log, TEXT("  ✓ Context-appropriate: %s::%s"), 
+                                       *Function->GetOuterUClass()->GetName(), *Function->GetName());
+                            }
+                            else
+                            {
+                                UE_LOG(LogVibeUEReflection, Log, TEXT("  ✗ Context-filtered: %s::%s"), 
+                                       *Function->GetOuterUClass()->GetName(), *Function->GetName());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Found %d total matches, %d context-appropriate for function '%s'"), 
+               MatchingFunctions.Num(), ContextFilteredMatches.Num(), *FunctionName);
+        
+        // ENHANCED: Prioritize context-filtered matches, then apply class filtering
+        const UFunction* BestMatch = nullptr;
+        UBlueprintNodeSpawner* BestSpawner = nullptr;
+        
+        // Use context-filtered list if available, otherwise use all matches
+        TArray<TPair<const UFunction*, UBlueprintNodeSpawner*>>& SearchList = 
+            ContextFilteredMatches.Num() > 0 ? ContextFilteredMatches : MatchingFunctions;
+        
+        if (!DesiredFunctionClass.IsEmpty())
+        {
+            // First pass: Try exact class match in context-appropriate functions
+            for (const auto& Pair : SearchList)
+            {
+                const UFunction* Function = Pair.Key;
+                UClass* FunctionClass = Function->GetOuterUClass();
+                
+                // Check if class name matches (handle both short names and full paths)
+                FString FunctionClassName = FunctionClass->GetName();
+                FString FunctionClassPath = FunctionClass->GetPathName();
+                
+                if (FunctionClassName.Equals(DesiredFunctionClass, ESearchCase::IgnoreCase) ||
+                    FunctionClassPath.Contains(DesiredFunctionClass, ESearchCase::IgnoreCase) ||
+                    DesiredFunctionClass.Contains(FunctionClassName, ESearchCase::IgnoreCase))
+                {
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Found exact class match: %s::%s"), 
+                           *FunctionClassName, *Function->GetName());
+                    BestMatch = Function;
+                    BestSpawner = Pair.Value;
+                    break;
+                }
+            }
+        }
+        
+        // If no class-specific match found, use first context-appropriate match (fallback)
+        if (!BestMatch && SearchList.Num() > 0)
+        {
+            BestMatch = SearchList[0].Key;
+            BestSpawner = SearchList[0].Value;
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Using first context-appropriate match: %s::%s"), 
+                   *BestMatch->GetOuterUClass()->GetName(), *BestMatch->GetName());
+        }
+        
+        if (BestMatch && BestSpawner)
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Selected function '%s::%s'"), 
+                   *BestMatch->GetOuterUClass()->GetName(), *BestMatch->GetName());
+            
+            // Cache this spawner for future use with the specific key
+            CacheSpawner(CacheKey, BestSpawner);
+            
+            // Reconfigure the node with the correct function
+            FunctionNode->Modify();
+            FunctionNode->SetFromFunction(BestMatch);
+            FunctionNode->FunctionReference.SetFromField<UFunction>(BestMatch, BestMatch->HasAnyFunctionFlags(FUNC_Static));
+            FunctionNode->AllocateDefaultPins();
+            FunctionNode->ReconstructNode();
+            
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: Successfully configured function node via spawner"));
+            return; // Success via spawner search!
+        }
+        
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureFunctionNode: No spawner found for function '%s', falling back to manual resolution"), *FunctionName);
+    }
+
+    // FALLBACK: Original parameter-based configuration (manual function resolution)
+    if (FunctionName.IsEmpty())
+    {
+        // Try alternative parameter sources if not already extracted
         const TSharedPtr<FJsonObject>* FunctionReference = nullptr;
         if (NodeParams->TryGetObjectField(TEXT("FunctionReference"), FunctionReference) && FunctionReference && (*FunctionReference)->TryGetStringField(TEXT("MemberName"), FunctionName))
         {
@@ -1974,6 +2230,10 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
     Params->TryGetBoolField(TEXT("include_events"), bIncludeEvents);
     Params->TryGetBoolField(TEXT("includeEvents"), bIncludeEvents);
 
+    bool bReturnDescriptors = true;  // Default to true for enhanced metadata
+    Params->TryGetBoolField(TEXT("return_descriptors"), bReturnDescriptors);
+    Params->TryGetBoolField(TEXT("returnDescriptors"), bReturnDescriptors);
+
     int32 MaxResults = 100;
     double ParsedMaxResults = 0.0;
     if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
@@ -1982,8 +2242,9 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
         MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
     }
 
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Search params - Category: '%s', SearchTerm: '%s', IncludeFunctions=%s, IncludeVariables=%s, IncludeEvents=%s, MaxResults=%d"),
+    UE_LOG(LogVibeUEReflection, Log, TEXT("Search params - Category: '%s', SearchTerm: '%s', ReturnDescriptors=%s, IncludeFunctions=%s, IncludeVariables=%s, IncludeEvents=%s, MaxResults=%d"),
         *Category, *SearchTerm,
+        bReturnDescriptors ? TEXT("true") : TEXT("false"),
         bIncludeFunctions ? TEXT("true") : TEXT("false"),
         bIncludeVariables ? TEXT("true") : TEXT("false"),
         bIncludeEvents ? TEXT("true") : TEXT("false"),
@@ -1997,6 +2258,68 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
         Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
         return Result;
     }
+    
+    // NEW: Use descriptor-based discovery if requested
+    if (bReturnDescriptors)
+    {
+        UE_LOG(LogVibeUEReflection, Log, TEXT("Using descriptor-based discovery with complete metadata"));
+        
+        // Use the new descriptor discovery system
+        TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+            FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, Category, TEXT(""), MaxResults);
+        
+        // Convert descriptors to the category-based format
+        TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
+        int32 TotalNodes = 0;
+        
+        for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+        {
+            // Apply type filters
+            if (!bIncludeFunctions && Desc.NodeType == TEXT("function_call")) continue;
+            if (!bIncludeVariables && (Desc.NodeType == TEXT("variable_get") || Desc.NodeType == TEXT("variable_set"))) continue;
+            if (!bIncludeEvents && Desc.NodeType == TEXT("event")) continue;
+            
+            // Convert descriptor to JSON (this includes spawner_key, pins, etc.)
+            TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+            
+            // Add to appropriate category
+            FString DescCategory = Desc.Category;
+            if (DescCategory.IsEmpty())
+            {
+                DescCategory = TEXT("Other");
+            }
+            
+            if (!CategoryMap.Contains(DescCategory))
+            {
+                CategoryMap.Add(DescCategory, TArray<TSharedPtr<FJsonValue>>());
+            }
+            
+            CategoryMap[DescCategory].Add(MakeShared<FJsonValueObject>(DescriptorJson));
+            TotalNodes++;
+        }
+        
+        // Build result
+        TSharedPtr<FJsonObject> Categories = MakeShared<FJsonObject>();
+        for (auto& CategoryPair : CategoryMap)
+        {
+            Categories->SetArrayField(CategoryPair.Key, CategoryPair.Value);
+        }
+        
+        Result->SetObjectField(TEXT("categories"), Categories);
+        Result->SetNumberField(TEXT("total_nodes"), TotalNodes);
+        Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+        Result->SetBoolField(TEXT("truncated"), false);
+        Result->SetBoolField(TEXT("success"), true);
+        Result->SetBoolField(TEXT("with_descriptors"), true);  // Flag to indicate enhanced format
+        
+        UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d nodes with descriptors in %d categories"), 
+               TotalNodes, CategoryMap.Num());
+        
+        return Result;
+    }
+    
+    // LEGACY: Use original action-based discovery (without descriptors)
+    UE_LOG(LogVibeUEReflection, Log, TEXT("Using legacy action-based discovery"));
     
     // Discover all available actions using Unreal's reflection system
     TArray<TSharedPtr<FEdGraphSchemaAction>> AllActions;
@@ -2135,6 +2458,75 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
     return Result;
 }
 
+TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
+{
+    UE_LOG(LogVibeUEReflection, Log, TEXT("HandleDiscoverNodesWithDescriptors called - NEW descriptor-based discovery"));
+    
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    
+    // Extract parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter"));
+        return Result;
+    }
+    
+    FString SearchTerm;
+    Params->TryGetStringField(TEXT("search_term"), SearchTerm);
+    
+    FString CategoryFilter;
+    Params->TryGetStringField(TEXT("category_filter"), CategoryFilter);
+    
+    FString ClassFilter;
+    Params->TryGetStringField(TEXT("class_filter"), ClassFilter);
+    
+    int32 MaxResults = 100;
+    double ParsedMaxResults = 0.0;
+    if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
+    {
+        MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("Descriptor search params - SearchTerm: '%s', CategoryFilter: '%s', ClassFilter: '%s', MaxResults=%d"),
+        *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
+    
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        Result->SetStringField(TEXT("suggestion"), TEXT("Use exact Blueprint path like '/Game/Blueprints/BP_Player'"));
+        return Result;
+    }
+    
+    // Call the new descriptor-based discovery
+    TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+        FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
+    
+    // Convert descriptors to JSON
+    TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
+    
+    for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+    {
+        TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+        DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescriptorJson));
+    }
+    
+    // Build result
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
+    Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
+    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d node descriptors for Blueprint: %s"), 
+           DescriptorJsonArray.Num(), *BlueprintName);
+    
+    return Result;
+}
+
 // === BLUEPRINT REFLECTION COMMANDS IMPLEMENTATION ===
 
 FBlueprintReflectionCommands::FBlueprintReflectionCommands()
@@ -2144,7 +2536,7 @@ FBlueprintReflectionCommands::FBlueprintReflectionCommands()
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    UE_LOG(LogVibeUEReflection, Warning, TEXT("HandleAddBlueprintNode called - using enhanced reflection system"));
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("HandleAddBlueprintNode called - descriptor-only pathway engaged"));
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 
@@ -2154,32 +2546,13 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
     {
         UE_LOG(LogVibeUEReflection, Error, TEXT("Missing blueprint_name parameter"));
         Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter. Use full asset path like '/Game/Blueprints/Actors/BP_Heart.BP_Heart'"));
-        Result->SetStringField(TEXT("usage_hint"), TEXT("Blueprint name should be a full asset path, not just a simple name"));
+        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter. Use full asset path like '/Game/Blueprints/Actors/BP_MyActor.BP_MyActor'"));
+        Result->SetStringField(TEXT("usage_hint"), TEXT("Blueprint name should be the exact package path (package_path from search_items)."));
         return Result;
     }
     UE_LOG(LogVibeUEReflection, Warning, TEXT("Blueprint path: %s"), *BlueprintName);
 
-    FString NodeIdentifier;
-    bool bHasNodeType = Params->TryGetStringField(TEXT("node_type"), NodeIdentifier);
-    if (!bHasNodeType)
-    {
-        if (Params->TryGetStringField(TEXT("node_identifier"), NodeIdentifier))
-        {
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("Legacy 'node_identifier' parameter received, using it as node type"));
-        }
-        else
-        {
-            UE_LOG(LogVibeUEReflection, Error, TEXT("Missing node_type parameter"));
-            Result->SetBoolField(TEXT("success"), false);
-            Result->SetStringField(TEXT("error"), TEXT("Missing node_type parameter. Use node types like 'Branch', 'Print String', 'GetVariable', 'SetVariable', 'Self', etc."));
-            Result->SetStringField(TEXT("usage_hint"), TEXT("Node type should be a descriptive name like 'Branch' or 'Print String'"));
-            return Result;
-        }
-    }
-    UE_LOG(LogVibeUEReflection, Warning, TEXT("Node type: %s"), *NodeIdentifier);
-
-    // Extract node parameters (supports legacy names)
+    // Extract node parameters (supports legacy names but always create an object so we can annotate it)
     TSharedPtr<FJsonObject> NodeParamsShared;
     const TSharedPtr<FJsonObject>* NodeParamsPtr = nullptr;
     if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsPtr) && NodeParamsPtr && NodeParamsPtr->IsValid())
@@ -2190,62 +2563,104 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
     {
         NodeParamsShared = *NodeParamsPtr;
     }
-    const FJsonObject* NodeParamsObj = NodeParamsShared.Get();
 
-    // Extract position parameters with better defaults
-    float PosX = 500.0f, PosY = 500.0f;  // Default position
-    bool bPositionSet = false;
-    if (NodeParamsObj)
+    if (!NodeParamsShared.IsValid())
     {
+        NodeParamsShared = MakeShared<FJsonObject>();
+    }
+
+    // Optional descriptive node identifier (retained for logging + configuration hints)
+    FString NodeIdentifier;
+    if (Params->TryGetStringField(TEXT("node_type"), NodeIdentifier) && !NodeIdentifier.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("Requested node_type: %s"), *NodeIdentifier);
+    }
+    else if (Params->TryGetStringField(TEXT("node_identifier"), NodeIdentifier) && !NodeIdentifier.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("Legacy node_identifier provided: %s"), *NodeIdentifier);
+    }
+
+    if (!NodeIdentifier.IsEmpty())
+    {
+        NodeParamsShared->SetStringField(TEXT("node_type_name"), NodeIdentifier);
+    }
+
+    // Extract the required spawner key (top-level or nested)
+    FString SpawnerKey;
+    if (!Params->TryGetStringField(TEXT("spawner_key"), SpawnerKey))
+    {
+        NodeParamsShared->TryGetStringField(TEXT("spawner_key"), SpawnerKey);
+    }
+
+    if (SpawnerKey.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("Missing required spawner_key parameter"));
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), TEXT("Missing required spawner_key. All node creation must specify node_params.spawner_key obtained from discover_nodes_with_descriptors()."));
+        Result->SetStringField(TEXT("usage_hint"), TEXT("Call discover_nodes_with_descriptors() or get_available_blueprint_nodes() first, then pass node_params.spawner_key in manage_blueprint_node."));
+        return Result;
+    }
+
+    NodeParamsShared->SetStringField(TEXT("spawner_key"), SpawnerKey);
+
+    // Extract desired position
+    auto ExtractPosition = [](const TSharedPtr<FJsonObject>& Source, const TCHAR* Field, float& OutX, float& OutY) -> bool
+    {
+        if (!Source.IsValid())
+        {
+            return false;
+        }
+
         const TArray<TSharedPtr<FJsonValue>>* PositionArrayPtr = nullptr;
-        if (NodeParamsObj->TryGetArrayField(TEXT("position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
+        if (Source->TryGetArrayField(Field, PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
         {
-            PosX = (*PositionArrayPtr)[0]->AsNumber();
-            PosY = (*PositionArrayPtr)[1]->AsNumber();
-            bPositionSet = true;
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("Position (node_params.position): (%f, %f)"), PosX, PosY);
+            OutX = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
+            OutY = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
+            return true;
         }
-        else if (NodeParamsObj->TryGetArrayField(TEXT("node_position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
+
+        return false;
+    };
+
+    float PosX = 500.0f;
+    float PosY = 500.0f;
+    bool bPositionSet = ExtractPosition(NodeParamsShared, TEXT("position"), PosX, PosY) ||
+                        ExtractPosition(NodeParamsShared, TEXT("node_position"), PosX, PosY);
+
+    if (!bPositionSet)
+    {
+        const TArray<TSharedPtr<FJsonValue>>* DirectPositionPtr = nullptr;
+        if (Params->TryGetArrayField(TEXT("position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
         {
-            PosX = (*PositionArrayPtr)[0]->AsNumber();
-            PosY = (*PositionArrayPtr)[1]->AsNumber();
+            PosX = static_cast<float>((*DirectPositionPtr)[0]->AsNumber());
+            PosY = static_cast<float>((*DirectPositionPtr)[1]->AsNumber());
             bPositionSet = true;
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("Position (node_params.node_position): (%f, %f)"), PosX, PosY);
+        }
+        else if (Params->TryGetArrayField(TEXT("node_position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
+        {
+            PosX = static_cast<float>((*DirectPositionPtr)[0]->AsNumber());
+            PosY = static_cast<float>((*DirectPositionPtr)[1]->AsNumber());
+            bPositionSet = true;
         }
     }
 
-    const TArray<TSharedPtr<FJsonValue>>* DirectPositionPtr = nullptr;
-    if (!bPositionSet && Params->TryGetArrayField(TEXT("position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
-    {
-        PosX = (*DirectPositionPtr)[0]->AsNumber();
-        PosY = (*DirectPositionPtr)[1]->AsNumber();
-        bPositionSet = true;
-        UE_LOG(LogVibeUEReflection, Warning, TEXT("Direct position parameter: (%f, %f)"), PosX, PosY);
-    }
-    if (!bPositionSet && Params->TryGetArrayField(TEXT("node_position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
-    {
-        PosX = (*DirectPositionPtr)[0]->AsNumber();
-        PosY = (*DirectPositionPtr)[1]->AsNumber();
-        bPositionSet = true;
-        UE_LOG(LogVibeUEReflection, Warning, TEXT("Direct node_position parameter: (%f, %f)"), PosX, PosY);
-    }
+    // Persist position inside node params for downstream configuration helpers
+    TArray<TSharedPtr<FJsonValue>> PositionArray;
+    PositionArray.Add(MakeShared<FJsonValueNumber>(PosX));
+    PositionArray.Add(MakeShared<FJsonValueNumber>(PosY));
+    NodeParamsShared->SetArrayField(TEXT("position"), PositionArray);
 
     // Try to load the Blueprint with better path handling
     UBlueprint* Blueprint = nullptr;
 
-    // Handle both simple names and full paths with better guidance
     FString AssetPath = BlueprintName;
-
-    // PREFER FULL PATHS: If it looks like a full path, use it directly
     if (BlueprintName.Contains(TEXT("/Game/")))
     {
-        // Full path provided - use directly
         UE_LOG(LogVibeUEReflection, Log, TEXT("Using provided full path: %s"), *AssetPath);
         Blueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
     }
     else if (!BlueprintName.Contains(TEXT("/")) && !BlueprintName.Contains(TEXT(".")))
     {
-        // Simple name - try to find it in common locations (DISCOURAGED)
         UE_LOG(LogVibeUEReflection, Warning, TEXT("Using simple name '%s' - recommend using full asset paths instead"), *BlueprintName);
 
         TArray<FString> SearchPaths = {
@@ -2269,7 +2684,6 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
     }
     else
     {
-        // Partial path provided - try to use it
         UE_LOG(LogVibeUEReflection, Log, TEXT("Trying to load Blueprint with partial path: %s"), *AssetPath);
         Blueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
     }
@@ -2280,8 +2694,8 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
         UE_LOG(LogVibeUEReflection, Error, TEXT("%s"), *ErrorMsg);
         Result->SetBoolField(TEXT("success"), false);
         Result->SetStringField(TEXT("error"), ErrorMsg);
-        Result->SetStringField(TEXT("suggestion"), TEXT("Use full asset path like '/Game/Blueprints/Actors/BP_Heart.BP_Heart'"));
-        Result->SetStringField(TEXT("usage_hint"), TEXT("Search for available Blueprints first using search_items with asset_type='Blueprint'"));
+        Result->SetStringField(TEXT("suggestion"), TEXT("Use full asset path like '/Game/Blueprints/Actors/BP_MyActor.BP_MyActor'."));
+        Result->SetStringField(TEXT("usage_hint"), TEXT("Use search_items(asset_type='Blueprint') to get the package_path value and pass that here."));
         return Result;
     }
 
@@ -2302,13 +2716,11 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
             {
                 Result->SetBoolField(TEXT("success"), false);
                 Result->SetStringField(TEXT("error"), TEXT("Missing 'function_name' for function scope"));
-                Result->SetStringField(TEXT("usage_hint"), TEXT("Provide the exact function name when graph_scope='function'"));
+                Result->SetStringField(TEXT("usage_hint"), TEXT("Provide the exact function name when graph_scope='function'."));
                 return Result;
             }
 
             const FName FunctionGraphName(*FunctionName);
-
-            // Search all graphs to handle editor-created and rebuilt graphs consistently
             TArray<UEdGraph*> AllGraphs;
             Blueprint->GetAllGraphs(AllGraphs);
 
@@ -2337,7 +2749,7 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
             {
                 Result->SetBoolField(TEXT("success"), false);
                 Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Function graph not found: %s"), *FunctionName));
-                Result->SetStringField(TEXT("suggestion"), TEXT("Verify the function exists and the name matches exactly"));
+                Result->SetStringField(TEXT("suggestion"), TEXT("Verify the function exists and the name matches exactly."));
                 return Result;
             }
 
@@ -2351,7 +2763,6 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
         }
     }
 
-    // Default to event graph only when no explicit function scope was requested
     if (!TargetGraph)
     {
         for (UEdGraph* Graph : Blueprint->UbergraphPages)
@@ -2374,199 +2785,55 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
         UE_LOG(LogVibeUEReflection, Warning, TEXT("EventGraph found: %s"), *TargetGraph->GetName());
     }
 
-    // ENHANCED: Prioritize reflection system over hardcoded node creation
-    UEdGraphNode* NewNode = nullptr;
-    FString NodeId;
-
-    UE_LOG(LogVibeUEReflection, Warning, TEXT("Creating node '%s' - trying reflection system first"), *NodeIdentifier);
-
+    // ✅ NEW: Creation is ONLY allowed through spawner descriptors
     try
     {
-        // FIRST: Try the true reflection-based creation system for ALL node types
-        TSharedPtr<FJsonObject> NodeParamsJson = NodeParamsShared.IsValid()
-            ? MakeShareable(new FJsonObject(*NodeParamsShared))
-            : MakeShareable(new FJsonObject);
+        const FVector2D NodePosition(PosX, PosY);
+        UK2Node* NewNode = FBlueprintReflection::CreateNodeFromSpawnerKey(TargetGraph, SpawnerKey, NodePosition);
 
-        // Add position to node params for reflection system
-        TArray<TSharedPtr<FJsonValue>> PositionArray;
-        PositionArray.Add(MakeShared<FJsonValueNumber>(PosX));
-        PositionArray.Add(MakeShared<FJsonValueNumber>(PosY));
-        NodeParamsJson->SetArrayField(TEXT("position"), PositionArray);
-
-    TSharedPtr<FJsonObject> ReflectionResult = CreateBlueprintNodeInGraph(Blueprint, NodeIdentifier, NodeParamsJson, TargetGraph);
-
-        if (ReflectionResult.IsValid() && ReflectionResult->GetBoolField(TEXT("success")))
+        if (!NewNode)
         {
-            // Success! Extract the created node info
-            FString ReflectionNodeId = ReflectionResult->GetStringField(TEXT("node_id"));
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("Successfully created node via REFLECTION SYSTEM: %s (ID: %s)"), *NodeIdentifier, *ReflectionNodeId);
-
-            Result->SetBoolField(TEXT("success"), true);
-            Result->SetStringField(TEXT("node_type"), NodeIdentifier);
-            Result->SetStringField(TEXT("node_id"), ReflectionNodeId);
-            Result->SetStringField(TEXT("creation_method"), TEXT("reflection_system"));
-            Result->SetStringField(TEXT("graph_name"), TargetGraph ? TargetGraph->GetName() : TEXT("unknown"));
-            Result->SetStringField(TEXT("graph_scope"), bExplicitFunctionScope ? TEXT("function") : TEXT("event"));
-            Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Successfully created %s node via reflection system in Blueprint %s"), *NodeIdentifier, *Blueprint->GetName()));
-            Result->SetObjectField(TEXT("reflection_result"), ReflectionResult);
+            UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromSpawnerKey failed for '%s'"), *SpawnerKey);
+            Result->SetBoolField(TEXT("success"), false);
+            Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Failed to create node using spawner_key '%s'. The spawner could not be resolved."), *SpawnerKey));
+            Result->SetStringField(TEXT("suggestion"), TEXT("Refresh descriptors with discover_nodes_with_descriptors() and retry with a valid spawner_key."));
             return Result;
         }
 
-        // FALLBACK: Use hardcoded creation for common node types if reflection fails
-        UE_LOG(LogVibeUEReflection, Warning, TEXT("Reflection system failed for '%s', trying hardcoded fallback"), *NodeIdentifier);
-
-        if (NodeIdentifier == TEXT("Branch"))
+        // Configure any additional parameters (variable names, casts, etc.)
+        if (NodeParamsShared.IsValid())
         {
-            // Create a Branch node
-            UK2Node_IfThenElse* BranchNode = NewObject<UK2Node_IfThenElse>(TargetGraph);
-            if (BranchNode)
-            {
-                BranchNode->CreateNewGuid();
-                BranchNode->NodePosX = PosX;
-                BranchNode->NodePosY = PosY;
-                BranchNode->AllocateDefaultPins();
-                TargetGraph->AddNode(BranchNode, true);
-                NewNode = BranchNode;
-                NodeId = BranchNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created Branch node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(BranchNode->NodeGuid));
-            }
-        }
-        else if (NodeIdentifier == TEXT("Print String"))
-        {
-            // Create a Print String node
-            UK2Node_CallFunction* PrintNode = NewObject<UK2Node_CallFunction>(TargetGraph);
-            if (PrintNode)
-            {
-                PrintNode->FunctionReference.SetExternalMember(GET_FUNCTION_NAME_CHECKED(UKismetSystemLibrary, PrintString), UKismetSystemLibrary::StaticClass());
-                PrintNode->CreateNewGuid();
-                PrintNode->NodePosX = PosX;
-                PrintNode->NodePosY = PosY;
-                PrintNode->AllocateDefaultPins();
-                TargetGraph->AddNode(PrintNode, true);
-                NewNode = PrintNode;
-                NodeId = PrintNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created Print String node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(PrintNode->NodeGuid));
-            }
-        }
-        else if (NodeIdentifier == TEXT("Cast To Object"))
-        {
-            // Create a Cast node (generic cast)
-            UK2Node_DynamicCast* CastNode = NewObject<UK2Node_DynamicCast>(TargetGraph);
-            if (CastNode)
-            {
-                // Set target class to UObject as default
-                CastNode->TargetType = UObject::StaticClass();
-                CastNode->CreateNewGuid();
-                CastNode->NodePosX = PosX;
-                CastNode->NodePosY = PosY;
-                CastNode->AllocateDefaultPins();
-                TargetGraph->AddNode(CastNode, true);
-                NewNode = CastNode;
-                NodeId = CastNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created Cast To Object node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(CastNode->NodeGuid));
-            }
-        }
-        else if (NodeIdentifier == TEXT("GetVariable"))
-        {
-            // Create a Get Variable node
-            UK2Node_VariableGet* GetVariableNode = NewObject<UK2Node_VariableGet>(TargetGraph);
-            if (GetVariableNode)
-            {
-                GetVariableNode->CreateNewGuid();
-                GetVariableNode->NodePosX = PosX;
-                GetVariableNode->NodePosY = PosY;
-
-                // Configure the variable reference using provided node params
-                if (NodeParamsShared.IsValid())
-                {
-                    FBlueprintReflection::ConfigureVariableNode(GetVariableNode, NodeParamsShared);
-                }
-
-                GetVariableNode->AllocateDefaultPins();
-                TargetGraph->AddNode(GetVariableNode, true);
-                NewNode = GetVariableNode;
-                NodeId = GetVariableNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created GetVariable node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(GetVariableNode->NodeGuid));
-            }
-        }
-        else if (NodeIdentifier == TEXT("SetVariable"))
-        {
-            // Create a Set Variable node
-            UK2Node_VariableSet* SetVariableNode = NewObject<UK2Node_VariableSet>(TargetGraph);
-            if (SetVariableNode)
-            {
-                SetVariableNode->CreateNewGuid();
-                SetVariableNode->NodePosX = PosX;
-                SetVariableNode->NodePosY = PosY;
-
-                // Configure the variable reference using provided node params
-                if (NodeParamsShared.IsValid())
-                {
-                    FBlueprintReflection::ConfigureVariableSetNode(SetVariableNode, NodeParamsShared);
-                }
-
-                SetVariableNode->AllocateDefaultPins();
-                TargetGraph->AddNode(SetVariableNode, true);
-                NewNode = SetVariableNode;
-                NodeId = SetVariableNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created SetVariable node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(SetVariableNode->NodeGuid));
-            }
-        }
-        else if (NodeIdentifier == TEXT("Self"))
-        {
-            // Create a Self reference node (K2Node_Self)
-            UK2Node_Self* SelfNode = NewObject<UK2Node_Self>(TargetGraph);
-            if (SelfNode)
-            {
-                SelfNode->CreateNewGuid();
-                SelfNode->NodePosX = PosX;
-                SelfNode->NodePosY = PosY;
-
-                SelfNode->AllocateDefaultPins();
-                TargetGraph->AddNode(SelfNode, true);
-                NewNode = SelfNode;
-                NodeId = SelfNode->NodeGuid.ToString();
-                UE_LOG(LogVibeUEReflection, Warning, TEXT("Created Self reference node at (%f, %f) with GUID: %s"), PosX, PosY, *LexToString(SelfNode->NodeGuid));
-            }
-        }
-        else
-        {
-            // No hardcoded fallback available
-            FString ErrorMsg = FString::Printf(TEXT("Node type '%s' not implemented in hardcoded fallbacks and reflection system failed"), *NodeIdentifier);
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("%s"), *ErrorMsg);
-            Result->SetBoolField(TEXT("success"), false);
-            Result->SetStringField(TEXT("error"), ErrorMsg);
-            Result->SetStringField(TEXT("suggestion"), TEXT("Try using exact node names from get_available_blueprint_nodes"));
-            return Result;
+            FBlueprintReflection::ConfigureNodeFromParameters(NewNode, NodeParamsShared);
         }
 
-        if (NewNode)
+        NewNode->NodePosX = FMath::RoundToInt(PosX);
+        NewNode->NodePosY = FMath::RoundToInt(PosY);
+        NewNode->ReconstructNode();
+
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+        Blueprint->MarkPackageDirty();
+
+        Result->SetBoolField(TEXT("success"), true);
+        Result->SetStringField(TEXT("node_id"), NewNode->NodeGuid.ToString());
+        Result->SetStringField(TEXT("spawner_key"), SpawnerKey);
+        Result->SetStringField(TEXT("creation_method"), TEXT("exact_spawner_key"));
+        Result->SetStringField(TEXT("graph_name"), TargetGraph ? TargetGraph->GetName() : TEXT("unknown"));
+        Result->SetStringField(TEXT("graph_scope"), bExplicitFunctionScope ? TEXT("function") : TEXT("event"));
+        Result->SetStringField(TEXT("node_class"), NewNode->GetClass()->GetPathName());
+        Result->SetStringField(TEXT("node_display_name"), NewNode->GetNodeTitle(ENodeTitleType::ListView).ToString());
+        Result->SetNumberField(TEXT("pin_count"), NewNode->Pins.Num());
+        Result->SetNumberField(TEXT("position_x"), PosX);
+        Result->SetNumberField(TEXT("position_y"), PosY);
+
+        if (!NodeIdentifier.IsEmpty())
         {
-            // Mark Blueprint as modified
-            FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-            // Refresh and compile the Blueprint
-            FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
-            FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-            UE_LOG(LogVibeUEReflection, Warning, TEXT("Successfully created and added node '%s' to Blueprint '%s' via HARDCODED FALLBACK - NodeId: %s"), *NodeIdentifier, *Blueprint->GetName(), *NodeId);
-
-            Result->SetBoolField(TEXT("success"), true);
-            Result->SetStringField(TEXT("node_type"), NodeIdentifier);
-            Result->SetStringField(TEXT("node_id"), NodeId);
-            Result->SetStringField(TEXT("creation_method"), TEXT("hardcoded_fallback"));
-            Result->SetStringField(TEXT("graph_name"), TargetGraph ? TargetGraph->GetName() : TEXT("unknown"));
-            Result->SetStringField(TEXT("graph_scope"), bExplicitFunctionScope ? TEXT("function") : TEXT("event"));
-            Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Successfully created %s node via hardcoded fallback in Blueprint %s at position (%f, %f)"), *NodeIdentifier, *Blueprint->GetName(), PosX, PosY));
+            Result->SetStringField(TEXT("requested_node_type"), NodeIdentifier);
         }
-        else
-        {
-            FString ErrorMsg = FString::Printf(TEXT("Failed to create node of type: %s"), *NodeIdentifier);
-            UE_LOG(LogVibeUEReflection, Error, TEXT("%s"), *ErrorMsg);
-            Result->SetBoolField(TEXT("success"), false);
-            Result->SetStringField(TEXT("error"), ErrorMsg);
-            Result->SetStringField(TEXT("suggestion"), TEXT("Check available node types using get_available_blueprint_nodes"));
-        }
+
+        Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Successfully created node via spawner_key '%s'"), *SpawnerKey));
+
+        return Result;
     }
     catch (const std::exception& e)
     {
@@ -2574,15 +2841,17 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
         UE_LOG(LogVibeUEReflection, Error, TEXT("%s"), *ErrorMsg);
         Result->SetBoolField(TEXT("success"), false);
         Result->SetStringField(TEXT("error"), ErrorMsg);
-        Result->SetStringField(TEXT("suggestion"), TEXT("Check Blueprint path and node type parameters"));
+        Result->SetStringField(TEXT("suggestion"), TEXT("Ensure the Blueprint is loaded and the spawner_key is valid."));
+        return Result;
     }
     catch (...)
     {
-        FString ErrorMsg = TEXT("Unknown exception during node creation");
+        FString ErrorMsg = TEXT("Unknown exception during descriptor-based node creation");
         UE_LOG(LogVibeUEReflection, Error, TEXT("%s"), *ErrorMsg);
         Result->SetBoolField(TEXT("success"), false);
         Result->SetStringField(TEXT("error"), ErrorMsg);
-        Result->SetStringField(TEXT("suggestion"), TEXT("Verify Blueprint asset path and node type are correct"));
+        Result->SetStringField(TEXT("suggestion"), TEXT("Verify Blueprint asset path and spawner_key."));
+        return Result;
     }
 
     return Result;
@@ -2821,3 +3090,532 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::CreateSuccessResponse(cons
     
     return Response;
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// NEW DESIGN IMPLEMENTATION: Node Descriptor System
+// ═════════════════════════════════════════════════════════════════════════════
+
+TSharedPtr<FJsonObject> FBlueprintReflection::FPinDescriptor::ToJson() const
+{
+    TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
+    Json->SetStringField(TEXT("name"), Name);
+    Json->SetStringField(TEXT("type"), Type);
+    Json->SetStringField(TEXT("type_path"), TypePath);
+    Json->SetStringField(TEXT("direction"), Direction);
+    Json->SetStringField(TEXT("category"), Category);
+    Json->SetBoolField(TEXT("is_array"), bIsArray);
+    Json->SetBoolField(TEXT("is_reference"), bIsReference);
+    Json->SetBoolField(TEXT("is_hidden"), bIsHidden);
+    Json->SetBoolField(TEXT("is_advanced"), bIsAdvanced);
+    Json->SetStringField(TEXT("default_value"), DefaultValue);
+    Json->SetStringField(TEXT("tooltip"), Tooltip);
+    return Json;
+}
+
+TSharedPtr<FJsonObject> FBlueprintReflection::FNodeSpawnerDescriptor::ToJson() const
+{
+    TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
+    
+    // Core identification
+    Json->SetStringField(TEXT("spawner_key"), SpawnerKey);
+    Json->SetStringField(TEXT("display_name"), DisplayName);
+    Json->SetStringField(TEXT("node_class_name"), NodeClassName);
+    Json->SetStringField(TEXT("node_class_path"), NodeClassPath);
+    
+    // Categorization
+    Json->SetStringField(TEXT("category"), Category);
+    Json->SetStringField(TEXT("description"), Description);
+    Json->SetStringField(TEXT("tooltip"), Tooltip);
+    Json->SetStringField(TEXT("node_type"), NodeType);
+    
+    TArray<TSharedPtr<FJsonValue>> KeywordsArray;
+    for (const FString& Keyword : Keywords)
+    {
+        KeywordsArray.Add(MakeShareable(new FJsonValueString(Keyword)));
+    }
+    Json->SetArrayField(TEXT("keywords"), KeywordsArray);
+    
+    // Function metadata (if applicable)
+    if (!FunctionName.IsEmpty())
+    {
+        TSharedPtr<FJsonObject> FunctionMeta = MakeShareable(new FJsonObject);
+        FunctionMeta->SetStringField(TEXT("function_name"), FunctionName);
+        FunctionMeta->SetStringField(TEXT("function_class"), FunctionClassName);
+        FunctionMeta->SetStringField(TEXT("function_class_path"), FunctionClassPath);
+        FunctionMeta->SetBoolField(TEXT("is_static"), bIsStatic);
+        FunctionMeta->SetBoolField(TEXT("is_const"), bIsConst);
+        FunctionMeta->SetBoolField(TEXT("is_pure"), bIsPure);
+        FunctionMeta->SetStringField(TEXT("module"), Module);
+        Json->SetObjectField(TEXT("function_metadata"), FunctionMeta);
+    }
+    
+    // Variable metadata (if applicable)
+    if (!VariableName.IsEmpty())
+    {
+        TSharedPtr<FJsonObject> VariableMeta = MakeShareable(new FJsonObject);
+        VariableMeta->SetStringField(TEXT("variable_name"), VariableName);
+        VariableMeta->SetStringField(TEXT("variable_type"), VariableType);
+        VariableMeta->SetStringField(TEXT("variable_type_path"), VariableTypePath);
+        Json->SetObjectField(TEXT("variable_metadata"), VariableMeta);
+    }
+    
+    // Cast metadata (if applicable)
+    if (!TargetClassName.IsEmpty())
+    {
+        TSharedPtr<FJsonObject> CastMeta = MakeShareable(new FJsonObject);
+        CastMeta->SetStringField(TEXT("target_class"), TargetClassName);
+        CastMeta->SetStringField(TEXT("target_class_path"), TargetClassPath);
+        Json->SetObjectField(TEXT("cast_metadata"), CastMeta);
+    }
+    
+    // Pin information
+    TArray<TSharedPtr<FJsonValue>> PinsArray;
+    for (const FPinDescriptor& Pin : Pins)
+    {
+        PinsArray.Add(MakeShareable(new FJsonValueObject(Pin.ToJson())));
+    }
+    Json->SetArrayField(TEXT("pins"), PinsArray);
+    Json->SetNumberField(TEXT("expected_pin_count"), ExpectedPinCount);
+    
+    return Json;
+}
+
+FBlueprintReflection::FNodeSpawnerDescriptor FBlueprintReflection::FNodeSpawnerDescriptor::FromJson(const TSharedPtr<FJsonObject>& Json)
+{
+    FNodeSpawnerDescriptor Descriptor;
+    
+    if (!Json.IsValid())
+        return Descriptor;
+    
+    // Core fields
+    Json->TryGetStringField(TEXT("spawner_key"), Descriptor.SpawnerKey);
+    Json->TryGetStringField(TEXT("display_name"), Descriptor.DisplayName);
+    Json->TryGetStringField(TEXT("node_class_name"), Descriptor.NodeClassName);
+    Json->TryGetStringField(TEXT("node_type"), Descriptor.NodeType);
+    
+    // Function metadata
+    const TSharedPtr<FJsonObject>* FunctionMeta;
+    if (Json->TryGetObjectField(TEXT("function_metadata"), FunctionMeta))
+    {
+        (*FunctionMeta)->TryGetStringField(TEXT("function_name"), Descriptor.FunctionName);
+        (*FunctionMeta)->TryGetStringField(TEXT("function_class"), Descriptor.FunctionClassName);
+        (*FunctionMeta)->TryGetStringField(TEXT("function_class_path"), Descriptor.FunctionClassPath);
+        (*FunctionMeta)->TryGetBoolField(TEXT("is_static"), Descriptor.bIsStatic);
+    }
+    
+    return Descriptor;
+}
+
+void FBlueprintReflection::ExtractPinDescriptors(const UFunction* Function, TArray<FPinDescriptor>& OutPins)
+{
+    if (!Function)
+        return;
+    
+    OutPins.Empty();
+    
+    for (TFieldIterator<FProperty> It(Function); It; ++It)
+    {
+        FProperty* Param = *It;
+        
+        FPinDescriptor Pin;
+        Pin.Name = Param->GetName();
+        Pin.Type = Param->GetCPPType();
+        
+        // Get type path from property class
+        if (FObjectProperty* ObjectProp = CastField<FObjectProperty>(Param))
+        {
+            if (ObjectProp->PropertyClass)
+            {
+                Pin.TypePath = ObjectProp->PropertyClass->GetPathName();
+            }
+        }
+        else if (FClassProperty* ClassProp = CastField<FClassProperty>(Param))
+        {
+            if (ClassProp->MetaClass)
+            {
+                Pin.TypePath = ClassProp->MetaClass->GetPathName();
+            }
+        }
+        else
+        {
+            // For primitive types, use the property name
+            Pin.TypePath = Param->GetClass()->GetName();
+        }
+        
+        // Determine direction
+        if (Param->HasAnyPropertyFlags(CPF_ReturnParm))
+        {
+            Pin.Direction = TEXT("output");
+            Pin.Name = TEXT("ReturnValue");
+        }
+        else if (Param->HasAnyPropertyFlags(CPF_OutParm) && !Param->HasAnyPropertyFlags(CPF_ConstParm))
+        {
+            Pin.Direction = TEXT("output");
+        }
+        else
+        {
+            Pin.Direction = TEXT("input");
+        }
+        
+        Pin.Category = TEXT(""); // Will be filled by pin type analysis
+        Pin.bIsArray = Param->IsA<FArrayProperty>();
+        Pin.bIsReference = Param->HasAnyPropertyFlags(CPF_ReferenceParm);
+        Pin.bIsHidden = false; // Will be determined by metadata
+        Pin.bIsAdvanced = Param->HasAnyPropertyFlags(CPF_AdvancedDisplay);
+        Pin.DefaultValue = TEXT("");
+        Pin.Tooltip = Param->GetToolTipText().ToString();
+        
+        OutPins.Add(Pin);
+    }
+}
+
+void FBlueprintReflection::ExtractPinDescriptorsFromNode(UK2Node* Node, TArray<FPinDescriptor>& OutPins)
+{
+    if (!Node)
+        return;
+    
+    OutPins.Empty();
+    
+    for (UEdGraphPin* Pin : Node->Pins)
+    {
+        if (!Pin)
+            continue;
+        
+        FPinDescriptor Descriptor;
+        Descriptor.Name = Pin->PinName.ToString();
+        Descriptor.Type = Pin->PinType.PinCategory.ToString();
+        
+        if (Pin->PinType.PinSubCategoryObject.IsValid())
+        {
+            Descriptor.TypePath = Pin->PinType.PinSubCategoryObject->GetPathName();
+        }
+        
+        Descriptor.Direction = (Pin->Direction == EGPD_Input) ? TEXT("input") : TEXT("output");
+        Descriptor.Category = Pin->PinType.PinCategory.ToString();
+        Descriptor.bIsArray = Pin->PinType.IsArray();
+        Descriptor.bIsReference = Pin->PinType.bIsReference;
+        Descriptor.bIsHidden = Pin->bHidden;
+        Descriptor.bIsAdvanced = Pin->bAdvancedView;
+        Descriptor.DefaultValue = Pin->DefaultValue;
+        Descriptor.Tooltip = Pin->PinToolTip;
+        
+        OutPins.Add(Descriptor);
+    }
+}
+
+FBlueprintReflection::FNodeSpawnerDescriptor FBlueprintReflection::ExtractDescriptorFromSpawner(
+    UBlueprintNodeSpawner* Spawner,
+    UBlueprint* Blueprint)
+{
+    FNodeSpawnerDescriptor Descriptor;
+    
+    if (!Spawner)
+        return Descriptor;
+    
+    Descriptor.Spawner = Spawner;
+    Descriptor.DisplayName = Spawner->DefaultMenuSignature.MenuName.ToString();
+    Descriptor.Tooltip = Spawner->DefaultMenuSignature.Tooltip.ToString();
+    Descriptor.Category = Spawner->DefaultMenuSignature.Category.ToString();
+    Descriptor.NodeClassName = Spawner->NodeClass ? Spawner->NodeClass->GetName() : TEXT("");
+    Descriptor.NodeClassPath = Spawner->NodeClass ? Spawner->NodeClass->GetPathName() : TEXT("");
+
+    // Provide safe defaults so descriptors always have a valid classification/key even if
+    // specialized extraction fails (e.g. unexpected spawner subclass).
+    Descriptor.NodeType = TEXT("generic");
+    Descriptor.SpawnerKey = Descriptor.DisplayName;
+    
+    // Extract function-specific metadata
+    if (UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(Spawner))
+    {
+        UClass* NodeClass = FunctionSpawner->NodeClass;
+        if (!NodeClass)
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ExtractDescriptorFromSpawner: Function spawner '%s' has no NodeClass"), *Descriptor.DisplayName);
+        }
+        else if (!NodeClass->IsChildOf(UK2Node_CallFunction::StaticClass()))
+        {
+            UE_LOG(LogVibeUEReflection, Warning,
+                TEXT("ExtractDescriptorFromSpawner: Function spawner '%s' NodeClass '%s' is not a UK2Node_CallFunction; treating as generic"),
+                *Descriptor.DisplayName, *NodeClass->GetName());
+        }
+        else if (const UFunction* Function = FunctionSpawner->GetFunction())
+        {
+            const UClass* OwnerClass = Function->GetOuterUClass();
+
+            if (!OwnerClass)
+            {
+                if (const UObject* OuterObj = Function->GetOuter())
+                {
+                    OwnerClass = Cast<UClass>(OuterObj);
+                }
+            }
+
+            if (!OwnerClass)
+            {
+                UE_LOG(LogVibeUEReflection, Warning,
+                    TEXT("ExtractDescriptorFromSpawner: Function '%s' has no owning class; treating spawner '%s' as generic"),
+                    *Function->GetName(), *Descriptor.DisplayName);
+            }
+            else
+            {
+                Descriptor.NodeType = TEXT("function_call");
+                Descriptor.FunctionName = Function->GetName();
+                Descriptor.FunctionClassName = OwnerClass->GetName();
+                Descriptor.FunctionClassPath = OwnerClass->GetPathName();
+                Descriptor.bIsStatic = Function->HasAnyFunctionFlags(FUNC_Static);
+                Descriptor.bIsConst = Function->HasAnyFunctionFlags(FUNC_Const);
+                Descriptor.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
+
+                // Build unique spawner key
+                Descriptor.SpawnerKey = FString::Printf(TEXT("%s::%s"),
+                    *Descriptor.FunctionClassName, *Descriptor.FunctionName);
+
+                // Extract module name from class path
+                const FString ClassPath = Descriptor.FunctionClassPath;
+                if (ClassPath.StartsWith(TEXT("/Script/")))
+                {
+                    int32 DotIndex;
+                    if (ClassPath.FindChar('.', DotIndex))
+                    {
+                        Descriptor.Module = ClassPath.Mid(8, DotIndex - 8); // Skip "/Script/"
+                    }
+                }
+
+                // Extract pin descriptors
+                ExtractPinDescriptors(Function, Descriptor.Pins);
+                Descriptor.ExpectedPinCount = Descriptor.Pins.Num();
+            }
+        }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Warning,
+                TEXT("ExtractDescriptorFromSpawner: Function spawner '%s' returned null function; treating as generic"),
+                *Descriptor.DisplayName);
+        }
+    }
+    // Extract variable-specific metadata
+    else if (UBlueprintVariableNodeSpawner* VariableSpawner = Cast<UBlueprintVariableNodeSpawner>(Spawner))
+    {
+        Descriptor.NodeType = TEXT("variable_get");
+        // Variable metadata would be extracted here
+        Descriptor.SpawnerKey = Descriptor.DisplayName; // Simplified for variables
+    }
+    // Extract other node types as needed
+    else
+    {
+        Descriptor.NodeType = TEXT("generic");
+        Descriptor.SpawnerKey = Descriptor.DisplayName;
+    }
+    
+    return Descriptor;
+}
+
+TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::DiscoverNodesWithDescriptors(
+    UBlueprint* Blueprint,
+    const FString& SearchTerm,
+    const FString& CategoryFilter,
+    const FString& ClassFilter,
+    int32 MaxResults)
+{
+    TArray<FNodeSpawnerDescriptor> Descriptors;
+    
+    if (!Blueprint)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("DiscoverNodesWithDescriptors: Blueprint is null"));
+        return Descriptors;
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Search='%s', Category='%s', Class='%s', Max=%d"),
+           *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
+    
+    FBlueprintActionDatabase& ActionDB = FBlueprintActionDatabase::Get();
+    const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDB.GetAllActions();
+    
+    int32 Count = 0;
+    
+    for (auto& ActionEntry : AllActions)
+    {
+        if (Count >= MaxResults)
+            break;
+        
+        const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
+        
+        for (UBlueprintNodeSpawner* Spawner : ActionList)
+        {
+            if (Count >= MaxResults)
+                break;
+            
+            if (!Spawner)
+                continue;
+            
+            // Extract complete descriptor
+            FNodeSpawnerDescriptor Descriptor = ExtractDescriptorFromSpawner(Spawner, Blueprint);
+            
+            // Apply filters
+            bool bPassesFilters = true;
+            
+            // Search term filter
+            if (!SearchTerm.IsEmpty())
+            {
+                bPassesFilters = Descriptor.DisplayName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                                Descriptor.FunctionName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                                Descriptor.SpawnerKey.Contains(SearchTerm, ESearchCase::IgnoreCase);
+            }
+            
+            // Category filter
+            if (bPassesFilters && !CategoryFilter.IsEmpty())
+            {
+                bPassesFilters = Descriptor.Category.Contains(CategoryFilter, ESearchCase::IgnoreCase);
+            }
+            
+            // Class filter (function class name)
+            if (bPassesFilters && !ClassFilter.IsEmpty())
+            {
+                bPassesFilters = Descriptor.FunctionClassName.Contains(ClassFilter, ESearchCase::IgnoreCase) ||
+                                Descriptor.FunctionClassPath.Contains(ClassFilter, ESearchCase::IgnoreCase);
+            }
+            
+            if (bPassesFilters)
+            {
+                // Cache the spawner
+                if (!Descriptor.SpawnerKey.IsEmpty())
+                {
+                    CacheSpawner(Descriptor.SpawnerKey, Spawner);
+                }
+                
+                Descriptors.Add(Descriptor);
+                Count++;
+                
+                UE_LOG(LogVibeUEReflection, Verbose, TEXT("  ✓ Added descriptor: %s (Key: %s)"),
+                       *Descriptor.DisplayName, *Descriptor.SpawnerKey);
+            }
+        }
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Found %d descriptors"), Descriptors.Num());
+    
+    return Descriptors;
+}
+
+UK2Node* FBlueprintReflection::CreateNodeFromDescriptor(
+    UEdGraph* Graph,
+    const FNodeSpawnerDescriptor& Descriptor,
+    FVector2D Position)
+{
+    if (!Graph)
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromDescriptor: Graph is null"));
+        return nullptr;
+    }
+    
+    if (!Descriptor.Spawner)
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromDescriptor: Descriptor has no spawner"));
+        return nullptr;
+    }
+    
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromDescriptor: Creating node from descriptor '%s' (Key: %s)"),
+           *Descriptor.DisplayName, *Descriptor.SpawnerKey);
+    
+    // Use the spawner directly - NO SEARCHING
+    FBlueprintActionContext Context;
+    Context.Graphs.Add(Graph);
+    if (UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph))
+    {
+        Context.Blueprints.Add(Blueprint);
+    }
+    
+    UEdGraphNode* NewNode = Descriptor.Spawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), Position);
+    
+    if (UK2Node* K2Node = Cast<UK2Node>(NewNode))
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromDescriptor: Successfully created node with %d pins"),
+               K2Node->Pins.Num());
+        return K2Node;
+    }
+    
+    UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromDescriptor: Failed to create K2Node"));
+    return nullptr;
+}
+
+UK2Node* FBlueprintReflection::CreateNodeFromSpawnerKey(
+    UEdGraph* Graph,
+    const FString& SpawnerKey,
+    FVector2D Position)
+{
+    if (!Graph || SpawnerKey.IsEmpty())
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromSpawnerKey: Invalid parameters"));
+        return nullptr;
+    }
+    
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Looking up spawner with key '%s'"), *SpawnerKey);
+    
+    // Try cached spawner first
+    UBlueprintNodeSpawner* Spawner = GetSpawnerByKey(SpawnerKey);
+    
+    if (!Spawner)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Spawner not in cache, searching..."));
+        
+        // If not cached, search for it
+        UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
+        if (Blueprint)
+        {
+            TArray<FNodeSpawnerDescriptor> Descriptors = DiscoverNodesWithDescriptors(Blueprint, TEXT(""), TEXT(""), TEXT(""), 1000);
+            
+            for (const FNodeSpawnerDescriptor& Desc : Descriptors)
+            {
+                if (Desc.SpawnerKey.Equals(SpawnerKey, ESearchCase::IgnoreCase))
+                {
+                    Spawner = Desc.Spawner;
+                    CacheSpawner(SpawnerKey, Spawner);
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Found and cached spawner"));
+                    break;
+                }
+            }
+        }
+    }
+    
+    if (!Spawner)
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("CreateNodeFromSpawnerKey: Could not find spawner for key '%s'"), *SpawnerKey);
+        return nullptr;
+    }
+    
+    // Create descriptor and use it
+    FNodeSpawnerDescriptor Descriptor = ExtractDescriptorFromSpawner(Spawner);
+    return CreateNodeFromDescriptor(Graph, Descriptor, Position);
+}
+
+UBlueprintNodeSpawner* FBlueprintReflection::GetSpawnerByKey(const FString& SpawnerKey)
+{
+    if (SpawnerKey.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    if (TWeakObjectPtr<UBlueprintNodeSpawner>* Found = CachedNodeSpawners.Find(SpawnerKey))
+    {
+        if (Found->IsValid())
+        {
+            return Found->Get();
+        }
+
+        // Remove stale entry to avoid future crashes from dangling pointers
+        CachedNodeSpawners.Remove(SpawnerKey);
+        UE_LOG(LogVibeUEReflection, Verbose, TEXT("GetSpawnerByKey: Removed stale cache entry for '%s'"), *SpawnerKey);
+    }
+
+    return nullptr;
+}
+
+void FBlueprintReflection::CacheSpawner(const FString& SpawnerKey, UBlueprintNodeSpawner* Spawner)
+{
+    if (!SpawnerKey.IsEmpty() && Spawner)
+    {
+        CachedNodeSpawners.Add(SpawnerKey, Spawner);
+        UE_LOG(LogVibeUEReflection, Verbose, TEXT("CacheSpawner: Cached spawner '%s'"), *SpawnerKey);
+    }
+}
+

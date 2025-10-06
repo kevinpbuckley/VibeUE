@@ -80,17 +80,21 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         pins appear immediately.
 
         ## Supported Actions:
-        - **create**: Create new nodes (requires node_type from get_available_blueprint_nodes())
-    - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
-    - **connect_pins**: Batch connect pins with schema validation, conversion helpers, and diagnostics
-    - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
-    - **disconnect_pins**: Break specific links or clear entire pins using the new payload format
+        - **create**: Create new nodes (use spawner_key from get_available_blueprint_nodes() for exact creation)
+        - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
+        - **connect_pins**: Batch connect pins with schema validation, conversion helpers, and diagnostics
+        - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
+        - **disconnect_pins**: Break specific links or clear entire pins using the new payload format
         - **delete**: Remove nodes (requires node_id)
         - **move**: Reposition nodes (requires node_id and position)
-    - **list**: List all nodes in graph (returns node inventory)
-    - **describe**: Rich node + pin metadata payload (deterministic ordering)
+        - **list**: List all nodes in graph (returns node inventory)
+        - **describe**: Rich node + pin metadata payload (deterministic ordering)
         - **get_details**: Get detailed node information (requires node_id)
-        - **configure**: Set node properties (requires node_id, property_name, property_value)
+    - **configure**: Apply node configuration including property updates and pin operations (split/recombine)
+    - **split** / **split_pins**: Split struct pins into sub-pins (requires node_id and pin names)
+    - **recombine** / **recombine_pins** / **unsplit**: Collapse previously split pins back into their parent pin
+        - **refresh_node**: Reconstruct a single Blueprint node (equivalent to right-click → Refresh Node)
+        - **refresh_nodes**: Refresh every node in the Blueprint (mirrors Blueprint → Refresh All Nodes)
 
         ## Context Requirements:
         - **graph_scope**: "event" (Event Graph) or "function" (Function Graph)
@@ -99,52 +103,341 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
         ## Multi-Action Usage Patterns:
 
-        ### Pattern 1: Node Creation Workflow
+        ### Pattern 1: Descriptor-Based Node Creation (RECOMMENDED Oct 2025)
         ```python
-        # 1. Discover → 2. Create → 3. Position → 4. Configure
+        # 🆕 BEST PRACTICE: Use spawner_key for exact node creation
+        
+        # 1. Discover with complete metadata (returns descriptors by default)
+        nodes = get_available_blueprint_nodes(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            search_term="GetPlayerController"
+        )
+        
+        # 2. AI examines ALL variants with complete info:
+        # - "GameplayStatics::GetPlayerController" (3 input pins, static)
+        # - "CheatManager::GetPlayerController" (1 pin, instance method)
+        
+        # 3. Create using EXACT spawner_key (NO AMBIGUITY!)
+        result = manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="create",
+            graph_scope="function",
+            function_name="MyFunction",
+            node_params={"spawner_key": "GameplayStatics::GetPlayerController"},
+            position=[200, 100]
+        )
+        # ✅ Result: Exact variant created, correct pin count guaranteed!
+        ```
+
+        ### Pattern 2: Legacy Node Creation (Fuzzy Search)
+        ```python
+        # ⚠️ LEGACY: Using node_type triggers fuzzy search (less reliable)
         nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
         result = manage_blueprint_node("BP_Player", action="create", node_type="Branch")
         node_id = result["node_id"]
         manage_blueprint_node("BP_Player", action="move", node_id=node_id, position=[200, 100])
         ```
 
-        ### Pattern 2: Node Connection Workflow
+        ### Pattern 3: Node Connection Workflow
         ```python
         # List → Identify → Connect → Verify
-        nodes = manage_blueprint_node("BP_Player", action="list")
-        manage_blueprint_node("BP_Player", action="connect",
-                              source_node_id="EventBeginPlay_1", source_pin="exec",
-                              target_node_id="Branch_2", target_pin="exec")
+        nodes = manage_blueprint_node("BP_Player", action="list", graph_scope="function", 
+                                     function_name="MyFunction")
+        
+        # ✅ CORRECT: Use connect_pins with extra parameter containing connections array
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="connect_pins",
+            graph_scope="function",
+            function_name="MyFunction",
+            extra={
+                "connections": [{
+                    "source_node_id": "NODE_GUID_1",
+                    "source_pin_name": "ReturnValue",
+                    "target_node_id": "NODE_GUID_2",
+                    "target_pin_name": "InputValue"
+                }]
+            }
+        )
         ```
 
-        ### Pattern 3: Function Graph Operations
+        ### Pattern 4: Function Graph Operations
         ```python
         # Function context requires function_name
         manage_blueprint_node("BP_Player", action="create", graph_scope="function",
                               function_name="CalculateHealth", node_type="Add", position=[100, 50])
         ```
 
+        ### Pattern 5: Refreshing nodes to clear stale state
+        ```python
+        # Rebuild a single node (same as right-click → Refresh Node)
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player2",
+            action="refresh_node",
+            node_id="{NODE_GUID}"
+        )
+
+        # Refresh every node in the Blueprint (Blueprint → Refresh All Nodes)
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player2",
+            action="refresh_nodes"
+        )
+        ```
+
+        ## 🔌 Pin Connection System (CRITICAL):
+
+        ### ✅ CORRECT Connection Format:
+        
+        The `connect_pins` action requires connections to be passed via the `extra` parameter:
+        
+        ```python
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="connect_pins",
+            graph_scope="function",
+            function_name="MyFunction",
+            extra={
+                "connections": [
+                    {
+                        "source_node_id": "F937A5914C523D1AB3532C8C4125C0B7",  # Node GUID
+                        "source_pin_name": "ReturnValue",                      # Pin name
+                        "target_node_id": "64DE8C1B47F7EEDA2B713B8604257954",  # Node GUID
+                        "target_pin_name": "self"                              # Pin name
+                    },
+                    # Multiple connections can be made at once
+                    {
+                        "source_node_id": "64DE8C1B47F7EEDA2B713B8604257954",
+                        "source_pin_name": "ReturnValue",
+                        "target_node_id": "B3DC700344C6DA7C35FD48B872A57458",
+                        "target_pin_name": "Object"
+                    }
+                ]
+            }
+        )
+        ```
+        
+        ### 📋 Getting Node IDs and Pin Names:
+        
+        Use `action="describe"` to get node GUIDs and pin names:
+        
+        ```python
+        # Get all nodes and their pins
+        result = manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="describe",
+            graph_scope="function",
+            function_name="MyFunction"
+        )
+        
+        # Result contains nodes with:
+        # - node_id: "{GUID}" format
+        # - pins: array with pin_id and name for each pin
+        ```
+        
+        ### Connection Payload Fields:
+        
+        Each connection object can contain:
+        - **source_node_id** (required): Source node GUID
+        - **source_pin_name** (required): Name of source pin
+        - **target_node_id** (required): Target node GUID  
+        - **target_pin_name** (required): Name of target pin
+        - **allow_conversion_node** (optional): Allow automatic conversion nodes (default: true)
+        - **allow_promotion** (optional): Allow type promotion/array wrapping (default: true)
+        - **break_existing_links** (optional): Break existing connections first (default: true)
+
+                ## 🔧 Pin Split/Recombine Patterns
+
+                - Use `action="split"` (or `"split_pins"`) with `extra={"pins": ["MyStruct"]}` to split one or more struct pins.
+                - Use `action="recombine"` / `"unsplit"` with the same payload shape to collapse sub-pins back into the parent pin.
+                - Alternatively, call `action="configure"` and pass
+                    ```python
+                    node_config={
+                            "pin_operations": [
+                                    {"action": "split", "pin": "MyStruct"},
+                                    {"action": "recombine", "pin": "OldStruct"}
+                            ]
+                    }
+                    ```
+                    to batch property edits and pin transforms in a single request.
+
         ## Action-Specific Parameters:
 
-        **create**: node_type (required), position (optional), node_params (optional)
-        **connect**: source_node_id, source_pin, target_node_id, target_pin
-    **connect_pins**: connections array with source/target pin identifiers plus optional conversion flags
-        **disconnect**: source_node_id, source_pin, target_node_id, target_pin
-    **disconnect_pins**: connections array or pin_ids list defining which links to break
+        **create**: 
+        - **RECOMMENDED**: node_params with spawner_key (from get_available_blueprint_nodes)
+        - **LEGACY**: node_type (triggers fuzzy search, less reliable)
+        - position (optional)
+        - node_params (CRITICAL for variable nodes, casts, and exact node creation)
+        
+        **connect_pins**: extra with connections array (see above) ✅ USE THIS FOR CONNECTIONS
+        **disconnect_pins**: extra with connections array or pin_ids list
         **delete**: node_id
         **move**: node_id, position
         **list**: (no additional parameters)
-        **get_details**: node_id
+        **describe**: node_id (optional - if omitted, describes all nodes)
         **configure**: node_id, property_name, property_value
+    **refresh_node**: node_id or node_identifier required; optional `compile` (default `True`) to auto-compile after refresh
+    **refresh_nodes**: blueprint-level refresh; optional `compile` (default `True`)
+            - Pass `extra={"compile": False}` to skip the compile step when needed
 
-        ## Pin Connection Guide:
-        Common pin names for connections:
-        - **Execution**: "exec" (out) → "exec" (in)
-        - **Boolean**: "Return Value" → "Condition"
-        - **Variables**: "Return Value" → parameter names
-        - **Function Calls**: "Return Value" → input parameter names
+        ## 🔑 node_params Patterns (VALIDATED Oct 2025):
 
-        ⚠️ **CRITICAL**: Always use get_available_blueprint_nodes() before action="create" to get exact node_type names.
+        ### 🆕 Spawner Key (EXACT NODE CREATION - RECOMMENDED)
+        ```python
+        # Get spawner_key from discovery
+        nodes = get_available_blueprint_nodes(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            search_term="GetPlayerController"
+        )
+        
+        # Use spawner_key for exact creation
+        manage_blueprint_node(
+            action="create",
+            node_params={"spawner_key": "GameplayStatics::GetPlayerController"},
+            position=[200, 100]
+        )
+        # ✅ Creates EXACT variant with correct pin count
+        # ✅ No ambiguity, no fuzzy searching, no wrong variants
+        # ⚠️ Spawner keys mirror the Blueprint palette display text. When copying names that
+        #    include underscores (e.g., variables like ``Death_Niagara_System``), replace
+        #    them with spaces so the key matches the node title (``GET Death Niagara System``).
+        #    The tool now performs this normalization automatically, but copying the exact
+        #    descriptor text avoids ambiguity.
+        ```
+
+        ### Variable Set Nodes ✅ REQUIRED
+        ```python
+        manage_blueprint_node(
+            action="create",
+            node_type="SET Microsub HUD",  # or "Set Microsub HUD"
+            node_params={"variable_name": "Microsub HUD"},  # ← CRITICAL!
+            position=[1100, 100]
+        )
+        # Creates 5-pin node: execute, then, Microsub HUD (input), Output_Get
+        # Without node_params: Only 2 pins (broken node)
+        ```
+
+        ### Variable Get Nodes ✅ REQUIRED
+        ```python
+        manage_blueprint_node(
+            action="create",
+            node_type="GET Health",  # or "Get Health"
+            node_params={"variable_name": "Health"},  # ← CRITICAL!
+            position=[100, 50]
+        )
+        # Creates proper getter with value output pin
+        ```
+
+        ### Cast Nodes ✅ REQUIRED for Blueprint Classes
+        ```python
+        manage_blueprint_node(
+            action="create",
+            node_type="Cast To BP_MicrosubHUD",
+            node_params={
+                "cast_target": "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C"
+            },  # ← CRITICAL! Full path + _C suffix
+            position=[800, 100]
+        )
+        # Creates 6-pin node with typed output: execute, then, CastFailed, Object, AsBP Microsub HUD
+        # Format: /Full/Package/Path/BP_ClassName.BP_ClassName_C
+        ```
+
+        ### Function Call Nodes ⚠️ SITUATIONAL
+        ```python
+        # Most function calls work without node_params
+        manage_blueprint_node(
+            action="create",
+            node_type="Get HUD",
+            position=[500, 100]
+        )
+        
+        # Known Issue: "Get Player Controller" shows CheatManager warning
+        # Workaround: Works correctly despite warning (C++ fix planned)
+        manage_blueprint_node(
+            action="create",
+            node_type="Get Player Controller",
+            position=[200, 100]
+        )
+        # Shows warning but ReturnValue is correct PlayerController type
+        ```
+
+        ## ✅ Validation Workflow:
+        ```python
+        # 1. Create node with node_params
+        result = manage_blueprint_node(
+            action="create",
+            node_type="SET Health",
+            node_params={"variable_name": "Health"}
+        )
+        
+        # 2. Validate pin count (CRITICAL!)
+        expected_pins = {
+            "variable_set": 5,    # execute, then, value_input, Output_Get
+            "variable_get": 2,    # value_output (+ optional self)
+            "cast": 6,            # execute, then, CastFailed, Object, AsCastTarget
+        }
+        
+        # 3. If pin_count < expected, node configuration failed
+        if result.get("pin_count", 0) < expected_pins["variable_set"]:
+            print("⚠️ Node missing pins - check node_params!")
+        
+        # 4. Use describe to inspect before connecting
+        manage_blueprint_node(
+            action="describe",
+            extra={"node_id": result["node_id"]}
+        )
+        ```
+
+        ## Common Pin Names by Node Type:
+        
+        - **Function Entry**: "then" (exec output)
+        - **Function Call**: "self" (target input), "ReturnValue" (output), "execute" (exec input)
+        - **Cast Node**: "execute" (exec in), "then" (exec out success), "CastFailed" (exec out fail), "Object" (cast input), "As[ClassName]" (typed output)
+        - **Variable Get**: Variable name (output)
+        - **Variable Set**: "execute" (exec in), "then" (exec out), Variable name (value input), "Output_Get" (optional)
+        - **Branch**: "execute" (exec in), "Condition" (bool input), "True" (exec out), "False" (exec out)
+
+        ## 🎯 Node Creation Best Practices:
+
+        ### ✅ RECOMMENDED: Descriptor-Based Creation (Oct 2025)
+        ```python
+        # 1. Use get_available_blueprint_nodes() with default return_descriptors=True
+        nodes = get_available_blueprint_nodes(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            search_term="GetPlayerController"
+        )
+        
+        # 2. Examine spawner_key, expected_pin_count, function_metadata
+        # - "GameplayStatics::GetPlayerController" → 4 pins (exec + 3 data pins)
+        # - "CheatManager::GetPlayerController" → 2 pins (exec + 1 data pin)
+        
+        # 3. Create with exact spawner_key
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="create",
+            node_params={"spawner_key": "GameplayStatics::GetPlayerController"}
+        )
+        # Result: EXACT variant, guaranteed correct pin count!
+        ```
+
+        ### ⚠️ LEGACY: Fuzzy Search (Less Reliable)
+        ```python
+        # Old way: Uses fuzzy search, may create wrong variant
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="create",
+            node_type="Get Player Controller"  # Ambiguous!
+        )
+        # May create CheatManager variant instead of GameplayStatics
+        ```
+        
+        📖 **Troubleshooting**:
+        | Problem | Cause | Solution |
+        |---------|-------|----------|
+        | Variable Set has only 2 pins | Missing node_params.variable_name | Add variable_name to node_params |
+        | Cast shows generic Object type | Missing node_params.cast_target | Add full Blueprint path with _C suffix |
+        | Function shows wrong context | C++ plugin issue (Get Player Controller) | Use anyway - output type is correct |
+        | Pins don't match original BP | Wrong node_type or missing node_params | Use get_available_blueprint_nodes() first |
+    | Warnings about missing overrides | Node cache is stale after structural edits | Call `manage_blueprint_node(..., action="refresh_node")` |
 
         🔧 **Advanced Multi-Action Examples**:
         ```python
@@ -156,6 +449,20 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
                               target_node_id="Branch_1", target_pin="Condition")
         ```
         """
+
+        normalized_node_params = node_params
+        if isinstance(node_params, dict):
+            spawner_key = node_params.get("spawner_key")
+            if isinstance(spawner_key, str) and "_" in spawner_key:
+                normalized_spawner_key = "::".join(
+                    part.replace("_", " ") for part in spawner_key.split("::")
+                )
+                if normalized_spawner_key != spawner_key:
+                    logger.debug(
+                        "Normalizing spawner_key from '%s' to '%s'", spawner_key, normalized_spawner_key
+                    )
+                    normalized_node_params = dict(node_params)
+                    normalized_node_params["spawner_key"] = normalized_spawner_key
 
         payload: Dict[str, Any] = {
             "blueprint_name": blueprint_name,
@@ -171,7 +478,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
                 "node_id": node_id,
                 "node_type": resolved_node_type,
                 "node_identifier": resolved_node_type,
-                "node_params": node_params,
+                "node_params": normalized_node_params,
                 "node_config": node_config,
                 "position": position,
                 "node_position": node_position,
@@ -210,12 +517,20 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         include_variables: bool = True,
         include_events: bool = True,
         max_results: int = 100,
+        return_descriptors: bool = True,
     ) -> Dict[str, Any]:
         """
-        🔍 **ESSENTIAL NODE DISCOVERY TOOL**: Get all available Blueprint node types using Unreal's reflection system.
+        🔍 **ESSENTIAL NODE DISCOVERY TOOL**: Get all available Blueprint node types with complete metadata.
+        
+        🎯 **NEW (Oct 2025)**: Now returns complete node descriptors including:
+        - **spawner_key**: Unique identifier for exact node creation (e.g., "GameplayStatics::GetPlayerController")
+        - **expected_pin_count**: Number of pins the node will have
+        - **function_class_path**: Full UE path to function class
+        - **pins**: Complete pin metadata with types and directions
+        - **is_static**, **is_pure**, **is_const**: Function properties
         
         ⚠️ **USE THIS FIRST**: Always call this before manage_blueprint_node(action='create') to discover
-        exact node type names. This prevents "unknown node type" errors and ensures reliable node creation.
+        exact node type names and spawner_keys. This prevents "unknown node type" errors and ensures reliable node creation.
         
         🎯 **PRIMARY USE CASES**:
         - **Before Creating Nodes**: Find exact node type names (e.g., "Branch", "Print String", "Cast To Object")
@@ -225,13 +540,40 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         
         🔄 **TYPICAL AI WORKFLOW**:
         ```python
-        # 1. User says: "Create a branch node"
-        nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
-        # Result: Find "Branch" in the node list
+        # 1. User says: "Create a GetPlayerController node"
+        nodes = get_available_blueprint_nodes("BP_Player", search_term="GetPlayerController")
         
-        # 2. Use exact name for creation
-        manage_blueprint_node(blueprint_name="BP_Player", action="create", 
-                            node_type="Branch", position=[200, 100])
+        # 2. Result now includes spawner_key for each variant:
+        # {
+        #   "categories": {
+        #     "|Game": [
+        #       {
+        #         "name": "Get Player Controller",
+        #         "spawner_key": "GameplayStatics::GetPlayerController",
+        #         "expected_pin_count": 3,
+        #         "function_class": "GameplayStatics",
+        #         "is_static": true,
+        #         "pins": [...]
+        #       },
+        #       {
+        #         "name": "Get Player Controller", 
+        #         "spawner_key": "CheatManager::GetPlayerController",
+        #         "expected_pin_count": 1,
+        #         "function_class": "CheatManager",
+        #         "is_static": false,
+        #         "pins": [...]
+        #       }
+        #     ]
+        #   }
+        # }
+        
+        # 3. Use exact spawner_key for creation (NO AMBIGUITY!)
+        manage_blueprint_node(
+            blueprint_name="BP_Player", 
+            action="create",
+            node_params={"spawner_key": "GameplayStatics::GetPlayerController"},
+            position=[200, 100]
+        )
         ```
         
         📊 **Search Strategies**:
@@ -249,6 +591,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
             include_variables: Whether to include variable get/set nodes
             include_events: Whether to include event nodes  
             max_results: Maximum number of nodes to return (default: 100)
+            return_descriptors: Whether to return complete descriptors with spawner_key (default: True)
             
         Returns:
             Dict containing:
@@ -257,13 +600,20 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
             - total_nodes: total number of nodes found
             - error: string (only if success=false)
             
-        � **Node Metadata Structure**:
+        📊 **Node Metadata Structure** (when return_descriptors=True):
         Each discovered node includes:
         - name: Exact node type name to use in manage_blueprint_node
+        - spawner_key: Unique identifier for exact creation (e.g., "GameplayStatics::GetPlayerController")
         - category: Node category for organization
         - description: What the node does
         - keywords: Search terms for semantic discovery
-        - type: Node classification (node, function, variable, etc.)
+        - type: Node classification (function_call, variable_get, etc.)
+        - expected_pin_count: Total pins this node will have
+        - function_class: Class name (for function nodes)
+        - function_class_path: Full UE path to class
+        - is_static: Whether function is static
+        - is_pure: Whether function is pure (no exec pins)
+        - pins: Array of complete pin descriptors with names, types, directions
         
         💡 **Smart Usage Examples**:
         ```python
@@ -288,6 +638,64 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         
         🎯 **AI Integration**: This tool enables data-driven Blueprint development by providing
         exact node names that work reliably, eliminating guesswork and trial-and-error.
+        
+        ⚠️ **CRITICAL: node_params Requirements** (Validated Oct 3, 2025):
+        
+        Some node types REQUIRE `node_params` in manage_blueprint_node() to work correctly:
+        
+        **Variable Set Nodes** (REQUIRED):
+        - Must include: `node_params={"variable_name": "VariableName"}`
+        - Without it: Creates broken 2-pin node (only execute, then)
+        - With it: Creates proper 5-pin node with value input
+        - Example:
+          ```python
+          manage_blueprint_node(
+              action="create",
+              node_type="SET Health",
+              node_params={"variable_name": "Health"}
+          )
+          ```
+        
+        **Variable Get Nodes** (REQUIRED):
+        - Must include: `node_params={"variable_name": "VariableName"}`
+        - Example:
+          ```python
+          manage_blueprint_node(
+              action="create", 
+              node_type="GET Health",
+              node_params={"variable_name": "Health"}
+          )
+          ```
+        
+        **Cast Nodes** (REQUIRED for Blueprint types):
+        - Must include: `node_params={"cast_target": "/Full/Path/BP_Class.BP_Class_C"}`
+        - Format: Full package path + "." + ClassName + "_C"
+        - Without it: Creates generic cast with wrong type
+        - With it: Creates typed cast with proper Blueprint class
+        - Example:
+          ```python
+          manage_blueprint_node(
+              action="create",
+              node_type="Cast To BP_MicrosubHUD",
+              node_params={
+                  "cast_target": "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C"
+              }
+          )
+          ```
+        
+        **Function Call Nodes** (SITUATIONAL):
+        - Some functions may show compiler warnings with wrong context
+        - Known issue: "Get Player Controller" creates CheatManager context
+        - Workaround: Node works correctly despite warning
+        - C++ plugin fix planned for future release
+        
+        🔧 **Validation Tip**:
+        After creating complex nodes, use `manage_blueprint_node(action="describe")` 
+        to verify pin count and configuration before connecting.
+        
+        📖 **See Also**:
+        - `manage_blueprint_node()` for creation with node_params
+        - node-tools-improvements.md for complete patterns guide
         """
         
         payload = {
@@ -299,9 +707,14 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
             "include_variables": include_variables,
             "include_events": include_events,
             "max_results": max_results,
+            "return_descriptors": return_descriptors,
         }
 
         return _dispatch("get_available_blueprint_nodes", payload)
+
+    # ⚠️ REMOVED Oct 4, 2025: discover_blueprint_nodes_with_descriptors tool
+    # Functionality merged into get_available_blueprint_nodes(return_descriptors=True)
+    # This maintains a cleaner API with a single unified discovery tool
 
     @mcp.tool()
     def manage_blueprint_function(

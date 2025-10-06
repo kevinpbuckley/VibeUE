@@ -40,7 +40,7 @@ This documentation contains everything you need to use the VibeUE MCP system eff
 6. **Add Local Variables** (`manage_blueprint_function` with `add_local_variable`)
 
 ### Phase 3: Function Implementation  
-7. **Create Nodes** (`manage_blueprint_node` with `create_node`)
+7. **Create Nodes** (`manage_blueprint_node` with `create` + descriptor `spawner_key`)
 8. **Connect Nodes** (`manage_blueprint_node` with `connect_pins`)
 9. **Test Compilation** (`compile_blueprint`)
 
@@ -548,137 +548,141 @@ for param in original["parameters"]:
 
 ### `manage_blueprint_node` - Node Operations
 
-**Purpose:** Complete node lifecycle and connection management for Blueprint graphs.
+**Purpose:** Complete node lifecycle and connection management for Blueprint graphs using the descriptor system.
 
-> ✅ **Update (Sept 2025):** The reflection layer now resolves external targets when
-> you supply class hints. Include `node_params.function_name` with
-> `node_params.function_class` (or `FunctionReference.MemberParent`) to spawn fully
-> wired static/global calls such as `GameplayStatics::GetPlayerController`. Provide
-> `node_params.cast_target` (soft class path or Blueprint class name) to configure
-> `Cast To <Class>` nodes automatically. Pins populate immediately, eliminating the
-> manual cleanup required by earlier builds.
+> ✅ **Update (Oct 2025):** Node creation is now **descriptor-only**. Every `create` action must include
+> `node_params.spawner_key` (or a top-level `spawner_key`) copied directly from
+> `discover_nodes_with_descriptors()` / `get_available_blueprint_nodes()` results. Legacy fuzzy
+> `node_type` workflows are blocked at the engine layer to prevent ambiguous or malformed nodes.
 
-#### ⚠️ DEPENDENCY REQUIREMENTS
+#### ⚠️ Dependency Requirements
 
-**Before adding nodes to any function, verify:**
+Before adding nodes to any function, verify:
 
 1. **All referenced variables exist** (Blueprint variables, function parameters, local variables)
-2. **All called functions exist** with proper input/output parameters defined
-3. **Function signature is complete** (parameters added via `manage_blueprint_function`)
-4. **Dependencies are satisfied** (see manage_blueprint_function section for full workflow)
+2. **All called functions exist** with complete signatures
+3. **Function signature is finalized** (parameters + locals defined)
+4. **Dependencies are satisfied** (see `manage_blueprint_function` section for the full workflow)
 
-**Common Node Creation Failures:**
-- `Variable Get/Set nodes`: Variable doesn't exist → Create variable first
-- `Function Call nodes`: Target function missing parameters → Add parameters first  
-- `Cast nodes`: Target class unknown → Verify class name and availability
-- `Connection failures`: Pin names don't match → Use `get_node_details` to verify pin names
+Skipping these prerequisites still causes the usual “ERROR!” states and compiler failures.
 
-**Recommended Workflow:**
-```
-Dependencies Ready → Create Nodes → Connect Pins → Test Compilation
-```
+#### Descriptor-Only Creation (Mandatory)
 
-#### Actions Available:
+1. **Discover exact descriptors**
+   ```python
+   descriptors = discover_nodes_with_descriptors(
+       blueprint_name="/Game/Blueprints/BP_Player",
+       search_term="GetPlayerController"
+   )
+   target = descriptors["descriptors"][0]
+   spawner_key = target["spawner_key"]
+   ```
+2. **Create the node with the descriptor’s `spawner_key`**
+   ```python
+   manage_blueprint_node(
+       blueprint_name="/Game/Blueprints/BP_Player",
+       action="create",
+       graph_scope="function",
+       function_name="MyFunction",
+       node_params={
+           "spawner_key": spawner_key,
+           # Optional: additional config like variable_name / cast_target
+       },
+       position=[200, 120]
+   )
+   ```
+3. **Provide extra node parameters when required**
+   - Variable Set/Get nodes: include `node_params["variable_name"]`
+   - Cast nodes: include `node_params["cast_target"]` with full `..._C` path
+   - Function calls with context requirements: include `node_params["function_class"]`
 
-##### `list_nodes`
-List all nodes in Event Graph or specific function.
+❌ **Do not** pass only `node_type` or `node_identifier`—the engine now rejects creation requests that lack a valid `spawner_key`.
+
+#### Actions at a Glance
+
+- `list` / `list_nodes` – Enumerate nodes in the selected graph
+- `describe` – Return rich node + pin metadata (ideal before wiring connections)
+- `create` – Spawn a node **(requires `spawner_key`)**
+- `delete` – Remove a node by GUID
+- `move` – Reposition a node
+- `connect_pins` – Batch-connect pins using deterministic payloads
+- `disconnect_pins` – Break specific links or clear pins
+- `set_property` / `configure` – Update node-level properties
+- `get_details` – Fetch detailed node information for diagnostics
+
+#### Node Creation Examples
+
 ```python
-manage_blueprint_node(
-    blueprint_name="BP_Player",
-    action="list_nodes", 
-    graph_scope="event",  # or "function"
-    function_name="MyFunction",  # if graph_scope="function"
-    ctx={},
-    kwargs={}
-)
-```
+# 1. Grab descriptor for Set Health from discovery payload
+descriptor = next(d for d in descriptors if d["display_name"] == "Set Health")
 
-##### `create_node`
-Create a new node in the graph.
-```python
+# 2. Create the node with mandatory spawner_key + variable name
 manage_blueprint_node(
-    blueprint_name="BP_Player",
-    action="create_node",
-    node_type="K2Node_CallFunction",
-    node_config={
-        "function_name": "Print String",
-        "position": [100, 200]
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="create",
+    graph_scope="function",
+    function_name="UpdateHUD",
+    node_params={
+        "spawner_key": descriptor["spawner_key"],
+        "variable_name": "Health"
     },
-    ctx={},
-    kwargs={}
+    position=[900, 100]
+)
+
+# Cast example – note the full class path with _C suffix
+cast_descriptor = next(d for d in descriptors if d["display_name"] == "Cast To BP_MicrosubHUD")
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="create",
+    graph_scope="function",
+    function_name="InitHUD",
+    node_params={
+        "spawner_key": cast_descriptor["spawner_key"],
+        "cast_target": "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C"
+    },
+    position=[600, 200]
 )
 ```
 
-##### `delete_node`
-Remove a node from the graph.
-```python
-manage_blueprint_node(
-    blueprint_name="BP_Player", 
-    action="delete_node",
-    node_id="12345",
-    ctx={},
-    kwargs={}
-)
-```
+#### Connecting Pins
 
-##### `connect_pins`
-Connect output pin to input pin between nodes.
+`connect_pins` now always expects an array of connection dictionaries under the `extra` payload:
+
 ```python
 manage_blueprint_node(
-    blueprint_name="BP_Player",
+    blueprint_name="/Game/Blueprints/BP_Player",
     action="connect_pins",
-    source_node_id="12345",
-    source_pin="output",
-    target_node_id="67890", 
-    target_pin="input",
-    ctx={},
-    kwargs={}
+    graph_scope="function",
+    function_name="MyFunction",
+    extra={
+        "connections": [
+            {
+                "source_node_id": "F937A5914C523D1AB3532C8C4125C0B7",
+                "source_pin_name": "ReturnValue",
+                "target_node_id": "64DE8C1B47F7EEDA2B713B8604257954",
+                "target_pin_name": "self"
+            }
+        ]
+    }
 )
 ```
 
-##### `disconnect_pins`
-Disconnect pins between nodes.
-```python
-manage_blueprint_node(
-    blueprint_name="BP_Player",
-    action="disconnect_pins", 
-    source_node_id="12345",
-    source_pin="output",
-    target_node_id="67890",
-    target_pin="input",
-    ctx={},
-    kwargs={}
-)
-```
+Key fields per connection object:
+- `source_node_id`, `target_node_id` (required GUIDs)
+- `source_pin_name`, `target_pin_name` (required pin names)
+- Optional flags: `allow_conversion_node`, `allow_promotion`, `break_existing_links`
 
-##### `set_node_property`
-Set property value on a node.
-```python
-manage_blueprint_node(
-    blueprint_name="BP_Player",
-    action="set_node_property",
-    node_id="12345",
-    property_name="InString", 
-    property_value="Hello World",
-    ctx={},
-    kwargs={}
-)
-```
+Use `action="describe"` to harvest the GUIDs/pin names before connecting.
 
-##### `move_node`
-Change node position in graph.
-```python
-manage_blueprint_node(
-    blueprint_name="BP_Player",
-    action="move_node",
-    node_id="12345",
-    node_position=[300, 400],
-    ctx={},
-    kwargs={}
-)
-```
+#### Troubleshooting Checklist
 
----
+| Symptom | Likely Cause | Fix |
+|---------|--------------|-----|
+| `{'success': False, 'error': 'Missing required spawner_key'}` | Creation payload omitted `node_params.spawner_key` | Re-run discovery and include the descriptor’s key |
+| Node spawns with only two pins | Variable metadata missing | Add `node_params.variable_name` matching the Blueprint variable |
+| Cast node outputs generic `Object` type | `cast_target` not provided | Supply full class path (e.g., `/Game/.../BP_Class.BP_Class_C`) |
+| Wrong function variant created | Used stale descriptor cache | Refresh descriptors and pick the precise `spawner_key` |
+| Connect fails with “pin not found” | Incorrect pin name casing | Inspect `describe` output to copy exact pin names |
 
 ## 📚 Common Usage Patterns
 
@@ -852,18 +856,47 @@ var_types = get_available_blueprint_variable_types()
 
 **Function Creation Failures:**
 ```python
-# ❌ WRONG: Create function and add nodes immediately
+# Shared descriptor for both attempts (retrieved once up front)
+health_descriptor = discover_nodes_with_descriptors(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    search_term="Get Health",
+    max_results=5
+)["descriptors"][0]
+
+# ❌ WRONG: Create function and add nodes immediately (variable missing)
 manage_blueprint_function("BP_Player", "create_function", function_name="Test")
-manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # FAILS!
+manage_blueprint_node(
+    "BP_Player",
+    "create",
+    graph_scope="function",
+    function_name="Test",
+    node_params={
+        "spawner_key": health_descriptor["spawner_key"],
+        "variable_name": "Health"
+    }
+)  # FAILS! Variable doesn't exist yet
 
 # ✅ RIGHT: Follow dependency order
 # 1. Create variable first
-manage_blueprint_variables("BP_Player", "create", variable_name="Health", 
-                          variable_config={"type_path": "/Script/CoreUObject.FloatProperty"})
+manage_blueprint_variables(
+    "BP_Player",
+    "create",
+    variable_name="Health",
+    variable_config={"type_path": "/Script/CoreUObject.FloatProperty"}
+)
 # 2. Create function
 manage_blueprint_function("BP_Player", "create_function", function_name="Test")
 # 3. Now create nodes that reference existing dependencies
-manage_blueprint_node("BP_Player", "create_node", node_type="Get Health")  # SUCCESS!
+manage_blueprint_node(
+    "BP_Player",
+    "create",
+    graph_scope="function",
+    function_name="Test",
+    node_params={
+        "spawner_key": health_descriptor["spawner_key"],
+        "variable_name": "Health"
+    }
+)  # SUCCESS!
 ```
 
 **Function Compilation Errors:**
@@ -906,8 +939,22 @@ manage_blueprint_function("BP_Player", "add_local_variable", function_name="Proc
                          variable_name="TempValue", variable_type="float")
 
 # ✅ NOW SAFE TO ADD NODES:
-manage_blueprint_node("BP_Player", "create_node", node_type="Get Health",
-                     graph_scope="function", function_name="ProcessData")
+health_descriptor = discover_nodes_with_descriptors(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    search_term="Get Health",
+    max_results=5
+)["descriptors"][0]
+
+manage_blueprint_node(
+    "BP_Player",
+    "create",
+    graph_scope="function",
+    function_name="ProcessData",
+    node_params={
+        "spawner_key": health_descriptor["spawner_key"],
+        "variable_name": "Health"
+    }
+)
 ```
 
 **Recovery from Broken Functions:**

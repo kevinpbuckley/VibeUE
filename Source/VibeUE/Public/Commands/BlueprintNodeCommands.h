@@ -31,6 +31,8 @@ private:
     TSharedPtr<FJsonObject> HandleConnectPins(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDisconnectPins(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleRefreshBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
     // New unified function management (list/get/create/delete) Phase 1
     TSharedPtr<FJsonObject> HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleManageBlueprintNode(const TSharedPtr<FJsonObject>& Params);
@@ -38,9 +40,12 @@ private:
     
     // NEW: Reflection-based command handlers
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSplitOrRecombinePins(const TSharedPtr<FJsonObject>& Params, bool bSplitPins);
     
     // NEW: Deletion command handlers
     TSharedPtr<FJsonObject> HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params);
@@ -88,6 +93,23 @@ private:
     bool ResolvePinByIdentifier(const TArray<UEdGraph*>& Graphs, const FString& Identifier, FResolvedPinReference& OutPin) const;
     bool ResolvePinByNodeAndName(const TArray<UEdGraph*>& Graphs, const FString& NodeIdentifier, const FString& PinName, EEdGraphPinDirection DesiredDirection, FResolvedPinReference& OutPin, FString& OutError) const;
     bool ResolvePinFromPayload(const TSharedPtr<FJsonObject>& Payload, const TArray<FString>& RolePrefixes, EEdGraphPinDirection DesiredDirection, const TArray<UEdGraph*>& Graphs, FResolvedPinReference& OutPin, FString& OutError) const;
+
+    bool ResolveNodeContext(const TSharedPtr<FJsonObject>& Params,
+        UBlueprint*& OutBlueprint,
+        UEdGraphNode*& OutNode,
+        UEdGraph*& OutGraph,
+        TArray<UEdGraph*>& OutCandidateGraphs,
+        FString& OutBlueprintName,
+        FString& OutNodeIdentifier,
+        FString& OutError) const;
+
+    TSharedPtr<FJsonObject> ApplyPinTransform(
+        UBlueprint* Blueprint,
+        UEdGraphNode* Node,
+        const FString& BlueprintName,
+        const FString& NodeIdentifier,
+        const TArray<FString>& PinNames,
+        bool bSplitPins) const;
     
 private:
     // Reflection system helper

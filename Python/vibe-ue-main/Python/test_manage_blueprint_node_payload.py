@@ -94,6 +94,26 @@ class ManageBlueprintNodePayloadTests(unittest.TestCase):
         self.assertEqual(payload["node_type"], "Cast To BP_MicrosubHUD")
         self.assertEqual(payload["node_identifier"], "Cast To BP_MicrosubHUD")
 
+    @patch("vibe_ue_server.get_unreal_connection")
+    def test_refresh_node_payload_supports_compile_toggle(self, mock_get_connection):
+        fake_connection = FakeConnection()
+        mock_get_connection.return_value = fake_connection
+
+        result = self.manage_blueprint_node(
+            ctx=None,
+            blueprint_name="/Game/Blueprints/BP_Player2",
+            action="refresh_node",
+            node_id="{ABC123}",
+            extra={"compile": False},
+        )
+
+        self.assertTrue(result["success"])
+        command, payload = fake_connection.calls[0]
+        self.assertEqual(command, "manage_blueprint_node")
+        self.assertEqual(payload["action"], "refresh_node")
+        self.assertFalse(payload["compile"])
+        self.assertEqual(payload["node_id"], "{ABC123}")
+
 
 if __name__ == "__main__":
     unittest.main()
