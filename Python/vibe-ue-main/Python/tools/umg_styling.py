@@ -4,7 +4,7 @@ UMG Widget Property Management and Styling Tools
 ADVANCED STYLING SYSTEM FOR AI ASSISTANTS
 
 ⚠️ **CRITICAL FOR AI**: Before using any styling or background tools, ALWAYS call 
-get_umg_guide() first to understand proper widget hierarchy, container-specific 
+get_help(topic="umg-guide") first to understand proper widget hierarchy, container-specific 
 background implementation patterns, and styling best practices.
 
 This module provides the enhanced UMG styling system with:
@@ -21,7 +21,7 @@ KEY FEATURES FOR AI UNDERSTANDING:
 4. Slot Management: Layout-specific properties for different container types
 
 REQUIRED AI WORKFLOW:
-1. ALWAYS call get_umg_guide() FIRST before styling widgets
+1. ALWAYS call get_help(topic="umg-guide") FIRST before styling widgets
 2. Use search_items() to find target widgets
 3. Use list_widget_components() to understand current structure
 4. Apply styling following container-specific patterns from guide
@@ -50,7 +50,7 @@ def register_umg_styling_tools(mcp: FastMCP):
     Register UMG property management and styling tools with the MCP server.
     
     ⚠️ **AI INTEGRATION NOTE**: These tools require the UMG guide for proper usage. 
-    AI assistants should call get_umg_guide() before using styling tools to understand 
+    AI assistants should call get_help(topic="umg-guide") before using styling tools to understand 
     container-specific patterns and widget hierarchy requirements.
     """
     
@@ -67,7 +67,7 @@ def register_umg_styling_tools(mcp: FastMCP):
         """
         Set any property on any widget component.
         
-        ⚠️ **IMPORTANT**: Before styling widgets, ALWAYS use get_umg_guide() first to understand 
+        ⚠️ **IMPORTANT**: Before styling widgets, ALWAYS use get_help(topic="umg-guide") first to understand 
         proper container-specific background implementation, widget hierarchy requirements, 
         and styling best practices. This ensures correct implementation patterns.
         

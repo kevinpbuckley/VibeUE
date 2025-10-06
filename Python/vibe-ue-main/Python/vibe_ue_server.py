@@ -470,7 +470,7 @@ except ImportError:
 # 3. Enhanced UMG tools (advanced capabilities)
 # This order ensures basic tools are available before enhanced features
 
-# ⚠️ CRITICAL AI REQUIREMENT: UMG tools require get_umg_guide() to be called FIRST
+# ⚠️ CRITICAL AI REQUIREMENT: UMG tools require get_help(topic="umg-guide") to be called FIRST
 # before styling, adding components, or implementing backgrounds. The guide contains
 # essential container-specific patterns and widget hierarchy requirements.
 
@@ -479,7 +479,7 @@ register_editor_tools(mcp)         # Actor management, viewport control, screens
 register_blueprint_tools(mcp)      # Blueprint creation, compilation, component management
 register_blueprint_node_tools(mcp) # Event graph manipulation, node connections
 
-# Basic UMG Widget Tools (includes get_umg_guide() tool)
+# Basic UMG Widget Tools (includes get_help(topic="umg-guide") for guidance)
 register_umg_tools(mcp)            # UMG guide and deprecated legacy tools (now references reflection system)
 
 # Enhanced UMG Widget System (Advanced Features) - REQUIRES UMG GUIDE FIRST
@@ -975,8 +975,8 @@ def info():
     **Format:** All tools return JSON responses with 'success' field and relevant data
     **Requirement:** Unreal Engine must be running with VibeUE plugin loaded
     
-    ## � ESSENTIAL: GET WORKFLOW GUIDANCE FIRST
-    **⚠️ CRITICAL FOR AI ASSISTANTS: Before using any tools, call `get_umg_guide()` for:**
+    ## 📚 ESSENTIAL: GET WORKFLOW GUIDANCE FIRST
+    **⚠️ CRITICAL FOR AI ASSISTANTS: Before using any tools, call `get_help(topic="umg-guide")` for:**
     - **Proper workflow patterns** and step-by-step processes
     - **Component nesting & hierarchy** best practices 
     - **Sizing & positioning** strategies for responsive layouts
@@ -984,7 +984,7 @@ def info():
     - **SVG generation & import** capabilities for custom graphics
     - **Error recovery** patterns and troubleshooting guides
 
-    **👉 Always start with: `get_umg_guide()` - This prevents common mistakes and ensures professional results**
+    **👉 Always start with: `get_help(topic="umg-guide")` - This prevents common mistakes and ensures professional results**
 
     ## �🎨 UMG Widget Discovery & Inspection
     ### Widget Blueprint Management
@@ -1228,11 +1228,11 @@ def info():
     - **Canvas Panels**: Always use Overlay wrapper (Canvas -> Overlay -> Image)
     - **ScrollBox/Box Containers**: Add Image directly as child with Fill sizing
     - **Border Widgets**: Use native BrushColor property, not child Images
-    - **Complex Layouts**: Use `get_umg_guide()` for container-specific patterns
+    - **Complex Layouts**: Use `get_help(topic="umg-guide")` for container-specific patterns
     - **Performance**: Avoid unnecessary Overlay nesting, use native properties when available
 
     ## 🚀 REMEMBER: START WITH UMG GUIDE
-    **Before beginning any UI work, call `get_umg_guide()` to get:**
+    **Before beginning any UI work, call `get_help(topic="umg-guide")` to get:**
     - Complete workflow patterns and step-by-step processes
     - Professional component nesting and hierarchy guidelines
     - Sizing, positioning, and responsive layout strategies  

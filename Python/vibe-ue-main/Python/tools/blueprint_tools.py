@@ -65,502 +65,8 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    @mcp.tool()
-    def get_available_components(
-        ctx: Context,
-        category: str = "",
-        base_class: str = "",
-        search_text: str = "",
-        include_abstract: bool = False,
-        include_deprecated: bool = False
-    ) -> Dict[str, Any]:
-        """
-        Discover all available component types using Unreal's reflection system.
-        
-        🔍 **100% REFLECTION-BASED DISCOVERY**: Uses TObjectIterator to find all component classes
-        with comprehensive metadata including properties, methods, hierarchy rules, and usage examples.
-        
-        Args:
-            category: Filter by component category (optional)
-            base_class: Filter by base class (optional)
-            search_text: Text to search for in component names (optional)
-            include_abstract: Whether to include abstract component types (default: False)
-            include_deprecated: Whether to include deprecated component types (default: False)
-            
-        Returns:
-            Dict containing:
-            - success: boolean indicating if discovery completed
-            - components: array of component objects with comprehensive metadata
-            - categories: array of all available categories
-            - total_count: total number of components found
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            params = {
-                "category": category,
-                "base_class": base_class,
-                "search_text": search_text,
-                "include_abstract": include_abstract,
-                "include_deprecated": include_deprecated
-            }
-            
-            response = unreal.send_command("get_available_components", params)
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Found {response.get('total_count', 0)} component types via reflection")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error discovering components: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def get_component_info(
-        ctx: Context,
-        component_type: str
-    ) -> Dict[str, Any]:
-        """
-        Get comprehensive information about a specific component type using reflection.
-        
-        🔍 **COMPLETE COMPONENT ANALYSIS**: Extracts all metadata including properties,
-        methods, hierarchy rules, compatibility, and usage examples.
-        
-        Args:
-            component_type: Name of the component type to analyze
-            
-        Returns:
-            Dict containing complete component information with reflection-based metadata
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("get_component_info", {
-                "component_type": component_type
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Retrieved component info for: {component_type}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting component info: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def get_property_metadata(
-        ctx: Context,
-        component_type: str,
-        property_name: str
-    ) -> Dict[str, Any]:
-        """
-        Get detailed metadata for a specific property on a component type.
-        
-        🔍 **PROPERTY REFLECTION**: Extracts complete property information including
-        type, constraints, flags, and metadata from UPROPERTY tags.
-        
-        Args:
-            component_type: Name of the component type
-            property_name: Name of the property to analyze
-            
-        Returns:
-            Dict containing comprehensive property metadata
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("get_property_metadata", {
-                "component_type": component_type,
-                "property_name": property_name
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Retrieved property metadata for {component_type}.{property_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting property metadata: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def get_component_hierarchy(
-        ctx: Context,
-        blueprint_name: str
-    ) -> Dict[str, Any]:
-        """
-        Get the component hierarchy of a specific Blueprint.
-        
-        🏗️ **HIERARCHY ANALYSIS**: Extracts complete component tree with parent-child
-        relationships, transforms, and component metadata.
-        
-        Args:
-            blueprint_name: Name of the Blueprint to analyze
-            
-        Returns:
-            Dict containing complete component hierarchy information
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("get_component_hierarchy", {
-                "blueprint_name": blueprint_name
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Retrieved component hierarchy for Blueprint: {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error getting component hierarchy: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def add_component(
-        ctx: Context,
-        blueprint_name: str,
-        component_type: str,
-        component_name: str,
-        parent_name: str = "",
-        properties: Dict[str, Any] = {},
-        location: List[float] = [],
-        rotation: List[float] = [],
-        scale: List[float] = []
-    ) -> Dict[str, Any]:
-        """
-        Add a component to a Blueprint with full hierarchy and property support.
-        
-        🔧 **REFLECTION-BASED COMPONENT CREATION**: Uses validated component types and
-        supports complete property initialization and hierarchy placement.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_type: Type of component to add (discovered via get_available_components)
-            component_name: Name for the new component
-            parent_name: Name of parent component for attachment (optional)
-            properties: Initial properties to set on the component (optional)
-            location: [X, Y, Z] transform location for scene components (optional)
-            rotation: [Pitch, Yaw, Roll] transform rotation for scene components (optional)
-            scale: [X, Y, Z] transform scale for scene components (optional)
-            
-        Returns:
-            Dict containing information about the created component
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_type": component_type,
-                "component_name": component_name
-            }
-            
-            if parent_name:
-                params["parent_name"] = parent_name
-            if properties:
-                params["properties"] = properties
-            if location:
-                params["location"] = [float(x) for x in location]
-            if rotation:
-                params["rotation"] = [float(x) for x in rotation] 
-            if scale:
-                params["scale"] = [float(x) for x in scale]
-                
-            response = unreal.send_command("add_component", params)
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Added component {component_name} ({component_type}) to {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding component: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def set_component_property(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        property_name: str,
-        property_value: Any
-    ) -> Dict[str, Any]:
-        """
-        Set a property on a Blueprint component using reflection-based type conversion.
-        
-        🔧 **REFLECTION-BASED PROPERTY SETTING**: Uses component property metadata to
-        perform intelligent type conversion and validation.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_name: Name of the target component
-            property_name: Name of the property to set
-            property_value: Value to set (auto-converted to appropriate type)
-            
-        Returns:
-            Dict containing success status and property information
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("set_component_property", {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "property_name": property_name,
-                "property_value": property_value
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Set property {component_name}.{property_name} in {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting component property: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def remove_component(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        remove_children: bool = True
-    ) -> Dict[str, Any]:
-        """
-        Remove a component from a Blueprint with intelligent child handling.
-        
-        🗑️ **SAFE COMPONENT REMOVAL**: Handles child components and hierarchy
-        preservation with options for recursive removal or reparenting.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_name: Name of the component to remove
-            remove_children: Whether to remove child components recursively (default: True)
-            
-        Returns:
-            Dict containing information about removed and orphaned components
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("remove_component", {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "remove_children": remove_children
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Removed component {component_name} from {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error removing component: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-
     # --- Blueprint variable management -------------------------------------------------
 
-    @mcp.tool()
-    def reorder_components(
-        ctx: Context,
-        blueprint_name: str,
-        component_order: List[str]
-    ) -> Dict[str, Any]:
-        """
-        Reorder components in a Blueprint's component hierarchy.
-        
-        🔄 **HIERARCHY REORDERING**: Changes the order of components in the Blueprint's
-        Simple Construction Script with hierarchy preservation.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_order: Array of component names in desired order
-            
-        Returns:
-            Dict containing success status and final component order
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            response = unreal.send_command("reorder_components", {
-                "blueprint_name": blueprint_name,
-                "component_order": component_order
-            })
-            
-            if not response:
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Reordered components in {blueprint_name}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error reordering components: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-
-    @mcp.tool()
-    def add_component_to_blueprint(
-        ctx: Context,
-        blueprint_name: str,
-        component_type: str,
-        component_name: str,
-        location: List[float] = [],
-        rotation: List[float] = [],
-        scale: List[float] = [],
-        component_properties: Dict[str, Any] = {}
-    ) -> Dict[str, Any]:
-        """
-        Add a component to a Blueprint.
-        
-        Args:
-            blueprint_name: Name of the target Blueprint
-            component_type: Type of component to add (use component class name without U prefix)
-            component_name: Name for the new component
-            location: [X, Y, Z] coordinates for component's position
-            rotation: [Pitch, Yaw, Roll] values for component's rotation
-            scale: [X, Y, Z] values for component's scale
-            component_properties: Additional properties to set on the component
-        
-        Returns:
-            Information about the added component
-        """
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            # Ensure all parameters are properly formatted
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_type": component_type,
-                "component_name": component_name,
-                "location": location or [0.0, 0.0, 0.0],
-                "rotation": rotation or [0.0, 0.0, 0.0],
-                "scale": scale or [1.0, 1.0, 1.0]
-            }
-            
-            # Add component_properties if provided
-            if component_properties and len(component_properties) > 0:
-                params["component_properties"] = component_properties
-            
-            # Validate location, rotation, and scale formats
-            for param_name in ["location", "rotation", "scale"]:
-                param_value = params[param_name]
-                if not isinstance(param_value, list) or len(param_value) != 3:
-                    logger.error(f"Invalid {param_name} format: {param_value}. Must be a list of 3 float values.")
-                    return {"success": False, "message": f"Invalid {param_name} format. Must be a list of 3 float values."}
-                # Ensure all values are float
-                params[param_name] = [float(val) for val in param_value]
-            
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-                
-            logger.info(f"Adding component to blueprint with params: {params}")
-            response = unreal.send_command("add_component_to_blueprint", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Component addition response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error adding component to blueprint: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    
-    
-    @mcp.tool()
-    def set_component_property(
-        ctx: Context,
-        blueprint_name: str,
-        component_name: str,
-        property_name: str,
-        property_value,
-    ) -> Dict[str, Any]:
-        """Set a property on a component in a Blueprint."""
-        from vibe_ue_server import get_unreal_connection
-        
-        try:
-            unreal = get_unreal_connection()
-            if not unreal:
-                logger.error("Failed to connect to Unreal Engine")
-                return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            params = {
-                "blueprint_name": blueprint_name,
-                "component_name": component_name,
-                "property_name": property_name,
-                "property_value": property_value
-            }
-            
-            logger.info(f"Setting component property with params: {params}")
-            response = unreal.send_command("set_component_property", params)
-            
-            if not response:
-                logger.error("No response from Unreal Engine")
-                return {"success": False, "message": "No response from Unreal Engine"}
-            
-            logger.info(f"Set component property response: {response}")
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error setting component property: {e}"
-            logger.error(error_msg)
-            return {"success": False, "message": error_msg}
-    
-    
     @mcp.tool()
     def compile_blueprint(
         ctx: Context,
@@ -680,7 +186,7 @@ def register_blueprint_tools(mcp: FastMCP):
         
         🎯 **Comprehensive Information Includes**:
         
-        **Variables**: Type, container type, category, editability, flags
+        **Variables**: Type, type_path (canonical path for use in manage_blueprint_variables), container type, category, editability, flags
         **Components**: Name, type, parent relationships, native status  
         **Widget Components**: Name, type, parent, visibility, enabled state
         **Functions**: Name, node count, graph type
@@ -828,6 +334,10 @@ def register_blueprint_tools(mcp: FastMCP):
         """
         🔧 **UNIFIED BLUEPRINT VARIABLE MANAGEMENT SYSTEM** 
         
+        ⚠️ **CRITICAL: variable_config MUST use "type_path" NOT "type"**
+        ❌ WRONG: {"type": "UserWidget"} or {"type": "float"}
+        ✅ CORRECT: {"type_path": "/Script/UMG.UserWidget"} or {"type_path": "/Script/CoreUObject.FloatProperty"}
+        
         **🎯 SOLVES THE BLUEPRINT CHALLENGE TYPE ISSUES**
         This tool replaces all individual variable tools with a unified, reflection-based system
         that properly handles UserWidget, NiagaraSystem, SoundBase, and Blueprint class types.
@@ -836,12 +346,22 @@ def register_blueprint_tools(mcp: FastMCP):
         
         **🆕 create** - Create new Blueprint variable with proper typing
         ```python
+        # REQUIRED: Use search_types action first to find the exact type_path
+        type_search = manage_blueprint_variables(
+            blueprint_name="BP_Player2",
+            action="search_types",
+            search_criteria={"search_text": "UserWidget"}
+        )
+        # Result includes type_path like "/Script/UMG.UserWidget"
+        
+        # ⚠️ CRITICAL: Use "type_path" key, NOT "type"!
+        # Then create variable with exact type_path from search results
         manage_blueprint_variables(
             blueprint_name="BP_Player2",
             action="create", 
             variable_name="AttributeWidget",
             variable_config={
-                "type": "UserWidget",           # ✅ Now resolves to proper UUserWidget*
+                "type_path": "/Script/UMG.UserWidget",  # ✅ REQUIRED: Use "type_path" NOT "type"
                 "category": "UI",
                 "tooltip": "Player's attribute display widget",
                 "is_editable": True,
@@ -873,19 +393,70 @@ def register_blueprint_tools(mcp: FastMCP):
         
         **🎯 Blueprint Challenge Solution:**
         This tool fixes the exact variable type issues blocking challenge completion:
-        - AttributeWidget → UserWidget (not String) ✅
-        - Death_Niagara_System → NiagaraSystem (not String) ✅  
-        - Death_Sound → SoundBase (not String) ✅
-        - Microsub HUD → BP_MicrosubHUD_C (Blueprint class support) ✅
+        - AttributeWidget → UserWidget (type_path: "/Script/UMG.UserWidget") ✅
+        - Death_Niagara_System → NiagaraSystem (type_path: "/Script/Niagara.NiagaraSystem") ✅  
+        - Death_Sound → SoundBase (type_path: "/Script/Engine.SoundBase") ✅
+        - Microsub HUD → BP_MicrosubHUD_C (type_path: "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C") ✅
+        - ExplosionForce → float (type_path: "/Script/CoreUObject.FloatProperty") ✅
+        - Loading Start Delay → float (type_path: "/Script/CoreUObject.FloatProperty") ✅
+        
+        **📌 Common Type Paths Reference:**
+        
+        **Primitives (CRITICAL - Use exact paths):**
+        - **float**: "/Script/CoreUObject.FloatProperty"
+        - **int**: "/Script/CoreUObject.IntProperty"  
+        - **bool**: "/Script/CoreUObject.BoolProperty"
+        - **double**: "/Script/CoreUObject.DoubleProperty"
+        - **string**: "/Script/CoreUObject.StrProperty"
+        - **name**: "/Script/CoreUObject.NameProperty"
+        - **byte**: "/Script/CoreUObject.ByteProperty"
+        
+        **Common Object Types:**
+        - **Widgets**: "/Script/UMG.UserWidget"
+        - **Niagara**: "/Script/Niagara.NiagaraSystem", "/Script/Niagara.NiagaraComponent"
+        - **Audio**: "/Script/Engine.SoundBase", "/Script/Engine.SoundCue", "/Script/Engine.SoundWave"
+        - **Actors**: "/Script/Engine.Actor", "/Script/Engine.Pawn", "/Script/Engine.Character"
+        - **Components**: "/Script/Engine.SceneComponent", "/Script/Engine.ActorComponent"
+        - **Materials**: "/Script/Engine.Material", "/Script/Engine.MaterialInstance"
+        - **Textures**: "/Script/Engine.Texture2D", "/Script/Engine.TextureRenderTarget2D"
+        
+        **Blueprint Classes:**
+        - Full asset path with _C suffix: "/Game/Blueprints/UI/BP_MicrosubHUD.BP_MicrosubHUD_C"
+        - Use search_items() to find the correct path, then append ".ClassName_C"
+        
+        **💡 Best Practice Workflow:**
+        1. Use `search_types` action to find exact type_path for complex types
+        2. Use canonical type_path in `create` action's variable_config
+        3. For Blueprint classes, use full package path with _C suffix
         
         **📋 Parameters:**
         - blueprint_name: Target Blueprint name
         - action: Operation to perform (create|delete|get_info|get_property|set_property|search_types)
         - variable_name: Variable name (required for most actions)
-        - variable_config: Variable configuration for create action
-        - property_path: Dotted path for property operations
+        - variable_config: Variable configuration dict for create action
+          
+          ⚠️ **CRITICAL REQUIREMENT**: MUST use "type_path" key, NOT "type"
+          ❌ WRONG: {"type": "float"} or {"type": "UserWidget"}
+          ✅ CORRECT: {"type_path": "/Script/CoreUObject.FloatProperty"}
+          
+          **Required field:**
+          - **type_path** (REQUIRED): Canonical type path string (e.g., "/Script/UMG.UserWidget")
+            ALWAYS use search_types action first to find the correct type_path
+          
+          **Optional fields:**
+          - category (optional): Variable category for organization
+          - tooltip (optional): Description tooltip
+          - is_editable (optional): Whether editable in editor (default: True)
+          - is_blueprint_readonly (optional): Whether read-only in Blueprint (default: False)
+          - is_expose_on_spawn (optional): Expose on spawn (default: False)
+          - default_value (optional): Default value for the variable
+        - property_path: Dotted path for property operations (e.g., "Health.CurrentValue")
         - value: Value for set_property action
-        - search_criteria: Filters for search_types action
+        - search_criteria: Filters for search_types action:
+          - search_text: Text to search for in type names
+          - category: Filter by category (Widget|Audio|Particle|Blueprint|Basic|Struct)
+          - include_blueprints: Include custom Blueprint types (default: True)
+          - include_engine_types: Include engine types (default: True)
         - options: Additional options for various actions
         """
         from vibe_ue_server import get_unreal_connection
@@ -895,6 +466,35 @@ def register_blueprint_tools(mcp: FastMCP):
             if not unreal:
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            # ⚠️ CRITICAL VALIDATION: Catch common "type" vs "type_path" mistake
+            if action == "create" and variable_config:
+                if "type" in variable_config and "type_path" not in variable_config:
+                    error_msg = (
+                        "❌ CRITICAL ERROR: variable_config uses 'type' but should use 'type_path'\n"
+                        f"❌ WRONG: variable_config={variable_config}\n"
+                        "✅ CORRECT: Use 'type_path' key with full canonical path:\n"
+                        "   Examples:\n"
+                        '   - {"type_path": "/Script/CoreUObject.FloatProperty"} for float\n'
+                        '   - {"type_path": "/Script/UMG.UserWidget"} for widgets\n'
+                        '   - {"type_path": "/Script/Engine.SoundBase"} for audio\n'
+                        "Use manage_blueprint_variables(action='search_types') to find correct type_path"
+                    )
+                    logger.error(error_msg)
+                    return {"success": False, "message": error_msg}
+                
+                if "type_path" not in variable_config:
+                    error_msg = (
+                        "❌ CRITICAL ERROR: variable_config missing required 'type_path' field\n"
+                        f"Current variable_config: {variable_config}\n"
+                        "✅ REQUIRED: variable_config must include 'type_path' with full canonical path:\n"
+                        "   Examples:\n"
+                        '   - {"type_path": "/Script/CoreUObject.FloatProperty"} for float\n'
+                        '   - {"type_path": "/Script/UMG.UserWidget"} for widgets\n'
+                        "Use manage_blueprint_variables(action='search_types') to find correct type_path"
+                    )
+                    logger.error(error_msg)
+                    return {"success": False, "message": error_msg}
             
             # Build command parameters
             params = {
@@ -937,4 +537,410 @@ def register_blueprint_tools(mcp: FastMCP):
             logger.error(error_msg)
             return {"success": False, "message": error_msg}
     
-    logger.info("Blueprint tools registered successfully (including NEW unified manage_blueprint_variables)") 
+    @mcp.tool()
+    def manage_blueprint_components(
+        ctx: Context,
+        blueprint_name: str,
+        action: str,
+        # Component identification
+        component_type: str = "",
+        component_name: str = "",
+        # Property operations
+        property_name: str = "",
+        property_value: Any = None,
+        # Component creation parameters
+        parent_name: str = "",
+        properties: Dict[str, Any] = None,
+        location: List[float] = None,
+        rotation: List[float] = None,
+        scale: List[float] = None,
+        # Hierarchy operations
+        component_order: List[str] = None,
+        remove_children: bool = True,
+        # Discovery parameters
+        category: str = "",
+        base_class: str = "",
+        search_text: str = "",
+        include_abstract: bool = False,
+        include_deprecated: bool = False,
+        include_property_values: bool = False,
+        include_inherited: bool = True,
+        # Additional options
+        options: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """
+        🔧 **UNIFIED BLUEPRINT COMPONENT MANAGEMENT SYSTEM**
+        
+        ⚠️ **CRITICAL: blueprint_name MUST be a full package path!**
+        - ✅ CORRECT: `/Game/Blueprints/BP_Player2` or `/Game/Blueprints/Characters/BP_Player`
+        - ❌ WRONG: `BP_Player2` (will fail with "Blueprint 'BP_Player2' not found")
+        
+        **How to get the correct path:**
+        1. Use `search_items(search_term="BP_Player2", asset_type="Blueprint")` first
+        2. Use the `package_path` field from results (NOT the `path` field with duplicated name)
+        3. Pass that exact path to this tool
+        
+        Consolidates all Blueprint component operations into a single multi-action tool
+        following the successful patterns of manage_blueprint_function and manage_blueprint_variables.
+        
+        **📋 Available Actions:**
+        
+        ## Discovery & Inspection
+        
+        **search_types** - Discover available component types
+        ```python
+        manage_blueprint_components(
+            blueprint_name="",  # Not required for type search
+            action="search_types",
+            category="Rendering",
+            search_text="Light"
+        )
+        ```
+        
+        **get_info** - Get comprehensive component type information
+        ```python
+        # Get type metadata only
+        manage_blueprint_components(
+            blueprint_name="",
+            action="get_info",
+            component_type="SpotLightComponent"
+        )
+        
+        # Get metadata + actual property values from instance
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
+            action="get_info",
+            component_type="SpotLightComponent",
+            component_name="SpotLight_Top",
+            include_property_values=True
+        )
+        ```
+        
+        **get_property_metadata** - Get detailed property metadata
+        ```python
+        manage_blueprint_components(
+            blueprint_name="",
+            action="get_property_metadata",
+            component_type="SpotLightComponent",
+            property_name="Intensity"
+        )
+        ```
+        
+        **list** - List all components in Blueprint
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
+            action="list"
+        )
+        ```
+        
+        ## Component Lifecycle
+        
+        **create** - Add new component to Blueprint
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path required!
+            action="create",
+            component_type="SpotLightComponent",
+            component_name="SpotLight_Top",
+            parent_name="BoxCollision",
+            location=[0, 0, 100],
+            rotation=[0, -90, 0],
+            properties={"Intensity": 5000}
+        )
+        ```
+        
+        **delete** - Remove component from Blueprint
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
+            action="delete",
+            component_name="SpotLight_Top",
+            remove_children=True
+        )
+        ```
+        
+        ## Property Management
+        
+        **get_property** - Get single property value from component instance
+        ```python
+        result = manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
+            action="get_property",
+            component_name="SpotLight_Top",
+            property_name="Intensity"
+        )
+        # Returns: {"value": 5000.0, "type": "float"}
+        ```
+        
+        **set_property** - Set component property value
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
+            action="set_property",
+            component_name="SpotLight_Top",
+            property_name="Intensity",
+            property_value=5000.0
+        )
+        ```
+        
+        **get_all_properties** - Get all property values from component
+        ```python
+        result = manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/Characters/BP_Player",  # ✅ Full package path
+            action="get_all_properties",
+            component_name="SpotLight_Top",
+            include_inherited=True
+        )
+        # Returns: {"properties": {"Intensity": 5000.0, "InnerConeAngle": 0.0, ...}}
+        ```
+        
+        **compare_properties** - Compare component properties between Blueprints
+        ```python
+        result = manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
+            action="compare_properties",
+            component_name="SpotLight_Top",
+            options={
+                "compare_to_blueprint": "/Game/Blueprints/Characters/BP_Player",  # ✅ Full path
+                "compare_to_component": "SpotLight_Top"
+            }
+        )
+        # Returns: {{"matches": True/False, "differences": [...], "matching_count": 45}}
+        ```
+        
+        ## Hierarchy Operations
+        
+        **reorder** - Change component order
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
+            action="reorder",
+            component_order=["SpotLight_Top", "SpotLight_Right", "TrailVFX"]
+        )
+        ```
+        
+        **reparent** - Change component's parent attachment
+        ```python
+        manage_blueprint_components(
+            blueprint_name="/Game/Blueprints/BP_Player2",  # ✅ Full package path
+            action="reparent",
+            component_name="SpotLight_Top",
+            parent_name="CameraBoom"
+        )
+        ```
+        
+        **💡 CRITICAL PROPERTY NAMING DISCOVERIES:**
+        
+        **SkeletalMesh Component:**
+        - ✅ Use `SkeletalMeshAsset` or `SkinnedAsset` for mesh asset (NOT `SkeletalMesh`)
+        - ✅ Use `OverrideMaterials` for material array
+        - ⚠️ UI may require Blueprint tab close/reopen to refresh after property changes
+        
+        **Common Property Names:**
+        - Lights: `Intensity`, `LightColor`, `AttenuationRadius`, `CastShadows`
+        - SpotLights: `InnerConeAngle`, `OuterConeAngle`
+        - Transforms: `RelativeLocation`, `RelativeRotation`, `RelativeScale`
+        - Niagara: `Asset` for NiagaraSystem reference
+        
+        **⚠️ REPLACES LEGACY TOOLS:**
+        - get_available_components() → action="search_types"
+        - get_component_info() → action="get_info"
+        - get_property_metadata() → action="get_property_metadata"
+        - get_component_hierarchy() → action="list"
+        - add_component() → action="create"
+        - remove_component() → action="delete"
+        - set_component_property() → action="set_property"
+        - reorder_components() → action="reorder"
+        
+        Args:
+            blueprint_name: ⚠️ **MUST be full package path** (e.g., "/Game/Blueprints/BP_Player2")
+                           Use search_items() to get the correct package_path first!
+                           ❌ Short names like "BP_Player2" will fail with "Blueprint not found"
+            action: Action to perform (see above for available actions)
+            component_type: Component class name (for get_info, create actions)
+            component_name: Component instance name (for property/delete/reparent actions)
+            property_name: Property name (for get_property, set_property actions)
+            property_value: Value to set (for set_property action)
+            parent_name: Parent component name (for create, reparent actions)
+            properties: Initial properties dict (for create action)
+            location: [X, Y, Z] transform (for create action)
+            rotation: [Pitch, Yaw, Roll] transform (for create action)
+            scale: [X, Y, Z] transform (for create action)
+            component_order: Ordered list of component names (for reorder action)
+            remove_children: Whether to remove children (for delete action)
+            category: Filter by category (for search_types action)
+            base_class: Filter by base class (for search_types action)
+            search_text: Text search filter (for search_types action)
+            include_abstract: Include abstract types (for search_types action)
+            include_deprecated: Include deprecated types (for search_types action)
+            include_property_values: Include actual values (for get_info action)
+            include_inherited: Include inherited properties (for get_all_properties action)
+            options: Additional action-specific options dict
+            
+        Returns:
+            Dict containing action results with success field and action-specific data
+        """
+        from vibe_ue_server import get_unreal_connection
+        
+        try:
+            unreal = get_unreal_connection()
+            if not unreal:
+                logger.error("Failed to connect to Unreal Engine")
+                return {"success": False, "message": "Failed to connect to Unreal Engine"}
+            
+            # Validate action
+            valid_actions = [
+                "search_types", "get_info", "get_property_metadata", "list",
+                "create", "delete",
+                "get_property", "set_property", "get_all_properties", "compare_properties",
+                "reorder", "reparent"
+            ]
+            
+            if action not in valid_actions:
+                return {
+                    "success": False,
+                    "message": f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
+                }
+            
+            # Route to appropriate legacy tool or new implementation
+            # This provides backward compatibility while consolidating the interface
+            
+            if action == "search_types":
+                # Route to get_available_components
+                params = {
+                    "category": category,
+                    "base_class": base_class,
+                    "search_text": search_text,
+                    "include_abstract": include_abstract,
+                    "include_deprecated": include_deprecated
+                }
+                response = unreal.send_command("get_available_components", params)
+                
+            elif action == "get_info":
+                # Route to get_component_info with optional property values
+                params = {
+                    "component_type": component_type,
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "include_property_values": include_property_values
+                }
+                response = unreal.send_command("get_component_info", params)
+                
+            elif action == "get_property_metadata":
+                # Route to get_property_metadata
+                params = {
+                    "component_type": component_type,
+                    "property_name": property_name
+                }
+                response = unreal.send_command("get_property_metadata", params)
+                
+            elif action == "list":
+                # Route to get_component_hierarchy
+                params = {"blueprint_name": blueprint_name}
+                response = unreal.send_command("get_component_hierarchy", params)
+                
+            elif action == "create":
+                # Route to add_component
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_type": component_type,
+                    "component_name": component_name
+                }
+                if parent_name:
+                    params["parent_name"] = parent_name
+                if properties:
+                    params["properties"] = properties
+                if location:
+                    params["location"] = [float(x) for x in location]
+                if rotation:
+                    params["rotation"] = [float(x) for x in rotation]
+                if scale:
+                    params["scale"] = [float(x) for x in scale]
+                response = unreal.send_command("add_component", params)
+                
+            elif action == "delete":
+                # Route to remove_component
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "remove_children": remove_children
+                }
+                response = unreal.send_command("remove_component", params)
+                
+            elif action == "get_property":
+                # NEW: Get single property value
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "property_name": property_name
+                }
+                response = unreal.send_command("get_component_property", params)
+                
+            elif action == "set_property":
+                # Route to set_component_property
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "property_name": property_name,
+                    "property_value": property_value
+                }
+                response = unreal.send_command("set_component_property", params)
+                
+            elif action == "get_all_properties":
+                # NEW: Get all property values from component
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "include_inherited": include_inherited
+                }
+                response = unreal.send_command("get_all_component_properties", params)
+                
+            elif action == "compare_properties":
+                # NEW: Compare properties between components
+                if not options or "compare_to_blueprint" not in options or "compare_to_component" not in options:
+                    return {
+                        "success": False,
+                        "message": "compare_properties requires options with 'compare_to_blueprint' and 'compare_to_component'"
+                    }
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "compare_to_blueprint": options["compare_to_blueprint"],
+                    "compare_to_component": options["compare_to_component"]
+                }
+                response = unreal.send_command("compare_component_properties", params)
+                
+            elif action == "reorder":
+                # Route to reorder_components
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_order": component_order
+                }
+                response = unreal.send_command("reorder_components", params)
+                
+            elif action == "reparent":
+                # NEW: Reparent component
+                params = {
+                    "blueprint_name": blueprint_name,
+                    "component_name": component_name,
+                    "parent_name": parent_name
+                }
+                response = unreal.send_command("reparent_component", params)
+            
+            else:
+                return {"success": False, "message": f"Action '{action}' not yet implemented"}
+            
+            if not response:
+                logger.error(f"No response from Unreal Engine for component action: {action}")
+                return {"success": False, "message": "No response from Unreal Engine"}
+            
+            logger.info(f"Component management action '{action}' completed successfully")
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error in component management (action={action}): {e}"
+            logger.error(error_msg)
+            return {"success": False, "message": error_msg}
+    
+    logger.info("Blueprint tools registered successfully (including NEW unified manage_blueprint_components)") 

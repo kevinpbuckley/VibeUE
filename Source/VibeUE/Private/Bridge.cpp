@@ -245,6 +245,10 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("get_component_hierarchy") ||
                      CommandType == TEXT("add_component") ||
                      CommandType == TEXT("set_component_property") ||
+                     CommandType == TEXT("get_component_property") ||
+                     CommandType == TEXT("get_all_component_properties") ||
+                     CommandType == TEXT("compare_component_properties") ||
+                     CommandType == TEXT("reparent_component") ||
                      CommandType == TEXT("remove_component") ||
                      CommandType == TEXT("reorder_components"))
             {
@@ -274,7 +278,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
             // Blueprint Node Commands
             else if (CommandType == TEXT("manage_blueprint_node") ||
                      CommandType == TEXT("manage_blueprint_function") ||
-                     CommandType == TEXT("get_available_blueprint_nodes"))
+                     CommandType == TEXT("get_available_blueprint_nodes") ||
+                     CommandType == TEXT("discover_nodes_with_descriptors"))
             {
                 UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
                 ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
