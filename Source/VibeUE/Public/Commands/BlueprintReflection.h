@@ -65,7 +65,7 @@ public:
     
     // NEW: Optimized search methods
     static void GetFilteredBlueprintActions(UBlueprint* Blueprint, const FString& SearchTerm, const FString& Category, int32 MaxResults, TArray<TSharedPtr<FEdGraphSchemaAction>>& OutActions);
-    static void GetCommonBlueprintActions(UBlueprint* Blueprint, const FString& Category, int32 MaxResults, TArray<TSharedPtr<FEdGraphSchemaAction>>& OutActions);
+    static void GetCommonBlueprintActions(UBlueprint* Blueprint, const FString& Category, int32 MaxResults, TArray<TSharedPtr<FJsonValue>>& OutActions);
     
     // Node configuration helpers (moved to public for reflection system access)
     static void ConfigureFunctionNode(UK2Node_CallFunction* FunctionNode, const TSharedPtr<FJsonObject>& NodeParams);
@@ -73,6 +73,30 @@ public:
     static void ConfigureVariableSetNode(UK2Node_VariableSet* VariableNode, const TSharedPtr<FJsonObject>& NodeParams);
     static void ConfigureEventNode(UK2Node_Event* EventNode, const TSharedPtr<FJsonObject>& NodeParams);
     static void ConfigureDynamicCastNode(UK2Node_DynamicCast* CastNode, const TSharedPtr<FJsonObject>& NodeParams);
+    
+    // NEW (Oct 6, 2025): Pin default configuration system
+    static TSharedPtr<FJsonObject> ApplyPinDefaults(UEdGraphNode* Node, const TSharedPtr<FJsonObject>& PinDefaults);
+    
+    // NEW (Oct 6, 2025): Reroute node ergonomics system
+    static class UK2Node_Knot* CreateRerouteNode(
+        UEdGraph* Graph,
+        const FVector2D& Position,
+        const struct FEdGraphPinType* PinType = nullptr
+    );
+    
+    static class UK2Node_Knot* InsertRerouteNode(
+        UEdGraph* Graph,
+        UEdGraphPin* SourcePin,
+        UEdGraphPin* TargetPin,
+        const FVector2D* CustomPosition = nullptr
+    );
+    
+    static TArray<class UK2Node_Knot*> CreateReroutePath(
+        UEdGraph* Graph,
+        UEdGraphPin* SourcePin,
+        UEdGraphPin* TargetPin,
+        const TArray<FVector2D>& Waypoints
+    );
 
 private:
     // Internal reflection helpers (simplified)
@@ -159,10 +183,16 @@ public:
         FString VariableName;
         FString VariableType;
         FString VariableTypePath;
+        FString OwnerClassName;                 // Class that owns this variable
+        FString OwnerClassPath;                 // Full path to owner class
+        bool bIsExternalMember = false;         // True if variable is from external class
         
         // Cast-specific metadata (if applicable)
         FString TargetClassName;
         FString TargetClassPath;
+        
+        // Special node flags
+        bool bIsSynthetic = false;              // True for nodes without real spawners (e.g., reroute)
         
         // Pin information
         TArray<FPinDescriptor> Pins;

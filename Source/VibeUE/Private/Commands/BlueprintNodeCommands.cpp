@@ -17,6 +17,7 @@
 #include "K2Node_IfThenElse.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
+#include "K2Node_Knot.h"  // NEW (Oct 6, 2025): Reroute node multi-connection support
 // #include "K2Node_ForEachLoop.h"  // Commented out - header not found
 #include "K2Node_Timeline.h"
 #include "K2Node_MacroInstance.h"
@@ -537,7 +538,21 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectPins(const TSharedP
         const bool bRequiresBreakSource = (ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_A || ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_AB);
         const bool bRequiresBreakTarget = (ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_B || ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_AB);
 
-        if ((bRequiresBreakSource || bRequiresBreakTarget) && !bBreakExisting)
+        // REROUTE NODE SPECIAL HANDLING (Oct 6, 2025)
+        // Reroute nodes (K2Node_Knot) are specifically designed to split one signal to multiple targets.
+        // Their OutputPin should support multiple connections without breaking existing links.
+        // Auto-detect reroute nodes and allow multiple output connections.
+        bool bIsRerouteOutputPin = false;
+        if (SourceRef.Pin && SourceRef.Pin->Direction == EGPD_Output)
+        {
+            if (UK2Node_Knot* KnotNode = Cast<UK2Node_Knot>(SourceRef.Pin->GetOwningNode()))
+            {
+                // This is a reroute node's output pin - allow multiple connections
+                bIsRerouteOutputPin = true;
+            }
+        }
+
+        if ((bRequiresBreakSource || bRequiresBreakTarget) && !bBreakExisting && !bIsRerouteOutputPin)
         {
             TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
             Failure->SetBoolField(TEXT("success"), false);
@@ -567,7 +582,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectPins(const TSharedP
             BrokenLinks.Append(Links);
         }
 
-        if (bRequiresBreakSource)
+        // REROUTE NODE SPECIAL HANDLING: Don't break source links for reroute output pins
+        if (bRequiresBreakSource && !bIsRerouteOutputPin)
         {
             SourceRef.Pin->BreakAllPinLinks();
         }

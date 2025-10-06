@@ -9,6 +9,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_SpawnActorFromClass.h"
 #include "K2Node_Self.h"
+#include "K2Node_Knot.h"  // NEW (Oct 6, 2025): Reroute node support
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphSchema.h"
 #include "EdGraphSchema_K2.h"
@@ -1178,15 +1179,85 @@ void FBlueprintReflection::ConfigureVariableNode(UK2Node_VariableGet* VariableNo
         UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureVariableNode: No variable name provided in parameters"));
         return;
     }
-        
-    // Find the variable in the Blueprint
-    if (UBlueprint* Blueprint = VariableNode->GetBlueprint())
+    
+    // ═════════════════════════════════════════════════════════════════════
+    // NEW: Context-aware variable resolution (Oct 6, 2025)
+    // Supports external member references via owner_class parameter
+    // ═════════════════════════════════════════════════════════════════════
+    
+    FString OwnerDescriptor;
+    bool bIsExternal = false;
+    
+    // Check for external owner class specification
+    if (NodeParams->TryGetStringField(TEXT("owner_class"), OwnerDescriptor) ||
+        NodeParams->TryGetStringField(TEXT("variable_owner"), OwnerDescriptor))
     {
-        FName VarName(*VariableName);
-        VariableNode->VariableReference.SetSelfMember(VarName);
-        VariableNode->AllocateDefaultPins();
-        VariableNode->ReconstructNode();
-        UE_LOG(LogVibeUEReflection, Log, TEXT("Set variable get node to reference: %s"), *VariableName);
+        bIsExternal = true;
+    }
+    
+    // Check explicit scope indicator
+    FString MemberScope;
+    if (NodeParams->TryGetStringField(TEXT("member_scope"), MemberScope))
+    {
+        if (MemberScope.Equals(TEXT("external"), ESearchCase::IgnoreCase))
+        {
+            bIsExternal = true;
+        }
+    }
+    
+    // Check is_local flag (inverse logic)
+    bool bIsLocal = true;
+    if (NodeParams->TryGetBoolField(TEXT("is_local"), bIsLocal))
+    {
+        if (!bIsLocal)
+        {
+            bIsExternal = true;
+        }
+    }
+    
+    FName VarName(*VariableName);
+    
+    if (bIsExternal && !OwnerDescriptor.IsEmpty())
+    {
+        // External member - resolve owner class and set external reference
+        if (UClass* OwnerClass = ResolveClassDescriptor(OwnerDescriptor))
+        {
+            VariableNode->VariableReference.SetExternalMember(VarName, OwnerClass);
+            VariableNode->AllocateDefaultPins();
+            VariableNode->ReconstructNode();
+            
+            UE_LOG(LogVibeUEReflection, Log, 
+                TEXT("ConfigureVariableNode: Set external variable '%s' from class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+        }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Warning,
+                TEXT("ConfigureVariableNode: Failed to resolve owner class '%s' for variable '%s'"),
+                *OwnerDescriptor, *VariableName);
+            
+            // Fallback to self member
+            if (UBlueprint* Blueprint = VariableNode->GetBlueprint())
+            {
+                VariableNode->VariableReference.SetSelfMember(VarName);
+                VariableNode->AllocateDefaultPins();
+                VariableNode->ReconstructNode();
+                
+                UE_LOG(LogVibeUEReflection, Warning,
+                    TEXT("ConfigureVariableNode: Falling back to self member for '%s'"), *VariableName);
+            }
+        }
+    }
+    else
+    {
+        // Self member (default behavior)
+        if (UBlueprint* Blueprint = VariableNode->GetBlueprint())
+        {
+            VariableNode->VariableReference.SetSelfMember(VarName);
+            VariableNode->AllocateDefaultPins();
+            VariableNode->ReconstructNode();
+            UE_LOG(LogVibeUEReflection, Log, TEXT("ConfigureVariableNode: Set self variable '%s'"), *VariableName);
+        }
     }
 }
 
@@ -1196,14 +1267,89 @@ void FBlueprintReflection::ConfigureVariableSetNode(UK2Node_VariableSet* Variabl
         return;
         
     FString VariableName;
-    if (NodeParams->TryGetStringField(TEXT("variable_name"), VariableName))
+    if (!NodeParams->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        // Find the variable in the Blueprint
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureVariableSetNode: No variable name provided"));
+        return;
+    }
+    
+    // ═════════════════════════════════════════════════════════════════════
+    // NEW: Context-aware variable resolution (Oct 6, 2025)
+    // Supports external member references via owner_class parameter
+    // ═════════════════════════════════════════════════════════════════════
+    
+    FString OwnerDescriptor;
+    bool bIsExternal = false;
+    
+    // Check for external owner class specification
+    if (NodeParams->TryGetStringField(TEXT("owner_class"), OwnerDescriptor) ||
+        NodeParams->TryGetStringField(TEXT("variable_owner"), OwnerDescriptor))
+    {
+        bIsExternal = true;
+    }
+    
+    // Check explicit scope indicator
+    FString MemberScope;
+    if (NodeParams->TryGetStringField(TEXT("member_scope"), MemberScope))
+    {
+        if (MemberScope.Equals(TEXT("external"), ESearchCase::IgnoreCase))
+        {
+            bIsExternal = true;
+        }
+    }
+    
+    // Check is_local flag (inverse logic)
+    bool bIsLocal = true;
+    if (NodeParams->TryGetBoolField(TEXT("is_local"), bIsLocal))
+    {
+        if (!bIsLocal)
+        {
+            bIsExternal = true;
+        }
+    }
+    
+    FName VarName(*VariableName);
+    
+    if (bIsExternal && !OwnerDescriptor.IsEmpty())
+    {
+        // External member - resolve owner class and set external reference
+        if (UClass* OwnerClass = ResolveClassDescriptor(OwnerDescriptor))
+        {
+            VariableNode->VariableReference.SetExternalMember(VarName, OwnerClass);
+            VariableNode->AllocateDefaultPins();
+            VariableNode->ReconstructNode();
+            
+            UE_LOG(LogVibeUEReflection, Log,
+                TEXT("ConfigureVariableSetNode: Set external variable '%s' from class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+        }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Warning,
+                TEXT("ConfigureVariableSetNode: Failed to resolve owner class '%s' for variable '%s'"),
+                *OwnerDescriptor, *VariableName);
+            
+            // Fallback to self member
+            if (UBlueprint* Blueprint = VariableNode->GetBlueprint())
+            {
+                VariableNode->VariableReference.SetSelfMember(VarName);
+                VariableNode->AllocateDefaultPins();
+                VariableNode->ReconstructNode();
+                
+                UE_LOG(LogVibeUEReflection, Warning,
+                    TEXT("ConfigureVariableSetNode: Falling back to self member for '%s'"), *VariableName);
+            }
+        }
+    }
+    else
+    {
+        // Self member (default behavior)
         if (UBlueprint* Blueprint = VariableNode->GetBlueprint())
         {
-            FName VarName(*VariableName);
             VariableNode->VariableReference.SetSelfMember(VarName);
-            UE_LOG(LogVibeUEReflection, Log, TEXT("Set variable set node to reference: %s"), *VariableName);
+            VariableNode->AllocateDefaultPins();
+            VariableNode->ReconstructNode();
+            UE_LOG(LogVibeUEReflection, Log, TEXT("ConfigureVariableSetNode: Set self variable '%s'"), *VariableName);
         }
     }
 }
@@ -1271,6 +1417,416 @@ void FBlueprintReflection::ConfigureDynamicCastNode(UK2Node_DynamicCast* CastNod
     {
         UE_LOG(LogVibeUEReflection, Warning, TEXT("ConfigureDynamicCastNode: Failed to resolve cast target '%s'"), *CastTargetDescriptor);
     }
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// PIN DEFAULT CONFIGURATION SYSTEM (Oct 6, 2025)
+// ═════════════════════════════════════════════════════════════════════
+
+/**
+ * Try to apply a struct default value from JSON
+ */
+static bool TryApplyStructDefault(UEdGraphPin* Pin, const TSharedPtr<FJsonObject>& StructValue)
+{
+    if (!Pin || !StructValue.IsValid())
+    {
+        return false;
+    }
+    
+    // Common struct types
+    if (Pin->PinType.PinSubCategoryObject.IsValid())
+    {
+        UScriptStruct* Struct = Cast<UScriptStruct>(Pin->PinType.PinSubCategoryObject.Get());
+        if (!Struct)
+        {
+            return false;
+        }
+        
+        // Handle FVector
+        if (Struct->GetFName() == NAME_Vector)
+        {
+            double X = 0, Y = 0, Z = 0;
+            StructValue->TryGetNumberField(TEXT("X"), X);
+            StructValue->TryGetNumberField(TEXT("Y"), Y);
+            StructValue->TryGetNumberField(TEXT("Z"), Z);
+            Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), X, Y, Z);
+            return true;
+        }
+        
+        // Handle FRotator
+        if (Struct->GetFName() == NAME_Rotator)
+        {
+            double Pitch = 0, Yaw = 0, Roll = 0;
+            StructValue->TryGetNumberField(TEXT("Pitch"), Pitch);
+            StructValue->TryGetNumberField(TEXT("Yaw"), Yaw);
+            StructValue->TryGetNumberField(TEXT("Roll"), Roll);
+            Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), Pitch, Yaw, Roll);
+            return true;
+        }
+        
+        // Handle FVector2D
+        if (Struct->GetFName() == NAME_Vector2D)
+        {
+            double X = 0, Y = 0;
+            StructValue->TryGetNumberField(TEXT("X"), X);
+            StructValue->TryGetNumberField(TEXT("Y"), Y);
+            Pin->DefaultValue = FString::Printf(TEXT("%f,%f"), X, Y);
+            return true;
+        }
+        
+        // Handle FLinearColor / FColor
+        if (Struct->GetFName() == NAME_LinearColor || Struct->GetFName() == NAME_Color)
+        {
+            double R = 1, G = 1, B = 1, A = 1;
+            StructValue->TryGetNumberField(TEXT("R"), R);
+            StructValue->TryGetNumberField(TEXT("G"), G);
+            StructValue->TryGetNumberField(TEXT("B"), B);
+            StructValue->TryGetNumberField(TEXT("A"), A);
+            Pin->DefaultValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), R, G, B, A);
+            return true;
+        }
+    }
+    
+    return false;
+}
+
+/**
+ * Apply default values to node pins after creation
+ * Supports primitive types, structs, and provides detailed error reporting
+ */
+TSharedPtr<FJsonObject> FBlueprintReflection::ApplyPinDefaults(
+    UEdGraphNode* Node, 
+    const TSharedPtr<FJsonObject>& PinDefaults
+)
+{
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    TArray<FString> SuccessfulPins;
+    TArray<FString> FailedPins;
+    
+    if (!Node || !PinDefaults.IsValid())
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), TEXT("Invalid node or pin defaults"));
+        return Result;
+    }
+    
+    // Iterate through all requested pin defaults
+    for (const auto& Pair : PinDefaults->Values)
+    {
+        FString PinName = Pair.Key;
+        const TSharedPtr<FJsonValue>& DefaultValue = Pair.Value;
+        
+        // Find the pin (case-insensitive)
+        UEdGraphPin* Pin = nullptr;
+        for (UEdGraphPin* CandidatePin : Node->Pins)
+        {
+            if (CandidatePin && CandidatePin->PinName.ToString().Equals(PinName, ESearchCase::IgnoreCase))
+            {
+                Pin = CandidatePin;
+                break;
+            }
+        }
+        
+        if (!Pin)
+        {
+            FailedPins.Add(FString::Printf(TEXT("%s (pin not found)"), *PinName));
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ApplyPinDefaults: Pin '%s' not found on node"), *PinName);
+            continue;
+        }
+        
+        // Validate pin can accept defaults
+        if (Pin->Direction != EGPD_Input)
+        {
+            FailedPins.Add(FString::Printf(TEXT("%s (output pin cannot have defaults)"), *PinName));
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ApplyPinDefaults: Pin '%s' is output pin"), *PinName);
+            continue;
+        }
+        
+        if (Pin->LinkedTo.Num() > 0)
+        {
+            FailedPins.Add(FString::Printf(TEXT("%s (connected pin cannot have defaults)"), *PinName));
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("ApplyPinDefaults: Pin '%s' is connected"), *PinName);
+            continue;
+        }
+        
+        // Apply default based on value type
+        bool bSuccess = false;
+        
+        if (DefaultValue->Type == EJson::String)
+        {
+            Pin->DefaultValue = DefaultValue->AsString();
+            bSuccess = true;
+        }
+        else if (DefaultValue->Type == EJson::Number)
+        {
+            Pin->DefaultValue = FString::SanitizeFloat(DefaultValue->AsNumber());
+            bSuccess = true;
+        }
+        else if (DefaultValue->Type == EJson::Boolean)
+        {
+            Pin->DefaultValue = DefaultValue->AsBool() ? TEXT("true") : TEXT("false");
+            bSuccess = true;
+        }
+        else if (DefaultValue->Type == EJson::Object)
+        {
+            // Handle struct defaults (complex types)
+            if (TryApplyStructDefault(Pin, DefaultValue->AsObject()))
+            {
+                bSuccess = true;
+            }
+            else
+            {
+                FailedPins.Add(FString::Printf(TEXT("%s (struct conversion failed)"), *PinName));
+                UE_LOG(LogVibeUEReflection, Warning, 
+                    TEXT("ApplyPinDefaults: Failed to convert struct default for pin '%s'"), *PinName);
+            }
+        }
+        else
+        {
+            FailedPins.Add(FString::Printf(TEXT("%s (unsupported value type)"), *PinName));
+            UE_LOG(LogVibeUEReflection, Warning, 
+                TEXT("ApplyPinDefaults: Unsupported value type for pin '%s'"), *PinName);
+        }
+        
+        if (bSuccess)
+        {
+            SuccessfulPins.Add(PinName);
+            UE_LOG(LogVibeUEReflection, Log, 
+                TEXT("ApplyPinDefaults: Set default '%s' = '%s'"), *PinName, *Pin->DefaultValue);
+        }
+    }
+    
+    // Build result
+    Result->SetBoolField(TEXT("success"), FailedPins.Num() == 0);
+    
+    TArray<TSharedPtr<FJsonValue>> SuccessArray;
+    for (const FString& SuccessPin : SuccessfulPins)
+    {
+        SuccessArray.Add(MakeShared<FJsonValueString>(SuccessPin));
+    }
+    Result->SetArrayField(TEXT("successful_pins"), SuccessArray);
+    
+    TArray<TSharedPtr<FJsonValue>> FailedArray;
+    for (const FString& FailedPin : FailedPins)
+    {
+        FailedArray.Add(MakeShared<FJsonValueString>(FailedPin));
+    }
+    Result->SetArrayField(TEXT("failed_pins"), FailedArray);
+    
+    Result->SetNumberField(TEXT("successful_count"), SuccessfulPins.Num());
+    Result->SetNumberField(TEXT("failed_count"), FailedPins.Num());
+    
+    return Result;
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// REROUTE NODE ERGONOMICS SYSTEM (Oct 6, 2025)
+// ═════════════════════════════════════════════════════════════════════
+
+/**
+ * Create a reroute (knot) node at the specified position
+ */
+UK2Node_Knot* FBlueprintReflection::CreateRerouteNode(
+    UEdGraph* Graph,
+    const FVector2D& Position,
+    const FEdGraphPinType* PinType
+)
+{
+    if (!Graph)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateRerouteNode: Null graph"));
+        return nullptr;
+    }
+    
+    UK2Node_Knot* KnotNode = NewObject<UK2Node_Knot>(Graph);
+    if (!KnotNode)
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("CreateRerouteNode: Failed to create knot node"));
+        return nullptr;
+    }
+    
+    KnotNode->NodePosX = Position.X;
+    KnotNode->NodePosY = Position.Y;
+    
+    Graph->AddNode(KnotNode, true);
+    KnotNode->CreateNewGuid();
+    KnotNode->PostPlacedNewNode();
+    KnotNode->AllocateDefaultPins();
+    
+    UE_LOG(LogVibeUEReflection, Log, 
+        TEXT("CreateRerouteNode: Created reroute at (%f, %f)"), Position.X, Position.Y);
+    
+    return KnotNode;
+}
+
+/**
+ * Create a reroute node between two existing pins
+ * Automatically positions the reroute at the midpoint
+ */
+UK2Node_Knot* FBlueprintReflection::InsertRerouteNode(
+    UEdGraph* Graph,
+    UEdGraphPin* SourcePin,
+    UEdGraphPin* TargetPin,
+    const FVector2D* CustomPosition
+)
+{
+    if (!Graph || !SourcePin || !TargetPin)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, 
+            TEXT("InsertRerouteNode: Invalid parameters (Graph=%p, Source=%p, Target=%p)"),
+            Graph, SourcePin, TargetPin);
+        return nullptr;
+    }
+    
+    // Calculate position (midpoint between nodes or custom)
+    FVector2D ReroutePosition;
+    if (CustomPosition)
+    {
+        ReroutePosition = *CustomPosition;
+    }
+    else
+    {
+        UEdGraphNode* SourceNode = SourcePin->GetOwningNode();
+        UEdGraphNode* TargetNode = TargetPin->GetOwningNode();
+        
+        if (SourceNode && TargetNode)
+        {
+            ReroutePosition.X = (SourceNode->NodePosX + TargetNode->NodePosX) / 2.0f;
+            ReroutePosition.Y = (SourceNode->NodePosY + TargetNode->NodePosY) / 2.0f;
+            
+            // Grid snap (16-pixel increments)
+            ReroutePosition.X = FMath::RoundToFloat(ReroutePosition.X / 16.0f) * 16.0f;
+            ReroutePosition.Y = FMath::RoundToFloat(ReroutePosition.Y / 16.0f) * 16.0f;
+        }
+    }
+    
+    // Create the reroute node with matching pin type
+    UK2Node_Knot* KnotNode = CreateRerouteNode(Graph, ReroutePosition, &SourcePin->PinType);
+    if (!KnotNode)
+    {
+        return nullptr;
+    }
+    
+    // Find the input and output pins on the knot
+    UEdGraphPin* KnotInput = nullptr;
+    UEdGraphPin* KnotOutput = nullptr;
+    
+    for (UEdGraphPin* Pin : KnotNode->Pins)
+    {
+        if (Pin->Direction == EGPD_Input)
+        {
+            KnotInput = Pin;
+        }
+        else if (Pin->Direction == EGPD_Output)
+        {
+            KnotOutput = Pin;
+        }
+    }
+    
+    if (!KnotInput || !KnotOutput)
+    {
+        UE_LOG(LogVibeUEReflection, Error, TEXT("InsertRerouteNode: Knot node missing pins"));
+        Graph->RemoveNode(KnotNode);
+        return nullptr;
+    }
+    
+    // Wire up: Source -> Knot -> Target
+    if (const UEdGraphSchema* Schema = Graph->GetSchema())
+    {
+        // Connect source to knot input
+        if (Schema->TryCreateConnection(SourcePin, KnotInput))
+        {
+            UE_LOG(LogVibeUEReflection, Log, TEXT("InsertRerouteNode: Connected source to reroute"));
+        }
+        
+        // Connect knot output to target
+        if (Schema->TryCreateConnection(KnotOutput, TargetPin))
+        {
+            UE_LOG(LogVibeUEReflection, Log, TEXT("InsertRerouteNode: Connected reroute to target"));
+        }
+        
+        UE_LOG(LogVibeUEReflection, Log,
+            TEXT("InsertRerouteNode: Inserted reroute between %s and %s"),
+            *SourcePin->GetName(), *TargetPin->GetName());
+    }
+    
+    return KnotNode;
+}
+
+/**
+ * Create a reroute path with multiple knots
+ * Useful for creating clean cable routing
+ */
+TArray<UK2Node_Knot*> FBlueprintReflection::CreateReroutePath(
+    UEdGraph* Graph,
+    UEdGraphPin* SourcePin,
+    UEdGraphPin* TargetPin,
+    const TArray<FVector2D>& Waypoints
+)
+{
+    TArray<UK2Node_Knot*> CreatedKnots;
+    
+    if (!Graph || !SourcePin || !TargetPin || Waypoints.Num() == 0)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, 
+            TEXT("CreateReroutePath: Invalid parameters or empty waypoints"));
+        return CreatedKnots;
+    }
+    
+    UEdGraphPin* CurrentOutput = SourcePin;
+    
+    // Create knot at each waypoint
+    for (const FVector2D& Waypoint : Waypoints)
+    {
+        UK2Node_Knot* KnotNode = CreateRerouteNode(Graph, Waypoint, &SourcePin->PinType);
+        if (!KnotNode)
+        {
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateReroutePath: Failed to create knot at waypoint"));
+            continue;
+        }
+        
+        // Find knot pins
+        UEdGraphPin* KnotInput = nullptr;
+        UEdGraphPin* KnotOutput = nullptr;
+        
+        for (UEdGraphPin* Pin : KnotNode->Pins)
+        {
+            if (Pin->Direction == EGPD_Input)
+            {
+                KnotInput = Pin;
+            }
+            else if (Pin->Direction == EGPD_Output)
+            {
+                KnotOutput = Pin;
+            }
+        }
+        
+        if (KnotInput && KnotOutput)
+        {
+            // Connect previous output to this knot
+            if (const UEdGraphSchema* Schema = Graph->GetSchema())
+            {
+                Schema->TryCreateConnection(CurrentOutput, KnotInput);
+            }
+            
+            CurrentOutput = KnotOutput;
+            CreatedKnots.Add(KnotNode);
+        }
+    }
+    
+    // Connect final knot to target
+    if (CurrentOutput && CreatedKnots.Num() > 0)
+    {
+        if (const UEdGraphSchema* Schema = Graph->GetSchema())
+        {
+            Schema->TryCreateConnection(CurrentOutput, TargetPin);
+        }
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log,
+        TEXT("CreateReroutePath: Created path with %d knots"), CreatedKnots.Num());
+    
+    return CreatedKnots;
 }
 
 // === PLACEHOLDER IMPLEMENTATIONS FOR DECLARED METHODS ===
@@ -3396,9 +3952,71 @@ FBlueprintReflection::FNodeSpawnerDescriptor FBlueprintReflection::ExtractDescri
     // Extract variable-specific metadata
     else if (UBlueprintVariableNodeSpawner* VariableSpawner = Cast<UBlueprintVariableNodeSpawner>(Spawner))
     {
-        Descriptor.NodeType = TEXT("variable_get");
-        // Variable metadata would be extracted here
-        Descriptor.SpawnerKey = Descriptor.DisplayName; // Simplified for variables
+        // Determine if this is a GET or SET node
+        bool bIsGetter = VariableSpawner->NodeClass && VariableSpawner->NodeClass->IsChildOf(UK2Node_VariableGet::StaticClass());
+        Descriptor.NodeType = bIsGetter ? TEXT("variable_get") : TEXT("variable_set");
+        
+        // Extract variable information
+        UClass* OwnerClass = nullptr;
+        FProperty const* VarProperty = VariableSpawner->GetVarProperty();
+        FString VariableName;
+        
+        // Get variable name from property
+        if (VarProperty)
+        {
+            VariableName = VarProperty->GetName();
+            OwnerClass = VarProperty->GetOwnerClass();
+        }
+        // For local variables, check LocalVarDesc (if accessible)
+        else if (VariableSpawner->IsLocalVariable())
+        {
+            // Local variable - use the local context
+            // Note: LocalVarDesc is private, but we can still use the spawner
+            // Just set a generic name for now - local vars aren't external anyway
+            VariableName = Descriptor.DisplayName;
+        }
+        
+        // Fallback to outer if we don't have owner class yet
+        if (!OwnerClass && VariableSpawner->GetOuter())
+        {
+            if (UBlueprintGeneratedClass* BPGC = Cast<UBlueprintGeneratedClass>(VariableSpawner->GetOuter()))
+            {
+                OwnerClass = BPGC;
+            }
+            else if (UBlueprint* OwnerBP = Cast<UBlueprint>(VariableSpawner->GetOuter()))
+            {
+                OwnerClass = OwnerBP->GeneratedClass;
+            }
+        }
+        
+        // Set variable name
+        if (!VariableName.IsEmpty())
+        {
+            Descriptor.VariableName = VariableName;
+            
+            // Build spawner key: "GET VariableName" or "SET VariableName"
+            FString Operation = bIsGetter ? TEXT("GET") : TEXT("SET");
+            Descriptor.SpawnerKey = FString::Printf(TEXT("%s %s"), *Operation, *Descriptor.VariableName);
+            
+            // If we have owner class information, check if it's external
+            if (OwnerClass)
+            {
+                Descriptor.OwnerClassName = OwnerClass->GetName();
+                Descriptor.OwnerClassPath = OwnerClass->GetPathName();
+                
+                // Check if this is an external variable (not from the current Blueprint)
+                if (Blueprint && OwnerClass != Blueprint->GeneratedClass)
+                {
+                    Descriptor.bIsExternalMember = true;
+                    // Enhanced spawner key for external: "ClassName::GET VariableName"
+                    Descriptor.SpawnerKey = FString::Printf(TEXT("%s::%s %s"),
+                        *Descriptor.OwnerClassName, *Operation, *Descriptor.VariableName);
+                }
+            }
+            
+            UE_LOG(LogVibeUEReflection, Verbose, TEXT("  Variable node: %s (External: %s)"),
+                *Descriptor.SpawnerKey, Descriptor.bIsExternalMember ? TEXT("Yes") : TEXT("No"));
+        }
     }
     // Extract other node types as needed
     else
@@ -3492,7 +4110,36 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
         }
     }
     
-    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Found %d descriptors"), Descriptors.Num());
+    // ═════════════════════════════════════════════════════════════════════
+    // NEW (Oct 6, 2025): Add synthetic descriptors for special node types
+    // ═════════════════════════════════════════════════════════════════════
+    
+    // Add reroute node (K2Node_Knot) as a synthetic descriptor
+    // Reroute nodes don't have spawners but are essential for clean Blueprint wiring
+    if (Count < MaxResults && (SearchTerm.IsEmpty() || 
+        FString(TEXT("Reroute")).Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+        FString(TEXT("Knot")).Contains(SearchTerm, ESearchCase::IgnoreCase)))
+    {
+        FNodeSpawnerDescriptor RerouteDescriptor;
+        RerouteDescriptor.NodeType = TEXT("reroute");
+        RerouteDescriptor.DisplayName = TEXT("Reroute Node");
+        RerouteDescriptor.SpawnerKey = TEXT("K2Node_Knot");
+        RerouteDescriptor.NodeClassName = TEXT("K2Node_Knot");
+        RerouteDescriptor.NodeClassPath = TEXT("/Script/BlueprintGraph.K2Node_Knot");
+        RerouteDescriptor.Category = TEXT("Utilities");
+        RerouteDescriptor.Tooltip = TEXT("Creates a reroute node for cleaner wire routing. Reroute nodes are cosmetic and don't affect performance.");
+        RerouteDescriptor.bIsSynthetic = true; // No real spawner
+        RerouteDescriptor.ExpectedPinCount = 2; // InputPin + OutputPin
+        RerouteDescriptor.Spawner = nullptr; // Handled specially
+        
+        Descriptors.Add(RerouteDescriptor);
+        Count++;
+        
+        UE_LOG(LogVibeUEReflection, Verbose, TEXT("  ✓ Added synthetic descriptor: Reroute Node (K2Node_Knot)"));
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Found %d descriptors (including %d synthetic)"), 
+        Descriptors.Num(), Descriptors.FilterByPredicate([](const FNodeSpawnerDescriptor& D) { return D.bIsSynthetic; }).Num());
     
     return Descriptors;
 }
@@ -3550,6 +4197,17 @@ UK2Node* FBlueprintReflection::CreateNodeFromSpawnerKey(
     }
     
     UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Looking up spawner with key '%s'"), *SpawnerKey);
+    
+    // ═════════════════════════════════════════════════════════════════════
+    // NEW (Oct 6, 2025): Special handling for synthetic nodes
+    // ═════════════════════════════════════════════════════════════════════
+    
+    // Handle reroute nodes (K2Node_Knot) - no spawner needed
+    if (SpawnerKey.Equals(TEXT("K2Node_Knot"), ESearchCase::IgnoreCase))
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Creating synthetic reroute node"));
+        return CreateRerouteNode(Graph, Position);
+    }
     
     // Try cached spawner first
     UBlueprintNodeSpawner* Spawner = GetSpawnerByKey(SpawnerKey);

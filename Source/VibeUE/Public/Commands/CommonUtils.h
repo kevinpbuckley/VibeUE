@@ -38,6 +38,7 @@ public:
     static TSharedPtr<FJsonValue> ActorToJson(AActor* Actor);
     static TSharedPtr<FJsonObject> ActorToJsonObject(AActor* Actor, bool bDetailed = false);
     
+    
     // Blueprint utilities
     static UBlueprint* FindBlueprint(const FString& BlueprintName);
     static UBlueprint* FindBlueprintByName(const FString& BlueprintName);
@@ -48,8 +49,11 @@ public:
     // Blueprint node utilities
     static UK2Node_Event* CreateEventNode(UEdGraph* Graph, const FString& EventName, const FVector2D& Position);
     static UK2Node_CallFunction* CreateFunctionCallNode(UEdGraph* Graph, UFunction* Function, const FVector2D& Position);
-    static UK2Node_VariableGet* CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position);
-    static UK2Node_VariableSet* CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position);
+    
+    // ENHANCED (Oct 6, 2025): Context-aware variable nodes with external member support
+    static UK2Node_VariableGet* CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position, UClass* OwnerClass = nullptr);
+    static UK2Node_VariableSet* CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position, UClass* OwnerClass = nullptr);
+    
     static UK2Node_InputAction* CreateInputActionNode(UEdGraph* Graph, const FString& ActionName, const FVector2D& Position);
     static UK2Node_Self* CreateSelfReferenceNode(UEdGraph* Graph, const FVector2D& Position);
     static bool ConnectGraphNodes(UEdGraph* Graph, UEdGraphNode* SourceNode, const FString& SourcePinName, 
@@ -74,3 +78,4 @@ public:
     // Safely compile a blueprint and return an error string on failure
     static bool SafeCompileBlueprint(UBlueprint* Blueprint, FString& OutError);
 }; 
+

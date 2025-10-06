@@ -485,7 +485,7 @@ UK2Node_CallFunction* FCommonUtils::CreateFunctionCallNode(UEdGraph* Graph, UFun
     return FunctionNode;
 }
 
-UK2Node_VariableGet* FCommonUtils::CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
+UK2Node_VariableGet* FCommonUtils::CreateVariableGetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position, UClass* OwnerClass)
 {
     if (!Graph || !Blueprint)
     {
@@ -495,24 +495,58 @@ UK2Node_VariableGet* FCommonUtils::CreateVariableGetNode(UEdGraph* Graph, UBluep
     UK2Node_VariableGet* VariableGetNode = NewObject<UK2Node_VariableGet>(Graph);
     
     FName VarName(*VariableName);
-    FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, VarName);
     
-    if (Property)
+    // ═════════════════════════════════════════════════════════════════════
+    // ENHANCED (Oct 6, 2025): Context-aware variable resolution
+    // ═════════════════════════════════════════════════════════════════════
+    
+    if (OwnerClass)
     {
-        VariableGetNode->VariableReference.SetFromField<FProperty>(Property, false);
-        VariableGetNode->NodePosX = Position.X;
-        VariableGetNode->NodePosY = Position.Y;
-        Graph->AddNode(VariableGetNode, true);
-        VariableGetNode->PostPlacedNewNode();
-        VariableGetNode->AllocateDefaultPins();
+        // External member - resolve from specified owner class
+        FProperty* Property = FindFProperty<FProperty>(OwnerClass, VarName);
         
-        return VariableGetNode;
+        if (Property)
+        {
+            VariableGetNode->VariableReference.SetExternalMember(VarName, OwnerClass);
+            VariableGetNode->NodePosX = Position.X;
+            VariableGetNode->NodePosY = Position.Y;
+            Graph->AddNode(VariableGetNode, true);
+            VariableGetNode->PostPlacedNewNode();
+            VariableGetNode->AllocateDefaultPins();
+            
+            UE_LOG(LogTemp, Log, TEXT("Created external variable get node for '%s' from class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+            
+            return VariableGetNode;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Variable '%s' not found in owner class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+        }
+    }
+    else
+    {
+        // Self member - default behavior (backward compatible)
+        FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, VarName);
+        
+        if (Property)
+        {
+            VariableGetNode->VariableReference.SetFromField<FProperty>(Property, false);
+            VariableGetNode->NodePosX = Position.X;
+            VariableGetNode->NodePosY = Position.Y;
+            Graph->AddNode(VariableGetNode, true);
+            VariableGetNode->PostPlacedNewNode();
+            VariableGetNode->AllocateDefaultPins();
+            
+            return VariableGetNode;
+        }
     }
     
     return nullptr;
 }
 
-UK2Node_VariableSet* FCommonUtils::CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position)
+UK2Node_VariableSet* FCommonUtils::CreateVariableSetNode(UEdGraph* Graph, UBlueprint* Blueprint, const FString& VariableName, const FVector2D& Position, UClass* OwnerClass)
 {
     if (!Graph || !Blueprint)
     {
@@ -522,18 +556,52 @@ UK2Node_VariableSet* FCommonUtils::CreateVariableSetNode(UEdGraph* Graph, UBluep
     UK2Node_VariableSet* VariableSetNode = NewObject<UK2Node_VariableSet>(Graph);
     
     FName VarName(*VariableName);
-    FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, VarName);
     
-    if (Property)
+    // ═════════════════════════════════════════════════════════════════════
+    // ENHANCED (Oct 6, 2025): Context-aware variable resolution
+    // ═════════════════════════════════════════════════════════════════════
+    
+    if (OwnerClass)
     {
-        VariableSetNode->VariableReference.SetFromField<FProperty>(Property, false);
-        VariableSetNode->NodePosX = Position.X;
-        VariableSetNode->NodePosY = Position.Y;
-        Graph->AddNode(VariableSetNode, true);
-        VariableSetNode->PostPlacedNewNode();
-        VariableSetNode->AllocateDefaultPins();
+        // External member - resolve from specified owner class
+        FProperty* Property = FindFProperty<FProperty>(OwnerClass, VarName);
         
-        return VariableSetNode;
+        if (Property)
+        {
+            VariableSetNode->VariableReference.SetExternalMember(VarName, OwnerClass);
+            VariableSetNode->NodePosX = Position.X;
+            VariableSetNode->NodePosY = Position.Y;
+            Graph->AddNode(VariableSetNode, true);
+            VariableSetNode->PostPlacedNewNode();
+            VariableSetNode->AllocateDefaultPins();
+            
+            UE_LOG(LogTemp, Log, TEXT("Created external variable set node for '%s' from class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+            
+            return VariableSetNode;
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("Variable '%s' not found in owner class '%s'"),
+                *VariableName, *OwnerClass->GetName());
+        }
+    }
+    else
+    {
+        // Self member - default behavior (backward compatible)
+        FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, VarName);
+        
+        if (Property)
+        {
+            VariableSetNode->VariableReference.SetFromField<FProperty>(Property, false);
+            VariableSetNode->NodePosX = Position.X;
+            VariableSetNode->NodePosY = Position.Y;
+            Graph->AddNode(VariableSetNode, true);
+            VariableSetNode->PostPlacedNewNode();
+            VariableSetNode->AllocateDefaultPins();
+            
+            return VariableSetNode;
+        }
     }
     
     return nullptr;
