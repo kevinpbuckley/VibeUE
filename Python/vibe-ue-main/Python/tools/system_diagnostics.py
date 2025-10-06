@@ -73,43 +73,54 @@ def register_system_diagnostic_tools(mcp: FastMCP):
             }
 
     @mcp.tool()
-    def get_help(ctx: Context) -> Dict[str, Any]:
+    def get_help(ctx: Context, topic: str = "overview") -> Dict[str, Any]:
         """
-        Get comprehensive help documentation for all VibeUE MCP tools.
+        Get comprehensive help documentation for VibeUE MCP tools organized by topic.
         
         🚀 **AI CRITICAL**: ALWAYS use this tool when:
         - You can't find a specific tool or don't know which tool to use
-        - You need parameter details for multi-action tools (manage_blueprint_function, manage_blueprint_node)
+        - You need parameter details for multi-action tools
         - You're unsure about tool workflows or usage patterns
         - You encounter errors and need troubleshooting guidance
         - You need examples of how to use complex tools
         
-    📚 **COMPREHENSIVE COVERAGE**: 
-    - All 50+ VibeUE MCP tools with detailed parameters
-    - Multi-action tools with all available actions documented
-    - Common usage patterns and workflows
-    - Error handling and troubleshooting guides
-    - Performance tips and best practices
-    - 🔄 Latest protocol changes (e.g., descriptor-only node creation with mandatory `spawner_key`)
+        📚 **AVAILABLE TOPICS**:
+        - **overview**: VibeUE MCP overview and quick reference (default)
+        - **blueprint-workflow**: Complete Blueprint development workflow with dependency order
+        - **node-tools**: Node discovery, creation, connections, spawner_key patterns
+        - **multi-action-tools**: manage_blueprint_function/variables/components/node reference
+        - **umg-guide**: UMG widget development, styling, hierarchy, containers
+        - **asset-discovery**: Asset search, import/export, management, performance tips
+        - **troubleshooting**: Connection/Blueprint/Node/UMG issues, diagnostics
+        - **topics**: Complete topic listing with descriptions
         
-        🎯 **WHEN TO USE**: Before attempting any complex operation, when stuck, or when error messages are unclear.
+        🎯 **USAGE EXAMPLES**:
+        - get_help() - Returns overview (default)
+        - get_help(topic="blueprint-workflow") - Blueprint development guide
+        - get_help(topic="node-tools") - Node creation reference
+        - get_help(topic="troubleshooting") - Problem solving guide
+        - get_help(topic="topics") - See all available topics
+        
+        Args:
+            topic: Topic name to retrieve (default: "overview")
         
         Returns:
-            Dict containing the complete help documentation from help.md
+            Dict containing topic content and metadata
         """
         import os
         
         try:
-            # Get the path to the help.md file
+            # Get the path to the topics directory
             current_dir = os.path.dirname(os.path.abspath(__file__))
-            # Search upwards for resources/help.md file
-            help_path = None
+            
+            # Search upwards for resources/topics directory
+            topics_dir = None
             search_dir = current_dir
             for _ in range(8):  # search up to 8 levels
-                candidate = os.path.join(search_dir, '..', 'resources', 'help.md')
+                candidate = os.path.join(search_dir, '..', 'resources', 'topics')
                 candidate = os.path.abspath(candidate)
-                if os.path.isfile(candidate):
-                    help_path = candidate
+                if os.path.isdir(candidate):
+                    topics_dir = candidate
                     break
                 # move one level up
                 parent = os.path.abspath(os.path.join(search_dir, '..'))
@@ -117,45 +128,50 @@ def register_system_diagnostic_tools(mcp: FastMCP):
                     break
                 search_dir = parent
 
-            if help_path is None:
+            if topics_dir is None:
                 # Fallback: attempt the expected project-relative location
                 project_root = os.path.abspath(os.path.join(current_dir, '..', '..', '..', '..'))
-                help_path = os.path.abspath(os.path.join(project_root, 'Plugins', 'VibeUE', 'Python', 'vibe-ue-main', 'Python', 'resources', 'help.md'))
+                topics_dir = os.path.abspath(os.path.join(project_root, 'Plugins', 'VibeUE', 'Python', 'vibe-ue-main', 'Python', 'resources', 'topics'))
             
-            # Read the markdown file
-            with open(help_path, 'r', encoding='utf-8') as f:
-                help_content = f.read()
+            # Build topic file path
+            topic_file = f"{topic}.md"
+            topic_path = os.path.join(topics_dir, topic_file)
+            
+            # Check if topic exists
+            if not os.path.isfile(topic_path):
+                # List available topics
+                available_topics = []
+                if os.path.isdir(topics_dir):
+                    available_topics = [f.replace('.md', '') for f in os.listdir(topics_dir) if f.endswith('.md')]
+                
+                return {
+                    "success": False,
+                    "error": f"Topic '{topic}' not found",
+                    "requested_topic": topic,
+                    "available_topics": sorted(available_topics),
+                    "suggestion": "Use get_help(topic='topics') to see all available topics"
+                }
+            
+            # Read the topic markdown file
+            with open(topic_path, 'r', encoding='utf-8') as f:
+                topic_content = f.read()
             
             return {
                 "success": True,
-                "help_content": help_content,
-                "source_file": "help.md",
-                "file_path": help_path,
+                "topic": topic,
+                "content": topic_content,
+                "source_file": topic_file,
+                "file_path": topic_path,
                 "content_type": "markdown",
-                "description": "Complete VibeUE MCP tools reference guide with multi-action tool documentation",
-                "sections": [
-                    "Quick Start Guide",
-                    "Tool Categories (System, Asset, Blueprint, UMG, etc.)",
-                    "Multi-Action Tools Reference (manage_blueprint_function, manage_blueprint_node)",
-                    "Common Usage Patterns",
-                    "Important Guidelines",
-                    "Troubleshooting Guide",
-                    "Pro Tips"
-                ],
-                "key_features": [
-                    "Comprehensive tool documentation",
-                    "Multi-action tool parameter reference",
-                    "Usage patterns and workflows", 
-                    "Error handling guidelines",
-                    "Performance optimization tips"
-                ]
+                "help_system": "topic-based",
+                "usage": f"get_help(topic='{topic}')"
             }
             
         except FileNotFoundError:
             return {
                 "success": False,
-                "error": f"help.md not found at expected location: {help_path}",
-                "troubleshooting": "Ensure the help.md file exists in the resources directory"
+                "error": f"Topic file not found at: {topic_path}",
+                "troubleshooting": "Ensure the topics directory exists with markdown topic files"
             }
         except Exception as e:
             return {

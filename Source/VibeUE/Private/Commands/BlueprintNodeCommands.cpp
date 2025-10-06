@@ -1,6 +1,8 @@
 #include "Commands/BlueprintNodeCommands.h"
 #include "Commands/BlueprintReflection.h"
 #include "Commands/CommonUtils.h"
+#include "Commands/ComponentEventBinder.h"
+#include "Commands/InputKeyEnumerator.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -2724,6 +2726,30 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const 
         NormalizedAction == TEXT("refresh_blueprint") || NormalizedAction == TEXT("refreshgraph"))
     {
         return HandleRefreshBlueprintNodes(Params);
+    }
+    
+    // Component Event Actions (Oct 6, 2025)
+    if (NormalizedAction == TEXT("create_component_event") || NormalizedAction == TEXT("component_event"))
+    {
+        return HandleCreateComponentEvent(Params);
+    }
+    if (NormalizedAction == TEXT("discover_component_events") || NormalizedAction == TEXT("get_component_events") ||
+        NormalizedAction == TEXT("component_events") || NormalizedAction == TEXT("list_component_events"))
+    {
+        return HandleGetComponentEvents(Params);
+    }
+    
+    // Input Key Actions (Oct 6, 2025)
+    if (NormalizedAction == TEXT("discover_input_keys") || NormalizedAction == TEXT("get_input_keys") ||
+        NormalizedAction == TEXT("get_all_input_keys") || NormalizedAction == TEXT("input_keys") ||
+        NormalizedAction == TEXT("list_input_keys"))
+    {
+        return HandleGetAllInputKeys(Params);
+    }
+    if (NormalizedAction == TEXT("create_input_key") || NormalizedAction == TEXT("input_key") ||
+        NormalizedAction == TEXT("create_input_key_node"))
+    {
+        return HandleCreateInputKeyNode(Params);
     }
 
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown node action: %s"), *Action));
@@ -5752,4 +5778,346 @@ UK2Node_FunctionEntry* FBlueprintNodeCommands::FindFunctionEntry(UEdGraph* Funct
     }
     
     return nullptr;
+}
+
+// ============================================================================
+// Component Event Support (Oct 6, 2025) - Reflection-Based Implementation
+// ============================================================================
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString ComponentName;
+    FString DelegateName;
+    
+    // Support both direct parameters and nested node_params
+    const TSharedPtr<FJsonObject>* NodeParamsPtr = nullptr;
+    if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsPtr) && NodeParamsPtr && (*NodeParamsPtr).IsValid())
+    {
+        const TSharedPtr<FJsonObject>* ComponentEventPtr = nullptr;
+        if ((*NodeParamsPtr)->TryGetObjectField(TEXT("component_event"), ComponentEventPtr) && ComponentEventPtr && (*ComponentEventPtr).IsValid())
+        {
+            (*ComponentEventPtr)->TryGetStringField(TEXT("component_name"), ComponentName);
+            (*ComponentEventPtr)->TryGetStringField(TEXT("delegate_name"), DelegateName);
+        }
+    }
+    
+    // Fallback to direct parameters
+    if (ComponentName.IsEmpty())
+    {
+        Params->TryGetStringField(TEXT("component_name"), ComponentName);
+    }
+    if (DelegateName.IsEmpty())
+    {
+        Params->TryGetStringField(TEXT("delegate_name"), DelegateName);
+    }
+
+    if (ComponentName.IsEmpty() || DelegateName.IsEmpty())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
+    }
+
+    // Parse position
+    FVector2D Position(0.0, 0.0);
+    const TArray<TSharedPtr<FJsonValue>>* PositionArray = nullptr;
+    if (Params->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray && PositionArray->Num() >= 2)
+    {
+        Position.X = (*PositionArray)[0]->AsNumber();
+        Position.Y = (*PositionArray)[1]->AsNumber();
+    }
+
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+    }
+
+    // Create component event using reflection-based binder
+    FString Error;
+    UK2Node_ComponentBoundEvent* EventNode = FComponentEventBinder::CreateComponentEvent(
+        Blueprint,
+        ComponentName,
+        DelegateName,
+        Position,
+        Error
+    );
+
+    if (!EventNode)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Failed to create component event: %s"), *Error));
+    }
+
+    // Build success response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+    Result->SetStringField(TEXT("component_name"), ComponentName);
+    Result->SetStringField(TEXT("delegate_name"), DelegateName);
+    Result->SetNumberField(TEXT("pin_count"), EventNode->Pins.Num());
+    
+    // Add position info
+    TArray<TSharedPtr<FJsonValue>> PosArray;
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosX));
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosY));
+    Result->SetArrayField(TEXT("position"), PosArray);
+
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created component event: %s::%s"), *ComponentName, *DelegateName);
+
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString ComponentNameFilter;
+    Params->TryGetStringField(TEXT("component_name"), ComponentNameFilter);
+
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+    }
+
+    // Discover component events using reflection
+    TArray<FComponentEventInfo> Events;
+    if (!FComponentEventBinder::GetAvailableComponentEvents(Blueprint, ComponentNameFilter, Events))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to enumerate component events"));
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetNumberField(TEXT("count"), Events.Num());
+
+    // Group events by component
+    TMap<FString, TArray<FComponentEventInfo>> EventsByComponent;
+    for (const FComponentEventInfo& EventInfo : Events)
+    {
+        if (!EventsByComponent.Contains(EventInfo.ComponentName))
+        {
+            EventsByComponent.Add(EventInfo.ComponentName, TArray<FComponentEventInfo>());
+        }
+        EventsByComponent[EventInfo.ComponentName].Add(EventInfo);
+    }
+
+    // Build components array
+    TArray<TSharedPtr<FJsonValue>> ComponentsArray;
+    for (const auto& Pair : EventsByComponent)
+    {
+        TSharedPtr<FJsonObject> ComponentObj = MakeShared<FJsonObject>();
+        ComponentObj->SetStringField(TEXT("component_name"), Pair.Key);
+        
+        if (Pair.Value.Num() > 0)
+        {
+            ComponentObj->SetStringField(TEXT("component_class"), Pair.Value[0].ComponentClassName);
+        }
+
+        // Build events array for this component
+        TArray<TSharedPtr<FJsonValue>> EventsArray;
+        for (const FComponentEventInfo& EventInfo : Pair.Value)
+        {
+            TSharedPtr<FJsonObject> EventObj = MakeShared<FJsonObject>();
+            EventObj->SetStringField(TEXT("delegate_name"), EventInfo.DelegateName);
+            EventObj->SetStringField(TEXT("display_name"), EventInfo.DisplayName);
+            EventObj->SetStringField(TEXT("signature"), EventInfo.Signature);
+
+            // Add parameters
+            TArray<TSharedPtr<FJsonValue>> ParamsArray;
+            for (const FParameterInfo& ParamInfo : EventInfo.Parameters)
+            {
+                TSharedPtr<FJsonObject> ParamObj = MakeShared<FJsonObject>();
+                ParamObj->SetStringField(TEXT("name"), ParamInfo.Name);
+                ParamObj->SetStringField(TEXT("type"), ParamInfo.Type);
+                ParamObj->SetStringField(TEXT("cpp_type"), ParamInfo.CPPType);
+                ParamObj->SetStringField(TEXT("direction"), ParamInfo.Direction);
+                ParamsArray.Add(MakeShared<FJsonValueObject>(ParamObj));
+            }
+            EventObj->SetArrayField(TEXT("parameters"), ParamsArray);
+
+            EventsArray.Add(MakeShared<FJsonValueObject>(EventObj));
+        }
+        ComponentObj->SetArrayField(TEXT("events"), EventsArray);
+
+        ComponentsArray.Add(MakeShared<FJsonValueObject>(ComponentObj));
+    }
+
+    Result->SetArrayField(TEXT("components"), ComponentsArray);
+
+    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d component events across %d components"), 
+        Events.Num(), EventsByComponent.Num());
+
+    return Result;
+}
+
+// ============================================================================
+// Input Key Discovery Support (Oct 6, 2025) - Reflection-Based Implementation
+// ============================================================================
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAllInputKeys(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract parameters
+    FString Category = TEXT("All");
+    Params->TryGetStringField(TEXT("category"), Category);
+
+    bool bIncludeDeprecated = false;
+    Params->TryGetBoolField(TEXT("include_deprecated"), bIncludeDeprecated);
+
+    // Get input keys using reflection
+    TArray<FInputKeyInfo> Keys;
+    int32 Count = 0;
+    
+    if (Category == TEXT("All"))
+    {
+        Count = FInputKeyEnumerator::GetAllInputKeys(Keys, bIncludeDeprecated);
+    }
+    else
+    {
+        Count = FInputKeyEnumerator::GetInputKeysByCategory(Category, Keys);
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetNumberField(TEXT("count"), Count);
+    Result->SetStringField(TEXT("category"), Category);
+
+    // Build keys array
+    TArray<TSharedPtr<FJsonValue>> KeysArray;
+    for (const FInputKeyInfo& KeyInfo : Keys)
+    {
+        TSharedPtr<FJsonObject> KeyObj = MakeShared<FJsonObject>();
+        KeyObj->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
+        KeyObj->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
+        KeyObj->SetStringField(TEXT("menu_category"), KeyInfo.MenuCategory);
+        KeyObj->SetStringField(TEXT("category"), KeyInfo.Category);
+        KeyObj->SetBoolField(TEXT("is_gamepad"), KeyInfo.bIsGamepadKey);
+        KeyObj->SetBoolField(TEXT("is_mouse"), KeyInfo.bIsMouseButton);
+        KeyObj->SetBoolField(TEXT("is_keyboard"), KeyInfo.bIsKeyboard);
+        KeyObj->SetBoolField(TEXT("is_modifier"), KeyInfo.bIsModifierKey);
+        KeyObj->SetBoolField(TEXT("is_digital"), KeyInfo.bIsDigital);
+        KeyObj->SetBoolField(TEXT("is_analog"), KeyInfo.bIsAnalog);
+        KeyObj->SetBoolField(TEXT("is_bindable"), KeyInfo.bIsBindableInBlueprints);
+
+        KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
+    }
+    Result->SetArrayField(TEXT("keys"), KeysArray);
+
+    // Add category statistics
+    TSharedPtr<FJsonObject> StatsObj = MakeShared<FJsonObject>();
+    int32 KeyboardCount = 0, MouseCount = 0, GamepadCount = 0, OtherCount = 0;
+    for (const FInputKeyInfo& KeyInfo : Keys)
+    {
+        if (KeyInfo.bIsGamepadKey) GamepadCount++;
+        else if (KeyInfo.bIsMouseButton) MouseCount++;
+        else if (KeyInfo.bIsKeyboard) KeyboardCount++;
+        else OtherCount++;
+    }
+    StatsObj->SetNumberField(TEXT("keyboard_keys"), KeyboardCount);
+    StatsObj->SetNumberField(TEXT("mouse_keys"), MouseCount);
+    StatsObj->SetNumberField(TEXT("gamepad_keys"), GamepadCount);
+    StatsObj->SetNumberField(TEXT("other_keys"), OtherCount);
+    Result->SetObjectField(TEXT("statistics"), StatsObj);
+
+    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d input keys via reflection (Category: %s)"), Count, *Category);
+
+    return Result;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    FString KeyName;
+    if (!Params->TryGetStringField(TEXT("key_name"), KeyName))
+    {
+        // Try node_params.spawner_key as fallback
+        const TSharedPtr<FJsonObject>* NodeParamsPtr = nullptr;
+        if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsPtr) && NodeParamsPtr && (*NodeParamsPtr).IsValid())
+        {
+            (*NodeParamsPtr)->TryGetStringField(TEXT("spawner_key"), KeyName);
+        }
+    }
+
+    if (KeyName.IsEmpty())
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'key_name' parameter"));
+    }
+
+    // Parse position
+    FVector2D Position(0.0, 0.0);
+    const TArray<TSharedPtr<FJsonValue>>* PositionArray = nullptr;
+    if (Params->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray && PositionArray->Num() >= 2)
+    {
+        Position.X = (*PositionArray)[0]->AsNumber();
+        Position.Y = (*PositionArray)[1]->AsNumber();
+    }
+
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+    }
+
+    // Find the key using reflection
+    FInputKeyInfo KeyInfo;
+    if (!FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo))
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Input key '%s' not found. Use get_all_input_keys to discover available keys."), *KeyName));
+    }
+
+    // Create input key node
+    FString Error;
+    UK2Node_InputKey* InputKeyNode = FInputKeyEnumerator::CreateInputKeyNode(
+        Blueprint,
+        KeyInfo.Key,
+        Position,
+        Error
+    );
+
+    if (!InputKeyNode)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Failed to create input key node: %s"), *Error));
+    }
+
+    // Build success response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("node_id"), InputKeyNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+    Result->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
+    Result->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
+    Result->SetNumberField(TEXT("pin_count"), InputKeyNode->Pins.Num());
+    
+    // Add position info
+    TArray<TSharedPtr<FJsonValue>> PosArray;
+    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosX));
+    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosY));
+    Result->SetArrayField(TEXT("position"), PosArray);
+
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *KeyInfo.KeyName);
+
+    return Result;
 }

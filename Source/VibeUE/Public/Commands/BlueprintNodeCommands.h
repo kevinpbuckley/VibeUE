@@ -52,6 +52,14 @@ private:
     TSharedPtr<FJsonObject> HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params);
 
+    // NEW (Oct 6, 2025): Component Event Support - Reflection-Based
+    TSharedPtr<FJsonObject> HandleCreateComponentEvent(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetComponentEvents(const TSharedPtr<FJsonObject>& Params);
+    
+    // NEW (Oct 6, 2025): Input Key Discovery - Reflection-Based
+    TSharedPtr<FJsonObject> HandleGetAllInputKeys(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params);
+
 private:
     // Internal helpers (Phase 1 minimal)
     TSharedPtr<FJsonObject> BuildFunctionSummary(UBlueprint* Blueprint);

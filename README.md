@@ -165,7 +165,7 @@ UMG property & styling
 - set_widget_property
 - get_widget_property
 - list_widget_properties
-- get_umg_guide
+- get_help (use topic="umg-guide" for UMG workflow guidance)
 
 Events & graph analysis
 - bind_input_events
@@ -204,7 +204,7 @@ All capabilities are accessible through natural language commands via AI assista
 ### Performance Optimization
 - **Always use full asset paths** from `search_items()` results for instant loading
 - **Avoid partial names** when possible - they trigger expensive Asset Registry searches
-- **Use `get_umg_guide()`** before styling to understand container-specific requirements
+- **Use `get_help(topic="umg-guide")`** before styling to understand container-specific requirements
 - **Batch property changes** when modifying multiple components
 
 ### Error Prevention
@@ -216,7 +216,7 @@ All capabilities are accessible through natural language commands via AI assista
 ### Intelligent Workflow Design
 - **Plan before creating**: Use analysis tools to understand existing structures
 - **Incremental development**: Build widgets step-by-step with validation
-- **Template-driven**: Use `get_umg_guide()` for styling patterns and best practices
+- **Template-driven**: Use `get_help(topic="umg-guide")` for styling patterns and best practices
 - **Visual feedback**: Export textures for AI analysis with `export_texture_for_analysis()`
 
 ### AI Assistant Integration
