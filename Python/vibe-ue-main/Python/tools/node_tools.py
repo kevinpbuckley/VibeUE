@@ -285,7 +285,12 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         **create**: 
         - **RECOMMENDED**: node_params with spawner_key (from get_available_blueprint_nodes)
         - **LEGACY**: node_type (triggers fuzzy search, less reliable)
-        - position (optional)
+        - **position**: [X, Y] coordinates for node placement (CRITICAL for readable layouts)
+          - X increases to the RIGHT (left-to-right flow)
+          - Y increases DOWNWARD
+          - **Best Practice**: Use increasing X values (e.g., [0, 100], [300, 100], [600, 100]) for left-to-right execution flow
+          - **Common Mistake**: Decreasing X values creates backward/unreadable graphs
+          - Typical spacing: 250-400 units horizontal, 100-200 units vertical
         - node_params (CRITICAL for variable nodes, casts, and exact node creation)
         
         **connect_pins**: extra with connections array (see above) ✅ USE THIS FOR CONNECTIONS
