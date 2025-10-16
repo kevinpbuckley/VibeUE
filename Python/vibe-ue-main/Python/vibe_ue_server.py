@@ -133,7 +133,7 @@ class UnrealConnection:
     def receive_full_response(self, sock, buffer_size=4096) -> bytes:
         """Receive a complete response from Unreal, handling chunked data."""
         chunks = []
-        sock.settimeout(60)  # Increase timeout to 60 seconds for complex widget operations
+        sock.settimeout(15)  # 15 second timeout for MCP calls
         try:
             while True:
                 chunk = sock.recv(buffer_size)

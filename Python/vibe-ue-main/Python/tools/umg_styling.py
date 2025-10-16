@@ -65,7 +65,7 @@ def register_umg_styling_tools(mcp: FastMCP):
         property_type: str = "auto"
     ) -> Dict[str, Any]:
         """
-        Set any property on any widget component.
+        Set any property on any widget component, including slot properties.
         
         ⚠️ **IMPORTANT**: Before styling widgets, ALWAYS use get_help(topic="umg-guide") first to understand 
         proper container-specific background implementation, widget hierarchy requirements, 
@@ -81,12 +81,14 @@ def register_umg_styling_tools(mcp: FastMCP):
                         ⚠️ **Must be exact name from list_widget_components() results**
             property_name: Property to set
                         Examples: "Text", "Visibility", "IsEnabled", "ColorAndOpacity", "Font"
+                        **SLOT PROPERTIES**: Use "Slot." prefix for layout properties (see below)
             property_value: Value to set (auto-detects type)
                         - Strings: "Hello World", "Visible", "Collapsed"
                         - Numbers: 42, 3.14, 255
                         - Booleans: true, false
                         - Colors: [1.0, 0.0, 0.5, 1.0] or {"R": 1.0, "G": 0.0, "B": 0.5, "A": 1.0}
                         - Arrays: [100, 200] for positions/sizes
+                        - **ENUM VALUES**: Use exact Unreal enum format (see Slot Properties below)
             property_type: Type hint for complex properties (usually auto-detected)
                         Examples: "Color", "Font", "Padding", "Vector2D"
             
@@ -96,6 +98,51 @@ def register_umg_styling_tools(mcp: FastMCP):
             - property_name: name of property that was set
             - component_name: name of component that was modified
             - error: string (only if success=false)
+            
+        ⚠️ **CRITICAL: Slot Properties for Background Filling**:
+        
+        When adding background images to containers, you MUST set slot properties to make them fill:
+        
+        **For ScrollBox/VerticalBox/HorizontalBox backgrounds:**
+        ```python
+        # Step 1: Set horizontal alignment (MUST use HAlign_ prefix!)
+        set_widget_property(
+            widget_name="WBP_MyWidget",
+            component_name="Background",
+            property_name="Slot.HorizontalAlignment",
+            property_value="HAlign_Fill"  # ✅ CORRECT - NOT "Fill"!
+        )
+        
+        # Step 2: Set vertical alignment (MUST use VAlign_ prefix!)
+        set_widget_property(
+            widget_name="WBP_MyWidget",
+            component_name="Background",
+            property_name="Slot.VerticalAlignment",
+            property_value="VAlign_Fill"  # ✅ CORRECT - NOT "Fill"!
+        )
+        
+        # Step 3: Set size rule to Fill (CRITICAL - prevents 32x32 default!)
+        set_widget_property(
+            widget_name="WBP_MyWidget",
+            component_name="Background",
+            property_name="Slot.Size.SizeRule",
+            property_value="Fill"  # ✅ SizeRule uses plain "Fill" string
+        )
+        ```
+        
+        **Valid Enum Values for Alignments:**
+        - HorizontalAlignment: "HAlign_Fill", "HAlign_Left", "HAlign_Center", "HAlign_Right"
+        - VerticalAlignment: "VAlign_Fill", "VAlign_Top", "VAlign_Center", "VAlign_Bottom"
+        - SizeRule: "Fill", "Auto"
+        
+        ❌ **Common Mistakes:**
+        ```python
+        # WRONG - Missing enum prefix (will fail with "Invalid enum value" error)
+        set_widget_property(widget_name, component_name, "Slot.HorizontalAlignment", "Fill")
+        
+        # CORRECT - Use proper enum format
+        set_widget_property(widget_name, component_name, "Slot.HorizontalAlignment", "HAlign_Fill")
+        ```
             
         📝 **Sci-Fi Styling Examples**:
         ```python
@@ -121,6 +168,8 @@ def register_umg_styling_tools(mcp: FastMCP):
         3. For text, check if property is "Text" or "Content"  
         4. For visibility, use "Visible", "Hidden", "Collapsed", "HitTestInvisible"
         5. For booleans, use lowercase true/false
+        6. **For slot properties, ALWAYS use correct enum format (HAlign_Fill, VAlign_Fill)**
+        7. **ALWAYS set Slot.Size.SizeRule="Fill" for background images in ScrollBox!**
         
         💡 **Common Properties**:
         - **Text Components**: "Text", "ColorAndOpacity", "Font", "Justification"
@@ -128,6 +177,7 @@ def register_umg_styling_tools(mcp: FastMCP):
         - **Button Components**: "Style", "ColorAndOpacity", "BackgroundColor"
         - **Panel Components**: "BrushColor", "Padding", "BackgroundColor"
         - **All Components**: "Visibility", "IsEnabled", "ToolTipText"
+        - **Slot Properties**: "Slot.HorizontalAlignment", "Slot.VerticalAlignment", "Slot.Size.SizeRule"
         """
         from vibe_ue_server import get_unreal_connection
         
