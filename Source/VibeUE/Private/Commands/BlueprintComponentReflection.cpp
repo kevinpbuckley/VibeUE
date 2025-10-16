@@ -1,6 +1,7 @@
 #include "Commands/BlueprintComponentReflection.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"
+#include "Engine/SCS_Node.h"
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"

@@ -26,6 +26,8 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_VariableSet.h"
 #include "K2Node_SpawnActorFromClass.h"
+#include "K2Node_ComponentBoundEvent.h"
+#include "K2Node_InputKey.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/KismetDebugUtilities.h"

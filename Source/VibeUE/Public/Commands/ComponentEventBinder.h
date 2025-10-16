@@ -2,7 +2,9 @@
 
 #include "CoreMinimal.h"
 #include "Engine/Blueprint.h"
-#include "K2Node_ComponentBoundEvent.h"
+
+// Forward declarations for editor-only types
+class UK2Node_ComponentBoundEvent;
 
 /**
  * 🔍 REFLECTION-BASED COMPONENT EVENT BINDING

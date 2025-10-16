@@ -2,8 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "InputCoreTypes.h"
-#include "K2Node_InputKey.h"
 #include "Engine/Blueprint.h"
+
+// Forward declarations for editor-only types
+class UK2Node_InputKey;
 
 /**
  * 🔍 REFLECTION-BASED INPUT KEY DISCOVERY

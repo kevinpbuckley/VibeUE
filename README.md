@@ -308,7 +308,7 @@ MIT
 
 ## Questions and Contributions
 
-For questions and contributions, you can reach me on Discord - Buckley603
+For questions and contributions, you can reach me on Discord: https://discord.gg/hZs73ST59a
 
 ## Credits
 

@@ -2,13 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Json.h"
-#include "K2Node.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "Engine/Blueprint.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
 // Forward declarations
+class UK2Node;
 class UK2Node_CallFunction;
 class UK2Node_VariableGet;
 class UK2Node_VariableSet;
