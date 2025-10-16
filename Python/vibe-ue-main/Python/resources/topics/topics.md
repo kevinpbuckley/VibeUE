@@ -48,6 +48,16 @@ Use `get_help(topic="topic_name")` to access specific help content.
 - Common anti-patterns to avoid
 - Real-world examples from challenge documentation
 
+**properties** - Component property setting guide (⭐ NEW!)
+- Color property formats (FColor, FLinearColor)
+- Common color values reference (yellow, red, blue, cyan, etc.)
+- Light-specific properties (LightColor, Intensity, AttenuationRadius)
+- Vector/Rotator property formats
+- Common mistakes and solutions
+- Complete workflow examples
+- Troubleshooting property setting failures
+- Property type quick reference
+
 **multi-action-tools** - Multi-action tool reference
 - manage_blueprint_function (functions, parameters, locals)
 - manage_blueprint_variables (type search, creation with type_path)
