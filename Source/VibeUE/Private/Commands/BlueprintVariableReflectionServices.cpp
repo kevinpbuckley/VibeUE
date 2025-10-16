@@ -1,6 +1,8 @@
 #include "Commands/BlueprintVariableReflectionServices.h"
 #include "Commands/BlueprintCommands.h"
+#include "Commands/CommonUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "UObject/UObjectIterator.h"

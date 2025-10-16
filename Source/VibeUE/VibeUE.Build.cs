@@ -7,8 +7,10 @@ public class VibeUE : ModuleRules
 	public VibeUE(ReadOnlyTargetRules Target) : base(Target)
 	{
 		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
-		// Use IWYUSupport instead of the deprecated bEnforceIWYU in UE5.5
-		IWYUSupport = IWYUSupport.Full;
+		// Disable IWYU for better cross-environment compatibility (fix for GitHub issue #7)
+		IWYUSupport = IWYUSupport.None;
+		// Disable unity builds to ensure each file compiles independently
+		bUseUnity = false;
 		
 		// Ensure proper debug symbol generation for PDB files
 		if (Target.Configuration == UnrealTargetConfiguration.Debug || 
