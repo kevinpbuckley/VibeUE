@@ -6,6 +6,9 @@
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
 
+// Forward declarations for editor-only types
+class USCS_Node;
+
 /**
  * Handler class for Blueprint Component Reflection MCP commands
  * Implements 100% reflection-based component discovery and manipulation
