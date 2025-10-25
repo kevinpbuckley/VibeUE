@@ -24,7 +24,33 @@ def register_umg_graph_introspection_tools(mcp: FastMCP):
         node_id: str
     ) -> Dict[str, Any]:
         """
-        Get detailed information for a specific graph node (pins, literal values, connected node ids, display title).
+        Get detailed information for a specific graph node including pins with current default values.
+        
+        🔍 **PRIMARY USE**: Discover pin names and current default values before setting new values.
+        
+        Returns:
+            Dict containing:
+            - success: boolean
+            - node: object with node_id, display_title, and pins array
+            - pins: array of pin objects with:
+              - pin_id: unique pin identifier
+              - name: pin name (use this with action="configure")
+              - direction: "input" or "output"
+              - type: pin type (int, float, bool, string, etc.)
+              - default_value: current default value set on the pin
+              - connected_to: array of connected pin IDs
+        
+        Example:
+            # Get node details to see available pins
+            details = get_node_details(
+                blueprint_name="/Game/Blueprints/BP_Player",
+                node_id="{NODE_GUID}"
+            )
+            
+            # Use pin names to set values with action="configure"
+            for pin in details["node"]["pins"]:
+                if pin["direction"] == "input":
+                    print(f"Pin: {pin['name']}, Type: {pin['type']}, Current: {pin.get('default_value')}")
         """
         from vibe_ue_server import get_unreal_connection
         try:
