@@ -1,5 +1,55 @@
 # Node Tools Reference
 
+## Quick Reference: Complete Node Workflow
+
+```python
+# 1. DISCOVER available nodes and their pins
+nodes = get_available_blueprint_nodes(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    search_term="Random Integer"
+)
+# Returns: spawner_key, expected_pin_count, pins metadata
+
+# 2. CREATE node with exact spawner_key
+result = manage_blueprint_node(
+    action="create",
+    node_params={"spawner_key": "KismetMathLibrary::RandomIntegerInRange"},
+    position=[300, 100]
+)
+node_id = result["node_id"]
+
+# 3. GET pin details and current values
+details = get_node_details(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    node_id=node_id
+)
+# Returns: pins with names, types, default_values, connections
+
+# 4. SET pin default values
+manage_blueprint_node(
+    action="configure",
+    node_id=node_id,
+    property_name="Min",    # Pin name from get_node_details
+    property_value=10       # New default value
+)
+
+# 5. CONNECT pins between nodes
+manage_blueprint_node(
+    action="connect_pins",
+    extra={
+        "connections": [{
+            "source_node_id": node_id,
+            "source_pin_name": "ReturnValue",
+            "target_node_id": target_id,
+            "target_pin_name": "InputPin"
+        }]
+    }
+)
+
+# 6. COMPILE Blueprint
+compile_blueprint(blueprint_name="/Game/Blueprints/BP_Player")
+```
+
 ## Node Discovery
 
 ### get_available_blueprint_nodes
@@ -182,6 +232,200 @@ result = manage_blueprint_node(
 )
 ```
 
+## Setting Pin Default Values
+
+### Discovery Workflow: Get Current Pin Values
+
+Before setting values, discover what pins exist and their current configuration:
+
+```python
+# Step 1: Get detailed node information including current pin values
+details = get_node_details(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    node_id="{NODE_GUID}"
+)
+
+# Returns structure:
+# {
+#   "success": true,
+#   "node": {
+#     "node_id": "{GUID}",
+#     "display_title": "Random Integer in Range",
+#     "pins": [
+#       {
+#         "pin_id": "{PIN_GUID}",
+#         "name": "Min",
+#         "direction": "input",
+#         "type": "int",
+#         "default_value": "0",        # ← Current default value
+#         "connected_to": []
+#       },
+#       {
+#         "pin_id": "{PIN_GUID}",
+#         "name": "Max",
+#         "direction": "input",
+#         "type": "int",
+#         "default_value": "100",      # ← Current default value
+#         "connected_to": []
+#       }
+#     ]
+#   }
+# }
+```
+
+### Setting Pin Default Values with Configure Action
+
+Use the `configure` action to set default values on input pins:
+
+```python
+# Set default value on a specific pin
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="configure",
+    graph_scope="function",
+    function_name="MyFunction",
+    node_id="{NODE_GUID}",
+    property_name="Min",         # Pin name from get_node_details
+    property_value=10            # New default value
+)
+
+# Set multiple pin values sequentially
+node_id = "{RANDOM_NODE_GUID}"
+
+# Set Min value
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="configure",
+    node_id=node_id,
+    property_name="Min",
+    property_value=0
+)
+
+# Set Max value
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="configure",
+    node_id=node_id,
+    property_name="Max",
+    property_value=100
+)
+```
+
+### Complete Workflow: Create Node + Set Values
+
+```python
+# 1. Create the node
+result = manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="create",
+    graph_scope="function",
+    function_name="CalculateDamage",
+    node_params={"spawner_key": "KismetMathLibrary::RandomIntegerInRange"},
+    position=[300, 100]
+)
+
+node_id = result["node_id"]
+
+# 2. Verify pin structure (optional but recommended)
+details = get_node_details(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    node_id=node_id
+)
+print(f"Available pins: {[pin['name'] for pin in details['node']['pins']]}")
+
+# 3. Set default values on input pins
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="configure",
+    node_id=node_id,
+    property_name="Min",
+    property_value=10
+)
+
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="configure",
+    node_id=node_id,
+    property_name="Max",
+    property_value=50
+)
+```
+
+### Resetting Pin Values to Defaults
+
+Use `reset_pin_defaults` to clear custom values back to auto-generated defaults:
+
+```python
+# Reset specific pins
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="reset_pin_defaults",
+    node_id="{NODE_GUID}",
+    extra={"pins": ["Min", "Max"]}
+)
+
+# Reset ALL pins on a node
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="reset_pin_defaults",
+    node_id="{NODE_GUID}",
+    extra={"reset_all": True, "compile": True}
+)
+```
+
+### Common Pin Value Types
+
+| Pin Type | Example Values | Notes |
+|----------|---------------|-------|
+| **int** | `10`, `-5`, `0` | Integer numbers |
+| **float** | `3.14`, `0.5`, `-2.7` | Decimal numbers |
+| **bool** | `True`, `False` | Boolean values |
+| **string** | `"Hello"`, `"PlayerName"` | Text strings |
+| **Name** | `"TagName"`, `"SocketName"` | Unreal Name type |
+| **Vector** | `[1.0, 2.0, 3.0]` | 3D coordinates (X, Y, Z) |
+| **Rotator** | `[0.0, 90.0, 0.0]` | Rotation (Pitch, Yaw, Roll) |
+| **Color** | `[1.0, 0.0, 0.0, 1.0]` | RGBA color (0.0-1.0 range) |
+
+### Best Practices for Pin Values
+
+1. ✅ **Discover first**: Use `get_node_details()` to see available pins and types
+2. ✅ **Match types**: Ensure value type matches pin type (int vs float, etc.)
+3. ✅ **Set before connecting**: Configure default values before making pin connections
+4. ✅ **Verify after setting**: Use `get_node_details()` again to confirm values were set
+5. ✅ **Handle errors**: Check response `success` field for validation errors
+
+### Example: Math Node with Configured Values
+
+```python
+# Create a Multiply node and set both operands
+result = manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="create",
+    node_params={"spawner_key": "KismetMathLibrary::Multiply_IntInt"},
+    position=[200, 100]
+)
+
+multiply_node = result["node_id"]
+
+# Set A = 5
+manage_blueprint_node(
+    action="configure",
+    node_id=multiply_node,
+    property_name="A",
+    property_value=5
+)
+
+# Set B = 10
+manage_blueprint_node(
+    action="configure",
+    node_id=multiply_node,
+    property_name="B",
+    property_value=10
+)
+
+# Result: Multiply node with default values 5 * 10 = 50
+```
+
 ## Troubleshooting
 
 | Problem | Cause | Solution |
@@ -193,7 +437,8 @@ result = manage_blueprint_node(
 | **Nodes flow right-to-left** | **Position X decreasing** | **Use increasing X values (left-to-right flow)** |
 | **Messy zigzag connections** | **Inconsistent Y coordinates** | **Keep main flow nodes at same Y value** |
 | **Unreadable node layout** | **Poor position planning** | **Calculate positions before creating nodes** |
-| **Pin default values not set** | **Configure action syntax unclear** | **Set values manually in editor Details panel** |
+| **Pin default values not set** | **Need to use configure action** | **Use action="configure" with property_name and property_value** |
+| **Wrong pin value type** | **Type mismatch** | **Match value type to pin type (int, float, bool, string, etc.)** |
 
 ## Node Positioning & Layout
 
@@ -484,10 +729,13 @@ REMEMBER:
 2. ✅ Use `spawner_key` for exact node creation
 3. ✅ Include `node_params` for variable/cast nodes
 4. ✅ Use `describe` to verify structure before connecting
-5. ✅ Connect nodes immediately after creation
-6. ✅ Compile Blueprint after node changes
-7. ✅ **Position nodes left-to-right with consistent Y-coordinates**
-8. ✅ **Plan node layout before creating multiple nodes**
-9. ✅ **Use 250-400 unit horizontal spacing for readability**
-10. ✅ **CRITICAL: Function Entry (with INPUT parameters) FIRST, Return (with OUTPUT parameters) LAST**
-11. ✅ **Remember: Entry node OUTPUTS the function inputs, Return node INPUTS the function outputs**
+5. ✅ Use `get_node_details()` to discover available pins and current values
+6. ✅ Set pin default values with `action="configure"` before connecting
+7. ✅ Connect nodes immediately after configuration
+8. ✅ Compile Blueprint after node changes
+9. ✅ **Position nodes left-to-right with consistent Y-coordinates**
+10. ✅ **Plan node layout before creating multiple nodes**
+11. ✅ **Use 250-400 unit horizontal spacing for readability**
+12. ✅ **CRITICAL: Function Entry (with INPUT parameters) FIRST, Return (with OUTPUT parameters) LAST**
+13. ✅ **Remember: Entry node OUTPUTS the function inputs, Return node INPUTS the function outputs**
+14. ✅ **Workflow order: Discover pins → Create nodes → Set values → Connect → Compile**
