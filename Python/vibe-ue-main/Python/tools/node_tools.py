@@ -80,7 +80,8 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         pins appear immediately.
 
         ## Supported Actions:
-        - **create**: Create new nodes (use spawner_key from get_available_blueprint_nodes() for exact creation)
+        - **discover**: Discover available node types with metadata (returns node descriptors with spawner_key)
+        - **create**: Create new nodes (use spawner_key from discover action for exact creation)
         - **connect**: Connect pins between nodes (requires source/target node_id and pin names)
         - **connect_pins**: Batch connect pins with schema validation, conversion helpers, and diagnostics
         - **disconnect**: Disconnect pins (requires source/target node_id and pin names)
@@ -102,16 +103,86 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         - **function_name**: Required when graph_scope="function" - specify target function name
         - **blueprint_name**: Always required - target Blueprint name
 
+        ## Discovery Action Parameters (action="discover"):
+        
+        Pass these parameters in the `extra` dict when using action="discover":
+        
+        - **category**: Filter by node category (Flow Control, Math, Variables, Functions, etc.)
+        - **search_term**: Text filter for node names, descriptions, keywords
+        - **include_functions**: Whether to include function call nodes (default: True)
+        - **include_variables**: Whether to include variable get/set nodes (default: True)
+        - **include_events**: Whether to include event nodes (default: True)
+        - **max_results**: Maximum number of nodes to return (default: 100)
+        - **return_descriptors**: Whether to return complete descriptors with spawner_key (default: True)
+        
+        Example:
+        ```python
+        manage_blueprint_node(
+            blueprint_name="BP_Player",
+            action="discover",
+            graph_scope="event",
+            extra={
+                "category": "Flow Control",
+                "search_term": "Branch",
+                "include_functions": True,
+                "max_results": 50,
+                "return_descriptors": True
+            }
+        )
+        ```
+
         ## Multi-Action Usage Patterns:
 
-        ### Pattern 1: Descriptor-Based Node Creation (RECOMMENDED Oct 2025)
+        ### Pattern 1: Node Discovery Workflow (RECOMMENDED)
+        ```python
+        # 🆕 BEST PRACTICE: Discover available nodes first
+        
+        # 1. Discover nodes with complete metadata
+        result = manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="discover",
+            extra={
+                "search_term": "GetPlayerController",
+                "return_descriptors": True
+            }
+        )
+        
+        # 2. Result includes spawner_key for each variant:
+        # {
+        #   "success": true,
+        #   "categories": {
+        #     "|Game": [
+        #       {
+        #         "name": "Get Player Controller",
+        #         "spawner_key": "GameplayStatics::GetPlayerController",
+        #         "expected_pin_count": 3,
+        #         "is_static": true,
+        #         "pins": [...]
+        #       }
+        #     ]
+        #   }
+        # }
+        
+        # 3. Create using EXACT spawner_key (NO AMBIGUITY!)
+        manage_blueprint_node(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="create",
+            graph_scope="function",
+            function_name="MyFunction",
+            node_params={"spawner_key": "GameplayStatics::GetPlayerController"},
+            position=[200, 100]
+        )
+        ```
+
+        ### Pattern 2: Descriptor-Based Node Creation
         ```python
         # 🆕 BEST PRACTICE: Use spawner_key for exact node creation
         
         # 1. Discover with complete metadata (returns descriptors by default)
-        nodes = get_available_blueprint_nodes(
+        nodes = manage_blueprint_node(
             blueprint_name="/Game/Blueprints/BP_Player",
-            search_term="GetPlayerController"
+            action="discover",
+            extra={"search_term": "GetPlayerController"}
         )
         
         # 2. AI examines ALL variants with complete info:
@@ -130,16 +201,15 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         # ✅ Result: Exact variant created, correct pin count guaranteed!
         ```
 
-        ### Pattern 2: Legacy Node Creation (Fuzzy Search)
+        ### Pattern 3: Legacy Node Creation (Fuzzy Search)
         ```python
         # ⚠️ LEGACY: Using node_type triggers fuzzy search (less reliable)
-        nodes = get_available_blueprint_nodes("BP_Player", category="Flow Control")
         result = manage_blueprint_node("BP_Player", action="create", node_type="Branch")
         node_id = result["node_id"]
         manage_blueprint_node("BP_Player", action="move", node_id=node_id, position=[200, 100])
         ```
 
-        ### Pattern 3: Node Connection Workflow
+        ### Pattern 4: Node Connection Workflow
         ```python
         # List → Identify → Connect → Verify
         nodes = manage_blueprint_node("BP_Player", action="list", graph_scope="function", 
@@ -162,14 +232,14 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         )
         ```
 
-        ### Pattern 4: Function Graph Operations
+        ### Pattern 5: Function Graph Operations
         ```python
         # Function context requires function_name
         manage_blueprint_node("BP_Player", action="create", graph_scope="function",
                               function_name="CalculateHealth", node_type="Add", position=[100, 50])
         ```
 
-        ### Pattern 5: Refreshing nodes to clear stale state
+        ### Pattern 6: Refreshing nodes to clear stale state
         ```python
         # Rebuild a single node (same as right-click → Refresh Node)
         manage_blueprint_node(
@@ -470,10 +540,11 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
         ### ✅ RECOMMENDED: Descriptor-Based Creation (Oct 2025)
         ```python
-        # 1. Use get_available_blueprint_nodes() with default return_descriptors=True
-        nodes = get_available_blueprint_nodes(
+        # 1. Use discover action to get complete metadata
+        nodes = manage_blueprint_node(
             blueprint_name="/Game/Blueprints/BP_Player",
-            search_term="GetPlayerController"
+            action="discover",
+            extra={"search_term": "GetPlayerController"}
         )
         
         # 2. Examine spawner_key, expected_pin_count, function_metadata
@@ -506,8 +577,8 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         | Variable Set has only 2 pins | Missing node_params.variable_name | Add variable_name to node_params |
         | Cast shows generic Object type | Missing node_params.cast_target | Add full Blueprint path with _C suffix |
         | Function shows wrong context | C++ plugin issue (Get Player Controller) | Use anyway - output type is correct |
-        | Pins don't match original BP | Wrong node_type or missing node_params | Use get_available_blueprint_nodes() first |
-    | Warnings about missing overrides | Node cache is stale after structural edits | Call `manage_blueprint_node(..., action="refresh_node")` |
+        | Pins don't match original BP | Wrong node_type or missing node_params | Use discover action first |
+    | Warnings about missing overrides | Node cache is stale after structural edits | Call manage_blueprint_node(..., action="refresh_node") |
 
         🔧 **Advanced Multi-Action Examples**:
         ```python
@@ -519,6 +590,22 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
                               target_node_id="Branch_1", target_pin="Condition")
         ```
         """
+
+        # Handle discovery action in Python (doesn't need C++ dispatch)
+        if action and action.lower() in ["discover", "get_available_nodes", "search_nodes"]:
+            # Extract discovery parameters from extra dict
+            discover_params = extra or {}
+            return _get_available_blueprint_nodes_internal(
+                blueprint_name=blueprint_name,
+                category=discover_params.get("category", ""),
+                search_term=discover_params.get("search_term", ""),
+                graph_scope=graph_scope or "event",
+                include_functions=discover_params.get("include_functions", True),
+                include_variables=discover_params.get("include_variables", True),
+                include_events=discover_params.get("include_events", True),
+                max_results=discover_params.get("max_results", 100),
+                return_descriptors=discover_params.get("return_descriptors", True),
+            )
 
         normalized_node_params = node_params
 
@@ -565,8 +652,7 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
 
         return _dispatch("manage_blueprint_node", payload)
 
-    @mcp.tool()
-    def get_available_blueprint_nodes(
+    def _get_available_blueprint_nodes_internal(
         blueprint_name: str,
         category: str = "",
         search_term: str = "",
@@ -578,17 +664,28 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         return_descriptors: bool = True,
     ) -> Dict[str, Any]:
         """
-        🔍 **ESSENTIAL NODE DISCOVERY TOOL**: Get all available Blueprint node types with complete metadata.
+        🔍 **INTERNAL NODE DISCOVERY**: Get all available Blueprint node types with complete metadata.
         
-        🎯 **NEW (Oct 2025)**: Now returns complete node descriptors including:
+        This is an internal function used by manage_blueprint_node(action="discover").
+        External callers should use manage_blueprint_node with action="discover" instead.
+        
+        🎯 **NEW (Oct 2025)**: Returns complete node descriptors including:
         - **spawner_key**: Unique identifier for exact node creation (e.g., "GameplayStatics::GetPlayerController")
         - **expected_pin_count**: Number of pins the node will have
         - **function_class_path**: Full UE path to function class
         - **pins**: Complete pin metadata with types and directions
         - **is_static**, **is_pure**, **is_const**: Function properties
         
-        ⚠️ **USE THIS FIRST**: Always call this before manage_blueprint_node(action='create') to discover
-        exact node type names and spawner_keys. This prevents "unknown node type" errors and ensures reliable node creation.
+        ⚠️ **USAGE NOTE**: This is an internal function. Use manage_blueprint_node(action="discover") instead:
+        
+        ```python
+        # ✅ CORRECT: Use discover action
+        result = manage_blueprint_node(
+            blueprint_name="BP_Player",
+            action="discover",
+            extra={"search_term": "GetPlayerController"}
+        )
+        ```
         
         🎯 **PRIMARY USE CASES**:
         - **Before Creating Nodes**: Find exact node type names (e.g., "Branch", "Print String", "Cast To Object")
@@ -599,10 +696,15 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         🔄 **TYPICAL AI WORKFLOW**:
         ```python
         # 1. User says: "Create a GetPlayerController node"
-        nodes = get_available_blueprint_nodes("BP_Player", search_term="GetPlayerController")
+        result = manage_blueprint_node(
+            blueprint_name="BP_Player",
+            action="discover",
+            extra={"search_term": "GetPlayerController"}
+        )
         
-        # 2. Result now includes spawner_key for each variant:
+        # 2. Result includes spawner_key for each variant:
         # {
+        #   "success": true,
         #   "categories": {
         #     "|Game": [
         #       {
@@ -676,22 +778,28 @@ def register_blueprint_node_tools(mcp: FastMCP) -> None:
         💡 **Smart Usage Examples**:
         ```python
         # Find print/debug nodes
-        get_available_blueprint_nodes("BP_Player", category="Development")
+        manage_blueprint_node("BP_Player", action="discover", 
+                            extra={"category": "Development"})
         
         # Search for "Play Sound" nodes like Unreal's Add Action menu
-        get_available_blueprint_nodes("BP_Player", search_term="Play Sound")
+        manage_blueprint_node("BP_Player", action="discover",
+                            extra={"search_term": "Play Sound"})
         
         # Find mathematical operations
-        get_available_blueprint_nodes("BP_Player", category="Math")
+        manage_blueprint_node("BP_Player", action="discover",
+                            extra={"category": "Math"})
         
         # Search for specific functions - find all "Location" related nodes
-        get_available_blueprint_nodes("BP_Player", search_term="Location")
+        manage_blueprint_node("BP_Player", action="discover",
+                            extra={"search_term": "Location"})
         
         # Combined filtering: Audio category with "Play" in the name
-        get_available_blueprint_nodes("BP_Player", category="Audio", search_term="Play")
+        manage_blueprint_node("BP_Player", action="discover",
+                            extra={"category": "Audio", "search_term": "Play"})
         
         # Find variable operations
-        get_available_blueprint_nodes("BP_Player", category="Variables")
+        manage_blueprint_node("BP_Player", action="discover",
+                            extra={"category": "Variables"})
         ```
         
         🎯 **AI Integration**: This tool enables data-driven Blueprint development by providing

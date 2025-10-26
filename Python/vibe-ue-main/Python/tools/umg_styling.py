@@ -67,6 +67,20 @@ def register_umg_styling_tools(mcp: FastMCP):
         """
         Set any property on any widget component, including slot properties.
         
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="set_property").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        set_widget_property("WBP_Inventory", "TitleText", "ColorAndOpacity", [0, 1, 1, 1])
+        
+        # NEW (recommended):
+        manage_umg_widget(action="set_property", widget_name="WBP_Inventory", 
+                         component_name="TitleText", property_name="ColorAndOpacity", 
+                         property_value=[0, 1, 1, 1])
+        ```
+        
         ⚠️ **IMPORTANT**: Before styling widgets, ALWAYS use get_help(topic="umg-guide") first to understand 
         proper container-specific background implementation, widget hierarchy requirements, 
         and styling best practices. This ensures correct implementation patterns.

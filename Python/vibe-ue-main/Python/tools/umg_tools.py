@@ -92,6 +92,19 @@ def register_umg_tools(mcp: FastMCP):
         """
         Universal widget component removal from UMG Widget Blueprints.
         
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="remove_component").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        remove_umg_component("WBP_Inventory", "CloseButton", remove_children=True)
+        
+        # NEW (recommended):
+        manage_umg_widget(action="remove_component", widget_name="WBP_Inventory", 
+                         component_name="CloseButton", remove_children=True)
+        ```
+        
         🎯 **UNIVERSAL REMOVAL**: Remove any widget component from anywhere in the hierarchy:
         - Root level components
         - Children of any panel type (Canvas, Overlay, Vertical/Horizontal Box, etc.)

@@ -375,6 +375,18 @@ def register_umg_discovery_tools(mcp: FastMCP):
         """
         List all components in a widget with their properties and hierarchy.
         
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="list_components").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        list_widget_components("WBP_Inventory")
+        
+        # NEW (recommended):
+        manage_umg_widget(action="list_components", widget_name="WBP_Inventory")
+        ```
+        
         🎯 **PERFECT FOR FINDING COMPONENTS TO MODIFY**: Use this to see all available 
         components and their exact names for targeted styling and property changes.
         
@@ -601,6 +613,18 @@ def register_umg_discovery_tools(mcp: FastMCP):
     def validate_widget_hierarchy(ctx: Context, widget_name: str) -> Dict[str, Any]:
         """
         Validate the hierarchy and structure of a widget for issues.
+        
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="validate").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        validate_widget_hierarchy("WBP_Inventory")
+        
+        # NEW (recommended):
+        manage_umg_widget(action="validate", widget_name="WBP_Inventory")
+        ```
         
         Args:
             widget_name: Name of the widget to validate

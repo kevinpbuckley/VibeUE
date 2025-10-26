@@ -69,6 +69,18 @@ def register_umg_reflection_tools(mcp: FastMCP):
         """
         Get all available widget types using Unreal's reflection system.
         
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="search_types").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        get_available_widgets(category="Common", include_custom=True)
+        
+        # NEW (recommended):
+        manage_umg_widget(action="search_types", category="Common", include_custom=True)
+        ```
+        
         🔍 **WIDGET PALETTE DISCOVERY**: Discover all widget types available in Unreal
         using the same reflection system as the Widget Palette, with filtering and metadata.
         
@@ -247,6 +259,21 @@ def register_umg_reflection_tools(mcp: FastMCP):
     ) -> Dict[str, Any]:
         """
         Add any type of widget component using generic reflection-based creation.
+        
+        ⚠️ **DEPRECATION NOTICE**: This tool is being replaced by manage_umg_widget(action="add_component").
+        The new unified tool provides the same functionality with a consistent multi-action pattern.
+        
+        **Migration Example**:
+        ```python
+        # OLD (deprecated):
+        add_widget_component("WBP_MainMenu", "Button", "PlayButton", "CanvasPanel_Root", 
+                           properties={"Text": "Play"})
+        
+        # NEW (recommended):
+        manage_umg_widget(action="add_component", widget_name="WBP_MainMenu", 
+                         component_type="Button", component_name="PlayButton",
+                         parent_name="CanvasPanel_Root", properties={"Text": "Play"})
+        ```
         
         🎯 **UNIVERSAL WIDGET CREATOR**: Create any widget type using Unreal's reflection
         system with automatic validation and compatibility checking.

@@ -432,27 +432,16 @@ mcp = FastMCP(
 # AI assistants should understand the tool organization for better selection:
 
 # CORE UNREAL TOOLS (Basic engine interaction)
-from tools.editor_tools import register_editor_tools          # Viewport, screenshots, basic editor
-from tools.blueprint_tools import register_blueprint_tools    # Blueprint creation, compilation, components
+from tools.blueprint_manager import register_blueprint_manager_tools  # Unified Blueprint lifecycle management (RECOMMENDED)
+from tools.blueprint_advanced import register_blueprint_advanced_tools  # Blueprint variables and components multi-action tools
 from tools.node_tools import register_blueprint_node_tools    # Blueprint graph nodes and connections
 
-# BASIC UMG TOOLS (UMG guide + deprecated tools)
-from tools.umg_tools import register_umg_tools               # UMG guide and deprecated legacy tools
+# UMG SYSTEM (Widget management)
+from tools.umg_manager import register_umg_manager_tools            # Unified multi-action UMG tool (RECOMMENDED)
+from tools.umg_data_binding import register_umg_data_binding_tools   # MVVM and data sources (advanced)
 
-# ENHANCED UMG SYSTEM (Advanced widget capabilities)
-from tools.umg_discovery import register_umg_discovery_tools         # Widget search and inspection
-from tools.umg_components import register_umg_component_tools        # DEPRECATED - All replaced by reflection system
-from tools.umg_layout import register_umg_layout_tools              # DEPRECATED - All replaced by reflection system
-from tools.umg_styling import register_umg_styling_tools            # Style sets and theming system
-from tools.umg_events import register_umg_event_tools               # Event binding and interaction
-from tools.umg_data_binding import register_umg_data_binding_tools   # MVVM and data sources
-from tools.umg_graph_introspection import register_umg_graph_introspection_tools  # Blueprint graph analysis
-
-# UMG REFLECTION SYSTEM (Generic widget creation using Unreal's reflection)
-from tools.umg_reflection import register_umg_reflection_tools       # Reflection-based widget discovery and creation
-
-# ENHANCED ASSET SYSTEM (Advanced asset management capabilities)
-from tools.asset_discovery import register_asset_discovery_tools     # Smart asset search, import, export, application
+# ASSET SYSTEM (Asset management)
+from tools.asset_manager import register_asset_manager_tools  # Unified asset operations (RECOMMENDED)
 
 # SYSTEM DIAGNOSTICS (AI Assistant Support)
 from tools.system_diagnostics import register_system_diagnostic_tools  # Connection testing, validation, AI guidance
@@ -475,159 +464,39 @@ except ImportError:
 # essential container-specific patterns and widget hierarchy requirements.
 
 # Core Unreal Engine Tools
-register_editor_tools(mcp)         # Actor management, viewport control, screenshots
-register_blueprint_tools(mcp)      # Blueprint creation, compilation, component management
+register_blueprint_manager_tools(mcp)  # Blueprint lifecycle: create, compile, get_info, set_property, reparent, list_custom_events, summarize_event_graph (7 actions)
+register_blueprint_advanced_tools(mcp) # Blueprint variables and components (2 multi-action tools)
 register_blueprint_node_tools(mcp) # Event graph manipulation, node connections
 
-# Basic UMG Widget Tools (includes get_help(topic="umg-guide") for guidance)
-register_umg_tools(mcp)            # UMG guide and deprecated legacy tools (now references reflection system)
+# UMG Unified Manager (Consolidated Multi-Action Tool) - ALL UMG OPERATIONS
+register_umg_manager_tools(mcp)       # Single unified tool for all UMG operations (11 actions)
 
-# Enhanced UMG Widget System (Advanced Features) - REQUIRES UMG GUIDE FIRST
-register_umg_discovery_tools(mcp)     # Widget search, inspection, validation
-register_umg_component_tools(mcp)     # DEPRECATED - All tools replaced by reflection system
-register_umg_layout_tools(mcp)        # DEPRECATED - All tools replaced by reflection system
-register_umg_styling_tools(mcp)       # Style sets, theming, property management - REQUIRES GUIDE
-register_umg_event_tools(mcp)         # Event binding, delegates, interactivity
-register_umg_data_binding_tools(mcp)  # Data binding, MVVM patterns
-register_umg_graph_introspection_tools(mcp)  # Blueprint analysis and introspection
+# UMG Advanced Features (Not replaced by manage_umg_widget)
+register_umg_data_binding_tools(mcp)  # Data binding, MVVM patterns (advanced features)
 
-# UMG Reflection System (Generic Widget Creation) - FUTURE-PROOF APPROACH
-register_umg_reflection_tools(mcp)    # Reflection-based widget discovery and creation using Widget Palette patterns
+# ❌ REMOVED - All replaced by manage_umg_widget():
+# - register_umg_tools(mcp)            # create/delete widget blueprint, remove_component
+# - register_umg_discovery_tools(mcp)   # list_components, validate, get_component_properties, get_available_widget_types
+# - register_umg_styling_tools(mcp)     # get/set/list widget properties
+# - register_umg_event_tools(mcp)       # get_available_events, bind_events
+# - register_umg_reflection_tools(mcp)  # get_available_widgets, add_component
+# - register_umg_component_tools(mcp)   # Already deprecated
+# - register_umg_layout_tools(mcp)      # Already deprecated
 
-# Enhanced Asset Management System (Advanced Capabilities)
-register_asset_discovery_tools(mcp)   # Smart asset search, import, export, AI analysis
+# ❌ REMOVED - All replaced by manage_blueprint():
+# - register_blueprint_tools(mcp)      # create_blueprint, compile_blueprint, get_blueprint_info, set_blueprint_property, reparent_blueprint
+# - register_umg_graph_introspection_tools(mcp)  # list_custom_events, summarize_event_graph (now in manage_blueprint)
+
+# ❌ REMOVED - All replaced by manage_asset():
+# - register_asset_discovery_tools(mcp)  # import_texture_asset, export_texture_for_analysis
+# - register_editor_tools(mcp)  # open_asset_in_editor (now in manage_asset)
+# - convert_svg_to_png inline tool (now in manage_asset)
+
+# Asset Management
+register_asset_manager_tools(mcp)  # Asset operations: import_texture, export_texture, open_in_editor, convert_svg (4 actions)
 
 # System Diagnostics and AI Support Tools
 register_system_diagnostic_tools(mcp)  # Connection testing, validation, troubleshooting guides, get_help() tool  
-
-# Image Conversion Tools
-@mcp.tool()
-def convert_svg_to_png(
-    svg_path: str,
-    output_path: str = None,
-    size: list = None,
-    scale: float = 1.0,
-    background: str = None
-) -> dict:
-    """Convert an SVG to PNG using direct CairoSVG integration.
-
-        Args:
-            svg_path: Source SVG path
-            output_path: Destination PNG path (default side-by-side)
-            size: Optional [W,H] override pixels (forces output size)
-            scale: Scalar multiplier (ignored if size provided)
-            background: Optional background color (e.g. '#00000000' / '#1e293b')
-
-        Returns: success, png_path, method, conversion details.
-        """
-    import io
-    from pathlib import Path
-    
-    try:
-        # Import dependencies with better error handling
-        try:
-            import cairosvg
-            from PIL import Image, ImageEnhance
-            import numpy as np
-        except ImportError as e:
-            return {
-                "success": False,
-                "error": f"Missing required package: {e}. Install with: pip install cairosvg pillow numpy",
-                "png_path": None
-            }
-        
-        # Validate input
-        svg_file = Path(svg_path)
-        if not svg_file.exists():
-            return {
-                "success": False,
-                "error": f"SVG file not found: {svg_path}",
-                "png_path": None
-            }
-        
-        # Determine output path
-        if output_path:
-            png_file = Path(output_path)
-        else:
-            png_file = svg_file.with_suffix('.png')
-        
-        # Determine dimensions
-        width = height = None
-        if size and len(size) >= 2:
-            width, height = int(size[0]), int(size[1])
-        elif scale != 1.0:
-            # Default base size with scaling
-            width = height = int(1024 * scale)
-        
-        # Convert SVG to PNG bytes using CairoSVG
-        logger.info(f"Converting SVG {svg_path} to PNG with dimensions {width}x{height}")
-        
-        png_bytes = cairosvg.svg2png(
-            url=str(svg_file),
-            output_width=width,
-            output_height=height,
-            background_color=background if background else None
-        )
-        
-        # Load into PIL for post-processing
-        img = Image.open(io.BytesIO(png_bytes))
-        
-        # Ensure RGBA format
-        if img.mode != 'RGBA':
-            img = img.convert('RGBA')
-        
-        # UMG optimizations
-        arr = np.array(img, dtype=np.uint8)
-        
-        # Clean up fully transparent pixels (set RGB to 0 for better compression)
-        transparent_mask = arr[..., 3] == 0
-        arr[transparent_mask, 0:3] = 0
-        
-        # Optional: Premultiply alpha for UMG (better blending)
-        if True:  # Always premultiply for UMG
-            rgb = arr[..., 0:3].astype(np.float32) / 255.0
-            alpha = arr[..., 3:4].astype(np.float32) / 255.0
-            
-            # Simple premultiply (no gamma for now to keep it fast)
-            rgb_premult = rgb * alpha
-            
-            arr[..., 0:3] = (rgb_premult * 255.0 + 0.5).astype(np.uint8)
-        
-        # Convert back to PIL and save
-        final_img = Image.fromarray(arr, 'RGBA')
-        
-        # Ensure output directory exists
-        png_file.parent.mkdir(parents=True, exist_ok=True)
-        
-        # Save with optimization
-        final_img.save(png_file, format='PNG', optimize=True, compress_level=6)
-        
-        # Get final file info
-        file_size = png_file.stat().st_size
-        final_width, final_height = final_img.size
-        
-        logger.info(f"Successfully converted {svg_path} to {png_file} ({file_size} bytes)")
-        
-        return {
-            "success": True,
-            "png_path": str(png_file),
-            "width": final_width,
-            "height": final_height,
-            "file_size": file_size,
-            "method": "cairosvg_direct",
-            "optimizations": ["premultiplied_alpha", "transparent_cleanup", "png_optimized"],
-            "source_svg": str(svg_file)
-        }
-        
-    except Exception as e:
-        logger.error(f"SVG conversion error: {e}")
-        return {
-            "success": False,
-            "error": str(e),
-            "png_path": None
-        }
-
-register_umg_graph_introspection_tools(mcp)
 
 @mcp.prompt()
 def server_capabilities():
