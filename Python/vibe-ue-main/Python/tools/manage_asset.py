@@ -100,19 +100,19 @@ def register_asset_tools(mcp: FastMCP):
         )
         ```
         
-        **convert_svg** - Convert SVG to PNG
+        **svg_to_png** - Convert SVG to PNG
         ```python
         manage_asset(
-            action="convert_svg",
-            svg_path="C:/Path/icon.svg",
-            output_path="C:/Path/icon.png",
+            action="svg_to_png",
+            svg_path="C:/path/icon.svg",
+            output_path="C:/path/icon.png",
             size=[512, 512],
             background="#00000000"
         )
         ```
         
         Args:
-            action: Action to perform (search|import_texture|export_texture|open_in_editor|convert_svg)
+            action: Action to perform (search|import_texture|export_texture|open_in_editor|svg_to_png)
             search_term: Text to search for in asset names (for search)
             asset_type: Filter by asset type (for search - examples: Widget, Texture2D, Material, Blueprint)
             path: Content browser path to search in (for search, default: /Game)
@@ -121,17 +121,17 @@ def register_asset_tools(mcp: FastMCP):
             max_results: Maximum number of results to return (for search)
             file_path: Source file path (for import_texture)
             asset_path: Asset path in project (for export_texture, open_in_editor)
-            svg_path: SVG file path (for convert_svg)
+            svg_path: SVG file path (for svg_to_png)
             destination_path: Destination in content browser (for import_texture)
             texture_name: Custom texture name (for import_texture)
             compression_settings: Texture compression (for import_texture)
             export_format: Export format (for export_texture)
-            max_size: Maximum export size (for export_texture, convert_svg)
+            max_size: Maximum export size (for export_texture, svg_to_png)
             force_open: Force open if already open (for open_in_editor)
-            output_path: Output file path (for convert_svg)
-            size: Output size (for convert_svg)
-            scale: Scale multiplier (for convert_svg)
-            background: Background color (for convert_svg)
+            output_path: Output file path (for svg_to_png)
+            size: Output size (for svg_to_png)
+            scale: Scale multiplier (for svg_to_png)
+            background: Background color (for svg_to_png)
             
         Returns:
             Dict containing action results with success field
@@ -156,14 +156,14 @@ def register_asset_tools(mcp: FastMCP):
             )
         elif action == "open_in_editor":
             return _handle_open_in_editor(asset_path, force_open)
-        elif action == "convert_svg":
+        elif action == "svg_to_png":
             return _handle_convert_svg(
                 svg_path, output_path, size, scale, background
             )
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, open_in_editor, convert_svg"
+                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, open_in_editor, svg_to_png"
             }
 
 
@@ -325,7 +325,7 @@ def _handle_convert_svg(
     from pathlib import Path
     
     if not svg_path:
-        return {"success": False, "error": "'svg_path' is required for convert_svg action"}
+        return {"success": False, "error": "'svg_path' is required for svg_to_png action"}
     
     try:
         # Import dependencies

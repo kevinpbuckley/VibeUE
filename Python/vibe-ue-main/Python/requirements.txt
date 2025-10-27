@@ -13,6 +13,14 @@ fastapi
 pydantic>=2.6.1
 requests
 
+# Optional: SVG to PNG conversion support
+# Required for manage_asset svg_to_png action
+# Install with: pip install cairosvg pillow numpy
+# Or with uv: uv pip install cairosvg pillow numpy
+# cairosvg>=2.8.0
+# pillow>=11.0.0
+# numpy>=1.26.0
+
 # Optional development dependencies
 # Uncomment if you plan to develop or extend VibeUE
 # pytest>=7.0.0
