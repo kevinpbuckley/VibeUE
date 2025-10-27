@@ -55,6 +55,27 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
+### Optional: SVG Conversion Support
+
+The `svg_to_png` action in `manage_asset` tool requires additional packages for converting SVG files to optimized PNG textures for UMG.
+
+**Using uv:**
+```bash
+uv pip install .[svg]
+```
+
+**Using pip:**
+```bash
+pip install cairosvg pillow numpy
+```
+
+**Required for:**
+- `manage_asset(action="svg_to_png", ...)` - Convert SVG vector graphics to PNG textures
+- Automatic UMG optimizations (premultiplied alpha, transparent cleanup)
+- Custom UI texture workflows from SVG design files
+
+If you don't need SVG conversion, these packages are optional and don't affect other functionality.
+
 ## 🎯 Features
 
 The MCP server provides comprehensive tools for:
