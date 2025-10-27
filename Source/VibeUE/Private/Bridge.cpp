@@ -259,10 +259,11 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                      CommandType == TEXT("add_component_to_blueprint") || 
                      CommandType == TEXT("set_component_property") || 
                      CommandType == TEXT("compile_blueprint") || 
+                     CommandType == TEXT("get_blueprint_property") || 
                      CommandType == TEXT("set_blueprint_property") || 
                      CommandType == TEXT("reparent_blueprint") ||
                      // Blueprint Variable Commands
-                     CommandType == TEXT("manage_blueprint_variables") ||
+                     CommandType == TEXT("manage_blueprint_variable") ||
                      CommandType == TEXT("add_blueprint_variable") ||
                      CommandType == TEXT("get_blueprint_variable") ||
                      CommandType == TEXT("delete_blueprint_variable") ||

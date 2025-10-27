@@ -13,6 +13,14 @@ dependencies = [
   "requests"
 ]
 
+[project.optional-dependencies]
+# SVG to PNG conversion support for manage_asset svg_to_png action
+svg = [
+  "cairosvg>=2.8.0",
+  "pillow>=11.0.0",
+  "numpy>=1.26.0"
+]
+
 [build-system]
 requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"

@@ -146,7 +146,7 @@ Blueprint graph & variables
 - manage_blueprint_node
 - get_available_blueprint_nodes
 - manage_blueprint_function
-- manage_blueprint_variables
+- manage_blueprint_variable
 
 UMG discovery & inspection
 - search_items

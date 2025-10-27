@@ -1,4 +1,4 @@
-# manage_blueprint_components - Complete Action Reference
+# manage_blueprint_component - Complete Action Reference
 
 ## ✅ Status: FULLY TESTED AND WORKING
 - **Total Actions**: 12
@@ -29,7 +29,7 @@ Unified tool for complete Blueprint component lifecycle management, replacing 10
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="",
     action="search_types",
     category="Lighting",
@@ -52,7 +52,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="BP_Player",
     action="get_info",
     component_type="SpotLightComponent",
@@ -73,7 +73,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="list"
 )
@@ -93,7 +93,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="get_property",
     component_name="SpotLight_Top",
@@ -116,7 +116,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="set_property",
     component_name="SpotLight_Top",
@@ -139,7 +139,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="get_all_properties",
     component_name="SpotLight_Top",
@@ -163,7 +163,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="compare_properties",
     component_name="SpotLight_Top",
@@ -194,7 +194,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="create",
     component_name="TestLight_MCP",
@@ -219,7 +219,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="delete",
     component_name="TestLight_MCP",
@@ -241,7 +241,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="reparent",
     component_name="TestLight_MCP",
@@ -262,7 +262,7 @@ manage_blueprint_components(
 
 **Example**:
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="reorder",
     component_order=["SpotLight_Top", "SpotLight_Right", "SpotLight_Left", "TrailVFX", "PointLight"]
@@ -319,14 +319,14 @@ manage_blueprint_components(
 ### Pattern 1: Discover Available Components
 ```python
 # Find all lighting components
-lights = manage_blueprint_components(
+lights = manage_blueprint_component(
     blueprint_name="",
     action="search_types",
     category="Lighting"
 )
 
 # Find specific component type
-spot_lights = manage_blueprint_components(
+spot_lights = manage_blueprint_component(
     blueprint_name="",
     action="search_types",
     search_text="SpotLight"
@@ -336,13 +336,13 @@ spot_lights = manage_blueprint_components(
 ### Pattern 2: Inspect Component Structure
 ```python
 # List all components
-components = manage_blueprint_components(
+components = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="list"
 )
 
 # Get detailed info about a specific component type
-info = manage_blueprint_components(
+info = manage_blueprint_component(
     blueprint_name="BP_Player",
     action="get_info",
     component_type="SpotLightComponent",
@@ -354,7 +354,7 @@ info = manage_blueprint_components(
 ### Pattern 3: Property Operations
 ```python
 # Read property
-intensity = manage_blueprint_components(
+intensity = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="get_property",
     component_name="SpotLight_Top",
@@ -362,7 +362,7 @@ intensity = manage_blueprint_components(
 )
 
 # Write property
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="set_property",
     component_name="SpotLight_Top",
@@ -371,7 +371,7 @@ manage_blueprint_components(
 )
 
 # Get all properties at once
-all_props = manage_blueprint_components(
+all_props = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="get_all_properties",
     component_name="SpotLight_Top",
@@ -382,7 +382,7 @@ all_props = manage_blueprint_components(
 ### Pattern 4: Sync Components Between Blueprints
 ```python
 # 1. Compare to find differences
-comparison = manage_blueprint_components(
+comparison = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="compare_properties",
     component_name="SkeletalMesh",
@@ -394,7 +394,7 @@ comparison = manage_blueprint_components(
 
 # 2. Sync all differences
 for diff in comparison["differences"]:
-    manage_blueprint_components(
+    manage_blueprint_component(
         blueprint_name="/Game/Blueprints/BP_Player2",
         action="set_property",
         component_name="SkeletalMesh",
@@ -409,7 +409,7 @@ compile_blueprint("/Game/Blueprints/BP_Player2")
 ### Pattern 5: Component Lifecycle Management
 ```python
 # Create new component
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Test",
     action="create",
     component_name="DynamicLight",
@@ -419,7 +419,7 @@ manage_blueprint_components(
 )
 
 # Reparent to different location
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Test",
     action="reparent",
     component_name="DynamicLight",
@@ -427,14 +427,14 @@ manage_blueprint_components(
 )
 
 # Reorder components
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Test",
     action="reorder",
     component_order=["DynamicLight", "OtherLight", "VFX"]
 )
 
 # Delete when done
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Test",
     action="delete",
     component_name="DynamicLight",
@@ -510,7 +510,7 @@ Successfully synced all components from BP_Player to BP_Player2:
 - `compile_blueprint` - Compile Blueprint after component changes
 - `get_blueprint_info` - Get overall Blueprint structure
 - `search_items` - Find Blueprints before modifying
-- `manage_blueprint_variables` - Manage Blueprint variables
+- `manage_blueprint_variable` - Manage Blueprint variables
 - `manage_blueprint_function` - Manage Blueprint functions
 - `manage_blueprint_node` - Manage Blueprint nodes
 

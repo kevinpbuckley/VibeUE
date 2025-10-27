@@ -31,7 +31,7 @@ This documentation contains everything you need to use the VibeUE MCP system eff
 
 ### Phase 1: Foundation
 1. **Create Blueprint** (`create_blueprint`)
-2. **Create Blueprint Variables** (`manage_blueprint_variables`)
+2. **Create Blueprint Variables** (`manage_blueprint_variable`)
 3. **Create Components** (`add_component`)
 
 ### Phase 2: Function Structure
@@ -85,7 +85,7 @@ Create Function → Add Nodes Immediately (Missing dependencies!) → Broken Blu
 
 ## 🚨 CRITICAL: ALWAYS Use `type_path` NOT `type` 🚨
 
-When creating variables with `manage_blueprint_variables`, the parameter name is `type_path`:
+When creating variables with `manage_blueprint_variable`, the parameter name is `type_path`:
 
 ❌ **WRONG - AI KEEPS DOING THIS**:
 ```python
@@ -100,7 +100,7 @@ variable_config={"type_path": "/Script/UMG.UserWidget"}  # ✅ CORRECT
 ```
 
 **Available Tools:**
-- `manage_blueprint_variables` - **UNIFIED TOOL** for all variable operations (create, delete, search_types, etc.)
+- `manage_blueprint_variable` - **UNIFIED TOOL** for all variable operations (create, delete, search_types, etc.)
 - `add_blueprint_variable` - (Legacy) Add variables to Blueprint
 - `get_blueprint_variable` - Get variable information
 - `get_blueprint_variable_info` - Get detailed variable metadata
@@ -114,7 +114,7 @@ variable_config={"type_path": "/Script/UMG.UserWidget"}  # ✅ CORRECT
 ❌ **COMMON MISTAKE**: Using `"type": "UserWidget"` or `"type": "float"` in variable_config
 ✅ **CORRECT USAGE**: You MUST use `"type_path": "/Script/UMG.UserWidget"` or `"type_path": "/Script/CoreUObject.FloatProperty"`
 
-When using `manage_blueprint_variables` with `action="create"`, the `variable_config` dictionary **REQUIRES** a `type_path` field with the full canonical path. The field name is `type_path`, NOT `type`. Here are the correct type paths:
+When using `manage_blueprint_variable` with `action="create"`, the `variable_config` dictionary **REQUIRES** a `type_path` field with the full canonical path. The field name is `type_path`, NOT `type`. Here are the correct type paths:
 
 **Quick Reference - Most Common Types:**
 
@@ -159,7 +159,7 @@ When using `manage_blueprint_variables` with `action="create"`, the `variable_co
 **Example: Creating Variables with Correct Type Paths:**
 ```python
 # ❌ WRONG - This will FAIL with "type_path required" error:
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player",
     action="create",
     variable_name="Health",
@@ -171,7 +171,7 @@ manage_blueprint_variables(
 
 # ✅ CORRECT - Use type_path, not type:
 # Float variable
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player",
     action="create",
     variable_name="Health",
@@ -183,7 +183,7 @@ manage_blueprint_variables(
 )
 
 # Widget variable
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player",
     action="create",
     variable_name="HUDWidget",
@@ -195,7 +195,7 @@ manage_blueprint_variables(
 )
 
 # Blueprint class reference
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player",
     action="create",
     variable_name="CustomHUD",
@@ -208,7 +208,7 @@ manage_blueprint_variables(
 ```
 
 ### Blueprint Components
-- `manage_blueprint_components` - **UNIFIED MULTI-ACTION TOOL** for complete component management (12 actions)
+- `manage_blueprint_component` - **UNIFIED MULTI-ACTION TOOL** for complete component management (12 actions)
   - **Discovery**: search_types, get_info, get_property_metadata, list
   - **Lifecycle**: create, delete, reparent, reorder
   - **Properties**: get_property, set_property, get_all_properties, compare_properties
@@ -216,16 +216,16 @@ manage_blueprint_variables(
   - **⚠️ CRITICAL**: `blueprint_name` parameter MUST be full package path (e.g., `/Game/Blueprints/BP_Player2`)
     - ✅ Use `search_items()` to get `package_path` first, then pass to this tool
     - ❌ Short names like "BP_Player2" will fail with "Blueprint not found"
-  - **📖 See**: `manage_blueprint_components_guide.md` for complete action reference, examples, and best practices
-- `get_available_components` - (Legacy - use manage_blueprint_components with search_types)
-- `add_component` - (Legacy - use manage_blueprint_components with create)
+  - **📖 See**: `manage_blueprint_component_guide.md` for complete action reference, examples, and best practices
+- `get_available_components` - (Legacy - use manage_blueprint_component with search_types)
+- `add_component` - (Legacy - use manage_blueprint_component with create)
 - `add_component_to_blueprint` - Add components to Blueprint
-- `get_component_info` - (Legacy - use manage_blueprint_components with get_info)
-- `get_component_hierarchy` - (Legacy - use manage_blueprint_components with list)
-- `get_property_metadata` - (Legacy - use manage_blueprint_components with get_property_metadata)
-- `set_component_property` - (Legacy - use manage_blueprint_components with set_property)
-- `remove_component` - (Legacy - use manage_blueprint_components with delete)
-- `reorder_components` - (Legacy - use manage_blueprint_components with reorder)
+- `get_component_info` - (Legacy - use manage_blueprint_component with get_info)
+- `get_component_hierarchy` - (Legacy - use manage_blueprint_component with list)
+- `get_property_metadata` - (Legacy - use manage_blueprint_component with get_property_metadata)
+- `set_component_property` - (Legacy - use manage_blueprint_component with set_property)
+- `remove_component` - (Legacy - use manage_blueprint_component with delete)
+- `reorder_components` - (Legacy - use manage_blueprint_component with reorder)
 
 ### Blueprint Functions & Nodes
 - `manage_blueprint_function` - **MULTI-ACTION TOOL** for function management (includes listing functions)
@@ -291,7 +291,7 @@ These tools use an `action` parameter to perform different operations. Each acti
    ```python
    # Example: If function uses Health variable
    # First create the Blueprint variable
-   manage_blueprint_variables(
+   manage_blueprint_variable(
        blueprint_name="BP_Player",
        action="create",
        variable_name="Health",
@@ -744,7 +744,7 @@ set_widget_property("WBP_Menu", "Background", "Brush.Texture", "/Game/Textures/M
 
 ```python
 # ❌ WRONG - Will fail with "Blueprint 'BP_Player2' not found"
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="BP_Player2",  # ❌ Short name fails!
     action="create",
     component_type="SpotLightComponent",
@@ -755,7 +755,7 @@ manage_blueprint_components(
 search_result = search_items(search_term="BP_Player2", asset_type="Blueprint")
 blueprint_path = search_result["items"][0]["package_path"]  # "/Game/Blueprints/BP_Player2"
 
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name=blueprint_path,  # ✅ Full package path works!
     action="create",
     component_type="SpotLightComponent",
@@ -878,7 +878,7 @@ manage_blueprint_node(
 
 # ✅ RIGHT: Follow dependency order
 # 1. Create variable first
-manage_blueprint_variables(
+manage_blueprint_variable(
     "BP_Player",
     "create",
     variable_name="Health",
@@ -919,7 +919,7 @@ manage_blueprint_node(
 # ✅ REQUIRED DEPENDENCIES CHECKLIST:
 
 # 1. Blueprint Variables Created?
-manage_blueprint_variables("BP_Player", "create", variable_name="Health", 
+manage_blueprint_variable("BP_Player", "create", variable_name="Health", 
                           variable_config={"type_path": "/Script/CoreUObject.FloatProperty"})
 
 # 2. Dependent Functions Created with Parameters?  

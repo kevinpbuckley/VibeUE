@@ -1214,6 +1214,40 @@ bool FCommonUtils::SetObjectProperty(UObject* Object, const FString& PropertyNam
             }
         }
     }
+    else if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        // Handle struct properties using ImportText_Direct
+        if (Value->Type == EJson::String)
+        {
+            FString StructValue = Value->AsString();
+            const TCHAR* ValueStr = *StructValue;
+            
+            // ImportText_Direct parses struct string format like "(Member1=Value1,Member2=Value2,...)"
+            const TCHAR* Result = StructProp->ImportText_Direct(ValueStr, PropertyAddr, nullptr, PPF_None);
+            if (Result && *Result == TEXT('\0'))
+            {
+                // Notify the object that a property changed
+                FPropertyChangedEvent PropertyChangedEvent(Property);
+                Object->PostEditChangeProperty(PropertyChangedEvent);
+                
+                UE_LOG(LogTemp, Display, TEXT("Successfully set struct property %s to: %s"), 
+                      *PropertyName, *StructValue);
+                return true;
+            }
+            else
+            {
+                OutErrorMessage = FString::Printf(TEXT("Failed to import struct value for property %s. Value: %s"), 
+                                                *PropertyName, *StructValue);
+                return false;
+            }
+        }
+        else
+        {
+            OutErrorMessage = FString::Printf(TEXT("Struct property %s requires string value in format: (Member1=Value1,Member2=Value2,...)"), 
+                                            *PropertyName);
+            return false;
+        }
+    }
     
     OutErrorMessage = FString::Printf(TEXT("Unsupported property type: %s for property %s"), 
                                     *Property->GetClass()->GetName(), *PropertyName);

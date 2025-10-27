@@ -210,7 +210,7 @@ manage_blueprint_function(
 
 ---
 
-## manage_blueprint_variables
+## manage_blueprint_variable
 
 **Purpose**: Unified Blueprint variable management with proper type handling
 
@@ -222,7 +222,7 @@ manage_blueprint_function(
 
 **search_types** - Discover available variable types (200+ types)
 ```python
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player2",
     action="search_types",
     search_criteria={
@@ -237,7 +237,7 @@ manage_blueprint_variables(
 
 **get_info** - Get variable information
 ```python
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="get_info",
     variable_name="Health"
@@ -254,14 +254,14 @@ manage_blueprint_variables(
 
 ```python
 # 1. Search for type
-type_search = manage_blueprint_variables(
+type_search = manage_blueprint_variable(
     blueprint_name="BP_Player2",
     action="search_types",
     search_criteria={"search_text": "UserWidget"}
 )
 
 # 2. Create with exact type_path
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="BP_Player2",
     action="create",
     variable_name="AttributeWidget",
@@ -277,7 +277,7 @@ manage_blueprint_variables(
 
 **delete** - Remove variable
 ```python
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="delete",
     variable_name="OldVariable"
@@ -288,7 +288,7 @@ manage_blueprint_variables(
 
 **get_property** - Get variable property value
 ```python
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="get_property",
     variable_name="Health",
@@ -298,7 +298,7 @@ manage_blueprint_variables(
 
 **set_property** - Set variable property value
 ```python
-manage_blueprint_variables(
+manage_blueprint_variable(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="set_property",
     variable_name="Health",
@@ -327,7 +327,7 @@ manage_blueprint_variables(
 
 ---
 
-## manage_blueprint_components
+## manage_blueprint_component
 
 **Purpose**: Unified Blueprint component management for actors
 
@@ -339,7 +339,7 @@ manage_blueprint_variables(
 
 **search_types** - Discover component types
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="",  # Not required for type search
     action="search_types",
     category="Rendering",
@@ -350,14 +350,14 @@ manage_blueprint_components(
 **get_info** - Get component type information
 ```python
 # Type metadata only
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="",
     action="get_info",
     component_type="SpotLightComponent"
 )
 
 # Type + instance property values
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="get_info",
     component_type="SpotLightComponent",
@@ -368,7 +368,7 @@ manage_blueprint_components(
 
 **get_property_metadata** - Get property details
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="",
     action="get_property_metadata",
     component_type="SpotLightComponent",
@@ -378,7 +378,7 @@ manage_blueprint_components(
 
 **list** - List all components in Blueprint
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="list"
 )
@@ -388,7 +388,7 @@ manage_blueprint_components(
 
 **create** - Add component to Blueprint
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="create",
     component_type="SpotLightComponent",
@@ -402,7 +402,7 @@ manage_blueprint_components(
 
 **delete** - Remove component
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="delete",
     component_name="SpotLight_Top",
@@ -414,7 +414,7 @@ manage_blueprint_components(
 
 **get_property** - Get single property value
 ```python
-result = manage_blueprint_components(
+result = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="get_property",
     component_name="SpotLight_Top",
@@ -425,7 +425,7 @@ result = manage_blueprint_components(
 
 **set_property** - Set property value
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="set_property",
     component_name="SpotLight_Top",
@@ -436,7 +436,7 @@ manage_blueprint_components(
 
 **get_all_properties** - Get all property values
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="get_all_properties",
     component_name="SpotLight_Top",
@@ -446,7 +446,7 @@ manage_blueprint_components(
 
 **compare_properties** - Compare between Blueprints
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="compare_properties",
     component_name="SpotLight_Top",
@@ -461,7 +461,7 @@ manage_blueprint_components(
 
 **reorder** - Change component order
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="reorder",
     component_order=["SpotLight_Top", "SpotLight_Right", "TrailVFX"]
@@ -470,7 +470,7 @@ manage_blueprint_components(
 
 **reparent** - Change parent attachment
 ```python
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="reparent",
     component_name="SpotLight_Top",
@@ -708,14 +708,14 @@ for param in params["parameters"]:
 
 ```python
 # 1. Get source properties
-source_props = manage_blueprint_components(
+source_props = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player",
     action="get_all_properties",
     component_name="SpotLight_Top"
 )
 
 # 2. Compare with target
-comparison = manage_blueprint_components(
+comparison = manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Player2",
     action="compare_properties",
     component_name="SpotLight_Top",
@@ -727,7 +727,7 @@ comparison = manage_blueprint_components(
 
 # 3. Apply differences
 for diff in comparison["differences"]:
-    manage_blueprint_components(
+    manage_blueprint_component(
         blueprint_name="/Game/Blueprints/BP_Player2",
         action="set_property",
         component_name="SpotLight_Top",
