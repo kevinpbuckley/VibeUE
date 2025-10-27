@@ -74,7 +74,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleAddBlueprintVariable(Params);
     }
-    else if (CommandType == TEXT("manage_blueprint_variables"))
+    else if (CommandType == TEXT("manage_blueprint_variable"))
     {
         return HandleManageBlueprintVariables(Params);
     }
@@ -1689,7 +1689,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         
         // Get type info using reflection
         FString TypeName = TEXT("Unknown");
-        FString TypePath = TEXT("");  // Add type_path for consistency with manage_blueprint_variables
+        FString TypePath = TEXT("");  // Add type_path for consistency with manage_blueprint_variable
         
         if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
         {

@@ -11,13 +11,20 @@ from mcp.server.fastmcp import FastMCP, Context
 logger = logging.getLogger("UnrealMCP")
 
 
-def register_asset_manager_tools(mcp: FastMCP):
+def register_asset_tools(mcp: FastMCP):
     """Register unified asset manager tool with the MCP server."""
 
     @mcp.tool()
     def manage_asset(
         ctx: Context,
         action: str,
+        # Search parameters
+        search_term: str = "",
+        asset_type: str = "",
+        path: str = "/Game",
+        case_sensitive: bool = False,
+        include_engine_content: bool = False,
+        max_results: int = 100,
         # Import parameters
         file_path: str = "",
         destination_path: str = "/Game/Textures/Imported",
@@ -44,13 +51,23 @@ def register_asset_manager_tools(mcp: FastMCP):
         background: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        🔧 **UNIFIED ASSET MANAGER**
+         **UNIFIED ASSET MANAGER**
         
         Single multi-action tool for all asset operations.
         Replaces: import_texture_asset, export_texture_for_analysis, 
                  open_asset_in_editor, convert_svg_to_png
         
-        📋 **Available Actions:**
+         **Available Actions:**
+        
+        **search** - Search for assets in the project (widgets, textures, blueprints, materials, etc.)
+        ```python
+        manage_asset(
+            action="search",
+            search_term="radar",
+            asset_type="Widget"
+        )
+        # Returns list of matching assets with paths and metadata
+        ```
         
         **import_texture** - Import texture from file system
         ```python
@@ -95,7 +112,13 @@ def register_asset_manager_tools(mcp: FastMCP):
         ```
         
         Args:
-            action: Action to perform (import_texture|export_texture|open_in_editor|convert_svg)
+            action: Action to perform (search|import_texture|export_texture|open_in_editor|convert_svg)
+            search_term: Text to search for in asset names (for search)
+            asset_type: Filter by asset type (for search - examples: Widget, Texture2D, Material, Blueprint)
+            path: Content browser path to search in (for search, default: /Game)
+            case_sensitive: Whether search should be case sensitive (for search)
+            include_engine_content: Whether to include engine content (for search)
+            max_results: Maximum number of results to return (for search)
             file_path: Source file path (for import_texture)
             asset_path: Asset path in project (for export_texture, open_in_editor)
             svg_path: SVG file path (for convert_svg)
@@ -116,7 +139,12 @@ def register_asset_manager_tools(mcp: FastMCP):
         action = action.lower()
         
         # Route to appropriate handler
-        if action == "import_texture":
+        if action == "search":
+            return _handle_search(
+                search_term, asset_type, path, case_sensitive,
+                include_engine_content, max_results
+            )
+        elif action == "import_texture":
             return _handle_import_texture(
                 file_path, destination_path, texture_name, compression_settings,
                 generate_mipmaps, validate_format, auto_optimize, convert_if_needed,
@@ -135,8 +163,44 @@ def register_asset_manager_tools(mcp: FastMCP):
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: import_texture, export_texture, open_in_editor, convert_svg"
+                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, open_in_editor, convert_svg"
             }
+
+
+def _handle_search(
+    search_term: str,
+    asset_type: str,
+    path: str,
+    case_sensitive: bool,
+    include_engine_content: bool,
+    max_results: int
+) -> Dict[str, Any]:
+    """Handle asset search."""
+    from vibe_ue_server import get_unreal_connection
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Searching for assets: term='{search_term}', type='{asset_type}', path='{path}'")
+        response = unreal.send_command("search_items", {
+            "search_term": search_term,
+            "asset_type": asset_type,
+            "path": path,
+            "case_sensitive": case_sensitive,
+            "include_engine_content": include_engine_content,
+            "max_results": max_results
+        })
+        
+        if not response:
+            return {"success": False, "error": "No response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error searching assets: {e}")
+        return {"success": False, "error": str(e)}
 
 
 def _handle_import_texture(
@@ -234,7 +298,7 @@ def _handle_open_in_editor(asset_path: str, force_open: bool) -> Dict[str, Any]:
             return {"success": False, "error": "Failed to connect to Unreal Engine"}
         
         logger.info(f"Opening asset {asset_path} in editor")
-        response = unreal.send_command("open_asset_in_editor", {
+        response = unreal.send_command("OpenAssetInEditor", {
             "asset_path": asset_path,
             "force_open": force_open
         })

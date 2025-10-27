@@ -2148,7 +2148,7 @@ TSharedPtr<FJsonValue> FBlueprintComponentReflection::PropertyToJsonValue(
     return MakeShareable(new FJsonValueString(ExportedValue));
 }
 
-// NEW HANDLER IMPLEMENTATIONS for manage_blueprint_components
+// NEW HANDLER IMPLEMENTATIONS for manage_blueprint_component
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {

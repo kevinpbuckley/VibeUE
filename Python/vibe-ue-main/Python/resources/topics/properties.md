@@ -91,7 +91,7 @@ property_value=[255, 255, 0, 255]
 
 ```python
 # Step 1: Set the color to yellow
-manage_blueprint_components(
+manage_blueprint_component(
     blueprint_name="/Game/Blueprints/Characters/BP_Player",
     action="set_property",
     component_name="SpotLight_Top",
@@ -100,7 +100,7 @@ manage_blueprint_components(
 )
 
 # Step 2: Verify it was set
-result = manage_blueprint_components(
+result = manage_blueprint_component(
     action="get_property",
     component_name="SpotLight_Top",
     property_name="LightColor"

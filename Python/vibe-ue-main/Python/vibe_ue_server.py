@@ -431,20 +431,21 @@ mcp = FastMCP(
 # This section registers all available MCP tools in logical groupings.
 # AI assistants should understand the tool organization for better selection:
 
-# CORE UNREAL TOOLS (Basic engine interaction)
-from tools.blueprint_manager import register_blueprint_manager_tools  # Unified Blueprint lifecycle management (RECOMMENDED)
-from tools.blueprint_advanced import register_blueprint_advanced_tools  # Blueprint variables and components multi-action tools
-from tools.node_tools import register_blueprint_node_tools    # Blueprint graph nodes and connections
+# CORE BLUEPRINT TOOLS (Blueprint lifecycle and management)
+from tools.manage_blueprint import register_blueprint_tools  # Blueprint lifecycle (7 actions)
+from tools.manage_blueprint_variable import register_blueprint_variable_tools  # Variable management
+from tools.manage_blueprint_component import register_blueprint_component_tools  # Component management
+from tools.manage_blueprint_node import register_node_tools  # Node operations
+from tools.manage_blueprint_function import register_blueprint_function_tools  # Function operations
 
 # UMG SYSTEM (Widget management)
-from tools.umg_manager import register_umg_manager_tools            # Unified multi-action UMG tool (RECOMMENDED)
-from tools.umg_data_binding import register_umg_data_binding_tools   # MVVM and data sources (advanced)
+from tools.manage_umg_widget import register_umg_tools  # Unified UMG tool (11 actions)
 
 # ASSET SYSTEM (Asset management)
-from tools.asset_manager import register_asset_manager_tools  # Unified asset operations (RECOMMENDED)
+from tools.manage_asset import register_asset_tools  # Asset operations (4 actions)
 
 # SYSTEM DIAGNOSTICS (AI Assistant Support)
-from tools.system_diagnostics import register_system_diagnostic_tools  # Connection testing, validation, AI guidance
+from tools.system import register_system_tools  # Connection testing, get_help
 
 # CLIENT INTEGRATION SUPPORT
 try:
@@ -463,40 +464,24 @@ except ImportError:
 # before styling, adding components, or implementing backgrounds. The guide contains
 # essential container-specific patterns and widget hierarchy requirements.
 
-# Core Unreal Engine Tools
-register_blueprint_manager_tools(mcp)  # Blueprint lifecycle: create, compile, get_info, set_property, reparent, list_custom_events, summarize_event_graph (7 actions)
-register_blueprint_advanced_tools(mcp) # Blueprint variables and components (2 multi-action tools)
-register_blueprint_node_tools(mcp) # Event graph manipulation, node connections
+# Core Blueprint Tools (9 files → 6 tools)
+register_blueprint_tools(mcp)  # manage_blueprint: create, compile, get_info, set_property, reparent, etc. (7 actions)
+register_blueprint_variable_tools(mcp)  # manage_blueprint_variable
+register_blueprint_component_tools(mcp)  # manage_blueprint_component
+register_node_tools(mcp)  # manage_blueprint_node (with discover action)
+register_blueprint_function_tools(mcp)  # manage_blueprint_function (15+ actions)
 
-# UMG Unified Manager (Consolidated Multi-Action Tool) - ALL UMG OPERATIONS
-register_umg_manager_tools(mcp)       # Single unified tool for all UMG operations (11 actions)
+# UMG Unified Manager (1 file → 1 tool)
+register_umg_tools(mcp)  # manage_umg_widget: all UMG operations (11 actions)
 
-# UMG Advanced Features (Not replaced by manage_umg_widget)
-register_umg_data_binding_tools(mcp)  # Data binding, MVVM patterns (advanced features)
+# Asset Management (1 file → 1 tool)
+register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 actions)
 
-# ❌ REMOVED - All replaced by manage_umg_widget():
-# - register_umg_tools(mcp)            # create/delete widget blueprint, remove_component
-# - register_umg_discovery_tools(mcp)   # list_components, validate, get_component_properties, get_available_widget_types
-# - register_umg_styling_tools(mcp)     # get/set/list widget properties
-# - register_umg_event_tools(mcp)       # get_available_events, bind_events
-# - register_umg_reflection_tools(mcp)  # get_available_widgets, add_component
-# - register_umg_component_tools(mcp)   # Already deprecated
-# - register_umg_layout_tools(mcp)      # Already deprecated
+# System Tools (1 file → 2 tools)
+register_system_tools(mcp)  # check_unreal_connection + get_help
 
-# ❌ REMOVED - All replaced by manage_blueprint():
-# - register_blueprint_tools(mcp)      # create_blueprint, compile_blueprint, get_blueprint_info, set_blueprint_property, reparent_blueprint
-# - register_umg_graph_introspection_tools(mcp)  # list_custom_events, summarize_event_graph (now in manage_blueprint)
-
-# ❌ REMOVED - All replaced by manage_asset():
-# - register_asset_discovery_tools(mcp)  # import_texture_asset, export_texture_for_analysis
-# - register_editor_tools(mcp)  # open_asset_in_editor (now in manage_asset)
-# - convert_svg_to_png inline tool (now in manage_asset)
-
-# Asset Management
-register_asset_manager_tools(mcp)  # Asset operations: import_texture, export_texture, open_in_editor, convert_svg (4 actions)
-
-# System Diagnostics and AI Support Tools
-register_system_diagnostic_tools(mcp)  # Connection testing, validation, troubleshooting guides, get_help() tool  
+# ✅ TOTAL: 8 Python files providing 9 MCP tools
+# ❌ REMOVED: 13 deprecated tool files (blueprint_advanced, umg_discovery, umg_styling, etc.)
 
 @mcp.prompt()
 def server_capabilities():
@@ -1033,8 +1018,10 @@ def info():
       Supported actions include `list`, `add`, `delete`, `connect`, `move`, `details`, `available`, `find`, `set_property`, `get_property`, and `list_custom_events`.
     - `manage_blueprint_function(blueprint_name, action, **kwargs)`
       Single entry point for Blueprint function graphs: `list`, `get`, `create`, `delete`, `list_params`, `add_param`, `remove_param`, `update_param`, `update_properties`.
-    - `manage_blueprint_variables(blueprint_name, action, **kwargs)`
+    - `manage_blueprint_variable(blueprint_name, action, **kwargs)`
       Unified Blueprint variable operations covering creation, deletion, info, property access, modification, listing, and type discovery via actions like `create`, `delete`, `get_info`, `get_property`, `set_property`, `list`, `modify`, and `search_types`.
+    - `manage_blueprint_component(blueprint_name, action, **kwargs)`
+      Unified Blueprint component operations.
     - `summarize_event_graph(blueprint_name, max_nodes=200)`
       Get a readable overview of event graph structure.
     

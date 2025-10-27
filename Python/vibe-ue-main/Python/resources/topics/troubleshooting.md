@@ -69,7 +69,7 @@
 
 **Solutions:**
 1. **Create variables BEFORE nodes** that reference them
-2. Use exact names from `list_widget_components()` or `manage_blueprint_variables(action="list")`
+2. Use exact names from `list_widget_components()` or `manage_blueprint_variable(action="list")`
 3. Verify you're in the correct Blueprint
 
 ## Node Issues

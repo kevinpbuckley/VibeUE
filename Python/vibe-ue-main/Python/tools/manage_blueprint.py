@@ -12,7 +12,7 @@ from mcp.server.fastmcp import FastMCP, Context
 logger = logging.getLogger("UnrealMCP")
 
 
-def register_blueprint_manager_tools(mcp: FastMCP):
+def register_blueprint_tools(mcp: FastMCP):
     """Register unified Blueprint manager tool with the MCP server."""
 
     @mcp.tool()
@@ -28,14 +28,14 @@ def register_blueprint_manager_tools(mcp: FastMCP):
         max_nodes: int = 200
     ) -> Dict[str, Any]:
         """
-        🔧 **UNIFIED BLUEPRINT LIFECYCLE MANAGER**
+         **UNIFIED BLUEPRINT LIFECYCLE MANAGER**
         
         Single multi-action tool for all Blueprint lifecycle operations.
         Replaces: create_blueprint, compile_blueprint, get_blueprint_info, 
                  set_blueprint_property, reparent_blueprint, list_custom_events,
                  summarize_event_graph
         
-        📋 **Available Actions:**
+         **Available Actions:**
         
         **create** - Create new Blueprint
         ```python
@@ -45,7 +45,7 @@ def register_blueprint_manager_tools(mcp: FastMCP):
             parent_class="Actor"
         )
         
-        ⚠️ CRITICAL DEPENDENCY ORDER after creation:
+        ️ CRITICAL DEPENDENCY ORDER after creation:
         1) Variables FIRST - Create all Blueprint variables
         2) Components SECOND - Add all components  
         3) Functions THIRD - Implement custom functions
@@ -175,7 +175,7 @@ def _handle_create(name: str, parent_class: str) -> Dict[str, Any]:
         # Add dependency order reminder
         result = response or {}
         if result.get("path") or result.get("name"):
-            logger.info("⚠️ REMINDER: Create Blueprint elements in DEPENDENCY ORDER: 1) Variables FIRST, 2) Components SECOND, 3) Functions THIRD, 4) Event Graph nodes LAST")
+            logger.info("️ REMINDER: Create Blueprint elements in DEPENDENCY ORDER: 1) Variables FIRST, 2) Components SECOND, 3) Functions THIRD, 4) Event Graph nodes LAST")
             result["reminder"] = "Create in order: Variables → Components → Functions → Event Graph"
             result["critical_order"] = "Variables FIRST, then Components, then Functions, then Event Graph LAST"
         

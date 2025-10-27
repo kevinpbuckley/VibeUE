@@ -13,7 +13,7 @@ from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
 
-def register_system_diagnostic_tools(mcp: FastMCP):
+def register_system_tools(mcp: FastMCP):
     """Register essential system diagnostic tools."""
     
     @mcp.tool()
@@ -21,7 +21,7 @@ def register_system_diagnostic_tools(mcp: FastMCP):
         """
         Test connection to Unreal Engine and verify plugin status.
         
-        🔧 **FIRST DIAGNOSTIC TOOL**: Use this when any MCP tools fail to verify basic connectivity.
+         **FIRST DIAGNOSTIC TOOL**: Use this when any MCP tools fail to verify basic connectivity.
         
         Returns:
             Dict containing:
@@ -77,14 +77,14 @@ def register_system_diagnostic_tools(mcp: FastMCP):
         """
         Get comprehensive help documentation for VibeUE MCP tools organized by topic.
         
-        🚀 **AI CRITICAL**: ALWAYS use this tool when:
+         **AI CRITICAL**: ALWAYS use this tool when:
         - You can't find a specific tool or don't know which tool to use
         - You need parameter details for multi-action tools
         - You're unsure about tool workflows or usage patterns
         - You encounter errors and need troubleshooting guidance
         - You need examples of how to use complex tools
         
-        📚 **AVAILABLE TOPICS**:
+         **AVAILABLE TOPICS**:
         - **overview**: VibeUE MCP overview and quick reference (default)
         - **blueprint-workflow**: Complete Blueprint development workflow with dependency order
         - **node-tools**: Node discovery, creation, connections, spawner_key patterns
@@ -94,7 +94,7 @@ def register_system_diagnostic_tools(mcp: FastMCP):
         - **troubleshooting**: Connection/Blueprint/Node/UMG issues, diagnostics
         - **topics**: Complete topic listing with descriptions
         
-        🎯 **USAGE EXAMPLES**:
+         **USAGE EXAMPLES**:
         - get_help() - Returns overview (default)
         - get_help(topic="blueprint-workflow") - Blueprint development guide
         - get_help(topic="node-tools") - Node creation reference

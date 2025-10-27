@@ -12,7 +12,7 @@
 
 2. **Create Blueprint Variables**
    ```python
-   manage_blueprint_variables(
+   manage_blueprint_variable(
        blueprint_name="/Game/Blueprints/BP_Player2",
        action="create",
        variable_name="Health",
@@ -22,7 +22,7 @@
 
 3. **Add Components**
    ```python
-   manage_blueprint_components(
+   manage_blueprint_component(
        blueprint_name="/Game/Blueprints/BP_Player2",
        action="create",
        component_type="SpotLightComponent",

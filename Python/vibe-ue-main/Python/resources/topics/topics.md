@@ -60,8 +60,8 @@ Use `get_help(topic="topic_name")` to access specific help content.
 
 **multi-action-tools** - Multi-action tool reference
 - manage_blueprint_function (functions, parameters, locals)
-- manage_blueprint_variables (type search, creation with type_path)
-- manage_blueprint_components (component management, properties)
+- manage_blueprint_variable (type search, creation with type_path)
+- manage_blueprint_component (component management, properties)
 - manage_blueprint_node (node operations, connections)
 - Action-specific parameters and patterns
 - Complete workflow examples

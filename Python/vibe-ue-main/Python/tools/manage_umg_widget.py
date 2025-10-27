@@ -7,8 +7,8 @@ This module provides a single unified tool for ALL UMG Widget Blueprint operatio
 following the successful multi-action pattern established by:
 - manage_blueprint_node (node operations)
 - manage_blueprint_function (function operations)
-- manage_blueprint_variables (variable operations)
-- manage_blueprint_components (component operations)
+- manage_blueprint_variable (variable operations)
+- manage_blueprint_component (component operations)
 
 CRITICAL FOR AI WORKFLOW:
 1. Use manage_umg_widget() for ALL UMG operations
@@ -35,7 +35,7 @@ from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
 
-def register_umg_manager_tools(mcp: FastMCP):
+def register_umg_tools(mcp: FastMCP):
     """Register unified UMG management tool with the MCP server."""
 
     @mcp.tool()
@@ -80,15 +80,15 @@ def register_umg_manager_tools(mcp: FastMCP):
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        🔧 **UNIFIED UMG WIDGET MANAGEMENT SYSTEM**
+         **UNIFIED UMG WIDGET MANAGEMENT SYSTEM**
         
         Single multi-action tool for ALL UMG Widget Blueprint operations, following the same
-        pattern as manage_blueprint_node, manage_blueprint_function, and manage_blueprint_variables.
+        pattern as manage_blueprint_node, manage_blueprint_function, and manage_blueprint_variable.
         
-        ⚠️ **CRITICAL**: Before styling widgets, use get_help(topic="umg-guide") to understand
+        ️ **CRITICAL**: Before styling widgets, use get_help(topic="umg-guide") to understand
         proper container-specific patterns and widget hierarchy requirements.
         
-        ## 📋 Available Actions:
+        ##  Available Actions:
         
         ### Component Lifecycle Actions
         
@@ -220,7 +220,7 @@ def register_umg_manager_tools(mcp: FastMCP):
         )
         ```
         
-        ## 📊 Parameters by Action:
+        ##  Parameters by Action:
         
         **Component Lifecycle:**
         - list_components: widget_name
@@ -241,7 +241,7 @@ def register_umg_manager_tools(mcp: FastMCP):
         - get_available_events: widget_name, component_name
         - bind_events: widget_name, component_name, input_events
         
-        ## 🎯 Common Workflows:
+        ##  Common Workflows:
         
         **Discovery → Inspect → Modify:**
         ```python
@@ -266,7 +266,7 @@ def register_umg_manager_tools(mcp: FastMCP):
                          component_name="PlayButton", parent_name="CanvasPanel_Root")
         ```
         
-        ## ⚠️ Critical Notes:
+        ## ️ Critical Notes:
         
         **Slot Properties (Background Filling):**
         - Use "Slot.HorizontalAlignment" with values: "HAlign_Fill", "HAlign_Left", "HAlign_Center", "HAlign_Right"
@@ -279,7 +279,7 @@ def register_umg_manager_tools(mcp: FastMCP):
         - Padding: {"Left": n, "Top": n, "Right": n, "Bottom": n}
         - Visibility: "Visible", "Hidden", "Collapsed", "HitTestInvisible"
         
-        ## 🔄 Replaces Legacy Tools:
+        ##  Replaces Legacy Tools:
         - list_widget_components() → action="list_components"
         - add_widget_component() → action="add_component"
         - remove_umg_component() → action="remove_component"
