@@ -723,15 +723,66 @@ FVariableDefinition FVariableDefinitionService::BPVariableToDefinition(const FBP
 {
     FVariableDefinition Def;
     Def.VariableName = BPVar.VarName;
-    // Type path best-effort: resolve from subcategory object
+    
+    // Type path resolution: handle both object types and primitives
     if (const UObject* Obj = BPVar.VarType.PinSubCategoryObject.Get())
     {
+        // Object types (UMG widgets, Niagara systems, Blueprint classes, etc.)
         const UPackage* Pkg = Obj->GetOutermost();
         Def.TypePath = FTopLevelAssetPath(*Pkg->GetName(), *Obj->GetName());
     }
+    else if (!BPVar.VarType.PinCategory.IsNone())
+    {
+        // Primitive types: convert pin category to canonical type path
+        const FString CategoryStr = BPVar.VarType.PinCategory.ToString();
+        FString PropertyTypeName;
+        
+        if (CategoryStr.Equals(TEXT("float"), ESearchCase::IgnoreCase) || CategoryStr.Equals(TEXT("real"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("FloatProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("int"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("IntProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("bool"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("BoolProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("double"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("DoubleProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("string"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("StrProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("name"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("NameProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("byte"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("ByteProperty");
+        }
+        else if (CategoryStr.Equals(TEXT("text"), ESearchCase::IgnoreCase))
+        {
+            PropertyTypeName = TEXT("TextProperty");
+        }
+        
+        if (!PropertyTypeName.IsEmpty())
+        {
+            Def.TypePath = FTopLevelAssetPath(TEXT("/Script/CoreUObject"), *PropertyTypeName);
+        }
+    }
+    
     Def.Container.Kind = (BPVar.VarType.ContainerType == EPinContainerType::Array) ? TEXT("Array") :
                          (BPVar.VarType.ContainerType == EPinContainerType::Set) ? TEXT("Set") :
                          (BPVar.VarType.ContainerType == EPinContainerType::Map) ? TEXT("Map") : TEXT("");
+    
+    // Copy default value
+    Def.DefaultValueString = BPVar.DefaultValue;
+    
     // Copy metadata out
     Def.MetadataMap.Reset();
     for (const FBPVariableMetaDataEntry& Entry : BPVar.MetaDataArray)
@@ -1758,6 +1809,7 @@ TSharedPtr<FJsonObject> FResponseSerializer::SerializeVariableDefinition(const F
     Obj->SetObjectField(TEXT("container"), SerializeContainerDescriptor(Definition.Container));
     Obj->SetStringField(TEXT("category"), Definition.Category);
     Obj->SetStringField(TEXT("tooltip"), Definition.Tooltip);
+    Obj->SetStringField(TEXT("default_value"), Definition.DefaultValueString);
     return Obj;
 }
 

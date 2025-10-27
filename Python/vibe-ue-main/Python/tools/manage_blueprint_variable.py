@@ -81,11 +81,36 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         )
         ```
         
+        **list** - List all variables with filtering
+        ```python
+        manage_blueprint_variable(
+            blueprint_name="/Game/Blueprints/BP_Player",
+            action="list",
+            list_criteria={
+                "category": "UI",  # Optional: filter by category
+                "name_contains": "Health",  # Optional: filter by name substring
+                "include_private": True,  # Optional: include private variables
+                "include_metadata": False  # Optional: include metadata
+            }
+        )
+        # Returns: {
+        #   "success": True,
+        #   "variables": [
+        #     {
+        #       "name": "Health",
+        #       "display_type": "Float",
+        #       "category": "Combat",
+        #       "is_editable": True,
+        #       ...
+        #     }
+        #   ]
+        # }
+        ```
+        
         **ℹ️ get_info** - Get detailed variable information
         **️ delete** - Remove variables with reference checking  
         ** get_property** - Get nested property values from complex variables
         **️ set_property** - Set nested property values (arrays, maps, structs)
-        ** list** - List all variables with filtering (FUTURE)
         ** modify** - Modify existing variable config (FUTURE)
         
         ** Blueprint Challenge Solution:**
