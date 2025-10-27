@@ -6,7 +6,8 @@ Follows the established multi-action pattern from manage_blueprint_node, manage_
 """
 
 import logging
-from typing import Dict, Any, Optional
+import json
+from typing import Dict, Any, Optional, Union
 from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
@@ -23,7 +24,7 @@ def register_blueprint_tools(mcp: FastMCP):
         name: str = "",
         parent_class: str = "",
         property_name: str = "",
-        property_value: str = "",
+        property_value: Union[str, int, float, bool] = "",
         new_parent_class: str = "",
         max_nodes: int = 200,
         include_class_defaults: bool = True
@@ -297,7 +298,7 @@ def _handle_get_property(blueprint_name: str, property_name: str) -> Dict[str, A
 def _handle_set_property(
     blueprint_name: str,
     property_name: str,
-    property_value: str
+    property_value
 ) -> Dict[str, Any]:
     """Handle Blueprint property setting."""
     from vibe_ue_server import get_unreal_connection
@@ -313,11 +314,22 @@ def _handle_set_property(
         if not unreal:
             return {"success": False, "error": "Failed to connect to Unreal Engine"}
         
-        logger.info(f"Setting property {property_name} on {blueprint_name}")
+        # Convert property_value to appropriate string format for C++
+        if isinstance(property_value, bool):
+            # Convert Python bool to string that C++ expects
+            value_str = "true" if property_value else "false"
+        elif isinstance(property_value, (int, float)):
+            # Convert numbers to string
+            value_str = str(property_value)
+        else:
+            # Already a string or other type
+            value_str = str(property_value) if property_value else ""
+        
+        logger.info(f"Setting property {property_name} on {blueprint_name} to {value_str} (type: {type(property_value).__name__})")
         response = unreal.send_command("set_blueprint_property", {
             "blueprint_name": blueprint_name,
             "property_name": property_name,
-            "property_value": property_value
+            "property_value": value_str
         })
         
         if not response:
