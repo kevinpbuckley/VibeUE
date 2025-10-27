@@ -39,13 +39,36 @@ def register_blueprint_tools(mcp: FastMCP):
         
          **Available Actions:**
         
-        **create** - Create new Blueprint
+        **create** - Create new Blueprint of ANY type (Actor, Widget, Component, etc.)
         ```python
+        # Create Actor Blueprint
         manage_blueprint(
             action="create",
             name="BP_MyActor",
             parent_class="Actor"
         )
+        
+        # Create Widget Blueprint (UMG)
+        manage_blueprint(
+            action="create",
+            name="WBP_MyWidget",
+            parent_class="UserWidget"  # Base class for UMG widgets
+        )
+        
+        # Create ActorComponent Blueprint
+        manage_blueprint(
+            action="create",
+            name="BP_MyComponent",
+            parent_class="ActorComponent"
+        )
+        
+        # Create any Blueprint type by specifying the parent class
+        # Common parent classes:
+        # - Actor, Pawn, Character (gameplay objects)
+        # - UserWidget (UMG widgets)
+        # - ActorComponent, SceneComponent (components)
+        # - GameMode, GameState, PlayerController (framework)
+        # - AnimInstance (animation blueprints)
         
         ️ CRITICAL DEPENDENCY ORDER after creation:
         1) Variables FIRST - Create all Blueprint variables
