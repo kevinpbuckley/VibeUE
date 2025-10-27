@@ -25,7 +25,8 @@ def register_blueprint_tools(mcp: FastMCP):
         property_name: str = "",
         property_value: str = "",
         new_parent_class: str = "",
-        max_nodes: int = 200
+        max_nodes: int = 200,
+        include_class_defaults: bool = True
     ) -> Dict[str, Any]:
         """
          **UNIFIED BLUEPRINT LIFECYCLE MANAGER**
@@ -64,9 +65,20 @@ def register_blueprint_tools(mcp: FastMCP):
         ```python
         manage_blueprint(
             action="get_info",
-            blueprint_name="/Game/Blueprints/BP_Player"
+            blueprint_name="/Game/Blueprints/BP_Player",
+            include_class_defaults=True
         )
-        # Returns: variables, components, functions, event graphs, properties
+        # Returns: variables, components, functions, event graphs, class_defaults
+        ```
+        
+        **get_property** - Get Blueprint class default property value and metadata
+        ```python
+        manage_blueprint(
+            action="get_property",
+            blueprint_name="/Game/Blueprints/BP_Player",
+            property_name="NoiseRadius"
+        )
+        # Returns: current_value, type, category, tooltip, min/max values, etc.
         ```
         
         **set_property** - Set Blueprint class default property
@@ -109,14 +121,15 @@ def register_blueprint_tools(mcp: FastMCP):
         ```
         
         Args:
-            action: Action to perform (create|compile|get_info|set_property|reparent|list_custom_events|summarize_event_graph)
+            action: Action to perform (create|compile|get_info|get_property|set_property|reparent|list_custom_events|summarize_event_graph)
             blueprint_name: Target Blueprint name/path (required for most actions)
             name: Blueprint name for create action
             parent_class: Parent class for create action
-            property_name: Property name for set_property action
-            property_value: Property value for set_property action
+            property_name: Property name for set_property/get_property actions
+            property_value: Property value for set_property action (will be converted to string internally)
             new_parent_class: New parent class for reparent action
             max_nodes: Maximum nodes to include in summary (for summarize_event_graph)
+            include_class_defaults: Include class default properties in get_info (default: True)
             
         Returns:
             Dict containing action results with success field
@@ -131,7 +144,9 @@ def register_blueprint_tools(mcp: FastMCP):
         elif action == "compile":
             return _handle_compile(blueprint_name)
         elif action == "get_info":
-            return _handle_get_info(blueprint_name)
+            return _handle_get_info(blueprint_name, include_class_defaults)
+        elif action == "get_property":
+            return _handle_get_property(blueprint_name, property_name)
         elif action == "set_property":
             return _handle_set_property(blueprint_name, property_name, property_value)
         elif action == "reparent":
@@ -143,7 +158,7 @@ def register_blueprint_tools(mcp: FastMCP):
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, set_property, reparent, list_custom_events, summarize_event_graph"
+                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph"
             }
 
 
@@ -217,7 +232,7 @@ def _handle_compile(blueprint_name: str) -> Dict[str, Any]:
         return {"success": False, "error": str(e)}
 
 
-def _handle_get_info(blueprint_name: str) -> Dict[str, Any]:
+def _handle_get_info(blueprint_name: str, include_class_defaults: bool = True) -> Dict[str, Any]:
     """Handle Blueprint info retrieval."""
     from vibe_ue_server import get_unreal_connection
     
@@ -234,7 +249,8 @@ def _handle_get_info(blueprint_name: str) -> Dict[str, Any]:
         
         logger.info(f"Getting Blueprint info: {blueprint_name}")
         response = unreal.send_command("get_blueprint_info", {
-            "blueprint_name": blueprint_name
+            "blueprint_name": blueprint_name,
+            "include_class_defaults": include_class_defaults
         })
         
         if not response:
@@ -244,6 +260,37 @@ def _handle_get_info(blueprint_name: str) -> Dict[str, Any]:
         
     except Exception as e:
         logger.error(f"Error getting blueprint info: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _handle_get_property(blueprint_name: str, property_name: str) -> Dict[str, Any]:
+    """Handle Blueprint property retrieval with full metadata."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not blueprint_name or not property_name:
+        return {
+            "success": False,
+            "error": "'blueprint_name' and 'property_name' are required for get_property action"
+        }
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Getting property {property_name} from {blueprint_name}")
+        response = unreal.send_command("get_blueprint_property", {
+            "blueprint_name": blueprint_name,
+            "property_name": property_name
+        })
+        
+        if not response:
+            return {"success": False, "error": "No response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error getting blueprint property: {e}")
         return {"success": False, "error": str(e)}
 
 
