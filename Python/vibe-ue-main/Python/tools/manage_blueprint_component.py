@@ -45,7 +45,7 @@ def register_blueprint_component_tools(mcp: FastMCP):
         options: Dict[str, Any] = None
     ) -> Dict[str, Any]:
         """
-         **UNIFIED BLUEPRINT COMPONENT MANAGEMENT SYSTEM**
+        Blueprint Component Management Tool
         
         ️ **CRITICAL: blueprint_name MUST be a full package path!**
         -  CORRECT: `/Game/Blueprints/BP_Player2` or `/Game/Blueprints/Characters/BP_Player`

@@ -51,14 +51,9 @@ def register_asset_tools(mcp: FastMCP):
         background: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-         **UNIFIED ASSET MANAGER**
-        
         Single multi-action tool for all asset operations.
-        Replaces: import_texture_asset, export_texture_for_analysis, 
-                 open_asset_in_editor, convert_svg_to_png
         
          **Available Actions:**
-        
         **search** - Search for assets in the project (widgets, textures, blueprints, materials, etc.)
         ```python
         manage_asset(

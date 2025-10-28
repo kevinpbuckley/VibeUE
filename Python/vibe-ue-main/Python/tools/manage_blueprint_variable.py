@@ -29,15 +29,13 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-        UNIFIED BLUEPRINT VARIABLE MANAGEMENT SYSTEM
+        Blueprint Variable Management Tool
         
+        Single multi-action tool for ALL Blueprint variable operations.
+
         CRITICAL: variable_config MUST use "type_path" NOT "type"
         WRONG: {"type": "UserWidget"} or {"type": "float"}
         CORRECT: {"type_path": "/Script/UMG.UserWidget"} or {"type_path": "/Script/CoreUObject.FloatProperty"}
-        
-        SOLVES THE BLUEPRINT CHALLENGE TYPE ISSUES
-        This tool replaces all individual variable tools with a unified, reflection-based system
-        that properly handles UserWidget, NiagaraSystem, SoundBase, and Blueprint class types.
         
         Available Actions:
         
@@ -51,7 +49,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         )
         # Result includes type_path like "/Script/UMG.UserWidget"
         
-        # ️ CRITICAL: Use "type_path" key, NOT "type"!
+        #  CRITICAL: Use "type_path" key, NOT "type"!
         # Then create variable with exact type_path from search results
         manage_blueprint_variable(
             blueprint_name="BP_Player2",
@@ -67,7 +65,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         )
         ```
         
-    **search_types** - Discover available variable types (200+ vs old 27)
+    **search_types** - Discover available variable types
         ```python
         manage_blueprint_variable(
             blueprint_name="BP_Player2",
@@ -107,24 +105,15 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         # }
         ```
         
-        **ℹ️ get_info** - Get detailed variable information
-        **️ delete** - Remove variables with reference checking  
+        ** get_info** - Get detailed variable information
+        ** delete** - Remove variables with reference checking  
         ** get_property** - Get nested property values from complex variables
-        **️ set_property** - Set nested property values (arrays, maps, structs)
+        ** set_property** - Set nested property values (arrays, maps, structs)
         ** modify** - Modify existing variable config (FUTURE)
         
-        ** Blueprint Challenge Solution:**
-        This tool fixes the exact variable type issues blocking challenge completion:
-        - AttributeWidget → UserWidget (type_path: "/Script/UMG.UserWidget") 
-        - Death_Niagara_System → NiagaraSystem (type_path: "/Script/Niagara.NiagaraSystem")   
-        - Death_Sound → SoundBase (type_path: "/Script/Engine.SoundBase") 
-        - Microsub HUD → BP_MicrosubHUD_C (type_path: "/Game/Blueprints/HUD/BP_MicrosubHUD.BP_MicrosubHUD_C") 
-        - ExplosionForce → float (type_path: "/Script/CoreUObject.FloatProperty") 
-        - Loading Start Delay → float (type_path: "/Script/CoreUObject.FloatProperty") 
+        Common Type Paths Reference:
         
-        ** Common Type Paths Reference:**
-        
-        **Primitives (CRITICAL - Use exact paths):**
+        Primitives (Use exact paths):
         - **float**: "/Script/CoreUObject.FloatProperty"
         - **int**: "/Script/CoreUObject.IntProperty"  
         - **bool**: "/Script/CoreUObject.BoolProperty"
@@ -157,7 +146,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         - variable_name: Variable name (required for most actions)
         - variable_config: Variable configuration dict for create action
           
-          ️ **CRITICAL REQUIREMENT**: MUST use "type_path" key, NOT "type"
+           **CRITICAL REQUIREMENT**: MUST use "type_path" key, NOT "type"
            WRONG: {"type": "float"} or {"type": "UserWidget"}
            CORRECT: {"type_path": "/Script/CoreUObject.FloatProperty"}
           

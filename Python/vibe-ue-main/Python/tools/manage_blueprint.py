@@ -30,7 +30,7 @@ def register_blueprint_tools(mcp: FastMCP):
         include_class_defaults: bool = True
     ) -> Dict[str, Any]:
         """
-         **UNIFIED BLUEPRINT LIFECYCLE MANAGER**
+         Blueprint Manager Tool
         
         Single multi-action tool for all Blueprint lifecycle operations.
         Replaces: create_blueprint, compile_blueprint, get_blueprint_info, 
