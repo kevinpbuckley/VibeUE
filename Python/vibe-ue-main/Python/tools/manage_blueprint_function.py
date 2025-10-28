@@ -55,8 +55,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         extra: Dict[str, Any] = None,
     ) -> Dict[str, Any]:
         """
-         **MULTI-ACTION BLUEPRINT FUNCTION MANAGER**: Complete Blueprint function lifecycle management.
-        
+        Blueprint Function Management Tool
         ️ **CRITICAL: All action names are case-insensitive and processed as lowercase by C++ backend**
         
         ##  Complete Action Reference (All Available Actions):
@@ -271,7 +270,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         )
         ```
         
-        ## ️ Critical Parameter Direction Values:
+        ## Critical Parameter Direction Values:
         
         **Accepted Values (case-insensitive):**
         - **"input"** - Input parameters (left side of function node)
@@ -346,7 +345,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         After creating functions with parameters, use manage_blueprint_node with graph_scope="function"
         and function_name to add nodes to the function graph.
         
-        ## ️ CRITICAL WORKFLOW ORDER:
+        ## CRITICAL WORKFLOW ORDER:
         
         1. **Variables First**: Create all Blueprint variables
         2. **Functions Second**: Create functions and add parameters

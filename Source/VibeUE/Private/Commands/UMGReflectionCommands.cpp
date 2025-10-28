@@ -1,4 +1,4 @@
-#include "UMGReflectionCommands.h"
+#include "Commands/UMGReflectionCommands.h"
 #include "Engine/Engine.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/UserWidget.h"

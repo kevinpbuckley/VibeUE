@@ -80,12 +80,11 @@ def register_umg_tools(mcp: FastMCP):
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """
-         **UNIFIED UMG WIDGET MANAGEMENT SYSTEM**
+         UMG Widget Manager Tool
         
-        Single multi-action tool for ALL UMG Widget Blueprint operations, following the same
-        pattern as manage_blueprint_node, manage_blueprint_function, and manage_blueprint_variable.
+        Single multi-action tool for ALL UMG Widget Blueprint operations
         
-        ️ **CRITICAL**: Before styling widgets, use get_help(topic="umg-guide") to understand
+        **CRITICAL**: Before styling widgets, use get_help(topic="umg-guide") to understand
         proper container-specific patterns and widget hierarchy requirements.
         
         ##  Available Actions:
@@ -266,7 +265,7 @@ def register_umg_tools(mcp: FastMCP):
                          component_name="PlayButton", parent_name="CanvasPanel_Root")
         ```
         
-        ## ️ Critical Notes:
+        ## Critical Notes:
         
         **Slot Properties (Background Filling):**
         - Use "Slot.HorizontalAlignment" with values: "HAlign_Fill", "HAlign_Left", "HAlign_Center", "HAlign_Right"
@@ -279,7 +278,7 @@ def register_umg_tools(mcp: FastMCP):
         - Padding: {"Left": n, "Top": n, "Right": n, "Bottom": n}
         - Visibility: "Visible", "Hidden", "Collapsed", "HitTestInvisible"
         
-        ##  Replaces Legacy Tools:
+        Action Mappings:
         - list_widget_components() → action="list_components"
         - add_widget_component() → action="add_component"
         - remove_umg_component() → action="remove_component"
