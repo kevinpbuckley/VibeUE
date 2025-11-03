@@ -1,43 +1,136 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #pragma once
 
 #include "CoreMinimal.h"
+#include "HAL/CriticalSection.h"
+
+// Forward declarations
+class UWorld;
+class UEditorEngine;
+class FServiceBase;
 
 /**
- * @struct FServiceContext
- * @brief Shared context for all services
- * 
- * Provides access to common resources and configuration needed by services.
- * Services receive this context through dependency injection.
+ * Shared context object that services use to access common resources.
+ * Provides thread-safe access to logging, caching, and Unreal Engine state.
+ * Enables dependency injection for testability.
  */
-struct VIBEUE_API FServiceContext
+class VIBEUE_API FServiceContext
 {
 public:
 	/**
-	 * @brief Default constructor
+	 * Default constructor.
+	 * Initializes the service context with default values.
 	 */
-	FServiceContext()
-		: LogCategoryName(TEXT("VibeUE"))
-	{
-	}
+	FServiceContext();
 
 	/**
-	 * @brief Gets the log category name for service logging
-	 * @return The log category name
+	 * Destructor.
+	 * Cleans up registered services and resources.
 	 */
-	const FString& GetLogCategoryName() const { return LogCategoryName; }
+	~FServiceContext();
+
+	// ========================================
+	// Logging
+	// ========================================
 
 	/**
-	 * @brief Sets the log category name for service logging
-	 * @param InLogCategoryName The new log category name
+	 * Logs an informational message from a service.
+	 * Thread-safe.
+	 * 
+	 * @param Message The message to log
+	 * @param ServiceName The name of the service logging the message
 	 */
-	void SetLogCategoryName(const FString& InLogCategoryName)
-	{
-		LogCategoryName = InLogCategoryName;
-	}
+	void LogInfo(const FString& Message, const FString& ServiceName) const;
+
+	/**
+	 * Logs a warning message from a service.
+	 * Thread-safe.
+	 * 
+	 * @param Message The warning message to log
+	 * @param ServiceName The name of the service logging the warning
+	 */
+	void LogWarning(const FString& Message, const FString& ServiceName) const;
+
+	/**
+	 * Logs an error message from a service.
+	 * Thread-safe.
+	 * 
+	 * @param Message The error message to log
+	 * @param ServiceName The name of the service logging the error
+	 */
+	void LogError(const FString& Message, const FString& ServiceName) const;
+
+	// ========================================
+	// Unreal Engine Access
+	// ========================================
+
+	/**
+	 * Gets the current world context.
+	 * Thread-safe.
+	 * 
+	 * @return Pointer to the current UWorld, or nullptr if not available
+	 */
+	UWorld* GetWorld() const;
+
+	/**
+	 * Gets the editor engine instance.
+	 * Thread-safe.
+	 * 
+	 * @return Pointer to the UEditorEngine, or nullptr if not in editor mode
+	 */
+	UEditorEngine* GetEditorEngine() const;
+
+	// ========================================
+	// Service Registration (for inter-service communication)
+	// ========================================
+
+	/**
+	 * Registers a service with the context.
+	 * Thread-safe.
+	 * 
+	 * @param ServiceName The unique name identifier for the service
+	 * @param Service Shared pointer to the service instance
+	 */
+	void RegisterService(const FString& ServiceName, TSharedPtr<FServiceBase> Service);
+
+	/**
+	 * Retrieves a registered service by name.
+	 * Thread-safe.
+	 * 
+	 * @param ServiceName The unique name identifier for the service
+	 * @return Shared pointer to the service if found, nullptr otherwise
+	 */
+	TSharedPtr<FServiceBase> GetService(const FString& ServiceName) const;
+
+	// ========================================
+	// Configuration
+	// ========================================
+
+	/**
+	 * Gets a configuration value by key.
+	 * Thread-safe.
+	 * 
+	 * @param Key The configuration key
+	 * @param DefaultValue The default value to return if key not found
+	 * @return The configuration value, or DefaultValue if not found
+	 */
+	FString GetConfigValue(const FString& Key, const FString& DefaultValue = TEXT("")) const;
+
+	/**
+	 * Sets a configuration value.
+	 * Thread-safe.
+	 * 
+	 * @param Key The configuration key
+	 * @param Value The value to store
+	 */
+	void SetConfigValue(const FString& Key, const FString& Value);
 
 private:
-	/** Log category name used for all service logging */
-	FString LogCategoryName;
+	/** Map of registered services for inter-service communication */
+	TMap<FString, TSharedPtr<FServiceBase>> Services;
+
+	/** Map of configuration key-value pairs */
+	TMap<FString, FString> ConfigValues;
+
+	/** Critical section for thread-safe access to shared resources */
+	mutable FCriticalSection Lock;
 };
