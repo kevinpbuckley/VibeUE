@@ -52,7 +52,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::FindBlueprint(const FString& Bl
     if (BlueprintName.IsEmpty())
     {
         return TResult<UBlueprint*>::Error(
-            ErrorCodes::PARAM_INVALID,
+            VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Blueprint name cannot be empty")
         );
     }
@@ -123,7 +123,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::FindBlueprint(const FString& Bl
     }
     
     return TResult<UBlueprint*>::Error(
-        ErrorCodes::BLUEPRINT_NOT_FOUND,
+        VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
         FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName)
     );
 }
@@ -133,7 +133,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::LoadBlueprint(const FString& Bl
     if (BlueprintPath.IsEmpty())
     {
         return TResult<UBlueprint*>::Error(
-            ErrorCodes::PARAM_INVALID,
+            VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Blueprint path cannot be empty")
         );
     }
@@ -143,7 +143,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::LoadBlueprint(const FString& Bl
     if (!Blueprint)
     {
         return TResult<UBlueprint*>::Error(
-            ErrorCodes::BLUEPRINT_LOAD_FAILED,
+            VibeUE::ErrorCodes::BLUEPRINT_LOAD_FAILED,
             FString::Printf(TEXT("Failed to load blueprint from path: %s"), *BlueprintPath)
         );
     }
@@ -156,7 +156,7 @@ TResult<TArray<FBlueprintInfo>> FBlueprintDiscoveryService::SearchBlueprints(con
     if (SearchTerm.IsEmpty())
     {
         return TResult<TArray<FBlueprintInfo>>::Error(
-            ErrorCodes::PARAM_INVALID,
+            VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Search term cannot be empty")
         );
     }
@@ -229,7 +229,7 @@ TResult<FBlueprintInfo> FBlueprintDiscoveryService::GetBlueprintInfo(UBlueprint*
     if (!Blueprint)
     {
         return TResult<FBlueprintInfo>::Error(
-            ErrorCodes::PARAM_INVALID,
+            VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Blueprint pointer is null")
         );
     }
@@ -250,7 +250,7 @@ TResult<bool> FBlueprintDiscoveryService::BlueprintExists(const FString& Bluepri
     if (BlueprintName.IsEmpty())
     {
         return TResult<bool>::Error(
-            ErrorCodes::PARAM_INVALID,
+            VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Blueprint name cannot be empty")
         );
     }
