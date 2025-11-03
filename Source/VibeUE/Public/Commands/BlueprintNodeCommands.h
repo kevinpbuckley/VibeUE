@@ -140,6 +140,16 @@ private:
                                                          const TArray<TSharedPtr<FJsonValue>>& Failures,
                                                          const TArray<UEdGraph*>& ModifiedGraphs) const;
     
+    // HandleDisconnectPins helper methods
+    TArray<TSharedPtr<FJsonValue>> SummarizeLinksToJson(UEdGraphPin* Pin, const FString& Role) const;
+    TSharedPtr<FJsonObject> BuildDisconnectionSuccessJson(const struct FPinDisconnectionResult& Result,
+                                                            const TSharedPtr<FJsonObject>& RequestObject) const;
+    TSharedPtr<FJsonObject> BuildDisconnectionResponseJson(const FString& BlueprintName,
+                                                             int32 AttemptedCount,
+                                                             const TArray<TSharedPtr<FJsonValue>>& Successes,
+                                                             const TArray<TSharedPtr<FJsonValue>>& Failures,
+                                                             const TArray<UEdGraph*>& ModifiedGraphs) const;
+    
 private:
     // Helper methods to convert TResult to JSON
     TSharedPtr<FJsonObject> CreateSuccessResponse() const;

@@ -89,6 +89,50 @@ struct VIBEUE_API FPinConnectionBatchResult
 };
 
 /**
+ * Request to disconnect pins
+ */
+struct VIBEUE_API FPinDisconnectionRequest
+{
+    int32 Index = 0;
+    UEdGraphPin* SourcePin = nullptr;
+    UEdGraphNode* SourceNode = nullptr;
+    UEdGraph* SourceGraph = nullptr;
+    FString SourcePinIdentifier;
+    UEdGraphPin* TargetPin = nullptr;
+    UEdGraphNode* TargetNode = nullptr;
+    UEdGraph* TargetGraph = nullptr;
+    FString TargetPinIdentifier;
+    bool bBreakAll = true;  // If true, break all links; if false, break specific link
+};
+
+/**
+ * Result of pin disconnection operation
+ */
+struct VIBEUE_API FPinDisconnectionResult
+{
+    int32 Index = 0;
+    bool bSuccess = false;
+    FString ErrorCode;
+    FString ErrorMessage;
+    FString PinIdentifier;
+    FString SourcePinIdentifier;
+    FString TargetPinIdentifier;
+    TArray<FPinLinkBreakInfo> BrokenLinks;
+    bool bGraphModified = false;
+    UEdGraph* ModifiedGraph = nullptr;
+};
+
+/**
+ * Batch disconnection results
+ */
+struct VIBEUE_API FPinDisconnectionBatchResult
+{
+    TArray<FPinDisconnectionResult> Results;
+    TArray<UEdGraph*> ModifiedGraphs;
+    bool bBlueprintModified = false;
+};
+
+/**
  * Descriptor for a node type available in the palette
  */
 struct VIBEUE_API FNodeDescriptor
@@ -149,8 +193,10 @@ public:
     // Pin connections
     TResult<FPinConnectionResult> ConnectPins(UBlueprint* Blueprint, const FPinConnectionRequest& Request);
     TResult<FPinConnectionBatchResult> ConnectPinsBatch(UBlueprint* Blueprint, const TArray<FPinConnectionRequest>& Requests);
-    TResult<void> DisconnectPins(UBlueprint* Blueprint, const FString& SourceNodeId,
-                                const FString& SourcePinName);
+    
+    // Pin disconnections
+    TResult<FPinDisconnectionResult> DisconnectPins(UBlueprint* Blueprint, const FPinDisconnectionRequest& Request);
+    TResult<FPinDisconnectionBatchResult> DisconnectPinsBatch(UBlueprint* Blueprint, const TArray<FPinDisconnectionRequest>& Requests);
     TResult<TArray<FPinConnectionInfo>> GetPinConnections(UBlueprint* Blueprint, const FString& NodeId);
     
     // Node configuration
