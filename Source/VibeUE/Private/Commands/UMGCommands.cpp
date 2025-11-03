@@ -17,6 +17,7 @@
 #include "Components/Button.h"
 #include "Components/CanvasPanel.h"
 #include "Components/CanvasPanelSlot.h"
+#include "Components/WidgetSwitcher.h"
 #include "Blueprint/WidgetTree.h"
 #include "Blueprint/UserWidget.h"
 #include "JsonObjectConverter.h"
@@ -1025,11 +1026,75 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<F
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
 {
-	// NOTE: This requires special handling beyond simple AddComponent
-	// For now, delegate to old implementation
-	// TODO: Add WidgetSwitcher slot management to ComponentService
-	return CreateErrorResponse(TEXT("NOT_IMPLEMENTED"), 
-		TEXT("add_widget_switcher_slot not yet refactored"));
+	FString WidgetBlueprintName, SwitcherName, ChildWidgetName;
+	int32 SlotIndex = 0;
+	
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName) ||
+		!Params->TryGetStringField(TEXT("switcher_name"), SwitcherName) ||
+		!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
+	}
+	
+	Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
+	
+	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(WidgetBlueprintName);
+	if (WidgetResult.IsError())
+	{
+		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
+	}
+	
+	UWidgetBlueprint* WidgetBlueprint = WidgetResult.GetValue();
+	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
+	if (!WidgetTree)
+	{
+		return CreateErrorResponse(TEXT("INVALID_STATE"), TEXT("Widget Blueprint has no WidgetTree"));
+	}
+	
+	// Find the widget switcher and child widget
+	UWidgetSwitcher* WidgetSwitcher = nullptr;
+	UWidget* ChildWidget = nullptr;
+	TArray<UWidget*> AllWidgets;
+	WidgetTree->GetAllWidgets(AllWidgets);
+	
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (Widget && Widget->GetName() == SwitcherName && Widget->IsA<UWidgetSwitcher>())
+		{
+			WidgetSwitcher = Cast<UWidgetSwitcher>(Widget);
+		}
+		if (Widget && Widget->GetName() == ChildWidgetName)
+		{
+			ChildWidget = Widget;
+		}
+	}
+	
+	if (!WidgetSwitcher)
+	{
+		return CreateErrorResponse(TEXT("NOT_FOUND"), 
+			FString::Printf(TEXT("Widget Switcher '%s' not found"), *SwitcherName));
+	}
+	
+	if (!ChildWidget)
+	{
+		return CreateErrorResponse(TEXT("NOT_FOUND"), 
+			FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+	}
+	
+	// Add child to switcher
+	WidgetSwitcher->AddChild(ChildWidget);
+	SlotIndex = WidgetSwitcher->GetNumWidgets() - 1;
+	
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+	
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Data->SetStringField(TEXT("switcher_name"), SwitcherName);
+	Data->SetStringField(TEXT("child_widget_name"), ChildWidgetName);
+	Data->SetNumberField(TEXT("slot_index"), SlotIndex);
+	Data->SetNumberField(TEXT("total_slots"), WidgetSwitcher->GetNumWidgets());
+	
+	return CreateSuccessResponse(Data);
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
