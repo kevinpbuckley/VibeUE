@@ -121,6 +121,22 @@ private:
         bool bSplitPins) const;
     
 private:
+    // Helper methods to convert TResult to JSON
+    TSharedPtr<FJsonObject> CreateSuccessResponse() const;
+    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
+    template<typename T>
+    TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<T>& Result) const;
+    
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
+    
+    // Phase 4: Blueprint Services (replacing inline logic)
+    TSharedPtr<class FBlueprintDiscoveryService> DiscoveryService;
+    TSharedPtr<class FBlueprintLifecycleService> LifecycleService;
+    TSharedPtr<class FBlueprintPropertyService> PropertyService;
+    TSharedPtr<class FBlueprintComponentService> ComponentService;
+    TSharedPtr<class FBlueprintFunctionService> FunctionService;
+    TSharedPtr<class FBlueprintNodeService> NodeService;
+    TSharedPtr<class FBlueprintGraphService> GraphService;
+    TSharedPtr<class FBlueprintReflectionService> ReflectionService;
 }; 
