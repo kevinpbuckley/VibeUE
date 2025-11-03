@@ -108,6 +108,14 @@ protected:
 	 */
 	void LogError(const FString& Message) const;
 
+	/**
+	 * @brief Gets the service name for logging
+	 * @return The service name
+	 * 
+	 * This is a pure virtual method that must be implemented by derived classes.
+	 */
+	virtual FString GetServiceName() const = 0;
+
 private:
 	/** Shared service context */
 	TSharedPtr<FServiceContext> Context;
