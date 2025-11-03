@@ -1,0 +1,74 @@
+#pragma once
+
+#include "CoreMinimal.h"
+
+/**
+ * Centralized error codes for consistent error handling
+ * Organized by domain and operation type
+ */
+namespace VibeUE
+{
+namespace ErrorCodes
+{
+    // Parameter validation errors (1000-1099)
+    constexpr const TCHAR* PARAM_MISSING = TEXT("PARAM_MISSING");
+    constexpr const TCHAR* PARAM_INVALID = TEXT("PARAM_INVALID");
+    constexpr const TCHAR* PARAM_TYPE_MISMATCH = TEXT("PARAM_TYPE_MISMATCH");
+
+    // Blueprint errors (2000-2099)
+    constexpr const TCHAR* BLUEPRINT_NOT_FOUND = TEXT("BLUEPRINT_NOT_FOUND");
+    constexpr const TCHAR* BLUEPRINT_LOAD_FAILED = TEXT("BLUEPRINT_LOAD_FAILED");
+    constexpr const TCHAR* BLUEPRINT_COMPILATION_FAILED = TEXT("BLUEPRINT_COMPILATION_FAILED");
+    constexpr const TCHAR* BLUEPRINT_ALREADY_EXISTS = TEXT("BLUEPRINT_ALREADY_EXISTS");
+    constexpr const TCHAR* BLUEPRINT_INVALID_PARENT = TEXT("BLUEPRINT_INVALID_PARENT");
+
+    // Function errors (2050-2099)
+    constexpr const TCHAR* FUNCTION_NOT_FOUND = TEXT("FUNCTION_NOT_FOUND");
+    constexpr const TCHAR* FUNCTION_ALREADY_EXISTS = TEXT("FUNCTION_ALREADY_EXISTS");
+    constexpr const TCHAR* FUNCTION_CREATE_FAILED = TEXT("FUNCTION_CREATE_FAILED");
+    constexpr const TCHAR* FUNCTION_DELETE_FAILED = TEXT("FUNCTION_DELETE_FAILED");
+    constexpr const TCHAR* FUNCTION_ENTRY_NOT_FOUND = TEXT("FUNCTION_ENTRY_NOT_FOUND");
+    constexpr const TCHAR* FUNCTION_RESULT_CREATE_FAILED = TEXT("FUNCTION_RESULT_CREATE_FAILED");
+
+    // Parameter errors (2100-2149)
+    constexpr const TCHAR* PARAMETER_NOT_FOUND = TEXT("PARAMETER_NOT_FOUND");
+    constexpr const TCHAR* PARAMETER_ALREADY_EXISTS = TEXT("PARAMETER_ALREADY_EXISTS");
+    constexpr const TCHAR* PARAMETER_CREATE_FAILED = TEXT("PARAMETER_CREATE_FAILED");
+    constexpr const TCHAR* PARAMETER_INVALID_DIRECTION = TEXT("PARAMETER_INVALID_DIRECTION");
+    constexpr const TCHAR* PARAMETER_TYPE_INVALID = TEXT("PARAMETER_TYPE_INVALID");
+
+    // Variable errors (2150-2199)
+    constexpr const TCHAR* VARIABLE_NOT_FOUND = TEXT("VARIABLE_NOT_FOUND");
+    constexpr const TCHAR* VARIABLE_ALREADY_EXISTS = TEXT("VARIABLE_ALREADY_EXISTS");
+    constexpr const TCHAR* VARIABLE_TYPE_INVALID = TEXT("VARIABLE_TYPE_INVALID");
+    constexpr const TCHAR* VARIABLE_CREATE_FAILED = TEXT("VARIABLE_CREATE_FAILED");
+
+    // Component errors (2200-2299)
+    constexpr const TCHAR* COMPONENT_NOT_FOUND = TEXT("COMPONENT_NOT_FOUND");
+    constexpr const TCHAR* COMPONENT_TYPE_INVALID = TEXT("COMPONENT_TYPE_INVALID");
+    constexpr const TCHAR* COMPONENT_ADD_FAILED = TEXT("COMPONENT_ADD_FAILED");
+
+    // Property errors (2300-2399)
+    constexpr const TCHAR* PROPERTY_NOT_FOUND = TEXT("PROPERTY_NOT_FOUND");
+    constexpr const TCHAR* PROPERTY_READ_ONLY = TEXT("PROPERTY_READ_ONLY");
+    constexpr const TCHAR* PROPERTY_TYPE_MISMATCH = TEXT("PROPERTY_TYPE_MISMATCH");
+    constexpr const TCHAR* PROPERTY_SET_FAILED = TEXT("PROPERTY_SET_FAILED");
+
+    // Node errors (2400-2499)
+    constexpr const TCHAR* NODE_NOT_FOUND = TEXT("NODE_NOT_FOUND");
+    constexpr const TCHAR* NODE_CREATE_FAILED = TEXT("NODE_CREATE_FAILED");
+    constexpr const TCHAR* NODE_TYPE_INVALID = TEXT("NODE_TYPE_INVALID");
+    constexpr const TCHAR* PIN_NOT_FOUND = TEXT("PIN_NOT_FOUND");
+    constexpr const TCHAR* PIN_CONNECTION_FAILED = TEXT("PIN_CONNECTION_FAILED");
+    constexpr const TCHAR* PIN_TYPE_INCOMPATIBLE = TEXT("PIN_TYPE_INCOMPATIBLE");
+
+    // Graph errors (2500-2599)
+    constexpr const TCHAR* GRAPH_NOT_FOUND = TEXT("GRAPH_NOT_FOUND");
+    constexpr const TCHAR* GRAPH_INVALID = TEXT("GRAPH_INVALID");
+
+    // System errors (9000-9099)
+    constexpr const TCHAR* OPERATION_NOT_SUPPORTED = TEXT("OPERATION_NOT_SUPPORTED");
+    constexpr const TCHAR* INTERNAL_ERROR = TEXT("INTERNAL_ERROR");
+    constexpr const TCHAR* TIMEOUT = TEXT("TIMEOUT");
+}
+}
