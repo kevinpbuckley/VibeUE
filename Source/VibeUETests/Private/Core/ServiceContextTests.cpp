@@ -196,6 +196,36 @@ bool FServiceContextGetServiceNotFoundTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FServiceContextRegisterServiceUpdateTest,
+	"VibeUE.Core.ServiceContext.RegisterService.Update",
+	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter
+)
+
+bool FServiceContextRegisterServiceUpdateTest::RunTest(const FString& Parameters)
+{
+	// Arrange
+	TSharedPtr<FServiceContext> Context = MakeShared<FServiceContext>();
+	TSharedPtr<FTestService> Service1 = MakeShared<FTestService>(Context);
+	TSharedPtr<FTestService> Service2 = MakeShared<FTestService>(Context);
+
+	// Act - Register service, then update it with a different instance
+	Context->RegisterService(TEXT("TestService"), Service1);
+	Context->RegisterService(TEXT("TestService"), Service2);
+	TSharedPtr<FServiceBase> RetrievedService = Context->GetService(TEXT("TestService"));
+
+	// Assert - Should get the updated (second) service
+	TestTrue(TEXT("Retrieved service should be valid"), RetrievedService.IsValid());
+	TestEqual(TEXT("Retrieved service should be the updated instance"), 
+		RetrievedService.Get(), 
+		StaticCastSharedPtr<FServiceBase>(Service2).Get());
+	TestNotEqual(TEXT("Retrieved service should not be the first instance"), 
+		RetrievedService.Get(), 
+		StaticCastSharedPtr<FServiceBase>(Service1).Get());
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FServiceContextConfigValueTest,
 	"VibeUE.Core.ServiceContext.ConfigValue",
 	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter

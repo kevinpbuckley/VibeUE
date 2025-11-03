@@ -61,7 +61,7 @@ UEditorEngine* FServiceContext::GetEditorEngine() const
 void FServiceContext::RegisterService(const FString& ServiceName, TSharedPtr<FServiceBase> Service)
 {
 	FScopeLock ScopeLock(&Lock);
-	Services.Add(ServiceName, Service);
+	Services.Emplace(ServiceName, Service);
 }
 
 TSharedPtr<FServiceBase> FServiceContext::GetService(const FString& ServiceName) const
