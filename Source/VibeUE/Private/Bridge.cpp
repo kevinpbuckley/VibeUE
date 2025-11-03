@@ -89,7 +89,13 @@ UBridge::~UBridge()
     UMGCommands.Reset();
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
-    // Note: ServiceContext cleaned up in Deinitialize() before destructor is called
+    
+    // Defensive cleanup - Deinitialize() should have been called by UEditorSubsystem,
+    // but ensure ServiceContext is cleaned up even if lifecycle was abnormal
+    if (ServiceContext.IsValid())
+    {
+        ServiceContext.Reset();
+    }
 }
 
 // Initialize subsystem
