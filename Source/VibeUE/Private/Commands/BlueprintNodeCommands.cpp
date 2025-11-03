@@ -1257,13 +1257,11 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TS
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract required parameters
-    FString BlueprintName;
+    FString BlueprintName, ActionName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
-    FString ActionName;
     if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action_name' parameter"));
@@ -1276,18 +1274,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
         return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Parse position parameter (optional, defaults to 0,0)
-    FVector2D NodePosition(0.0f, 0.0f);
-    if (Params->HasField(TEXT("node_position")))
-    {
-        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
-    }
-
     // Prepare input action node parameters
     FInputActionNodeParams InputParams;
     InputParams.ActionName = ActionName;
-    InputParams.Position = NodePosition;
-    // InputTrigger is optional and not currently used
+    InputParams.Position = Params->HasField(TEXT("node_position")) 
+        ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
+        : FVector2D(0.0f, 0.0f);
 
     // Create input action node using NodeService
     auto CreateResult = NodeService->CreateInputActionNode(FindResult.GetValue(), InputParams);
