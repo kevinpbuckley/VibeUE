@@ -98,3 +98,34 @@ private:
     FString ErrorCode;
     FString ErrorMessage;
 };
+
+// Specialization for void
+template<>
+class TResult<void>
+{
+public:
+    static TResult Success()
+    {
+        return TResult(true, FString(), FString());
+    }
+
+    static TResult Error(const FString& ErrorCode, const FString& ErrorMessage)
+    {
+        return TResult(false, ErrorCode, ErrorMessage);
+    }
+
+    bool IsSuccess() const { return bSuccess; }
+    bool IsError() const { return !bSuccess; }
+    
+    const FString& GetErrorCode() const { return ErrorCode; }
+    const FString& GetErrorMessage() const { return ErrorMessage; }
+
+private:
+    TResult(bool bInSuccess, const FString& InErrorCode, const FString& InErrorMessage)
+        : bSuccess(bInSuccess), ErrorCode(InErrorCode), ErrorMessage(InErrorMessage)
+    {}
+
+    bool bSuccess;
+    FString ErrorCode;
+    FString ErrorMessage;
+};
