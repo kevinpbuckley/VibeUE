@@ -1180,6 +1180,12 @@ TResult<TArray<FDetailedNodeInfo>> FBlueprintNodeService::DescribeAllNodes(UBlue
                 Results.Add(DescribeResult.GetValue());
                 ++Collected;
             }
+            else
+            {
+                // Log failure for diagnostics but continue processing other nodes
+                UE_LOG(LogBlueprintNodeService, Warning, TEXT("Failed to describe node %s: %s"), 
+                    *Node->NodeGuid.ToString(), *DescribeResult.GetErrorMessage());
+            }
         }
 
         if (Limit >= 0 && Collected >= Limit)
