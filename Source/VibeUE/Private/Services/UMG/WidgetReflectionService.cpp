@@ -19,6 +19,12 @@
 #include "Components/Spacer.h"
 #include "UObject/UObjectGlobals.h"
 
+namespace
+{
+    // Common events for all widgets
+    const TArray<FString> CommonWidgetEvents = { TEXT("OnVisibilityChanged") };
+}
+
 FWidgetReflectionService::FWidgetReflectionService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
     , bCatalogsInitialized(false)
@@ -65,13 +71,15 @@ void FWidgetReflectionService::InitializeWidgetCatalogs()
         {TEXT("WidgetSwitcher"), TEXT("/Script/UMG.WidgetSwitcher")}
     };
     
-    // Category mappings
+    // Category mappings (Panel widgets get "Panel" automatically in GetWidgetTypeInfo)
     WidgetTypeToCategory = {
         {TEXT("EditableText"), TEXT("Input")}, {TEXT("EditableTextBox"), TEXT("Input")},
         {TEXT("Slider"), TEXT("Input")}, {TEXT("CheckBox"), TEXT("Input")},
+        {TEXT("Button"), TEXT("Input")},
         {TEXT("TextBlock"), TEXT("Display")}, {TEXT("Image"), TEXT("Display")},
         {TEXT("ProgressBar"), TEXT("Display")}, {TEXT("RichTextBlock"), TEXT("Display")},
-        {TEXT("Button"), TEXT("Input")}, {TEXT("Spacer"), TEXT("Layout")}
+        {TEXT("Spacer"), TEXT("Layout")}, {TEXT("Border"), TEXT("Layout")},
+        {TEXT("SizeBox"), TEXT("Layout")}
     };
     
     // Event mappings
@@ -217,8 +225,8 @@ TResult<TArray<FString>> FWidgetReflectionService::GetWidgetTypeEvents(const FSt
         Events = WidgetTypeToEvents[WidgetType];
     }
     
-    // Add common event for all widgets
-    Events.Add(TEXT("OnVisibilityChanged"));
+    // Add common events for all widgets
+    Events.Append(CommonWidgetEvents);
     
     return TResult<TArray<FString>>::Success(Events);
 }
