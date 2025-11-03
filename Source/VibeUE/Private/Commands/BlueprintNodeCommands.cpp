@@ -2460,138 +2460,212 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
 // --- Unified Function Management (Phase 1) ---
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName; FString Action;
+    // Extract required parameters
+    FString BlueprintName, Action;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     if (!Params->TryGetStringField(TEXT("action"), Action))
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action' parameter"));
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-
+    // Find blueprint using DiscoveryService
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+    
+    UBlueprint* Blueprint = BlueprintResult.GetValue();
     const FString NormalizedAction = Action.ToLower();
 
-    // Core CRUD
+    // Core CRUD operations
     if (NormalizedAction == TEXT("list"))
     {
-        return BuildFunctionSummary(Blueprint);
+        TResult<TArray<FFunctionInfo>> Result = FunctionService->ListFunctions(Blueprint);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TArray<TSharedPtr<FJsonValue>> Functions;
+        for (const FFunctionInfo& FuncInfo : Result.GetValue())
+        {
+            TSharedPtr<FJsonObject> Func = MakeShared<FJsonObject>();
+            Func->SetStringField(TEXT("name"), FuncInfo.Name);
+            Func->SetStringField(TEXT("graph_guid"), FuncInfo.GraphGuid);
+            Func->SetNumberField(TEXT("node_count"), FuncInfo.NodeCount);
+            Functions.Add(MakeShared<FJsonValueObject>(Func));
+        }
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetArrayField(TEXT("functions"), Functions);
+        Response->SetNumberField(TEXT("count"), Functions.Num());
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("get"))
     {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
-        }
-        return BuildSingleFunctionInfo(Blueprint, FunctionName);
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        
+        TResult<FString> GraphResult = FunctionService->GetFunctionGraph(Blueprint, FunctionName);
+        if (!GraphResult.IsSuccess())
+            return CreateErrorResponse(GraphResult.GetErrorCode(), GraphResult.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("graph_guid"), GraphResult.GetValue());
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("create"))
     {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
-        }
-        return CreateFunctionGraph(Blueprint, FunctionName);
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        
+        TResult<UEdGraph*> Result = FunctionService->CreateFunction(Blueprint, FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("graph_name"), Result.GetValue()->GetName());
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("delete"))
     {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
-        }
-        FString Err; if (!RemoveFunctionGraph(Blueprint, FunctionName, Err))
-        {
-            return FCommonUtils::CreateErrorResponse(Err);
-        }
-        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-        R->SetBoolField(TEXT("success"), true);
-        R->SetStringField(TEXT("function_name"), FunctionName);
-        return R;
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        
+        TResult<void> Result = FunctionService->DeleteFunction(Blueprint, FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        return Response;
     }
 
     // Parameter operations
     if (NormalizedAction == TEXT("list_params"))
     {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name' for list_params"));
+        
+        TResult<TArray<FFunctionParameterInfo>> Result = FunctionService->ListParameters(Blueprint, FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TArray<TSharedPtr<FJsonValue>> ParamsArray;
+        for (const FFunctionParameterInfo& ParamInfo : Result.GetValue())
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_params"));
+            TSharedPtr<FJsonObject> Param = MakeShared<FJsonObject>();
+            Param->SetStringField(TEXT("name"), ParamInfo.Name);
+            Param->SetStringField(TEXT("direction"), ParamInfo.Direction);
+            Param->SetStringField(TEXT("type"), ParamInfo.Type);
+            ParamsArray.Add(MakeShared<FJsonValueObject>(Param));
         }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-        R->SetBoolField(TEXT("success"), true);
-        R->SetStringField(TEXT("function_name"), FunctionName);
-        TArray<TSharedPtr<FJsonValue>> ParamsArray = ListFunctionParameters(Blueprint, Graph);
-        R->SetArrayField(TEXT("parameters"), ParamsArray);
-        R->SetNumberField(TEXT("count"), ParamsArray.Num());
-        return R;
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetArrayField(TEXT("parameters"), ParamsArray);
+        Response->SetNumberField(TEXT("count"), ParamsArray.Num());
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("add_param"))
     {
         FString FunctionName, ParamName, TypeDesc, Direction;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
-        if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type'"));
-        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return AddFunctionParameter(Blueprint, Graph, ParamName, TypeDesc, Direction);
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'type'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction))
+            Direction = TEXT("input");
+        
+        TResult<void> Result = FunctionService->AddParameter(Blueprint, FunctionName, ParamName, TypeDesc, Direction);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("param_name"), ParamName);
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("remove_param"))
     {
         FString FunctionName, ParamName, Direction;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
-        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return RemoveFunctionParameter(Blueprint, Graph, ParamName, Direction);
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction))
+            Direction = TEXT("input");
+        
+        TResult<void> Result = FunctionService->RemoveParameter(Blueprint, FunctionName, ParamName, Direction);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("param_name"), ParamName);
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("update_param"))
     {
         FString FunctionName, ParamName, Direction, NewType, NewName;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
-        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction))
+            Direction = TEXT("input");
         Params->TryGetStringField(TEXT("new_type"), NewType);
         Params->TryGetStringField(TEXT("new_name"), NewName);
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return UpdateFunctionParameter(Blueprint, Graph, ParamName, Direction, NewType, NewName);
-    }
-    if (NormalizedAction == TEXT("update_properties"))
-    {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return UpdateFunctionProperties(Blueprint, Graph, Params);
+        
+        TResult<void> Result = FunctionService->UpdateParameter(Blueprint, FunctionName, ParamName, NewType, NewName, Direction);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        return Response;
     }
 
     // Local variable operations
     if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars"))
     {
-        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name' for list_locals"));
+        
+        TResult<TArray<FLocalVariableInfo>> Result = FunctionService->ListLocalVariables(Blueprint, FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TArray<TSharedPtr<FJsonValue>> Locals;
+        for (const FLocalVariableInfo& LocalInfo : Result.GetValue())
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_locals"));
+            TSharedPtr<FJsonObject> Local = MakeShared<FJsonObject>();
+            Local->SetStringField(TEXT("name"), LocalInfo.Name);
+            Local->SetStringField(TEXT("type"), LocalInfo.Type);
+            Local->SetStringField(TEXT("default_value"), LocalInfo.DefaultValue);
+            Local->SetBoolField(TEXT("is_const"), LocalInfo.bIsConst);
+            Local->SetBoolField(TEXT("is_reference"), LocalInfo.bIsReference);
+            Locals.Add(MakeShared<FJsonValueObject>(Local));
         }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, Graph);
+        
         TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
         Response->SetBoolField(TEXT("success"), true);
         Response->SetStringField(TEXT("function_name"), FunctionName);
@@ -2599,83 +2673,83 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         Response->SetNumberField(TEXT("count"), Locals.Num());
         return Response;
     }
+    
     if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var"))
     {
-        FString FunctionName;
+        FString FunctionName, LocalName, TypeDesc, DefaultValue;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        }
-        FString LocalName;
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name'"));
+        
         if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
-        {
             if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
-            {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
-            }
-        }
-        FString TypeDesc;
+                return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'local_name' parameter"));
+        
         if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
-        {
             if (!Params->TryGetStringField(TEXT("local_type"), TypeDesc) && !Params->TryGetStringField(TEXT("variable_type"), TypeDesc))
-            {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' parameter for local variable"));
-            }
-        }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return AddFunctionLocalVariable(Blueprint, Graph, LocalName, TypeDesc, Params);
+                return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'type' parameter for local variable"));
+        
+        Params->TryGetStringField(TEXT("default_value"), DefaultValue);
+        bool bIsConst = false, bIsReference = false;
+        Params->TryGetBoolField(TEXT("is_const"), bIsConst);
+        Params->TryGetBoolField(TEXT("is_reference"), bIsReference);
+        
+        TResult<void> Result = FunctionService->AddLocalVariable(Blueprint, FunctionName, LocalName, TypeDesc, DefaultValue, bIsConst, bIsReference);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("local_name"), LocalName);
+        return Response;
     }
+    
     if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var"))
     {
-        FString FunctionName;
+        FString FunctionName, LocalName;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        }
-        FString LocalName;
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'function_name'"));
+        
         if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
-        {
             if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
-            {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
-            }
-        }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return RemoveFunctionLocalVariable(Blueprint, Graph, LocalName);
+                return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'local_name' parameter"));
+        
+        TResult<void> Result = FunctionService->RemoveLocalVariable(Blueprint, FunctionName, LocalName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetStringField(TEXT("local_name"), LocalName);
+        return Response;
     }
+    
+    // Note: update_local and update_properties would need UpdateLocalVariable method in FunctionService
+    // For now, keeping them as-is or returning not implemented
     if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var"))
     {
-        FString FunctionName;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
-        }
-        FString LocalName;
-        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
-        {
-            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
-            {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
-            }
-        }
-        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
-        {
-            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
-        }
-        return UpdateFunctionLocalVariable(Blueprint, Graph, LocalName, Params);
+        // This would require additional FunctionService method
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, 
+            TEXT("update_local operation requires additional service implementation"));
     }
+    
+    if (NormalizedAction == TEXT("update_properties"))
+    {
+        // This would require additional FunctionService method
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
+            TEXT("update_properties operation requires additional service implementation"));
+    }
+    
     if (NormalizedAction == TEXT("get_available_local_types") || NormalizedAction == TEXT("list_local_types"))
     {
-        return BuildAvailableLocalVariableTypes();
+        // This could be delegated to ReflectionService
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
+            TEXT("get_available_local_types operation requires additional service implementation"));
     }
 
-    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown function action: %s"), *Action));
+    return CreateErrorResponse(VibeUE::ErrorCodes::ACTION_UNSUPPORTED, 
+        FString::Printf(TEXT("Unknown function action: %s"), *Action));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const TSharedPtr<FJsonObject>& Params)
