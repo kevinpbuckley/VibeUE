@@ -65,6 +65,9 @@ public:
      */
     explicit FWidgetDiscoveryService(TSharedPtr<FServiceContext> Context);
 
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("WidgetDiscoveryService"); }
+
     /**
      * @brief Find a widget blueprint by name or path
      * 

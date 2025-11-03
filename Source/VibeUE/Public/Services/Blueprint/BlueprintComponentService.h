@@ -37,6 +37,9 @@ public:
     explicit FBlueprintComponentService(TSharedPtr<FServiceContext> Context);
     ~FBlueprintComponentService() = default;
 
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintComponentService"); }
+
     /**
      * Add a new component to a Blueprint
      * @param Blueprint Target blueprint

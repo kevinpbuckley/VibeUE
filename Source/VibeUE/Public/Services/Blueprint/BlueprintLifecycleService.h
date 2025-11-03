@@ -19,6 +19,9 @@ class VIBEUE_API FBlueprintLifecycleService : public FServiceBase
 public:
     explicit FBlueprintLifecycleService(TSharedPtr<FServiceContext> Context);
     
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintLifecycleService"); }
+    
     // Lifecycle operations
     TResult<UBlueprint*> CreateBlueprint(const FString& Name, const FString& ParentClass);
     TResult<void> CompileBlueprint(UBlueprint* Blueprint);

@@ -41,6 +41,9 @@ class VIBEUE_API FBlueprintPropertyService : public FServiceBase
 public:
     explicit FBlueprintPropertyService(TSharedPtr<FServiceContext> Context);
     
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintPropertyService"); }
+    
     /**
      * Get a property value from a Blueprint's default object
      * @param Blueprint The Blueprint to query

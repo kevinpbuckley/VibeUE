@@ -5,6 +5,10 @@
 #include "Core/Result.h"
 #include "UObject/Class.h"
 
+// Forward declarations
+struct FPropertyInfo;
+struct FFunctionInfo;
+
 /**
  * Structure for class information
  */
@@ -23,10 +27,6 @@ struct VIBEUE_API FClassInfo
     }
 };
 
-// Forward declarations for structs defined in specialized services
-struct FPropertyInfo;
-struct FFunctionInfo;
-
 /**
  * Blueprint Reflection Service
  * 
@@ -43,6 +43,9 @@ class VIBEUE_API FBlueprintReflectionService : public FServiceBase
 {
 public:
 	explicit FBlueprintReflectionService(TSharedPtr<FServiceContext> Context);
+	
+	// FServiceBase interface
+	virtual FString GetServiceName() const override { return TEXT("BlueprintReflectionService"); }
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Discovery

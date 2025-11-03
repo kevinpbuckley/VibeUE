@@ -67,6 +67,9 @@ public:
     explicit FBlueprintFunctionService(TSharedPtr<FServiceContext> Context);
     virtual ~FBlueprintFunctionService() = default;
     
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintFunctionService"); }
+    
     /**
      * Create a new function in a Blueprint
      * @param Blueprint The blueprint to add the function to

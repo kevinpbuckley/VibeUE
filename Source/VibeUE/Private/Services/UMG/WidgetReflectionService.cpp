@@ -1,4 +1,5 @@
 #include "Services/UMG/WidgetReflectionService.h"
+#include "Services/UMG/WidgetPropertyService.h"
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Core/ErrorCodes.h"
 #include "Components/Widget.h"

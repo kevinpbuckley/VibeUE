@@ -61,6 +61,9 @@ public:
     explicit FBlueprintNodeService(TSharedPtr<FServiceContext> Context);
     virtual ~FBlueprintNodeService() = default;
     
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintNodeService"); }
+    
     // Node lifecycle
     TResult<UK2Node*> CreateNode(UBlueprint* Blueprint, const FString& GraphName, 
                                  const FString& NodeType, const FVector2D& Position);

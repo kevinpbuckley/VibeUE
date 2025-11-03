@@ -1,4 +1,6 @@
 #include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Services/Blueprint/BlueprintFunctionService.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -359,10 +361,10 @@ void FBlueprintReflectionService::ExtractFunctionInfo(UFunction* Function, FFunc
 		return;
 	}
 	
-	OutFunctionInfo.FunctionName = Function->GetName();
-	OutFunctionInfo.Category = Function->GetMetaData(TEXT("Category"));
-	OutFunctionInfo.bIsStatic = Function->HasAnyFunctionFlags(FUNC_Static);
-	OutFunctionInfo.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
+	// FFunctionInfo uses Name, GraphGuid, and NodeCount fields
+	OutFunctionInfo.Name = Function->GetName();
+	OutFunctionInfo.GraphGuid = TEXT(""); // Not populated here
+	OutFunctionInfo.NodeCount = 0; // Not populated here
 }
 
 bool FBlueprintReflectionService::IsClassValidForBlueprints(UClass* Class)

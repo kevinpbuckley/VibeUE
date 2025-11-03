@@ -34,6 +34,9 @@ class VIBEUE_API FBlueprintGraphService : public FServiceBase
 public:
     explicit FBlueprintGraphService(TSharedPtr<FServiceContext> Context);
     
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintGraphService"); }
+    
     // Graph introspection
     TResult<FString> SummarizeEventGraph(UBlueprint* Blueprint, int32 MaxNodes = 200);
     TResult<TArray<FString>> ListCustomEvents(UBlueprint* Blueprint);

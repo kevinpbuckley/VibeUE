@@ -65,6 +65,9 @@ public:
      */
     explicit FBlueprintDiscoveryService(TSharedPtr<FServiceContext> Context);
 
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("BlueprintDiscoveryService"); }
+
     /**
      * @brief Find a blueprint by name or path
      * 
