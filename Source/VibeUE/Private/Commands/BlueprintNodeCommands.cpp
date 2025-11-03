@@ -3,6 +3,19 @@
 #include "Commands/CommonUtils.h"
 #include "Commands/ComponentEventBinder.h"
 #include "Commands/InputKeyEnumerator.h"
+
+// Phase 4: Include Blueprint Services
+#include "Services/Blueprint/BlueprintDiscoveryService.h"
+#include "Services/Blueprint/BlueprintLifecycleService.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Services/Blueprint/BlueprintComponentService.h"
+#include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintGraphService.h"
+#include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
+
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -19,8 +32,7 @@
 #include "K2Node_IfThenElse.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
-#include "K2Node_Knot.h"  // NEW (Oct 6, 2025): Reroute node multi-connection support
-// #include "K2Node_ForEachLoop.h"  // Commented out - header not found
+#include "K2Node_Knot.h"
 #include "K2Node_Timeline.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_DynamicCast.h"
@@ -192,8 +204,38 @@ static UEdGraphPin* FindPinForOperation(UEdGraphNode* Node, const FString& RawPi
 
 FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
-    // Initialize reflection system
+    // Initialize reflection system (legacy)
     ReflectionCommands = MakeShareable(new FBlueprintReflectionCommands());
+    
+    // Phase 4: Initialize Blueprint Services
+    // Create a shared service context for all services
+    TSharedPtr<FServiceContext> ServiceContext = MakeShared<FServiceContext>();
+    
+    DiscoveryService = MakeShared<FBlueprintDiscoveryService>(ServiceContext);
+    LifecycleService = MakeShared<FBlueprintLifecycleService>(ServiceContext);
+    PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
+    ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
+    FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
+    NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
+    GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
+    ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
+}
+
+// Helper methods for TResult to JSON conversion
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateSuccessResponse() const
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error_code"), ErrorCode);
+    Response->SetStringField(TEXT("error"), ErrorMessage);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -4637,31 +4679,36 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::ApplyPinTransform(
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract blueprint name parameter
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    
+    // Use DiscoveryService to find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
+    
+    // Use GraphService to list custom events
+    TResult<TArray<FString>> EventsResult = GraphService->ListCustomEvents(BlueprintResult.GetValue());
+    if (!EventsResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
     }
+    
+    // Convert result to JSON
     TArray<TSharedPtr<FJsonValue>> Events;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
+    for (const FString& EventName : EventsResult.GetValue())
     {
-        if (UK2Node_CustomEvent* CE = Cast<UK2Node_CustomEvent>(Node))
-        {
-            TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
-            Evt->SetStringField(TEXT("name"), CE->CustomFunctionName.ToString());
-            Events.Add(MakeShared<FJsonValueObject>(Evt));
-        }
+        TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
+        Evt->SetStringField(TEXT("name"), EventName);
+        Events.Add(MakeShared<FJsonValueObject>(Evt));
     }
+    
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetArrayField(TEXT("events"), Events);
     return Result;
