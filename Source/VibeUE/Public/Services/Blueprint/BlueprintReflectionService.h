@@ -23,38 +23,9 @@ struct VIBEUE_API FClassInfo
     }
 };
 
-/**
- * Structure for property information
- */
-struct VIBEUE_API FPropertyInfo
-{
-    FString PropertyName;
-    FString PropertyType;
-    FString Category;
-    bool bIsEditable;
-    
-    FPropertyInfo()
-        : bIsEditable(false)
-    {
-    }
-};
-
-/**
- * Structure for function information
- */
-struct VIBEUE_API FFunctionInfo
-{
-    FString FunctionName;
-    FString Category;
-    bool bIsStatic;
-    bool bIsPure;
-    
-    FFunctionInfo()
-        : bIsStatic(false)
-        , bIsPure(false)
-    {
-    }
-};
+// Forward declarations for structs defined in specialized services
+struct FPropertyInfo;
+struct FFunctionInfo;
 
 /**
  * Blueprint Reflection Service

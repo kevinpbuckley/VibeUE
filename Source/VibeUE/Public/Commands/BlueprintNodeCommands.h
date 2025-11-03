@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Json.h"
+#include "Core/Result.h"
 
 // Forward declare reflection commands
 class FBlueprintReflectionCommands;

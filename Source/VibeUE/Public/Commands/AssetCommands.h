@@ -2,13 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Json.h"
+#include "Core/Result.h"
 
 // Forward declarations
 class FAssetDiscoveryService;
 class FAssetLifecycleService;
 class FAssetImportService;
 class FServiceContext;
-template<typename T> class TResult;
 
 /**
  * Handler class for Asset Discovery and Procedural Generation MCP commands
