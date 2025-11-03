@@ -3,6 +3,8 @@
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Commands/BlueprintVariableReflectionServices.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Services/ServiceBase.h"
 
 #include "WidgetBlueprint.h"
 #include "Factories/BlueprintFactory.h"
@@ -42,6 +44,9 @@
 
 FBlueprintCommands::FBlueprintCommands()
 {
+    // Initialize service context and property service
+    ServiceContext = MakeShared<FServiceContext>();
+    PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -922,100 +927,62 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintProperty(const TSh
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the default object
-    UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
-    if (!DefaultObject)
+    // Use the property service to get metadata
+    TResult<FPropertyInfo> Result = PropertyService->GetPropertyMetadata(Blueprint, PropertyName);
+    
+    if (Result.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get default object"));
+        return FCommonUtils::CreateErrorResponse(Result.GetError());
     }
 
-    // Find the property
-    FProperty* Property = FindFProperty<FProperty>(DefaultObject->GetClass(), *PropertyName);
-    if (!Property)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found in Blueprint '%s'"), *PropertyName, *BlueprintName));
-    }
-
-    // Create response with comprehensive property metadata
+    // Convert property info to JSON response
+    const FPropertyInfo& Info = Result.GetValue();
     TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("property_name"), PropertyName);
+    Response->SetStringField(TEXT("property_name"), Info.PropertyName);
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("type"), Info.PropertyType);
+    Response->SetStringField(TEXT("property_class"), Info.PropertyClass);
+    Response->SetStringField(TEXT("category"), Info.Category);
+    Response->SetStringField(TEXT("tooltip"), Info.Tooltip);
+    Response->SetBoolField(TEXT("is_editable"), Info.bIsEditable);
+    Response->SetBoolField(TEXT("is_blueprint_visible"), Info.bIsBlueprintVisible);
+    Response->SetBoolField(TEXT("is_blueprint_readonly"), Info.bIsBlueprintReadOnly);
+    Response->SetStringField(TEXT("current_value"), Info.CurrentValue);
     
-    // Property type information
-    Response->SetStringField(TEXT("type"), Property->GetCPPType());
-    Response->SetStringField(TEXT("property_class"), Property->GetClass()->GetName());
-    
-    // Property metadata
-    Response->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
-    Response->SetStringField(TEXT("tooltip"), Property->GetMetaData(TEXT("ToolTip")));
-    
-    // Property flags
-    Response->SetBoolField(TEXT("is_editable"), Property->HasAnyPropertyFlags(CPF_Edit));
-    Response->SetBoolField(TEXT("is_blueprint_visible"), Property->HasAnyPropertyFlags(CPF_BlueprintVisible));
-    Response->SetBoolField(TEXT("is_blueprint_readonly"), Property->HasAnyPropertyFlags(CPF_BlueprintReadOnly));
-    
-    // Get current value from CDO
-    void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject);
-    if (PropertyValuePtr)
+    if (!Info.DefaultValue.IsEmpty())
     {
-        // Export the property value to a string
-        FString ValueString;
-        Property->ExportTextItem_Direct(ValueString, PropertyValuePtr, PropertyValuePtr, nullptr, PPF_None);
-        Response->SetStringField(TEXT("current_value"), ValueString);
-        
-        // Try to get default value from archetype
-        if (DefaultObject->GetArchetype())
-        {
-            void* ArchetypeValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject->GetArchetype());
-            if (ArchetypeValuePtr)
-            {
-                FString ArchetypeValueString;
-                Property->ExportTextItem_Direct(ArchetypeValueString, ArchetypeValuePtr, ArchetypeValuePtr, nullptr, PPF_None);
-                Response->SetStringField(TEXT("default_value"), ArchetypeValueString);
-            }
-        }
-        
-        // Add type-specific metadata
-        if (FNumericProperty* NumericProp = CastField<FNumericProperty>(Property))
-        {
-            // Check for ClampMin/ClampMax metadata
-            if (Property->HasMetaData(TEXT("ClampMin")))
-            {
-                Response->SetStringField(TEXT("min_value"), Property->GetMetaData(TEXT("ClampMin")));
-            }
-            if (Property->HasMetaData(TEXT("ClampMax")))
-            {
-                Response->SetStringField(TEXT("max_value"), Property->GetMetaData(TEXT("ClampMax")));
-            }
-            if (Property->HasMetaData(TEXT("UIMin")))
-            {
-                Response->SetStringField(TEXT("ui_min"), Property->GetMetaData(TEXT("UIMin")));
-            }
-            if (Property->HasMetaData(TEXT("UIMax")))
-            {
-                Response->SetStringField(TEXT("ui_max"), Property->GetMetaData(TEXT("UIMax")));
-            }
-        }
-        else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(Property))
-        {
-            bool bValue = BoolProp->GetPropertyValue(PropertyValuePtr);
-            Response->SetBoolField(TEXT("value"), bValue);
-        }
-        else if (FObjectProperty* ObjectProp = CastField<FObjectProperty>(Property))
-        {
-            UObject* ObjectValue = ObjectProp->GetObjectPropertyValue(PropertyValuePtr);
-            Response->SetStringField(TEXT("object_class"), ObjectProp->PropertyClass ? ObjectProp->PropertyClass->GetName() : TEXT("None"));
-            Response->SetStringField(TEXT("object_value"), ObjectValue ? ObjectValue->GetPathName() : TEXT("None"));
-        }
+        Response->SetStringField(TEXT("default_value"), Info.DefaultValue);
     }
-    else
+    
+    // Add type-specific metadata
+    if (!Info.MinValue.IsEmpty())
     {
-        Response->SetStringField(TEXT("error"), TEXT("Failed to access property value"));
+        Response->SetStringField(TEXT("min_value"), Info.MinValue);
+    }
+    if (!Info.MaxValue.IsEmpty())
+    {
+        Response->SetStringField(TEXT("max_value"), Info.MaxValue);
+    }
+    if (!Info.UIMin.IsEmpty())
+    {
+        Response->SetStringField(TEXT("ui_min"), Info.UIMin);
+    }
+    if (!Info.UIMax.IsEmpty())
+    {
+        Response->SetStringField(TEXT("ui_max"), Info.UIMax);
+    }
+    if (!Info.ObjectClass.IsEmpty())
+    {
+        Response->SetStringField(TEXT("object_class"), Info.ObjectClass);
+    }
+    if (!Info.ObjectValue.IsEmpty())
+    {
+        Response->SetStringField(TEXT("object_value"), Info.ObjectValue);
     }
     
     UE_LOG(LogTemp, Log, TEXT("MCP: Retrieved property '%s' from Blueprint '%s': Type=%s"), 
-           *PropertyName, *BlueprintName, *Property->GetCPPType());
+           *PropertyName, *BlueprintName, *Info.PropertyType);
     
     return Response;
 }
@@ -1042,22 +1009,40 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get the default object
-    UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
-    if (!DefaultObject)
+    // Get property value parameter
+    if (!Params->HasField(TEXT("property_value")))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get default object"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_value' parameter"));
     }
 
-    // Set the property value
-    if (Params->HasField(TEXT("property_value")))
+    TSharedPtr<FJsonValue> JsonValue = Params->Values.FindRef(TEXT("property_value"));
+    FString PropertyValue;
+    
+    // Convert JSON value to string
+    if (JsonValue->Type == EJson::String)
     {
-        TSharedPtr<FJsonValue> JsonValue = Params->Values.FindRef(TEXT("property_value"));
-        
+        PropertyValue = JsonValue->AsString();
+    }
+    else if (JsonValue->Type == EJson::Number)
+    {
+        PropertyValue = FString::Printf(TEXT("%f"), JsonValue->AsNumber());
+    }
+    else if (JsonValue->Type == EJson::Boolean)
+    {
+        PropertyValue = JsonValue->AsBool() ? TEXT("true") : TEXT("false");
+    }
+    else
+    {
+        // For complex types, fall back to the old implementation
+        UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
+        if (!DefaultObject)
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Failed to get default object"));
+        }
+
         FString ErrorMessage;
         if (FCommonUtils::SetObjectProperty(DefaultObject, PropertyName, JsonValue, ErrorMessage))
         {
-            // Mark the blueprint as modified
             FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
             TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
@@ -1071,7 +1056,18 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
         }
     }
 
-    return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_value' parameter"));
+    // Use the property service to set the value
+    TResult<void> Result = PropertyService->SetProperty(Blueprint, PropertyName, PropertyValue);
+    
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetError());
+    }
+
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetStringField(TEXT("property"), PropertyName);
+    ResultObj->SetBoolField(TEXT("success"), true);
+    return ResultObj;
 }
 
 

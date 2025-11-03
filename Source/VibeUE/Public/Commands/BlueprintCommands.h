@@ -3,6 +3,10 @@
 #include "CoreMinimal.h"
 #include "Json.h"
 
+// Forward declarations
+class FBlueprintPropertyService;
+class FServiceContext;
+
 /**
  * Handler class for Blueprint-related MCP commands
  */
@@ -74,4 +78,9 @@ private:
                                                    const FString& ComponentName, const FString& MeshType,
                                                    const TArray<float>& Location, const TArray<float>& Rotation,
                                                    const TArray<float>& Scale, const TSharedPtr<FJsonObject>& ComponentProperties);
-}; 
+
+private:
+    // Services
+    TSharedPtr<FServiceContext> ServiceContext;
+    TSharedPtr<FBlueprintPropertyService> PropertyService;
+};
