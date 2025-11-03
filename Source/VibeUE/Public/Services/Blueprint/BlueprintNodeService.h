@@ -128,6 +128,16 @@ struct VIBEUE_API FNodeDeletionInfo
 };
 
 /**
+ * Parameters for creating an input action node
+ */
+struct VIBEUE_API FInputActionNodeParams
+{
+    FString ActionName;
+    FVector2D Position;
+    FString InputTrigger;
+};
+
+/**
  * Service for Blueprint node operations (create, connect, configure)
  * Extracted from BlueprintNodeCommands.cpp to provide focused node management
  */
@@ -145,6 +155,9 @@ public:
                                  const FString& NodeType, const FVector2D& Position);
     TResult<FNodeDeletionInfo> DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins = true);
     TResult<void> MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position);
+    
+    // Specialized node creation
+    TResult<FString> CreateInputActionNode(UBlueprint* Blueprint, const FInputActionNodeParams& Params);
     
     // Pin connections
     TResult<FPinConnectionResult> ConnectPins(UBlueprint* Blueprint, const FPinConnectionRequest& Request);

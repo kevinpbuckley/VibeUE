@@ -1256,49 +1256,51 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TS
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ActionName;
     if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action_name' parameter"));
     }
 
-    // Get position parameters (optional)
+    // Find the blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+
+    // Parse position parameter (optional, defaults to 0,0)
     FVector2D NodePosition(0.0f, 0.0f);
     if (Params->HasField(TEXT("node_position")))
     {
         NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Prepare input action node parameters
+    FInputActionNodeParams InputParams;
+    InputParams.ActionName = ActionName;
+    InputParams.Position = NodePosition;
+    // InputTrigger is optional and not currently used
+
+    // Create input action node using NodeService
+    auto CreateResult = NodeService->CreateInputActionNode(FindResult.GetValue(), InputParams);
+    if (CreateResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
     }
 
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
-
-    // Create the input action node
-    UK2Node_InputAction* InputActionNode = FCommonUtils::CreateInputActionNode(EventGraph, ActionName, NodePosition);
-    if (!InputActionNode)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create input action node"));
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("node_id"), InputActionNode->NodeGuid.ToString());
-    return ResultObj;
+    // Build success response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("node_id"), CreateResult.GetValue());
+    return Result;
 }
 
 
