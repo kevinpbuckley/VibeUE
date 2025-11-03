@@ -58,15 +58,24 @@ TResult<void> FServiceBase::ValidateArray(const TArray<FString>& Value, const FS
 
 void FServiceBase::LogInfo(const FString& Message) const
 {
-	UE_LOG(LogTemp, Log, TEXT("[%s] %s"), *Context->GetLogCategoryName(), *Message);
+	if (Context.IsValid())
+	{
+		Context->LogInfo(Message, GetServiceName());
+	}
 }
 
 void FServiceBase::LogWarning(const FString& Message) const
 {
-	UE_LOG(LogTemp, Warning, TEXT("[%s] %s"), *Context->GetLogCategoryName(), *Message);
+	if (Context.IsValid())
+	{
+		Context->LogWarning(Message, GetServiceName());
+	}
 }
 
 void FServiceBase::LogError(const FString& Message) const
 {
-	UE_LOG(LogTemp, Error, TEXT("[%s] %s"), *Context->GetLogCategoryName(), *Message);
+	if (Context.IsValid())
+	{
+		Context->LogError(Message, GetServiceName());
+	}
 }
