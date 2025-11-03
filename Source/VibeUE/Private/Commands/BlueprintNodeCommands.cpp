@@ -1302,58 +1302,49 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const T
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    FString NodeType;
-    if (!Params->TryGetStringField(TEXT("node_type"), NodeType))
+    // Find the blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Parse search criteria
+    FNodeSearchCriteria Criteria;
+    if (!Params->TryGetStringField(TEXT("node_type"), Criteria.NodeType))
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_type' parameter"));
     }
-
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
-
-    // Create a JSON array for the node GUIDs
+    
+    Params->TryGetStringField(TEXT("name_pattern"), Criteria.NamePattern);
+    
+    // Determine graph scope from parameters
+    FString GraphScope;
+    if (Params->TryGetStringField(TEXT("graph_name"), GraphScope))
+    {
+        Criteria.GraphScope = GraphScope;
+    }
+    else if (Params->TryGetStringField(TEXT("graph_scope"), GraphScope))
+    {
+        Criteria.GraphScope = GraphScope;
+    }
+    
+    // Search for nodes using NodeService
+    auto SearchResult = NodeService->FindNodes(FindResult.GetValue(), Criteria);
+    if (SearchResult.IsError())
+    {
+        return CreateErrorResponse(SearchResult.GetErrorCode(), SearchResult.GetErrorMessage());
+    }
+    
+    // Convert result to JSON
     TArray<TSharedPtr<FJsonValue>> NodeGuidArray;
-    
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching for node type: %s"), *NodeType);
-    
-    // Use pure reflection-based node type resolution
-    UClass* TargetNodeClass = FBlueprintReflection::ResolveNodeClass(NodeType);
-    
-    if (TargetNodeClass)
+    for (const FNodeInfo& NodeInfo : SearchResult.GetValue())
     {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Resolved node class via reflection: %s"), *TargetNodeClass->GetName());
-        
-        // Search through nodes using reflection-based type matching
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching %d nodes for type: %s"), EventGraph->Nodes.Num(), *TargetNodeClass->GetName());
-        
-        for (UEdGraphNode* Node : EventGraph->Nodes)
-        {
-            if (Node && Node->IsA(TargetNodeClass))
-            {
-                UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found matching node: %s"), *Node->NodeGuid.ToString());
-                NodeGuidArray.Add(MakeShared<FJsonValueString>(Node->NodeGuid.ToString()));
-            }
-        }
+        NodeGuidArray.Add(MakeShared<FJsonValueString>(NodeInfo.NodeId));
     }
-    else
-    {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: FindBlueprintNodes - Failed to resolve node type via reflection: %s"), *NodeType);
-        
-        // Since we don't want hardcoded fallbacks, return an error if reflection fails
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown node type '%s' - reflection system could not resolve this node type"), *NodeType));
-    }
-    
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found %d matching nodes for type: %s"), NodeGuidArray.Num(), *NodeType);
     
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetArrayField(TEXT("node_guids"), NodeGuidArray);
