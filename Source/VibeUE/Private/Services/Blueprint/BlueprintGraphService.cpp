@@ -1,6 +1,7 @@
 #include "Services/Blueprint/BlueprintGraphService.h"
 #include "Core/ErrorCodes.h"
 #include "EdGraph/EdGraphNode.h"
+#include "EdGraph/EdGraphPin.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_Event.h"
 #include "K2Node_CallFunction.h"
