@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Core/Result.h"
 
 // Forward declarations
@@ -127,11 +128,12 @@ public:
      * @brief Get properties available for a widget type
      * 
      * Returns list of editable properties for the specified widget type.
+     * Uses FPropertyInfo from BlueprintReflectionService.h
      * 
      * @param WidgetType Widget type name
      * @return TResult containing array of property information
      */
-    TResult<TArray<struct FPropertyInfo>> GetWidgetTypeProperties(const FString& WidgetType);
+    TResult<TArray<FPropertyInfo>> GetWidgetTypeProperties(const FString& WidgetType);
     
     /**
      * @brief Get events available for a widget type
@@ -227,6 +229,8 @@ private:
     TArray<FString> PanelWidgetTypes;
     TArray<FString> CommonWidgetTypes;
     TMap<FString, FString> WidgetTypeToClassPath;
+    TMap<FString, FString> WidgetTypeToCategory;
+    TMap<FString, TArray<FString>> WidgetTypeToEvents;
     
     // Initialization flag
     bool bCatalogsInitialized;

@@ -65,6 +65,24 @@ void FWidgetReflectionService::InitializeWidgetCatalogs()
         {TEXT("WidgetSwitcher"), TEXT("/Script/UMG.WidgetSwitcher")}
     };
     
+    // Category mappings
+    WidgetTypeToCategory = {
+        {TEXT("EditableText"), TEXT("Input")}, {TEXT("EditableTextBox"), TEXT("Input")},
+        {TEXT("Slider"), TEXT("Input")}, {TEXT("CheckBox"), TEXT("Input")},
+        {TEXT("TextBlock"), TEXT("Display")}, {TEXT("Image"), TEXT("Display")},
+        {TEXT("ProgressBar"), TEXT("Display")}, {TEXT("RichTextBlock"), TEXT("Display")},
+        {TEXT("Button"), TEXT("Input")}, {TEXT("Spacer"), TEXT("Layout")}
+    };
+    
+    // Event mappings
+    WidgetTypeToEvents = {
+        {TEXT("Button"), {TEXT("OnClicked"), TEXT("OnPressed"), TEXT("OnReleased"), TEXT("OnHovered"), TEXT("OnUnhovered")}},
+        {TEXT("CheckBox"), {TEXT("OnCheckStateChanged")}},
+        {TEXT("Slider"), {TEXT("OnValueChanged"), TEXT("OnMouseCaptureBegin"), TEXT("OnMouseCaptureEnd")}},
+        {TEXT("EditableText"), {TEXT("OnTextChanged"), TEXT("OnTextCommitted")}},
+        {TEXT("EditableTextBox"), {TEXT("OnTextChanged"), TEXT("OnTextCommitted")}}
+    };
+    
     bCatalogsInitialized = true;
 }
 
@@ -129,14 +147,19 @@ TResult<FWidgetTypeInfo> FWidgetReflectionService::GetWidgetTypeInfo(const FStri
     Info.bIsPanelWidget = PanelWidgetTypes.Contains(WidgetType);
     Info.bIsCommonWidget = CommonWidgetTypes.Contains(WidgetType);
     
-    if (Info.bIsPanelWidget) Info.Category = TEXT("Panel");
-    else if (WidgetType.Equals(TEXT("EditableText")) || WidgetType.Equals(TEXT("EditableTextBox")) || 
-             WidgetType.Equals(TEXT("Slider")) || WidgetType.Equals(TEXT("CheckBox"))) 
-        Info.Category = TEXT("Input");
-    else if (WidgetType.Equals(TEXT("TextBlock")) || WidgetType.Equals(TEXT("Image")) || 
-             WidgetType.Equals(TEXT("ProgressBar"))) 
-        Info.Category = TEXT("Display");
-    else Info.Category = TEXT("Other");
+    // Assign category from lookup table or default
+    if (Info.bIsPanelWidget)
+    {
+        Info.Category = TEXT("Panel");
+    }
+    else if (WidgetTypeToCategory.Contains(WidgetType))
+    {
+        Info.Category = WidgetTypeToCategory[WidgetType];
+    }
+    else
+    {
+        Info.Category = TEXT("Other");
+    }
     
     return TResult<FWidgetTypeInfo>::Success(Info);
 }
@@ -178,6 +201,8 @@ TResult<TArray<FPropertyInfo>> FWidgetReflectionService::GetWidgetTypeProperties
 
 TResult<TArray<FString>> FWidgetReflectionService::GetWidgetTypeEvents(const FString& WidgetType)
 {
+    InitializeWidgetCatalogs();
+    
     auto ClassResult = ResolveWidgetClass(WidgetType);
     if (ClassResult.IsError())
     {
@@ -186,23 +211,13 @@ TResult<TArray<FString>> FWidgetReflectionService::GetWidgetTypeEvents(const FSt
     
     TArray<FString> Events;
     
-    if (WidgetType.Equals(TEXT("Button")))
+    // Get widget-specific events from lookup table
+    if (WidgetTypeToEvents.Contains(WidgetType))
     {
-        Events = { TEXT("OnClicked"), TEXT("OnPressed"), TEXT("OnReleased"), TEXT("OnHovered"), TEXT("OnUnhovered") };
-    }
-    else if (WidgetType.Equals(TEXT("CheckBox")))
-    {
-        Events.Add(TEXT("OnCheckStateChanged"));
-    }
-    else if (WidgetType.Equals(TEXT("Slider")))
-    {
-        Events = { TEXT("OnValueChanged"), TEXT("OnMouseCaptureBegin"), TEXT("OnMouseCaptureEnd") };
-    }
-    else if (WidgetType.Equals(TEXT("EditableText")) || WidgetType.Equals(TEXT("EditableTextBox")))
-    {
-        Events = { TEXT("OnTextChanged"), TEXT("OnTextCommitted") };
+        Events = WidgetTypeToEvents[WidgetType];
     }
     
+    // Add common event for all widgets
     Events.Add(TEXT("OnVisibilityChanged"));
     
     return TResult<TArray<FString>>::Success(Events);
