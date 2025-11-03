@@ -11,6 +11,7 @@ class UEdGraphNode;
 class UEdGraphPin;
 class UK2Node;
 struct FEdGraphPinType;
+struct FGraphInfo;
 
 /**
  * Information about a pin connection
@@ -91,6 +92,12 @@ public:
                                                            const FString& SearchTerm);
     TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId);
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
+    TResult<TArray<FNodeInfo>> FindNodes(UBlueprint* Blueprint, const FString& GraphName,
+                                        const FString& SearchTerm);
+    
+    // Node refresh/reconstruction
+    TResult<void> RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile = true);
+    TResult<TArray<FGraphInfo>> RefreshAllNodes(UBlueprint* Blueprint, bool bCompile = true);
 
 private:
     /**

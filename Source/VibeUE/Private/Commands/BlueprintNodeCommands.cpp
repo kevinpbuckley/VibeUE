@@ -4790,58 +4790,39 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
+    // Extract parameters
+    FString BlueprintName, NodeIdentifier;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(Error);
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
+    }
+    
     bool bCompile = true;
     Params->TryGetBoolField(TEXT("compile"), bCompile);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNode", "MCP Refresh Blueprint Node"));
-
-    if (Blueprint)
+    
+    // Find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        Blueprint->Modify();
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
-    if (Graph)
+    
+    // Refresh node using NodeService
+    TResult<void> RefreshResult = NodeService->RefreshNode(BlueprintResult.GetValue(), NodeIdentifier, bCompile);
+    if (!RefreshResult.IsSuccess())
     {
-        Graph->Modify();
+        return CreateErrorResponse(RefreshResult.GetErrorCode(), RefreshResult.GetErrorMessage());
     }
-    if (Node)
-    {
-        Node->Modify();
-        Node->ReconstructNode();
-    }
-
-    if (Graph)
-    {
-        Graph->NotifyGraphChanged();
-    }
-
-    if (Blueprint)
-    {
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-        if (bCompile)
-        {
-            FKismetEditorUtilities::CompileBlueprint(Blueprint);
-        }
-    }
-
+    
+    // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Result->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Result->SetStringField(TEXT("graph_name"), Graph ? Graph->GetName() : TEXT(""));
-    Result->SetStringField(TEXT("node_class"), Node ? Node->GetClass()->GetPathName() : TEXT(""));
     Result->SetBoolField(TEXT("compiled"), bCompile);
     Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' refreshed in Blueprint '%s'"), *NodeIdentifier, *BlueprintName));
     return Result;
@@ -4849,73 +4830,55 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-
+    
     bool bCompile = true;
     Params->TryGetBoolField(TEXT("compile"), bCompile);
-
-    TArray<UEdGraph*> Graphs;
-    GatherCandidateGraphs(Blueprint, nullptr, Graphs);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNodes", "MCP Refresh Blueprint Nodes"));
-
-    Blueprint->Modify();
-    for (UEdGraph* Graph : Graphs)
+    
+    // Find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        if (Graph)
-        {
-            Graph->Modify();
-        }
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
-
-    FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
-
+    
+    // Refresh all nodes using NodeService
+    TResult<TArray<FGraphInfo>> RefreshResult = NodeService->RefreshAllNodes(BlueprintResult.GetValue(), bCompile);
+    if (!RefreshResult.IsSuccess())
+    {
+        return CreateErrorResponse(RefreshResult.GetErrorCode(), RefreshResult.GetErrorMessage());
+    }
+    
+    // Build graph summaries for response
     TArray<TSharedPtr<FJsonValue>> GraphSummaries;
     int32 TotalNodes = 0;
-
-    TArray<UEdGraph*> SummaryGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, SummaryGraphs);
-    for (UEdGraph* Graph : SummaryGraphs)
+    
+    for (const FGraphInfo& GraphInfo : RefreshResult.GetValue())
     {
-        if (!Graph)
-        {
-            continue;
-        }
-
-        Graph->NotifyGraphChanged();
-        TotalNodes += Graph->Nodes.Num();
-
-        TSharedPtr<FJsonObject> GraphInfo = MakeShared<FJsonObject>();
-        GraphInfo->SetStringField(TEXT("graph_name"), Graph->GetName());
-        GraphInfo->SetStringField(TEXT("graph_guid"), VibeUENodeIntrospection::NormalizeGuid(Graph->GraphGuid));
-        GraphInfo->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
-        GraphSummaries.Add(MakeShared<FJsonValueObject>(GraphInfo));
+        TotalNodes += GraphInfo.NodeCount;
+        
+        TSharedPtr<FJsonObject> GraphObj = MakeShared<FJsonObject>();
+        GraphObj->SetStringField(TEXT("graph_name"), GraphInfo.Name);
+        GraphObj->SetStringField(TEXT("graph_guid"), GraphInfo.Guid);
+        GraphObj->SetNumberField(TEXT("node_count"), GraphInfo.NodeCount);
+        GraphSummaries.Add(MakeShared<FJsonValueObject>(GraphObj));
     }
-
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    if (bCompile)
-    {
-        FKismetEditorUtilities::CompileBlueprint(Blueprint);
-    }
-
+    
+    // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetNumberField(TEXT("graph_count"), SummaryGraphs.Num());
+    Result->SetNumberField(TEXT("graph_count"), RefreshResult.GetValue().Num());
     Result->SetNumberField(TEXT("node_count"), TotalNodes);
     Result->SetBoolField(TEXT("compiled"), bCompile);
     Result->SetArrayField(TEXT("graphs"), GraphSummaries);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), SummaryGraphs.Num(), TotalNodes, *BlueprintName));
+    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), 
+        RefreshResult.GetValue().Num(), TotalNodes, *BlueprintName));
     return Result;
 }
 
@@ -5614,19 +5577,18 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const 
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    FString NodeID;
-
+    // Extract parameters
+    FString BlueprintName, NodeID;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
     if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
 
+    // Parse position from various possible formats
     FVector2D NewPosition(0.0f, 0.0f);
     bool bHasPosition = false;
 
@@ -5646,8 +5608,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TS
 
     if (!bHasPosition)
     {
-        double PosX = 0.0;
-        double PosY = 0.0;
+        double PosX = 0.0, PosY = 0.0;
         const bool bHasX = Params->TryGetNumberField(TEXT("x"), PosX) || Params->TryGetNumberField(TEXT("pos_x"), PosX);
         const bool bHasY = Params->TryGetNumberField(TEXT("y"), PosY) || Params->TryGetNumberField(TEXT("pos_y"), PosY);
 
@@ -5661,70 +5622,31 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TS
 
     if (!bHasPosition)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
 
-    FString ScopeError;
-    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!PreferredGraph && !ScopeError.IsEmpty())
+    // Move node using NodeService
+    TResult<void> MoveResult = NodeService->MoveNode(BlueprintResult.GetValue(), NodeID, NewPosition);
+    if (!MoveResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(ScopeError);
+        return CreateErrorResponse(MoveResult.GetErrorCode(), MoveResult.GetErrorMessage());
     }
 
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
-
-    UEdGraphNode* TargetNode = nullptr;
-    UEdGraph* NodeGraph = nullptr;
-    ResolveNodeIdentifier(NodeID, CandidateGraphs, TargetNode, NodeGraph);
-
-    if (!TargetNode)
-    {
-        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
-        UE_LOG(LogVibeUE, Error, TEXT("MoveBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
-    }
-
-    if (!NodeGraph)
-    {
-        NodeGraph = PreferredGraph;
-    }
-
-    const int32 PreviousX = TargetNode->NodePosX;
-    const int32 PreviousY = TargetNode->NodePosY;
+    // Build success response
     const int32 RoundedX = FMath::RoundToInt(NewPosition.X);
     const int32 RoundedY = FMath::RoundToInt(NewPosition.Y);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "MoveBlueprintNode", "MCP Move Blueprint Node"));
-    if (NodeGraph)
-    {
-        NodeGraph->Modify();
-    }
-    TargetNode->Modify();
-
-    TargetNode->NodePosX = RoundedX;
-    TargetNode->NodePosY = RoundedY;
-
-    if (NodeGraph)
-    {
-        NodeGraph->NotifyGraphChanged();
-    }
-
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Result->SetStringField(TEXT("node_id"), NodeID);
-    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
-    Result->SetNumberField(TEXT("previous_x"), PreviousX);
-    Result->SetNumberField(TEXT("previous_y"), PreviousY);
     Result->SetNumberField(TEXT("new_x"), RoundedX);
     Result->SetNumberField(TEXT("new_y"), RoundedY);
     Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
