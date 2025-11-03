@@ -8,6 +8,7 @@
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
 #include "K2Node.h"
+#include "K2Node_InputAction.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "ScopedTransaction.h"
@@ -617,4 +618,42 @@ TResult<TArray<FGraphInfo>> FBlueprintNodeService::RefreshAllNodes(UBlueprint* B
     }
     
     return TResult<TArray<FGraphInfo>>::Success(GraphInfos);
+}
+
+TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Blueprint, const FInputActionNodeParams& Params)
+{
+    if (!Blueprint)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(Params.ActionName, TEXT("ActionName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Resolve target graph (defaults to EventGraph)
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, TEXT(""), Error);
+    if (!TargetGraph)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
+    }
+    
+    // Create input action node
+    // Uses CommonUtils which handles graph modification, GUID generation, and pin allocation
+    UK2Node_InputAction* InputActionNode = FCommonUtils::CreateInputActionNode(TargetGraph, Params.ActionName, Params.Position);
+    if (!InputActionNode)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::NODE_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create input action node for action '%s'"), *Params.ActionName));
+    }
+    
+    // Mark blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    
+    // Return node ID
+    return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
 }
