@@ -1,6 +1,5 @@
 #include "Services/UMG/WidgetDiscoveryService.h"
 #include "Core/ErrorCodes.h"
-#include "UMGEditor.h"
 #include "WidgetBlueprint.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "EditorAssetLibrary.h"
