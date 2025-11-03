@@ -319,12 +319,12 @@ bool FServiceContextThreadSafetyTest::RunTest(const FString& Parameters)
 		WaitCount++;
 	}
 
-	// Cleanup threads
+	// Cleanup threads - wait for completion instead of forcing kill
 	for (FRunnableThread* Thread : Threads)
 	{
 		if (Thread)
 		{
-			Thread->Kill(true);
+			Thread->WaitForCompletion();
 			delete Thread;
 		}
 	}

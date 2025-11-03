@@ -2,6 +2,8 @@
 #include "Editor.h"
 #include "Engine/World.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
+
 FServiceContext::FServiceContext()
 {
 }
@@ -15,17 +17,17 @@ FServiceContext::~FServiceContext()
 
 void FServiceContext::LogInfo(const FString& Message, const FString& ServiceName) const
 {
-	UE_LOG(LogTemp, Log, TEXT("[%s] %s"), *ServiceName, *Message);
+	UE_LOG(LogVibeUE, Log, TEXT("[%s] %s"), *ServiceName, *Message);
 }
 
 void FServiceContext::LogWarning(const FString& Message, const FString& ServiceName) const
 {
-	UE_LOG(LogTemp, Warning, TEXT("[%s] %s"), *ServiceName, *Message);
+	UE_LOG(LogVibeUE, Warning, TEXT("[%s] %s"), *ServiceName, *Message);
 }
 
 void FServiceContext::LogError(const FString& Message, const FString& ServiceName) const
 {
-	UE_LOG(LogTemp, Error, TEXT("[%s] %s"), *ServiceName, *Message);
+	UE_LOG(LogVibeUE, Error, TEXT("[%s] %s"), *ServiceName, *Message);
 }
 
 UWorld* FServiceContext::GetWorld() const
@@ -79,5 +81,5 @@ FString FServiceContext::GetConfigValue(const FString& Key, const FString& Defau
 void FServiceContext::SetConfigValue(const FString& Key, const FString& Value)
 {
 	FScopeLock ScopeLock(&Lock);
-	ConfigValues.Add(Key, Value);
+	ConfigValues.Emplace(Key, Value);
 }
