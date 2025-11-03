@@ -27,16 +27,16 @@ TResult<UWidgetBlueprint*> FWidgetDiscoveryService::FindWidget(const FString& Wi
     // Check if we're in a serialization context to prevent crashes
     if (IsInSerializationContext())
     {
-        return TResult<UWidgetBlueprint*>::Failure(
-            ErrorCodes::InvalidOperation,
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
             TEXT("Cannot find widget during serialization context")
         );
     }
 
     if (WidgetName.IsEmpty())
     {
-        return TResult<UWidgetBlueprint*>::Failure(
-            ErrorCodes::InvalidArgument,
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::PARAM_EMPTY,
             TEXT("Widget name cannot be empty")
         );
     }
@@ -173,8 +173,8 @@ TResult<UWidgetBlueprint*> FWidgetDiscoveryService::FindWidget(const FString& Wi
         return TResult<UWidgetBlueprint*>::Success(BestMatch);
     }
     
-    return TResult<UWidgetBlueprint*>::Failure(
-        ErrorCodes::AssetNotFound,
+    return TResult<UWidgetBlueprint*>::Error(
+        VibeUE::ErrorCodes::ASSET_NOT_FOUND,
         FString::Printf(TEXT("Widget blueprint '%s' not found"), *WidgetName)
     );
 }
@@ -183,16 +183,16 @@ TResult<UWidgetBlueprint*> FWidgetDiscoveryService::LoadWidget(const FString& Wi
 {
     if (IsInSerializationContext())
     {
-        return TResult<UWidgetBlueprint*>::Failure(
-            ErrorCodes::InvalidOperation,
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
             TEXT("Cannot load widget during serialization context")
         );
     }
 
     if (WidgetPath.IsEmpty())
     {
-        return TResult<UWidgetBlueprint*>::Failure(
-            ErrorCodes::InvalidArgument,
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::PARAM_EMPTY,
             TEXT("Widget path cannot be empty")
         );
     }
@@ -200,8 +200,8 @@ TResult<UWidgetBlueprint*> FWidgetDiscoveryService::LoadWidget(const FString& Wi
     UWidgetBlueprint* Widget = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(WidgetPath));
     if (!Widget)
     {
-        return TResult<UWidgetBlueprint*>::Failure(
-            ErrorCodes::AssetNotFound,
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::ASSET_LOAD_FAILED,
             FString::Printf(TEXT("Failed to load widget from path '%s'"), *WidgetPath)
         );
     }
@@ -275,7 +275,7 @@ TResult<bool> FWidgetDiscoveryService::IsValidWidget(const FString& WidgetName)
     
     // Additional validation: check if widget is valid
     UWidgetBlueprint* Widget = Result.GetValue();
-    bool bIsValid = Widget != nullptr && Widget->IsValidLowLevel() && !Widget->IsPendingKill();
+    bool bIsValid = Widget != nullptr && Widget->IsValidLowLevel() && IsValid(Widget);
     
     return TResult<bool>::Success(bIsValid);
 }
