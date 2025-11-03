@@ -21,7 +21,7 @@
  * TResult<UBlueprint*> Result = DiscoveryService->FindBlueprint(BlueprintName);
  * if (Result.IsError())
  * {
- *     return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+ *     return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
  * }
  * return CreateSuccessResponseWithBlueprint(Result.GetValue());
  * @endcode
@@ -33,8 +33,33 @@
 
 #include "CoreMinimal.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
-#include "Commands/CommonUtils.h"
 #include "Json.h"
+
+/**
+ * Helper to create error JSON response
+ */
+static TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& Message)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error_code"), ErrorCode);
+    Response->SetStringField(TEXT("error"), Message);
+    return Response;
+}
+
+/**
+ * Helper to create success JSON response
+ */
+static TSharedPtr<FJsonObject> CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data = nullptr)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    if (Data.IsValid())
+    {
+        Response->SetObjectField(TEXT("data"), Data);
+    }
+    return Response;
+}
 
 /**
  * Example command handler using BlueprintDiscoveryService
@@ -60,7 +85,7 @@ public:
         FString BlueprintName;
         if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+            return CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name' parameter"));
         }
 
         // Call service method
@@ -69,11 +94,7 @@ public:
         // Convert result to JSON
         if (Result.IsError())
         {
-            return FCommonUtils::CreateErrorResponse(
-                FString::Printf(TEXT("%s: %s"), 
-                    *Result.GetErrorCode(), 
-                    *Result.GetErrorMessage())
-            );
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
         }
 
         // Success - create response with blueprint data
@@ -82,7 +103,7 @@ public:
         Data->SetStringField(TEXT("name"), Blueprint->GetName());
         Data->SetStringField(TEXT("path"), Blueprint->GetPathName());
         
-        return FCommonUtils::CreateSuccessResponse(Data);
+        return CreateSuccessResponse(Data);
     }
 
     /**
@@ -94,7 +115,7 @@ public:
         FString SearchTerm;
         if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'search_term' parameter"));
+            return CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'search_term' parameter"));
         }
 
         int32 MaxResults = 100;
@@ -105,7 +126,7 @@ public:
         
         if (Result.IsError())
         {
-            return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
         }
 
         // Convert array of FBlueprintInfo to JSON array
@@ -125,7 +146,7 @@ public:
         Data->SetArrayField(TEXT("blueprints"), JsonArray);
         Data->SetNumberField(TEXT("count"), JsonArray.Num());
         
-        return FCommonUtils::CreateSuccessResponse(Data);
+        return CreateSuccessResponse(Data);
     }
 
     /**
@@ -137,21 +158,21 @@ public:
         FString BlueprintName;
         if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+            return CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name' parameter"));
         }
 
         TResult<bool> Result = DiscoveryService->BlueprintExists(BlueprintName);
         
         if (Result.IsError())
         {
-            return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
         }
 
         TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
         Data->SetBoolField(TEXT("exists"), Result.GetValue());
         Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
         
-        return FCommonUtils::CreateSuccessResponse(Data);
+        return CreateSuccessResponse(Data);
     }
 
 private:

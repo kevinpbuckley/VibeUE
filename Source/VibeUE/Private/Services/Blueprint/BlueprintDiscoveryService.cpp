@@ -20,6 +20,28 @@
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
+// Helper function to extract asset name from path
+static FString ExtractAssetNameFromPath(const FString& Path)
+{
+    int32 SlashIndex = INDEX_NONE;
+    if (Path.FindLastChar(TEXT('/'), SlashIndex))
+    {
+        return Path.Mid(SlashIndex + 1);
+    }
+    return Path;
+}
+
+// Helper function to try loading a blueprint by path
+static UBlueprint* TryLoadBlueprintByPath(const FString& AssetPath)
+{
+    UBlueprint* Blueprint = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
+    if (!Blueprint)
+    {
+        Blueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
+    }
+    return Blueprint;
+}
+
 FBlueprintDiscoveryService::FBlueprintDiscoveryService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
 {
@@ -36,74 +58,45 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::FindBlueprint(const FString& Bl
     }
 
     FString NormalizedName = BlueprintName.TrimStartAndEnd();
-    UBlueprint* LoadedBlueprint = nullptr;
 
-    auto ExtractAssetName = [](const FString& Path) -> FString
-    {
-        int32 SlashIndex = INDEX_NONE;
-        if (Path.FindLastChar(TEXT('/'), SlashIndex))
-        {
-            return Path.Mid(SlashIndex + 1);
-        }
-        return Path;
-    };
-
-    auto TryLoadByPath = [&LoadedBlueprint](const FString& AssetPath)
-    {
-        if (!LoadedBlueprint)
-        {
-            LoadedBlueprint = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
-        }
-        if (!LoadedBlueprint)
-        {
-            LoadedBlueprint = LoadObject<UBlueprint>(nullptr, *AssetPath);
-        }
-    };
-
-    // Handle full or partial asset paths
+    // Handle full asset paths
     if (NormalizedName.StartsWith(TEXT("/")))
     {
         FString AssetPath = NormalizedName;
         if (!AssetPath.Contains(TEXT(".")))
         {
-            const FString AssetName = ExtractAssetName(AssetPath);
+            const FString AssetName = ExtractAssetNameFromPath(AssetPath);
             if (!AssetName.IsEmpty())
             {
                 AssetPath += TEXT(".") + AssetName;
             }
         }
 
-        TryLoadByPath(AssetPath);
-        if (LoadedBlueprint)
+        UBlueprint* Blueprint = TryLoadBlueprintByPath(AssetPath);
+        if (Blueprint)
         {
-            return TResult<UBlueprint*>::Success(LoadedBlueprint);
+            return TResult<UBlueprint*>::Success(Blueprint);
         }
     }
     else
     {
-        TryLoadByPath(NormalizedName);
-        if (LoadedBlueprint)
-        {
-            return TResult<UBlueprint*>::Success(LoadedBlueprint);
-        }
-
         // Try default path under /Game/Blueprints/
         const FString DefaultPackage = FString::Printf(TEXT("/Game/Blueprints/%s"), *NormalizedName);
         FString DefaultAssetPath = DefaultPackage;
         if (!DefaultAssetPath.Contains(TEXT(".")))
         {
-            const FString AssetName = ExtractAssetName(DefaultPackage);
+            const FString AssetName = ExtractAssetNameFromPath(DefaultPackage);
             DefaultAssetPath += TEXT(".") + AssetName;
         }
 
-        TryLoadByPath(DefaultAssetPath);
-        if (LoadedBlueprint)
+        UBlueprint* Blueprint = TryLoadBlueprintByPath(DefaultAssetPath);
+        if (Blueprint)
         {
-            return TResult<UBlueprint*>::Success(LoadedBlueprint);
+            return TResult<UBlueprint*>::Success(Blueprint);
         }
     }
 
-    // Use Asset Registry for recursive search
+    // Use Asset Registry for recursive search by name
     FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
     IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
     
@@ -145,11 +138,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::LoadBlueprint(const FString& Bl
         );
     }
 
-    UBlueprint* Blueprint = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(BlueprintPath));
-    if (!Blueprint)
-    {
-        Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintPath);
-    }
+    UBlueprint* Blueprint = TryLoadBlueprintByPath(BlueprintPath);
 
     if (!Blueprint)
     {
