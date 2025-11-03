@@ -9,6 +9,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "K2Node.h"
 #include "K2Node_InputAction.h"
+#include "K2Node_Event.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "ScopedTransaction.h"
@@ -656,4 +657,42 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
     
     // Return node ID
     return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
+}
+
+TResult<FString> FBlueprintNodeService::AddEvent(UBlueprint* Blueprint, const FEventConfiguration& Config)
+{
+    if (!Blueprint)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(Config.EventName, TEXT("EventName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Resolve target graph (use specified graph or default to EventGraph)
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Config.GraphName, Error);
+    if (!TargetGraph)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
+    }
+    
+    // Create event node
+    // Uses CommonUtils which handles graph modification, GUID generation, and pin allocation
+    UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(TargetGraph, Config.EventName, Config.Position);
+    if (!EventNode)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::NODE_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create event node for event '%s'"), *Config.EventName));
+    }
+    
+    // Mark blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    
+    // Return node ID
+    return TResult<FString>::Success(EventNode->NodeGuid.ToString());
 }
