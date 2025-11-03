@@ -2239,219 +2239,129 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
 {
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails called"));
-    
+    // Extract parameters
     FString BlueprintName, NodeId;
-    bool bIncludeProperties = true;
-    bool bIncludePins = true;
-    bool bIncludeConnections = true;
-    
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing blueprint_name parameter"));
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
     if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
     {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing node_id parameter"));
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
     
-    // Enhanced: Support optional parameters
+    bool bIncludeProperties = true, bIncludePins = true, bIncludeConnections = true;
     Params->TryGetBoolField(TEXT("include_properties"), bIncludeProperties);
     Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
     Params->TryGetBoolField(TEXT("include_connections"), bIncludeConnections);
     
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Blueprint: %s, NodeId: %s, Props: %s, Pins: %s, Conns: %s"), 
-        *BlueprintName, *NodeId, bIncludeProperties ? TEXT("true") : TEXT("false"), 
-        bIncludePins ? TEXT("true") : TEXT("false"), bIncludeConnections ? TEXT("true") : TEXT("false"));
-    
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Blueprint not found: %s"), *BlueprintName);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
     
-    // Enhanced: Use ResolveTargetGraph to support function scope
-    FString GraphError;
-    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Params, GraphError);
-    if (!TargetGraph)
+    // Get node details from NodeService
+    TResult<FNodeInfo> NodeInfoResult = NodeService->GetNodeDetails(BlueprintResult.GetValue(), NodeId);
+    if (!NodeInfoResult.IsSuccess())
     {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Failed to resolve target graph: %s"), *GraphError);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to resolve target graph: %s"), *GraphError));
+        return CreateErrorResponse(NodeInfoResult.GetErrorCode(), NodeInfoResult.GetErrorMessage());
     }
     
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Using graph: %s"), *TargetGraph->GetName());
-    UEdGraphNode* Found = nullptr;
-    for (UEdGraphNode* Node : TargetGraph->Nodes)
-    {
-        if (Node->NodeGuid.ToString() == NodeId)
-        {
-            Found = Node; break;
-        }
-    }
-    if (!Found)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Node not found"));
-    }
+    const FNodeInfo& Info = NodeInfoResult.GetValue();
     
-    // Enhanced: Create comprehensive node information
+    // Build basic node info
     TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
-    NodeInfo->SetStringField(TEXT("id"), Found->NodeGuid.ToString());
-    NodeInfo->SetStringField(TEXT("node_class"), Found->GetClass()->GetName());
-    NodeInfo->SetStringField(TEXT("title"), Found->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+    NodeInfo->SetStringField(TEXT("id"), Info.NodeId);
+    NodeInfo->SetStringField(TEXT("node_class"), Info.NodeType);
+    NodeInfo->SetStringField(TEXT("title"), Info.DisplayName);
     
-    // Enhanced: Add position information
     TArray<TSharedPtr<FJsonValue>> Position;
-    Position.Add(MakeShared<FJsonValueNumber>(Found->NodePosX));
-    Position.Add(MakeShared<FJsonValueNumber>(Found->NodePosY));
+    Position.Add(MakeShared<FJsonValueNumber>(Info.Position.X));
+    Position.Add(MakeShared<FJsonValueNumber>(Info.Position.Y));
     NodeInfo->SetArrayField(TEXT("position"), Position);
-    
-    // Enhanced: Add category and metadata
-    if (UK2Node* K2Node = Cast<UK2Node>(Found))
-    {
-        NodeInfo->SetStringField(TEXT("category"), K2Node->GetMenuCategory().ToString());
-        NodeInfo->SetStringField(TEXT("tooltip"), K2Node->GetTooltipText().ToString());
-        NodeInfo->SetStringField(TEXT("keywords"), K2Node->GetKeywords().ToString());
-    }
-    
-    // Enhanced: Add node state information
-    NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Found->CanUserDeleteNode());
-    // Note: Comment node checking requires specific include - simplified for now
-    NodeInfo->SetStringField(TEXT("node_class_simple"), Found->GetClass()->GetName().Contains(TEXT("Comment")) ? TEXT("Comment") : TEXT("Other"));
-    
-    // Enhanced: Try to get additional node properties safely
-    if (UK2Node* K2Node = Cast<UK2Node>(Found))
-    {
-        // Color information might not be available on all node types
-        NodeInfo->SetStringField(TEXT("node_type"), TEXT("Blueprint"));
-    }
     
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetObjectField(TEXT("node_info"), NodeInfo);
     
-    // Enhanced: Include detailed pins if requested
-    if (bIncludePins)
+    // Enhanced details require accessing the actual node (keeping this logic for now)
+    // TODO: Move this introspection logic to NodeService in future refactoring
+    FString GraphError;
+    UEdGraph* TargetGraph = ResolveTargetGraph(BlueprintResult.GetValue(), Params, GraphError);
+    if (TargetGraph)
     {
-        TArray<TSharedPtr<FJsonValue>> InputPins;
-        TArray<TSharedPtr<FJsonValue>> OutputPins;
-        
-        for (UEdGraphPin* Pin : Found->Pins)
+        UEdGraphNode* Found = nullptr;
+        for (UEdGraphNode* Node : TargetGraph->Nodes)
         {
-            TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-            PinInfo->SetStringField(TEXT("name"), Pin->PinName.ToString());
-            PinInfo->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
-            PinInfo->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("Input") : TEXT("Output"));
-            PinInfo->SetBoolField(TEXT("is_hidden"), Pin->bHidden);
-            PinInfo->SetBoolField(TEXT("is_connected"), Pin->LinkedTo.Num() > 0);
+            if (Node->NodeGuid.ToString() == NodeId)
+            {
+                Found = Node;
+                break;
+            }
+        }
+        
+        if (Found)
+        {
+            NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Found->CanUserDeleteNode());
             
-            // Enhanced: Add default value information
-            if (!Pin->DefaultValue.IsEmpty())
+            if (UK2Node* K2Node = Cast<UK2Node>(Found))
             {
-                PinInfo->SetStringField(TEXT("default_value"), Pin->DefaultValue);
-            }
-            if (Pin->DefaultObject)
-            {
-                PinInfo->SetStringField(TEXT("default_object"), Pin->DefaultObject->GetName());
-            }
-            if (!Pin->DefaultTextValue.IsEmpty())
-            {
-                PinInfo->SetStringField(TEXT("default_text"), Pin->DefaultTextValue.ToString());
+                NodeInfo->SetStringField(TEXT("category"), K2Node->GetMenuCategory().ToString());
+                NodeInfo->SetStringField(TEXT("tooltip"), K2Node->GetTooltipText().ToString());
+                NodeInfo->SetStringField(TEXT("keywords"), K2Node->GetKeywords().ToString());
             }
             
-            // Enhanced: Add connection information if requested
-            if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
+            if (bIncludePins)
             {
-                TArray<TSharedPtr<FJsonValue>> Connections;
-                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                TArray<TSharedPtr<FJsonValue>> InputPins, OutputPins;
+                for (UEdGraphPin* Pin : Found->Pins)
                 {
-                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
+                    PinInfo->SetStringField(TEXT("name"), Pin->PinName.ToString());
+                    PinInfo->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+                    PinInfo->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("Input") : TEXT("Output"));
+                    PinInfo->SetBoolField(TEXT("is_hidden"), Pin->bHidden);
+                    PinInfo->SetBoolField(TEXT("is_connected"), Pin->LinkedTo.Num() > 0);
+                    
+                    if (!Pin->DefaultValue.IsEmpty())
+                        PinInfo->SetStringField(TEXT("default_value"), Pin->DefaultValue);
+                    if (Pin->DefaultObject)
+                        PinInfo->SetStringField(TEXT("default_object"), Pin->DefaultObject->GetName());
+                    if (!Pin->DefaultTextValue.IsEmpty())
+                        PinInfo->SetStringField(TEXT("default_text"), Pin->DefaultTextValue.ToString());
+                    
+                    if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
                     {
-                        TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
-                        Connection->SetStringField(TEXT("to_node_id"), LinkedPin->GetOwningNode()->NodeGuid.ToString());
-                        Connection->SetStringField(TEXT("to_pin"), LinkedPin->PinName.ToString());
-                        Connections.Add(MakeShared<FJsonValueObject>(Connection));
+                        TArray<TSharedPtr<FJsonValue>> Connections;
+                        for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                        {
+                            if (LinkedPin && LinkedPin->GetOwningNode())
+                            {
+                                TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
+                                Connection->SetStringField(TEXT("to_node_id"), LinkedPin->GetOwningNode()->NodeGuid.ToString());
+                                Connection->SetStringField(TEXT("to_pin"), LinkedPin->PinName.ToString());
+                                Connections.Add(MakeShared<FJsonValueObject>(Connection));
+                            }
+                        }
+                        PinInfo->SetArrayField(TEXT("connections"), Connections);
                     }
+                    
+                    PinInfo->SetBoolField(TEXT("is_array"), Pin->PinType.IsArray());
+                    PinInfo->SetBoolField(TEXT("is_reference"), Pin->PinType.bIsReference);
+                    
+                    if (Pin->Direction == EGPD_Input)
+                        InputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
+                    else
+                        OutputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
                 }
-                PinInfo->SetArrayField(TEXT("connections"), Connections);
-            }
-            
-            // Enhanced: Add pin type details
-            if (Pin->PinType.PinSubCategory.IsNone() == false)
-            {
-                PinInfo->SetStringField(TEXT("sub_category"), Pin->PinType.PinSubCategory.ToString());
-            }
-            if (Pin->PinType.PinSubCategoryObject.IsValid())
-            {
-                PinInfo->SetStringField(TEXT("sub_category_object"), Pin->PinType.PinSubCategoryObject->GetName());
-            }
-            PinInfo->SetBoolField(TEXT("is_array"), Pin->PinType.IsArray());
-            PinInfo->SetBoolField(TEXT("is_reference"), Pin->PinType.bIsReference);
-            
-            if (Pin->Direction == EGPD_Input)
-            {
-                InputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-            }
-            else
-            {
-                OutputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
+                
+                TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
+                PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
+                PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
+                Result->SetObjectField(TEXT("pins"), PinsInfo);
             }
         }
-        
-        TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
-        PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
-        PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
-        Result->SetObjectField(TEXT("pins"), PinsInfo);
-    }
-    
-    // Enhanced: Include node properties if requested
-    if (bIncludeProperties)
-    {
-        TArray<TSharedPtr<FJsonValue>> Properties;
-        
-        // Get reflection-based properties
-        UClass* NodeClass = Found->GetClass();
-        for (TFieldIterator<FProperty> PropIt(NodeClass); PropIt; ++PropIt)
-        {
-            FProperty* Property = *PropIt;
-            if (!Property || Property->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient))
-            {
-                continue;
-            }
-            
-            // Enhanced: Include editable properties
-            if (Property->HasAnyPropertyFlags(CPF_Edit))
-            {
-                TSharedPtr<FJsonObject> PropInfo = MakeShared<FJsonObject>();
-                PropInfo->SetStringField(TEXT("name"), Property->GetName());
-                PropInfo->SetStringField(TEXT("type"), Property->GetClass()->GetName());
-                PropInfo->SetBoolField(TEXT("editable"), true);
-                
-                // Enhanced: Try to get current property value as string
-                FString PropertyValue;
-                if (const void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Found))
-                {
-                    // Use simpler text export method
-                    PropertyValue = Property->GetNameCPP();
-                    PropInfo->SetStringField(TEXT("current_value"), PropertyValue);
-                }
-                
-                // Enhanced: Add property metadata
-                if (Property->HasMetaData(TEXT("Tooltip")))
-                {
-                    PropInfo->SetStringField(TEXT("tooltip"), Property->GetMetaData(TEXT("Tooltip")));
-                }
-                if (Property->HasMetaData(TEXT("Category")))
-                {
-                    PropInfo->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
-                }
-                
-                Properties.Add(MakeShared<FJsonValueObject>(PropInfo));
-            }
-        }
-        
-        Result->SetArrayField(TEXT("properties"), Properties);
     }
     
     return Result;
@@ -5457,121 +5367,68 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    FString NodeID;
-    bool DisconnectPins = true;
-    
+    // Extract parameters
+    FString BlueprintName, NodeID;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-    
     if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing node_id parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
     
-    // Optional parameter with default
-    Params->TryGetBoolField(TEXT("disconnect_pins"), DisconnectPins);
+    bool bDisconnectPins = true;
+    Params->TryGetBoolField(TEXT("disconnect_pins"), bDisconnectPins);
     
-    // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find blueprint
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
     
-    FString ScopeError;
-    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!PreferredGraph && !ScopeError.IsEmpty())
+    // Delete node using NodeService
+    TResult<FNodeDeletionInfo> DeleteResult = NodeService->DeleteNode(BlueprintResult.GetValue(), NodeID, bDisconnectPins);
+    if (!DeleteResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(ScopeError);
+        return CreateErrorResponse(DeleteResult.GetErrorCode(), DeleteResult.GetErrorMessage());
     }
-
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
-
-    UEdGraphNode* NodeToDelete = nullptr;
-    UEdGraph* NodeGraph = nullptr;
-    ResolveNodeIdentifier(NodeID, CandidateGraphs, NodeToDelete, NodeGraph);
-
-    if (!NodeToDelete)
-    {
-        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
-        UE_LOG(LogVibeUE, Error, TEXT("DeleteBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
-    }
-
-    if (!NodeToDelete->CanUserDeleteNode())
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeID));
-    }
-
+    
+    // Compile blueprint
+    FKismetEditorUtilities::CompileBlueprint(BlueprintResult.GetValue());
+    
+    // Build disconnected pins array for response
+    const FNodeDeletionInfo& DeletionInfo = DeleteResult.GetValue();
     TArray<TSharedPtr<FJsonValue>> DisconnectedPins;
-    if (DisconnectPins)
+    for (const FPinConnectionInfo& ConnInfo : DeletionInfo.DisconnectedPins)
     {
-        for (UEdGraphPin* Pin : NodeToDelete->Pins)
-        {
-            if (Pin && Pin->LinkedTo.Num() > 0)
-            {
-                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
-                {
-                    if (!LinkedPin)
-                    {
-                        continue;
-                    }
-
-                    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-                    PinInfo->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
-                    PinInfo->SetStringField(TEXT("pin_type"), Pin->PinType.PinCategory.ToString());
-                    PinInfo->SetStringField(TEXT("linked_node"), LinkedPin->GetOwningNode()->GetName());
-                    PinInfo->SetStringField(TEXT("linked_pin"), LinkedPin->PinName.ToString());
-                    DisconnectedPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-                }
-
-                Pin->BreakAllPinLinks();
-            }
-        }
+        TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
+        PinInfo->SetStringField(TEXT("pin_name"), ConnInfo.SourcePinName);
+        PinInfo->SetStringField(TEXT("pin_type"), ConnInfo.PinType);
+        PinInfo->SetStringField(TEXT("linked_node"), ConnInfo.TargetNodeId);
+        PinInfo->SetStringField(TEXT("linked_pin"), ConnInfo.TargetPinName);
+        DisconnectedPins.Add(MakeShared<FJsonValueObject>(PinInfo));
     }
-
-    const FString NodeType = NodeToDelete->GetClass()->GetName();
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "MCP Delete Blueprint Node"));
-
-    if (NodeGraph)
-    {
-        NodeGraph->Modify();
-    }
-    NodeToDelete->Modify();
-
-    if (NodeGraph)
-    {
-        NodeGraph->RemoveNode(NodeToDelete, true);
-        NodeGraph->NotifyGraphChanged();
-    }
-    else
-    {
-        NodeToDelete->DestroyNode();
-    }
-
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
+    
+    // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_guid"), NodeID);
-    Result->SetStringField(TEXT("node_type"), NodeType);
-    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
+    Result->SetStringField(TEXT("node_guid"), DeletionInfo.NodeId);
+    Result->SetStringField(TEXT("node_type"), DeletionInfo.NodeType);
+    Result->SetStringField(TEXT("graph_name"), DeletionInfo.GraphName);
     Result->SetArrayField(TEXT("disconnected_pins"), DisconnectedPins);
-    Result->SetBoolField(TEXT("pins_disconnected"), DisconnectPins);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
-
+    Result->SetBoolField(TEXT("pins_disconnected"), bDisconnectPins);
+    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), 
+        *NodeID, *BlueprintName));
+    
     TSharedPtr<FJsonObject> SafetyChecks = MakeShared<FJsonObject>();
     SafetyChecks->SetBoolField(TEXT("can_delete_check_passed"), true);
-    SafetyChecks->SetBoolField(TEXT("is_protected_node"), false);
+    SafetyChecks->SetBoolField(TEXT("is_protected_node"), DeletionInfo.bWasProtected);
     SafetyChecks->SetNumberField(TEXT("pins_disconnected_count"), DisconnectedPins.Num());
     Result->SetObjectField(TEXT("safety_checks"), SafetyChecks);
-
+    
     return Result;
 }
 

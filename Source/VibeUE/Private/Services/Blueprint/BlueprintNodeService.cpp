@@ -175,25 +175,86 @@ TResult<UK2Node*> FBlueprintNodeService::CreateNode(UBlueprint* Blueprint, const
     return TResult<UK2Node*>::Success(NewNode);
 }
 
-TResult<void> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FString& NodeId)
+TResult<FNodeDeletionInfo> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins)
 {
-    if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
+    if (!Blueprint)
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
     auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
-    if (ValidationResult.IsError()) { return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage()); }
+    if (ValidationResult.IsError())
+    {
+        return TResult<FNodeDeletionInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
 
     TArray<UEdGraph*> CandidateGraphs;
     GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
     UEdGraphNode* NodeToDelete = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph)) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId)); }
-    if (!NodeToDelete->CanUserDeleteNode()) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeId)); }
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph))
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId));
+    }
+    
+    if (!NodeToDelete->CanUserDeleteNode())
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, 
+            FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeId));
+    }
 
-    for (UEdGraphPin* Pin : NodeToDelete->Pins) { if (Pin && Pin->LinkedTo.Num() > 0) { Pin->BreakAllPinLinks(); } }
+    // Gather deletion info before deleting
+    FNodeDeletionInfo DeletionInfo;
+    DeletionInfo.NodeId = NodeToDelete->NodeGuid.ToString();
+    DeletionInfo.NodeType = NodeToDelete->GetClass()->GetName();
+    DeletionInfo.GraphName = NodeGraph ? NodeGraph->GetName() : TEXT("");
+    DeletionInfo.bWasProtected = false;
+
+    // Disconnect pins if requested and collect info
+    if (bDisconnectPins)
+    {
+        for (UEdGraphPin* Pin : NodeToDelete->Pins)
+        {
+            if (Pin && Pin->LinkedTo.Num() > 0)
+            {
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    {
+                        FPinConnectionInfo ConnInfo;
+                        ConnInfo.SourceNodeId = DeletionInfo.NodeId;
+                        ConnInfo.SourcePinName = Pin->PinName.ToString();
+                        ConnInfo.TargetNodeId = LinkedPin->GetOwningNode()->NodeGuid.ToString();
+                        ConnInfo.TargetPinName = LinkedPin->PinName.ToString();
+                        ConnInfo.PinType = Pin->PinType.PinCategory.ToString();
+                        DeletionInfo.DisconnectedPins.Add(ConnInfo);
+                    }
+                }
+                Pin->BreakAllPinLinks();
+            }
+        }
+    }
+
+    // Delete the node
     const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "Delete Blueprint Node"));
-    if (NodeGraph) { NodeGraph->Modify(); NodeGraph->RemoveNode(NodeToDelete, true); NodeGraph->NotifyGraphChanged(); }
-    else { NodeToDelete->Modify(); NodeToDelete->DestroyNode(); }
+    
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+        NodeGraph->RemoveNode(NodeToDelete, true);
+        NodeGraph->NotifyGraphChanged();
+    }
+    else
+    {
+        NodeToDelete->Modify();
+        NodeToDelete->DestroyNode();
+    }
+    
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    return TResult<void>::Success();
+    
+    return TResult<FNodeDeletionInfo>::Success(DeletionInfo);
 }
 
 TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position)
