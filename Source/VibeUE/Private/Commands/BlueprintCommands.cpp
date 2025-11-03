@@ -2,7 +2,7 @@
 #include "Commands/CommonUtils.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
-#include "Commands/BlueprintVariableReflectionServices.h"
+#include "Commands/BlueprintVariableService.h"
 
 #include "WidgetBlueprint.h"
 #include "Factories/BlueprintFactory.h"
@@ -3109,7 +3109,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
     Params->TryGetBoolField(TEXT("use_legacy"), bLegacyPath);
     if (!bLegacyPath)
     {
-        return FBlueprintVariableCommandContext::Get().ExecuteCommand(Action, Params);
+        return FBlueprintVariableService::Get().ExecuteCommand(Action, Params);
     }
 
     // Route to appropriate operation based on action
@@ -3136,7 +3136,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
     else if (Action == TEXT("get_property") || Action == TEXT("set_property") || Action == TEXT("diagnostics") || Action == TEXT("search_types"))
     {
         // Even if legacy is requested, these are best handled by the reflection path
-        return FBlueprintVariableCommandContext::Get().ExecuteCommand(Action, Params);
+        return FBlueprintVariableService::Get().ExecuteCommand(Action, Params);
     }
     else if (Action == TEXT("search_types"))
     {
