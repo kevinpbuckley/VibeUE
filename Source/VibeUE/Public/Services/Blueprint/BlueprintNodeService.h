@@ -187,7 +187,7 @@ struct VIBEUE_API FEventConfiguration
 {
     FString EventName;
     FVector2D Position;
-    FString GraphName; // Optional: target graph name (defaults to EventGraph when empty)
+    FString GraphName; // Optional: target graph name (defaults to EventGraph if empty or not specified)
 };
 
 /**
