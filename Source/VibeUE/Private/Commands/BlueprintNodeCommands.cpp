@@ -1277,7 +1277,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
     // Prepare input action node parameters
     FInputActionNodeParams InputParams;
     InputParams.ActionName = ActionName;
-    InputParams.Position = Params->HasField(TEXT("node_position")) 
+    InputParams.Position = Params->HasField(TEXT("node_position"))
         ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
         : FVector2D(0.0f, 0.0f);
 

@@ -659,7 +659,8 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
             Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
     }
     
-    // Create input action node using CommonUtils helper
+    // Create input action node
+    // Uses CommonUtils which handles graph modification, GUID generation, and pin allocation
     UK2Node_InputAction* InputActionNode = FCommonUtils::CreateInputActionNode(TargetGraph, Params.ActionName, Params.Position);
     if (!InputActionNode)
     {
