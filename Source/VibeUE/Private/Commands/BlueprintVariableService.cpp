@@ -2385,8 +2385,16 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleSetProperty(const TShar
     if (!CompileErr.IsEmpty()) Data->SetStringField(TEXT("compile_warning"), CompileErr);
     return FResponseSerializer::CreateSuccessResponse(Data);
 }
-TSharedPtr<FJsonObject> FBlueprintVariableService::HandleGetPropertyMetadata(const TSharedPtr<FJsonObject>& /*Params*/) { return FResponseSerializer::CreateErrorResponse(TEXT("UNIMPL"), TEXT("get_property_metadata not implemented")); }
-TSharedPtr<FJsonObject> FBlueprintVariableService::HandleSetPropertyMetadata(const TSharedPtr<FJsonObject>& /*Params*/) { return FResponseSerializer::CreateErrorResponse(TEXT("UNIMPL"), TEXT("set_property_metadata not implemented")); }
+TSharedPtr<FJsonObject> FBlueprintVariableService::HandleGetPropertyMetadata(const TSharedPtr<FJsonObject>& /*Params*/) 
+{ 
+    return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, TEXT("get_property_metadata not implemented")); 
+}
+
+TSharedPtr<FJsonObject> FBlueprintVariableService::HandleSetPropertyMetadata(const TSharedPtr<FJsonObject>& /*Params*/) 
+{ 
+    return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, TEXT("set_property_metadata not implemented")); 
+}
+
 TSharedPtr<FJsonObject> FBlueprintVariableService::HandleDiagnostics(const TSharedPtr<FJsonObject>& /*Params*/) {
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("stats"), CatalogService.GetCacheStats());
