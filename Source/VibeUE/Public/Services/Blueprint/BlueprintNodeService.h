@@ -188,7 +188,7 @@ struct VIBEUE_API FNodeSearchCriteria
     FString NodeType;        // Node type to search for (e.g., "K2Node_Event")
     FString NamePattern;     // Optional: Name pattern to match
     FString GraphScope;      // Optional: Graph name to search in (empty = all graphs)
-    TOptional<FString> FunctionName;  // Optional: Function name for function-scoped search
+    TOptional<FString> FunctionName;  // Reserved for future use: Function-scoped search
 };
 
 /**
