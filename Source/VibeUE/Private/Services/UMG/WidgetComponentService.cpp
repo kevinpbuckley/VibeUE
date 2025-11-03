@@ -518,7 +518,7 @@ void FWidgetComponentService::CollectChildren(UWidget* Widget, TArray<UWidget*>&
 UClass* FWidgetComponentService::GetWidgetClass(const FString& ComponentType) const
 {
     // Map common widget type names to classes
-    // Using function-local static for thread-safe singleton initialization (C++11 guarantees)
+    // Using function-local static for thread-safe singleton initialization
     static const TMap<FString, UClass*> WidgetTypeMap = {
         {TEXT("TextBlock"), UTextBlock::StaticClass()},
         {TEXT("Button"), UButton::StaticClass()},
@@ -532,19 +532,24 @@ UClass* FWidgetComponentService::GetWidgetClass(const FString& ComponentType) co
         {TEXT("SizeBox"), USizeBox::StaticClass()}
     };
 
-    if (const UClass* const* FoundClass = WidgetTypeMap.Find(ComponentType))
+    if (UClass* const* FoundClass = WidgetTypeMap.Find(ComponentType))
     {
         return *FoundClass;
     }
 
-    // Try to find class by name with U prefix
-    UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("U%s"), *ComponentType));
+    // Try to find class by name
+    // First, try as-is in case it already has the correct prefix or is a special name
+    UClass* FoundClass = FindObject<UClass>(nullptr, *ComponentType);
     if (FoundClass)
     {
         return FoundClass;
     }
 
-    // Fallback: try without prefix in case class doesn't follow UObject naming convention
-    FoundClass = FindObject<UClass>(nullptr, *ComponentType);
+    // If not found and doesn't start with 'U', try adding the prefix
+    if (!ComponentType.StartsWith(TEXT("U")))
+    {
+        FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("U%s"), *ComponentType));
+    }
+
     return FoundClass;
 }
