@@ -7,11 +7,19 @@
 class UWidget;
 class UWidgetBlueprint;
 class UUserWidget;
+class FWidgetDiscoveryService;
+class FWidgetLifecycleService;
+class FWidgetComponentService;
+class FWidgetPropertyService;
+class FWidgetStyleService;
+class FWidgetEventService;
+class FWidgetReflectionService;
+class FServiceContext;
 
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
- * Responsible for creating and modifying UMG Widget Blueprints,
- * adding widget components
+ * Thin command handler that delegates to UMG services.
+ * Refactored in Phase 4, Task 18 to use service layer.
  */
 class VIBEUE_API FUMGCommands
 {
@@ -107,10 +115,18 @@ private:
     TSharedPtr<FJsonObject> HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
 
 private:
+    // Service instances
+    TSharedPtr<FServiceContext> ServiceContext;
+    TSharedPtr<FWidgetDiscoveryService> DiscoveryService;
+    TSharedPtr<FWidgetLifecycleService> LifecycleService;
+    TSharedPtr<FWidgetComponentService> ComponentService;
+    TSharedPtr<FWidgetPropertyService> PropertyService;
+    TSharedPtr<FWidgetStyleService> StyleService;
+    TSharedPtr<FWidgetEventService> EventService;
+    TSharedPtr<FWidgetReflectionService> ReflectionService;
     
-    // Helper method to validate property before setting - Added based on Issues Report
-    static bool ValidatePropertyValue(UWidget* Widget, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& ErrorMessage);
-    
-    // Helper method to batch property operations - Added based on Issues Report
-    static bool SetPropertiesWithRetry(UWidget* Widget, const TArray<TPair<FString, TSharedPtr<FJsonValue>>>& Properties, TArray<FString>& Errors);
+    // Helper methods for JSON conversion
+    TSharedPtr<FJsonObject> CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data = nullptr);
+    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage);
+    TSharedPtr<FJsonObject> ComponentToJson(UWidget* Component);
 }; 
