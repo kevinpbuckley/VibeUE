@@ -54,7 +54,7 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
     if (Widget->WidgetTree->FindWidget(FName(*ComponentName)))
     {
         return TResult<UWidget*>::Error(
-            TEXT("COMPONENT_ALREADY_EXISTS"),
+            VibeUE::ErrorCodes::COMPONENT_NAME_EXISTS,
             FString::Printf(TEXT("Component '%s' already exists"), *ComponentName));
     }
 
@@ -63,7 +63,7 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
     if (!WidgetClass)
     {
         return TResult<UWidget*>::Error(
-            TEXT("INVALID_COMPONENT_TYPE"),
+            VibeUE::ErrorCodes::COMPONENT_TYPE_INVALID,
             FString::Printf(TEXT("Unknown widget type '%s'"), *ComponentType));
     }
 
@@ -72,7 +72,7 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
     if (!NewWidget)
     {
         return TResult<UWidget*>::Error(
-            TEXT("COMPONENT_CREATION_FAILED"),
+            VibeUE::ErrorCodes::COMPONENT_CREATE_FAILED,
             FString::Printf(TEXT("Failed to create widget of type '%s'"), *ComponentType));
     }
 
@@ -89,7 +89,7 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
         if (!ParentWidget)
         {
             return TResult<UWidget*>::Error(
-                TEXT("PARENT_NOT_FOUND"),
+                VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
                 FString::Printf(TEXT("Parent component '%s' not found"), *ParentName));
         }
         ParentPanel = Cast<UPanelWidget>(ParentWidget);
@@ -98,7 +98,7 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
     if (!ParentPanel)
     {
         return TResult<UWidget*>::Error(
-            TEXT("INVALID_PARENT"),
+            VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
             TEXT("Parent is not a panel widget that can contain children"));
     }
 
@@ -136,7 +136,7 @@ TResult<void> FWidgetComponentService::RemoveComponent(
     if (!TargetComponent)
     {
         return TResult<void>::Error(
-            TEXT("COMPONENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
     }
 
@@ -176,7 +176,7 @@ TResult<void> FWidgetComponentService::RemoveComponent(
         else
         {
             return TResult<void>::Error(
-                TEXT("INVALID_PARENT"),
+                VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
                 TEXT("Parent is not a panel widget"));
         }
     }
@@ -271,7 +271,7 @@ TResult<void> FWidgetComponentService::SetParent(
     if (!Component)
     {
         return TResult<void>::Error(
-            TEXT("COMPONENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
     }
 
@@ -280,7 +280,7 @@ TResult<void> FWidgetComponentService::SetParent(
     if (!NewParentWidget)
     {
         return TResult<void>::Error(
-            TEXT("PARENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Parent component '%s' not found"), *NewParentName));
     }
 
@@ -288,7 +288,7 @@ TResult<void> FWidgetComponentService::SetParent(
     if (!NewParentPanel)
     {
         return TResult<void>::Error(
-            TEXT("INVALID_PARENT"),
+            VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
             TEXT("New parent is not a panel widget"));
     }
 
@@ -335,7 +335,7 @@ TResult<FString> FWidgetComponentService::GetParent(
     if (!Component)
     {
         return TResult<FString>::Error(
-            TEXT("COMPONENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
     }
 
@@ -372,7 +372,7 @@ TResult<TArray<FString>> FWidgetComponentService::GetChildren(
     if (!Component)
     {
         return TResult<TArray<FString>>::Error(
-            TEXT("COMPONENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
     }
 
@@ -418,7 +418,7 @@ TResult<FWidgetComponentInfo> FWidgetComponentService::GetComponentInfo(
     if (!Component)
     {
         return TResult<FWidgetComponentInfo>::Error(
-            TEXT("COMPONENT_NOT_FOUND"),
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
     }
 
@@ -474,12 +474,16 @@ TResult<void> FWidgetComponentService::ValidateWidget(UWidgetBlueprint* Widget) 
 {
     if (!Widget)
     {
-        return TResult<void>::Error(TEXT("INVALID_WIDGET"), TEXT("Widget blueprint is null"));
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_BLUEPRINT_NOT_FOUND,
+            TEXT("Widget blueprint is null"));
     }
 
     if (!Widget->WidgetTree)
     {
-        return TResult<void>::Error(TEXT("INVALID_WIDGET"), TEXT("Widget tree is null"));
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_BLUEPRINT_NOT_FOUND,
+            TEXT("Widget tree is null"));
     }
 
     return TResult<void>::Success();
