@@ -1,4 +1,5 @@
 #include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintNodeServiceHelpers.h"
 #include "Core/ErrorCodes.h"
 #include "Commands/CommonUtils.h"
 #include "Commands/BlueprintReflection.h"
@@ -6,14 +7,8 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
-#include "EdGraphSchema_K2.h"
 #include "K2Node.h"
-#include "K2Node_Event.h"
-#include "K2Node_CallFunction.h"
-#include "K2Node_VariableGet.h"
-#include "K2Node_CustomEvent.h"
 #include "Kismet2/BlueprintEditorUtils.h"
-#include "Kismet2/KismetEditorUtilities.h"
 #include "ScopedTransaction.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBlueprintNodeService, Log, All);
@@ -43,7 +38,7 @@ TResult<UK2Node*> FBlueprintNodeService::CreateNode(UBlueprint* Blueprint, const
 
     // Find or use default graph
     FString Error;
-    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName, Error);
+    UEdGraph* TargetGraph = FBlueprintNodeServiceHelpers::ResolveTargetGraph(Blueprint, GraphName, Error);
     if (!TargetGraph)
     {
         return TResult<UK2Node*>::Error(
@@ -93,11 +88,11 @@ TResult<void> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FSt
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* NodeToDelete = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -159,11 +154,11 @@ TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FStri
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* TargetNode = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, TargetNode, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, TargetNode, NodeGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -207,12 +202,12 @@ TResult<void> FBlueprintNodeService::ConnectPins(UBlueprint* Blueprint, const FS
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     // Find source node
     UEdGraphNode* SourceNode = nullptr;
     UEdGraph* SourceGraph = nullptr;
-    if (!ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -223,7 +218,7 @@ TResult<void> FBlueprintNodeService::ConnectPins(UBlueprint* Blueprint, const FS
     // Find target node
     UEdGraphNode* TargetNode = nullptr;
     UEdGraph* TargetGraph = nullptr;
-    if (!ResolveNodeIdentifier(TargetNodeId, CandidateGraphs, TargetNode, TargetGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(TargetNodeId, CandidateGraphs, TargetNode, TargetGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -233,20 +228,20 @@ TResult<void> FBlueprintNodeService::ConnectPins(UBlueprint* Blueprint, const FS
 
     // Find pins
     FString Error;
-    UEdGraphPin* SourcePin = FindPin(SourceNode, SourcePinName, Error);
+    UEdGraphPin* SourcePin = FBlueprintNodeServiceHelpers::FindPin(SourceNode, SourcePinName, Error);
     if (!SourcePin)
     {
         return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, Error);
     }
 
-    UEdGraphPin* TargetPin = FindPin(TargetNode, TargetPinName, Error);
+    UEdGraphPin* TargetPin = FBlueprintNodeServiceHelpers::FindPin(TargetNode, TargetPinName, Error);
     if (!TargetPin)
     {
         return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, Error);
     }
 
     // Validate connection
-    if (!ValidatePinConnection(SourcePin, TargetPin, Error))
+    if (!FBlueprintNodeServiceHelpers::ValidatePinConnection(SourcePin, TargetPin, Error))
     {
         return TResult<void>::Error(VibeUE::ErrorCodes::PIN_TYPE_INCOMPATIBLE, Error);
     }
@@ -284,12 +279,12 @@ TResult<void> FBlueprintNodeService::DisconnectPins(UBlueprint* Blueprint, const
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     // Find source node
     UEdGraphNode* SourceNode = nullptr;
     UEdGraph* SourceGraph = nullptr;
-    if (!ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -299,7 +294,7 @@ TResult<void> FBlueprintNodeService::DisconnectPins(UBlueprint* Blueprint, const
 
     // Find pin
     FString Error;
-    UEdGraphPin* SourcePin = FindPin(SourceNode, SourcePinName, Error);
+    UEdGraphPin* SourcePin = FBlueprintNodeServiceHelpers::FindPin(SourceNode, SourcePinName, Error);
     if (!SourcePin)
     {
         return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, Error);
@@ -336,11 +331,11 @@ TResult<TArray<FPinConnectionInfo>> FBlueprintNodeService::GetPinConnections(UBl
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* Node = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
     {
         return TResult<TArray<FPinConnectionInfo>>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -386,11 +381,11 @@ TResult<void> FBlueprintNodeService::SetPinDefaultValue(UBlueprint* Blueprint, c
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* Node = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -399,7 +394,7 @@ TResult<void> FBlueprintNodeService::SetPinDefaultValue(UBlueprint* Blueprint, c
     }
 
     FString Error;
-    UEdGraphPin* Pin = FindPin(Node, PinName, Error);
+    UEdGraphPin* Pin = FBlueprintNodeServiceHelpers::FindPin(Node, PinName, Error);
     if (!Pin)
     {
         return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, Error);
@@ -438,11 +433,11 @@ TResult<FString> FBlueprintNodeService::GetPinDefaultValue(UBlueprint* Blueprint
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* Node = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
     {
         return TResult<FString>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -451,7 +446,7 @@ TResult<FString> FBlueprintNodeService::GetPinDefaultValue(UBlueprint* Blueprint
     }
 
     FString Error;
-    UEdGraphPin* Pin = FindPin(Node, PinName, Error);
+    UEdGraphPin* Pin = FBlueprintNodeServiceHelpers::FindPin(Node, PinName, Error);
     if (!Pin)
     {
         return TResult<FString>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, Error);
@@ -473,11 +468,11 @@ TResult<void> FBlueprintNodeService::ConfigureNode(UBlueprint* Blueprint, const 
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* Node = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -497,7 +492,7 @@ TResult<void> FBlueprintNodeService::ConfigureNode(UBlueprint* Blueprint, const 
     for (const auto& Pair : Config)
     {
         FString Error;
-        UEdGraphPin* Pin = FindPin(Node, Pair.Key, Error);
+        UEdGraphPin* Pin = FBlueprintNodeServiceHelpers::FindPin(Node, Pair.Key, Error);
         if (Pin)
         {
             Pin->DefaultValue = Pair.Value;
@@ -582,11 +577,11 @@ TResult<FNodeInfo> FBlueprintNodeService::GetNodeDetails(UBlueprint* Blueprint, 
 
     // Gather all graphs
     TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
 
     UEdGraphNode* Node = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    if (!FBlueprintNodeServiceHelpers::ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
     {
         return TResult<FNodeInfo>::Error(
             VibeUE::ErrorCodes::NODE_NOT_FOUND,
@@ -636,7 +631,7 @@ TResult<TArray<FString>> FBlueprintNodeService::ListNodes(UBlueprint* Blueprint,
     }
 
     FString Error;
-    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName, Error);
+    UEdGraph* TargetGraph = FBlueprintNodeServiceHelpers::ResolveTargetGraph(Blueprint, GraphName, Error);
     
     TArray<UEdGraph*> Graphs;
     if (TargetGraph)
@@ -645,7 +640,7 @@ TResult<TArray<FString>> FBlueprintNodeService::ListNodes(UBlueprint* Blueprint,
     }
     else
     {
-        GatherCandidateGraphs(Blueprint, nullptr, Graphs);
+        FBlueprintNodeServiceHelpers::GatherCandidateGraphs(Blueprint, nullptr, Graphs);
     }
 
     TArray<FString> NodeIds;
@@ -664,185 +659,4 @@ TResult<TArray<FString>> FBlueprintNodeService::ListNodes(UBlueprint* Blueprint,
     }
 
     return TResult<TArray<FString>>::Success(NodeIds);
-}
-
-// Helper methods
-UEdGraph* FBlueprintNodeService::ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName, FString& OutError) const
-{
-    if (!Blueprint)
-    {
-        OutError = TEXT("Blueprint is null");
-        return nullptr;
-    }
-
-    if (GraphName.IsEmpty())
-    {
-        // Use default event graph
-        for (UEdGraph* Graph : Blueprint->UbergraphPages)
-        {
-            if (Graph && Graph->GetName().Contains(TEXT("EventGraph")))
-            {
-                return Graph;
-            }
-        }
-        
-        // Fall back to first uber graph
-        if (Blueprint->UbergraphPages.Num() > 0)
-        {
-            return Blueprint->UbergraphPages[0];
-        }
-        
-        OutError = TEXT("No graphs found in blueprint");
-        return nullptr;
-    }
-
-    // Search for named graph
-    for (UEdGraph* Graph : Blueprint->UbergraphPages)
-    {
-        if (Graph && Graph->GetName().Equals(GraphName, ESearchCase::IgnoreCase))
-        {
-            return Graph;
-        }
-    }
-
-    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-    {
-        if (Graph && Graph->GetName().Equals(GraphName, ESearchCase::IgnoreCase))
-        {
-            return Graph;
-        }
-    }
-
-    OutError = FString::Printf(TEXT("Graph '%s' not found"), *GraphName);
-    return nullptr;
-}
-
-void FBlueprintNodeService::GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const
-{
-    OutGraphs.Empty();
-
-    if (PreferredGraph)
-    {
-        OutGraphs.Add(PreferredGraph);
-    }
-
-    if (Blueprint)
-    {
-        for (UEdGraph* Graph : Blueprint->UbergraphPages)
-        {
-            if (Graph && Graph != PreferredGraph)
-            {
-                OutGraphs.Add(Graph);
-            }
-        }
-
-        for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-        {
-            if (Graph && Graph != PreferredGraph)
-            {
-                OutGraphs.Add(Graph);
-            }
-        }
-    }
-}
-
-bool FBlueprintNodeService::ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, UEdGraphNode*& OutNode, UEdGraph*& OutGraph) const
-{
-    OutNode = nullptr;
-    OutGraph = nullptr;
-
-    FGuid NodeGuid;
-    if (FGuid::Parse(Identifier, NodeGuid))
-    {
-        // Search by GUID
-        for (UEdGraph* Graph : Graphs)
-        {
-            if (!Graph) continue;
-
-            for (UEdGraphNode* Node : Graph->Nodes)
-            {
-                if (Node && Node->NodeGuid == NodeGuid)
-                {
-                    OutNode = Node;
-                    OutGraph = Graph;
-                    return true;
-                }
-            }
-        }
-    }
-
-    // Search by name
-    for (UEdGraph* Graph : Graphs)
-    {
-        if (!Graph) continue;
-
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (Node && Node->GetName().Equals(Identifier, ESearchCase::IgnoreCase))
-            {
-                OutNode = Node;
-                OutGraph = Graph;
-                return true;
-            }
-        }
-    }
-
-    return false;
-}
-
-UEdGraphPin* FBlueprintNodeService::FindPin(UEdGraphNode* Node, const FString& PinName, FString& OutError) const
-{
-    if (!Node)
-    {
-        OutError = TEXT("Node is null");
-        return nullptr;
-    }
-
-    for (UEdGraphPin* Pin : Node->Pins)
-    {
-        if (Pin && Pin->PinName.ToString().Equals(PinName, ESearchCase::IgnoreCase))
-        {
-            return Pin;
-        }
-    }
-
-    OutError = FString::Printf(TEXT("Pin '%s' not found on node"), *PinName);
-    return nullptr;
-}
-
-bool FBlueprintNodeService::ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin, FString& OutError) const
-{
-    if (!SourcePin || !TargetPin)
-    {
-        OutError = TEXT("Source or target pin is null");
-        return false;
-    }
-
-    if (SourcePin->Direction != EGPD_Output)
-    {
-        OutError = TEXT("Source pin must be an output pin");
-        return false;
-    }
-
-    if (TargetPin->Direction != EGPD_Input)
-    {
-        OutError = TEXT("Target pin must be an input pin");
-        return false;
-    }
-
-    const UEdGraphSchema* Schema = SourcePin->GetSchema();
-    if (!Schema)
-    {
-        OutError = TEXT("Cannot find schema for pin validation");
-        return false;
-    }
-
-    FPinConnectionResponse Response = Schema->CanCreateConnection(SourcePin, TargetPin);
-    if (Response.Response != CONNECT_RESPONSE_MAKE)
-    {
-        OutError = Response.Message.ToString();
-        return false;
-    }
-
-    return true;
 }

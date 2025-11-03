@@ -89,14 +89,4 @@ public:
                                                            const FString& SearchTerm);
     TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId);
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
-
-private:
-    // Helper methods for node resolution
-    UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName, FString& OutError) const;
-    void GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const;
-    bool ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, UEdGraphNode*& OutNode, UEdGraph*& OutGraph) const;
-    
-    // Pin resolution helpers
-    UEdGraphPin* FindPin(UEdGraphNode* Node, const FString& PinName, FString& OutError) const;
-    bool ValidatePinConnection(UEdGraphPin* SourcePin, UEdGraphPin* TargetPin, FString& OutError) const;
 };
