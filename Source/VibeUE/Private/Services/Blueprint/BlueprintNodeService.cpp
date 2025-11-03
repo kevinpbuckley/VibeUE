@@ -1,4 +1,5 @@
 ﻿#include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintGraphService.h"
 #include "Core/ErrorCodes.h"
 #include "Commands/CommonUtils.h"
 #include "Commands/BlueprintReflection.h"
@@ -8,6 +9,7 @@
 #include "EdGraph/EdGraphPin.h"
 #include "K2Node.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "ScopedTransaction.h"
 #include "Json.h"
 
@@ -173,25 +175,86 @@ TResult<UK2Node*> FBlueprintNodeService::CreateNode(UBlueprint* Blueprint, const
     return TResult<UK2Node*>::Success(NewNode);
 }
 
-TResult<void> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FString& NodeId)
+TResult<FNodeDeletionInfo> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins)
 {
-    if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
+    if (!Blueprint)
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
     auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
-    if (ValidationResult.IsError()) { return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage()); }
+    if (ValidationResult.IsError())
+    {
+        return TResult<FNodeDeletionInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
 
     TArray<UEdGraph*> CandidateGraphs;
     GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
     UEdGraphNode* NodeToDelete = nullptr;
     UEdGraph* NodeGraph = nullptr;
-    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph)) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId)); }
-    if (!NodeToDelete->CanUserDeleteNode()) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeId)); }
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, NodeToDelete, NodeGraph))
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId));
+    }
+    
+    if (!NodeToDelete->CanUserDeleteNode())
+    {
+        return TResult<FNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, 
+            FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeId));
+    }
 
-    for (UEdGraphPin* Pin : NodeToDelete->Pins) { if (Pin && Pin->LinkedTo.Num() > 0) { Pin->BreakAllPinLinks(); } }
+    // Gather deletion info before deleting
+    FNodeDeletionInfo DeletionInfo;
+    DeletionInfo.NodeId = NodeToDelete->NodeGuid.ToString();
+    DeletionInfo.NodeType = NodeToDelete->GetClass()->GetName();
+    DeletionInfo.GraphName = NodeGraph ? NodeGraph->GetName() : TEXT("");
+    DeletionInfo.bWasProtected = false;
+
+    // Disconnect pins if requested and collect info
+    if (bDisconnectPins)
+    {
+        for (UEdGraphPin* Pin : NodeToDelete->Pins)
+        {
+            if (Pin && Pin->LinkedTo.Num() > 0)
+            {
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    {
+                        FPinConnectionInfo ConnInfo;
+                        ConnInfo.SourceNodeId = DeletionInfo.NodeId;
+                        ConnInfo.SourcePinName = Pin->PinName.ToString();
+                        ConnInfo.TargetNodeId = LinkedPin->GetOwningNode()->NodeGuid.ToString();
+                        ConnInfo.TargetPinName = LinkedPin->PinName.ToString();
+                        ConnInfo.PinType = Pin->PinType.PinCategory.ToString();
+                        DeletionInfo.DisconnectedPins.Add(ConnInfo);
+                    }
+                }
+                Pin->BreakAllPinLinks();
+            }
+        }
+    }
+
+    // Delete the node
     const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "Delete Blueprint Node"));
-    if (NodeGraph) { NodeGraph->Modify(); NodeGraph->RemoveNode(NodeToDelete, true); NodeGraph->NotifyGraphChanged(); }
-    else { NodeToDelete->Modify(); NodeToDelete->DestroyNode(); }
+    
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+        NodeGraph->RemoveNode(NodeToDelete, true);
+        NodeGraph->NotifyGraphChanged();
+    }
+    else
+    {
+        NodeToDelete->Modify();
+        NodeToDelete->DestroyNode();
+    }
+    
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    return TResult<void>::Success();
+    
+    return TResult<FNodeDeletionInfo>::Success(DeletionInfo);
 }
 
 TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position)
@@ -436,4 +499,162 @@ TResult<TArray<FString>> FBlueprintNodeService::ListNodes(UBlueprint* Blueprint,
         }
     }
     return TResult<TArray<FString>>::Success(NodeIds);
+}
+
+TResult<TArray<FNodeInfo>> FBlueprintNodeService::FindNodes(UBlueprint* Blueprint, const FString& GraphName, const FString& SearchTerm)
+{
+    if (!Blueprint)
+    {
+        return TResult<TArray<FNodeInfo>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName, Error);
+    TArray<UEdGraph*> Graphs;
+    if (TargetGraph)
+    {
+        Graphs.Add(TargetGraph);
+    }
+    else
+    {
+        GatherCandidateGraphs(Blueprint, nullptr, Graphs);
+    }
+    
+    TArray<FNodeInfo> FoundNodes;
+    FString LowerSearchTerm = SearchTerm.ToLower();
+    
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph) continue;
+        
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node) continue;
+            
+            // Search in node title, type, or GUID
+            FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString().ToLower();
+            FString NodeType = Node->GetClass()->GetName().ToLower();
+            FString NodeGuid = Node->NodeGuid.ToString().ToLower();
+            
+            if (SearchTerm.IsEmpty() || 
+                NodeTitle.Contains(LowerSearchTerm) ||
+                NodeType.Contains(LowerSearchTerm) ||
+                NodeGuid.Contains(LowerSearchTerm))
+            {
+                FNodeInfo Info;
+                Info.NodeId = Node->NodeGuid.ToString();
+                Info.NodeType = Node->GetClass()->GetName();
+                Info.DisplayName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+                Info.Position = FVector2D(Node->NodePosX, Node->NodePosY);
+                Info.GraphName = Graph->GetName();
+                FoundNodes.Add(Info);
+            }
+        }
+    }
+    
+    return TResult<TArray<FNodeInfo>>::Success(FoundNodes);
+}
+
+TResult<void> FBlueprintNodeService::RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile)
+{
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshNode", "Refresh Blueprint Node"));
+    
+    if (Blueprint) Blueprint->Modify();
+    if (NodeGraph) NodeGraph->Modify();
+    if (Node)
+    {
+        Node->Modify();
+        Node->ReconstructNode();
+    }
+    
+    if (NodeGraph) NodeGraph->NotifyGraphChanged();
+    
+    if (Blueprint)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+        if (bCompile)
+        {
+            FKismetEditorUtilities::CompileBlueprint(Blueprint);
+        }
+    }
+    
+    return TResult<void>::Success();
+}
+
+TResult<TArray<FGraphInfo>> FBlueprintNodeService::RefreshAllNodes(UBlueprint* Blueprint, bool bCompile)
+{
+    if (!Blueprint)
+    {
+        return TResult<TArray<FGraphInfo>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    TArray<UEdGraph*> Graphs;
+    GatherCandidateGraphs(Blueprint, nullptr, Graphs);
+    
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshAllNodes", "Refresh All Blueprint Nodes"));
+    
+    Blueprint->Modify();
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (Graph) Graph->Modify();
+    }
+    
+    FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
+    
+    TArray<FGraphInfo> GraphInfos;
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph) continue;
+        
+        Graph->NotifyGraphChanged();
+        
+        FGraphInfo Info;
+        Info.Name = Graph->GetName();
+        Info.Guid = Graph->GraphGuid.ToString();
+        Info.NodeCount = Graph->Nodes.Num();
+        
+        // Determine graph type
+        if (Blueprint->UbergraphPages.Contains(Graph))
+        {
+            Info.GraphType = TEXT("event");
+        }
+        else if (Blueprint->FunctionGraphs.Contains(Graph))
+        {
+            Info.GraphType = TEXT("function");
+        }
+        else if (Blueprint->MacroGraphs.Contains(Graph))
+        {
+            Info.GraphType = TEXT("macro");
+        }
+        else
+        {
+            Info.GraphType = TEXT("other");
+        }
+        
+        GraphInfos.Add(Info);
+    }
+    
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    if (bCompile)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
+    
+    return TResult<TArray<FGraphInfo>>::Success(GraphInfos);
 }

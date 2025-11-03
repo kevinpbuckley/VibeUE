@@ -11,6 +11,7 @@ class UEdGraphNode;
 class UEdGraphPin;
 class UK2Node;
 struct FEdGraphPinType;
+struct FGraphInfo;
 
 /**
  * Information about a pin connection
@@ -52,6 +53,18 @@ struct VIBEUE_API FNodeInfo
 };
 
 /**
+ * Information about a deleted node
+ */
+struct VIBEUE_API FNodeDeletionInfo
+{
+    FString NodeId;
+    FString NodeType;
+    FString GraphName;
+    TArray<FPinConnectionInfo> DisconnectedPins;
+    bool bWasProtected;
+};
+
+/**
  * Service for Blueprint node operations (create, connect, configure)
  * Extracted from BlueprintNodeCommands.cpp to provide focused node management
  */
@@ -67,7 +80,7 @@ public:
     // Node lifecycle
     TResult<UK2Node*> CreateNode(UBlueprint* Blueprint, const FString& GraphName, 
                                  const FString& NodeType, const FVector2D& Position);
-    TResult<void> DeleteNode(UBlueprint* Blueprint, const FString& NodeId);
+    TResult<FNodeDeletionInfo> DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins = true);
     TResult<void> MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position);
     
     // Pin connections
@@ -91,6 +104,12 @@ public:
                                                            const FString& SearchTerm);
     TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId);
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
+    TResult<TArray<FNodeInfo>> FindNodes(UBlueprint* Blueprint, const FString& GraphName,
+                                        const FString& SearchTerm);
+    
+    // Node refresh/reconstruction
+    TResult<void> RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile = true);
+    TResult<TArray<FGraphInfo>> RefreshAllNodes(UBlueprint* Blueprint, bool bCompile = true);
 
 private:
     /**
