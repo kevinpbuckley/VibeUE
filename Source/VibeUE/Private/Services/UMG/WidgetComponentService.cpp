@@ -97,9 +97,12 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
 
     if (!ParentPanel)
     {
+        FString ErrorMsg = ParentName.IsEmpty() 
+            ? TEXT("Root widget must be a panel widget that can contain children")
+            : TEXT("Parent is not a panel widget that can contain children");
         return TResult<UWidget*>::Error(
             VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
-            TEXT("Parent is not a panel widget that can contain children"));
+            ErrorMsg);
     }
 
     // Add to parent
@@ -149,19 +152,23 @@ TResult<void> FWidgetComponentService::RemoveComponent(
     {
         // Reparent children to root
         UPanelWidget* RootPanel = Cast<UPanelWidget>(Widget->WidgetTree->RootWidget);
-        if (RootPanel)
+        if (!RootPanel)
         {
-            for (UWidget* Child : AllChildren)
+            return TResult<void>::Error(
+                VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
+                TEXT("Cannot reparent children: root widget is not a panel widget"));
+        }
+
+        for (UWidget* Child : AllChildren)
+        {
+            if (UWidget* CurrentParent = Child->GetParent())
             {
-                if (UWidget* CurrentParent = Child->GetParent())
+                if (UPanelWidget* CurrentPanel = Cast<UPanelWidget>(CurrentParent))
                 {
-                    if (UPanelWidget* CurrentPanel = Cast<UPanelWidget>(CurrentParent))
-                    {
-                        CurrentPanel->RemoveChild(Child);
-                    }
+                    CurrentPanel->RemoveChild(Child);
                 }
-                RootPanel->AddChild(Child);
             }
+            RootPanel->AddChild(Child);
         }
     }
 
