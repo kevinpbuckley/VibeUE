@@ -204,7 +204,7 @@ bool FWidgetPropertyService_GetProperty_NullWidget_ReturnsError::RunTest(const F
 
 	// Assert
 	TestTrue(TEXT("Result should be error"), Result.IsError());
-	TestEqual(TEXT("Error code should be INVALID_INPUT"), Result.GetErrorCode(), EErrorCodes::InvalidInput);
+	TestEqual(TEXT("Error code should be PARAM_INVALID"), Result.GetErrorCode(), VibeUE::ErrorCodes::PARAM_INVALID);
 
 	Fixture.Teardown();
 	return true;
@@ -230,7 +230,7 @@ bool FWidgetPropertyService_GetProperty_EmptyComponentName_ReturnsError::RunTest
 
 	// Assert
 	TestTrue(TEXT("Result should be error"), Result.IsError());
-	TestEqual(TEXT("Error code should be INVALID_INPUT"), Result.GetErrorCode(), EErrorCodes::InvalidInput);
+	TestEqual(TEXT("Error code should be PARAM_EMPTY"), Result.GetErrorCode(), VibeUE::ErrorCodes::PARAM_EMPTY);
 
 	Fixture.Teardown();
 	return true;
@@ -253,7 +253,7 @@ bool FWidgetPropertyService_SetProperty_NullWidget_ReturnsError::RunTest(const F
 
 	// Assert
 	TestTrue(TEXT("Result should be error"), Result.IsError());
-	TestEqual(TEXT("Error code should be INVALID_INPUT"), Result.GetErrorCode(), EErrorCodes::InvalidInput);
+	TestEqual(TEXT("Error code should be PARAM_INVALID"), Result.GetErrorCode(), VibeUE::ErrorCodes::PARAM_INVALID);
 
 	Fixture.Teardown();
 	return true;
@@ -276,7 +276,7 @@ bool FWidgetPropertyService_IsValidProperty_NullWidget_ReturnsError::RunTest(con
 
 	// Assert
 	TestTrue(TEXT("Result should be error"), Result.IsError());
-	TestEqual(TEXT("Error code should be INVALID_INPUT"), Result.GetErrorCode(), EErrorCodes::InvalidInput);
+	TestEqual(TEXT("Error code should be PARAM_INVALID"), Result.GetErrorCode(), VibeUE::ErrorCodes::PARAM_INVALID);
 
 	Fixture.Teardown();
 	return true;
@@ -301,7 +301,7 @@ bool FWidgetPropertyService_GetPropertyMetadata_EmptyPropertyName_ReturnsError::
 
 	// Assert
 	TestTrue(TEXT("Result should be error"), Result.IsError());
-	TestEqual(TEXT("Error code should be INVALID_INPUT"), Result.GetErrorCode(), EErrorCodes::InvalidInput);
+	TestEqual(TEXT("Error code should be PARAM_EMPTY"), Result.GetErrorCode(), VibeUE::ErrorCodes::PARAM_EMPTY);
 
 	Fixture.Teardown();
 	return true;

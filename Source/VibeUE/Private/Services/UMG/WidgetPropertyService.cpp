@@ -64,7 +64,7 @@ TResult<FString> FWidgetPropertyService::GetProperty(UWidgetBlueprint* Widget, c
 	if (!FoundWidget)
 	{
 		return TResult<FString>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
 	}
 
@@ -82,7 +82,7 @@ TResult<FString> FWidgetPropertyService::GetProperty(UWidgetBlueprint* Widget, c
 	if (!Property)
 	{
 		return TResult<FString>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
 			FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
 	}
 
@@ -91,7 +91,7 @@ TResult<FString> FWidgetPropertyService::GetProperty(UWidgetBlueprint* Widget, c
 	if (!ExtractPropertyValue(Property, FoundWidget, PropertyValue))
 	{
 		return TResult<FString>::Error(
-			EErrorCodes::InvalidOperation,
+			VibeUE::ErrorCodes::PROPERTY_GET_FAILED,
 			FString::Printf(TEXT("Failed to extract value for property '%s'"), *PropertyName));
 	}
 
@@ -125,7 +125,7 @@ TResult<void> FWidgetPropertyService::SetProperty(UWidgetBlueprint* Widget, cons
 	if (!FoundWidget)
 	{
 		return TResult<void>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
 	}
 
@@ -143,7 +143,7 @@ TResult<void> FWidgetPropertyService::SetProperty(UWidgetBlueprint* Widget, cons
 	if (!Property)
 	{
 		return TResult<void>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
 			FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
 	}
 
@@ -151,7 +151,7 @@ TResult<void> FWidgetPropertyService::SetProperty(UWidgetBlueprint* Widget, cons
 	if (!SetPropertyValue(Property, FoundWidget, Value))
 	{
 		return TResult<void>::Error(
-			EErrorCodes::InvalidOperation,
+			VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
 			FString::Printf(TEXT("Failed to set value for property '%s'"), *PropertyName));
 	}
 
@@ -182,7 +182,7 @@ TResult<TMap<FString, FString>> FWidgetPropertyService::GetAllProperties(UWidget
 	if (!FoundWidget)
 	{
 		return TResult<TMap<FString, FString>>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
 	}
 
@@ -236,7 +236,7 @@ TResult<TArray<FPropertyInfo>> FWidgetPropertyService::ListProperties(UWidgetBlu
 	if (!FoundWidget)
 	{
 		return TResult<TArray<FPropertyInfo>>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
 	}
 
@@ -293,7 +293,7 @@ TResult<FPropertyInfo> FWidgetPropertyService::GetPropertyMetadata(UWidgetBluepr
 	if (!FoundWidget)
 	{
 		return TResult<FPropertyInfo>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
 	}
 
@@ -311,7 +311,7 @@ TResult<FPropertyInfo> FWidgetPropertyService::GetPropertyMetadata(UWidgetBluepr
 	if (!Property)
 	{
 		return TResult<FPropertyInfo>::Error(
-			EErrorCodes::NotFound,
+			VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
 			FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
 	}
 
