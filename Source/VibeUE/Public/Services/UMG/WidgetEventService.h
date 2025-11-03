@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
-#include "Core/TResult.h"
+#include "Core/Result.h"
 
 // Forward declarations
 class UWidgetBlueprint;

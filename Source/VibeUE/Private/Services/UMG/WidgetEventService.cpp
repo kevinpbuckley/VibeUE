@@ -16,12 +16,12 @@ TResult<void> FWidgetEventService::BindEvent(UWidgetBlueprint* Widget, const FSt
 	if (auto R = ValidateNotEmpty(FunctionName, TEXT("FunctionName")); R.IsError()) return TResult<void>::Error(R.GetErrorCode(), R.GetErrorMessage());
 
 	if (!FindComponent(Widget, ComponentName))
-		return TResult<void>::Error(VibeUE::ErrorCodes::NotFound, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+		return TResult<void>::Error(VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
 
 	auto EventVal = IsValidEvent(Widget, ComponentName, EventName);
 	if (EventVal.IsError()) return TResult<void>::Error(EventVal.GetErrorCode(), EventVal.GetErrorMessage());
 	if (!EventVal.GetValue())
-		return TResult<void>::Error(VibeUE::ErrorCodes::InvalidParameter, FString::Printf(TEXT("Event '%s' invalid"), *EventName));
+		return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, FString::Printf(TEXT("Event '%s' invalid"), *EventName));
 
 	LogInfo(FString::Printf(TEXT("Bound '%s' on '%s' to '%s'"), *EventName, *ComponentName, *FunctionName));
 	return TResult<void>::Success();
@@ -33,7 +33,7 @@ TResult<void> FWidgetEventService::UnbindEvent(UWidgetBlueprint* Widget, const F
 	if (auto R = ValidateNotEmpty(ComponentName, TEXT("ComponentName")); R.IsError()) return TResult<void>::Error(R.GetErrorCode(), R.GetErrorMessage());
 	if (auto R = ValidateNotEmpty(EventName, TEXT("EventName")); R.IsError()) return TResult<void>::Error(R.GetErrorCode(), R.GetErrorMessage());
 	if (!FindComponent(Widget, ComponentName))
-		return TResult<void>::Error(VibeUE::ErrorCodes::NotFound, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+		return TResult<void>::Error(VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
 
 	LogInfo(FString::Printf(TEXT("Unbound '%s' from '%s'"), *EventName, *ComponentName));
 	return TResult<void>::Success();
@@ -46,7 +46,7 @@ TResult<TMap<FString, FString>> FWidgetEventService::GetBoundEvents(UWidgetBluep
 	if (auto R = ValidateNotEmpty(ComponentName, TEXT("ComponentName")); R.IsError()) 
 		return TResult<TMap<FString, FString>>::Error(R.GetErrorCode(), R.GetErrorMessage());
 	if (!FindComponent(Widget, ComponentName))
-		return TResult<TMap<FString, FString>>::Error(VibeUE::ErrorCodes::NotFound, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+		return TResult<TMap<FString, FString>>::Error(VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
 
 	return TResult<TMap<FString, FString>>::Success(TMap<FString, FString>());
 }
@@ -71,7 +71,7 @@ TResult<TArray<FEventInfo>> FWidgetEventService::GetEventDetails(UWidgetBlueprin
 
 	UWidget* Component = FindComponent(Widget, ComponentName);
 	if (!Component)
-		return TResult<TArray<FEventInfo>>::Error(VibeUE::ErrorCodes::NotFound, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+		return TResult<TArray<FEventInfo>>::Error(VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
 
 	TArray<FEventInfo> Events;
 	GetWidgetEvents(Component->GetClass(), Events);
