@@ -599,7 +599,7 @@ bool FVariableDefinitionService::CreateOrUpdateVariable(UBlueprint* Blueprint, c
     }
     if (Definition.VariableName.IsNone())
     {
-        OutError = TEXT("VARIABLE_NAME_MISSING");
+        OutError = VibeUE::ErrorCodes::PARAM_INVALID;
         return false;
     }
     // Resolve pin type from canonical path
@@ -661,7 +661,7 @@ bool FVariableDefinitionService::DeleteVariable(UBlueprint* Blueprint, const FNa
     FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, VarName);
     if (FindVariable(Blueprint, VarName) != nullptr)
     {
-        OutError = TEXT("VARIABLE_NOT_FOUND");
+        OutError = VibeUE::ErrorCodes::VARIABLE_NOT_FOUND;
         return false;
     }
     return CompileIfNeeded(Blueprint, OutError);
@@ -678,7 +678,7 @@ bool FVariableDefinitionService::GetVariableMetadata(UBlueprint* Blueprint, cons
         }
         return true;
     }
-    OutError = TEXT("VARIABLE_NOT_FOUND");
+    OutError = VibeUE::ErrorCodes::VARIABLE_NOT_FOUND;
     return false;
 }
 
@@ -693,7 +693,7 @@ bool FVariableDefinitionService::SetVariableMetadata(UBlueprint* Blueprint, cons
         }
         return CompileIfNeeded(Blueprint, OutError);
     }
-    OutError = TEXT("VARIABLE_NOT_FOUND");
+    OutError = VibeUE::ErrorCodes::VARIABLE_NOT_FOUND;
     return false;
 }
 
@@ -715,7 +715,7 @@ bool FVariableDefinitionService::GetVariableInfo(UBlueprint* Blueprint, const FN
         OutDefinition = BPVariableToDefinition(*Var);
         return true;
     }
-    OutError = TEXT("VARIABLE_NOT_FOUND");
+    OutError = VibeUE::ErrorCodes::VARIABLE_NOT_FOUND;
     return false;
 }
 
@@ -804,12 +804,12 @@ bool FVariableDefinitionService::ValidateVariableDefinition(const FVariableDefin
 {
     if (Definition.VariableName.IsNone())
     {
-        OutError = TEXT("VARIABLE_NAME_MISSING");
+        OutError = VibeUE::ErrorCodes::PARAM_INVALID;
         return false;
     }
     if (Definition.TypePath.IsNull())
     {
-        OutError = TEXT("TYPE_PATH_REQUIRED");
+        OutError = VibeUE::ErrorCodes::PARAM_INVALID;
         return false;
     }
     return true;
@@ -2036,13 +2036,13 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleCreate(const TSharedPtr
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
     }
 
     const TSharedPtr<FJsonObject>* VariableConfigObj = nullptr;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigObj))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'variable_config' object"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'variable_config' object"));
     }
 
     FVariableDefinition Def;
@@ -2054,7 +2054,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleCreate(const TSharedPtr
     }
     if (VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("'variable_name' is required"));
     }
     Def.VariableName = FName(*VarNameStr);
 
@@ -2063,11 +2063,11 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleCreate(const TSharedPtr
     FTopLevelAssetPath TypePath;
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("type_path"), TypePathStr) || TypePathStr.TrimStartAndEnd().IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_REQUIRED"), TEXT("'variable_config.type_path' must be provided and canonical"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("'variable_config.type_path' must be provided and canonical"));
     }
     if (!ParseTopLevelAssetPathString(TypePathStr, TypePath))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::TYPE_INVALID, FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
     }
     Def.TypePath = TypePath;
 
@@ -2105,12 +2105,12 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleCreate(const TSharedPtr
     if (!BP)
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err);
     }
     if (!VariableService.CreateOrUpdateVariable(BP, Def, Err))
     {
         if (Err.IsEmpty()) { Err = TEXT("Failed to create/update variable"); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("CREATE_FAILED"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::VARIABLE_CREATE_FAILED, Err);
     }
 
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -2124,24 +2124,24 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleDelete(const TSharedPtr
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
     }
     FString VarNameStr;
     if (!Params->TryGetStringField(TEXT("variable_name"), VarNameStr) || VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("'variable_name' is required"));
     }
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
     if (!BP)
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err);
     }
     if (!VariableService.DeleteVariable(BP, FName(*VarNameStr), Err))
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Failed to delete variable '%s'"), *VarNameStr); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("DELETE_FAILED"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::VARIABLE_DELETE_FAILED, Err);
     }
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
@@ -2154,14 +2154,14 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleList(const TSharedPtr<F
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
     }
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
     if (!BP)
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err);
     }
     const TArray<FBPVariableDescription*> Vars = VariableService.GetAllVariables(BP);
     TArray<TSharedPtr<FJsonValue>> Arr;
@@ -2182,24 +2182,24 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleGetInfo(const TSharedPt
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
     }
     FString VarNameStr;
     if (!Params->TryGetStringField(TEXT("variable_name"), VarNameStr) || VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("'variable_name' is required"));
     }
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
     if (!BP)
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err);
     }
     FVariableDefinition Def;
     if (!VariableService.GetVariableInfo(BP, FName(*VarNameStr), Def, Err))
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Variable '%s' not found"), *VarNameStr); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::VARIABLE_NOT_FOUND, Err);
     }
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
@@ -2212,12 +2212,12 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
     }
     const TSharedPtr<FJsonObject>* VariableConfigObj = nullptr;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigObj))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'variable_config' object"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'variable_config' object"));
     }
     FString VarNameStr;
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("variable_name"), VarNameStr))
@@ -2226,7 +2226,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
     }
     if (VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("'variable_name' is required"));
     }
 
     FString Err;
@@ -2234,7 +2234,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
     if (!BP)
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err);
     }
 
     // Start from current info as baseline
@@ -2242,7 +2242,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
     if (!VariableService.GetVariableInfo(BP, FName(*VarNameStr), Def, Err))
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Variable '%s' not found"), *VarNameStr); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NOT_FOUND"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::VARIABLE_NOT_FOUND, Err);
     }
 
     // Apply incoming changes
@@ -2252,7 +2252,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
         FTopLevelAssetPath NewTypePath;
         if (!ParseTopLevelAssetPathString(TypePathStr, NewTypePath))
         {
-            return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
+            return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::TYPE_INVALID, FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
         }
         Def.TypePath = NewTypePath;
     }
@@ -2284,7 +2284,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
     if (!VariableService.CreateOrUpdateVariable(BP, Def, Err))
     {
         if (Err.IsEmpty()) { Err = TEXT("Failed to modify variable"); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("MODIFY_FAILED"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::VARIABLE_UPDATE_FAILED, Err);
     }
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
@@ -2295,14 +2295,14 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleModify(const TSharedPtr
 // Unused handlers (still unimplemented)
 TSharedPtr<FJsonObject> FBlueprintVariableService::HandleGetProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName; if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName)) return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
-    FString Path; if (!Params->TryGetStringField(TEXT("path"), Path) && !Params->TryGetStringField(TEXT("property_path"), Path)) return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'path' or 'property_path'"));
-    FString Err; UBlueprint* BP = FindBlueprint(BlueprintName, Err); if (!BP) { if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); } return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err); }
+    FString BlueprintName; if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName)) return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
+    FString Path; if (!Params->TryGetStringField(TEXT("path"), Path) && !Params->TryGetStringField(TEXT("property_path"), Path)) return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'path' or 'property_path'"));
+    FString Err; UBlueprint* BP = FindBlueprint(BlueprintName, Err); if (!BP) { if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); } return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err); }
     FResolvedProperty RP = PropertyService.ResolveProperty(BP, Path, Err);
     if (!RP.bIsValid)
     {
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Failed to resolve property path '%s'"), *Path); }
-        return FResponseSerializer::CreateErrorResponse(TEXT("RESOLVE_FAILED"), Err);
+        return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::TYPE_RESOLVE_FAILED, Err);
     }
     TSharedPtr<FJsonValue> Val; if (!PropertyService.GetPropertyValue(RP, Val, Err)) { if (Err.IsEmpty()) { Err = TEXT("Failed to get property value"); } return FResponseSerializer::CreateErrorResponse(TEXT("GET_FAILED"), Err); }
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -2314,10 +2314,10 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleGetProperty(const TShar
 
 TSharedPtr<FJsonObject> FBlueprintVariableService::HandleSetProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName; if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName)) return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
-    FString Path; if (!Params->TryGetStringField(TEXT("path"), Path) && !Params->TryGetStringField(TEXT("property_path"), Path)) return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'path' or 'property_path'"));
-    TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value")); if (!ValueField.IsValid()) return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'value'"));
-    FString Err; UBlueprint* BP = FindBlueprint(BlueprintName, Err); if (!BP) { if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); } return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err); }
+    FString BlueprintName; if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName)) return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name'"));
+    FString Path; if (!Params->TryGetStringField(TEXT("path"), Path) && !Params->TryGetStringField(TEXT("property_path"), Path)) return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'path' or 'property_path'"));
+    TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value")); if (!ValueField.IsValid()) return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'value'"));
+    FString Err; UBlueprint* BP = FindBlueprint(BlueprintName, Err); if (!BP) { if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); } return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, Err); }
     FResolvedProperty RP = PropertyService.ResolveProperty(BP, Path, Err);
     if (!RP.bIsValid)
     {
@@ -2367,7 +2367,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableService::HandleSetProperty(const TShar
         if (!RP.bIsValid)
         {
             if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Failed to resolve property path '%s'"), *Path); }
-            return FResponseSerializer::CreateErrorResponse(TEXT("RESOLVE_FAILED"), Err);
+            return FResponseSerializer::CreateErrorResponse(VibeUE::ErrorCodes::TYPE_RESOLVE_FAILED, Err);
         }
     }
     if (!PropertyService.SetPropertyValue(RP, ValueField, Err)) { if (Err.IsEmpty()) { Err = TEXT("Failed to set property value"); } return FResponseSerializer::CreateErrorResponse(TEXT("SET_FAILED"), Err); }
