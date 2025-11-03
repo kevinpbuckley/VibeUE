@@ -13,13 +13,13 @@ class UWidgetBlueprint;
 class UWidget;
 
 /**
- * @struct FWidgetStyle
+ * @struct FVibeWidgetStyle
  * @brief Structure defining a complete widget style
  * 
  * Contains style information including colors, fonts, padding, and alignment
  * that can be applied to UMG widgets.
  */
-struct VIBEUE_API FWidgetStyle
+struct VIBEUE_API FVibeWidgetStyle
 {
 	/** Primary color for the widget */
 	FLinearColor PrimaryColor;
@@ -39,7 +39,7 @@ struct VIBEUE_API FWidgetStyle
 	/** Vertical alignment */
 	TEnumAsByte<EVerticalAlignment> VerticalAlignment;
 
-	FWidgetStyle()
+	FVibeWidgetStyle()
 		: PrimaryColor(FLinearColor::White)
 		, SecondaryColor(FLinearColor::Gray)
 		, Padding(0.0f)
@@ -87,7 +87,7 @@ public:
 	 * @param Style Style configuration to apply
 	 * @return TResult indicating success or error details
 	 */
-	TResult<void> ApplyStyle(UWidgetBlueprint* Widget, const FString& ComponentName, const FWidgetStyle& Style);
+	TResult<void> ApplyStyle(UWidgetBlueprint* Widget, const FString& ComponentName, const FVibeWidgetStyle& Style);
 
 	/**
 	 * @brief Apply a predefined style set to a widget component
@@ -190,7 +190,7 @@ public:
 	 * @param StyleSetName Name of the style set to retrieve
 	 * @return TResult containing the style configuration
 	 */
-	TResult<FWidgetStyle> GetStyleSet(const FString& StyleSetName);
+	TResult<FVibeWidgetStyle> GetStyleSet(const FString& StyleSetName);
 
 protected:
 	/**
@@ -215,5 +215,5 @@ private:
 	void InitializeStyleSets();
 
 	/** Map of predefined style sets */
-	TMap<FString, FWidgetStyle> StyleSets;
+	TMap<FString, FVibeWidgetStyle> StyleSets;
 };

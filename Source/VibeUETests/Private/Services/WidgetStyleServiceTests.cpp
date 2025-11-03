@@ -84,7 +84,7 @@ bool FWidgetStyleService_GetStyleSet_ValidName_Success::RunTest(const FString& P
 	FWidgetStyleService Service(Context);
 
 	// Act
-	TResult<FWidgetStyle> Result = Service.GetStyleSet(TEXT("Modern"));
+	TResult<FVibeWidgetStyle> Result = Service.GetStyleSet(TEXT("Modern"));
 
 	// Assert
 	TestTrue(TEXT("Should return success"), Result.IsSuccess());
@@ -106,7 +106,7 @@ bool FWidgetStyleService_GetStyleSet_InvalidName_Error::RunTest(const FString& P
 	FWidgetStyleService Service(Context);
 
 	// Act
-	TResult<FWidgetStyle> Result = Service.GetStyleSet(TEXT("NonExistentStyle"));
+	TResult<FVibeWidgetStyle> Result = Service.GetStyleSet(TEXT("NonExistentStyle"));
 
 	// Assert
 	TestTrue(TEXT("Should return error"), Result.IsError());
@@ -128,7 +128,7 @@ bool FWidgetStyleService_GetStyleSet_EmptyName_Error::RunTest(const FString& Par
 	FWidgetStyleService Service(Context);
 
 	// Act
-	TResult<FWidgetStyle> Result = Service.GetStyleSet(TEXT(""));
+	TResult<FVibeWidgetStyle> Result = Service.GetStyleSet(TEXT(""));
 
 	// Assert
 	TestTrue(TEXT("Should return error"), Result.IsError());

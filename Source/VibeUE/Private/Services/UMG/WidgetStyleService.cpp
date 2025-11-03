@@ -20,7 +20,7 @@ void FWidgetStyleService::InitializeStyleSets()
 	auto AddStyle = [this](const FString& Name, const FLinearColor& Primary, const FLinearColor& Secondary, 
 	                       const FMargin& Pad, EHorizontalAlignment HAlign, EVerticalAlignment VAlign)
 	{
-		FWidgetStyle Style;
+		FVibeWidgetStyle Style;
 		Style.PrimaryColor = Primary; Style.SecondaryColor = Secondary; Style.Padding = Pad;
 		Style.HorizontalAlignment = HAlign; Style.VerticalAlignment = VAlign;
 		StyleSets.Add(Name, Style);
@@ -40,7 +40,7 @@ UWidget* FWidgetStyleService::FindWidgetComponent(UWidgetBlueprint* Widget, cons
 	return (Widget && Widget->WidgetTree) ? Widget->WidgetTree->FindWidget(FName(*ComponentName)) : nullptr;
 }
 
-TResult<void> FWidgetStyleService::ApplyStyle(UWidgetBlueprint* Widget, const FString& ComponentName, const FWidgetStyle& Style)
+TResult<void> FWidgetStyleService::ApplyStyle(UWidgetBlueprint* Widget, const FString& ComponentName, const FVibeWidgetStyle& Style)
 {
 	auto ValidationResult = ValidateNotNull(Widget, TEXT("Widget"));
 	if (ValidationResult.IsError()) return ValidationResult;
@@ -240,15 +240,15 @@ TResult<TArray<FString>> FWidgetStyleService::GetAvailableStyleSets()
 	return TResult<TArray<FString>>::Success(StyleSetNames);
 }
 
-TResult<FWidgetStyle> FWidgetStyleService::GetStyleSet(const FString& StyleSetName)
+TResult<FVibeWidgetStyle> FWidgetStyleService::GetStyleSet(const FString& StyleSetName)
 {
 	auto ValidationResult = ValidateNotEmpty(StyleSetName, TEXT("StyleSetName"));
 	if (ValidationResult.IsError())
-		return TResult<FWidgetStyle>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+		return TResult<FVibeWidgetStyle>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 
-	const FWidgetStyle* Style = StyleSets.Find(StyleSetName);
-	return Style ? TResult<FWidgetStyle>::Success(*Style) 
-	             : TResult<FWidgetStyle>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
+	const FVibeWidgetStyle* Style = StyleSets.Find(StyleSetName);
+	return Style ? TResult<FVibeWidgetStyle>::Success(*Style) 
+	             : TResult<FVibeWidgetStyle>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
 	                 FString::Printf(TEXT("Style set '%s' not found"), *StyleSetName));
 }
 
