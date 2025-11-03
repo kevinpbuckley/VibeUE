@@ -181,6 +181,17 @@ struct VIBEUE_API FInputActionNodeParams
 };
 
 /**
+ * Search criteria for finding nodes in a blueprint
+ */
+struct VIBEUE_API FNodeSearchCriteria
+{
+    FString NodeType;        // Node type to search for (e.g., "K2Node_Event")
+    FString NamePattern;     // Optional: Name pattern to match
+    FString GraphScope;      // Optional: Graph name to search in (empty = all graphs)
+    TOptional<FString> FunctionName;  // Optional: Function name for function-scoped search
+};
+
+/**
  * Service for Blueprint node operations (create, connect, configure)
  * Extracted from BlueprintNodeCommands.cpp to provide focused node management
  */
@@ -226,6 +237,7 @@ public:
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
     TResult<TArray<FNodeInfo>> FindNodes(UBlueprint* Blueprint, const FString& GraphName,
                                         const FString& SearchTerm);
+    TResult<TArray<FNodeInfo>> FindNodes(UBlueprint* Blueprint, const FNodeSearchCriteria& Criteria);
     
     // Node refresh/reconstruction
     TResult<void> RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile = true);

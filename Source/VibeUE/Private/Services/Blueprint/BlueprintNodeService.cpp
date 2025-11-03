@@ -516,6 +516,93 @@ TResult<TArray<FNodeInfo>> FBlueprintNodeService::FindNodes(UBlueprint* Blueprin
     return TResult<TArray<FNodeInfo>>::Success(FoundNodes);
 }
 
+TResult<TArray<FNodeInfo>> FBlueprintNodeService::FindNodes(UBlueprint* Blueprint, const FNodeSearchCriteria& Criteria)
+{
+    if (!Blueprint)
+    {
+        return TResult<TArray<FNodeInfo>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    // Validate that we have a node type to search for
+    auto ValidationResult = ValidateNotEmpty(Criteria.NodeType, TEXT("NodeType"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<TArray<FNodeInfo>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Resolve target graph(s)
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Criteria.GraphScope, Error);
+    TArray<UEdGraph*> Graphs;
+    if (TargetGraph)
+    {
+        Graphs.Add(TargetGraph);
+    }
+    else
+    {
+        GatherCandidateGraphs(Blueprint, nullptr, Graphs);
+    }
+    
+    // Use reflection-based node type resolution
+    UClass* TargetNodeClass = FBlueprintReflection::ResolveNodeClass(Criteria.NodeType);
+    if (!TargetNodeClass)
+    {
+        return TResult<TArray<FNodeInfo>>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("Unknown node type '%s' - reflection system could not resolve this node type"), *Criteria.NodeType)
+        );
+    }
+    
+    UE_LOG(LogBlueprintNodeService, Log, TEXT("FindNodes - Resolved node class via reflection: %s"), *TargetNodeClass->GetName());
+    
+    // Search through nodes using reflection-based type matching
+    TArray<FNodeInfo> FoundNodes;
+    FString LowerNamePattern = Criteria.NamePattern.ToLower();
+    
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph) continue;
+        
+        UE_LOG(LogBlueprintNodeService, Verbose, TEXT("FindNodes - Searching %d nodes in graph '%s'"), Graph->Nodes.Num(), *Graph->GetName());
+        
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node || !Node->IsA(TargetNodeClass))
+            {
+                continue;
+            }
+            
+            // Apply name pattern filter if specified
+            if (!Criteria.NamePattern.IsEmpty())
+            {
+                FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString().ToLower();
+                FString NodeName = Node->GetName().ToLower();
+                
+                if (!NodeTitle.Contains(LowerNamePattern) && !NodeName.Contains(LowerNamePattern))
+                {
+                    continue;
+                }
+            }
+            
+            // Build node info
+            FNodeInfo Info;
+            Info.NodeId = Node->NodeGuid.ToString();
+            Info.NodeType = Node->GetClass()->GetName();
+            Info.DisplayName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+            Info.Position = FVector2D(Node->NodePosX, Node->NodePosY);
+            Info.GraphName = Graph->GetName();
+            
+            FoundNodes.Add(Info);
+            
+            UE_LOG(LogBlueprintNodeService, Verbose, TEXT("FindNodes - Found matching node: %s"), *Node->NodeGuid.ToString());
+        }
+    }
+    
+    UE_LOG(LogBlueprintNodeService, Log, TEXT("FindNodes - Found %d matching nodes for type: %s"), FoundNodes.Num(), *Criteria.NodeType);
+    
+    return TResult<TArray<FNodeInfo>>::Success(FoundNodes);
+}
+
 TResult<void> FBlueprintNodeService::RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile)
 {
     if (!Blueprint)
