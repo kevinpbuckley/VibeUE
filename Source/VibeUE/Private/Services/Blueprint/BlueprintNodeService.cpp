@@ -1,4 +1,4 @@
-﻿#include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Services/Blueprint/BlueprintGraphService.h"
 #include "Core/ErrorCodes.h"
 #include "Commands/CommonUtils.h"
@@ -279,23 +279,6 @@ TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FStri
     return TResult<void>::Success();
 }
 
-TResult<void> FBlueprintNodeService::DisconnectPins(UBlueprint* Blueprint, const FString& SourceNodeId, const FString& SourcePinName)
-{
-    if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
-    UEdGraphNode* SourceNode = nullptr;
-    UEdGraph* SourceGraph = nullptr;
-    if (!ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph)) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, FString::Printf(TEXT("Source node '%s' not found"), *SourceNodeId)); }
-    UEdGraphPin* SourcePin = FindPin(SourceNode, SourcePinName);
-    if (!SourcePin) { return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, FString::Printf(TEXT("Pin '%s' not found on node '%s'"), *SourcePinName, *SourceNodeId)); }
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DisconnectPins", "Disconnect Pins"));
-    if (SourceGraph) { SourceGraph->Modify(); }
-    SourcePin->BreakAllPinLinks();
-    if (SourceGraph) { SourceGraph->NotifyGraphChanged(); }
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-    return TResult<void>::Success();
-}
 
 TResult<TArray<FPinConnectionInfo>> FBlueprintNodeService::GetPinConnections(UBlueprint* Blueprint, const FString& NodeId)
 {
