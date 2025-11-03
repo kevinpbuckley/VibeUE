@@ -25,6 +25,69 @@ struct VIBEUE_API FPinConnectionInfo
     FString PinType;
 };
 
+struct VIBEUE_API FPinLinkBreakInfo
+{
+    FString OtherNodeId;
+    FString OtherNodeClass;
+    FString OtherPinId;
+    FString OtherPinName;
+    FString PinRole;
+};
+
+struct VIBEUE_API FPinLinkCreateInfo
+{
+    FString FromPinId;
+    FString ToPinId;
+    FString FromPinRole;
+    FString ToNodeId;
+    FString ToNodeClass;
+    FString ToPinName;
+};
+
+struct VIBEUE_API FPinConnectionRequest
+{
+    int32 Index = 0;
+    UEdGraphPin* SourcePin = nullptr;
+    UEdGraphNode* SourceNode = nullptr;
+    UEdGraph* SourceGraph = nullptr;
+    FString SourceNodeId;
+    FString SourcePinIdentifier;
+    UEdGraphPin* TargetPin = nullptr;
+    UEdGraphNode* TargetNode = nullptr;
+    UEdGraph* TargetGraph = nullptr;
+    FString TargetNodeId;
+    FString TargetPinIdentifier;
+    bool bAllowConversionNode = true;
+    bool bAllowPromotion = true;
+    bool bBreakExistingLinks = true;
+};
+
+struct VIBEUE_API FPinConnectionResult
+{
+    int32 Index = 0;
+    bool bSuccess = false;
+    bool bAlreadyConnected = false;
+    FString ErrorCode;
+    FString ErrorMessage;
+    FString SchemaResponse;
+    FString SourceNodeId;
+    FString TargetNodeId;
+    FString SourcePinIdentifier;
+    FString TargetPinIdentifier;
+    TArray<FPinLinkBreakInfo> BrokenLinks;
+    TArray<FPinLinkCreateInfo> CreatedLinks;
+    bool bGraphModified = false;
+    UEdGraph* ModifiedGraph = nullptr;
+    bool bBlueprintModified = false;
+};
+
+struct VIBEUE_API FPinConnectionBatchResult
+{
+    TArray<FPinConnectionResult> Results;
+    TArray<UEdGraph*> ModifiedGraphs;
+    bool bBlueprintModified = false;
+};
+
 /**
  * Descriptor for a node type available in the palette
  */
@@ -84,9 +147,8 @@ public:
     TResult<void> MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position);
     
     // Pin connections
-    TResult<void> ConnectPins(UBlueprint* Blueprint, const FString& SourceNodeId, 
-                             const FString& SourcePinName, const FString& TargetNodeId, 
-                             const FString& TargetPinName);
+    TResult<FPinConnectionResult> ConnectPins(UBlueprint* Blueprint, const FPinConnectionRequest& Request);
+    TResult<FPinConnectionBatchResult> ConnectPinsBatch(UBlueprint* Blueprint, const TArray<FPinConnectionRequest>& Requests);
     TResult<void> DisconnectPins(UBlueprint* Blueprint, const FString& SourceNodeId,
                                 const FString& SourcePinName);
     TResult<TArray<FPinConnectionInfo>> GetPinConnections(UBlueprint* Blueprint, const FString& NodeId);

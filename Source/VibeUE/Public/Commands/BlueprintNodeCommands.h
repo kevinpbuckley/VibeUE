@@ -120,6 +120,25 @@ private:
         const FString& NodeIdentifier,
         const TArray<FString>& PinNames,
         bool bSplitPins) const;
+
+    // HandleConnectPins helper methods
+    struct FConnectionDefaults
+    {
+        bool bAllowConversion = true;
+        bool bAllowPromotion = true;
+        bool bBreakExisting = true;
+    };
+    
+    FConnectionDefaults ParseConnectionDefaults(const TSharedPtr<FJsonObject>& Params) const;
+    TArray<TSharedPtr<FJsonValue>> ConvertBrokenLinksToJson(const TArray<struct FPinLinkBreakInfo>& Links) const;
+    TArray<TSharedPtr<FJsonValue>> ConvertCreatedLinksToJson(const TArray<struct FPinLinkCreateInfo>& Links) const;
+    TSharedPtr<FJsonObject> BuildConnectionSuccessJson(const struct FPinConnectionResult& Result, 
+                                                        const TSharedPtr<FJsonObject>& RequestObject) const;
+    TSharedPtr<FJsonObject> BuildConnectionResponseJson(const FString& BlueprintName,
+                                                         int32 AttemptedCount,
+                                                         const TArray<TSharedPtr<FJsonValue>>& Successes,
+                                                         const TArray<TSharedPtr<FJsonValue>>& Failures,
+                                                         const TArray<UEdGraph*>& ModifiedGraphs) const;
     
 private:
     // Helper methods to convert TResult to JSON

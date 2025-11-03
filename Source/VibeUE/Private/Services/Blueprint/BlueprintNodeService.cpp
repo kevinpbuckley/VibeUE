@@ -279,29 +279,6 @@ TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FStri
     return TResult<void>::Success();
 }
 
-TResult<void> FBlueprintNodeService::ConnectPins(UBlueprint* Blueprint, const FString& SourceNodeId, const FString& SourcePinName, const FString& TargetNodeId, const FString& TargetPinName)
-{
-    if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
-    UEdGraphNode* SourceNode = nullptr;
-    UEdGraph* SourceGraph = nullptr;
-    if (!ResolveNodeIdentifier(SourceNodeId, CandidateGraphs, SourceNode, SourceGraph)) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, FString::Printf(TEXT("Source node '%s' not found"), *SourceNodeId)); }
-    UEdGraphNode* TargetNode = nullptr;
-    UEdGraph* TargetGraph = nullptr;
-    if (!ResolveNodeIdentifier(TargetNodeId, CandidateGraphs, TargetNode, TargetGraph)) { return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, FString::Printf(TEXT("Target node '%s' not found"), *TargetNodeId)); }
-    UEdGraphPin* SourcePin = FindPin(SourceNode, SourcePinName);
-    if (!SourcePin) { return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, FString::Printf(TEXT("Source pin '%s' not found on node '%s'"), *SourcePinName, *SourceNodeId)); }
-    UEdGraphPin* TargetPin = FindPin(TargetNode, TargetPinName);
-    if (!TargetPin) { return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, FString::Printf(TEXT("Target pin '%s' not found on node '%s'"), *TargetPinName, *TargetNodeId)); }
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "ConnectPins", "Connect Pins"));
-    if (SourceGraph) { SourceGraph->Modify(); }
-    SourcePin->MakeLinkTo(TargetPin);
-    if (SourceGraph) { SourceGraph->NotifyGraphChanged(); }
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-    return TResult<void>::Success();
-}
-
 TResult<void> FBlueprintNodeService::DisconnectPins(UBlueprint* Blueprint, const FString& SourceNodeId, const FString& SourcePinName)
 {
     if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
