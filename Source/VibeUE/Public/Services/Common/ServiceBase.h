@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Core/Result.h"
 #include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
 
 /**
  * Base class for all VibeUE services
@@ -120,7 +121,7 @@ protected:
 		{
 			FString Message = FString::Printf(TEXT("Parameter '%s' cannot be empty"), *ParamName);
 			LogError(Message);
-			return TResult<void>::Error(TEXT("PARAM_INVALID"), Message);
+			return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, Message);
 		}
 		return TResult<void>::Success();
 	}
