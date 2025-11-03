@@ -14,9 +14,11 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
+#include "Core/ServiceContext.h"
 #include "Bridge.generated.h"
 
 class FMCPServerRunnable;
+class FServiceContext;
 
 /**
  * Editor subsystem for MCP Bridge
@@ -56,6 +58,9 @@ private:
 	FIPv4Address ServerAddress;
 	uint16 Port;
 
+	// Service context (shared across all services)
+	TSharedPtr<FServiceContext> ServiceContext;
+
 	// Command handler instances
 	TSharedPtr<FBlueprintCommands> BlueprintCommands;
 	TSharedPtr<FBlueprintNodeCommands> BlueprintNodeCommands;
@@ -63,4 +68,7 @@ private:
 	TSharedPtr<FUMGCommands> UMGCommands;
 	TSharedPtr<FUMGReflectionCommands> UMGReflectionCommands;
 	TSharedPtr<FAssetCommands> AssetCommands;
+
+	// Helper to create error response
+	FString CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage = FString());
 }; 
