@@ -3,6 +3,8 @@
 #include "Commands/CommonUtils.h"
 #include "Commands/ComponentEventBinder.h"
 #include "Commands/InputKeyEnumerator.h"
+#include "Services/Blueprint/BlueprintGraphService.h"
+#include "Core/ServiceContext.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -194,6 +196,10 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
     // Initialize reflection system
     ReflectionCommands = MakeShareable(new FBlueprintReflectionCommands());
+    
+    // Initialize graph service
+    TSharedPtr<FServiceContext> Context = MakeShared<FServiceContext>();
+    GraphService = MakeShared<FBlueprintGraphService>(Context);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -4642,29 +4648,33 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
+    
     UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
     {
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
-    UEdGraph* EventGraph = FCommonUtils::FindOrCreateEventGraph(Blueprint);
-    if (!EventGraph)
+    
+    // Use the graph service
+    TResult<TArray<FString>> Result = GraphService->ListCustomEvents(Blueprint);
+    
+    if (Result.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get event graph"));
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
+    
+    // Convert result to JSON
     TArray<TSharedPtr<FJsonValue>> Events;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
+    for (const FString& EventName : Result.GetValue())
     {
-        if (UK2Node_CustomEvent* CE = Cast<UK2Node_CustomEvent>(Node))
-        {
-            TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
-            Evt->SetStringField(TEXT("name"), CE->CustomFunctionName.ToString());
-            Events.Add(MakeShared<FJsonValueObject>(Evt));
-        }
+        TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
+        Evt->SetStringField(TEXT("name"), EventName);
+        Events.Add(MakeShared<FJsonValueObject>(Evt));
     }
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetArrayField(TEXT("events"), Events);
-    return Result;
+    
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetArrayField(TEXT("events"), Events);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)

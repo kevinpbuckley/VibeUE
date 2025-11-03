@@ -5,6 +5,7 @@
 
 // Forward declare reflection commands
 class FBlueprintReflectionCommands;
+class FBlueprintGraphService;
 
 /**
  * Handler class for Blueprint Node-related MCP commands
@@ -123,4 +124,7 @@ private:
 private:
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
+    
+    // Graph service helper
+    TSharedPtr<FBlueprintGraphService> GraphService;
 }; 
