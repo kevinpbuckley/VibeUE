@@ -4,6 +4,16 @@ This directory contains comprehensive documentation for the VibeUE refactoring i
 
 ## Documents Overview
 
+### 🧪 [Utility Tools Test Prompts](./UTILITY_TOOLS_TEST_PROMPTS.md)
+Comprehensive test prompts for VibeUE utility tools `check_unreal_connection` and `get_help`:
+
+- **Connection Diagnostics**: 4 test scenarios for connection verification
+- **Help System**: Test scenarios for all 10 help topics (overview, blueprint-workflow, node-tools, multi-action-tools, umg-guide, asset-discovery, node-positioning, properties, troubleshooting, topics)
+- **Integration Tests**: 5 real-world workflow scenarios combining both tools
+- **Testing Guide**: Environment requirements, best practices, and success criteria
+
+**Key Benefit**: Provides ready-to-use test prompts for validating utility tool functionality and integration.
+
 ### 🎯 [Refactoring Design Document](./REFACTORING_DESIGN.md)
 The primary design document outlining the comprehensive refactoring strategy for VibeUE. This document covers:
 
@@ -38,6 +48,14 @@ Concrete code examples demonstrating how the refactored architecture would work 
 
 ## Quick Start for Developers
 
+### Testing VibeUE Tools
+If you're looking to test the utility tools:
+
+1. **Start here**: [Utility Tools Test Prompts](./UTILITY_TOOLS_TEST_PROMPTS.md) - Comprehensive test scenarios for `check_unreal_connection` and `get_help`
+2. **Test connection**: Verify Unreal Engine connection and plugin status
+3. **Explore help topics**: Test all 10 help topics for complete documentation coverage
+
+### Understanding the Refactoring
 If you're looking to understand the refactoring proposal:
 
 1. **Start with**: [Refactoring Design Document](./REFACTORING_DESIGN.md) - Executive Summary and Current Problems sections
