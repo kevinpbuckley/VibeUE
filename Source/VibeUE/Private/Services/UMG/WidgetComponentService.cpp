@@ -518,6 +518,7 @@ void FWidgetComponentService::CollectChildren(UWidget* Widget, TArray<UWidget*>&
 UClass* FWidgetComponentService::GetWidgetClass(const FString& ComponentType) const
 {
     // Map common widget type names to classes
+    // Using function-local static for thread-safe singleton initialization (C++11 guarantees)
     static const TMap<FString, UClass*> WidgetTypeMap = {
         {TEXT("TextBlock"), UTextBlock::StaticClass()},
         {TEXT("Button"), UButton::StaticClass()},
@@ -536,7 +537,14 @@ UClass* FWidgetComponentService::GetWidgetClass(const FString& ComponentType) co
         return *FoundClass;
     }
 
-    // Try to find class by name
+    // Try to find class by name with U prefix
     UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("U%s"), *ComponentType));
+    if (FoundClass)
+    {
+        return FoundClass;
+    }
+
+    // Fallback: try without prefix in case class doesn't follow UObject naming convention
+    FoundClass = FindObject<UClass>(nullptr, *ComponentType);
     return FoundClass;
 }
