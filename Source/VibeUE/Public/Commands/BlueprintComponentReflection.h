@@ -5,6 +5,7 @@
 #include "Engine/Blueprint.h"
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
+#include "Services/Blueprint/BlueprintComponentService.h"
 
 // Forward declarations for editor-only types
 class USCS_Node;
@@ -92,4 +93,7 @@ private:
     
     void InitializeCache();
     void ClearCache();
+
+    // Component Service
+    FBlueprintComponentService ComponentService;
 };
