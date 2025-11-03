@@ -1,0 +1,349 @@
+# manage_asset Test Prompts
+# 
+# Comprehensive test scenarios for all 5 manage_asset actions
+# Tests cover: search, import_texture, export_texture, open_in_editor, svg_to_png
+#
+# Dependencies: Issue #69 (test_prompts structure)
+
+## Test 1: Search for Radar Widgets
+# Test: Asset search by name and type filtering
+# Action: search
+# Expected: Returns list of Widget assets containing "radar" in name
+
+Search for all radar-related widgets in the project:
+```python
+manage_asset(
+    action="search",
+    search_term="radar",
+    asset_type="Widget"
+)
+```
+
+## Test 2: Search for Background Textures
+# Test: Texture asset discovery
+# Action: search
+# Expected: Returns list of Texture2D assets with "background" in name
+
+Find all background textures in the project:
+```python
+manage_asset(
+    action="search",
+    search_term="background",
+    asset_type="Texture2D"
+)
+```
+
+## Test 3: Search All Blueprints
+# Test: Broad asset type search without search term
+# Action: search
+# Expected: Returns all Blueprint assets (up to max_results limit)
+
+List all Blueprint assets in the Game content:
+```python
+manage_asset(
+    action="search",
+    search_term="",
+    asset_type="Blueprint",
+    path="/Game",
+    max_results=50
+)
+```
+
+## Test 4: Search Materials with Case Sensitivity
+# Test: Case-sensitive search
+# Action: search
+# Expected: Returns only materials matching exact case
+
+Search for materials with exact case matching:
+```python
+manage_asset(
+    action="search",
+    search_term="Metal",
+    asset_type="Material",
+    case_sensitive=True
+)
+```
+
+## Test 5: Open Asset in Editor
+# Test: Open a texture asset in the material editor
+# Action: open_in_editor
+# Expected: Opens the specified asset in appropriate Unreal editor
+
+Open a texture for editing:
+```python
+manage_asset(
+    action="open_in_editor",
+    asset_path="/Game/Textures/T_Background",
+    force_open=False
+)
+```
+
+## Test 6: Open Blueprint in Editor (Force)
+# Test: Force open asset even if already open
+# Action: open_in_editor
+# Expected: Forces asset to open/refresh in editor
+
+Force open a Blueprint asset:
+```python
+manage_asset(
+    action="open_in_editor",
+    asset_path="/Game/Blueprints/BP_Player",
+    force_open=True
+)
+```
+
+## Test 7: Export Texture for AI Analysis
+# Test: Export texture at specific resolution for visual analysis
+# Action: export_texture
+# Expected: Exports texture as PNG at 256x256 max resolution
+
+Export a texture for AI vision analysis:
+```python
+manage_asset(
+    action="export_texture",
+    asset_path="/Game/Textures/UI/T_ButtonNormal",
+    export_format="PNG",
+    max_size=[256, 256]
+)
+```
+
+## Test 8: Export High-Res Texture
+# Test: Export texture at higher resolution for detailed inspection
+# Action: export_texture
+# Expected: Exports texture at 1024x1024 resolution
+
+Export texture at high resolution:
+```python
+manage_asset(
+    action="export_texture",
+    asset_path="/Game/Textures/Environments/T_Skybox",
+    export_format="PNG",
+    max_size=[1024, 1024]
+)
+```
+
+## Test 9: Import Texture with Auto-Optimization
+# Test: Import texture from file system with automatic optimization
+# Action: import_texture
+# Expected: Imports texture with auto-optimization enabled
+
+Import a UI texture with auto-optimization:
+```python
+manage_asset(
+    action="import_texture",
+    file_path="C:/GameAssets/UI/button_hover.png",
+    destination_path="/Game/Textures/UI",
+    texture_name="T_ButtonHover",
+    compression_settings="TC_Default",
+    auto_optimize=True
+)
+```
+
+## Test 10: Import Texture with Custom Settings
+# Test: Import texture with specific compression and mipmap settings
+# Action: import_texture
+# Expected: Imports texture with TC_EditorIcon compression
+
+Import an icon with custom settings:
+```python
+manage_asset(
+    action="import_texture",
+    file_path="C:/GameAssets/Icons/inventory_icon.png",
+    destination_path="/Game/Textures/Icons",
+    texture_name="T_InventoryIcon",
+    compression_settings="TC_EditorIcon",
+    generate_mipmaps=False,
+    validate_format=True,
+    auto_optimize=False
+)
+```
+
+## Test 11: Import Texture with Auto SVG Conversion
+# Test: Import SVG file with automatic conversion to PNG
+# Action: import_texture
+# Expected: Converts SVG to PNG during import if file is SVG
+
+Import SVG with auto-conversion:
+```python
+manage_asset(
+    action="import_texture",
+    file_path="C:/GameAssets/UI/logo.svg",
+    destination_path="/Game/Textures/UI",
+    texture_name="T_Logo",
+    auto_convert_svg=True,
+    raster_size=[512, 512],
+    compression_settings="TC_Default"
+)
+```
+
+## Test 12: SVG to PNG Conversion (Basic)
+# Test: Convert SVG to PNG with default settings
+# Action: svg_to_png
+# Expected: Converts SVG to PNG with automatic size detection
+
+Convert SVG icon to PNG:
+```python
+manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/Icons/health_icon.svg",
+    output_path="C:/GameAssets/Icons/health_icon.png"
+)
+```
+
+## Test 13: SVG to PNG with Size Constraints
+# Test: Convert SVG to PNG with specific size
+# Action: svg_to_png
+# Expected: Converts SVG to 512x512 PNG
+
+Convert SVG with size specification:
+```python
+manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/UI/menu_background.svg",
+    output_path="C:/GameAssets/UI/menu_background.png",
+    size=[512, 512]
+)
+```
+
+## Test 14: SVG to PNG with Transparent Background
+# Test: Convert SVG with transparent background for UI overlay
+# Action: svg_to_png
+# Expected: Converts SVG with transparent background (RGBA)
+
+Convert SVG with transparency:
+```python
+manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/UI/overlay_element.svg",
+    output_path="C:/GameAssets/UI/overlay_element.png",
+    size=[256, 256],
+    background="#00000000"
+)
+```
+
+## Test 15: SVG to PNG with Scale Factor
+# Test: Convert SVG using scale factor instead of fixed size
+# Action: svg_to_png
+# Expected: Scales SVG by 2x from default base size
+
+Convert SVG with scale factor:
+```python
+manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/UI/button_icon.svg",
+    output_path="C:/GameAssets/UI/button_icon.png",
+    scale=2.0
+)
+```
+
+## Test 16: SVG to PNG with White Background
+# Test: Convert SVG with solid white background
+# Action: svg_to_png
+# Expected: Converts SVG with white background fill
+
+Convert SVG with white background:
+```python
+manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/Icons/player_avatar.svg",
+    output_path="C:/GameAssets/Icons/player_avatar.png",
+    size=[128, 128],
+    background="#FFFFFF"
+)
+```
+
+## Test 17: Comprehensive Workflow - Widget Asset Pipeline
+# Test: Complete workflow for finding and opening a widget
+# Actions: search -> open_in_editor
+# Expected: Finds radar widget then opens it in UMG editor
+
+# Step 1: Find the radar widget
+search_result = manage_asset(
+    action="search",
+    search_term="radar",
+    asset_type="Widget"
+)
+
+# Step 2: Open the first result in editor
+manage_asset(
+    action="open_in_editor",
+    asset_path=search_result["assets"][0]["path"],
+    force_open=False
+)
+
+## Test 18: Comprehensive Workflow - Texture Analysis Pipeline
+# Test: Search for texture, export for AI analysis
+# Actions: search -> export_texture
+# Expected: Finds texture and exports it for visual analysis
+
+# Step 1: Find background textures
+textures = manage_asset(
+    action="search",
+    search_term="background",
+    asset_type="Texture2D"
+)
+
+# Step 2: Export first texture for AI analysis
+manage_asset(
+    action="export_texture",
+    asset_path=textures["assets"][0]["path"],
+    export_format="PNG",
+    max_size=[512, 512]
+)
+
+## Test 19: Comprehensive Workflow - SVG Import Pipeline
+# Test: Convert SVG to PNG then import as texture
+# Actions: svg_to_png -> import_texture
+# Expected: Converts SVG then imports the PNG into Unreal
+
+# Step 1: Convert SVG to PNG
+conversion = manage_asset(
+    action="svg_to_png",
+    svg_path="C:/GameAssets/Icons/new_icon.svg",
+    output_path="C:/GameAssets/Icons/new_icon.png",
+    size=[512, 512],
+    background="#00000000"
+)
+
+# Step 2: Import the converted PNG
+manage_asset(
+    action="import_texture",
+    file_path=conversion["png_path"],
+    destination_path="/Game/Textures/Icons",
+    texture_name="T_NewIcon",
+    compression_settings="TC_Default",
+    auto_optimize=True
+)
+
+## Test 20: Search All Asset Types
+# Test: Demonstrate different asset type searches
+# Action: search
+# Expected: Shows capability to search various asset types
+
+# Search for audio assets
+manage_asset(action="search", search_term="explosion", asset_type="SoundWave")
+
+# Search for particle systems
+manage_asset(action="search", search_term="fire", asset_type="ParticleSystem")
+
+# Search for animations
+manage_asset(action="search", search_term="walk", asset_type="AnimSequence")
+
+# Search for static meshes
+manage_asset(action="search", search_term="wall", asset_type="StaticMesh")
+
+## Summary
+# Total Tests: 20
+# Actions Covered:
+#   - search: 8 tests (including various asset types and search patterns)
+#   - import_texture: 3 tests (with different optimization settings)
+#   - export_texture: 2 tests (different resolutions)
+#   - open_in_editor: 2 tests (normal and force modes)
+#   - svg_to_png: 5 tests (various size and background options)
+# Workflow Tests: 3 multi-step scenarios
+# 
+# Acceptance Criteria Met:
+# ✅ All 5 actions tested
+# ✅ Multiple asset types searched (Widget, Texture2D, Blueprint, Material, SoundWave, ParticleSystem, AnimSequence, StaticMesh)
+# ✅ Texture import/export validated (with various settings)
+# ✅ SVG conversion tested (with size constraints, backgrounds, scaling)
