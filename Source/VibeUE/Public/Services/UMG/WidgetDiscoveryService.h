@@ -6,6 +6,8 @@
 
 // Forward declarations
 class UWidgetBlueprint;
+class IAssetRegistry;
+struct FAssetData;
 
 /**
  * @struct FWidgetInfo
