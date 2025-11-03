@@ -1,3 +1,18 @@
+/**
+ * @file BlueprintDiscoveryService.cpp
+ * @brief Implementation of Blueprint discovery and loading functionality
+ * 
+ * This service provides focused blueprint discovery operations extracted from the
+ * monolithic BlueprintCommands.cpp file as part of the Phase 2 refactoring effort.
+ * 
+ * The implementation uses the Unreal Engine Asset Registry for efficient blueprint
+ * discovery and supports multiple search strategies including direct path loading,
+ * default path conventions, and recursive name-based searches.
+ * 
+ * @see FBlueprintDiscoveryService
+ * @see CPP_REFACTORING_DESIGN.md
+ */
+
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"
