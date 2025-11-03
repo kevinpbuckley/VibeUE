@@ -1857,7 +1857,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
     auto DescribeResult = NodeService->DescribeAllNodes(
         FindResult.GetValue(),
         GraphScope,
-        TOptional<FString>(),
         bIncludePins,
         bIncludeInternalPins,
         Offset,

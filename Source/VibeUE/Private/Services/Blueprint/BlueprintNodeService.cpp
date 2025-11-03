@@ -873,8 +873,7 @@ TResult<FDetailedNodeInfo> FBlueprintNodeService::DescribeNode(UBlueprint* Bluep
         TSharedPtr<FJsonObject> NodeParams;
         FString DerivedSpawnerKey;
         
-        // Reuse existing BuildNodeDescriptorJson from BlueprintReflection if available
-        // For now, we'll extract descriptor information inline
+        // Extract descriptor information using BlueprintReflection system
         if (UK2Node_CallFunction* FuncNode = Cast<UK2Node_CallFunction>(AsK2Node))
         {
             if (UFunction* TargetFunction = FuncNode->GetTargetFunction())
@@ -1114,7 +1113,6 @@ TResult<FDetailedNodeInfo> FBlueprintNodeService::DescribeNode(UBlueprint* Bluep
 }
 
 TResult<TArray<FDetailedNodeInfo>> FBlueprintNodeService::DescribeAllNodes(UBlueprint* Blueprint, const FString& GraphScope, 
-                                                                           const TOptional<FString>& FunctionName,
                                                                            bool bIncludePins, bool bIncludeInternalPins,
                                                                            int32 Offset, int32 Limit)
 {

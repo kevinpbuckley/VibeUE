@@ -287,7 +287,6 @@ public:
     // Node description (detailed information with pins)
     TResult<FDetailedNodeInfo> DescribeNode(UBlueprint* Blueprint, const FString& NodeId, bool bIncludePins = true, bool bIncludeInternalPins = false);
     TResult<TArray<FDetailedNodeInfo>> DescribeAllNodes(UBlueprint* Blueprint, const FString& GraphScope, 
-                                                        const TOptional<FString>& FunctionName = TOptional<FString>(),
                                                         bool bIncludePins = true, bool bIncludeInternalPins = false,
                                                         int32 Offset = 0, int32 Limit = -1);
     
