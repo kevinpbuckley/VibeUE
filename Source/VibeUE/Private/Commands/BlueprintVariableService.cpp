@@ -1,3 +1,9 @@
+// BlueprintVariableService.cpp
+//
+// Implementation of Blueprint variable management service.
+// Phase 2 Task 5: Refactored from BlueprintVariableReflectionServices to align with
+// new service architecture patterns (ServiceBase, TResult, ErrorCodes, ServiceContext).
+
 #include "Commands/BlueprintVariableService.h"
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"

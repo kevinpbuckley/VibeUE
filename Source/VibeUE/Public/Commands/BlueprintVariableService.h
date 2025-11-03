@@ -1,3 +1,22 @@
+// BlueprintVariableService.h
+// 
+// Blueprint variable management service aligned with Phase 2 architecture patterns.
+// 
+// This service coordinates Blueprint variable operations including:
+// - Type discovery and reflection (FReflectionCatalogService)
+// - Type path resolution (FPinTypeResolver)
+// - Variable CRUD operations (FVariableDefinitionService)
+// - Property value access (FPropertyAccessService)
+//
+// Architecture:
+// - Inherits from FServiceBase for consistent service patterns
+// - Uses centralized ErrorCodes for error handling
+// - Integrates with ServiceContext for shared resources
+// - Maintains backward compatibility with existing Python MCP client via ExecuteCommand
+//
+// Phase 2 Task 5: Renamed from BlueprintVariableReflectionServices to BlueprintVariableService
+// to align with new naming conventions.
+
 #pragma once
 
 #include "CoreMinimal.h"
