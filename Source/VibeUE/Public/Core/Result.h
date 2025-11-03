@@ -20,7 +20,7 @@
  * @endcode
  */
 template<typename T>
-class VIBEUE_API TResult
+class TResult
 {
 public:
 	/** Creates a successful result with a value */
@@ -117,7 +117,7 @@ private:
  * @endcode
  */
 template<>
-class VIBEUE_API TResult<void>
+class TResult<void>
 {
 public:
 	/** Creates a successful result */
