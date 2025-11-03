@@ -103,13 +103,13 @@ TResult<UEdGraph*> FBlueprintFunctionService::CreateFunction(UBlueprint* Bluepri
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<UEdGraph*>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
     }
     
-    auto StringResult = ValidateString(FunctionName, TEXT("FunctionName"));
+    auto StringResult = ValidateNotEmpty(FunctionName, TEXT("FunctionName"));
     if (StringResult.IsError())
     {
         return TResult<UEdGraph*>::Error(StringResult.GetErrorCode(), StringResult.GetErrorMessage());
@@ -150,7 +150,7 @@ TResult<void> FBlueprintFunctionService::DeleteFunction(UBlueprint* Blueprint, c
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -174,7 +174,7 @@ TResult<FString> FBlueprintFunctionService::GetFunctionGraph(UBlueprint* Bluepri
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<FString>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -194,7 +194,7 @@ TResult<TArray<FFunctionInfo>> FBlueprintFunctionService::ListFunctions(UBluepri
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<TArray<FFunctionInfo>>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -218,7 +218,7 @@ TResult<void> FBlueprintFunctionService::AddParameter(UBlueprint* Blueprint, con
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -317,7 +317,7 @@ TResult<void> FBlueprintFunctionService::RemoveParameter(UBlueprint* Blueprint, 
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -404,7 +404,7 @@ TResult<void> FBlueprintFunctionService::UpdateParameter(UBlueprint* Blueprint, 
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -510,7 +510,7 @@ TResult<TArray<FFunctionParameterInfo>> FBlueprintFunctionService::ListParameter
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<TArray<FFunctionParameterInfo>>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -567,7 +567,7 @@ TResult<void> FBlueprintFunctionService::AddLocalVariable(UBlueprint* Blueprint,
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -654,7 +654,7 @@ TResult<void> FBlueprintFunctionService::RemoveLocalVariable(UBlueprint* Bluepri
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<void>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());
@@ -708,7 +708,7 @@ TResult<TArray<FLocalVariableInfo>> FBlueprintFunctionService::ListLocalVariable
 {
     using namespace VibeUE::ErrorCodes;
     
-    auto ValidResult = ValidateNotNull(Blueprint, BLUEPRINT_NOT_FOUND, TEXT("Blueprint cannot be null"));
+    auto ValidResult = ValidateNotNull(Blueprint, TEXT("Blueprint cannot be null"));
     if (ValidResult.IsError())
     {
         return TResult<TArray<FLocalVariableInfo>>::Error(ValidResult.GetErrorCode(), ValidResult.GetErrorMessage());

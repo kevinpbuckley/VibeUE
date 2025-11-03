@@ -246,6 +246,73 @@ namespace ErrorCodes
 	constexpr const TCHAR* EVENT_TYPE_INVALID = TEXT("EVENT_TYPE_INVALID");
 
 	// ============================================================================
+	// Function Errors (2500-2599)
+	// ============================================================================
+
+	/** @brief Function with specified name not found */
+	constexpr const TCHAR* FUNCTION_NOT_FOUND = TEXT("FUNCTION_NOT_FOUND");
+
+	/** @brief Function already exists with this name */
+	constexpr const TCHAR* FUNCTION_ALREADY_EXISTS = TEXT("FUNCTION_ALREADY_EXISTS");
+
+	/** @brief Failed to create function */
+	constexpr const TCHAR* FUNCTION_CREATE_FAILED = TEXT("FUNCTION_CREATE_FAILED");
+
+	/** @brief Function entry node not found */
+	constexpr const TCHAR* FUNCTION_ENTRY_NOT_FOUND = TEXT("FUNCTION_ENTRY_NOT_FOUND");
+
+	/** @brief Failed to create function result */
+	constexpr const TCHAR* FUNCTION_RESULT_CREATE_FAILED = TEXT("FUNCTION_RESULT_CREATE_FAILED");
+
+	// ============================================================================
+	// Parameter Errors (2600-2699)
+	// ============================================================================
+
+	/** @brief Parameter with specified name not found */
+	constexpr const TCHAR* PARAMETER_NOT_FOUND = TEXT("PARAMETER_NOT_FOUND");
+
+	/** @brief Parameter already exists with this name */
+	constexpr const TCHAR* PARAMETER_ALREADY_EXISTS = TEXT("PARAMETER_ALREADY_EXISTS");
+
+	/** @brief Failed to create parameter */
+	constexpr const TCHAR* PARAMETER_CREATE_FAILED = TEXT("PARAMETER_CREATE_FAILED");
+
+	/** @brief Parameter type is invalid */
+	constexpr const TCHAR* PARAMETER_TYPE_INVALID = TEXT("PARAMETER_TYPE_INVALID");
+
+	/** @brief Parameter direction is invalid */
+	constexpr const TCHAR* PARAMETER_INVALID_DIRECTION = TEXT("PARAMETER_INVALID_DIRECTION");
+
+	// ============================================================================
+	// Graph Errors (2700-2799)
+	// ============================================================================
+
+	/** @brief Graph with specified name not found */
+	constexpr const TCHAR* GRAPH_NOT_FOUND = TEXT("GRAPH_NOT_FOUND");
+
+	/** @brief Failed to create graph */
+	constexpr const TCHAR* GRAPH_CREATE_FAILED = TEXT("GRAPH_CREATE_FAILED");
+
+	// ============================================================================
+	// SCS (Simple Construction Script) Errors (2800-2899)
+	// ============================================================================
+
+	/** @brief SCS (Simple Construction Script) not available */
+	constexpr const TCHAR* SCS_NOT_AVAILABLE = TEXT("SCS_NOT_AVAILABLE");
+
+	/** @brief Parent component not found in SCS */
+	constexpr const TCHAR* PARENT_COMPONENT_NOT_FOUND = TEXT("PARENT_COMPONENT_NOT_FOUND");
+
+	/** @brief Parent is not a scene component */
+	constexpr const TCHAR* PARENT_NOT_SCENE_COMPONENT = TEXT("PARENT_NOT_SCENE_COMPONENT");
+
+	/** @brief Failed to create component */
+	constexpr const TCHAR* COMPONENT_CREATE_FAILED = TEXT("COMPONENT_CREATE_FAILED");
+
+	/** @brief General operation failed */
+	constexpr const TCHAR* OPERATION_FAILED = TEXT("OPERATION_FAILED");
+
+	// ============================================================================
 	// Texture/Image Errors (6000-6099)
 	// ============================================================================
 

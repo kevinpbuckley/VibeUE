@@ -1,8 +1,60 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Json.h"
+#include "Services/Common/ServiceBase.h"
+#include "Core/Result.h"
 #include "UObject/Class.h"
+
+/**
+ * Structure for class information
+ */
+struct VIBEUE_API FClassInfo
+{
+    FString ClassName;
+    FString ClassPath;
+    FString ParentClass;
+    bool bIsAbstract;
+    bool bIsBlueprint;
+    
+    FClassInfo()
+        : bIsAbstract(false)
+        , bIsBlueprint(false)
+    {
+    }
+};
+
+/**
+ * Structure for property information
+ */
+struct VIBEUE_API FPropertyInfo
+{
+    FString PropertyName;
+    FString PropertyType;
+    FString Category;
+    bool bIsEditable;
+    
+    FPropertyInfo()
+        : bIsEditable(false)
+    {
+    }
+};
+
+/**
+ * Structure for function information
+ */
+struct VIBEUE_API FFunctionInfo
+{
+    FString FunctionName;
+    FString Category;
+    bool bIsStatic;
+    bool bIsPure;
+    
+    FFunctionInfo()
+        : bIsStatic(false)
+        , bIsPure(false)
+    {
+    }
+};
 
 /**
  * Blueprint Reflection Service
@@ -15,14 +67,11 @@
  * - Class metadata (properties, functions, class info)
  * - Type validation
  * - Type conversion and resolution
- * 
- * Note: Currently uses TSharedPtr<FJsonObject> for compatibility with existing codebase.
- * Will be refactored to use TResult<T> when foundation infrastructure is implemented.
  */
-class VIBEUE_API FBlueprintReflectionService
+class VIBEUE_API FBlueprintReflectionService : public FServiceBase
 {
 public:
-	FBlueprintReflectionService();
+	explicit FBlueprintReflectionService(TSharedPtr<FServiceContext> Context);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Discovery
@@ -30,21 +79,21 @@ public:
 	
 	/**
 	 * Get list of available parent classes for Blueprint creation
-	 * @return JSON object with success status and array of class names
+	 * @return Result containing array of class names
 	 */
-	TSharedPtr<FJsonObject> GetAvailableParentClasses();
+	TResult<TArray<FString>> GetAvailableParentClasses();
 	
 	/**
 	 * Get list of available component types for Blueprint components
-	 * @return JSON object with success status and array of component type names
+	 * @return Result containing array of component type names
 	 */
-	TSharedPtr<FJsonObject> GetAvailableComponentTypes();
+	TResult<TArray<FString>> GetAvailableComponentTypes();
 	
 	/**
 	 * Get list of available property types for Blueprint variables
-	 * @return JSON object with success status and array of property type names
+	 * @return Result containing array of property type names
 	 */
-	TSharedPtr<FJsonObject> GetAvailablePropertyTypes();
+	TResult<TArray<FString>> GetAvailablePropertyTypes();
 	
 	// ═══════════════════════════════════════════════════════════
 	// Class Metadata
@@ -53,23 +102,23 @@ public:
 	/**
 	 * Get comprehensive class information
 	 * @param Class The class to inspect
-	 * @return JSON object with class metadata (name, path, parent, etc.)
+	 * @return Result containing class metadata
 	 */
-	TSharedPtr<FJsonObject> GetClassInfo(UClass* Class);
+	TResult<FClassInfo> GetClassInfo(UClass* Class);
 	
 	/**
 	 * Get all properties of a class
 	 * @param Class The class to inspect
-	 * @return JSON object with success status and array of property info
+	 * @return Result containing array of property info
 	 */
-	TSharedPtr<FJsonObject> GetClassProperties(UClass* Class);
+	TResult<TArray<FPropertyInfo>> GetClassProperties(UClass* Class);
 	
 	/**
 	 * Get all functions of a class
 	 * @param Class The class to inspect
-	 * @return JSON object with success status and array of function info
+	 * @return Result containing array of function info
 	 */
-	TSharedPtr<FJsonObject> GetClassFunctions(UClass* Class);
+	TResult<TArray<FFunctionInfo>> GetClassFunctions(UClass* Class);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Validation
@@ -78,23 +127,23 @@ public:
 	/**
 	 * Validate if a class name is a valid parent for Blueprint creation
 	 * @param ClassName The class name to validate
-	 * @return JSON object with success status and validation result
+	 * @return Result containing true if valid
 	 */
-	TSharedPtr<FJsonObject> IsValidParentClass(const FString& ClassName);
+	TResult<bool> IsValidParentClass(const FString& ClassName);
 	
 	/**
 	 * Validate if a component type is valid
 	 * @param ComponentType The component type to validate
-	 * @return JSON object with success status and validation result
+	 * @return Result containing true if valid
 	 */
-	TSharedPtr<FJsonObject> IsValidComponentType(const FString& ComponentType);
+	TResult<bool> IsValidComponentType(const FString& ComponentType);
 	
 	/**
 	 * Validate if a property type is valid
 	 * @param PropertyType The property type to validate
-	 * @return JSON object with success status and validation result
+	 * @return Result containing true if valid
 	 */
-	TSharedPtr<FJsonObject> IsValidPropertyType(const FString& PropertyType);
+	TResult<bool> IsValidPropertyType(const FString& PropertyType);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Conversion
@@ -103,16 +152,16 @@ public:
 	/**
 	 * Resolve a class name or path to a UClass*
 	 * @param ClassName The class name or path to resolve
-	 * @return JSON object with success status and class path (or null)
+	 * @return Result containing the UClass pointer
 	 */
-	TSharedPtr<FJsonObject> ResolveClass(const FString& ClassName);
+	TResult<UClass*> ResolveClass(const FString& ClassName);
 	
 	/**
 	 * Get the full path of a UClass
 	 * @param Class The class to get path for
-	 * @return JSON object with success status and class path
+	 * @return Result containing the class path
 	 */
-	TSharedPtr<FJsonObject> GetClassPath(UClass* Class);
+	TResult<FString> GetClassPath(UClass* Class);
 	
 private:
 	// Helper methods for type cataloging
@@ -121,8 +170,8 @@ private:
 	void PopulatePropertyTypeCatalog();
 	
 	// Helper methods for class introspection
-	void ExtractPropertyInfo(FProperty* Property, TSharedPtr<FJsonObject>& OutPropertyInfo);
-	void ExtractFunctionInfo(UFunction* Function, TSharedPtr<FJsonObject>& OutFunctionInfo);
+	void ExtractPropertyInfo(FProperty* Property, FPropertyInfo& OutPropertyInfo);
+	void ExtractFunctionInfo(UFunction* Function, FFunctionInfo& OutFunctionInfo);
 	
 	// Validation helpers
 	bool IsClassValidForBlueprints(UClass* Class);
@@ -137,8 +186,4 @@ private:
 	bool bParentClassesInitialized;
 	bool bComponentTypesInitialized;
 	bool bPropertyTypesInitialized;
-	
-	// Helper to create standardized responses
-	TSharedPtr<FJsonObject> CreateSuccessResponse();
-	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& Message);
 };

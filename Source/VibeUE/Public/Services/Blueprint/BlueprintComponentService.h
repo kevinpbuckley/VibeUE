@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Services/Common/ServiceBase.h"
 #include "Core/Result.h"
 #include "Engine/Blueprint.h"
 #include "Components/ActorComponent.h"
@@ -30,11 +31,11 @@ struct VIBEUE_API FComponentInfo
  * Service for Blueprint component CRUD operations
  * Extracted from BlueprintComponentReflection.cpp for focused, testable implementation
  */
-class VIBEUE_API FBlueprintComponentService
+class VIBEUE_API FBlueprintComponentService : public FServiceBase
 {
 public:
-    FBlueprintComponentService();
-    ~FBlueprintComponentService();
+    explicit FBlueprintComponentService(TSharedPtr<FServiceContext> Context);
+    ~FBlueprintComponentService() = default;
 
     /**
      * Add a new component to a Blueprint

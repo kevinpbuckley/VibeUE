@@ -9,11 +9,8 @@
 
 DEFINE_LOG_CATEGORY(LogBlueprintComponentService);
 
-FBlueprintComponentService::FBlueprintComponentService()
-{
-}
-
-FBlueprintComponentService::~FBlueprintComponentService()
+FBlueprintComponentService::FBlueprintComponentService(TSharedPtr<FServiceContext> Context)
+    : FServiceBase(Context)
 {
 }
 
@@ -27,7 +24,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     if (!Blueprint)
     {
         return TResult<UActorComponent*>::Error(
-            VibeUEErrorCodes::BLUEPRINT_NOT_FOUND,
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
             TEXT("Blueprint is null"));
     }
 
@@ -36,7 +33,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     if (!ValidateComponentType(ComponentType, ComponentClass))
     {
         return TResult<UActorComponent*>::Error(
-            VibeUEErrorCodes::COMPONENT_TYPE_INVALID,
+            VibeUE::ErrorCodes::COMPONENT_TYPE_INVALID,
             FString::Printf(TEXT("Invalid component type: %s"), *ComponentType));
     }
 
@@ -44,7 +41,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     if (!ValidateComponentName(Blueprint, ComponentName))
     {
         return TResult<UActorComponent*>::Error(
-            VibeUEErrorCodes::COMPONENT_NAME_EXISTS,
+            VibeUE::ErrorCodes::COMPONENT_NAME_EXISTS,
             FString::Printf(TEXT("Component name '%s' already exists in Blueprint"), *ComponentName));
     }
 
@@ -53,7 +50,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     if (!SCS)
     {
         return TResult<UActorComponent*>::Error(
-            VibeUEErrorCodes::SCS_NOT_AVAILABLE,
+            VibeUE::ErrorCodes::SCS_NOT_AVAILABLE,
             TEXT("Blueprint does not have a Simple Construction Script"));
     }
 
@@ -62,7 +59,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     if (!NewNode)
     {
         return TResult<UActorComponent*>::Error(
-            VibeUEErrorCodes::COMPONENT_CREATE_FAILED,
+            VibeUE::ErrorCodes::COMPONENT_CREATE_FAILED,
             FString::Printf(TEXT("Failed to create component node for '%s'"), *ComponentName));
     }
 
@@ -115,7 +112,7 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
     if (!Blueprint)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::BLUEPRINT_NOT_FOUND,
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
             TEXT("Blueprint is null"));
     }
 
@@ -123,7 +120,7 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
     if (!SCS)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::SCS_NOT_AVAILABLE,
+            VibeUE::ErrorCodes::SCS_NOT_AVAILABLE,
             TEXT("Blueprint does not have a Simple Construction Script"));
     }
 
@@ -131,7 +128,7 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
     if (!ComponentNode)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::COMPONENT_NOT_FOUND,
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
     }
 
@@ -167,7 +164,7 @@ TResult<TArray<FComponentInfo>> FBlueprintComponentService::ListComponents(UBlue
     if (!Blueprint)
     {
         return TResult<TArray<FComponentInfo>>::Error(
-            VibeUEErrorCodes::BLUEPRINT_NOT_FOUND,
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
             TEXT("Blueprint is null"));
     }
 
@@ -193,7 +190,7 @@ TResult<void> FBlueprintComponentService::ReorderComponents(
     if (!Blueprint)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::BLUEPRINT_NOT_FOUND,
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
             TEXT("Blueprint is null"));
     }
 
@@ -201,7 +198,7 @@ TResult<void> FBlueprintComponentService::ReorderComponents(
     if (!SCS)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::SCS_NOT_AVAILABLE,
+            VibeUE::ErrorCodes::SCS_NOT_AVAILABLE,
             TEXT("Blueprint does not have a Simple Construction Script"));
     }
 
@@ -225,7 +222,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     if (!Blueprint)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::BLUEPRINT_NOT_FOUND,
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
             TEXT("Blueprint is null"));
     }
 
@@ -247,7 +244,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     if (!ChildNode)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::COMPONENT_NOT_FOUND,
+            VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
     }
 
@@ -269,7 +266,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     if (!NewParentNode)
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::PARENT_COMPONENT_NOT_FOUND,
+            VibeUE::ErrorCodes::PARENT_COMPONENT_NOT_FOUND,
             FString::Printf(TEXT("Parent component '%s' not found in Blueprint"), *NewParentName));
     }
 
@@ -277,7 +274,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     if (!NewParentNode->ComponentTemplate || !NewParentNode->ComponentTemplate->IsA<USceneComponent>())
     {
         return TResult<void>::Error(
-            VibeUEErrorCodes::PARENT_NOT_SCENE_COMPONENT,
+            VibeUE::ErrorCodes::PARENT_NOT_SCENE_COMPONENT,
             FString::Printf(TEXT("Parent component '%s' is not a SceneComponent"), *NewParentName));
     }
 
@@ -293,7 +290,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     return TResult<void>::Success();
 #else
     return TResult<void>::Error(
-        VibeUEErrorCodes::NOT_IMPLEMENTED,
+        VibeUE::ErrorCodes::NOT_IMPLEMENTED,
         TEXT("Reparent component only available in Editor builds"));
 #endif
 }

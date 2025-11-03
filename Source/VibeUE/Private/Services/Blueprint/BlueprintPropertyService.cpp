@@ -15,33 +15,33 @@ TResult<FString> FBlueprintPropertyService::GetProperty(UBlueprint* Blueprint, c
 {
     if (!Blueprint)
     {
-        return TResult<FString>::Error(TEXT("Blueprint is null"));
+        return TResult<FString>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint is null"));
     }
 
     if (!Blueprint->GeneratedClass)
     {
-        return TResult<FString>::Error(TEXT("Blueprint has no generated class"));
+        return TResult<FString>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint has no generated class"));
     }
 
     // Get the default object
     UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
     if (!DefaultObject)
     {
-        return TResult<FString>::Error(TEXT("Failed to get default object"));
+        return TResult<FString>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get default object"));
     }
 
     // Find the property
     FProperty* Property = FindFProperty<FProperty>(DefaultObject->GetClass(), *PropertyName);
     if (!Property)
     {
-        return TResult<FString>::Error(FString::Printf(TEXT("Property '%s' not found in Blueprint"), *PropertyName));
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, FString::Printf(TEXT("Property '%s' not found in Blueprint"), *PropertyName));
     }
 
     // Get property value
     void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject);
     if (!PropertyValuePtr)
     {
-        return TResult<FString>::Error(TEXT("Failed to access property value"));
+        return TResult<FString>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to access property value"));
     }
 
     // Export the property value to a string
@@ -55,19 +55,19 @@ TResult<void> FBlueprintPropertyService::SetProperty(UBlueprint* Blueprint, cons
 {
     if (!Blueprint)
     {
-        return TResult<void>::Error(TEXT("Blueprint is null"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint is null"));
     }
 
     if (!Blueprint->GeneratedClass)
     {
-        return TResult<void>::Error(TEXT("Blueprint has no generated class"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint has no generated class"));
     }
 
     // Get the default object
     UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
     if (!DefaultObject)
     {
-        return TResult<void>::Error(TEXT("Failed to get default object"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get default object"));
     }
 
     // Create a JSON value from the string for SetObjectProperty
@@ -76,7 +76,7 @@ TResult<void> FBlueprintPropertyService::SetProperty(UBlueprint* Blueprint, cons
     FString ErrorMessage;
     if (!FCommonUtils::SetObjectProperty(DefaultObject, PropertyName, JsonValue, ErrorMessage))
     {
-        return TResult<void>::Error(ErrorMessage);
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, ErrorMessage);
     }
 
     // Mark the blueprint as modified
@@ -89,19 +89,19 @@ TResult<TArray<FPropertyInfo>> FBlueprintPropertyService::ListProperties(UBluepr
 {
     if (!Blueprint)
     {
-        return TResult<TArray<FPropertyInfo>>::Error(TEXT("Blueprint is null"));
+        return TResult<TArray<FPropertyInfo>>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint is null"));
     }
 
     if (!Blueprint->GeneratedClass)
     {
-        return TResult<TArray<FPropertyInfo>>::Error(TEXT("Blueprint has no generated class"));
+        return TResult<TArray<FPropertyInfo>>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint has no generated class"));
     }
 
     // Get the default object
     UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
     if (!DefaultObject)
     {
-        return TResult<TArray<FPropertyInfo>>::Error(TEXT("Failed to get default object"));
+        return TResult<TArray<FPropertyInfo>>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get default object"));
     }
 
     TArray<FPropertyInfo> Properties;
@@ -127,26 +127,26 @@ TResult<FPropertyInfo> FBlueprintPropertyService::GetPropertyMetadata(UBlueprint
 {
     if (!Blueprint)
     {
-        return TResult<FPropertyInfo>::Error(TEXT("Blueprint is null"));
+        return TResult<FPropertyInfo>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint is null"));
     }
 
     if (!Blueprint->GeneratedClass)
     {
-        return TResult<FPropertyInfo>::Error(TEXT("Blueprint has no generated class"));
+        return TResult<FPropertyInfo>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint has no generated class"));
     }
 
     // Get the default object
     UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
     if (!DefaultObject)
     {
-        return TResult<FPropertyInfo>::Error(TEXT("Failed to get default object"));
+        return TResult<FPropertyInfo>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get default object"));
     }
 
     // Find the property
     FProperty* Property = FindFProperty<FProperty>(DefaultObject->GetClass(), *PropertyName);
     if (!Property)
     {
-        return TResult<FPropertyInfo>::Error(FString::Printf(TEXT("Property '%s' not found in Blueprint"), *PropertyName));
+        return TResult<FPropertyInfo>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, FString::Printf(TEXT("Property '%s' not found in Blueprint"), *PropertyName));
     }
 
     FPropertyInfo Info;

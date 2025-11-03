@@ -1,4 +1,5 @@
 #include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Components/ActorComponent.h"
@@ -10,8 +11,9 @@
 // Declare log category
 DEFINE_LOG_CATEGORY_STATIC(LogBlueprintReflectionService, Log, All);
 
-FBlueprintReflectionService::FBlueprintReflectionService()
-	: bParentClassesInitialized(false)
+FBlueprintReflectionService::FBlueprintReflectionService(TSharedPtr<FServiceContext> Context)
+	: FServiceBase(Context)
+	, bParentClassesInitialized(false)
 	, bComponentTypesInitialized(false)
 	, bPropertyTypesInitialized(false)
 {
@@ -21,7 +23,7 @@ FBlueprintReflectionService::FBlueprintReflectionService()
 // Type Discovery
 // ═══════════════════════════════════════════════════════════
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailableParentClasses()
+TResult<TArray<FString>> FBlueprintReflectionService::GetAvailableParentClasses()
 {
 	if (!bParentClassesInitialized)
 	{
@@ -29,23 +31,11 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailableParentClasses()
 		bParentClassesInitialized = true;
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	
-	TArray<TSharedPtr<FJsonValue>> ClassArray;
-	for (const FString& ClassName : CachedParentClasses)
-	{
-		ClassArray.Add(MakeShareable(new FJsonValueString(ClassName)));
-	}
-	
-	Response->SetArrayField(TEXT("parent_classes"), ClassArray);
-	Response->SetNumberField(TEXT("count"), CachedParentClasses.Num());
-	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Returned %d parent classes"), CachedParentClasses.Num());
-	
-	return Response;
+	return TResult<TArray<FString>>::Success(CachedParentClasses);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailableComponentTypes()
+TResult<TArray<FString>> FBlueprintReflectionService::GetAvailableComponentTypes()
 {
 	if (!bComponentTypesInitialized)
 	{
@@ -53,23 +43,11 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailableComponentTypes(
 		bComponentTypesInitialized = true;
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	
-	TArray<TSharedPtr<FJsonValue>> ComponentArray;
-	for (const FString& ComponentType : CachedComponentTypes)
-	{
-		ComponentArray.Add(MakeShareable(new FJsonValueString(ComponentType)));
-	}
-	
-	Response->SetArrayField(TEXT("component_types"), ComponentArray);
-	Response->SetNumberField(TEXT("count"), CachedComponentTypes.Num());
-	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Returned %d component types"), CachedComponentTypes.Num());
-	
-	return Response;
+	return TResult<TArray<FString>>::Success(CachedComponentTypes);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailablePropertyTypes()
+TResult<TArray<FString>> FBlueprintReflectionService::GetAvailablePropertyTypes()
 {
 	if (!bPropertyTypesInitialized)
 	{
@@ -77,64 +55,44 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::GetAvailablePropertyTypes()
 		bPropertyTypesInitialized = true;
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	
-	TArray<TSharedPtr<FJsonValue>> PropertyArray;
-	for (const FString& PropertyType : CachedPropertyTypes)
-	{
-		PropertyArray.Add(MakeShareable(new FJsonValueString(PropertyType)));
-	}
-	
-	Response->SetArrayField(TEXT("property_types"), PropertyArray);
-	Response->SetNumberField(TEXT("count"), CachedPropertyTypes.Num());
-	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Returned %d property types"), CachedPropertyTypes.Num());
-	
-	return Response;
+	return TResult<TArray<FString>>::Success(CachedPropertyTypes);
 }
 
 // ═══════════════════════════════════════════════════════════
 // Class Metadata
 // ═══════════════════════════════════════════════════════════
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassInfo(UClass* Class)
+TResult<FClassInfo> FBlueprintReflectionService::GetClassInfo(UClass* Class)
 {
 	if (!Class)
 	{
-		return CreateErrorResponse(TEXT("INVALID_CLASS"), TEXT("Class is null"));
+		return TResult<FClassInfo>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class is null"));
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	TSharedPtr<FJsonObject> ClassInfo = MakeShareable(new FJsonObject);
-	
-	ClassInfo->SetStringField(TEXT("name"), Class->GetName());
-	ClassInfo->SetStringField(TEXT("path"), Class->GetPathName());
-	ClassInfo->SetStringField(TEXT("display_name"), Class->GetDisplayNameText().ToString());
+	FClassInfo Info;
+	Info.ClassName = Class->GetName();
+	Info.ClassPath = Class->GetPathName();
 	
 	if (UClass* SuperClass = Class->GetSuperClass())
 	{
-		ClassInfo->SetStringField(TEXT("parent_class"), SuperClass->GetName());
-		ClassInfo->SetStringField(TEXT("parent_path"), SuperClass->GetPathName());
+		Info.ParentClass = SuperClass->GetName();
 	}
 	
-	ClassInfo->SetBoolField(TEXT("is_abstract"), Class->HasAnyClassFlags(CLASS_Abstract));
-	ClassInfo->SetBoolField(TEXT("is_blueprint_type"), Class->HasAnyClassFlags(CLASS_BlueprintType));
-	ClassInfo->SetBoolField(TEXT("is_placeable"), !Class->HasAnyClassFlags(CLASS_NotPlaceable));
+	Info.bIsAbstract = Class->HasAnyClassFlags(CLASS_Abstract);
+	Info.bIsBlueprint = Class->HasAnyClassFlags(CLASS_CompiledFromBlueprint);
 	
-	Response->SetObjectField(TEXT("class_info"), ClassInfo);
-	
-	return Response;
+	return TResult<FClassInfo>::Success(Info);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassProperties(UClass* Class)
+TResult<TArray<FPropertyInfo>> FBlueprintReflectionService::GetClassProperties(UClass* Class)
 {
 	if (!Class)
 	{
-		return CreateErrorResponse(TEXT("INVALID_CLASS"), TEXT("Class is null"));
+		return TResult<TArray<FPropertyInfo>>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class is null"));
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
+	TArray<FPropertyInfo> Properties;
 	
 	for (TFieldIterator<FProperty> PropIt(Class); PropIt; ++PropIt)
 	{
@@ -144,31 +102,25 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassProperties(UClass* 
 			continue;
 		}
 		
-		TSharedPtr<FJsonObject> PropertyInfo = MakeShareable(new FJsonObject);
+		FPropertyInfo PropertyInfo;
 		ExtractPropertyInfo(Property, PropertyInfo);
-		
-		PropertiesArray.Add(MakeShareable(new FJsonValueObject(PropertyInfo)));
+		Properties.Add(PropertyInfo);
 	}
 	
-	Response->SetArrayField(TEXT("properties"), PropertiesArray);
-	Response->SetNumberField(TEXT("count"), PropertiesArray.Num());
-	Response->SetStringField(TEXT("class_name"), Class->GetName());
-	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Extracted %d properties from class %s"), 
-		PropertiesArray.Num(), *Class->GetName());
+		Properties.Num(), *Class->GetName());
 	
-	return Response;
+	return TResult<TArray<FPropertyInfo>>::Success(Properties);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassFunctions(UClass* Class)
+TResult<TArray<FFunctionInfo>> FBlueprintReflectionService::GetClassFunctions(UClass* Class)
 {
 	if (!Class)
 	{
-		return CreateErrorResponse(TEXT("INVALID_CLASS"), TEXT("Class is null"));
+		return TResult<TArray<FFunctionInfo>>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class is null"));
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	TArray<TSharedPtr<FJsonValue>> FunctionsArray;
+	TArray<FFunctionInfo> Functions;
 	
 	for (TFieldIterator<UFunction> FuncIt(Class); FuncIt; ++FuncIt)
 	{
@@ -178,82 +130,52 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassFunctions(UClass* C
 			continue;
 		}
 		
-		TSharedPtr<FJsonObject> FunctionInfo = MakeShareable(new FJsonObject);
+		FFunctionInfo FunctionInfo;
 		ExtractFunctionInfo(Function, FunctionInfo);
-		
-		FunctionsArray.Add(MakeShareable(new FJsonValueObject(FunctionInfo)));
+		Functions.Add(FunctionInfo);
 	}
 	
-	Response->SetArrayField(TEXT("functions"), FunctionsArray);
-	Response->SetNumberField(TEXT("count"), FunctionsArray.Num());
-	Response->SetStringField(TEXT("class_name"), Class->GetName());
-	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Extracted %d functions from class %s"), 
-		FunctionsArray.Num(), *Class->GetName());
+		Functions.Num(), *Class->GetName());
 	
-	return Response;
+	return TResult<TArray<FFunctionInfo>>::Success(Functions);
 }
 
 // ═══════════════════════════════════════════════════════════
 // Type Validation
 // ═══════════════════════════════════════════════════════════
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::IsValidParentClass(const FString& ClassName)
+TResult<bool> FBlueprintReflectionService::IsValidParentClass(const FString& ClassName)
 {
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	
 	// Try to resolve the class
-	TSharedPtr<FJsonObject> ResolveResult = ResolveClass(ClassName);
-	bool bIsValid = ResolveResult->GetBoolField(TEXT("success"));
-	
-	if (bIsValid)
+	TResult<UClass*> ResolveResult = ResolveClass(ClassName);
+	if (!ResolveResult.IsSuccess())
 	{
-		// Additional validation: check if it's suitable for Blueprints
-		FString ClassPath = ResolveResult->GetStringField(TEXT("class_path"));
-		UClass* Class = LoadObject<UClass>(nullptr, *ClassPath);
-		
-		if (Class)
-		{
-			bIsValid = IsClassValidForBlueprints(Class);
-		}
+		return TResult<bool>::Error(ResolveResult.GetErrorCode(), ResolveResult.GetErrorMessage());
 	}
 	
-	Response->SetBoolField(TEXT("is_valid"), bIsValid);
-	Response->SetStringField(TEXT("class_name"), ClassName);
+	UClass* Class = ResolveResult.GetValue();
+	bool bIsValid = IsClassValidForBlueprints(Class);
 	
-	return Response;
+	return TResult<bool>::Success(bIsValid);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::IsValidComponentType(const FString& ComponentType)
+TResult<bool> FBlueprintReflectionService::IsValidComponentType(const FString& ComponentType)
 {
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	
 	// Try to resolve the component class
-	TSharedPtr<FJsonObject> ResolveResult = ResolveClass(ComponentType);
-	bool bIsValid = ResolveResult->GetBoolField(TEXT("success"));
-	
-	if (bIsValid)
+	TResult<UClass*> ResolveResult = ResolveClass(ComponentType);
+	if (!ResolveResult.IsSuccess())
 	{
-		FString ClassPath = ResolveResult->GetStringField(TEXT("class_path"));
-		UClass* Class = LoadObject<UClass>(nullptr, *ClassPath);
-		
-		if (Class)
-		{
-			bIsValid = IsComponentTypeValid(Class);
-		}
-		else
-		{
-			bIsValid = false;
-		}
+		return TResult<bool>::Error(ResolveResult.GetErrorCode(), ResolveResult.GetErrorMessage());
 	}
 	
-	Response->SetBoolField(TEXT("is_valid"), bIsValid);
-	Response->SetStringField(TEXT("component_type"), ComponentType);
+	UClass* Class = ResolveResult.GetValue();
+	bool bIsValid = IsComponentTypeValid(Class);
 	
-	return Response;
+	return TResult<bool>::Success(bIsValid);
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::IsValidPropertyType(const FString& PropertyType)
+TResult<bool> FBlueprintReflectionService::IsValidPropertyType(const FString& PropertyType)
 {
 	// Property types include primitives and UObject types
 	// Simple validation: check if it's in our catalog or is a known primitive
@@ -263,8 +185,6 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::IsValidPropertyType(const F
 		PopulatePropertyTypeCatalog();
 		bPropertyTypesInitialized = true;
 	}
-	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
 	
 	bool bIsValid = CachedPropertyTypes.Contains(PropertyType);
 	
@@ -279,21 +199,18 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::IsValidPropertyType(const F
 		bIsValid = PrimitiveTypes.Contains(PropertyType);
 	}
 	
-	Response->SetBoolField(TEXT("is_valid"), bIsValid);
-	Response->SetStringField(TEXT("property_type"), PropertyType);
-	
-	return Response;
+	return TResult<bool>::Success(bIsValid);
 }
 
 // ═══════════════════════════════════════════════════════════
 // Type Conversion
 // ═══════════════════════════════════════════════════════════
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::ResolveClass(const FString& ClassName)
+TResult<UClass*> FBlueprintReflectionService::ResolveClass(const FString& ClassName)
 {
 	if (ClassName.IsEmpty())
 	{
-		return CreateErrorResponse(TEXT("EMPTY_CLASS_NAME"), TEXT("Class name is empty"));
+		return TResult<UClass*>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class name is empty"));
 	}
 	
 	UClass* ResolvedClass = nullptr;
@@ -320,29 +237,21 @@ TSharedPtr<FJsonObject> FBlueprintReflectionService::ResolveClass(const FString&
 	
 	if (ResolvedClass)
 	{
-		TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-		Response->SetStringField(TEXT("class_path"), ResolvedClass->GetPathName());
-		Response->SetStringField(TEXT("class_name"), ResolvedClass->GetName());
-		
-		return Response;
+		return TResult<UClass*>::Success(ResolvedClass);
 	}
 	
-	return CreateErrorResponse(TEXT("CLASS_NOT_FOUND"), 
+	return TResult<UClass*>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
 		FString::Printf(TEXT("Could not resolve class: %s"), *ClassName));
 }
 
-TSharedPtr<FJsonObject> FBlueprintReflectionService::GetClassPath(UClass* Class)
+TResult<FString> FBlueprintReflectionService::GetClassPath(UClass* Class)
 {
 	if (!Class)
 	{
-		return CreateErrorResponse(TEXT("INVALID_CLASS"), TEXT("Class is null"));
+		return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class is null"));
 	}
 	
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetStringField(TEXT("class_path"), Class->GetPathName());
-	Response->SetStringField(TEXT("class_name"), Class->GetName());
-	
-	return Response;
+	return TResult<FString>::Success(Class->GetPathName());
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -430,55 +339,30 @@ void FBlueprintReflectionService::PopulatePropertyTypeCatalog()
 		CachedPropertyTypes.Num());
 }
 
-void FBlueprintReflectionService::ExtractPropertyInfo(FProperty* Property, TSharedPtr<FJsonObject>& OutPropertyInfo)
+void FBlueprintReflectionService::ExtractPropertyInfo(FProperty* Property, FPropertyInfo& OutPropertyInfo)
 {
-	if (!Property || !OutPropertyInfo.IsValid())
+	if (!Property)
 	{
 		return;
 	}
 	
-	OutPropertyInfo->SetStringField(TEXT("name"), Property->GetName());
-	OutPropertyInfo->SetStringField(TEXT("type"), Property->GetCPPType());
-	OutPropertyInfo->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
-	OutPropertyInfo->SetStringField(TEXT("tooltip"), Property->GetToolTipText().ToString());
-	
-	OutPropertyInfo->SetBoolField(TEXT("is_editable"), Property->HasAnyPropertyFlags(CPF_Edit));
-	OutPropertyInfo->SetBoolField(TEXT("is_blueprint_visible"), Property->HasAnyPropertyFlags(CPF_BlueprintVisible));
-	OutPropertyInfo->SetBoolField(TEXT("is_blueprint_readonly"), Property->HasAnyPropertyFlags(CPF_BlueprintReadOnly));
+	OutPropertyInfo.PropertyName = Property->GetName();
+	OutPropertyInfo.PropertyType = Property->GetCPPType();
+	OutPropertyInfo.Category = Property->GetMetaData(TEXT("Category"));
+	OutPropertyInfo.bIsEditable = Property->HasAnyPropertyFlags(CPF_Edit);
 }
 
-void FBlueprintReflectionService::ExtractFunctionInfo(UFunction* Function, TSharedPtr<FJsonObject>& OutFunctionInfo)
+void FBlueprintReflectionService::ExtractFunctionInfo(UFunction* Function, FFunctionInfo& OutFunctionInfo)
 {
-	if (!Function || !OutFunctionInfo.IsValid())
+	if (!Function)
 	{
 		return;
 	}
 	
-	OutFunctionInfo->SetStringField(TEXT("name"), Function->GetName());
-	OutFunctionInfo->SetStringField(TEXT("category"), Function->GetMetaData(TEXT("Category")));
-	OutFunctionInfo->SetStringField(TEXT("tooltip"), Function->GetToolTipText().ToString());
-	
-	OutFunctionInfo->SetBoolField(TEXT("is_static"), Function->HasAnyFunctionFlags(FUNC_Static));
-	OutFunctionInfo->SetBoolField(TEXT("is_const"), Function->HasAnyFunctionFlags(FUNC_Const));
-	OutFunctionInfo->SetBoolField(TEXT("is_pure"), Function->HasAnyFunctionFlags(FUNC_BlueprintPure));
-	OutFunctionInfo->SetBoolField(TEXT("is_callable"), Function->HasAnyFunctionFlags(FUNC_BlueprintCallable));
-	
-	// Extract parameters
-	TArray<TSharedPtr<FJsonValue>> ParamsArray;
-	for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
-	{
-		FProperty* Param = *PropIt;
-		TSharedPtr<FJsonObject> ParamInfo = MakeShareable(new FJsonObject);
-		
-		ParamInfo->SetStringField(TEXT("name"), Param->GetName());
-		ParamInfo->SetStringField(TEXT("type"), Param->GetCPPType());
-		ParamInfo->SetBoolField(TEXT("is_return"), Param->HasAnyPropertyFlags(CPF_ReturnParm));
-		ParamInfo->SetBoolField(TEXT("is_out"), Param->HasAnyPropertyFlags(CPF_OutParm));
-		
-		ParamsArray.Add(MakeShareable(new FJsonValueObject(ParamInfo)));
-	}
-	
-	OutFunctionInfo->SetArrayField(TEXT("parameters"), ParamsArray);
+	OutFunctionInfo.FunctionName = Function->GetName();
+	OutFunctionInfo.Category = Function->GetMetaData(TEXT("Category"));
+	OutFunctionInfo.bIsStatic = Function->HasAnyFunctionFlags(FUNC_Static);
+	OutFunctionInfo.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
 }
 
 bool FBlueprintReflectionService::IsClassValidForBlueprints(UClass* Class)
@@ -495,7 +379,7 @@ bool FBlueprintReflectionService::IsClassValidForBlueprints(UClass* Class)
 	}
 	
 	// Check if it's a blueprint type
-	if (!Class->HasAnyClassFlags(CLASS_BlueprintType))
+	if (!Class->HasAnyClassFlags(CLASS_CompiledFromBlueprint))
 	{
 		return false;
 	}
@@ -523,20 +407,4 @@ bool FBlueprintReflectionService::IsComponentTypeValid(UClass* ComponentClass)
 	}
 	
 	return true;
-}
-
-TSharedPtr<FJsonObject> FBlueprintReflectionService::CreateSuccessResponse()
-{
-	TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-	Response->SetBoolField(TEXT("success"), true);
-	return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintReflectionService::CreateErrorResponse(const FString& ErrorCode, const FString& Message)
-{
-	TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-	Response->SetBoolField(TEXT("success"), false);
-	Response->SetStringField(TEXT("error_code"), ErrorCode);
-	Response->SetStringField(TEXT("error"), Message);
-	return Response;
 }

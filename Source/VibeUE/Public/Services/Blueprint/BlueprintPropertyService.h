@@ -1,8 +1,8 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Services/ServiceBase.h"
-#include "Services/TResult.h"
+#include "Services/Common/ServiceBase.h"
+#include "Core/Result.h"
 
 // Forward declarations
 class UBlueprint;

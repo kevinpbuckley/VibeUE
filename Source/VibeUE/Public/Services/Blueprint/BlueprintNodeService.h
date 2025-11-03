@@ -2,8 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Core/Result.h"
-#include "Core/ServiceBase.h"
-#include "Json.h"
+#include "Services/Common/ServiceBase.h"
 
 // Forward declarations
 class UBlueprint;
@@ -89,4 +88,41 @@ public:
                                                            const FString& SearchTerm);
     TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId);
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
+
+private:
+    /**
+     * Helper method to resolve target graph by name
+     * @param Blueprint Target blueprint
+     * @param GraphName Graph name or scope (empty defaults to event graph)
+     * @param OutError Error message if resolution fails
+     * @return Resolved graph or nullptr on failure
+     */
+    UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName, FString& OutError);
+
+    /**
+     * Helper method to gather all candidate graphs from a blueprint
+     * @param Blueprint Target blueprint
+     * @param PreferredGraph Optional preferred graph to add first
+     * @param OutGraphs Output array of graphs
+     */
+    void GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs);
+
+    /**
+     * Helper method to resolve a node by identifier (GUID, name, etc.)
+     * @param Identifier Node identifier string
+     * @param Graphs Graphs to search in
+     * @param OutNode Output node if found
+     * @param OutGraph Output graph containing the node
+     * @return True if node was found
+     */
+    bool ResolveNodeIdentifier(const FString& Identifier, const TArray<UEdGraph*>& Graphs, 
+                               UEdGraphNode*& OutNode, UEdGraph*& OutGraph);
+
+    /**
+     * Helper method to find a pin on a node by name
+     * @param Node Node to search
+     * @param PinName Pin name to find
+     * @return Found pin or nullptr
+     */
+    UEdGraphPin* FindPin(UEdGraphNode* Node, const FString& PinName);
 };

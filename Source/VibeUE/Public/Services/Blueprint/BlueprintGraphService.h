@@ -2,7 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Core/Result.h"
-#include "Core/ServiceBase.h"
+#include "Services/Common/ServiceBase.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
 

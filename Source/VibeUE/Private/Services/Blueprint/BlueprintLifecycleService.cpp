@@ -77,7 +77,7 @@ TResult<UBlueprint*> FBlueprintLifecycleService::CreateBlueprint(const FString& 
     // Check if blueprint already exists
     if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
     {
-        return TResult<UBlueprint*>::Err(FString::Printf(TEXT("Blueprint already exists: %s"), *FullAssetPath));
+        return TResult<UBlueprint*>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint already exists: %s"), *FullAssetPath));
     }
 
     // Find parent class
@@ -99,7 +99,7 @@ TResult<UBlueprint*> FBlueprintLifecycleService::CreateBlueprint(const FString& 
 
     if (!NewBlueprint)
     {
-        return TResult<UBlueprint*>::Err(TEXT("Failed to create blueprint"));
+        return TResult<UBlueprint*>::Error(VibeUE::ErrorCodes::BLUEPRINT_CREATE_FAILED, TEXT("Failed to create blueprint"));
     }
 
     // Notify the asset registry
@@ -108,14 +108,14 @@ TResult<UBlueprint*> FBlueprintLifecycleService::CreateBlueprint(const FString& 
     // Mark the package dirty
     Package->MarkPackageDirty();
 
-    return TResult<UBlueprint*>::Ok(NewBlueprint);
+    return TResult<UBlueprint*>::Success(NewBlueprint);
 }
 
 TResult<void> FBlueprintLifecycleService::CompileBlueprint(UBlueprint* Blueprint)
 {
     if (!Blueprint)
     {
-        return TResult<void>::Err(TEXT("Blueprint is null"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
     }
 
     // Compile the blueprint
@@ -124,22 +124,22 @@ TResult<void> FBlueprintLifecycleService::CompileBlueprint(UBlueprint* Blueprint
     // Check for compilation errors
     if (Blueprint->Status == BS_Error)
     {
-        return TResult<void>::Err(TEXT("Blueprint compilation failed with errors"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint compilation failed with errors"));
     }
 
-    return TResult<void>::Ok();
+    return TResult<void>::Success();
 }
 
 TResult<void> FBlueprintLifecycleService::ReparentBlueprint(UBlueprint* Blueprint, UClass* NewParentClass)
 {
     if (!Blueprint)
     {
-        return TResult<void>::Err(TEXT("Blueprint is null"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
     }
 
     if (!NewParentClass)
     {
-        return TResult<void>::Err(TEXT("New parent class is null"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("New parent class is null"));
     }
 
     // Set the new parent class
@@ -155,14 +155,14 @@ TResult<void> FBlueprintLifecycleService::ReparentBlueprint(UBlueprint* Blueprin
     FBlueprintEditorUtils::RefreshVariables(Blueprint);
     FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::None);
 
-    return TResult<void>::Ok();
+    return TResult<void>::Success();
 }
 
 TResult<void> FBlueprintLifecycleService::DeleteBlueprint(UBlueprint* Blueprint)
 {
     if (!Blueprint)
     {
-        return TResult<void>::Err(TEXT("Blueprint is null"));
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
     }
 
     FString AssetPath = Blueprint->GetPathName();
@@ -172,17 +172,17 @@ TResult<void> FBlueprintLifecycleService::DeleteBlueprint(UBlueprint* Blueprint)
 
     if (!bDeleted)
     {
-        return TResult<void>::Err(FString::Printf(TEXT("Failed to delete blueprint: %s"), *AssetPath));
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Failed to delete blueprint: %s"), *AssetPath));
     }
 
-    return TResult<void>::Ok();
+    return TResult<void>::Success();
 }
 
 TResult<TArray<FString>> FBlueprintLifecycleService::GetCompilationErrors(UBlueprint* Blueprint)
 {
     if (!Blueprint)
     {
-        return TResult<TArray<FString>>::Err(TEXT("Blueprint is null"));
+        return TResult<TArray<FString>>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint is null"));
     }
 
     TArray<FString> Errors;
@@ -196,18 +196,18 @@ TResult<TArray<FString>> FBlueprintLifecycleService::GetCompilationErrors(UBluep
     // Could be extended to extract specific error messages from the message log
     // For now, just return basic status
 
-    return TResult<TArray<FString>>::Ok(Errors);
+    return TResult<TArray<FString>>::Success(Errors);
 }
 
 TResult<bool> FBlueprintLifecycleService::IsCompiled(UBlueprint* Blueprint)
 {
     if (!Blueprint)
     {
-        return TResult<bool>::Err(TEXT("Blueprint is null"));
+        return TResult<bool>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
     }
 
     bool bIsCompiled = (Blueprint->Status != BS_Unknown && Blueprint->Status != BS_Dirty);
-    return TResult<bool>::Ok(bIsCompiled);
+    return TResult<bool>::Success(bIsCompiled);
 }
 
 UClass* FBlueprintLifecycleService::FindParentClass(const FString& ClassDescriptor)
