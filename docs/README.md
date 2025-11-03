@@ -2,6 +2,72 @@
 
 This directory contains comprehensive documentation for the VibeUE refactoring initiative, aimed at improving code maintainability and reducing duplication in the codebase.
 
+## 🚀 C++ Refactoring (Service-Oriented Architecture)
+
+### Active Documents
+
+#### 📋 [C++ Refactoring Design](./CPP_REFACTORING_DESIGN.md)
+Complete design specification for the service-oriented architecture refactoring:
+- **Current State Analysis**: 26,000+ lines with inconsistent patterns
+- **Service Architecture**: Blueprint, UMG, and Asset services
+- **Result Types**: Type-safe TResult<T> wrapper
+- **Error Handling**: Centralized error codes
+- **Migration Strategy**: 7-week phased implementation
+
+#### 📝 [C++ Refactoring Summary](./CPP_REFACTORING_SUMMARY.md)
+Executive summary and quick reference:
+- Before/After comparisons
+- Key improvements
+- Success metrics
+- Stage plan
+
+#### ✅ [Phase 1 Completion](./PHASE1_COMPLETION.md)
+Status report for Phase 1 Foundation (COMPLETE):
+- TResult<T> implementation
+- ErrorCodes constants
+- ServiceContext and ServiceBase
+- Zero breaking changes
+
+#### 🔧 [Service Patterns Guide](./SERVICE_PATTERNS.md)
+Developer guide for using the new service architecture:
+- How to create new services
+- TResult<T> usage examples
+- Error handling patterns
+- Testing guidelines
+- Migration from old patterns
+
+### Implementation Status
+
+- [x] **Phase 1: Foundation** ✅ COMPLETE
+  - TResult<T> type-safe results
+  - Centralized ErrorCodes
+  - ServiceContext infrastructure
+  - ServiceBase class
+  - Documentation and examples
+
+- [ ] **Phase 2: Blueprint Services** (Next)
+  - 9 focused Blueprint services
+  - Extract from monolithic files
+  - Maintain backward compatibility
+
+- [ ] **Phase 3: UMG Services**
+  - 7 focused UMG services
+  - Widget operations
+
+- [ ] **Phase 4: Command Handlers**
+  - Thin facade pattern
+  - Delegate to services
+
+- [ ] **Phase 5: Testing & Documentation**
+  - 80% code coverage
+  - Comprehensive API docs
+
+- [ ] **Phase 6: Optimization**
+  - Caching service
+  - Async operations
+
+---
+
 ## Documents Overview
 
 ### 🎯 [Refactoring Design Document](./REFACTORING_DESIGN.md)
