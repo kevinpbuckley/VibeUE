@@ -134,7 +134,6 @@ struct VIBEUE_API FInputActionNodeParams
 {
     FString ActionName;
     FVector2D Position;
-    FString InputTrigger;
 };
 
 /**
