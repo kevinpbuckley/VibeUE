@@ -71,8 +71,8 @@ UBridge::UBridge()
     // Create service context (shared across all services and command handlers)
     ServiceContext = MakeShared<FServiceContext>();
     
-    // Initialize command handlers with service context
-    // Note: Command handlers will be updated to accept ServiceContext in future refactoring
+    // Initialize command handlers
+    // TODO(Issue #38-40): Update command handlers to accept ServiceContext when refactored
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
     BlueprintComponentReflection = MakeShared<FBlueprintComponentReflection>();
@@ -89,7 +89,7 @@ UBridge::~UBridge()
     UMGCommands.Reset();
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
-    ServiceContext.Reset();
+    // Note: ServiceContext cleaned up in Deinitialize() before destructor is called
 }
 
 // Initialize subsystem

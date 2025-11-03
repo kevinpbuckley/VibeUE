@@ -18,7 +18,6 @@
 #include "Bridge.generated.h"
 
 class FMCPServerRunnable;
-class FServiceContext;
 
 /**
  * Editor subsystem for MCP Bridge
