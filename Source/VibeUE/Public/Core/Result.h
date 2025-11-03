@@ -42,6 +42,22 @@ public:
         check(bSuccess);
         return Value;
     }
+
+    // Safer access methods
+    bool TryGetValue(T& OutValue) const
+    {
+        if (bSuccess)
+        {
+            OutValue = Value;
+            return true;
+        }
+        return false;
+    }
+
+    T GetValueOr(const T& DefaultValue) const
+    {
+        return bSuccess ? Value : DefaultValue;
+    }
     
     const FString& GetErrorCode() const { return ErrorCode; }
     const FString& GetErrorMessage() const { return ErrorMessage; }

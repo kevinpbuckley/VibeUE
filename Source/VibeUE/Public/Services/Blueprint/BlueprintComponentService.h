@@ -6,6 +6,8 @@
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
 
+DECLARE_LOG_CATEGORY_EXTERN(LogBlueprintComponentService, Log, All);
+
 /**
  * Component information structure
  */

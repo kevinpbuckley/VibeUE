@@ -7,6 +7,8 @@
 #include "Kismet2/BlueprintEditorUtils.h"
 #endif
 
+DEFINE_LOG_CATEGORY(LogBlueprintComponentService);
+
 FBlueprintComponentService::FBlueprintComponentService()
 {
 }
@@ -74,7 +76,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
         }
         else
         {
-            UE_LOG(LogTemp, Warning, TEXT("Parent component '%s' not found, adding to root"), *ParentName);
+            UE_LOG(LogBlueprintComponentService, Warning, TEXT("Parent component '%s' not found, adding to root"), *ParentName);
             SCS->AddNode(NewNode);
         }
     }
@@ -99,7 +101,7 @@ TResult<UActorComponent*> FBlueprintComponentService::AddComponent(
     FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
 #endif
 
-    UE_LOG(LogTemp, Log, TEXT("Added component '%s' of type '%s' to Blueprint '%s'"), 
+    UE_LOG(LogBlueprintComponentService, Log, TEXT("Added component '%s' of type '%s' to Blueprint '%s'"), 
         *ComponentName, *ComponentType, *Blueprint->GetName());
 
     return TResult<UActorComponent*>::Success(NewNode->ComponentTemplate);
@@ -154,7 +156,7 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
     FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
 #endif
 
-    UE_LOG(LogTemp, Log, TEXT("Removed component '%s' from Blueprint '%s'"), 
+    UE_LOG(LogBlueprintComponentService, Log, TEXT("Removed component '%s' from Blueprint '%s'"), 
         *ComponentName, *Blueprint->GetName());
 
     return TResult<void>::Success();
@@ -204,7 +206,7 @@ TResult<void> FBlueprintComponentService::ReorderComponents(
     }
 
     // Component reordering is not fully implemented yet
-    UE_LOG(LogTemp, Warning, TEXT("Component reordering not fully implemented yet"));
+    UE_LOG(LogBlueprintComponentService, Warning, TEXT("Component reordering not fully implemented yet"));
 
 #if WITH_EDITOR
     // Mark Blueprint as modified
@@ -285,7 +287,7 @@ TResult<void> FBlueprintComponentService::ReparentComponent(
     // Mark Blueprint as modified
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
-    UE_LOG(LogTemp, Log, TEXT("Reparented component '%s' to '%s' in Blueprint '%s'"), 
+    UE_LOG(LogBlueprintComponentService, Log, TEXT("Reparented component '%s' to '%s' in Blueprint '%s'"), 
         *ComponentName, *NewParentName, *Blueprint->GetName());
 
     return TResult<void>::Success();
@@ -318,9 +320,12 @@ bool FBlueprintComponentService::ValidateComponentType(const FString& ComponentT
 
 bool FBlueprintComponentService::ValidateComponentName(UBlueprint* Blueprint, const FString& ComponentName)
 {
+    // Returns true if the name is valid (unique)
+    // Returns false if Blueprint is null, SCS is null, or name already exists
     if (!Blueprint || !Blueprint->SimpleConstructionScript)
         return false;
 
+    // Name is valid if it doesn't already exist
     return Blueprint->SimpleConstructionScript->FindSCSNode(*ComponentName) == nullptr;
 }
 
