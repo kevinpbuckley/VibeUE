@@ -48,7 +48,15 @@ TResult<TArray<FString>> FWidgetLifecycleService::ValidateWidget(UWidgetBlueprin
 
 TResult<bool> FWidgetLifecycleService::IsWidgetValid(UWidgetBlueprint* Widget)
 {
-    return TResult<bool>::Success(Widget && Widget->WidgetTree && Widget->WidgetTree->RootWidget && Widget->IsValidLowLevel() && IsValid(Widget));
+    if (!Widget) return TResult<bool>::Success(false);
+    
+    bool bHasWidgetTree = Widget->WidgetTree != nullptr;
+    bool bHasRootWidget = bHasWidgetTree && Widget->WidgetTree->RootWidget != nullptr;
+    bool bIsValidLowLevel = Widget->IsValidLowLevel();
+    bool bIsValidObject = IsValid(Widget);
+    bool bIsValid = bHasWidgetTree && bHasRootWidget && bIsValidLowLevel && bIsValidObject;
+    
+    return TResult<bool>::Success(bIsValid);
 }
 
 TResult<void> FWidgetLifecycleService::ValidateHierarchy(UWidgetBlueprint* Widget)
@@ -109,9 +117,24 @@ bool FWidgetLifecycleService::DetectCircularReference(UWidget* Widget, TSet<UWid
 {
     if (!Widget) return false;
     if (Visited.Contains(Widget)) return true;
+    
     Visited.Add(Widget);
+    
+    bool bCircularRefFound = false;
     if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
+    {
         for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
-            if (DetectCircularReference(PanelWidget->GetChildAt(i), Visited)) return true;
-    return false;
+        {
+            if (DetectCircularReference(PanelWidget->GetChildAt(i), Visited))
+            {
+                bCircularRefFound = true;
+                break;
+            }
+        }
+    }
+    
+    // Remove from visited set to allow widget in different branches
+    Visited.Remove(Widget);
+    
+    return bCircularRefFound;
 }
