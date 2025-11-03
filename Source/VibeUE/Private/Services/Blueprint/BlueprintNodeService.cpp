@@ -1192,3 +1192,129 @@ TResult<TArray<FDetailedNodeInfo>> FBlueprintNodeService::DescribeAllNodes(UBlue
 
     return TResult<TArray<FDetailedNodeInfo>>::Success(Results);
 }
+
+TSharedPtr<FJsonObject> FBlueprintNodeService::ConvertPinInfoToJson(const FPinInfo& PinInfo)
+{
+    TSharedPtr<FJsonObject> PinObject = MakeShared<FJsonObject>();
+    PinObject->SetStringField(TEXT("pin_id"), PinInfo.PinId);
+    PinObject->SetStringField(TEXT("name"), PinInfo.Name);
+    PinObject->SetStringField(TEXT("direction"), PinInfo.Direction);
+    PinObject->SetStringField(TEXT("category"), PinInfo.Category);
+    PinObject->SetStringField(TEXT("subcategory"), PinInfo.SubCategory);
+    if (!PinInfo.PinTypePath.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("pin_type_path"), PinInfo.PinTypePath);
+    }
+    PinObject->SetStringField(TEXT("container"), PinInfo.Container);
+    PinObject->SetBoolField(TEXT("is_const"), PinInfo.bIsConst);
+    PinObject->SetBoolField(TEXT("is_reference"), PinInfo.bIsReference);
+    PinObject->SetBoolField(TEXT("is_array"), PinInfo.bIsArray);
+    PinObject->SetBoolField(TEXT("is_set"), PinInfo.bIsSet);
+    PinObject->SetBoolField(TEXT("is_map"), PinInfo.bIsMap);
+    PinObject->SetBoolField(TEXT("is_hidden"), PinInfo.bIsHidden);
+    PinObject->SetBoolField(TEXT("is_advanced"), PinInfo.bIsAdvanced);
+    PinObject->SetBoolField(TEXT("is_connected"), PinInfo.bIsConnected);
+
+    if (!PinInfo.Tooltip.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("tooltip"), PinInfo.Tooltip);
+    }
+
+    if (!PinInfo.DefaultValue.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_value"), PinInfo.DefaultValue);
+    }
+    if (!PinInfo.DefaultText.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_text"), PinInfo.DefaultText);
+    }
+    if (!PinInfo.DefaultObjectPath.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_object_path"), PinInfo.DefaultObjectPath);
+    }
+
+    if (PinInfo.DefaultValueJson.IsValid())
+    {
+        PinObject->SetField(TEXT("default_value_json"), PinInfo.DefaultValueJson);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> LinksArray;
+    for (const TSharedPtr<FJsonObject>& Link : PinInfo.Links)
+    {
+        LinksArray.Add(MakeShared<FJsonValueObject>(Link));
+    }
+    PinObject->SetArrayField(TEXT("links"), LinksArray);
+
+    return PinObject;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeService::ConvertNodeInfoToJson(const FDetailedNodeInfo& NodeInfo, bool bIncludePins)
+{
+    TSharedPtr<FJsonObject> NodeObject = MakeShared<FJsonObject>();
+    NodeObject->SetStringField(TEXT("node_id"), NodeInfo.NodeId);
+    NodeObject->SetStringField(TEXT("display_name"), NodeInfo.DisplayName);
+    NodeObject->SetStringField(TEXT("class_path"), NodeInfo.ClassPath);
+    NodeObject->SetStringField(TEXT("graph_scope"), NodeInfo.GraphScope);
+    NodeObject->SetStringField(TEXT("graph_name"), NodeInfo.GraphName);
+    NodeObject->SetStringField(TEXT("graph_guid"), NodeInfo.GraphGuid);
+
+    TSharedPtr<FJsonObject> Position = MakeShared<FJsonObject>();
+    Position->SetNumberField(TEXT("x"), NodeInfo.Position.X);
+    Position->SetNumberField(TEXT("y"), NodeInfo.Position.Y);
+    NodeObject->SetObjectField(TEXT("position"), Position);
+
+    if (!NodeInfo.Comment.IsEmpty())
+    {
+        NodeObject->SetStringField(TEXT("comment"), NodeInfo.Comment);
+    }
+
+    NodeObject->SetBoolField(TEXT("is_pure"), NodeInfo.bIsPure);
+    NodeObject->SetStringField(TEXT("exec_state"), NodeInfo.ExecState);
+
+    if (NodeInfo.NodeDescriptor.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("node_descriptor"), NodeInfo.NodeDescriptor);
+    }
+
+    if (!NodeInfo.SpawnerKey.IsEmpty())
+    {
+        NodeObject->SetStringField(TEXT("spawner_key"), NodeInfo.SpawnerKey);
+    }
+
+    if (NodeInfo.NodeParams.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("node_params"), NodeInfo.NodeParams);
+    }
+
+    if (NodeInfo.FunctionMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("function_metadata"), NodeInfo.FunctionMetadata);
+    }
+
+    if (NodeInfo.VariableMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("variable_metadata"), NodeInfo.VariableMetadata);
+    }
+
+    if (NodeInfo.CastMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("cast_metadata"), NodeInfo.CastMetadata);
+    }
+
+    if (bIncludePins)
+    {
+        TArray<TSharedPtr<FJsonValue>> PinsArray;
+        for (const FPinInfo& PinInfo : NodeInfo.Pins)
+        {
+            PinsArray.Add(MakeShared<FJsonValueObject>(ConvertPinInfoToJson(PinInfo)));
+        }
+        NodeObject->SetArrayField(TEXT("pins"), PinsArray);
+    }
+
+    if (NodeInfo.Metadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("metadata"), NodeInfo.Metadata);
+    }
+
+    return NodeObject;
+}

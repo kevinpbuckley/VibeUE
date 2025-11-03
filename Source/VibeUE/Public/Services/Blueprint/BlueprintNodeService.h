@@ -290,6 +290,10 @@ public:
                                                         const TOptional<FString>& FunctionName = TOptional<FString>(),
                                                         bool bIncludePins = true, bool bIncludeInternalPins = false,
                                                         int32 Offset = 0, int32 Limit = -1);
+    
+    // Helper to convert detailed node info to JSON
+    static TSharedPtr<FJsonObject> ConvertNodeInfoToJson(const FDetailedNodeInfo& NodeInfo, bool bIncludePins = true);
+    static TSharedPtr<FJsonObject> ConvertPinInfoToJson(const FPinInfo& PinInfo);
 
 private:
     /**
