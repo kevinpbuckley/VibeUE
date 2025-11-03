@@ -2190,10 +2190,11 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
@@ -2201,14 +2202,22 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
     Params->TryGetBoolField(TEXT("include_macros"), bIncludeMacros);
     Params->TryGetBoolField(TEXT("include_timeline"), bIncludeTimeline);
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find blueprint using DiscoveryService
+    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (!BlueprintResult.IsSuccess())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
+    
+    UBlueprint* Blueprint = BlueprintResult.GetValue();
 
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
+    // TODO: Once all handlers refactored, move this logic to GraphService or NodeService
+    FString ScopeError;
+    UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
+    if (!EventGraph)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, ScopeError);
+    }
 
     TArray<TSharedPtr<FJsonValue>> NodeArray;
     for (UEdGraphNode* Node : EventGraph->Nodes)
