@@ -144,4 +144,4 @@ node_modules/
 
 # Local configuration files
 *.local.ini
-local.properties
+local.properties_codeql_detected_source_root
