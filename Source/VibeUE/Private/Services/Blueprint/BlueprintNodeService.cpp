@@ -672,7 +672,7 @@ TResult<FString> FBlueprintNodeService::AddEvent(UBlueprint* Blueprint, const FE
         return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
     }
     
-    // Resolve target graph (use specified graph or default to EventGraph)
+    // Resolve target graph (defaults to EventGraph if Config.GraphName is empty)
     FString Error;
     UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Config.GraphName, Error);
     if (!TargetGraph)
