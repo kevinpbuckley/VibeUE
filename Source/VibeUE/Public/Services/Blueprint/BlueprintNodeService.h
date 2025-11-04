@@ -172,7 +172,7 @@ struct VIBEUE_API FNodeDeletionInfo
 };
 
 /**
- * Detailed information about a pin
+ * Detailed information about a pin (used by DescribeNode from PR #115)
  */
 struct VIBEUE_API FPinInfo
 {
@@ -200,7 +200,7 @@ struct VIBEUE_API FPinInfo
 };
 
 /**
- * Detailed information about a blueprint node with pins
+ * Detailed information about a blueprint node with pins (used by DescribeNode from PR #115)
  */
 struct VIBEUE_API FDetailedNodeInfo
 {
@@ -222,6 +222,43 @@ struct VIBEUE_API FDetailedNodeInfo
     TSharedPtr<FJsonObject> CastMetadata;
     TArray<FPinInfo> Pins;
     TSharedPtr<FJsonObject> Metadata;
+};
+
+/**
+ * Pin detail information (used by GetNodeDetails from PR #118)
+ */
+struct VIBEUE_API FPinDetail
+{
+    FString PinName;
+    FString PinType;
+    FString Direction;  // "Input" or "Output"
+    bool bIsHidden;
+    bool bIsConnected;
+    FString DefaultValue;
+    FString DefaultObjectName;
+    FString DefaultTextValue;
+    bool bIsArray;
+    bool bIsReference;
+    TArray<FPinConnectionInfo> Connections;
+};
+
+/**
+ * Comprehensive node details with pin information (used by GetNodeDetails from PR #118)
+ */
+struct VIBEUE_API FNodeDetails
+{
+    FString NodeId;
+    FString NodeType;
+    FString DisplayName;
+    FVector2D Position;
+    FString GraphName;
+    bool bCanUserDeleteNode;
+    FString Category;
+    FString Tooltip;
+    FString Keywords;
+    TArray<FPinDetail> InputPins;
+    TArray<FPinDetail> OutputPins;
+    TMap<FString, FString> Properties;
 };
 
 /**
@@ -298,6 +335,8 @@ public:
     TResult<TArray<FNodeDescriptor>> DiscoverAvailableNodes(UBlueprint* Blueprint, 
                                                            const FString& SearchTerm);
     TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId);
+    TResult<FNodeDetails> GetNodeDetailsExtended(UBlueprint* Blueprint, const FString& NodeId, 
+                                                 bool bIncludePins = true, bool bIncludeConnections = true);
     TResult<TArray<FString>> ListNodes(UBlueprint* Blueprint, const FString& GraphName);
     TResult<TArray<FNodeInfo>> FindNodes(UBlueprint* Blueprint, const FString& GraphName,
                                         const FString& SearchTerm);
