@@ -25,6 +25,27 @@ struct VIBEUE_API FPinConnectionInfo
     FString PinType;
 };
 
+/**
+ * Function metadata for node descriptors
+ */
+struct VIBEUE_API FFunctionMetadata
+{
+	FString FunctionName;
+	FString FunctionClassName;
+	FString FunctionClassPath;
+	bool bIsStatic;
+	bool bIsConst;
+	bool bIsPure;
+	FString Module;
+	
+	FFunctionMetadata()
+		: bIsStatic(false)
+		, bIsConst(false)
+		, bIsPure(false)
+	{
+	}
+};
+
 struct VIBEUE_API FPinLinkBreakInfo
 {
     FString OtherNodeId;
@@ -133,6 +154,36 @@ struct VIBEUE_API FPinDisconnectionBatchResult
 };
 
 /**
+ * Detailed information about a pin (used by DescribeNode from PR #115)
+ */
+struct VIBEUE_API FPinInfo
+{
+    FString PinId;
+    FString Name;
+    FString Direction;
+    FString Category;
+    FString SubCategory;
+    FString PinTypePath;
+    FString Type;  // Simple type name (for node descriptors)
+    FString TypePath;  // Full type path (for node descriptors)
+    FString Container;
+    bool bIsConst = false;
+    bool bIsReference = false;
+    bool bIsArray = false;
+    bool bIsSet = false;
+    bool bIsMap = false;
+    bool bIsHidden = false;
+    bool bIsAdvanced = false;
+    bool bIsConnected = false;
+    FString Tooltip;
+    FString DefaultValue;
+    FString DefaultText;
+    FString DefaultObjectPath;
+    TSharedPtr<FJsonValue> DefaultValueJson;
+    TArray<TSharedPtr<FJsonObject>> Links;
+};
+
+/**
  * Descriptor for a node type available in the palette
  */
 struct VIBEUE_API FNodeDescriptor
@@ -143,6 +194,16 @@ struct VIBEUE_API FNodeDescriptor
     FString Description;
     TArray<FString> Keywords;
     FString SpawnerKey;
+    
+    // Extended fields for detailed node information
+    FString NodeTitle;
+    FString NodeClassName;
+    FString NodeClassPath;
+    FString Tooltip;
+    int32 ExpectedPinCount = 0;
+    bool bIsStatic = false;
+    TArray<FPinInfo> Pins;
+    TOptional<FFunctionMetadata> FunctionMetadata;
 };
 
 /**
@@ -169,34 +230,6 @@ struct VIBEUE_API FNodeDeletionInfo
     FString GraphName;
     TArray<FPinConnectionInfo> DisconnectedPins;
     bool bWasProtected;
-};
-
-/**
- * Detailed information about a pin (used by DescribeNode from PR #115)
- */
-struct VIBEUE_API FPinInfo
-{
-    FString PinId;
-    FString Name;
-    FString Direction;
-    FString Category;
-    FString SubCategory;
-    FString PinTypePath;
-    FString Container;
-    bool bIsConst = false;
-    bool bIsReference = false;
-    bool bIsArray = false;
-    bool bIsSet = false;
-    bool bIsMap = false;
-    bool bIsHidden = false;
-    bool bIsAdvanced = false;
-    bool bIsConnected = false;
-    FString Tooltip;
-    FString DefaultValue;
-    FString DefaultText;
-    FString DefaultObjectPath;
-    TSharedPtr<FJsonValue> DefaultValueJson;
-    TArray<TSharedPtr<FJsonObject>> Links;
 };
 
 /**
@@ -310,6 +343,17 @@ struct VIBEUE_API FNodeSearchCriteria
 };
 
 /**
+ * Node property information
+ */
+struct VIBEUE_API FNodePropertyInfo
+{
+    FString PropertyName;
+    FString CurrentValue;
+    FString PropertyType;
+    FString Category;
+};
+
+/**
  * Service for Blueprint node operations (create, connect, configure)
  * Extracted from BlueprintNodeCommands.cpp to provide focused node management
  */
@@ -347,6 +391,8 @@ public:
                                      const FString& PinName, const FString& Value);
     TResult<void> SetNodeProperty(UBlueprint* Blueprint, const FString& NodeId,
                                   const FString& PropertyName, const FString& PropertyValue);
+    TResult<FNodePropertyInfo> GetNodeProperty(UBlueprint* Blueprint, const FString& NodeId,
+                                              const FString& PropertyName);
     TResult<FString> GetPinDefaultValue(UBlueprint* Blueprint, const FString& NodeId,
                                        const FString& PinName);
     TResult<void> ConfigureNode(UBlueprint* Blueprint, const FString& NodeId,

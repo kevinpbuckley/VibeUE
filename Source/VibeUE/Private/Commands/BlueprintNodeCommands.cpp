@@ -257,6 +257,10 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
     NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
     GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
+    
+    // Set services on ReflectionCommands for Phase 4 refactoring
+    ReflectionCommands->SetDiscoveryService(DiscoveryService);
+    ReflectionCommands->SetNodeService(NodeService);
 }
 
 // Helper methods for TResult to JSON conversion
@@ -401,6 +405,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& Com
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // NOTE: This handler is redundant with HandleConnectPins (supports single connection).
+    // HandleConnectPins supports batch connections and is the primary implementation.
+    // This handler simply wraps parameters and forwards to HandleConnectPins.
+    // TODO: After HandleConnectPins is refactored to use NodeService (Issue #95),
+    //       this handler can be simplified or deprecated.
+    
     if (!Params.IsValid())
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Invalid connection payload"));
@@ -4799,19 +4809,27 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(c
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSplitOrRecombinePins(const TSharedPtr<FJsonObject>& Params, bool bSplitPins)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
+    // Extract required parameters
+    FString BlueprintName, NodeId;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(Error);
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+    }
+    
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("[%s] %s"), *FindResult.GetErrorCode(), *FindResult.GetErrorMessage()));
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+    
+    // Gather pin names from various sources
     auto GatherPins = [&](const TSharedPtr<FJsonObject>& Source, TArray<FString>& OutPins)
     {
         if (!Source.IsValid())
@@ -4874,8 +4892,58 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSplitOrRecombinePins(const
     {
         return FCommonUtils::CreateErrorResponse(TEXT("No pin names provided for operation"));
     }
-
-    return ApplyPinTransform(Blueprint, Node, BlueprintName, NodeIdentifier, PinNames, bSplitPins);
+    
+    // Apply split/recombine to each pin using NodeService
+    TArray<FString> SuccessPins;
+    TArray<FString> FailedPins;
+    FString LastError;
+    
+    for (const FString& PinName : PinNames)
+    {
+        TResult<void> Result = bSplitPins 
+            ? NodeService->SplitPin(Blueprint, NodeId, PinName)
+            : NodeService->RecombinePin(Blueprint, NodeId, PinName);
+        
+        if (Result.IsError())
+        {
+            FailedPins.Add(PinName);
+            LastError = Result.GetErrorMessage();
+        }
+        else
+        {
+            SuccessPins.Add(PinName);
+        }
+    }
+    
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), FailedPins.Num() == 0);
+    Response->SetNumberField(TEXT("processed_count"), PinNames.Num());
+    Response->SetNumberField(TEXT("success_count"), SuccessPins.Num());
+    Response->SetNumberField(TEXT("failed_count"), FailedPins.Num());
+    
+    if (SuccessPins.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> SuccessArray;
+        for (const FString& Pin : SuccessPins)
+        {
+            SuccessArray.Add(MakeShareable(new FJsonValueString(Pin)));
+        }
+        Response->SetArrayField(TEXT("success_pins"), SuccessArray);
+    }
+    
+    if (FailedPins.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> FailedArray;
+        for (const FString& Pin : FailedPins)
+        {
+            FailedArray.Add(MakeShareable(new FJsonValueString(Pin)));
+        }
+        Response->SetArrayField(TEXT("failed_pins"), FailedArray);
+        Response->SetStringField(TEXT("error"), LastError);
+    }
+    
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSharedPtr<FJsonObject>& Params)

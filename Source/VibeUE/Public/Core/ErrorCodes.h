@@ -315,6 +315,9 @@ namespace ErrorCodes
 	/** @brief General operation failed */
 	constexpr const TCHAR* OPERATION_FAILED = TEXT("OPERATION_FAILED");
 
+	/** @brief Functionality not yet implemented */
+	constexpr const TCHAR* NOT_IMPLEMENTED = TEXT("NOT_IMPLEMENTED");
+
 	// ============================================================================
 	// Texture/Image Errors (6000-6099)
 	// ============================================================================

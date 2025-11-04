@@ -1,4 +1,6 @@
 #include "Commands/BlueprintReflection.h"
+#include "Services/Blueprint/BlueprintDiscoveryService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Engine/Blueprint.h"
 #include "K2Node.h"
 #include "K2Node_Event.h"
@@ -3462,43 +3464,49 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleSetBlueprintNodeProp
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    if (!Params.IsValid())
-    {
-        return CreateErrorResponse(TEXT("Invalid parameters"));
-    }
-    
-    FString BlueprintName;
+    // Extract required parameters
+    FString BlueprintName, NodeId, PropertyName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    
-    FString NodeId;
     if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
     {
         return CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
-    
-    FString PropertyName;
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
         return CreateErrorResponse(TEXT("Missing 'property_name' parameter"));
     }
     
-    UBlueprint* Blueprint = FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("[%s] %s"), *FindResult.GetErrorCode(), *FindResult.GetErrorMessage()));
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+    
+    // Get node property from NodeService
+    auto GetResult = NodeService->GetNodeProperty(Blueprint, NodeId, PropertyName);
+    
+    // Convert TResult to JSON
+    if (GetResult.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(
+            FString::Printf(TEXT("[%s] %s"), *GetResult.GetErrorCode(), *GetResult.GetErrorMessage()));
     }
     
-    UK2Node* Node = FindNodeInBlueprint(Blueprint, NodeId);
-    if (!Node)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Node '%s' not found in blueprint"), *NodeId));
-    }
+    const FNodePropertyInfo& PropertyInfo = GetResult.GetValue();
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("property_name"), PropertyInfo.PropertyName);
+    Response->SetStringField(TEXT("value"), PropertyInfo.CurrentValue);
+    Response->SetStringField(TEXT("type"), PropertyInfo.PropertyType);
+    Response->SetStringField(TEXT("category"), PropertyInfo.Category);
     
-    // Use the reflection system to get property
-    return FBlueprintReflection::GetNodeProperty(Node, PropertyName);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params)

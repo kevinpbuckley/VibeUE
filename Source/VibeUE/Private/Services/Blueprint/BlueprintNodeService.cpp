@@ -16,6 +16,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Timeline.h"
 #include "K2Node_Event.h"
+#include "K2Node_Knot.h"
 #include "BlueprintFunctionNodeSpawner.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -560,6 +561,53 @@ TResult<void> FBlueprintNodeService::SetNodeProperty(UBlueprint* Blueprint, cons
     }
     
     return TResult<void>::Success();
+}
+
+TResult<FNodePropertyInfo> FBlueprintNodeService::GetNodeProperty(UBlueprint* Blueprint, const FString& NodeId,
+                                                                   const FString& PropertyName)
+{
+    // Validate Blueprint
+    if (!Blueprint)
+    {
+        return TResult<FNodePropertyInfo>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<FNodePropertyInfo>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    UK2Node* K2Node = Cast<UK2Node>(Node);
+    if (!K2Node)
+    {
+        return TResult<FNodePropertyInfo>::Error(VibeUE::ErrorCodes::NODE_INVALID, 
+            TEXT("Node is not a K2Node"));
+    }
+    
+    // Use FBlueprintReflection to get the property
+    TSharedPtr<FJsonObject> Result = FBlueprintReflection::GetNodeProperty(K2Node, PropertyName);
+    
+    if (!Result.IsValid() || !Result->GetBoolField(TEXT("success")))
+    {
+        FString ErrorMsg = Result.IsValid() ? Result->GetStringField(TEXT("error")) : TEXT("Unknown error");
+        return TResult<FNodePropertyInfo>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, ErrorMsg);
+    }
+    
+    // Convert JSON result to FNodePropertyInfo
+    FNodePropertyInfo PropertyInfo;
+    PropertyInfo.PropertyName = PropertyName;
+    PropertyInfo.CurrentValue = Result->GetStringField(TEXT("value"));
+    PropertyInfo.PropertyType = Result->HasField(TEXT("type")) ? Result->GetStringField(TEXT("type")) : TEXT("");
+    PropertyInfo.Category = Result->HasField(TEXT("category")) ? Result->GetStringField(TEXT("category")) : TEXT("");
+    
+    return TResult<FNodePropertyInfo>::Success(PropertyInfo);
 }
 
 TResult<FString> FBlueprintNodeService::GetPinDefaultValue(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
@@ -1812,4 +1860,398 @@ TResult<FString> FBlueprintNodeService::AddEvent(UBlueprint* Blueprint, const FE
     
     // Return node ID
     return TResult<FString>::Success(EventNode->NodeGuid.ToString());
+}
+
+// ============================================================================
+// Pin Connection Methods
+// ============================================================================
+
+TResult<FPinConnectionResult> FBlueprintNodeService::ConnectPins(UBlueprint* Blueprint, const FPinConnectionRequest& Request)
+{
+    // Validate Blueprint
+    auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+    if (ValidationResult.IsError())
+    {
+        FPinConnectionResult Result;
+        Result.bSuccess = false;
+        Result.ErrorCode = ValidationResult.GetErrorCode();
+        Result.ErrorMessage = ValidationResult.GetErrorMessage();
+        return TResult<FPinConnectionResult>::Success(Result);
+    }
+
+    FPinConnectionResult Result;
+    Result.Index = Request.Index;
+    Result.SourceNodeId = Request.SourceNodeId;
+    Result.TargetNodeId = Request.TargetNodeId;
+    Result.SourcePinIdentifier = Request.SourcePinIdentifier;
+    Result.TargetPinIdentifier = Request.TargetPinIdentifier;
+
+    // For now, call the batch method with a single request
+    // This allows us to reuse the complex connection logic
+    TArray<FPinConnectionRequest> Requests;
+    Requests.Add(Request);
+    
+    auto BatchResult = ConnectPinsBatch(Blueprint, Requests);
+    if (BatchResult.IsError())
+    {
+        Result.bSuccess = false;
+        Result.ErrorCode = BatchResult.GetErrorCode();
+        Result.ErrorMessage = BatchResult.GetErrorMessage();
+        return TResult<FPinConnectionResult>::Success(Result);
+    }
+    
+    const FPinConnectionBatchResult& Batch = BatchResult.GetValue();
+    if (Batch.Results.Num() > 0)
+    {
+        Result = Batch.Results[0];
+    }
+    else
+    {
+        Result.bSuccess = false;
+        Result.ErrorCode = VibeUE::ErrorCodes::OPERATION_FAILED;
+        Result.ErrorMessage = TEXT("Batch connection returned no results");
+    }
+    
+    return TResult<FPinConnectionResult>::Success(Result);
+}
+
+TResult<FPinConnectionBatchResult> FBlueprintNodeService::ConnectPinsBatch(UBlueprint* Blueprint, const TArray<FPinConnectionRequest>& Requests)
+{
+    // Validate Blueprint
+    auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FPinConnectionBatchResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    // Get all graphs for pin resolution
+    TArray<UEdGraph*> CandidateGraphs;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph) CandidateGraphs.Add(Graph);
+    }
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        if (Graph) CandidateGraphs.Add(Graph);
+    }
+    if (CandidateGraphs.Num() == 0)
+    {
+        return TResult<FPinConnectionBatchResult>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NO_EVENT_GRAPH,
+            TEXT("No graphs available for connection"));
+    }
+
+    FPinConnectionBatchResult BatchResult;
+    TSet<UEdGraph*> ModifiedGraphs;
+    bool bBlueprintModified = false;
+
+    // Helper lambda: Capture linked pins before modification
+    auto CaptureLinkedPins = [](UEdGraphPin* Pin) -> TSet<UEdGraphPin*>
+    {
+        TSet<UEdGraphPin*> Result;
+        if (!Pin) return Result;
+        
+        for (UEdGraphPin* Linked : Pin->LinkedTo)
+        {
+            if (Linked)
+            {
+                Result.Add(Linked);
+            }
+        }
+        return Result;
+    };
+
+    for (int32 RequestIndex = 0; RequestIndex < Requests.Num(); ++RequestIndex)
+    {
+        const FPinConnectionRequest& Request = Requests[RequestIndex];
+        FPinConnectionResult Result;
+        Result.Index = RequestIndex;
+        Result.SourceNodeId = Request.SourceNodeId;
+        Result.TargetNodeId = Request.TargetNodeId;
+        Result.SourcePinIdentifier = Request.SourcePinIdentifier;
+        Result.TargetPinIdentifier = Request.TargetPinIdentifier;
+
+        // Resolve source pin using the pin identifier
+        UEdGraphPin* SourcePin = Request.SourcePin;
+        UEdGraphNode* SourceNode = Request.SourceNode;
+        UEdGraph* SourceGraph = Request.SourceGraph;
+        
+        // If not already resolved, try to find by node ID and pin identifier
+        if (!SourcePin && !Request.SourceNodeId.IsEmpty() && !Request.SourcePinIdentifier.IsEmpty())
+        {
+            FGuid SourceGuid;
+            if (FGuid::Parse(Request.SourceNodeId, SourceGuid))
+            {
+                for (UEdGraph* Graph : CandidateGraphs)
+                {
+                    if (!Graph) continue;
+                    
+                    for (UEdGraphNode* Node : Graph->Nodes)
+                    {
+                        if (Node && Node->NodeGuid == SourceGuid)
+                        {
+                            SourceNode = Node;
+                            SourceGraph = Graph;
+                            
+                            // Find pin by identifier (try exact match on PinName)
+                            for (UEdGraphPin* Pin : Node->Pins)
+                            {
+                                if (Pin && Pin->PinName.ToString().Equals(Request.SourcePinIdentifier, ESearchCase::IgnoreCase))
+                                {
+                                    SourcePin = Pin;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (SourceNode) break;
+                }
+            }
+        }
+
+        if (!SourcePin || !SourceNode)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_NOT_FOUND;
+            Result.ErrorMessage = FString::Printf(TEXT("Source pin not found: %s on node %s"), 
+                *Request.SourcePinIdentifier, *Request.SourceNodeId);
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Resolve target pin using the pin identifier
+        UEdGraphPin* TargetPin = Request.TargetPin;
+        UEdGraphNode* TargetNode = Request.TargetNode;
+        UEdGraph* TargetGraph = Request.TargetGraph;
+        
+        if (!TargetPin && !Request.TargetNodeId.IsEmpty() && !Request.TargetPinIdentifier.IsEmpty())
+        {
+            FGuid TargetGuid;
+            if (FGuid::Parse(Request.TargetNodeId, TargetGuid))
+            {
+                for (UEdGraph* Graph : CandidateGraphs)
+                {
+                    if (!Graph) continue;
+                    
+                    for (UEdGraphNode* Node : Graph->Nodes)
+                    {
+                        if (Node && Node->NodeGuid == TargetGuid)
+                        {
+                            TargetNode = Node;
+                            TargetGraph = Graph;
+                            
+                            // Find pin by identifier (try exact match on PinName)
+                            for (UEdGraphPin* Pin : Node->Pins)
+                            {
+                                if (Pin && Pin->PinName.ToString().Equals(Request.TargetPinIdentifier, ESearchCase::IgnoreCase))
+                                {
+                                    TargetPin = Pin;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                    if (TargetNode) break;
+                }
+            }
+        }
+
+        if (!TargetPin || !TargetNode)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_NOT_FOUND;
+            Result.ErrorMessage = FString::Printf(TEXT("Target pin not found: %s on node %s"), 
+                *Request.TargetPinIdentifier, *Request.TargetNodeId);
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Verify pins are in same graph
+        UEdGraph* WorkingGraph = SourceGraph ? SourceGraph : TargetGraph;
+        if (!WorkingGraph || (SourceGraph && TargetGraph && SourceGraph != TargetGraph))
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_CONNECTION_FAILED;
+            Result.ErrorMessage = TEXT("Source and target pins are not in the same graph");
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Verify not connecting pin to itself
+        if (SourcePin == TargetPin)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_CONNECTION_FAILED;
+            Result.ErrorMessage = TEXT("Cannot connect a pin to itself");
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Get schema and check if connection is allowed
+        const UEdGraphSchema_K2* Schema = Cast<UEdGraphSchema_K2>(WorkingGraph->GetSchema());
+        if (!Schema)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_CONNECTION_FAILED;
+            Result.ErrorMessage = TEXT("Graph schema is not K2");
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        const FPinConnectionResponse Response = Schema->CanCreateConnection(SourcePin, TargetPin);
+        const ECanCreateConnectionResponse ResponseType = Response.Response;
+        const FString ResponseMessage = Response.Message.ToString();
+
+        // Check if connection is disallowed
+        if (ResponseType == CONNECT_RESPONSE_DISALLOW)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_TYPE_INCOMPATIBLE;
+            Result.ErrorMessage = ResponseMessage.IsEmpty() ? TEXT("Schema disallowed this connection") : ResponseMessage;
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Check if conversion is needed but not allowed
+        if ((ResponseType == CONNECT_RESPONSE_MAKE_WITH_CONVERSION_NODE && !Request.bAllowConversionNode) ||
+            (ResponseType == CONNECT_RESPONSE_MAKE_WITH_PROMOTION && !Request.bAllowPromotion))
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_TYPE_INCOMPATIBLE;
+            Result.ErrorMessage = ResponseMessage.IsEmpty() ? TEXT("Connection requires conversion node") : ResponseMessage;
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Determine if we need to break existing links
+        const bool bRequiresBreakSource = (ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_A || ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_AB);
+        const bool bRequiresBreakTarget = (ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_B || ResponseType == CONNECT_RESPONSE_BREAK_OTHERS_AB);
+
+        // REROUTE NODE SPECIAL HANDLING (from master branch)
+        // Reroute nodes (UK2Node_Knot) are designed to split one signal to multiple targets
+        // Their OutputPin should support multiple connections without breaking existing links
+        bool bIsRerouteOutputPin = false;
+        if (SourcePin && SourcePin->Direction == EGPD_Output)
+        {
+            if (UK2Node_Knot* KnotNode = Cast<UK2Node_Knot>(SourcePin->GetOwningNode()))
+            {
+                bIsRerouteOutputPin = true;
+            }
+        }
+
+        // Check if we need to break links but user didn't allow it
+        if ((bRequiresBreakSource || bRequiresBreakTarget) && !Request.bBreakExistingLinks && !bIsRerouteOutputPin)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_CONNECTION_FAILED;
+            Result.ErrorMessage = TEXT("Connection requires breaking existing links");
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Check if already connected
+        const bool bAlreadyLinked = SourcePin->LinkedTo.Contains(TargetPin);
+
+        // Capture current links before modification
+        TSet<UEdGraphPin*> SourceBefore = CaptureLinkedPins(SourcePin);
+        TSet<UEdGraphPin*> TargetBefore = CaptureLinkedPins(TargetPin);
+
+        // Break existing links if required (but NOT for reroute output pins!)
+        if (bRequiresBreakSource && !bIsRerouteOutputPin)
+        {
+            SourcePin->BreakAllPinLinks();
+        }
+        if (bRequiresBreakTarget)
+        {
+            TargetPin->BreakAllPinLinks();
+        }
+
+        // Optional breaking based on user preference
+        if (Request.bBreakExistingLinks && ResponseType == CONNECT_RESPONSE_MAKE)
+        {
+            const bool bSourceNeedsBreak = SourcePin->LinkedTo.Num() > 0 && 
+                SourcePin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
+            const bool bTargetNeedsBreak = TargetPin->LinkedTo.Num() > 0 && 
+                TargetPin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec;
+
+            if (bSourceNeedsBreak && !bIsRerouteOutputPin)
+            {
+                SourcePin->BreakAllPinLinks();
+            }
+            if (bTargetNeedsBreak)
+            {
+                TargetPin->BreakAllPinLinks();
+            }
+        }
+
+        // Create transaction for undo support
+        FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "ConnectPins", "MCP Connect Pins"));
+        if (WorkingGraph)
+        {
+            WorkingGraph->Modify();
+        }
+        if (SourceNode)
+        {
+            SourceNode->Modify();
+        }
+        if (TargetNode && TargetNode != SourceNode)
+        {
+            TargetNode->Modify();
+        }
+        SourcePin->Modify();
+        TargetPin->Modify();
+
+        // Attempt to create the connection
+        bool bSuccess = bAlreadyLinked;
+        if (!bAlreadyLinked)
+        {
+            bSuccess = Schema->TryCreateConnection(SourcePin, TargetPin);
+            if (!bSuccess)
+            {
+                // Fallback: Direct link creation
+                SourcePin->MakeLinkTo(TargetPin);
+                bSuccess = SourcePin->LinkedTo.Contains(TargetPin);
+            }
+        }
+
+        if (!bSuccess)
+        {
+            Transaction.Cancel();
+            
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PIN_CONNECTION_FAILED;
+            Result.ErrorMessage = ResponseMessage.IsEmpty() ? TEXT("Schema failed to create connection") : ResponseMessage;
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Success! Mark graph as modified
+        ModifiedGraphs.Add(WorkingGraph);
+        bBlueprintModified = true;
+
+        Result.bSuccess = true;
+        Result.bAlreadyConnected = bAlreadyLinked;
+        Result.SchemaResponse = ResponseMessage;
+        
+        BatchResult.Results.Add(Result);
+    }
+
+    // Notify all modified graphs
+    for (UEdGraph* Graph : ModifiedGraphs)
+    {
+        if (Graph)
+        {
+            Graph->NotifyGraphChanged();
+        }
+    }
+
+    // Mark Blueprint as modified if any connections were made
+    if (bBlueprintModified)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+
+    return TResult<FPinConnectionBatchResult>::Success(BatchResult);
 }

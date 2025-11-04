@@ -1,6 +1,7 @@
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Commands/BlueprintReflection.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"

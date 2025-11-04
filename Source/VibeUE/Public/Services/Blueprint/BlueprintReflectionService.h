@@ -2,36 +2,14 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
 
 // Forward declarations
 struct FPropertyInfo;
 struct FFunctionInfo;
-struct FPinInfo;
-struct FNodeDescriptor;
 class UBlueprintNodeSpawner;
-
-/**
- * Function metadata for node descriptors
- */
-struct VIBEUE_API FFunctionMetadata
-{
-	FString FunctionName;
-	FString FunctionClassName;
-	FString FunctionClassPath;
-	bool bIsStatic;
-	bool bIsConst;
-	bool bIsPure;
-	FString Module;
-	
-	FFunctionMetadata()
-		: bIsStatic(false)
-		, bIsConst(false)
-		, bIsPure(false)
-	{
-	}
-};
 
 /**
  * Search criteria for node descriptor discovery
@@ -66,9 +44,6 @@ struct VIBEUE_API FClassInfo
     {
     }
 };
-
-// Forward declaration to avoid duplicate definition
-struct FPinInfo;
 
 /**
  * Search criteria for available node types
