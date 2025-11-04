@@ -172,6 +172,59 @@ struct VIBEUE_API FNodeDeletionInfo
 };
 
 /**
+ * Detailed information about a pin
+ */
+struct VIBEUE_API FPinInfo
+{
+    FString PinId;
+    FString Name;
+    FString Direction;
+    FString Category;
+    FString SubCategory;
+    FString PinTypePath;
+    FString Container;
+    bool bIsConst = false;
+    bool bIsReference = false;
+    bool bIsArray = false;
+    bool bIsSet = false;
+    bool bIsMap = false;
+    bool bIsHidden = false;
+    bool bIsAdvanced = false;
+    bool bIsConnected = false;
+    FString Tooltip;
+    FString DefaultValue;
+    FString DefaultText;
+    FString DefaultObjectPath;
+    TSharedPtr<FJsonValue> DefaultValueJson;
+    TArray<TSharedPtr<FJsonObject>> Links;
+};
+
+/**
+ * Detailed information about a blueprint node with pins
+ */
+struct VIBEUE_API FDetailedNodeInfo
+{
+    FString NodeId;
+    FString DisplayName;
+    FString ClassPath;
+    FString GraphScope;
+    FString GraphName;
+    FString GraphGuid;
+    FVector2D Position;
+    FString Comment;
+    bool bIsPure = false;
+    FString ExecState;
+    TSharedPtr<FJsonObject> NodeDescriptor;
+    FString SpawnerKey;
+    TSharedPtr<FJsonObject> NodeParams;
+    TSharedPtr<FJsonObject> FunctionMetadata;
+    TSharedPtr<FJsonObject> VariableMetadata;
+    TSharedPtr<FJsonObject> CastMetadata;
+    TArray<FPinInfo> Pins;
+    TSharedPtr<FJsonObject> Metadata;
+};
+
+/**
  * Parameters for creating an input action node
  */
 struct VIBEUE_API FInputActionNodeParams
@@ -253,6 +306,16 @@ public:
     // Node refresh/reconstruction
     TResult<void> RefreshNode(UBlueprint* Blueprint, const FString& NodeId, bool bCompile = true);
     TResult<TArray<FGraphInfo>> RefreshAllNodes(UBlueprint* Blueprint, bool bCompile = true);
+    
+    // Node description (detailed information with pins)
+    TResult<FDetailedNodeInfo> DescribeNode(UBlueprint* Blueprint, const FString& NodeId, bool bIncludePins = true, bool bIncludeInternalPins = false);
+    TResult<TArray<FDetailedNodeInfo>> DescribeAllNodes(UBlueprint* Blueprint, const FString& GraphScope, 
+                                                        bool bIncludePins = true, bool bIncludeInternalPins = false,
+                                                        int32 Offset = 0, int32 Limit = -1);
+    
+    // Helper to convert detailed node info to JSON
+    static TSharedPtr<FJsonObject> ConvertNodeInfoToJson(const FDetailedNodeInfo& NodeInfo, bool bIncludePins = true);
+    static TSharedPtr<FJsonObject> ConvertPinInfoToJson(const FPinInfo& PinInfo);
 
 private:
     /**
