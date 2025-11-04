@@ -187,86 +187,118 @@ Combined test suite for `manage_blueprint_function` (13 actions) and `manage_blu
 
 ## Test 5: Node Creation in Function Graph
 
-**Purpose**: Create nodes using spawner_key from discovery
+**Purpose**: Create complete node graph for the function
+
+**Function Logic**: CalculateHealth(BaseHealth, Modifier) → ResultHealth = BaseHealth * Modifier
 
 ### Steps
 
 1. **List Existing Nodes**
    ```
-   List all nodes in CalculateHealth function graph
+   List all nodes in CalculateHealth function graph (should show entry and result nodes)
    ```
 
-2. **Create Variable Getter**
+2. **Identify Entry and Result Nodes**
    ```
-   Create node in CalculateHealth at position [100, 100] using spawner_key from Health variable discovery
-   ```
-
-3. **Create Multiply Node**
-   ```
-   Create multiply node at position [400, 100] using spawner_key from discovery
+   Use list to get node IDs for the function entry (has BaseHealth, Modifier inputs) 
+   and result node (has ResultHealth output)
    ```
 
-4. **Create Set Variable Node**
+3. **Create Convert Float to Int Node**
    ```
-   Create SET Health node at position [700, 100] with node_params={"variable_name": "Health"}
+   Create node at position [200, 100] to convert Modifier (int) to float for multiplication
+   Use spawner_key from discovery (search "convert int to float")
+   ```
+
+4. **Create Multiply Node** 
+   ```
+   Create multiply (float * float) node at position [400, 100]
+   Use spawner_key from discovery (search "float * float" or just "*")
    ```
 
 5. **List All Nodes**
    ```
-   Verify all created nodes appear in list
+   Verify all created nodes appear in list with correct IDs
    ```
 
-6. **Describe Nodes**
+6. **Describe All Nodes**
    ```
-   Use describe action to get detailed pin information for all nodes
+   Use describe to get complete pin information (names, types, IDs) for all nodes
+   Note down: entry node pins, convert node pins, multiply node pins, result node pins
    ```
 
 ### Expected Outcomes
-- ✅ Initial node list shows function entry/result nodes
-- ✅ Variable getter created with correct variable_name in node_params
-- ✅ Math node created at specified position
-- ✅ Variable setter created with proper pins (execute, then, value input, Output_Get)
-- ✅ describe shows all pins with IDs and types
+- ✅ Function entry node has: then (exec out), BaseHealth (float out), Modifier (int out)
+- ✅ Convert node created with int input and float output
+- ✅ Multiply node created with A (float in), B (float in), ReturnValue (float out)
+- ✅ Result node has: ResultHealth (float in)
+- ✅ All nodes positioned left-to-right with 200 unit spacing
+- ✅ describe returns complete pin details for connection planning
 
 ---
 
-## Test 6: Node Connections
+## Test 6: Node Connections (COMPLETE GRAPH)
 
-**Purpose**: Connect pins to create functional graph
+**Purpose**: Connect all pins to create fully functional graph
+
+**CRITICAL**: Function must compile successfully after connections!
+
+### Connection Map
+Entry → Convert → Multiply → Result
+
+**Data Flow:**
+- Entry.BaseHealth → Multiply.A
+- Entry.Modifier → Convert.IntValue  
+- Convert.FloatValue → Multiply.B
+- Multiply.ReturnValue → Result.ResultHealth
 
 ### Steps
 
-1. **Get Node Details**
+1. **Get All Pin Details**
    ```
-   Describe all nodes to identify exact pin names and node IDs
-   ```
-
-2. **Connect Entry to Getter**
-   ```
-   Use connect_pins to connect function entry "then" pin to first node
-   ```
-
-3. **Connect Getter to Multiply**
-   ```
-   Connect Health getter output to Multiply input A
+   Use describe to verify exact pin names on each node
+   Entry node: "BaseHealth", "Modifier"
+   Convert node: input pin name (e.g., "InInt"), output pin name (e.g., "ReturnValue")
+   Multiply node: "A", "B", "ReturnValue"
+   Result node: "ResultHealth"
    ```
 
-4. **Connect Multiply to Setter**
+2. **Connect BaseHealth to Multiply A**
    ```
-   Connect Multiply output to SET Health value input
-   Connect execution pins as well
+   Use connect_pins with:
+   - source_node_id: <entry_node_id>
+   - source_pin_name: "BaseHealth"
+   - target_node_id: <multiply_node_id>
+   - target_pin_name: "A"
    ```
 
-5. **List Connections**
+3. **Connect Modifier to Convert Input**
    ```
-   Use describe to verify all connections were made
+   Connect Entry.Modifier → Convert.(int input pin name)
+   ```
+
+4. **Connect Convert Output to Multiply B**
+   ```
+   Connect Convert.(float output) → Multiply.B
+   ```
+
+5. **Connect Multiply Result to Function Output**
+   ```
+   Connect Multiply.ReturnValue → Result.ResultHealth
+   ```
+
+6. **Verify All Connections**
+   ```
+   Use describe to confirm all data pins show as connected
+   Check that no pins are highlighted in red/warning state
    ```
 
 ### Expected Outcomes
-- ✅ Pin connections succeed with proper source/target node_id and pin_name
-- ✅ Execution flow connects (then pins)
-- ✅ Data flow connects (value pins)
-- ✅ describe shows linked pins
+- ✅ All 4 data connections succeed
+- ✅ describe shows "linked" status for all connected pins
+- ✅ No disconnected pins remain
+- ✅ Graph forms clean left-to-right flow
+- ✅ No compilation errors about unconnected pins
 
 ---
 
@@ -292,9 +324,11 @@ Combined test suite for `manage_blueprint_function` (13 actions) and `manage_blu
 
 ---
 
-## Test 8: Compile and Verify
+## Test 8: Compile and Verify (MUST SUCCEED)
 
-**Purpose**: Ensure Blueprint compiles and function is correct
+**Purpose**: Ensure Blueprint compiles successfully with complete function
+
+**CRITICAL**: This test MUST result in successful compilation!
 
 ### Steps
 
@@ -303,20 +337,39 @@ Combined test suite for `manage_blueprint_function` (13 actions) and `manage_blu
    Compile BP_FunctionNodeTest Blueprint
    ```
 
-2. **Check for Errors**
+2. **Check Compilation Result**
    ```
-   If compilation fails, check error messages
+   Verify compilation succeeds with no errors
+   If compilation fails, review error messages and fix connections
    ```
 
-3. **Verify Function Graph**
+3. **Verify Function is Callable**
    ```
-   Use describe to get final state of all nodes and connections
+   In Event Graph, right-click and search for "CalculateHealth"
+   Confirm function appears in context menu as callable node
+   ```
+
+4. **Final Node Graph Check**
+   ```
+   Use describe to get final state showing:
+   - All nodes positioned correctly (left-to-right: Entry → Convert → Multiply → Result)
+   - All pins connected (no red/warning indicators)
+   - Clean execution flow
    ```
 
 ### Expected Outcomes
-- ✅ Blueprint compiles successfully OR
-- ⚠️ Compilation errors are clear and actionable
-- ✅ Function graph is complete
+- ✅ **Compilation SUCCEEDS** (this is MANDATORY!)
+- ✅ No errors in compiler results
+- ✅ No warnings about unconnected pins
+- ✅ CalculateHealth appears as callable function
+- ✅ Function signature shows: CalculateHealth(BaseHealth: float, Modifier: int) → ResultHealth: float
+- ✅ Graph is visually clean and properly connected
+
+**If compilation fails:**
+- Review all pin connections
+- Check that data types match (int→float conversion node exists)
+- Verify no dangling/unconnected pins
+- Fix issues and recompile until SUCCESS
 
 ---
 
@@ -331,38 +384,47 @@ Combined test suite for `manage_blueprint_function` (13 actions) and `manage_blu
    - Double-click to open function graph
 
 2. **Verify Function Signature**
-   - Check input pins: BaseHealth (int), Modifier (int)
+   - Check input pins: BaseHealth (float), Modifier (int)
    - Check output pin: ResultHealth (float)
-   - Check local variables: TempResult (int)
 
-3. **Verify Node Graph**
-   - Entry node connects to GET Health
-   - GET Health connects to Multiply
-   - Multiply connects to SET Health
-   - All execution pins connected (white lines)
-   - All data pins connected (colored lines)
+3. **Verify Node Graph is COMPLETE and CONNECTED**
+   - Function Entry node at left
+   - Convert (int to float) node connected to Modifier
+   - Multiply node receiving BaseHealth and converted Modifier
+   - Function Result node receiving multiply output
+   - All data pins connected (blue/green/orange lines visible)
+   - Nodes aligned left-to-right
 
-4. **Verify Compilation**
-   - Blueprint compiles without errors
-   - No warning messages
-   - Function appears in function list
+4. **Verify Compilation SUCCESS**
+   - Blueprint shows green checkmark (compiled successfully)
+   - No errors in compiler results panel
+   - No warning messages about unconnected pins
 
-5. **Test Function**
-   - Right-click in Event Graph
+5. **Test Function is Callable**
+   - Open Event Graph
+   - Right-click in empty space
    - Search for "CalculateHealth"
-   - Verify function appears as callable node
-   - Check that pin names match parameters
+   - Verify function appears with correct signature
+   - Check that calling the function shows BaseHealth and Modifier inputs, ResultHealth output
 
 ### User Confirmation Required:
 ```
-Type "verified" when you confirm:
-- Function exists and has correct signature
-- Nodes are visible and connected
-- Blueprint compiles successfully
-- Function is callable from Event Graph
+Type "verified" when you confirm ALL of the following:
+✅ Function exists with correct signature (BaseHealth: float, Modifier: int → ResultHealth: float)
+✅ All nodes are visible and positioned left-to-right
+✅ ALL data pins are connected (no red/disconnected pins)
+✅ Blueprint compiles successfully (green checkmark, no errors)
+✅ Function is callable from Event Graph
+✅ Function logic is correct: ResultHealth = BaseHealth * (Modifier converted to float)
 ```
 
-**Only proceed to cleanup after user types "verified"**
+**DO NOT type "verified" if:**
+- ❌ Any pins are disconnected
+- ❌ Blueprint shows compilation errors
+- ❌ Nodes are misaligned or overlapping
+- ❌ Function cannot be called from Event Graph
+
+**Only proceed to cleanup after user types "verified" confirming COMPLETE, WORKING function!**
 
 ---
 
