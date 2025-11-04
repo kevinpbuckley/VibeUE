@@ -20,6 +20,8 @@
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
+DEFINE_LOG_CATEGORY_STATIC(LogBlueprintDiscovery, Log, All);
+
 // Helper function to extract asset name from path
 static FString ExtractAssetNameFromPath(const FString& Path)
 {
@@ -34,6 +36,13 @@ static FString ExtractAssetNameFromPath(const FString& Path)
 // Helper function to try loading a blueprint by path
 static UBlueprint* TryLoadBlueprintByPath(const FString& AssetPath)
 {
+    // CRITICAL: Cannot load assets during garbage collection or serialization
+    if (IsGarbageCollecting() || GIsSavingPackage || FUObjectThreadContext::Get().IsRoutingPostLoad)
+    {
+        UE_LOG(LogBlueprintDiscovery, Warning, TEXT("Cannot load Blueprint '%s' during serialization/GC"), *AssetPath);
+        return nullptr;
+    }
+
     UBlueprint* Blueprint = Cast<UBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
     if (!Blueprint)
     {
