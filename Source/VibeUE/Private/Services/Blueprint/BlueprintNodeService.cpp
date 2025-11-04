@@ -7,6 +7,7 @@
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
+#include "EdGraphSchema_K2.h"
 #include "K2Node.h"
 #include "K2Node_InputAction.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -743,4 +744,230 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
     
     // Return node ID
     return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
+}
+
+TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
+{
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    ValidationResult = ValidateNotEmpty(PinName, TEXT("PinName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    // Find the pin
+    UEdGraphPin* Pin = FindPin(Node, PinName);
+    if (!Pin)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, 
+            FString::Printf(TEXT("Pin '%s' not found on node '%s'"), *PinName, *NodeId));
+    }
+    
+    // Get the schema
+    const UEdGraphSchema_K2* Schema = NodeGraph ? Cast<UEdGraphSchema_K2>(NodeGraph->GetSchema()) : nullptr;
+    if (!Schema)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("Graph schema does not support K2 pin operations"));
+    }
+    
+    // Check if pin can be split
+    if (!Schema->CanSplitPin(Pin))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Pin '%s' cannot be split"), *PinName));
+    }
+    
+    // Split the pin
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "SplitPin", "Split Blueprint Pin"));
+    
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+    }
+    Node->Modify();
+    
+    Schema->SplitPin(Pin);
+    
+    if (NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+    }
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    
+    return TResult<void>::Success();
+}
+
+TResult<void> FBlueprintNodeService::RecombinePin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
+{
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    ValidationResult = ValidateNotEmpty(PinName, TEXT("PinName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    // Find the pin (or its parent if it's a sub-pin)
+    UEdGraphPin* Pin = FindPin(Node, PinName);
+    if (!Pin)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, 
+            FString::Printf(TEXT("Pin '%s' not found on node '%s'"), *PinName, *NodeId));
+    }
+    
+    // Get parent pin if this is a sub-pin
+    UEdGraphPin* ParentPin = Pin->ParentPin ? Pin->ParentPin : Pin;
+    
+    // Get the schema
+    const UEdGraphSchema_K2* Schema = NodeGraph ? Cast<UEdGraphSchema_K2>(NodeGraph->GetSchema()) : nullptr;
+    if (!Schema)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("Graph schema does not support K2 pin operations"));
+    }
+    
+    // Check if pin can be recombined
+    if (!Schema->CanRecombinePin(ParentPin))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Pin '%s' cannot be recombined (not split or has connections)"), *PinName));
+    }
+    
+    // Recombine the pin
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RecombinePin", "Recombine Blueprint Pin"));
+    
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+    }
+    Node->Modify();
+    
+    Schema->RecombinePin(ParentPin);
+    
+    if (NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+    }
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    
+    return TResult<void>::Success();
+}
+
+TResult<void> FBlueprintNodeService::ResetPinToDefault(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
+{
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    ValidationResult = ValidateNotEmpty(PinName, TEXT("PinName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    // Find the pin
+    UEdGraphPin* Pin = FindPin(Node, PinName);
+    if (!Pin)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PIN_NOT_FOUND, 
+            FString::Printf(TEXT("Pin '%s' not found on node '%s'"), *PinName, *NodeId));
+    }
+    
+    // Get the schema
+    const UEdGraphSchema_K2* Schema = NodeGraph ? Cast<UEdGraphSchema_K2>(NodeGraph->GetSchema()) : nullptr;
+    if (!Schema)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("Graph schema does not support K2 pin operations"));
+    }
+    
+    // Check if pin already matches default
+    if (Pin->DoesDefaultValueMatchAutogenerated())
+    {
+        // Already at default, this is success but no-op
+        return TResult<void>::Success();
+    }
+    
+    // Reset the pin to default
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "ResetPinDefault", "Reset Pin to Default"));
+    
+    if (NodeGraph)
+    {
+        NodeGraph->Modify();
+    }
+    Node->Modify();
+    Pin->Modify();
+    
+    Schema->ResetPinToAutogeneratedDefaultValue(Pin);
+    
+    if (NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+    }
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    
+    return TResult<void>::Success();
 }
