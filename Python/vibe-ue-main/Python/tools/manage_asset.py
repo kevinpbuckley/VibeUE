@@ -98,21 +98,34 @@ def register_asset_tools(mcp: FastMCP):
         )
         ```
         
-        **delete** - Delete asset from project
+        **delete** - Delete asset from project with safety checks
         ```python
+        # Safe deletion with user confirmation (default)
         manage_asset(
             action="delete",
             asset_path="/Game/Textures/T_OldTexture",
-            force_delete=False,
-            show_confirmation=True
+            force_delete=False,       # Will error if asset has references
+            show_confirmation=True    # Shows confirmation dialog
         )
+        
+        # Automated deletion without user interaction
+        manage_asset(
+            action="delete",
+            asset_path="/Game/Textures/T_OldTexture",
+            force_delete=True,        # Delete even if asset has references
+            show_confirmation=False   # No confirmation dialog (instant deletion)
+        )
+        
+        # ⚠️ CRITICAL: force_delete and show_confirmation are DIRECT parameters
+        # DO NOT pass them in extra dict - they will be ignored!
+        
         # Returns confirmation of deletion or error if asset in use
         # Error codes:
         # - ASSET_NOT_FOUND: Asset doesn't exist
-        # - ASSET_IN_USE: Asset has references (use force_delete=true)
-        # - ASSET_READ_ONLY: Asset is engine content
-        # - OPERATION_CANCELLED: User cancelled confirmation
-        # - ASSET_DELETE_FAILED: Deletion failed
+        # - ASSET_IN_USE: Asset has references (use force_delete=True to override)
+        # - ASSET_READ_ONLY: Asset is engine content (cannot delete)
+        # - OPERATION_CANCELLED: User cancelled confirmation dialog
+        # - ASSET_DELETE_FAILED: Deletion operation failed
         ```
         
         **svg_to_png** - Convert SVG to PNG
@@ -143,8 +156,13 @@ def register_asset_tools(mcp: FastMCP):
             export_format: Export format (for export_texture)
             max_size: Maximum export size (for export_texture, svg_to_png)
             force_open: Force open if already open (for open_in_editor)
-            force_delete: Attempt deletion even if asset has references (for delete)
-            show_confirmation: Show confirmation dialog before deletion (for delete)
+            force_delete: Delete even if asset has references (for delete action, default: False)
+                         When False: returns error if asset is referenced by other assets
+                         When True: deletes asset and breaks references
+            show_confirmation: Show confirmation dialog before deletion (for delete action, default: True)
+                              When True: displays dialog requiring user click (may timeout MCP call)
+                              When False: instant deletion without user interaction (recommended for automation)
+                              ⚠️ Must be passed as direct parameter, NOT in extra dict
             output_path: Output file path (for svg_to_png)
             size: Output size (for svg_to_png)
             scale: Scale multiplier (for svg_to_png)
