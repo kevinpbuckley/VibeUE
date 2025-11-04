@@ -42,7 +42,7 @@ TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> FWidgetLifecycleService::CreateWi
     if (UEditorAssetLibrary::DoesAssetExist(FullPath))
     {
         return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::ALREADY_EXISTS,
+            VibeUE::ErrorCodes::WIDGET_ALREADY_EXISTS,
             FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *WidgetName));
     }
 
@@ -51,7 +51,7 @@ TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> FWidgetLifecycleService::CreateWi
     if (!Package)
     {
         return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::CREATE_FAILED,
+            VibeUE::ErrorCodes::WIDGET_CREATE_FAILED,
             TEXT("Failed to create package"));
     }
 
@@ -73,7 +73,7 @@ TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> FWidgetLifecycleService::CreateWi
     if (!WidgetBlueprint)
     {
         return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::CREATE_FAILED,
+            VibeUE::ErrorCodes::WIDGET_CREATE_FAILED,
             TEXT("Failed to create Widget Blueprint"));
     }
 
@@ -149,7 +149,7 @@ TResult<void> FWidgetLifecycleService::DeleteWidget(
     if (!bDeletionSuccess)
     {
         return TResult<void>::Error(
-            VibeUE::ErrorCodes::DELETE_FAILED,
+            VibeUE::ErrorCodes::WIDGET_DELETE_FAILED,
             FString::Printf(TEXT("Failed to delete Widget Blueprint '%s'"), *Widget->GetName()));
     }
 

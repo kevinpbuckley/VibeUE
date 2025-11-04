@@ -180,8 +180,14 @@ namespace ErrorCodes
 	/** @brief Widget with specified name not found */
 	constexpr const TCHAR* WIDGET_NOT_FOUND = TEXT("WIDGET_NOT_FOUND");
 
+	/** @brief Widget already exists at target path */
+	constexpr const TCHAR* WIDGET_ALREADY_EXISTS = TEXT("WIDGET_ALREADY_EXISTS");
+
 	/** @brief Failed to create new widget */
 	constexpr const TCHAR* WIDGET_CREATE_FAILED = TEXT("WIDGET_CREATE_FAILED");
+
+	/** @brief Failed to delete widget */
+	constexpr const TCHAR* WIDGET_DELETE_FAILED = TEXT("WIDGET_DELETE_FAILED");
 
 	/** @brief Widget type is invalid or unsupported */
 	constexpr const TCHAR* WIDGET_TYPE_INVALID = TEXT("WIDGET_TYPE_INVALID");

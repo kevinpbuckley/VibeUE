@@ -16,6 +16,10 @@ class FWidgetEventService;
 class FWidgetReflectionService;
 class FServiceContext;
 
+// Forward declare structs from service headers
+struct FWidgetComponentInfo;
+struct FPropertyInfo;
+
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
  * Thin command handler that delegates to UMG services.
