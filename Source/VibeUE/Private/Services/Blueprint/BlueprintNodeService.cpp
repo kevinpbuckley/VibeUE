@@ -1073,8 +1073,8 @@ TResult<FString> FBlueprintNodeService::CreateInputKeyNode(UBlueprint* Blueprint
     // Mark blueprint as modified
     FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
     
-    // Return node ID
-    return TResult<FString>::Success(InputKeyNode->NodeGuid.ToString());
+    // Return node ID with consistent GUID format
+    return TResult<FString>::Success(NormalizeGuid(InputKeyNode->NodeGuid));
 }
 
 TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)

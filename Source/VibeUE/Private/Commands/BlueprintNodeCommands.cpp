@@ -5562,10 +5562,13 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
     }
 
     // Get the key info for additional metadata in the response
+    // Service has already validated the key exists, so this should always succeed
     FInputKeyInfo KeyInfo;
-    if (!FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo))
+    bool bKeyFound = FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo);
+    // If key not found (should never happen), use KeyName as fallback
+    if (!bKeyFound)
     {
-        // This shouldn't happen since the service already validated the key, but handle it gracefully
+        UE_LOG(LogVibeUE, Warning, TEXT("Key info lookup failed after successful node creation for key: %s"), *KeyName);
         KeyInfo.KeyName = KeyName;
         KeyInfo.DisplayName = KeyName;
     }
