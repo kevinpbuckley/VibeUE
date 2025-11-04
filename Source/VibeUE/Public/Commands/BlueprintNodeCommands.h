@@ -156,6 +156,7 @@ private:
     TSharedPtr<FJsonObject> CreateSuccessResponse() const;
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
     TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const;
+    TSharedPtr<FJsonObject> ConvertNodeDescriptorToJson(const FNodeDescriptor& Descriptor) const;
     
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
