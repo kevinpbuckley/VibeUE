@@ -1582,7 +1582,25 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
     }
 
     auto ListResult = NodeService->ListNodes(FindResult.GetValue(), TEXT("event"));
-    return ConvertTResultToJson(ListResult);
+    if (ListResult.IsError())
+    {
+        return CreateErrorResponse(ListResult.GetErrorCode(), ListResult.GetErrorMessage());
+    }
+
+    // Convert TArray<FString> to JSON array
+    TArray<TSharedPtr<FJsonValue>> NodeIdArray;
+    for (const FString& NodeId : ListResult.GetValue())
+    {
+        NodeIdArray.Add(MakeShared<FJsonValueString>(NodeId));
+    }
+
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetArrayField(TEXT("node_ids"), NodeIdArray);
+    Response->SetNumberField(TEXT("count"), NodeIdArray.Num());
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("graph_name"), TEXT("event"));
+    
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
@@ -3930,24 +3948,40 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
         return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
     
-    // Use GraphService to list custom events
-    TResult<TArray<FString>> EventsResult = GraphService->ListCustomEvents(BlueprintResult.GetValue());
-    if (!EventsResult.IsSuccess())
+    UBlueprint* Blueprint = BlueprintResult.GetValue();
+    
+    // Gather custom events from all event graphs
+    TArray<FString> CustomEventNames;
+    TArray<UEdGraph*> AllGraphs;
+    Blueprint->GetAllGraphs(AllGraphs);
+    
+    for (UEdGraph* Graph : AllGraphs)
     {
-        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
+        if (!Graph) continue;
+        
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node))
+            {
+                CustomEventNames.AddUnique(CustomEvent->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+            }
+        }
     }
     
     // Convert result to JSON
     TArray<TSharedPtr<FJsonValue>> Events;
-    for (const FString& EventName : EventsResult.GetValue())
+    for (const FString& EventName : CustomEventNames)
     {
         TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
         Evt->SetStringField(TEXT("name"), EventName);
         Events.Add(MakeShared<FJsonValueObject>(Evt));
     }
     
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    TSharedPtr<FJsonObject> Result = CreateSuccessResponse();
     Result->SetArrayField(TEXT("events"), Events);
+    Result->SetNumberField(TEXT("count"), Events.Num());
+    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    
     return Result;
 }
 
