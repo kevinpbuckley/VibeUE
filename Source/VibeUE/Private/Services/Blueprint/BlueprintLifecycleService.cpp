@@ -169,7 +169,7 @@ TResult<void> FBlueprintLifecycleService::ReparentBlueprint(UBlueprint* Blueprin
     UClass* NewParentClass = FindParentClass(NewParentClassName);
     if (!NewParentClass)
     {
-        return TResult<void>::Error(VibeUE::ErrorCodes::CLASS_NOT_FOUND, 
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_INVALID_PARENT, 
             FString::Printf(TEXT("Parent class not found: %s"), *NewParentClassName));
     }
 

@@ -24,6 +24,10 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
     {
         return HandleExportTextureForAnalysis(Params);
     }
+    else if (CommandType == TEXT("delete_asset"))
+    {
+        return HandleDeleteAsset(Params);
+    }
     else if (CommandType == TEXT("OpenAssetInEditor"))
     {
         return HandleOpenAssetInEditor(Params);
@@ -164,6 +168,44 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr
         bool bWasAlreadyOpen = WasOpenResult.IsSuccess() && WasOpenResult.GetValue();
         Response->SetBoolField(TEXT("was_already_open"), bWasAlreadyOpen);
         
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameter
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+    }
+    
+    // Extract optional parameters
+    bool bForceDelete = false;
+    bool bShowConfirmation = true;
+    
+    if (Params.IsValid())
+    {
+        Params->TryGetBoolField(TEXT("force_delete"), bForceDelete);
+        Params->TryGetBoolField(TEXT("show_confirmation"), bShowConfirmation);
+    }
+    
+    // Delegate to LifecycleService
+    TResult<bool> Result = LifecycleService->DeleteAsset(AssetPath, bForceDelete, bShowConfirmation);
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
+    {
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully deleted asset: %s"), *AssetPath)
+        );
+        Response->SetStringField(TEXT("asset_path"), AssetPath);
+        Response->SetBoolField(TEXT("deleted"), Result.GetValue());
         return Response;
     }
     else

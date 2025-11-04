@@ -88,12 +88,26 @@ public:
     /**
      * @brief Delete an asset from the project
      * 
-     * Removes the specified asset from the project.
+     * Removes the specified asset from the project with safety checks.
+     * Validates asset existence, checks for references, and optionally
+     * shows confirmation dialog before deletion.
      * 
-     * @param AssetPath The full path to the asset to delete
-     * @return Success or error result
+     * @param AssetPath The full path to the asset to delete (e.g., "/Game/Textures/T_Texture")
+     * @param bForceDelete If true, attempt deletion even if asset has references
+     * @param bShowConfirmation If true, show confirmation dialog to user
+     * @return TResult<bool> - Success with true if deleted, or error with appropriate code
+     *         Error codes:
+     *         - ASSET_NOT_FOUND: Asset doesn't exist at path
+     *         - ASSET_IN_USE: Asset has active references (use force_delete=true to override)
+     *         - ASSET_READ_ONLY: Asset is in engine content or read-only
+     *         - OPERATION_CANCELLED: User cancelled confirmation dialog
+     *         - ASSET_DELETE_FAILED: Deletion operation failed
      */
-    TResult<void> DeleteAsset(const FString& AssetPath);
+    TResult<bool> DeleteAsset(
+        const FString& AssetPath,
+        bool bForceDelete = false,
+        bool bShowConfirmation = true
+    );
     
     /**
      * @brief Check if an asset exists

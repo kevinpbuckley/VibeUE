@@ -241,6 +241,18 @@ namespace ErrorCodes
 	/** @brief Asset is corrupted or has dependency issues */
 	constexpr const TCHAR* ASSET_CORRUPTED = TEXT("ASSET_CORRUPTED");
 
+	/** @brief Asset has active references and cannot be deleted */
+	constexpr const TCHAR* ASSET_IN_USE = TEXT("ASSET_IN_USE");
+
+	/** @brief Asset is read-only or in engine content */
+	constexpr const TCHAR* ASSET_READ_ONLY = TEXT("ASSET_READ_ONLY");
+
+	/** @brief User cancelled the operation */
+	constexpr const TCHAR* OPERATION_CANCELLED = TEXT("OPERATION_CANCELLED");
+
+	/** @brief Asset deletion failed */
+	constexpr const TCHAR* ASSET_DELETE_FAILED = TEXT("ASSET_DELETE_FAILED");
+
 	// ============================================================================
 	// Event Errors (5000-5099)
 	// ============================================================================

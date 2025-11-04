@@ -10,6 +10,8 @@
 #include "Engine/StaticMesh.h"
 #include "Sound/SoundBase.h"
 #include "Engine/DataTable.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Misc/MessageDialog.h"
 
 FAssetLifecycleService::FAssetLifecycleService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -225,28 +227,115 @@ TResult<void> FAssetLifecycleService::SaveAsset(const FString& AssetPath)
     return TResult<void>::Success();
 }
 
-TResult<void> FAssetLifecycleService::DeleteAsset(const FString& AssetPath)
+TResult<bool> FAssetLifecycleService::DeleteAsset(
+    const FString& AssetPath,
+    bool bForceDelete,
+    bool bShowConfirmation
+)
 {
     FString NormalizedPath = NormalizeAssetPath(AssetPath);
     
+    // 1. Validate asset exists
     if (!UEditorAssetLibrary::DoesAssetExist(NormalizedPath))
     {
-        return TResult<void>::Error(
+        return TResult<bool>::Error(
             VibeUE::ErrorCodes::ASSET_NOT_FOUND,
             FString::Printf(TEXT("Asset not found: %s"), *NormalizedPath)
         );
     }
     
+    // 2. Check if asset is in engine content (read-only)
+    if (NormalizedPath.StartsWith(TEXT("/Engine/")))
+    {
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::ASSET_READ_ONLY,
+            FString::Printf(TEXT("Cannot delete engine content: %s"), *NormalizedPath)
+        );
+    }
+    
+    // 3. Check for asset references using AssetRegistry
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    
+    // Convert asset path to package name for reference checking
+    FString PackageName = NormalizedPath;
+    
+    // Get all assets that reference this asset
+    TArray<FName> Referencers;
+    AssetRegistry.GetReferencers(*PackageName, Referencers, UE::AssetRegistry::EDependencyCategory::Package);
+    
+    // Filter out self-references
+    Referencers.Remove(*PackageName);
+    
+    // If asset has references and force_delete is false, return error
+    if (Referencers.Num() > 0 && !bForceDelete)
+    {
+        // Convert TArray<FName> to comma-separated string
+        TArray<FString> ReferencerStrings;
+        for (const FName& Referencer : Referencers)
+        {
+            ReferencerStrings.Add(Referencer.ToString());
+        }
+        FString ReferencersStr = FString::Join(ReferencerStrings, TEXT(", "));
+        
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::ASSET_IN_USE,
+            FString::Printf(
+                TEXT("Asset has %d reference(s). Use force_delete=true to override. References: %s"),
+                Referencers.Num(),
+                *ReferencersStr
+            )
+        );
+    }
+    
+    // 4. Optional confirmation dialog
+    if (bShowConfirmation)
+    {
+        FText DialogTitle = FText::FromString(TEXT("Confirm Asset Deletion"));
+        FText DialogMessage;
+        
+        if (Referencers.Num() > 0)
+        {
+            DialogMessage = FText::FromString(FString::Printf(
+                TEXT("Delete asset '%s'?\n\nWarning: Asset has %d reference(s) that will be broken."),
+                *NormalizedPath,
+                Referencers.Num()
+            ));
+        }
+        else
+        {
+            DialogMessage = FText::FromString(FString::Printf(
+                TEXT("Delete asset '%s'?"),
+                *NormalizedPath
+            ));
+        }
+        
+        EAppReturnType::Type UserResponse = FMessageDialog::Open(
+            EAppMsgType::YesNo,
+            DialogMessage,
+            DialogTitle
+        );
+        
+        if (UserResponse != EAppReturnType::Yes)
+        {
+            return TResult<bool>::Error(
+                VibeUE::ErrorCodes::OPERATION_CANCELLED,
+                TEXT("User cancelled deletion")
+            );
+        }
+    }
+    
+    // 5. Perform deletion
     bool bSuccess = UEditorAssetLibrary::DeleteAsset(NormalizedPath);
     if (!bSuccess)
     {
-        return TResult<void>::Error(
-            VibeUE::ErrorCodes::OPERATION_FAILED,
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::ASSET_DELETE_FAILED,
             FString::Printf(TEXT("Failed to delete asset: %s"), *NormalizedPath)
         );
     }
     
-    return TResult<void>::Success();
+    return TResult<bool>::Success(true);
 }
 
 TResult<bool> FAssetLifecycleService::DoesAssetExist(const FString& AssetPath)

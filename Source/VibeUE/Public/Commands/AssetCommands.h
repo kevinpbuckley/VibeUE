@@ -34,6 +34,7 @@ private:
     // Asset Discovery command handlers
     TSharedPtr<FJsonObject> HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params);
     
     // Helper functions for converting TResult to JSON

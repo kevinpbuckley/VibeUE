@@ -847,7 +847,8 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
     {
         // For complex types, try to serialize as JSON
         TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&PropertyValue);
-        FJsonSerializer::Serialize(JsonValue.ToSharedRef(), Writer);
+        FJsonSerializer::Serialize(JsonValue, TEXT(""), Writer, false);
+        Writer->Close();
     }
 
     // Find Blueprint using DiscoveryService
