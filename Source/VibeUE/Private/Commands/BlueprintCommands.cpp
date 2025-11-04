@@ -148,7 +148,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
         return HandleSetVariableProperty(Params);
     }
     
-    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
+    return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)
@@ -184,159 +184,91 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedP
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddComponentToBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentType;
     if (!Params->TryGetStringField(TEXT("component_type"), ComponentType))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
     }
 
     FString ComponentName;
     if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_name' parameter"));
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Create the component - dynamically find the component class by name
-    UClass* ComponentClass = nullptr;
+    // Build transform from JSON if provided
+    FTransform RelativeTransform = FTransform::Identity;
+    if (Params->HasField(TEXT("location")))
+    {
+        RelativeTransform.SetLocation(FCommonUtils::GetVectorFromJson(Params, TEXT("location")));
+    }
+    if (Params->HasField(TEXT("rotation")))
+    {
+        RelativeTransform.SetRotation(FCommonUtils::GetRotatorFromJson(Params, TEXT("rotation")).Quaternion());
+    }
+    if (Params->HasField(TEXT("scale")))
+    {
+        RelativeTransform.SetScale3D(FCommonUtils::GetVectorFromJson(Params, TEXT("scale")));
+    }
 
-    // Try to find the class with exact name first
-    ComponentClass = FindFirstObject<UClass>(*ComponentType, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("VibeUEBlueprintCommands"));
+    // Add component using ComponentService
+    auto AddResult = ComponentService->AddComponent(FindResult.GetValue(), ComponentType, ComponentName, FString(), RelativeTransform);
+    if (AddResult.IsError())
+    {
+        return CreateErrorResponse(AddResult.GetErrorCode(), AddResult.GetErrorMessage());
+    }
+
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("component_type"), ComponentType);
     
-    // If not found, try with "Component" suffix
-    if (!ComponentClass && !ComponentType.EndsWith(TEXT("Component")))
-    {
-        FString ComponentTypeWithSuffix = ComponentType + TEXT("Component");
-        ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithSuffix, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("VibeUEBlueprintCommands"));
-    }
-    
-    // If still not found, try with "U" prefix
-    if (!ComponentClass && !ComponentType.StartsWith(TEXT("U")))
-    {
-        FString ComponentTypeWithPrefix = TEXT("U") + ComponentType;
-        ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithPrefix, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("VibeUEBlueprintCommands"));
-        
-        // Try with both prefix and suffix
-        if (!ComponentClass && !ComponentType.EndsWith(TEXT("Component")))
-        {
-            FString ComponentTypeWithBoth = TEXT("U") + ComponentType + TEXT("Component");
-            ComponentClass = FindFirstObject<UClass>(*ComponentTypeWithBoth, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("VibeUEBlueprintCommands"));
-        }
-    }
-    
-    // Verify that the class is a valid component type
-    if (!ComponentClass || !ComponentClass->IsChildOf(UActorComponent::StaticClass()))
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown component type: %s"), *ComponentType));
-    }
-
-    // Add the component to the blueprint
-    USCS_Node* NewNode = Blueprint->SimpleConstructionScript->CreateNode(ComponentClass, *ComponentName);
-    if (NewNode)
-    {
-        // Set transform if provided
-        USceneComponent* SceneComponent = Cast<USceneComponent>(NewNode->ComponentTemplate);
-        if (SceneComponent)
-        {
-            if (Params->HasField(TEXT("location")))
-            {
-                SceneComponent->SetRelativeLocation(FCommonUtils::GetVectorFromJson(Params, TEXT("location")));
-            }
-            if (Params->HasField(TEXT("rotation")))
-            {
-                SceneComponent->SetRelativeRotation(FCommonUtils::GetRotatorFromJson(Params, TEXT("rotation")));
-            }
-            if (Params->HasField(TEXT("scale")))
-            {
-                SceneComponent->SetRelativeScale3D(FCommonUtils::GetVectorFromJson(Params, TEXT("scale")));
-            }
-        }
-
-        // Add to root if no parent specified
-        Blueprint->SimpleConstructionScript->AddNode(NewNode);
-
-        // Compile the blueprint
-        FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-        ResultObj->SetStringField(TEXT("component_name"), ComponentName);
-        ResultObj->SetStringField(TEXT("component_type"), ComponentType);
-        return ResultObj;
-    }
-
-    return FCommonUtils::CreateErrorResponse(TEXT("Failed to add component to blueprint"));
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentName;
     if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_name' parameter"));
     }
 
     FString PropertyName;
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
     }
 
-    
-    
-    // Log property_value if available
-    if (Params->HasField(TEXT("property_value")))
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        TSharedPtr<FJsonValue> JsonValue = Params->Values.FindRef(TEXT("property_value"));
-        FString ValueType;
-        
-        switch(JsonValue->Type)
-        {
-            case EJson::Boolean: ValueType = FString::Printf(TEXT("Boolean: %s"), JsonValue->AsBool() ? TEXT("true") : TEXT("false")); break;
-            case EJson::Number: ValueType = FString::Printf(TEXT("Number: %f"), JsonValue->AsNumber()); break;
-            case EJson::String: ValueType = FString::Printf(TEXT("String: %s"), *JsonValue->AsString()); break;
-            case EJson::Array: ValueType = TEXT("Array"); break;
-            case EJson::Object: ValueType = TEXT("Object"); break;
-            default: ValueType = TEXT("Unknown"); break;
-        }
-        
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
     
-    }
-    else
-    {
-    
-    }
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
-    {
-    UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Blueprint not found: %s"), *BlueprintName);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-    }
-    else
-    {
-        
-    }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
     // Find the component
     USCS_Node* ComponentNode = nullptr;
@@ -345,7 +277,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
     if (!Blueprint->SimpleConstructionScript)
     {
     UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - SimpleConstructionScript is NULL for blueprint %s"), *BlueprintName);
-        return FCommonUtils::CreateErrorResponse(TEXT("Invalid blueprint construction script"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Invalid blueprint construction script"));
     }
     
     for (USCS_Node* Node : Blueprint->SimpleConstructionScript->GetAllNodes())
@@ -368,7 +300,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
     if (!ComponentNode)
     {
     UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component not found: %s"), *ComponentName);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component not found: %s"), *ComponentName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Component not found: %s"), *ComponentName));
     }
     else
     {
@@ -380,7 +312,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
     if (!ComponentTemplate)
     {
     UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Component template is NULL for %s"), *ComponentName);
-        return FCommonUtils::CreateErrorResponse(TEXT("Invalid component template"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Invalid component template"));
     }
 
     // Check if this is a Spring Arm component and log special debug info
@@ -406,7 +338,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             if (!Property)
             {
                 UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Property %s not found on SpringArm component"), *PropertyName);
-                return FCommonUtils::CreateErrorResponse(
+                return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
                     FString::Printf(TEXT("Property %s not found on SpringArm component"), *PropertyName));
             }
 
@@ -511,7 +443,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
             else
             {
                 UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Failed to set SpringArm property %s"), *PropertyName);
-                return FCommonUtils::CreateErrorResponse(
+                return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
                     FString::Printf(TEXT("Failed to set SpringArm property %s"), *PropertyName));
             }
         }
@@ -539,7 +471,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 
             }
             
-            return FCommonUtils::CreateErrorResponse(
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
                 FString::Printf(TEXT("Property %s not found on component %s"), *PropertyName, *ComponentName));
         }
         else
@@ -720,13 +652,13 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         catch (const std::exception& Ex)
         {
             UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - EXCEPTION: %s"), ANSI_TO_TCHAR(Ex.what()));
-            return FCommonUtils::CreateErrorResponse(
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
                 FString::Printf(TEXT("Exception while setting property %s: %s"), *PropertyName, ANSI_TO_TCHAR(Ex.what())));
         }
         catch (...)
         {
             UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - UNKNOWN EXCEPTION occurred while setting property %s"), *PropertyName);
-            return FCommonUtils::CreateErrorResponse(
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
                 FString::Printf(TEXT("Unknown exception while setting property %s"), *PropertyName));
         }
 
@@ -747,12 +679,12 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         {
             UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Failed to set property %s: %s"), 
                 *PropertyName, *ErrorMessage);
-            return FCommonUtils::CreateErrorResponse(ErrorMessage);
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, ErrorMessage);
         }
     }
 
     UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - Missing 'property_value' parameter"));
-    return FCommonUtils::CreateErrorResponse(TEXT("Missing 'property_value' parameter"));
+    return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'property_value' parameter"));
 }
 
 
@@ -942,25 +874,27 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
 
     // Get the default object
     UObject* DefaultObject = Blueprint->GeneratedClass->GetDefaultObject();
     if (!DefaultObject)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get default object"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get default object"));
     }
 
     // Track if any properties were set successfully
@@ -1056,14 +990,13 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TShare
     else if (ResultsObj->Values.Num() == 0)
     {
         // No properties were specified
-        return FCommonUtils::CreateErrorResponse(TEXT("No properties specified to set"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("No properties specified to set"));
     }
 
-    TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();
-    ResponseObj->SetStringField(TEXT("blueprint"), BlueprintName);
-    ResponseObj->SetBoolField(TEXT("success"), bAnyPropertiesSet);
-    ResponseObj->SetObjectField(TEXT("results"), ResultsObj);
-    return ResponseObj;
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("blueprint"), BlueprintName);
+    Response->SetObjectField(TEXT("results"), ResultsObj);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TSharedPtr<FJsonObject>& Params)
@@ -1116,26 +1049,31 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSh
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
     }
     
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
     }
     
     FString VariableType;
     if (!Params->TryGetStringField(TEXT("variable_type"), VariableType))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_type parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_type parameter"));
     }
     
     // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     
     // Create a comprehensive pin type mapping using reflection-based system
@@ -1275,7 +1213,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSh
     }
     else
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to add variable to Blueprint"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to add variable to Blueprint"));
     }
     
     return Response;
@@ -1288,19 +1226,24 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
     }
     
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
 
     // Find the variable
@@ -1318,7 +1261,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const
 
     if (!VarDesc)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
     }
 
     // Build comprehensive response
@@ -1781,21 +1724,26 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const 
     
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
     }
     
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing variable_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
     }
     
     // Optional force_delete parameter
     Params->TryGetBoolField(TEXT("force_delete"), ForceDelete);
     
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     
     FName VarName(*VariableName);
@@ -1815,7 +1763,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const 
     
     if (!VarDesc)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
     }
     
     TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
@@ -1980,7 +1928,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetAvailableBlueprintVariableT
     }
     catch (...)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to get available Blueprint variable types"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get available Blueprint variable types"));
     }
     
     return Response;
@@ -2443,7 +2391,7 @@ namespace
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSharedPtr<FJsonObject>& Params)
 {
     FString BPName, Path; if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("path"), Path))
-    { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'path'")); }
+    { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' or 'path'")); }
 
     // Check if this is a metadata path (e.g., "MyVar.@metadata.instance_editable")
     if (Path.Contains(TEXT(".@metadata.")))
@@ -2469,18 +2417,23 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSha
                     return Result;
                 }
             }
-            return FCommonUtils::CreateErrorResponse(TEXT("Failed to get metadata"));
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to get metadata"));
         }
     }
 
-    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
-    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    auto FindResult = DiscoveryService->FindBlueprint(BPName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* BP = FindResult.GetValue();
+    if (!BP) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint not found")); }
     if (!BP->GeneratedClass) { FKismetEditorUtilities::CompileBlueprint(BP); }
-    if (!BP->GeneratedClass) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to compile blueprint")); }
+    if (!BP->GeneratedClass) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to compile blueprint")); }
     UObject* CDO = BP->GeneratedClass->GetDefaultObject();
 
-    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return FCommonUtils::CreateErrorResponse(TEXT("Invalid path format")); }
-    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to resolve property path")); }
+    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Invalid path format")); }
+    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to resolve property path")); }
 
     TSharedPtr<FJsonValue> JVal = SerializeProperty(Res.Prop, Res.Ptr);
 
@@ -2494,8 +2447,8 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetVariableProperty(const TSha
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSharedPtr<FJsonObject>& Params)
 {
     FString BPName, Path; if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("path"), Path))
-    { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'path'")); }
-    if (!Params->HasField(TEXT("value"))) { return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value'")); }
+    { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' or 'path'")); }
+    if (!Params->HasField(TEXT("value"))) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'value'")); }
     
     // Check if this is a metadata path (e.g., "MyVar.@metadata.instance_editable")
     if (Path.Contains(TEXT(".@metadata.")))
@@ -2521,7 +2474,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSha
                 Result->SetField(TEXT("normalized_value"), Params->Values.FindRef(TEXT("value")));
                 return Result;
             }
-            return FCommonUtils::CreateErrorResponse(TEXT("Failed to set metadata"));
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to set metadata"));
         }
     }
     
@@ -2569,16 +2522,21 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetVariableProperty(const TSha
         }
     }
 
-    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
-    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    auto FindResult = DiscoveryService->FindBlueprint(BPName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* BP = FindResult.GetValue();
+    if (!BP) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint not found")); }
     if (!BP->GeneratedClass) { FKismetEditorUtilities::CompileBlueprint(BP); }
-    if (!BP->GeneratedClass) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to compile blueprint")); }
+    if (!BP->GeneratedClass) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to compile blueprint")); }
     UObject* CDO = BP->GeneratedClass->GetDefaultObject();
 
-    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return FCommonUtils::CreateErrorResponse(TEXT("Invalid path format")); }
-    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return FCommonUtils::CreateErrorResponse(TEXT("Failed to resolve property path")); }
+    FString Var; TArray<FString> Segs; if (!SplitVarPath(Path, Var, Segs)) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Invalid path format")); }
+    FResolvedVarProp Res; if (!ResolveOnCDO(CDO, Var, Segs, Res)) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to resolve property path")); }
 
-    auto Fail = [&](const TCHAR* Msg){ return FCommonUtils::CreateErrorResponse(Msg); };
+    auto Fail = [&](const TCHAR* Msg){ return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, Msg); };
 
     if (!ApplyJsonToProperty(InVal, Res.Prop, Res.Ptr)) { return Fail(TEXT("Unsupported property type or value kind")); }
 
@@ -2606,11 +2564,16 @@ TSharedPtr<FJsonObject> FBlueprintCommands::GetBlueprintVariableMetadata(const T
     FString BPName, VarName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'variable_name'"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' or 'variable_name'"));
     }
 
-    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
-    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    auto FindResult = DiscoveryService->FindBlueprint(BPName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* BP = FindResult.GetValue();
+    if (!BP) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint not found")); }
 
     // Find the variable in Blueprint's NewVariables
     FName VarFName(*VarName);
@@ -2626,7 +2589,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::GetBlueprintVariableMetadata(const T
 
     if (!VarDesc)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Variable not found"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Variable not found"));
     }
 
     // Build metadata response
@@ -2672,17 +2635,22 @@ TSharedPtr<FJsonObject> FBlueprintCommands::SetBlueprintVariableMetadata(const T
     FString BPName, VarName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BPName) || !Params->TryGetStringField(TEXT("variable_name"), VarName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' or 'variable_name'"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' or 'variable_name'"));
     }
 
     const TSharedPtr<FJsonObject>* MetadataObj;
     if (!Params->TryGetObjectField(TEXT("metadata"), MetadataObj))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'metadata' object"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'metadata' object"));
     }
 
-    UBlueprint* BP = FCommonUtils::FindBlueprint(BPName);
-    if (!BP) { return FCommonUtils::CreateErrorResponse(TEXT("Blueprint not found")); }
+    auto FindResult = DiscoveryService->FindBlueprint(BPName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* BP = FindResult.GetValue();
+    if (!BP) { return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Blueprint not found")); }
 
     // Find the variable
     FName VarFName(*VarName);
@@ -2698,7 +2666,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::SetBlueprintVariableMetadata(const T
 
     if (!VarDesc)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Variable not found"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Variable not found"));
     }
 
     // Apply metadata changes
@@ -2821,7 +2789,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
     FString Action;
     if (!Params->TryGetStringField(TEXT("action"), Action))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'action' parameter. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"));
     }
 
     // Flip: route to reflection path by default; maintains old path only if explicitly requested
@@ -2864,7 +2832,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleManageBlueprintVariables(const
     }
     else
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"), *Action));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Unknown action: %s. Valid actions: create, delete, modify, list, get_info, get_property, set_property, search_types"), *Action));
     }
 }
 
@@ -3217,20 +3185,20 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateVariableOperation(const 
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' parameter"));
     }
     
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'variable_name' parameter"));
     }
     
     // Get variable config
     const TSharedPtr<FJsonObject>* VariableConfigPtr;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigPtr) || !VariableConfigPtr || !VariableConfigPtr->IsValid())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing or invalid 'variable_config' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing or invalid 'variable_config' parameter"));
     }
     
     TSharedPtr<FJsonObject> VariableConfig = *VariableConfigPtr;
@@ -3238,24 +3206,29 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateVariableOperation(const 
     FString VariableType;
     if (!VariableConfig->TryGetStringField(TEXT("type"), VariableType))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' in variable_config"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'type' in variable_config"));
     }
 
     FString VariableTypePath;
     VariableConfig->TryGetStringField(TEXT("type_path"), VariableTypePath);
     
     // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     
     // Resolve the variable type using the enhanced system
     FEdGraphPinType PinType;
     if (!ResolveVariableType(VariableType, VariableTypePath, PinType))
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown or invalid variable type: %s"), *VariableType));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Unknown or invalid variable type: %s"), *VariableType));
     }
     
     // Get optional parameters
@@ -3315,7 +3288,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateVariableOperation(const 
     }
     else
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create variable in Blueprint"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to create variable in Blueprint"));
     }
     
     return Response;
@@ -3696,13 +3669,13 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetPropertyOperation(const TSh
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'variable_name' parameter"));
     }
 
     FString PropertyPath;
@@ -3730,13 +3703,13 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPropertyOperation(const TSh
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'variable_name' parameter"));
     }
 
     FString PropertyPath;
@@ -3748,7 +3721,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPropertyOperation(const TSh
     TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
     if (!ValueField.IsValid())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'value' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'value' parameter"));
     }
 
     // Build the full path: VariableName.PropertyPath (or just VariableName if no property path)
@@ -3771,25 +3744,30 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleModifyVariableOperation(const 
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString VariableName;
     if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'variable_name' parameter"));
     }
 
     const TSharedPtr<FJsonObject>* VariableConfig = nullptr;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfig))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'variable_config' object"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'variable_config' object"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
 
     FName VarName(*VariableName);
@@ -3805,7 +3783,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleModifyVariableOperation(const 
 
     if (!VarDesc)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
     }
 
     bool bAnyChanges = false;
@@ -3913,7 +3891,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleModifyVariableOperation(const 
             {
                 ErrorMessage = SetResponse->GetStringField(TEXT("error"));
             }
-            return FCommonUtils::CreateErrorResponse(ErrorMessage);
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, ErrorMessage);
         }
     }
 
@@ -3966,13 +3944,18 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleListVariablesOperation(const T
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
     if (!Blueprint)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
 
     FString CategoryFilter;
