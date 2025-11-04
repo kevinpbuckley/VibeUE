@@ -2481,7 +2481,9 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         if (!GetFunctionName(FunctionName))
             return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
         auto Result = FunctionService->DeleteFunction(Blueprint, FunctionName);
-        return !Result.IsSuccess() ? CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage()) : MakeSuccess(FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        return MakeSuccess(FunctionName);
     }
 
     // Parameter operations
@@ -2500,8 +2502,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     
     if (NormalizedAction == TEXT("add_param")) {
         FString FunctionName, ParamName, TypeDesc, Direction = TEXT("input");
-        if (!GetFunctionName(FunctionName) || !Params->TryGetStringField(TEXT("param_name"), ParamName) || !Params->TryGetStringField(TEXT("type"), TypeDesc))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing required parameter"));
+        if (!GetFunctionName(FunctionName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'type' parameter"));
         Params->TryGetStringField(TEXT("direction"), Direction);
         auto Result = FunctionService->AddParameter(Blueprint, FunctionName, ParamName, TypeDesc, Direction);
         if (!Result.IsSuccess())
@@ -2513,8 +2519,10 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     
     if (NormalizedAction == TEXT("remove_param")) {
         FString FunctionName, ParamName, Direction = TEXT("input");
-        if (!GetFunctionName(FunctionName) || !Params->TryGetStringField(TEXT("param_name"), ParamName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing required parameter"));
+        if (!GetFunctionName(FunctionName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
         Params->TryGetStringField(TEXT("direction"), Direction);
         auto Result = FunctionService->RemoveParameter(Blueprint, FunctionName, ParamName, Direction);
         if (!Result.IsSuccess())
@@ -2526,13 +2534,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     
     if (NormalizedAction == TEXT("update_param")) {
         FString FunctionName, ParamName, Direction = TEXT("input"), NewType, NewName;
-        if (!GetFunctionName(FunctionName) || !Params->TryGetStringField(TEXT("param_name"), ParamName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing required parameter"));
+        if (!GetFunctionName(FunctionName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
+            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
         Params->TryGetStringField(TEXT("direction"), Direction);
         Params->TryGetStringField(TEXT("new_type"), NewType);
         Params->TryGetStringField(TEXT("new_name"), NewName);
         auto Result = FunctionService->UpdateParameter(Blueprint, FunctionName, ParamName, NewType, NewName, Direction);
-        return !Result.IsSuccess() ? CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage()) : MakeSuccess(FunctionName);
+        if (!Result.IsSuccess())
+            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+        return MakeSuccess(FunctionName);
     }
 
     // Local variable operations
