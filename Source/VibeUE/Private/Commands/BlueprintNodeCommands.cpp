@@ -4662,11 +4662,80 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDiscoverNodesWithDescripto
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    if (ReflectionCommands.IsValid())
-    {
-        return ReflectionCommands->HandleAddBlueprintNode(Params);
-    }
-    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+	// Extract required parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	FString SpawnerKey;
+	if (!Params->TryGetStringField(TEXT("spawner_key"), SpawnerKey))
+	{
+		// Check nested node_params
+		const TSharedPtr<FJsonObject>* NodeParamsPtr = nullptr;
+		if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsPtr) && NodeParamsPtr && NodeParamsPtr->IsValid())
+		{
+			(*NodeParamsPtr)->TryGetStringField(TEXT("spawner_key"), SpawnerKey);
+		}
+	}
+	
+	if (SpawnerKey.IsEmpty())
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+			TEXT("Missing 'spawner_key'. Use discover_nodes_with_descriptors() to get valid spawner keys."));
+	}
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+	}
+	
+	// Build node creation parameters
+	FNodeCreationParams NodeParams;
+	NodeParams.SpawnerKey = SpawnerKey;
+	
+	// Extract position
+	const TArray<TSharedPtr<FJsonValue>>* PositionArrayPtr = nullptr;
+	if (Params->TryGetArrayField(TEXT("position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
+	{
+		NodeParams.Position.X = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
+		NodeParams.Position.Y = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
+	}
+	else if (Params->TryGetArrayField(TEXT("node_position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
+	{
+		NodeParams.Position.X = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
+		NodeParams.Position.Y = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
+	}
+	
+	// Extract graph scope and function name
+	Params->TryGetStringField(TEXT("graph_scope"), NodeParams.GraphScope);
+	Params->TryGetStringField(TEXT("function_name"), NodeParams.FunctionName);
+	
+	// Get node_params for additional configuration
+	const TSharedPtr<FJsonObject>* NodeParamsObjPtr = nullptr;
+	if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsObjPtr) && NodeParamsObjPtr && NodeParamsObjPtr->IsValid())
+	{
+		NodeParams.NodeParams = *NodeParamsObjPtr;
+	}
+	
+	// Create node using NodeService
+	auto CreateResult = NodeService->CreateNodeFromSpawnerKey(FindResult.GetValue(), NodeParams);
+	if (CreateResult.IsError())
+	{
+		return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
+	}
+	
+	// Build success response
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("node_id"), CreateResult.GetValue());
+	Response->SetStringField(TEXT("spawner_key"), SpawnerKey);
+	Response->SetNumberField(TEXT("position_x"), NodeParams.Position.X);
+	Response->SetNumberField(TEXT("position_y"), NodeParams.Position.Y);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)

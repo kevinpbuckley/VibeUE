@@ -281,6 +281,24 @@ struct VIBEUE_API FEventConfiguration
 };
 
 /**
+ * Parameters for creating a node with spawner key
+ */
+struct VIBEUE_API FNodeCreationParams
+{
+    FString SpawnerKey;      // Required: spawner key from descriptor discovery
+    FVector2D Position;      // Node position
+    FString GraphScope;      // "event" or "function"
+    FString FunctionName;    // Required if GraphScope is "function"
+    TSharedPtr<FJsonObject> NodeParams; // Optional: additional node configuration
+    
+    FNodeCreationParams()
+        : Position(500.0f, 500.0f)
+        , GraphScope(TEXT("event"))
+    {
+    }
+};
+
+/**
  * Search criteria for finding nodes in a blueprint
  */
 struct VIBEUE_API FNodeSearchCriteria
@@ -307,6 +325,7 @@ public:
     // Node lifecycle
     TResult<UK2Node*> CreateNode(UBlueprint* Blueprint, const FString& GraphName, 
                                  const FString& NodeType, const FVector2D& Position);
+    TResult<FString> CreateNodeFromSpawnerKey(UBlueprint* Blueprint, const FNodeCreationParams& Params);
     TResult<FNodeDeletionInfo> DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins = true);
     TResult<void> MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position);
     

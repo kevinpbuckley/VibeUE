@@ -302,6 +302,71 @@ TResult<UK2Node*> FBlueprintNodeService::CreateNode(UBlueprint* Blueprint, const
     return TResult<UK2Node*>::Success(NewNode);
 }
 
+TResult<FString> FBlueprintNodeService::CreateNodeFromSpawnerKey(UBlueprint* Blueprint, const FNodeCreationParams& Params)
+{
+    // Validate Blueprint
+    auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Validate spawner key
+    ValidationResult = ValidateNotEmpty(Params.SpawnerKey, TEXT("SpawnerKey"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Resolve target graph
+    FString GraphName;
+    if (Params.GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    {
+        if (Params.FunctionName.IsEmpty())
+        {
+            return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_MISSING, 
+                TEXT("FunctionName is required when GraphScope is 'function'"));
+        }
+        GraphName = Params.FunctionName;
+    }
+    else
+    {
+        GraphName = TEXT("EventGraph");
+    }
+    
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName, Error);
+    if (!TargetGraph)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
+    }
+    
+    // Create node from spawner key
+    UK2Node* NewNode = FBlueprintReflection::CreateNodeFromSpawnerKey(TargetGraph, Params.SpawnerKey, Params.Position);
+    if (!NewNode)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::NODE_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create node using spawner_key '%s'"), *Params.SpawnerKey));
+    }
+    
+    // Configure additional parameters if provided
+    if (Params.NodeParams.IsValid())
+    {
+        FBlueprintReflection::ConfigureNodeFromParameters(NewNode, Params.NodeParams);
+    }
+    
+    // Set position
+    NewNode->NodePosX = FMath::RoundToInt(Params.Position.X);
+    NewNode->NodePosY = FMath::RoundToInt(Params.Position.Y);
+    
+    // Reconstruct and mark modified
+    NewNode->ReconstructNode();
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    
+    return TResult<FString>::Success(NewNode->NodeGuid.ToString());
+}
+
 TResult<FNodeDeletionInfo> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins)
 {
     if (!Blueprint)
