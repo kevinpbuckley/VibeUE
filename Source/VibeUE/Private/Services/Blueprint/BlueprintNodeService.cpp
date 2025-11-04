@@ -10,12 +10,137 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node.h"
 #include "K2Node_InputAction.h"
+#include "K2Node_CallFunction.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_VariableSet.h"
+#include "K2Node_DynamicCast.h"
+#include "K2Node_Timeline.h"
+#include "K2Node_Event.h"
+#include "BlueprintFunctionNodeSpawner.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/KismetDebugUtilities.h"
 #include "ScopedTransaction.h"
 #include "Json.h"
+#include "Misc/DefaultValueHelper.h"
+#include "UObject/StrongObjectPtr.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogBlueprintNodeService, Log, All);
+
+namespace
+{
+	FString NormalizeGuid(const FGuid& Guid)
+	{
+		return Guid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
+	}
+
+	FString DescribeGraphScope(const UBlueprint* Blueprint, const UEdGraph* Graph)
+	{
+		if (!Blueprint || !Graph)
+		{
+			return TEXT("unknown");
+		}
+
+		if (Blueprint->UbergraphPages.Contains(Graph))
+		{
+			return TEXT("event");
+		}
+		if (Blueprint->FunctionGraphs.Contains(Graph))
+		{
+			return TEXT("function");
+		}
+		if (Blueprint->MacroGraphs.Contains(Graph))
+		{
+			return TEXT("macro");
+		}
+		if (Blueprint->IntermediateGeneratedGraphs.Contains(Graph))
+		{
+			return TEXT("intermediate");
+		}
+		return TEXT("other");
+	}
+
+	FString DescribePinDirection(EEdGraphPinDirection Direction)
+	{
+		switch (Direction)
+		{
+			case EGPD_Input:  return TEXT("input");
+			case EGPD_Output: return TEXT("output");
+			default:          return TEXT("unknown");
+		}
+	}
+
+	FString DescribeContainerType(EPinContainerType ContainerType)
+	{
+		switch (ContainerType)
+		{
+			case EPinContainerType::None:  return TEXT("none");
+			case EPinContainerType::Array: return TEXT("array");
+			case EPinContainerType::Set:   return TEXT("set");
+			case EPinContainerType::Map:   return TEXT("map");
+			default:                       return TEXT("unknown");
+		}
+	}
+
+	FString DescribeExecState(const UEdGraphNode* Node)
+	{
+		if (!Node) { return TEXT("unknown"); }
+		for (const UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				return TEXT("impure");
+			}
+		}
+		return TEXT("pure");
+	}
+
+	bool IsPureK2Node(const UK2Node* K2Node)
+	{
+		return K2Node && K2Node->IsNodePure();
+	}
+
+	TSharedPtr<FJsonValue> BuildDefaultValueJson(const UEdGraphPin* Pin)
+	{
+		if (!Pin || Pin->DefaultValue.IsEmpty())
+		{
+			return MakeShared<FJsonValueNull>();
+		}
+
+		const FString& Val = Pin->DefaultValue;
+		const FEdGraphPinType& PinType = Pin->PinType;
+
+		if (PinType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
+		{
+			bool BoolVal = Val.ToBool();
+			return MakeShared<FJsonValueBoolean>(BoolVal);
+		}
+		if (PinType.PinCategory == UEdGraphSchema_K2::PC_Int || PinType.PinCategory == UEdGraphSchema_K2::PC_Byte)
+		{
+			int32 IntVal = FCString::Atoi(*Val);
+			return MakeShared<FJsonValueNumber>(IntVal);
+		}
+		if (PinType.PinCategory == UEdGraphSchema_K2::PC_Real || PinType.PinCategory == UEdGraphSchema_K2::PC_Double)
+		{
+			double DoubleVal = FCString::Atod(*Val);
+			return MakeShared<FJsonValueNumber>(DoubleVal);
+		}
+
+		return MakeShared<FJsonValueString>(Val);
+	}
+
+	FString BuildPinIdentifier(const UEdGraphNode* Node, const UEdGraphPin* Pin)
+	{
+		if (!Node || !Pin) { return TEXT(""); }
+		if (Pin->PersistentGuid.IsValid())
+		{
+			return Pin->PersistentGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
+		}
+		return FString::Printf(TEXT("%s:%s"),
+			*Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces),
+			*Pin->PinName.ToString());
+	}
+}
 
 FBlueprintNodeService::FBlueprintNodeService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -793,14 +918,7 @@ TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FStri
             TEXT("Graph schema does not support K2 pin operations"));
     }
     
-    // Check if pin can be split
-    if (!Schema->CanSplitPin(Pin))
-    {
-        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
-            FString::Printf(TEXT("Pin '%s' cannot be split"), *PinName));
-    }
-    
-    // Split the pin
+    // Split the pin (UE 5.6 removed CanSplitPin check)
     const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "SplitPin", "Split Blueprint Pin"));
     
     if (NodeGraph)
@@ -870,14 +988,7 @@ TResult<void> FBlueprintNodeService::RecombinePin(UBlueprint* Blueprint, const F
             TEXT("Graph schema does not support K2 pin operations"));
     }
     
-    // Check if pin can be recombined
-    if (!Schema->CanRecombinePin(ParentPin))
-    {
-        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
-            FString::Printf(TEXT("Pin '%s' cannot be recombined (not split or has connections)"), *PinName));
-    }
-    
-    // Recombine the pin
+    // Recombine the pin (UE 5.6 removed CanRecombinePin check)
     const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RecombinePin", "Recombine Blueprint Pin"));
     
     if (NodeGraph)
