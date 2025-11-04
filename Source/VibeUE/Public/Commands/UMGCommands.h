@@ -129,4 +129,8 @@ private:
     TSharedPtr<FJsonObject> CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data = nullptr);
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage);
     TSharedPtr<FJsonObject> ComponentToJson(UWidget* Component);
+    TArray<TSharedPtr<FJsonValue>> StringArrayToJson(const TArray<FString>& Strings);
+    TSharedPtr<FJsonObject> ComponentInfoToJson(const FWidgetComponentInfo& Info);
+    TSharedPtr<FJsonObject> PropertyInfoToJson(const FPropertyInfo& Info);
+    TSharedPtr<FJsonObject> HandleAddComponentGeneric(const TSharedPtr<FJsonObject>& Params, const FString& ComponentType);
 }; 

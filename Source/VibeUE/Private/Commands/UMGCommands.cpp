@@ -74,6 +74,89 @@ TSharedPtr<FJsonObject> FUMGCommands::ComponentToJson(UWidget* Component)
 	return ComponentObj;
 }
 
+// Helper to convert array of strings to JSON array
+TArray<TSharedPtr<FJsonValue>> FUMGCommands::StringArrayToJson(const TArray<FString>& Strings)
+{
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+	for (const FString& Str : Strings)
+	{
+		JsonArray.Add(MakeShared<FJsonValueString>(Str));
+	}
+	return JsonArray;
+}
+
+// Helper to handle generic component addition (used by all add_* handlers)
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddComponentGeneric(
+	const TSharedPtr<FJsonObject>& Params,
+	const FString& ComponentType)
+{
+	FString BlueprintName, WidgetName, ParentName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), 
+			TEXT("Missing required parameters"));
+	}
+	
+	// parent_name is optional for some handlers
+	Params->TryGetStringField(TEXT("parent_name"), ParentName);
+	
+	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
+	if (WidgetResult.IsError())
+	{
+		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
+	}
+	
+	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
+		WidgetResult.GetValue(), ComponentType, WidgetName, ParentName);
+	
+	if (ComponentResult.IsError())
+	{
+		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
+	}
+	
+	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+}
+
+// Helper to convert FWidgetComponentInfo to JSON
+TSharedPtr<FJsonObject> FUMGCommands::ComponentInfoToJson(const FWidgetComponentInfo& Info)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("name"), Info.Name);
+	Obj->SetStringField(TEXT("type"), Info.Type);
+	Obj->SetStringField(TEXT("parent"), Info.ParentName);
+	Obj->SetBoolField(TEXT("is_variable"), Info.bIsVariable);
+	Obj->SetArrayField(TEXT("children"), StringArrayToJson(Info.Children));
+	return Obj;
+}
+
+// Helper to convert FPropertyInfo to JSON
+TSharedPtr<FJsonObject> FUMGCommands::PropertyInfoToJson(const FPropertyInfo& Info)
+{
+	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+	Obj->SetStringField(TEXT("name"), Info.PropertyName);
+	Obj->SetStringField(TEXT("type"), Info.PropertyType);
+	Obj->SetStringField(TEXT("value"), Info.CurrentValue);
+	Obj->SetBoolField(TEXT("editable"), Info.bIsEditable);
+	Obj->SetStringField(TEXT("category"), Info.Category);
+	Obj->SetStringField(TEXT("tooltip"), Info.Tooltip);
+	
+	if (!Info.MinValue.IsEmpty())
+	{
+		Obj->SetStringField(TEXT("min_value"), Info.MinValue);
+	}
+	if (!Info.MaxValue.IsEmpty())
+	{
+		Obj->SetStringField(TEXT("max_value"), Info.MaxValue);
+	}
+	if (Info.EnumValues.Num() > 0)
+	{
+		Obj->SetArrayField(TEXT("enum_values"), StringArrayToJson(Info.EnumValues));
+	}
+	
+	return Obj;
+}
+
 // ============================================================================
 // Command Router
 // ============================================================================
@@ -336,20 +419,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetComponents(const TSharedPt
 	TArray<TSharedPtr<FJsonValue>> ComponentsArray;
 	for (const FWidgetComponentInfo& CompInfo : ComponentsResult.GetValue())
 	{
-		TSharedPtr<FJsonObject> CompObj = MakeShared<FJsonObject>();
-		CompObj->SetStringField(TEXT("name"), CompInfo.Name);
-		CompObj->SetStringField(TEXT("type"), CompInfo.Type);
-		CompObj->SetStringField(TEXT("parent"), CompInfo.ParentName);
-		CompObj->SetBoolField(TEXT("is_variable"), CompInfo.bIsVariable);
-		
-		TArray<TSharedPtr<FJsonValue>> ChildrenArray;
-		for (const FString& Child : CompInfo.Children)
-		{
-			ChildrenArray.Add(MakeShared<FJsonValueString>(Child));
-		}
-		CompObj->SetArrayField(TEXT("children"), ChildrenArray);
-		
-		ComponentsArray.Add(MakeShared<FJsonValueObject>(CompObj));
+		ComponentsArray.Add(MakeShared<FJsonValueObject>(ComponentInfoToJson(CompInfo)));
 	}
 	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -384,12 +454,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
 	for (const FPropertyInfo& PropInfo : PropsResult.GetValue())
 	{
-		TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
-		PropObj->SetStringField(TEXT("name"), PropInfo.PropertyName);
-		PropObj->SetStringField(TEXT("type"), PropInfo.PropertyType);
-		PropObj->SetStringField(TEXT("value"), PropInfo.CurrentValue);
-		PropObj->SetBoolField(TEXT("editable"), PropInfo.bIsEditable);
-		PropertiesArray.Add(MakeShared<FJsonValueObject>(PropObj));
+		PropertiesArray.Add(MakeShared<FJsonValueObject>(PropertyInfoToJson(PropInfo)));
 	}
 	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -456,274 +521,52 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddTextBlockToWidget(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), 
-			TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("TextBlock"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("TextBlock"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddButtonToWidget(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), 
-			TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("Button"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("Button"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddEditableText(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("EditableText"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("EditableText"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddEditableTextBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("EditableTextBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("EditableTextBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddRichTextBlock(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("RichTextBlock"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("RichTextBlock"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddCheckBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("CheckBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("CheckBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddSlider(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("Slider"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("Slider"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddProgressBar(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("ProgressBar"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("ProgressBar"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddImage(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("Image"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("Image"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddSpacer(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName) ||
-		!Params->TryGetStringField(TEXT("parent_name"), ParentName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("Spacer"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("Spacer"));
 }
 
 // ============================================================================
@@ -732,219 +575,44 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddSpacer(const TSharedPtr<FJsonObje
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddCanvasPanel(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("CanvasPanel"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("CanvasPanel"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddSizeBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("SizeBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("SizeBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddOverlay(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("Overlay"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("Overlay"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddHorizontalBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("HorizontalBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("HorizontalBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddVerticalBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("VerticalBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("VerticalBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddScrollBox(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("ScrollBox"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("ScrollBox"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddGridPanel(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("GridPanel"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("GridPanel"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<FJsonObject>& Params)
 {
-	FString BlueprintName, WidgetName, ParentName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-		!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing required parameters"));
-	}
-	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
-	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);
-	if (WidgetResult.IsError())
-	{
-		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
-	}
-	
-	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
-		WidgetResult.GetValue(), TEXT("WidgetSwitcher"), WidgetName, ParentName);
-	
-	if (ComponentResult.IsError())
-	{
-		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	}
-	
-	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
+	return HandleAddComponentGeneric(Params, TEXT("WidgetSwitcher"));
 }
+
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
 {
@@ -1212,33 +880,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPt
 	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
 	for (const FPropertyInfo& PropInfo : PropsResult.GetValue())
 	{
-		TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
-		PropObj->SetStringField(TEXT("name"), PropInfo.PropertyName);
-		PropObj->SetStringField(TEXT("type"), PropInfo.PropertyType);
-		PropObj->SetStringField(TEXT("value"), PropInfo.CurrentValue);
-		PropObj->SetBoolField(TEXT("editable"), PropInfo.bIsEditable);
-		PropObj->SetStringField(TEXT("category"), PropInfo.Category);
-		PropObj->SetStringField(TEXT("tooltip"), PropInfo.Tooltip);
-		
-		if (!PropInfo.MinValue.IsEmpty())
-		{
-			PropObj->SetStringField(TEXT("min_value"), PropInfo.MinValue);
-		}
-		if (!PropInfo.MaxValue.IsEmpty())
-		{
-			PropObj->SetStringField(TEXT("max_value"), PropInfo.MaxValue);
-		}
-		if (PropInfo.EnumValues.Num() > 0)
-		{
-			TArray<TSharedPtr<FJsonValue>> EnumArray;
-			for (const FString& EnumValue : PropInfo.EnumValues)
-			{
-				EnumArray.Add(MakeShared<FJsonValueString>(EnumValue));
-			}
-			PropObj->SetArrayField(TEXT("enum_values"), EnumArray);
-		}
-		
-		PropertiesArray.Add(MakeShared<FJsonValueObject>(PropObj));
+		PropertiesArray.Add(MakeShared<FJsonValueObject>(PropertyInfoToJson(PropInfo)));
 	}
 	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -1303,13 +945,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 		return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
 	}
 	
-	TArray<TSharedPtr<FJsonValue>> EventsArray;
-	for (const FString& Event : EventsResult.GetValue())
-	{
-		EventsArray.Add(MakeShared<FJsonValueString>(Event));
-	}
-	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetArrayField(TEXT("events"), EventsArray);
+	Data->SetArrayField(TEXT("events"), StringArrayToJson(EventsResult.GetValue()));
 	return CreateSuccessResponse(Data);
 }
