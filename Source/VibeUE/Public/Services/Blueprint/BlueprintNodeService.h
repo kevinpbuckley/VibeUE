@@ -331,6 +331,11 @@ public:
     TResult<void> ConfigureNode(UBlueprint* Blueprint, const FString& NodeId,
                                const TMap<FString, FString>& Config);
     
+    // Pin manipulation
+    TResult<void> SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
+    TResult<void> RecombinePin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
+    TResult<void> ResetPinToDefault(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
+    
     // Node discovery
     TResult<TArray<FNodeDescriptor>> DiscoverAvailableNodes(UBlueprint* Blueprint, 
                                                            const FString& SearchTerm);
