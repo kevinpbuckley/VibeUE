@@ -276,6 +276,37 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateErrorResponse(const FStrin
     return Response;
 }
 
+// Helper to convert TResult<TArray<FNodeSummary>> to JSON
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const
+{
+    if (Result.IsError())
+    {
+        return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+    }
+
+    TArray<TSharedPtr<FJsonValue>> NodeArray;
+    for (const FNodeSummary& Summary : Result.GetValue())
+    {
+        TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
+        NodeObj->SetStringField(TEXT("id"), Summary.NodeId);
+        NodeObj->SetStringField(TEXT("node_type"), Summary.NodeType);
+        NodeObj->SetStringField(TEXT("title"), Summary.Title);
+        
+        TArray<TSharedPtr<FJsonValue>> PinArray;
+        for (const TSharedPtr<FJsonObject>& PinObj : Summary.Pins)
+        {
+            PinArray.Add(MakeShared<FJsonValueObject>(PinObj));
+        }
+        NodeObj->SetArrayField(TEXT("pins"), PinArray);
+        
+        NodeArray.Add(MakeShared<FJsonValueObject>(NodeObj));
+    }
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetArrayField(TEXT("nodes"), NodeArray);
+    return Response;
+}
+
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: BlueprintNodeCommands::HandleCommand called with CommandType: %s"), *CommandType);
@@ -1247,49 +1278,47 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TShar
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
+    FString EventName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
-    FString EventName;
     if (!Params->TryGetStringField(TEXT("event_name"), EventName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'event_name' parameter"));
     }
 
-    // Get position parameters (optional)
-    FVector2D NodePosition(0.0f, 0.0f);
-    if (Params->HasField(TEXT("node_position")))
+    // Find the blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Parse event configuration
+    FEventConfiguration EventConfig;
+    EventConfig.EventName = EventName;
+    EventConfig.Position = Params->HasField(TEXT("node_position"))
+        ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
+        : FVector2D(0.0f, 0.0f);
+    
+    // Extract graph_name if provided (defaults to event graph if empty)
+    Params->TryGetStringField(TEXT("graph_name"), EventConfig.GraphName);
+
+    // Add event using NodeService
+    auto AddResult = NodeService->AddEvent(FindResult.GetValue(), EventConfig);
+    if (AddResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(AddResult.GetErrorCode(), AddResult.GetErrorMessage());
     }
 
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
-
-    // Create the event node
-    UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(EventGraph, EventName, NodePosition);
-    if (!EventNode)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create event node"));
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString());
-    return ResultObj;
+    // Build success response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("node_id"), AddResult.GetValue());
+    return Result;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
@@ -1835,33 +1864,36 @@ static TSharedPtr<FJsonObject> BuildNodeDescriptorJson(UBlueprint* Blueprint, UK
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
+    // Extract options
     bool bIncludePins = true;
     Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
-
+    
     bool bIncludeInternalPins = false;
     Params->TryGetBoolField(TEXT("include_internal"), bIncludeInternalPins);
 
-    double OffsetValue = 0.0;
     int32 Offset = 0;
+    double OffsetValue = 0.0;
     if (Params->TryGetNumberField(TEXT("offset"), OffsetValue))
     {
         Offset = FMath::Max(0, static_cast<int32>(OffsetValue));
     }
 
-    double LimitValue = -1.0;
     int32 Limit = -1;
+    double LimitValue = -1.0;
     if (Params->TryGetNumberField(TEXT("limit"), LimitValue))
     {
         Limit = static_cast<int32>(LimitValue);
@@ -1871,335 +1903,46 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
         }
     }
 
-    FString GraphScopeValue;
-    Params->TryGetStringField(TEXT("graph_scope"), GraphScopeValue);
-    const bool bAllGraphs = GraphScopeValue.Equals(TEXT("all"), ESearchCase::IgnoreCase);
-
-    FString GraphGuidString;
-    const bool bHasGraphGuid = Params->TryGetStringField(TEXT("graph_guid"), GraphGuidString) && !GraphGuidString.IsEmpty();
-    FGuid GraphGuidFilter;
-    if (bHasGraphGuid && !FGuid::Parse(GraphGuidString, GraphGuidFilter))
+    // Determine graph scope
+    FString GraphScope;
+    Params->TryGetStringField(TEXT("graph_scope"), GraphScope);
+    if (GraphScope.IsEmpty())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Invalid graph_guid value: %s"), *GraphGuidString));
+        GraphScope = TEXT("all");
     }
 
-    FString GraphError;
-    UEdGraph* PreferredGraph = nullptr;
-    if (!bAllGraphs || bHasGraphGuid)
+    // Use NodeService to describe nodes
+    auto DescribeResult = NodeService->DescribeAllNodes(
+        FindResult.GetValue(),
+        GraphScope,
+        bIncludePins,
+        bIncludeInternalPins,
+        Offset,
+        Limit
+    );
+
+    if (DescribeResult.IsError())
     {
-        PreferredGraph = ResolveTargetGraph(Blueprint, Params, GraphError);
-        if (!PreferredGraph && !GraphError.IsEmpty())
-        {
-            return FCommonUtils::CreateErrorResponse(GraphError);
-        }
+        return CreateErrorResponse(DescribeResult.GetErrorCode(), DescribeResult.GetErrorMessage());
     }
 
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
-    if (CandidateGraphs.Num() == 0)
-    {
-        GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
-    }
-
-    if (bHasGraphGuid)
-    {
-        UEdGraph* MatchingGraph = nullptr;
-        for (UEdGraph* Graph : CandidateGraphs)
-        {
-            if (Graph && Graph->GraphGuid == GraphGuidFilter)
-            {
-                MatchingGraph = Graph;
-                break;
-            }
-        }
-
-        if (!MatchingGraph)
-        {
-            return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Graph with guid %s not found"), *GraphGuidString));
-        }
-
-        CandidateGraphs.Empty();
-        CandidateGraphs.Add(MatchingGraph);
-    }
-
-    FString RequestedGraphName;
-    if (Params->TryGetStringField(TEXT("graph_name"), RequestedGraphName) && !RequestedGraphName.IsEmpty())
-    {
-        UEdGraph* MatchingGraph = nullptr;
-        for (UEdGraph* Graph : CandidateGraphs)
-        {
-            if (Graph && Graph->GetName().Equals(RequestedGraphName, ESearchCase::IgnoreCase))
-            {
-                MatchingGraph = Graph;
-                break;
-            }
-        }
-
-        if (!MatchingGraph)
-        {
-            return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Graph '%s' not found"), *RequestedGraphName));
-        }
-
-        CandidateGraphs.Empty();
-        CandidateGraphs.Add(MatchingGraph);
-    }
-
-    if (CandidateGraphs.Num() == 0)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("No graphs available for description"));
-    }
-
-    TSet<FGuid> NodeGuidFilters;
-    TSet<FString> NodeStringFilters;
-    const TArray<TSharedPtr<FJsonValue>>* NodeIdArray = nullptr;
-    if (Params->TryGetArrayField(TEXT("node_ids"), NodeIdArray))
-    {
-        for (const TSharedPtr<FJsonValue>& Value : *NodeIdArray)
-        {
-            if (!Value.IsValid())
-            {
-                continue;
-            }
-
-            FString RawId = Value->AsString();
-            RawId.TrimStartAndEndInline();
-            if (RawId.IsEmpty())
-            {
-                continue;
-            }
-
-            FGuid ParsedGuid;
-            if (FGuid::Parse(RawId, ParsedGuid))
-            {
-                NodeGuidFilters.Add(ParsedGuid);
-                continue;
-            }
-
-            RawId.ToLowerInline();
-            NodeStringFilters.Add(RawId);
-        }
-    }
-
-    TSet<FName> PinNameFilters;
-    const TArray<TSharedPtr<FJsonValue>>* PinArray = nullptr;
-    if (Params->TryGetArrayField(TEXT("pin_names"), PinArray))
-    {
-        for (const TSharedPtr<FJsonValue>& Value : *PinArray)
-        {
-            if (!Value.IsValid())
-            {
-                continue;
-            }
-
-            const FString PinName = Value->AsString();
-            if (!PinName.IsEmpty())
-            {
-                PinNameFilters.Add(FName(*PinName));
-            }
-        }
-    }
-    const bool bHasPinFilter = PinNameFilters.Num() > 0;
-
-    auto NodeMatchesFilters = [&NodeGuidFilters, &NodeStringFilters](UEdGraphNode* Node)
-    {
-        if (!Node)
-        {
-            return false;
-        }
-
-        if (NodeGuidFilters.Num() == 0 && NodeStringFilters.Num() == 0)
-        {
-            return true;
-        }
-
-        if (NodeGuidFilters.Contains(Node->NodeGuid))
-        {
-            return true;
-        }
-
-        FString GuidString = VibeUENodeIntrospection::NormalizeGuid(Node->NodeGuid);
-        GuidString.ToLowerInline();
-        if (NodeStringFilters.Contains(GuidString))
-        {
-            return true;
-        }
-
-        FString CompactGuid = Node->NodeGuid.ToString(EGuidFormats::Digits);
-        CompactGuid.ToLowerInline();
-        if (NodeStringFilters.Contains(CompactGuid))
-        {
-            return true;
-        }
-
-        FString NodeName = Node->GetName();
-        NodeName.ToLowerInline();
-        if (NodeStringFilters.Contains(NodeName))
-        {
-            return true;
-        }
-
-        FString Title = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
-        Title.ToLowerInline();
-        if (NodeStringFilters.Contains(Title))
-        {
-            return true;
-        }
-
-        FString UniqueId = FString::FromInt(Node->GetUniqueID());
-        UniqueId.ToLowerInline();
-        if (NodeStringFilters.Contains(UniqueId))
-        {
-            return true;
-        }
-
-        return false;
-    };
-
+    // Convert result to JSON using NodeService helper
+    const TArray<FDetailedNodeInfo>& Nodes = DescribeResult.GetValue();
     TArray<TSharedPtr<FJsonValue>> NodesArray;
-    int32 Skipped = 0;
-    int32 Collected = 0;
-
-    for (UEdGraph* Graph : CandidateGraphs)
+    
+    for (const FDetailedNodeInfo& NodeInfo : Nodes)
     {
-        if (!Graph)
-        {
-            continue;
-        }
-
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (!Node)
-            {
-                continue;
-            }
-
-            if (!NodeMatchesFilters(Node))
-            {
-                continue;
-            }
-
-            if (Skipped < Offset)
-            {
-                ++Skipped;
-                continue;
-            }
-
-            if (Limit >= 0 && Collected >= Limit)
-            {
-                break;
-            }
-
-            TSharedPtr<FJsonObject> NodeObject = MakeShared<FJsonObject>();
-            NodeObject->SetStringField(TEXT("node_id"), VibeUENodeIntrospection::NormalizeGuid(Node->NodeGuid));
-            NodeObject->SetStringField(TEXT("display_name"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
-            NodeObject->SetStringField(TEXT("class_path"), Node->GetClass()->GetPathName());
-            NodeObject->SetStringField(TEXT("graph_scope"), VibeUENodeIntrospection::DescribeGraphScope(Blueprint, Graph));
-            NodeObject->SetStringField(TEXT("graph_name"), Graph->GetName());
-            NodeObject->SetStringField(TEXT("graph_guid"), VibeUENodeIntrospection::NormalizeGuid(Graph->GraphGuid));
-
-            TSharedPtr<FJsonObject> Position = MakeShared<FJsonObject>();
-            Position->SetNumberField(TEXT("x"), Node->NodePosX);
-            Position->SetNumberField(TEXT("y"), Node->NodePosY);
-            NodeObject->SetObjectField(TEXT("position"), Position);
-
-            if (!Node->NodeComment.IsEmpty())
-            {
-                NodeObject->SetStringField(TEXT("comment"), Node->NodeComment);
-            }
-
-            NodeObject->SetBoolField(TEXT("is_pure"), VibeUENodeIntrospection::IsPureK2Node(Node));
-            NodeObject->SetStringField(TEXT("exec_state"), VibeUENodeIntrospection::DescribeExecState(Node));
-
-            if (UK2Node* AsK2Node = Cast<UK2Node>(Node))
-            {
-                TSharedPtr<FJsonObject> NodeParams;
-                FString DerivedSpawnerKey;
-                TSharedPtr<FJsonObject> DescriptorJson = VibeUENodeIntrospection::BuildNodeDescriptorJson(Blueprint, AsK2Node, NodeParams, DerivedSpawnerKey);
-
-                if (DescriptorJson.IsValid())
-                {
-                    NodeObject->SetObjectField(TEXT("node_descriptor"), DescriptorJson);
-
-                    if (!DerivedSpawnerKey.IsEmpty())
-                    {
-                        NodeObject->SetStringField(TEXT("spawner_key"), DerivedSpawnerKey);
-                    }
-
-                    if (NodeParams.IsValid())
-                    {
-                        NodeObject->SetObjectField(TEXT("node_params"), NodeParams);
-                    }
-
-                    if (DescriptorJson->HasField(TEXT("function_metadata")))
-                    {
-                        NodeObject->SetObjectField(TEXT("function_metadata"), DescriptorJson->GetObjectField(TEXT("function_metadata")));
-                    }
-
-                    if (DescriptorJson->HasField(TEXT("variable_metadata")))
-                    {
-                        NodeObject->SetObjectField(TEXT("variable_metadata"), DescriptorJson->GetObjectField(TEXT("variable_metadata")));
-                    }
-
-                    if (DescriptorJson->HasField(TEXT("cast_metadata")))
-                    {
-                        NodeObject->SetObjectField(TEXT("cast_metadata"), DescriptorJson->GetObjectField(TEXT("cast_metadata")));
-                    }
-                }
-            }
-
-            if (bIncludePins)
-            {
-                TArray<TSharedPtr<FJsonValue>> PinArrayJson;
-                for (UEdGraphPin* Pin : Node->Pins)
-                {
-                    if (!Pin)
-                    {
-                        continue;
-                    }
-
-                    if (!bIncludeInternalPins && (Pin->bHidden || Pin->bAdvancedView))
-                    {
-                        continue;
-                    }
-
-                    if (bHasPinFilter && !PinNameFilters.Contains(Pin->PinName))
-                    {
-                        continue;
-                    }
-
-                    PinArrayJson.Add(MakeShared<FJsonValueObject>(VibeUENodeIntrospection::BuildPinDescriptor(Blueprint, Node, Pin)));
-                }
-                NodeObject->SetArrayField(TEXT("pins"), PinArrayJson);
-            }
-
-            TSharedPtr<FJsonObject> Metadata = MakeShared<FJsonObject>();
-            Metadata->SetStringField(TEXT("guid"), VibeUENodeIntrospection::NormalizeGuid(Node->NodeGuid));
-            Metadata->SetNumberField(TEXT("node_flags"), static_cast<int64>(Node->GetFlags()));
-            Metadata->SetBoolField(TEXT("has_compiler_message"), Node->bHasCompilerMessage);
-            if (Node->bHasCompilerMessage)
-            {
-                Metadata->SetNumberField(TEXT("compiler_message_type"), Node->ErrorType);
-                Metadata->SetStringField(TEXT("compiler_message"), Node->ErrorMsg);
-            }
-            Metadata->SetBoolField(TEXT("blueprint_has_breakpoints"), FKismetDebugUtilities::BlueprintHasBreakpoints(Blueprint));
-            NodeObject->SetObjectField(TEXT("metadata"), Metadata);
-
-            NodesArray.Add(MakeShared<FJsonValueObject>(NodeObject));
-            ++Collected;
-        }
-
-        if (Limit >= 0 && Collected >= Limit)
-        {
-            break;
-        }
+        NodesArray.Add(MakeShared<FJsonValueObject>(
+            FBlueprintNodeService::ConvertNodeInfoToJson(NodeInfo, bIncludePins)
+        ));
     }
 
+    // Build response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
     Result->SetArrayField(TEXT("nodes"), NodesArray);
 
     TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
-    Stats->SetNumberField(TEXT("graphs_considered"), CandidateGraphs.Num());
     Stats->SetNumberField(TEXT("offset"), Offset);
     if (Limit >= 0)
     {
@@ -2213,60 +1956,20 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
-    Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
-    Params->TryGetBoolField(TEXT("include_macros"), bIncludeMacros);
-    Params->TryGetBoolField(TEXT("include_timeline"), bIncludeTimeline);
-
-    // Find blueprint using DiscoveryService
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
-    }
-    
-    UBlueprint* Blueprint = BlueprintResult.GetValue();
-
-    // TODO: Once all handlers refactored, move this logic to GraphService or NodeService
-    FString ScopeError;
-    UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, ScopeError);
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    TArray<TSharedPtr<FJsonValue>> NodeArray;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
-    {
-        const FString Type = GetNodeTypeString(Node);
-        if (!bIncludeFunctions && Type == TEXT("FunctionCall")) continue;
-        if (!bIncludeMacros && Type == TEXT("MacroInstance")) continue;
-        if (!bIncludeTimeline && Type == TEXT("Timeline")) continue;
-
-        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-        Obj->SetStringField(TEXT("id"), Node->NodeGuid.ToString());
-        Obj->SetStringField(TEXT("node_type"), Type);
-        Obj->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
-
-        TArray<TSharedPtr<FJsonValue>> Pins;
-        for (UEdGraphPin* Pin : Node->Pins)
-        {
-            Pins.Add(MakeShared<FJsonValueObject>(MakePinJson(Pin)));
-        }
-        Obj->SetArrayField(TEXT("pins"), Pins);
-        NodeArray.Add(MakeShared<FJsonValueObject>(Obj));
-    }
-
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetArrayField(TEXT("nodes"), NodeArray);
-    return Result;
+    auto ListResult = GraphService->ListNodes(FindResult.GetValue(), TEXT("event"));
+    return ConvertTResultToJson(ListResult);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)

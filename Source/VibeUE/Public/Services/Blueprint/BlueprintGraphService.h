@@ -25,6 +25,20 @@ struct VIBEUE_API FGraphInfo
 };
 
 /**
+ * Summary information about a node in a graph
+ */
+struct VIBEUE_API FNodeSummary
+{
+    FString NodeId;
+    FString NodeType;
+    FString Title;
+    TArray<TSharedPtr<FJsonObject>> Pins;
+    
+    FNodeSummary()
+    {}
+};
+
+/**
  * Service for Blueprint graph introspection and manipulation
  * Handles graph analysis, summarization, and basic operations
  * Target: ~300 lines max
@@ -42,6 +56,7 @@ public:
     TResult<TArray<FString>> ListCustomEvents(UBlueprint* Blueprint);
     TResult<TArray<FGraphInfo>> GetAllGraphs(UBlueprint* Blueprint);
     TResult<FGraphInfo> GetGraphInfo(UBlueprint* Blueprint, const FString& GraphName);
+    TResult<TArray<FNodeSummary>> ListNodes(UBlueprint* Blueprint, const FString& GraphScope);
     
     // Graph manipulation
     TResult<UEdGraph*> GetGraph(UBlueprint* Blueprint, const FString& GraphName);
@@ -57,4 +72,5 @@ private:
     FString DescribeGraphScope(const UBlueprint* Blueprint, const UEdGraph* Graph) const;
     FString GetNodeTypeString(const UEdGraphNode* Node) const;
     void GatherCustomEvents(UEdGraph* Graph, TArray<UK2Node_CustomEvent*>& OutEvents) const;
+    TSharedPtr<FJsonObject> MakePinJson(const UEdGraphPin* Pin) const;
 };
