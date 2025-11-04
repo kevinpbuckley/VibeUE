@@ -3,6 +3,7 @@
 #include "Services/Blueprint/BlueprintFunctionService.h"
 #include "Services/Blueprint/BlueprintNodeService.h"
 #include "Commands/BlueprintReflection.h"
+#include "Commands/InputKeyEnumerator.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -549,4 +550,71 @@ TResult<TArray<FNodeDescriptor>> FBlueprintReflectionService::DiscoverNodesWithD
 		Descriptors.Num(), *Blueprint->GetName());
 	
 	return TResult<TArray<FNodeDescriptor>>::Success(Descriptors);
+}
+
+// ═══════════════════════════════════════════════════════════
+// Input Key Discovery
+// ═══════════════════════════════════════════════════════════
+
+TResult<FBlueprintReflectionService::FInputKeyResult> FBlueprintReflectionService::GetAllInputKeys(
+	const FString& Category, 
+	bool bIncludeDeprecated)
+{
+	FInputKeyResult Result;
+	Result.Category = Category;
+	
+	// Get input keys using FInputKeyEnumerator
+	TArray<FInputKeyInfo> Keys;
+	
+	if (Category == TEXT("All"))
+	{
+		Result.TotalCount = FInputKeyEnumerator::GetAllInputKeys(Keys, bIncludeDeprecated);
+	}
+	else
+	{
+		Result.TotalCount = FInputKeyEnumerator::GetInputKeysByCategory(Category, Keys);
+	}
+	
+	// Convert to JSON objects
+	for (const FInputKeyInfo& KeyInfo : Keys)
+	{
+		TSharedPtr<FJsonObject> KeyObj = MakeShared<FJsonObject>();
+		KeyObj->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
+		KeyObj->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
+		KeyObj->SetStringField(TEXT("menu_category"), KeyInfo.MenuCategory);
+		KeyObj->SetStringField(TEXT("category"), KeyInfo.Category);
+		KeyObj->SetBoolField(TEXT("is_gamepad"), KeyInfo.bIsGamepadKey);
+		KeyObj->SetBoolField(TEXT("is_mouse"), KeyInfo.bIsMouseButton);
+		KeyObj->SetBoolField(TEXT("is_keyboard"), KeyInfo.bIsKeyboard);
+		KeyObj->SetBoolField(TEXT("is_modifier"), KeyInfo.bIsModifierKey);
+		KeyObj->SetBoolField(TEXT("is_digital"), KeyInfo.bIsDigital);
+		KeyObj->SetBoolField(TEXT("is_analog"), KeyInfo.bIsAnalog);
+		KeyObj->SetBoolField(TEXT("is_bindable"), KeyInfo.bIsBindableInBlueprints);
+		
+		Result.Keys.Add(KeyObj);
+		
+		// Calculate statistics
+		if (KeyInfo.bIsGamepadKey)
+		{
+			Result.GamepadCount++;
+		}
+		else if (KeyInfo.bIsMouseButton)
+		{
+			Result.MouseCount++;
+		}
+		else if (KeyInfo.bIsKeyboard)
+		{
+			Result.KeyboardCount++;
+		}
+		else
+		{
+			Result.OtherCount++;
+		}
+	}
+	
+	UE_LOG(LogBlueprintReflectionService, Log, 
+		TEXT("Discovered %d input keys (Category: %s, Keyboard: %d, Mouse: %d, Gamepad: %d, Other: %d)"),
+		Result.TotalCount, *Category, Result.KeyboardCount, Result.MouseCount, Result.GamepadCount, Result.OtherCount);
+	
+	return TResult<FInputKeyResult>::Success(Result);
 }

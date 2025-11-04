@@ -212,6 +212,35 @@ public:
 	 */
 	TResult<FString> GetClassPath(UClass* Class);
 	
+	/**
+	 * Get all input keys (keyboard, mouse, gamepad)
+	 * @param Category Filter by category ("All", "Keyboard", "Mouse", "Gamepad", etc.)
+	 * @param bIncludeDeprecated Whether to include deprecated keys
+	 * @return Result containing array of input key information with statistics
+	 */
+	struct FInputKeyResult
+	{
+		TArray<TSharedPtr<FJsonObject>> Keys;
+		int32 TotalCount;
+		int32 KeyboardCount;
+		int32 MouseCount;
+		int32 GamepadCount;
+		int32 OtherCount;
+		FString Category;
+		
+		FInputKeyResult()
+			: TotalCount(0)
+			, KeyboardCount(0)
+			, MouseCount(0)
+			, GamepadCount(0)
+			, OtherCount(0)
+			, Category(TEXT("All"))
+		{
+		}
+	};
+	
+	TResult<FInputKeyResult> GetAllInputKeys(const FString& Category = TEXT("All"), bool bIncludeDeprecated = false);
+	
 private:
 	// Helper methods for type cataloging
 	void PopulateParentClassCatalog();

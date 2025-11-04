@@ -5440,74 +5440,47 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAllInputKeys(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
-    FString Category = TEXT("All");
-    Params->TryGetStringField(TEXT("category"), Category);
+	// 1. Extract parameters
+	FString Category = TEXT("All");
+	Params->TryGetStringField(TEXT("category"), Category);
 
-    bool bIncludeDeprecated = false;
-    Params->TryGetBoolField(TEXT("include_deprecated"), bIncludeDeprecated);
+	bool bIncludeDeprecated = false;
+	Params->TryGetBoolField(TEXT("include_deprecated"), bIncludeDeprecated);
 
-    // Get input keys using reflection
-    TArray<FInputKeyInfo> Keys;
-    int32 Count = 0;
-    
-    if (Category == TEXT("All"))
-    {
-        Count = FInputKeyEnumerator::GetAllInputKeys(Keys, bIncludeDeprecated);
-    }
-    else
-    {
-        Count = FInputKeyEnumerator::GetInputKeysByCategory(Category, Keys);
-    }
+	// 2. Call ReflectionService to get input keys
+	auto Result = ReflectionService->GetAllInputKeys(Category, bIncludeDeprecated);
+	
+	if (Result.IsError())
+	{
+		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+	}
 
-    // Build response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetNumberField(TEXT("count"), Count);
-    Result->SetStringField(TEXT("category"), Category);
+	// 3. Build JSON response
+	const auto& InputKeyResult = Result.GetValue();
+	
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetNumberField(TEXT("count"), InputKeyResult.TotalCount);
+	Response->SetStringField(TEXT("category"), InputKeyResult.Category);
 
-    // Build keys array
-    TArray<TSharedPtr<FJsonValue>> KeysArray;
-    for (const FInputKeyInfo& KeyInfo : Keys)
-    {
-        TSharedPtr<FJsonObject> KeyObj = MakeShared<FJsonObject>();
-        KeyObj->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
-        KeyObj->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
-        KeyObj->SetStringField(TEXT("menu_category"), KeyInfo.MenuCategory);
-        KeyObj->SetStringField(TEXT("category"), KeyInfo.Category);
-        KeyObj->SetBoolField(TEXT("is_gamepad"), KeyInfo.bIsGamepadKey);
-        KeyObj->SetBoolField(TEXT("is_mouse"), KeyInfo.bIsMouseButton);
-        KeyObj->SetBoolField(TEXT("is_keyboard"), KeyInfo.bIsKeyboard);
-        KeyObj->SetBoolField(TEXT("is_modifier"), KeyInfo.bIsModifierKey);
-        KeyObj->SetBoolField(TEXT("is_digital"), KeyInfo.bIsDigital);
-        KeyObj->SetBoolField(TEXT("is_analog"), KeyInfo.bIsAnalog);
-        KeyObj->SetBoolField(TEXT("is_bindable"), KeyInfo.bIsBindableInBlueprints);
+	// Convert key objects to JSON values
+	TArray<TSharedPtr<FJsonValue>> KeysArray;
+	for (const auto& KeyObj : InputKeyResult.Keys)
+	{
+		KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
+	}
+	Response->SetArrayField(TEXT("keys"), KeysArray);
 
-        KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
-    }
-    Result->SetArrayField(TEXT("keys"), KeysArray);
+	// Add statistics
+	TSharedPtr<FJsonObject> StatsObj = MakeShared<FJsonObject>();
+	StatsObj->SetNumberField(TEXT("keyboard_keys"), InputKeyResult.KeyboardCount);
+	StatsObj->SetNumberField(TEXT("mouse_keys"), InputKeyResult.MouseCount);
+	StatsObj->SetNumberField(TEXT("gamepad_keys"), InputKeyResult.GamepadCount);
+	StatsObj->SetNumberField(TEXT("other_keys"), InputKeyResult.OtherCount);
+	Response->SetObjectField(TEXT("statistics"), StatsObj);
 
-    // Add category statistics
-    TSharedPtr<FJsonObject> StatsObj = MakeShared<FJsonObject>();
-    int32 KeyboardCount = 0, MouseCount = 0, GamepadCount = 0, OtherCount = 0;
-    for (const FInputKeyInfo& KeyInfo : Keys)
-    {
-        if (KeyInfo.bIsGamepadKey) GamepadCount++;
-        else if (KeyInfo.bIsMouseButton) MouseCount++;
-        else if (KeyInfo.bIsKeyboard) KeyboardCount++;
-        else OtherCount++;
-    }
-    StatsObj->SetNumberField(TEXT("keyboard_keys"), KeyboardCount);
-    StatsObj->SetNumberField(TEXT("mouse_keys"), MouseCount);
-    StatsObj->SetNumberField(TEXT("gamepad_keys"), GamepadCount);
-    StatsObj->SetNumberField(TEXT("other_keys"), OtherCount);
-    Result->SetObjectField(TEXT("statistics"), StatsObj);
-
-    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d input keys via reflection (Category: %s)"), Count, *Category);
-
-    return Result;
+	return Response;
 }
-
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract required parameters
