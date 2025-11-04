@@ -26,6 +26,7 @@ public:
     TResult<UBlueprint*> CreateBlueprint(const FString& Name, const FString& ParentClass);
     TResult<void> CompileBlueprint(UBlueprint* Blueprint);
     TResult<void> ReparentBlueprint(UBlueprint* Blueprint, UClass* NewParentClass);
+    TResult<void> ReparentBlueprint(UBlueprint* Blueprint, const FString& NewParentClassName);
     TResult<void> DeleteBlueprint(UBlueprint* Blueprint);
     
     // Compilation utilities

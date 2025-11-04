@@ -4,6 +4,18 @@
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Commands/BlueprintVariableReflectionServices.h"
 
+// Phase 4: Include Blueprint Services
+#include "Services/Blueprint/BlueprintDiscoveryService.h"
+#include "Services/Blueprint/BlueprintLifecycleService.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Services/Blueprint/BlueprintComponentService.h"
+#include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintGraphService.h"
+#include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
+
 #include "WidgetBlueprint.h"
 #include "Factories/BlueprintFactory.h"
 #include "EdGraphSchema_K2.h"
@@ -42,6 +54,35 @@
 
 FBlueprintCommands::FBlueprintCommands()
 {
+    // Phase 4: Initialize Blueprint Services
+    // Create a shared service context for all services
+    TSharedPtr<FServiceContext> ServiceContext = MakeShared<FServiceContext>();
+    
+    DiscoveryService = MakeShared<FBlueprintDiscoveryService>(ServiceContext);
+    LifecycleService = MakeShared<FBlueprintLifecycleService>(ServiceContext);
+    PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
+    ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
+    FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
+    NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
+    GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
+    ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
+}
+
+// Helper methods for TResult to JSON conversion
+TSharedPtr<FJsonObject> FBlueprintCommands::CreateSuccessResponse() const
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error_code"), ErrorCode);
+    Response->SetStringField(TEXT("error"), ErrorMessage);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -112,186 +153,33 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
-    FString RawBlueprintName;
-    if (!Params->TryGetStringField(TEXT("name"), RawBlueprintName))
+    // Extract required parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'name' parameter"));
     }
-
-    auto NormalizePackagePath = [](FString InPath) -> FString
-    {
-        InPath.ReplaceInline(TEXT("\\"), TEXT("/"));
-        InPath.TrimStartAndEndInline();
-        while (InPath.EndsWith(TEXT("/")))
-        {
-            InPath.LeftChopInline(1);
-        }
-        if (!InPath.StartsWith(TEXT("/")) && !InPath.IsEmpty())
-        {
-            InPath = TEXT("/") + InPath;
-        }
-        return InPath;
-    };
-
-    FString CleanName = RawBlueprintName;
-    CleanName.ReplaceInline(TEXT("\\"), TEXT("/"));
-    CleanName.TrimStartAndEndInline();
-
-    FString PackagePath;
-    FString AssetName;
-
-    if (CleanName.Contains(TEXT("/")))
-    {
-        FString PackagePart = CleanName;
-        FString ObjectName;
-
-        if (CleanName.Contains(TEXT(".")))
-        {
-            CleanName.Split(TEXT("."), &PackagePart, &ObjectName);
-        }
-
-        PackagePart.TrimEndInline();
-        while (PackagePart.EndsWith(TEXT("/")))
-        {
-            PackagePart.LeftChopInline(1);
-        }
-
-        int32 LastSlashIndex = INDEX_NONE;
-        if (PackagePart.FindLastChar(TEXT('/'), LastSlashIndex))
-        {
-            AssetName = ObjectName.IsEmpty() ? PackagePart.Mid(LastSlashIndex + 1) : ObjectName;
-            PackagePath = PackagePart.Left(LastSlashIndex);
-        }
-    }
-
-    if (PackagePath.IsEmpty() || AssetName.IsEmpty())
-    {
-        AssetName = CleanName;
-        if (!Params->TryGetStringField(TEXT("path"), PackagePath))
-        {
-            PackagePath = TEXT("/Game/Blueprints");
-        }
-    }
-
-    PackagePath = NormalizePackagePath(PackagePath);
-
-    if (PackagePath.IsEmpty())
-    {
-        PackagePath = TEXT("/Game/Blueprints");
-    }
-
-    const FString FullAssetPath = PackagePath + TEXT("/") + AssetName;
-
-    // Check if blueprint already exists
-    if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint already exists: %s"), *FullAssetPath));
-    }
-
-    // Create the blueprint factory
-    UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
     
-    // Handle parent class
+    // Extract optional parent class parameter
     FString ParentClass;
     Params->TryGetStringField(TEXT("parent_class"), ParentClass);
     
-    // Default to Actor if no parent class specified
-    UClass* SelectedParentClass = AActor::StaticClass();
-    
-    // Try to find the specified parent class
-    if (!ParentClass.IsEmpty())
+    // Create blueprint using LifecycleService
+    auto CreateResult = LifecycleService->CreateBlueprint(BlueprintName, ParentClass);
+    if (CreateResult.IsError())
     {
-        FString ClassDescriptor = ParentClass;
-        ClassDescriptor.TrimStartAndEndInline();
-        ClassDescriptor.ReplaceInline(TEXT("\\"), TEXT("/"));
-
-        auto TryLoadParentClass = [](const FString& Descriptor) -> UClass*
-        {
-            if (Descriptor.IsEmpty())
-            {
-                return nullptr;
-            }
-
-            // Full path descriptors can be loaded directly.
-            if (Descriptor.Contains(TEXT("/")))
-            {
-                if (UClass* Loaded = LoadObject<UClass>(nullptr, *Descriptor))
-                {
-                    return Loaded;
-                }
-            }
-
-            // Try existing objects in memory.
-            if (UClass* Existing = FindObject<UClass>(ANY_PACKAGE, *Descriptor))
-            {
-                return Existing;
-            }
-
-            // Try loading from common script modules.
-            static const TArray<FString> ModuleHints = {
-                TEXT("Engine"),
-                TEXT("Game"),
-                TEXT("PROTEUS")
-            };
-
-            FString CandidateBase = Descriptor;
-
-            // Generate a handful of permutations (with/without leading 'A').
-            TArray<FString> NamePermutations;
-            NamePermutations.Add(CandidateBase);
-            if (!CandidateBase.StartsWith(TEXT("A")))
-            {
-                NamePermutations.Add(TEXT("A") + CandidateBase);
-            }
-
-            for (const FString& NameVariant : NamePermutations)
-            {
-                if (UClass* ExistingVariant = FindObject<UClass>(ANY_PACKAGE, *NameVariant))
-                {
-                    return ExistingVariant;
-                }
-
-                for (const FString& ModuleName : ModuleHints)
-                {
-                    const FString ModulePath = FString::Printf(TEXT("/Script/%s.%s"), *ModuleName, *NameVariant);
-                    if (UClass* LoadedVariant = LoadObject<UClass>(nullptr, *ModulePath))
-                    {
-                        return LoadedVariant;
-                    }
-                }
-            }
-
-            return nullptr;
-        };
-
-        if (UClass* ResolvedParent = TryLoadParentClass(ClassDescriptor))
-        {
-            SelectedParentClass = ResolvedParent;
-        }
+        return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
     }
     
-    Factory->ParentClass = SelectedParentClass;
-
-    // Create the blueprint
-    UPackage* Package = CreatePackage(*FullAssetPath);
-    UBlueprint* NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(UBlueprint::StaticClass(), Package, *AssetName, RF_Standalone | RF_Public, nullptr, GWarn));
-
-    if (NewBlueprint)
-    {
-        // Notify the asset registry
-        FAssetRegistryModule::AssetCreated(NewBlueprint);
-
-        // Mark the package dirty
-        Package->MarkPackageDirty();
-
-        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-        ResultObj->SetStringField(TEXT("name"), AssetName);
-        ResultObj->SetStringField(TEXT("path"), FullAssetPath);
-        return ResultObj;
-    }
-
-    return FCommonUtils::CreateErrorResponse(TEXT("Failed to create blueprint"));
+    // Get the created blueprint
+    UBlueprint* NewBlueprint = CreateResult.GetValue();
+    
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("name"), NewBlueprint->GetName());
+    Response->SetStringField(TEXT("path"), NewBlueprint->GetPathName());
+    
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddComponentToBlueprint(const TSharedPtr<FJsonObject>& Params)
@@ -870,34 +758,33 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCompileBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
-
-    // Compile the blueprint with safety wrapper and return diagnostics on failure
-    FString CompileError;
-    bool bCompiled = FCommonUtils::SafeCompileBlueprint(Blueprint, CompileError);
-
-    if (!bCompiled)
+    
+    // Compile blueprint using LifecycleService
+    auto CompileResult = LifecycleService->CompileBlueprint(FindResult.GetValue());
+    if (CompileResult.IsError())
     {
-        UE_LOG(LogTemp, Error, TEXT("MCP: CompileBlueprint failed for %s: %s"), *BlueprintName, *CompileError);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Compile failed: %s"), *CompileError));
+        return CreateErrorResponse(CompileResult.GetErrorCode(), CompileResult.GetErrorMessage());
     }
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("name"), BlueprintName);
-    ResultObj->SetBoolField(TEXT("compiled"), true);
-    return ResultObj;
+    
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("name"), BlueprintName);
+    Response->SetBoolField(TEXT("compiled"), true);
+    
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintProperty(const TSharedPtr<FJsonObject>& Params)
@@ -1203,183 +1090,44 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TShare
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    UE_LOG(LogTemp, Log, TEXT("MCP: HandleReparentBlueprint called"));
-    
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        UE_LOG(LogTemp, Error, TEXT("MCP: Missing 'blueprint_name' parameter"));
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString NewParentClass;
     if (!Params->TryGetStringField(TEXT("new_parent_class"), NewParentClass))
     {
-        UE_LOG(LogTemp, Error, TEXT("MCP: Missing 'new_parent_class' parameter"));
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'new_parent_class' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'new_parent_class' parameter"));
     }
 
-    UE_LOG(LogTemp, Log, TEXT("MCP: Attempting to reparent blueprint '%s' to parent class '%s'"), *BlueprintName, *NewParentClass);
-
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        FString ErrorMsg = FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName);
-        UE_LOG(LogTemp, Error, TEXT("MCP: %s"), *ErrorMsg);
-        return FCommonUtils::CreateErrorResponse(ErrorMsg);
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
-
-    // Find the new parent class
-    UClass* NewParentClassObj = nullptr;
     
-    // Try common engine classes first
-    if (NewParentClass == TEXT("Actor") || NewParentClass == TEXT("AActor"))
+    UBlueprint* Blueprint = FindResult.GetValue();
+    FString OldParentName = Blueprint->ParentClass ? Blueprint->ParentClass->GetName() : TEXT("None");
+    
+    // Reparent blueprint using LifecycleService
+    auto ReparentResult = LifecycleService->ReparentBlueprint(Blueprint, NewParentClass);
+    if (ReparentResult.IsError())
     {
-        NewParentClassObj = AActor::StaticClass();
+        return CreateErrorResponse(ReparentResult.GetErrorCode(), ReparentResult.GetErrorMessage());
     }
-    else if (NewParentClass == TEXT("Pawn") || NewParentClass == TEXT("APawn"))
-    {
-        NewParentClassObj = APawn::StaticClass();
-    }
-    else if (NewParentClass == TEXT("UserWidget") || NewParentClass == TEXT("UUserWidget"))
-    {
-        // Find UUserWidget class for UMG widgets
-        NewParentClassObj = FindObject<UClass>(nullptr, TEXT("UserWidget"));
-        if (!NewParentClassObj)
-        {
-            NewParentClassObj = LoadClass<UObject>(nullptr, TEXT("/Script/UMG.UserWidget"));
-        }
-    }
-    else
-    {
-        // Try to load the class by name with several fallbacks.
-        FString ClassName = NewParentClass;
-
-        // If a full path was provided (/Script/Module.Class) try loading directly
-        if (ClassName.StartsWith(TEXT("/Script/")) || ClassName.Contains(TEXT(".")))
-        {
-            NewParentClassObj = FindObject<UClass>(nullptr, *ClassName);
-            if (!NewParentClassObj)
-            {
-                // Attempt LoadClass with the provided path
-                NewParentClassObj = LoadClass<UObject>(nullptr, *ClassName);
-            }
-        }
-
-        // Try exact class name in loaded objects (may be C++ UCLASS)
-        if (!NewParentClassObj)
-        {
-            NewParentClassObj = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("Blueprint parent class search"));
-        }
-
-        // Add 'U'/'A' prefixes if missing and try common script modules (Engine and project module)
-        if (!NewParentClassObj)
-        {
-            FString ProjectModuleName = FApp::GetProjectName();
-
-            TArray<FString> TryPrefixes = { TEXT("U"), TEXT("A") };
-            TArray<FString> TryModules = { TEXT("Engine"), ProjectModuleName };
-
-            for (const FString& Prefix : TryPrefixes)
-            {
-                FString Prefixed = ClassName;
-                if (!ClassName.StartsWith(Prefix))
-                {
-                    Prefixed = Prefix + ClassName;
-                }
-
-                for (const FString& Module : TryModules)
-                {
-                    FString Path = FString::Printf(TEXT("/Script/%s.%s"), *Module, *Prefixed);
-                    NewParentClassObj = FindObject<UClass>(nullptr, *Path);
-                    if (!NewParentClassObj)
-                    {
-                        NewParentClassObj = LoadClass<UObject>(nullptr, *Path);
-                    }
-
-                    if (NewParentClassObj)
-                    {
-                        break;
-                    }
-                }
-
-                if (NewParentClassObj)
-                {
-                    break;
-                }
-            }
-        }
-
-        // Final fallback: attempt to find any loaded UClass with that short name
-        if (!NewParentClassObj)
-        {
-            for (TObjectIterator<UClass> It; It; ++It)
-            {
-                if (It->GetName() == ClassName || It->GetName() == (TEXT("U") + ClassName) || It->GetName() == (TEXT("A") + ClassName))
-                {
-                    NewParentClassObj = *It;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!NewParentClassObj)
-    {
-        FString ErrorMsg = FString::Printf(TEXT("Parent class not found: %s"), *NewParentClass);
-        UE_LOG(LogTemp, Error, TEXT("MCP: %s"), *ErrorMsg);
-        return FCommonUtils::CreateErrorResponse(ErrorMsg);
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("MCP: Found new parent class: %s"), *NewParentClassObj->GetName());
-
-    // Get the old parent class for logging
-    UClass* OldParentClass = Blueprint->ParentClass;
-    FString OldParentName = OldParentClass ? OldParentClass->GetName() : TEXT("None");
-
-    // Perform the reparenting
-    try
-    {
-        // Set the new parent class
-        Blueprint->ParentClass = NewParentClassObj;
-        
-        // Mark the blueprint as modified
-        FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-        
-        // Refresh the blueprint to update inheritance
-        FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
-        
-        // Recompile the blueprint
-        FBlueprintEditorUtils::RefreshVariables(Blueprint);
-        FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::None);
-        
-        UE_LOG(LogTemp, Log, TEXT("MCP: Successfully reparented blueprint '%s' from '%s' to '%s'"), 
-               *BlueprintName, *OldParentName, *NewParentClassObj->GetName());
-
-        // Create success response
-        TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();
-        ResponseObj->SetStringField(TEXT("blueprint_name"), BlueprintName);
-        ResponseObj->SetStringField(TEXT("old_parent_class"), OldParentName);
-        ResponseObj->SetStringField(TEXT("new_parent_class"), NewParentClassObj->GetName());
-        ResponseObj->SetBoolField(TEXT("success"), true);
-        ResponseObj->SetStringField(TEXT("message"), TEXT("Blueprint reparented successfully"));
-        
-        return ResponseObj;
-    }
-    catch (const std::exception& e)
-    {
-        FString ErrorMsg = FString::Printf(TEXT("Error during reparenting: %s"), UTF8_TO_TCHAR(e.what()));
-        UE_LOG(LogTemp, Error, TEXT("MCP: %s"), *ErrorMsg);
-        return FCommonUtils::CreateErrorResponse(ErrorMsg);
-    }
-    catch (...)
-    {
-        FString ErrorMsg = TEXT("Unknown error during reparenting");
-        UE_LOG(LogTemp, Error, TEXT("MCP: %s"), *ErrorMsg);
-        return FCommonUtils::CreateErrorResponse(ErrorMsg);
-    }
+    
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("old_parent_class"), OldParentName);
+    Response->SetStringField(TEXT("new_parent_class"), Blueprint->ParentClass->GetName());
+    Response->SetStringField(TEXT("message"), TEXT("Blueprint reparented successfully"));
+    
+    return Response;
 } 
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
