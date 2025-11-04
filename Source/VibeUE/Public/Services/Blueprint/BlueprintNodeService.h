@@ -233,6 +233,19 @@ struct VIBEUE_API FNodeDeletionInfo
 };
 
 /**
+ * Information about deleted event node with safety metadata
+ */
+struct VIBEUE_API FEventNodeDeletionInfo
+{
+    FString EventName;
+    FString EventType; // "Custom" or "Engine"
+    FString GraphName;
+    TArray<FPinConnectionInfo> ConnectedNodes;
+    bool bWasProtectedEvent;
+    bool bIsCustomEvent;
+};
+
+/**
  * Detailed information about a blueprint node with pins (used by DescribeNode from PR #115)
  */
 struct VIBEUE_API FDetailedNodeInfo
@@ -392,6 +405,7 @@ public:
                                  const FString& NodeType, const FVector2D& Position);
     TResult<FString> CreateNodeFromSpawnerKey(UBlueprint* Blueprint, const FNodeCreationParams& Params);
     TResult<FNodeDeletionInfo> DeleteNode(UBlueprint* Blueprint, const FString& NodeId, bool bDisconnectPins = true);
+    TResult<FEventNodeDeletionInfo> DeleteEventNode(UBlueprint* Blueprint, const FString& EventName, bool bCustomEventsOnly = true);
     TResult<void> MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position);
     
     // Specialized node creation

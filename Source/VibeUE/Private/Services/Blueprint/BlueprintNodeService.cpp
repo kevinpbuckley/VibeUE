@@ -452,6 +452,139 @@ TResult<FNodeDeletionInfo> FBlueprintNodeService::DeleteNode(UBlueprint* Bluepri
     return TResult<FNodeDeletionInfo>::Success(DeletionInfo);
 }
 
+TResult<FEventNodeDeletionInfo> FBlueprintNodeService::DeleteEventNode(UBlueprint* Blueprint, const FString& EventName, bool bCustomEventsOnly)
+{
+    if (!Blueprint)
+    {
+        return TResult<FEventNodeDeletionInfo>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(EventName, TEXT("EventName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FEventNodeDeletionInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the Event Graph
+    UEdGraph* EventGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph && Graph->GetFName() == "EventGraph")
+        {
+            EventGraph = Graph;
+            break;
+        }
+    }
+    
+    if (!EventGraph)
+    {
+        return TResult<FEventNodeDeletionInfo>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("EventGraph not found in Blueprint"));
+    }
+    
+    // Find the event node
+    UK2Node_Event* EventNode = nullptr;
+    UK2Node_CustomEvent* CustomEventNode = nullptr;
+    FString EventType = TEXT("Unknown");
+    
+    for (UEdGraphNode* Node : EventGraph->Nodes)
+    {
+        if (UK2Node_Event* Event = Cast<UK2Node_Event>(Node))
+        {
+            FString NodeEventName = Event->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+            if (NodeEventName.Contains(EventName) || Event->EventReference.GetMemberName().ToString() == EventName)
+            {
+                EventNode = Event;
+                
+                // Check if it's a custom event
+                if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Event))
+                {
+                    CustomEventNode = CustomEvent;
+                    EventType = TEXT("Custom");
+                }
+                else
+                {
+                    EventType = TEXT("Engine");
+                }
+                break;
+            }
+        }
+    }
+    
+    if (!EventNode)
+    {
+        return TResult<FEventNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Event '%s' not found in Blueprint"), *EventName));
+    }
+    
+    // Safety check: Protect engine events if safety is enabled
+    if (bCustomEventsOnly && EventType == TEXT("Engine"))
+    {
+        // Check for protected engine events
+        FString EventMemberName = EventNode->EventReference.GetMemberName().ToString();
+        if (EventMemberName == TEXT("ReceiveBeginPlay") || 
+            EventMemberName == TEXT("ReceiveConstruct") || 
+            EventMemberName == TEXT("ReceiveTick") ||
+            EventMemberName == TEXT("ReceiveEndPlay") ||
+            EventMemberName.StartsWith(TEXT("InputAction")) ||
+            EventMemberName.StartsWith(TEXT("InputAxis")))
+        {
+            return TResult<FEventNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, 
+                FString::Printf(TEXT("Cannot delete protected engine event '%s'. Use bCustomEventsOnly=false to override (not recommended)"), 
+                *EventName));
+        }
+    }
+    
+    // Safety check: Can the user delete this node?
+    if (!EventNode->CanUserDeleteNode())
+    {
+        return TResult<FEventNodeDeletionInfo>::Error(VibeUE::ErrorCodes::NODE_DELETE_FAILED, 
+            FString::Printf(TEXT("Event node '%s' cannot be deleted (protected)"), *EventName));
+    }
+    
+    // Collect information about connected nodes
+    FEventNodeDeletionInfo DeletionInfo;
+    DeletionInfo.EventName = EventName;
+    DeletionInfo.EventType = EventType;
+    DeletionInfo.GraphName = EventGraph->GetName();
+    DeletionInfo.bWasProtectedEvent = false; // If we got here, it wasn't protected
+    DeletionInfo.bIsCustomEvent = (EventType == TEXT("Custom"));
+    
+    for (UEdGraphPin* Pin : EventNode->Pins)
+    {
+        if (Pin && Pin->LinkedTo.Num() > 0)
+        {
+            for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+            {
+                if (LinkedPin && LinkedPin->GetOwningNode())
+                {
+                    FPinConnectionInfo ConnInfo;
+                    ConnInfo.SourceNodeId = EventNode->NodeGuid.ToString();
+                    ConnInfo.SourcePinName = Pin->PinName.ToString();
+                    ConnInfo.TargetNodeId = LinkedPin->GetOwningNode()->NodeGuid.ToString();
+                    ConnInfo.TargetPinName = LinkedPin->PinName.ToString();
+                    ConnInfo.PinType = Pin->PinType.PinCategory.ToString();
+                    DeletionInfo.ConnectedNodes.Add(ConnInfo);
+                }
+            }
+            
+            // Break all connections
+            Pin->BreakAllPinLinks();
+        }
+    }
+    
+    // Remove the event node from the graph
+    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteEventNode", "Delete Event Node"));
+    EventGraph->Modify();
+    EventGraph->RemoveNode(EventNode, true);
+    EventGraph->NotifyGraphChanged();
+    
+    // Mark Blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    
+    return TResult<FEventNodeDeletionInfo>::Success(DeletionInfo);
+}
+
 TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FString& NodeId, const FVector2D& Position)
 {
     if (!Blueprint) { return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }
