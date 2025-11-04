@@ -11,21 +11,10 @@
 #include "Services/UMG/WidgetEventService.h"
 #include "Services/UMG/WidgetReflectionService.h"
 #include "WidgetBlueprint.h"
-#include "WidgetBlueprintFactory.h"
 #include "Components/Widget.h"
-#include "Components/TextBlock.h"
-#include "Components/Button.h"
-#include "Components/CanvasPanel.h"
-#include "Components/CanvasPanelSlot.h"
 #include "Components/WidgetSwitcher.h"
 #include "Blueprint/WidgetTree.h"
-#include "Blueprint/UserWidget.h"
 #include "JsonObjectConverter.h"
-#include "EditorAssetLibrary.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Kismet2/BlueprintEditorUtils.h"
-#include "Kismet2/KismetEditorUtilities.h"
-#include "UObject/UObjectGlobals.h"
 
 // ============================================================================
 // Constructor
@@ -194,57 +183,18 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
 	FString PackagePath = TEXT("/Game/UI/");
 	Params->TryGetStringField(TEXT("path"), PackagePath);
 	
-	if (!PackagePath.EndsWith(TEXT("/")))
+	TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> Result = 
+		LifecycleService->CreateWidget(BlueprintName, PackagePath);
+	
+	if (Result.IsError())
 	{
-		PackagePath += TEXT("/");
+		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
 	}
 	
-	FString AssetName = BlueprintName;
-	FString FullPath = PackagePath + AssetName;
-
-	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
-	{
-		return CreateErrorResponse(TEXT("ALREADY_EXISTS"), 
-			FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *BlueprintName));
-	}
-
-	UPackage* Package = CreatePackage(*FullPath);
-	if (!Package)
-	{
-		return CreateErrorResponse(TEXT("CREATE_FAILED"), TEXT("Failed to create package"));
-	}
-
-	UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-	Factory->ParentClass = UUserWidget::StaticClass();
-	
-	UObject* NewAsset = Factory->FactoryCreateNew(
-		UWidgetBlueprint::StaticClass(),
-		Package,
-		FName(*AssetName),
-		RF_Standalone | RF_Public,
-		nullptr,
-		GWarn
-	);
-
-	UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
-	if (!WidgetBlueprint)
-	{
-		return CreateErrorResponse(TEXT("CREATE_FAILED"), TEXT("Failed to create Widget Blueprint"));
-	}
-
-	if (!WidgetBlueprint->WidgetTree->RootWidget)
-	{
-		UCanvasPanel* RootCanvas = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
-		WidgetBlueprint->WidgetTree->RootWidget = RootCanvas;
-	}
-
-	Package->MarkPackageDirty();
-	FAssetRegistryModule::AssetCreated(WidgetBlueprint);
-	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-
+	const FWidgetInfo& Info = Result.GetValue().Value;
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetStringField(TEXT("name"), BlueprintName);
-	Data->SetStringField(TEXT("path"), FullPath);
+	Data->SetStringField(TEXT("name"), Info.Name);
+	Data->SetStringField(TEXT("path"), Info.Path);
 	return CreateSuccessResponse(Data);
 }
 
@@ -267,63 +217,34 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleDeleteWidgetBlueprint(const TSharedP
 
 	UWidgetBlueprint* WidgetBlueprint = WidgetResult.GetValue();
 	FString AssetPath = WidgetBlueprint->GetPathName();
-
-	TArray<TSharedPtr<FJsonValue>> ReferencesFound;
+	
 	int32 ReferenceCount = 0;
-
-	if (CheckReferences)
-	{
-		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-		TArray<FName> PackageNamesReferencingAsset;
-		AssetRegistry.GetReferencers(WidgetBlueprint->GetPackage()->GetFName(), PackageNamesReferencingAsset);
-
-		for (const FName& PackageName : PackageNamesReferencingAsset)
-		{
-			if (PackageName == WidgetBlueprint->GetPackage()->GetFName())
-			{
-				continue;
-			}
-
-			TSharedPtr<FJsonObject> RefInfo = MakeShareable(new FJsonObject);
-			RefInfo->SetStringField(TEXT("package_name"), PackageName.ToString());
-			RefInfo->SetStringField(TEXT("reference_type"), TEXT("Asset Registry"));
-			ReferencesFound.Add(MakeShareable(new FJsonValueObject(RefInfo)));
-			ReferenceCount++;
-		}
-	}
-
-	TArray<FString> AssetsToDelete;
-	AssetsToDelete.Add(AssetPath);
-
-	bool DeletionSuccess = UEditorAssetLibrary::DeleteAsset(AssetsToDelete[0]);
+	TResult<void> DeleteResult = LifecycleService->DeleteWidget(
+		WidgetBlueprint, CheckReferences, &ReferenceCount);
 
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("widget_name"), WidgetName);
 	Data->SetStringField(TEXT("asset_path"), AssetPath);
-	Data->SetArrayField(TEXT("references_found"), ReferencesFound);
 	Data->SetNumberField(TEXT("reference_count"), ReferenceCount);
-	Data->SetBoolField(TEXT("deletion_blocked"), !DeletionSuccess);
 	Data->SetBoolField(TEXT("references_checked"), CheckReferences);
-
-	if (DeletionSuccess)
+	
+	if (DeleteResult.IsError())
 	{
-		Data->SetStringField(TEXT("message"), FString::Printf(
-			TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName));
+		Data->SetBoolField(TEXT("deletion_blocked"), true);
+		return CreateErrorResponse(DeleteResult.GetErrorCode(), DeleteResult.GetErrorMessage());
+	}
 
-		if (ReferenceCount > 0)
-		{
-			Data->SetStringField(TEXT("warning"), FString::Printf(
-				TEXT("Widget was referenced by %d other assets - those references may now be broken"), ReferenceCount));
-		}
-		return CreateSuccessResponse(Data);
-	}
-	else
+	Data->SetBoolField(TEXT("deletion_blocked"), false);
+	Data->SetStringField(TEXT("message"), FString::Printf(
+		TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName));
+
+	if (ReferenceCount > 0)
 	{
-		return CreateErrorResponse(TEXT("DELETE_FAILED"), 
-			TEXT("Failed to delete Widget Blueprint"));
+		Data->SetStringField(TEXT("warning"), FString::Printf(
+			TEXT("Widget was referenced by %d other assets - those references may now be broken"), ReferenceCount));
 	}
+	
+	return CreateSuccessResponse(Data);
 }
 
 // ============================================================================
@@ -1028,7 +949,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcher(const TSharedPtr<F
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName, SwitcherName, ChildWidgetName;
-	int32 SlotIndex = 0;
+	int32 SlotIndex = -1;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName) ||
 		!Params->TryGetStringField(TEXT("switcher_name"), SwitcherName) ||
@@ -1045,55 +966,42 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedP
 		return CreateErrorResponse(WidgetResult.GetErrorCode(), WidgetResult.GetErrorMessage());
 	}
 	
+	int32 ActualSlotIndex = 0;
+	TResult<void> AddSlotResult = ComponentService->AddWidgetSwitcherSlot(
+		WidgetResult.GetValue(), SwitcherName, ChildWidgetName, SlotIndex, &ActualSlotIndex);
+	
+	if (AddSlotResult.IsError())
+	{
+		return CreateErrorResponse(AddSlotResult.GetErrorCode(), AddSlotResult.GetErrorMessage());
+	}
+	
+	// Get the switcher to report total slots
 	UWidgetBlueprint* WidgetBlueprint = WidgetResult.GetValue();
 	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
-	if (!WidgetTree)
-	{
-		return CreateErrorResponse(TEXT("INVALID_STATE"), TEXT("Widget Blueprint has no WidgetTree"));
-	}
+	int32 TotalSlots = 0;
 	
-	// Find the widget switcher and child widget
-	UWidgetSwitcher* WidgetSwitcher = nullptr;
-	UWidget* ChildWidget = nullptr;
-	TArray<UWidget*> AllWidgets;
-	WidgetTree->GetAllWidgets(AllWidgets);
-	
-	for (UWidget* Widget : AllWidgets)
+	if (WidgetTree)
 	{
-		if (Widget && Widget->GetName() == SwitcherName && Widget->IsA<UWidgetSwitcher>())
+		TArray<UWidget*> AllWidgets;
+		WidgetTree->GetAllWidgets(AllWidgets);
+		
+		for (UWidget* Widget : AllWidgets)
 		{
-			WidgetSwitcher = Cast<UWidgetSwitcher>(Widget);
-		}
-		if (Widget && Widget->GetName() == ChildWidgetName)
-		{
-			ChildWidget = Widget;
+			if (Widget && Widget->GetName() == SwitcherName && Widget->IsA<UWidgetSwitcher>())
+			{
+				UWidgetSwitcher* WidgetSwitcher = Cast<UWidgetSwitcher>(Widget);
+				TotalSlots = WidgetSwitcher->GetNumWidgets();
+				break;
+			}
 		}
 	}
-	
-	if (!WidgetSwitcher)
-	{
-		return CreateErrorResponse(TEXT("NOT_FOUND"), 
-			FString::Printf(TEXT("Widget Switcher '%s' not found"), *SwitcherName));
-	}
-	
-	if (!ChildWidget)
-	{
-		return CreateErrorResponse(TEXT("NOT_FOUND"), 
-			FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
-	}
-	
-	// Add child to switcher
-	WidgetSwitcher->AddChild(ChildWidget);
-	SlotIndex = WidgetSwitcher->GetNumWidgets() - 1;
-	
-	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
 	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
 	Data->SetStringField(TEXT("switcher_name"), SwitcherName);
 	Data->SetStringField(TEXT("child_widget_name"), ChildWidgetName);
-	Data->SetNumberField(TEXT("slot_index"), SlotIndex);
-	Data->SetNumberField(TEXT("total_slots"), WidgetSwitcher->GetNumWidgets());
+	Data->SetNumberField(TEXT("slot_index"), ActualSlotIndex);
+	Data->SetNumberField(TEXT("total_slots"), TotalSlots);
 	
 	return CreateSuccessResponse(Data);
 }

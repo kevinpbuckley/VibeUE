@@ -16,6 +16,7 @@
 #include "Components/ScrollBox.h"
 #include "Components/Border.h"
 #include "Components/SizeBox.h"
+#include "Components/WidgetSwitcher.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Core/ErrorCodes.h"
@@ -559,4 +560,67 @@ UClass* FWidgetComponentService::GetWidgetClass(const FString& ComponentType) co
     }
 
     return FoundClass;
+}
+
+TResult<void> FWidgetComponentService::AddWidgetSwitcherSlot(
+    UWidgetBlueprint* Widget,
+    const FString& SwitcherName,
+    const FString& ChildWidgetName,
+    int32 SlotIndex,
+    int32* OutActualSlotIndex)
+{
+    // Validate inputs
+    auto ValidationResult = ValidateWidget(Widget);
+    if (ValidationResult.IsError())
+    {
+        return ValidationResult;
+    }
+
+    if (!Widget->WidgetTree)
+    {
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            TEXT("Widget Blueprint has no WidgetTree"));
+    }
+
+    // Find the widget switcher
+    UWidget* SwitcherWidget = FindComponent(Widget->WidgetTree, SwitcherName);
+    if (!SwitcherWidget)
+    {
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Widget Switcher '%s' not found"), *SwitcherName));
+    }
+
+    UWidgetSwitcher* WidgetSwitcher = Cast<UWidgetSwitcher>(SwitcherWidget);
+    if (!WidgetSwitcher)
+    {
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            FString::Printf(TEXT("Component '%s' is not a WidgetSwitcher"), *SwitcherName));
+    }
+
+    // Find the child widget
+    UWidget* ChildWidget = FindComponent(Widget->WidgetTree, ChildWidgetName);
+    if (!ChildWidget)
+    {
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
+    }
+
+    // Add child to switcher
+    WidgetSwitcher->AddChild(ChildWidget);
+    int32 ActualSlotIndex = WidgetSwitcher->GetNumWidgets() - 1;
+
+    // Set output parameter if provided
+    if (OutActualSlotIndex)
+    {
+        *OutActualSlotIndex = ActualSlotIndex;
+    }
+
+    // Mark blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Widget);
+
+    return TResult<void>::Success();
 }
