@@ -2255,3 +2255,302 @@ TResult<FPinConnectionBatchResult> FBlueprintNodeService::ConnectPinsBatch(UBlue
 
     return TResult<FPinConnectionBatchResult>::Success(BatchResult);
 }
+
+TResult<FPinDisconnectionResult> FBlueprintNodeService::DisconnectPins(UBlueprint* Blueprint, const FPinDisconnectionRequest& Request)
+{
+    // Validate Blueprint
+    auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+    if (ValidationResult.IsError())
+    {
+        FPinDisconnectionResult Result;
+        Result.bSuccess = false;
+        Result.ErrorCode = ValidationResult.GetErrorCode();
+        Result.ErrorMessage = ValidationResult.GetErrorMessage();
+        return TResult<FPinDisconnectionResult>::Success(Result);
+    }
+
+    FPinDisconnectionResult Result;
+    Result.Index = Request.Index;
+    Result.SourcePinIdentifier = Request.SourcePinIdentifier;
+    Result.TargetPinIdentifier = Request.TargetPinIdentifier;
+    
+    // For now, call the batch method with a single request
+    TArray<FPinDisconnectionRequest> Requests;
+    Requests.Add(Request);
+    
+    auto BatchResult = DisconnectPinsBatch(Blueprint, Requests);
+    if (BatchResult.IsError())
+    {
+        Result.bSuccess = false;
+        Result.ErrorCode = BatchResult.GetErrorCode();
+        Result.ErrorMessage = BatchResult.GetErrorMessage();
+        return TResult<FPinDisconnectionResult>::Success(Result);
+    }
+    
+    const FPinDisconnectionBatchResult& Batch = BatchResult.GetValue();
+    if (Batch.Results.Num() > 0)
+    {
+        Result = Batch.Results[0];
+    }
+    else
+    {
+        Result.bSuccess = false;
+        Result.ErrorCode = VibeUE::ErrorCodes::OPERATION_FAILED;
+        Result.ErrorMessage = TEXT("Batch disconnection returned no results");
+    }
+    
+    return TResult<FPinDisconnectionResult>::Success(Result);
+}
+
+TResult<FPinDisconnectionBatchResult> FBlueprintNodeService::DisconnectPinsBatch(UBlueprint* Blueprint, const TArray<FPinDisconnectionRequest>& Requests)
+{
+    // Validate Blueprint
+    auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FPinDisconnectionBatchResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    // Get all graphs for pin resolution
+    TArray<UEdGraph*> CandidateGraphs;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph) CandidateGraphs.Add(Graph);
+    }
+    for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+    {
+        if (Graph) CandidateGraphs.Add(Graph);
+    }
+    if (CandidateGraphs.Num() == 0)
+    {
+        return TResult<FPinDisconnectionBatchResult>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NO_EVENT_GRAPH,
+            TEXT("No graphs available for disconnection"));
+    }
+
+    FPinDisconnectionBatchResult BatchResult;
+    TSet<UEdGraph*> ModifiedGraphs;
+    bool bBlueprintModified = false;
+
+    // Helper: Summarize broken links
+    auto SummarizeLinks = [](UEdGraphPin* Pin) -> TArray<FPinLinkBreakInfo>
+    {
+        TArray<FPinLinkBreakInfo> Result;
+        if (!Pin) return Result;
+        
+        for (UEdGraphPin* Linked : Pin->LinkedTo)
+        {
+            if (!Linked) continue;
+            
+            FPinLinkBreakInfo LinkInfo;
+            if (UEdGraphNode* LinkedNode = Linked->GetOwningNode())
+            {
+                LinkInfo.OtherNodeId = LinkedNode->NodeGuid.ToString();
+                LinkInfo.OtherNodeClass = LinkedNode->GetClass()->GetPathName();
+            }
+            LinkInfo.OtherPinId = FString::Printf(TEXT("%s:%s"), 
+                *Linked->GetOwningNodeUnchecked()->NodeGuid.ToString(), 
+                *Linked->PinName.ToString());
+            LinkInfo.OtherPinName = Linked->PinName.ToString();
+            LinkInfo.PinRole = (Pin->Direction == EGPD_Output) ? TEXT("source") : TEXT("target");
+            Result.Add(LinkInfo);
+        }
+        
+        return Result;
+    };
+
+    // Process each disconnection request
+    for (int32 RequestIndex = 0; RequestIndex < Requests.Num(); ++RequestIndex)
+    {
+        const FPinDisconnectionRequest& Request = Requests[RequestIndex];
+        FPinDisconnectionResult Result;
+        Result.Index = RequestIndex;
+        Result.SourcePinIdentifier = Request.SourcePinIdentifier;
+        Result.TargetPinIdentifier = Request.TargetPinIdentifier;
+
+        // Resolve source pin
+        UEdGraphPin* SourcePin = Request.SourcePin;
+        UEdGraphNode* SourceNode = Request.SourceNode;
+        UEdGraph* SourceGraph = Request.SourceGraph;
+        
+        if (!SourcePin && Request.SourcePinIdentifier.IsEmpty())
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::PARAM_MISSING;
+            Result.ErrorMessage = TEXT("Source pin identifier is missing");
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // If not already resolved, try to find by identifier
+        if (!SourcePin && !Request.SourcePinIdentifier.IsEmpty())
+        {
+            // Parse identifier: "NodeGuid:PinName"
+            FString NodeIdPart, PinNamePart;
+            if (Request.SourcePinIdentifier.Split(TEXT(":"), &NodeIdPart, &PinNamePart))
+            {
+                FGuid NodeGuid;
+                if (FGuid::Parse(NodeIdPart, NodeGuid))
+                {
+                    for (UEdGraph* Graph : CandidateGraphs)
+                    {
+                        if (!Graph) continue;
+                        
+                        for (UEdGraphNode* Node : Graph->Nodes)
+                        {
+                            if (Node && Node->NodeGuid == NodeGuid)
+                            {
+                                SourceNode = Node;
+                                SourceGraph = Graph;
+                                
+                                // Find pin by name
+                                for (UEdGraphPin* Pin : Node->Pins)
+                                {
+                                    if (Pin && Pin->PinName.ToString().Equals(PinNamePart, ESearchCase::IgnoreCase))
+                                    {
+                                        SourcePin = Pin;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (SourcePin) break;
+                    }
+                }
+            }
+        }
+
+        if (!SourcePin)
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::NODE_NOT_FOUND;
+            Result.ErrorMessage = FString::Printf(TEXT("Source pin not found: %s"), *Request.SourcePinIdentifier);
+            BatchResult.Results.Add(Result);
+            continue;
+        }
+
+        // Resolve target pin (optional - if provided, break only specific link)
+        UEdGraphPin* TargetPin = Request.TargetPin;
+        
+        if (!TargetPin && !Request.TargetPinIdentifier.IsEmpty())
+        {
+            // Parse identifier: "NodeGuid:PinName"
+            FString NodeIdPart, PinNamePart;
+            if (Request.TargetPinIdentifier.Split(TEXT(":"), &NodeIdPart, &PinNamePart))
+            {
+                FGuid NodeGuid;
+                if (FGuid::Parse(NodeIdPart, NodeGuid))
+                {
+                    for (UEdGraph* Graph : CandidateGraphs)
+                    {
+                        if (!Graph) continue;
+                        
+                        for (UEdGraphNode* Node : Graph->Nodes)
+                        {
+                            if (Node && Node->NodeGuid == NodeGuid)
+                            {
+                                // Find pin by name
+                                for (UEdGraphPin* Pin : Node->Pins)
+                                {
+                                    if (Pin && Pin->PinName.ToString().Equals(PinNamePart, ESearchCase::IgnoreCase))
+                                    {
+                                        TargetPin = Pin;
+                                        break;
+                                    }
+                                }
+                                break;
+                            }
+                        }
+                        if (TargetPin) break;
+                    }
+                }
+            }
+        }
+
+        // Capture links before breaking
+        TArray<FPinLinkBreakInfo> BrokenLinks = SummarizeLinks(SourcePin);
+        Result.PinIdentifier = Request.SourcePinIdentifier;
+
+        // Start transaction
+        FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DisconnectPinsTransaction", "MCP Disconnect Blueprint Pins"));
+        if (SourceGraph)
+        {
+            SourceGraph->Modify();
+        }
+        if (SourceNode)
+        {
+            SourceNode->Modify();
+        }
+        SourcePin->Modify();
+
+        // Break connections
+        if (TargetPin)
+        {
+            // Break specific link
+            if (SourcePin->LinkedTo.Contains(TargetPin))
+            {
+                SourcePin->BreakLinkTo(TargetPin);
+                Result.bSuccess = true;
+                Result.BrokenLinks = BrokenLinks;
+                ModifiedGraphs.Add(SourceGraph);
+                bBlueprintModified = true;
+            }
+            else
+            {
+                Result.bSuccess = false;
+                Result.ErrorCode = VibeUE::ErrorCodes::PIN_NOT_CONNECTED;
+                Result.ErrorMessage = TEXT("Pins are not connected");
+            }
+        }
+        else if (Request.bBreakAll || Request.TargetPinIdentifier.IsEmpty())
+        {
+            // Break all links
+            if (SourcePin->LinkedTo.Num() > 0)
+            {
+                SourcePin->BreakAllPinLinks();
+                Result.bSuccess = true;
+                Result.BrokenLinks = BrokenLinks;
+                ModifiedGraphs.Add(SourceGraph);
+                bBlueprintModified = true;
+            }
+            else
+            {
+                Result.bSuccess = true; // No-op but not an error
+                Result.BrokenLinks.Empty();
+            }
+        }
+        else
+        {
+            Result.bSuccess = false;
+            Result.ErrorCode = VibeUE::ErrorCodes::NODE_NOT_FOUND;
+            Result.ErrorMessage = FString::Printf(TEXT("Target pin not found: %s"), *Request.TargetPinIdentifier);
+        }
+
+        Result.bGraphModified = Result.bSuccess && Result.BrokenLinks.Num() > 0;
+        Result.ModifiedGraph = SourceGraph;
+        
+        BatchResult.Results.Add(Result);
+    }
+
+    // Notify all modified graphs
+    for (UEdGraph* Graph : ModifiedGraphs)
+    {
+        if (Graph)
+        {
+            Graph->NotifyGraphChanged();
+        }
+    }
+
+    // Store modified graphs in batch result
+    BatchResult.ModifiedGraphs = ModifiedGraphs.Array();
+    BatchResult.bBlueprintModified = bBlueprintModified;
+
+    // Mark Blueprint as modified if any connections were broken
+    if (bBlueprintModified)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+
+    return TResult<FPinDisconnectionBatchResult>::Success(BatchResult);
+}
