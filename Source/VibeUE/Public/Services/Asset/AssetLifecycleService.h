@@ -88,12 +88,22 @@ public:
     /**
      * @brief Delete an asset from the project
      * 
-     * Removes the specified asset from the project.
+     * Removes the specified asset from the project with enhanced safety checks:
+     * - Validates asset exists
+     * - Checks for references (can be overridden with bForceDelete)
+     * - Checks if asset is read-only or in engine content
+     * - Optional user confirmation dialog
      * 
-     * @param AssetPath The full path to the asset to delete
-     * @return Success or error result
+     * @param AssetPath Full package path to the asset (e.g., "/Game/Textures/T_Texture")
+     * @param bForceDelete If true, attempt deletion even if asset has references
+     * @param bShowConfirmation If true, show confirmation dialog to user
+     * @return TResult<bool> - Success with true if deleted, or error with appropriate code
      */
-    TResult<void> DeleteAsset(const FString& AssetPath);
+    TResult<bool> DeleteAsset(
+        const FString& AssetPath,
+        bool bForceDelete = false,
+        bool bShowConfirmation = true
+    );
     
     /**
      * @brief Check if an asset exists

@@ -35,10 +35,12 @@ private:
     TSharedPtr<FJsonObject> HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params);
     
     // Helper functions for converting TResult to JSON
     TSharedPtr<FJsonObject> CreateSuccessResponse(const FString& Message = TEXT(""));
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorMessage);
+    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage);
     
     template<typename T>
     TSharedPtr<FJsonObject> ConvertResultToResponse(const TResult<T>& Result, const FString& SuccessMessage);

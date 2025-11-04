@@ -28,6 +28,10 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
     {
         return HandleOpenAssetInEditor(Params);
     }
+    else if (CommandType == TEXT("delete_asset"))
+    {
+        return HandleDeleteAsset(Params);
+    }
 
     return CreateErrorResponse(FString::Printf(TEXT("Unknown asset command: %s"), *CommandType));
 }
@@ -172,6 +176,35 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr
     }
 }
 
+TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract parameters
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'asset_path' parameter"));
+    }
+    
+    bool bForceDelete = false;
+    bool bShowConfirmation = true;
+    Params->TryGetBoolField(TEXT("force_delete"), bForceDelete);
+    Params->TryGetBoolField(TEXT("show_confirmation"), bShowConfirmation);
+    
+    // Delegate to LifecycleService
+    TResult<bool> Result = LifecycleService->DeleteAsset(AssetPath, bForceDelete, bShowConfirmation);
+    
+    // Convert TResult to JSON response
+    if (Result.IsError())
+    {
+        return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+    }
+    
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Asset deleted successfully"));
+    Response->SetStringField(TEXT("asset_path"), AssetPath);
+    Response->SetBoolField(TEXT("deleted"), Result.GetValue());
+    return Response;
+}
+
 TSharedPtr<FJsonObject> FAssetCommands::CreateSuccessResponse(const FString& Message)
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
@@ -184,6 +217,15 @@ TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& Error
 {
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error"), ErrorMessage);
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage)
+{
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error_code"), ErrorCode);
     Response->SetStringField(TEXT("error"), ErrorMessage);
     return Response;
 }
