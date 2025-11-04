@@ -1513,9 +1513,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TSharedPtr<FJsonObject>& Params)
 {
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    
-    // Get blueprint identifier (accepts name or full path)
+    // Extract blueprint identifier (accepts name or full path)
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
@@ -1527,17 +1525,19 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         }
         if (BlueprintName.IsEmpty())
         {
-            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter (accepts name or full path)"));
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter (accepts name or full path)"));
         }
     }
 
-    // Find blueprint using reflection
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprintByName(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found for '%s'"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
-
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
+    
     // Create comprehensive blueprint_info object
     TSharedPtr<FJsonObject> BlueprintInfo = MakeShared<FJsonObject>();
     
@@ -1561,7 +1561,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         
         // Get type info using reflection
         FString TypeName = TEXT("Unknown");
-        FString TypePath = TEXT("");  // Add type_path for consistency with manage_blueprint_variable
+        FString TypePath = TEXT("");
         
         if (VarDesc.VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
         {
@@ -1636,7 +1636,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         }
         
         VarInfo->SetStringField(TEXT("type"), TypeName);
-        VarInfo->SetStringField(TEXT("type_path"), TypePath);  // ✅ ADD type_path for AI consistency
+        VarInfo->SetStringField(TEXT("type_path"), TypePath);
         VarInfo->SetStringField(TEXT("category"), VarDesc.Category.ToString());
         VarInfo->SetBoolField(TEXT("is_editable"), (VarDesc.PropertyFlags & CPF_Edit) != 0);
         VarInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc.PropertyFlags & CPF_BlueprintReadOnly) != 0);
@@ -1670,7 +1670,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
                 CompInfo->SetStringField(TEXT("type"), Node->ComponentTemplate->GetClass()->GetName());
                 CompInfo->SetBoolField(TEXT("is_native"), Node->ComponentTemplate->GetClass()->HasAnyClassFlags(CLASS_Native));
                 
-                // Parent component - using ParentComponentOrVariableName instead of GetParent()
+                // Parent component
                 if (!Node->ParentComponentOrVariableName.IsNone())
                 {
                     CompInfo->SetStringField(TEXT("parent"), Node->ParentComponentOrVariableName.ToString());
@@ -1686,8 +1686,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
     TArray<TSharedPtr<FJsonValue>> WidgetComponentArray;
     if (bIsWidgetBlueprint)
     {
-        // For widget blueprints, we'll provide a basic indication but delegate detailed widget info
-        // to the existing UMG commands. This keeps separation of concerns clean.
         BlueprintInfo->SetStringField(TEXT("widget_info_note"), TEXT("Use get_widget_blueprint_info for detailed UMG component information"));
     }
     BlueprintInfo->SetArrayField(TEXT("widget_components"), WidgetComponentArray);
@@ -1790,13 +1788,9 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
     }
     BlueprintInfo->SetArrayField(TEXT("blueprint_properties"), PropertyArray);
     
-    // Success response
-    Response->SetBoolField(TEXT("success"), true);
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
     Response->SetObjectField(TEXT("blueprint_info"), BlueprintInfo);
-    
-    UE_LOG(LogTemp, Warning, TEXT("MCP: Comprehensive blueprint info for '%s': Type=%s, Variables=%d, Components=%d, Functions=%d"), 
-           *BlueprintName, *BlueprintInfo->GetStringField(TEXT("blueprint_type")), 
-           VariableArray.Num(), ComponentArray.Num(), FunctionArray.Num());
     
     return Response;
 }
