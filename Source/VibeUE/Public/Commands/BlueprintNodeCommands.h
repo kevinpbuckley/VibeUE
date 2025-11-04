@@ -4,8 +4,9 @@
 #include "Json.h"
 #include "Core/Result.h"
 
-// Forward declare reflection commands
+// Forward declarations
 class FBlueprintReflectionCommands;
+struct FNodeSummary;
 
 /**
  * Handler class for Blueprint Node-related MCP commands
@@ -154,8 +155,7 @@ private:
     // Helper methods to convert TResult to JSON
     TSharedPtr<FJsonObject> CreateSuccessResponse() const;
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
-    template<typename T>
-    TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<T>& Result) const;
+    TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const;
     
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
