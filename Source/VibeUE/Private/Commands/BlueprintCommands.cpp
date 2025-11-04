@@ -896,7 +896,16 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
     }
     else if (JsonValue->Type == EJson::Number)
     {
-        PropertyValue = FString::Printf(TEXT("%f"), JsonValue->AsNumber());
+        double NumValue = JsonValue->AsNumber();
+        // Check if it's an integer value
+        if (FMath::IsNearlyEqual(NumValue, FMath::RoundToDouble(NumValue)))
+        {
+            PropertyValue = FString::Printf(TEXT("%d"), FMath::RoundToInt(NumValue));
+        }
+        else
+        {
+            PropertyValue = FString::Printf(TEXT("%f"), NumValue);
+        }
     }
     else if (JsonValue->Type == EJson::Boolean)
     {
