@@ -6,6 +6,15 @@
 #include "Components/SceneComponent.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
+
+// Phase 4: Include Blueprint Services
+#include "Services/Blueprint/BlueprintDiscoveryService.h"
+#include "Services/Blueprint/BlueprintComponentService.h"
+#include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
+
 // Editor-only utilities and specific component headers guarded to avoid build issues in non-editor contexts
 #if WITH_EDITOR
 #include "Components/StaticMeshComponent.h"
@@ -18,7 +27,13 @@
 
 FBlueprintComponentReflection::FBlueprintComponentReflection()
 {
-    InitializeCache();
+    // Phase 4: Initialize Blueprint Services
+    TSharedPtr<FServiceContext> ServiceContext = MakeShared<FServiceContext>();
+    
+    DiscoveryService = MakeShared<FBlueprintDiscoveryService>(ServiceContext);
+    ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
+    ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
+    PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
 }
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -276,28 +291,88 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetPropertyMetadata
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentHierarchy(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    TSharedPtr<FJsonObject> HierarchyInfo = AnalyzeComponentHierarchy(Blueprint);
-    if (!HierarchyInfo.IsValid())
+    // Get component list from ComponentService
+    auto ListResult = ComponentService->ListComponents(FindResult.GetValue());
+    if (ListResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to analyze component hierarchy for Blueprint '%s'"), *BlueprintName));
+        return CreateErrorResponse(ListResult.GetErrorCode(), ListResult.GetErrorMessage());
     }
 
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    // Build hierarchy response from service result
+    const TArray<FComponentInfo>& Components = ListResult.GetValue();
+    
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
-    Response->SetObjectField(TEXT("hierarchy"), HierarchyInfo);
+    
+    // Build components array
+    TArray<TSharedPtr<FJsonValue>> ComponentsArray;
+    for (const FComponentInfo& CompInfo : Components)
+    {
+        TSharedPtr<FJsonObject> ComponentObj = MakeShared<FJsonObject>();
+        ComponentObj->SetStringField(TEXT("name"), CompInfo.ComponentName);
+        ComponentObj->SetStringField(TEXT("type"), CompInfo.ComponentType);
+        ComponentObj->SetStringField(TEXT("parent"), CompInfo.ParentName);
+        ComponentObj->SetBoolField(TEXT("is_scene_component"), CompInfo.bIsSceneComponent);
+        
+        // Add children array
+        TArray<TSharedPtr<FJsonValue>> ChildrenArray;
+        for (const FString& ChildName : CompInfo.ChildNames)
+        {
+            ChildrenArray.Add(MakeShared<FJsonValueString>(ChildName));
+        }
+        ComponentObj->SetArrayField(TEXT("children"), ChildrenArray);
+        
+        // Add transform if scene component
+        if (CompInfo.bIsSceneComponent)
+        {
+            TSharedPtr<FJsonObject> TransformObj = MakeShared<FJsonObject>();
+            
+            TArray<TSharedPtr<FJsonValue>> Location;
+            Location.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetLocation().X));
+            Location.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetLocation().Y));
+            Location.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetLocation().Z));
+            TransformObj->SetArrayField(TEXT("location"), Location);
+            
+            TArray<TSharedPtr<FJsonValue>> Rotation;
+            Rotation.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetRotation().Rotator().Pitch));
+            Rotation.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetRotation().Rotator().Yaw));
+            Rotation.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetRotation().Rotator().Roll));
+            TransformObj->SetArrayField(TEXT("rotation"), Rotation);
+            
+            TArray<TSharedPtr<FJsonValue>> Scale;
+            Scale.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetScale3D().X));
+            Scale.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetScale3D().Y));
+            Scale.Add(MakeShared<FJsonValueNumber>(CompInfo.RelativeTransform.GetScale3D().Z));
+            TransformObj->SetArrayField(TEXT("scale"), Scale);
+            
+            ComponentObj->SetObjectField(TEXT("relative_transform"), TransformObj);
+        }
+        
+        ComponentsArray.Add(MakeShared<FJsonValueObject>(ComponentObj));
+    }
+    
+    TSharedPtr<FJsonObject> HierarchyObj = MakeShared<FJsonObject>();
+    HierarchyObj->SetArrayField(TEXT("components"), ComponentsArray);
+    HierarchyObj->SetNumberField(TEXT("total_components"), Components.Num());
+    
+    Response->SetObjectField(TEXT("hierarchy"), HierarchyObj);
+
+    UE_LOG(LogTemp, Log, TEXT("Successfully retrieved component hierarchy for Blueprint: %s (%d components)"), 
+        *BlueprintName, Components.Num());
 
     return Response;
 }
@@ -306,158 +381,122 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentHierarc
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleAddComponent(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName, ComponentType, ComponentName;
     
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
         !Params->TryGetStringField(TEXT("component_type"), ComponentType) ||
         !Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_type, component_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+            TEXT("Missing required parameters: blueprint_name, component_type, component_name"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Validate component type
-    UClass* ComponentClass = nullptr;
-    if (!ValidateComponentType(ComponentType, ComponentClass))
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Invalid component type: %s"), *ComponentType));
-    }
-
-    // Validate component name is unique
-    if (!ValidateComponentName(Blueprint, ComponentName))
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Component name '%s' already exists in Blueprint"), *ComponentName));
-    }
-
-    // Create the component using Blueprint's Simple Construction Script
-    USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
-    if (!SCS)
-    {
-        return CreateErrorResponse(TEXT("Blueprint does not have a Simple Construction Script"));
-    }
-
-    // Create a new SCS node for the component
-    USCS_Node* NewNode = SCS->CreateNode(ComponentClass, *ComponentName);
-    if (!NewNode)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to create component node for '%s'"), *ComponentName));
-    }
-
-    // Handle parent attachment if specified
+    // Parse parent name and transform
     FString ParentName;
-    if (Params->TryGetStringField(TEXT("parent_name"), ParentName) && !ParentName.IsEmpty())
+    Params->TryGetStringField(TEXT("parent_name"), ParentName);
+    
+    // Parse transform for scene components
+    FTransform RelativeTransform = FTransform::Identity;
+    bool bTransformProvided = false;
+    
+    const TArray<TSharedPtr<FJsonValue>>* LocationArray;
+    if (Params->TryGetArrayField(TEXT("location"), LocationArray) && LocationArray->Num() >= 3)
     {
-        USCS_Node* ParentNode = SCS->FindSCSNode(*ParentName);
-        if (ParentNode)
-        {
-            ParentNode->AddChildNode(NewNode);
-        }
-        else
-        {
-            UE_LOG(LogTemp, Warning, TEXT("Parent component '%s' not found, adding to root"), *ParentName);
-            SCS->AddNode(NewNode);
-        }
+        FVector Location(
+            (*LocationArray)[0]->AsNumber(),
+            (*LocationArray)[1]->AsNumber(),
+            (*LocationArray)[2]->AsNumber()
+        );
+        RelativeTransform.SetLocation(Location);
+        bTransformProvided = true;
     }
-    else
+
+    const TArray<TSharedPtr<FJsonValue>>* RotationArray;
+    if (Params->TryGetArrayField(TEXT("rotation"), RotationArray) && RotationArray->Num() >= 3)
     {
-        SCS->AddNode(NewNode);
+        FRotator Rotation(
+            (*RotationArray)[0]->AsNumber(),
+            (*RotationArray)[1]->AsNumber(),
+            (*RotationArray)[2]->AsNumber()
+        );
+        RelativeTransform.SetRotation(Rotation.Quaternion());
+        bTransformProvided = true;
+    }
+
+    const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
+    if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
+    {
+        FVector Scale(
+            (*ScaleArray)[0]->AsNumber(),
+            (*ScaleArray)[1]->AsNumber(),
+            (*ScaleArray)[2]->AsNumber()
+        );
+        RelativeTransform.SetScale3D(Scale);
+        bTransformProvided = true;
+    }
+
+    // Add component using ComponentService
+    auto AddResult = ComponentService->AddComponent(
+        FindResult.GetValue(),
+        ComponentType,
+        ComponentName,
+        ParentName,
+        bTransformProvided ? RelativeTransform : FTransform::Identity
+    );
+
+    if (AddResult.IsError())
+    {
+        return CreateErrorResponse(AddResult.GetErrorCode(), AddResult.GetErrorMessage());
     }
 
     // Apply initial properties if provided
     const TSharedPtr<FJsonObject>* PropertiesObj;
     if (Params->TryGetObjectField(TEXT("properties"), PropertiesObj) && PropertiesObj->IsValid())
     {
-        // Apply properties to the component template
-        UActorComponent* ComponentTemplate = NewNode->ComponentTemplate;
-        if (ComponentTemplate)
+        UActorComponent* Component = AddResult.GetValue();
+        if (Component)
         {
             for (const auto& PropertyPair : (*PropertiesObj)->Values)
             {
                 const FString& PropertyName = PropertyPair.Key;
                 const TSharedPtr<FJsonValue>& PropertyValue = PropertyPair.Value;
                 
-                const FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
-                if (Property && ComponentTemplate)
+                // Use PropertyService to set property
+                auto SetResult = PropertyService->SetBlueprintProperty(
+                    FindResult.GetValue(),
+                    PropertyName,
+                    PropertyValue->AsString()
+                );
+                
+                // Log warning if property set fails, but don't fail the whole operation
+                if (SetResult.IsError())
                 {
-                    void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                    SetPropertyFromJson(Property, PropertyPtr, PropertyValue);
+                    UE_LOG(LogTemp, Warning, TEXT("Failed to set property '%s' on component '%s': %s"), 
+                        *PropertyName, *ComponentName, *SetResult.GetErrorMessage());
                 }
             }
         }
     }
 
-    // Apply transform if this is a scene component
-    if (ComponentClass->IsChildOf<USceneComponent>())
-    {
-        USceneComponent* SceneComponentTemplate = Cast<USceneComponent>(NewNode->ComponentTemplate);
-        if (SceneComponentTemplate)
-        {
-            FTransform ComponentTransform;
-            bool bTransformModified = false;
-
-            // Apply location
-            const TArray<TSharedPtr<FJsonValue>>* LocationArray;
-            if (Params->TryGetArrayField(TEXT("location"), LocationArray) && LocationArray->Num() >= 3)
-            {
-                FVector Location(
-                    (*LocationArray)[0]->AsNumber(),
-                    (*LocationArray)[1]->AsNumber(),
-                    (*LocationArray)[2]->AsNumber()
-                );
-                ComponentTransform.SetLocation(Location);
-                bTransformModified = true;
-            }
-
-            // Apply rotation
-            const TArray<TSharedPtr<FJsonValue>>* RotationArray;
-            if (Params->TryGetArrayField(TEXT("rotation"), RotationArray) && RotationArray->Num() >= 3)
-            {
-                FRotator Rotation(
-                    (*RotationArray)[0]->AsNumber(),
-                    (*RotationArray)[1]->AsNumber(),
-                    (*RotationArray)[2]->AsNumber()
-                );
-                ComponentTransform.SetRotation(Rotation.Quaternion());
-                bTransformModified = true;
-            }
-
-            // Apply scale
-            const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-            if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
-            {
-                FVector Scale(
-                    (*ScaleArray)[0]->AsNumber(),
-                    (*ScaleArray)[1]->AsNumber(),
-                    (*ScaleArray)[2]->AsNumber()
-                );
-                ComponentTransform.SetScale3D(Scale);
-                bTransformModified = true;
-            }
-
-            if (bTransformModified)
-            {
-                SceneComponentTemplate->SetRelativeTransform(ComponentTransform);
-            }
-        }
-    }
-
-    // Mark Blueprint as modified and recompile
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-    FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
-
-    // Create success response with component info
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(FString::Printf(TEXT("Component '%s' added successfully"), *ComponentName));
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Component '%s' added successfully"), *ComponentName));
     Response->SetStringField(TEXT("component_name"), ComponentName);
     Response->SetStringField(TEXT("component_type"), ComponentType);
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
 
-    UE_LOG(LogTemp, Log, TEXT("Added component '%s' of type '%s' to Blueprint '%s'"), *ComponentName, *ComponentType, *BlueprintName);
+    UE_LOG(LogTemp, Log, TEXT("Added component '%s' of type '%s' to Blueprint '%s'"), 
+        *ComponentName, *ComponentType, *BlueprintName);
+        
     return Response;
 }
 
@@ -619,88 +658,71 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentPropert
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleRemoveComponent(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName, ComponentName;
     
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
         !Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+            TEXT("Missing required parameters: blueprint_name, component_name"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-
-    USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
-    if (!SCS)
-    {
-        return CreateErrorResponse(TEXT("Blueprint does not have a Simple Construction Script"));
-    }
-
-    USCS_Node* ComponentNode = SCS->FindSCSNode(*ComponentName);
-    if (!ComponentNode)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
     // Handle children based on remove_children parameter
     bool bRemoveChildren = true;
     Params->TryGetBoolField(TEXT("remove_children"), bRemoveChildren);
 
-    TArray<USCS_Node*> ChildNodes = ComponentNode->GetChildNodes();
-    if (!bRemoveChildren && ChildNodes.Num() > 0)
+    // Remove component using ComponentService
+    auto RemoveResult = ComponentService->RemoveComponent(
+        FindResult.GetValue(),
+        ComponentName,
+        bRemoveChildren
+    );
+
+    if (RemoveResult.IsError())
     {
-        // Reparent children to root - in UE 5.6, we'll simplify this
-        for (USCS_Node* ChildNode : ChildNodes)
-        {
-            ComponentNode->RemoveChildNode(ChildNode);
-            SCS->AddNode(ChildNode);
-        }
+        return CreateErrorResponse(RemoveResult.GetErrorCode(), RemoveResult.GetErrorMessage());
     }
 
-    // Remove the component node - simplified for UE 5.6
-    SCS->RemoveNode(ComponentNode);
-
-    // Mark Blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-    FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
-
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(FString::Printf(TEXT("Component '%s' removed successfully"), *ComponentName));
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Component '%s' removed successfully"), *ComponentName));
     Response->SetStringField(TEXT("component_name"), ComponentName);
     Response->SetBoolField(TEXT("removed_children"), bRemoveChildren);
-    Response->SetNumberField(TEXT("children_count"), ChildNodes.Num());
+
+    UE_LOG(LogTemp, Log, TEXT("Removed component '%s' from Blueprint '%s'"), *ComponentName, *BlueprintName);
 
     return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReorderComponents(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     const TArray<TSharedPtr<FJsonValue>>* ComponentOrderArray;
     if (!Params->TryGetArrayField(TEXT("component_order"), ComponentOrderArray))
     {
-        return CreateErrorResponse(TEXT("Missing component_order parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_order' parameter"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-
-    USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
-    if (!SCS)
-    {
-        return CreateErrorResponse(TEXT("Blueprint does not have a Simple Construction Script"));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
     // Convert JSON array to FString array
@@ -710,15 +732,21 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReorderComponents(c
         ComponentNames.Add(Value->AsString());
     }
 
-    // TODO: Implement component reordering
-    // This would require manipulating the SCS node order
-    UE_LOG(LogTemp, Warning, TEXT("Component reordering not fully implemented yet"));
+    // Reorder components using ComponentService
+    auto ReorderResult = ComponentService->ReorderComponents(FindResult.GetValue(), ComponentNames);
+    
+    if (ReorderResult.IsError())
+    {
+        return CreateErrorResponse(ReorderResult.GetErrorCode(), ReorderResult.GetErrorMessage());
+    }
 
-    // Mark Blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Component reordering completed"));
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), TEXT("Component reordering completed"));
     Response->SetArrayField(TEXT("final_order"), *ComponentOrderArray);
+
+    UE_LOG(LogTemp, Log, TEXT("Reordered components in Blueprint '%s'"), *BlueprintName);
 
     return Response;
 }
@@ -1618,9 +1646,9 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::ValidateHierarchyOperatio
     return ValidationResult;
 }
 
-TSharedPtr<FJsonObject> FBlueprintComponentReflection::CreateSuccessResponse(const FString& Message)
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::CreateSuccessResponse(const FString& Message) const
 {
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
     
     if (!Message.IsEmpty())
@@ -1631,19 +1659,15 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::CreateSuccessResponse(con
     return Response;
 }
 
-TSharedPtr<FJsonObject> FBlueprintComponentReflection::CreateErrorResponse(const FString& ErrorMessage, const FString& ErrorCode)
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const
 {
-    TSharedPtr<FJsonObject> ErrorResponse = MakeShareable(new FJsonObject);
-    ErrorResponse->SetBoolField(TEXT("success"), false);
-    ErrorResponse->SetStringField(TEXT("error"), ErrorMessage);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), false);
+    Response->SetStringField(TEXT("error"), ErrorMessage);
+    Response->SetStringField(TEXT("error_code"), ErrorCode);
     
-    if (!ErrorCode.IsEmpty())
-    {
-        ErrorResponse->SetStringField(TEXT("error_code"), ErrorCode);
-    }
-    
-    UE_LOG(LogTemp, Error, TEXT("Blueprint Component Reflection Error: %s"), *ErrorMessage);
-    return ErrorResponse;
+    UE_LOG(LogTemp, Error, TEXT("Blueprint Component Reflection Error [%s]: %s"), *ErrorCode, *ErrorMessage);
+    return Response;
 }
 
 FString FBlueprintComponentReflection::GetFriendlyComponentName(UClass* ComponentClass)
@@ -2386,88 +2410,50 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReparentComponent(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName, ComponentName, ParentName;
     
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
         !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
         !Params->TryGetStringField(TEXT("parent_name"), ParentName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, parent_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+            TEXT("Missing required parameters: blueprint_name, component_name, parent_name"));
     }
 
 #if WITH_EDITOR
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Find the component to reparent
-    USCS_Node* ChildNode = nullptr;
-    if (Blueprint->SimpleConstructionScript)
+    // Reparent component using ComponentService
+    auto ReparentResult = ComponentService->ReparentComponent(
+        FindResult.GetValue(),
+        ComponentName,
+        ParentName
+    );
+
+    if (ReparentResult.IsError())
     {
-        const TArray<USCS_Node*>& AllNodes = Blueprint->SimpleConstructionScript->GetAllNodes();
-        for (USCS_Node* Node : AllNodes)
-        {
-            if (Node && Node->GetVariableName() == *ComponentName)
-            {
-                ChildNode = Node;
-                break;
-            }
-        }
+        return CreateErrorResponse(ReparentResult.GetErrorCode(), ReparentResult.GetErrorMessage());
     }
 
-    if (!ChildNode)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
-    }
-
-    // Find the new parent component
-    USCS_Node* NewParentNode = nullptr;
-    if (Blueprint->SimpleConstructionScript)
-    {
-        const TArray<USCS_Node*>& AllNodes = Blueprint->SimpleConstructionScript->GetAllNodes();
-        for (USCS_Node* Node : AllNodes)
-        {
-            if (Node && Node->GetVariableName() == *ParentName)
-            {
-                NewParentNode = Node;
-                break;
-            }
-        }
-    }
-
-    if (!NewParentNode)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Parent component '%s' not found in Blueprint"), *ParentName));
-    }
-
-    // Validate that new parent is a SceneComponent
-    if (!NewParentNode->ComponentTemplate || !NewParentNode->ComponentTemplate->IsA<USceneComponent>())
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Parent component '%s' is not a SceneComponent"), *ParentName));
-    }
-
-    // Store old parent name for response
-    FString OldParentName = ChildNode->ParentComponentOrVariableName.ToString();
-
-    // Reparent using UE's built-in SetParent method
-    ChildNode->SetParent(NewParentNode);
-
-    // Mark Blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-
-    // Build response
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("component_name"), ComponentName);
-    Response->SetStringField(TEXT("old_parent"), OldParentName.IsEmpty() ? TEXT("None") : OldParentName);
-    Response->SetStringField(TEXT("new_parent"), ParentName);
     Response->SetStringField(TEXT("message"), TEXT("Component reparented successfully"));
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("new_parent"), ParentName);
+
+    UE_LOG(LogTemp, Log, TEXT("Reparented component '%s' to '%s' in Blueprint '%s'"), 
+        *ComponentName, *ParentName, *BlueprintName);
 
     return Response;
 #else
-    return CreateErrorResponse(TEXT("Reparent component only available in Editor builds"));
+    return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, 
+        TEXT("Reparent component only available in Editor builds"));
 #endif
 }
