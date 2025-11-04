@@ -161,6 +161,9 @@ namespace ErrorCodes
 	/** @brief Pin with specified name not found */
 	constexpr const TCHAR* PIN_NOT_FOUND = TEXT("PIN_NOT_FOUND");
 
+	/** @brief Pin is not connected to any other pin */
+	constexpr const TCHAR* PIN_NOT_CONNECTED = TEXT("PIN_NOT_CONNECTED");
+
 	/** @brief Failed to connect pins */
 	constexpr const TCHAR* PIN_CONNECTION_FAILED = TEXT("PIN_CONNECTION_FAILED");
 
