@@ -2173,10 +2173,12 @@ TResult<TArray<FDetailedNodeInfo>> FBlueprintNodeService::DescribeAllNodes(UBlue
         }
         if (PreferredGraph)
         {
-            GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+            // Phase 4 Fix: When specific graph requested, use ONLY that graph, not all graphs
+            CandidateGraphs.Add(PreferredGraph);
         }
     }
     
+    // Only gather all graphs if no specific graph was found
     if (CandidateGraphs.Num() == 0)
     {
         GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);

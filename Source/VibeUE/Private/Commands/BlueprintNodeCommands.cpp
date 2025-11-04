@@ -1517,18 +1517,36 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
         }
     }
 
-    // Determine graph scope
+    // Determine graph scope - CRITICAL: Use function_name when graph_scope is "function"
     FString GraphScope;
     Params->TryGetStringField(TEXT("graph_scope"), GraphScope);
     if (GraphScope.IsEmpty())
     {
         GraphScope = TEXT("all");
     }
+    
+    // Phase 4 Fix: ResolveTargetGraph expects actual function name, not "function"
+    FString ResolvedGraphName = GraphScope;
+    if (GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+                TEXT("Missing 'function_name' parameter when graph_scope='function'"));
+        }
+        ResolvedGraphName = FunctionName;
+    }
+    else if (GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
+    {
+        // Event graph is typically "EventGraph" - use empty string to get default event graph
+        ResolvedGraphName = TEXT("");
+    }
 
     // Use NodeService to describe nodes
     auto DescribeResult = NodeService->DescribeAllNodes(
         FindResult.GetValue(),
-        GraphScope,
+        ResolvedGraphName,
         bIncludePins,
         bIncludeInternalPins,
         Offset,
@@ -1582,7 +1600,37 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
         return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    auto ListResult = NodeService->ListNodes(FindResult.GetValue(), TEXT("event"));
+    // Phase 4 Fix: Determine target graph based on graph_scope and function_name
+    FString GraphScope;
+    Params->TryGetStringField(TEXT("graph_scope"), GraphScope);
+    if (GraphScope.IsEmpty())
+    {
+        GraphScope = TEXT("event");
+    }
+    
+    FString ResolvedGraphName;
+    if (GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+                TEXT("Missing 'function_name' parameter when graph_scope='function'"));
+        }
+        ResolvedGraphName = FunctionName;
+    }
+    else if (GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
+    {
+        // Use empty string to get default event graph
+        ResolvedGraphName = TEXT("");
+    }
+    else
+    {
+        // Use graph_scope as-is for named graphs
+        ResolvedGraphName = GraphScope;
+    }
+
+    auto ListResult = NodeService->ListNodes(FindResult.GetValue(), ResolvedGraphName);
     if (ListResult.IsError())
     {
         return CreateErrorResponse(ListResult.GetErrorCode(), ListResult.GetErrorMessage());
@@ -1599,7 +1647,11 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
     Response->SetArrayField(TEXT("node_ids"), NodeIdArray);
     Response->SetNumberField(TEXT("count"), NodeIdArray.Num());
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("graph_name"), TEXT("event"));
+    Response->SetStringField(TEXT("graph_scope"), GraphScope);
+    if (!ResolvedGraphName.IsEmpty())
+    {
+        Response->SetStringField(TEXT("graph_name"), ResolvedGraphName);
+    }
     
     return Response;
 }
