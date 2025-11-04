@@ -4444,11 +4444,112 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAvailableBlueprintNodes
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
 {
-    if (ReflectionCommands.IsValid())
-    {
-        return ReflectionCommands->HandleDiscoverNodesWithDescriptors(Params);
-    }
-    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+	// Extract parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	// Find the Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+	}
+	
+	// Parse search criteria
+	FNodeDescriptorSearchCriteria Criteria;
+	Params->TryGetStringField(TEXT("search_term"), Criteria.SearchTerm);
+	Params->TryGetStringField(TEXT("category_filter"), Criteria.CategoryFilter);
+	Params->TryGetStringField(TEXT("class_filter"), Criteria.ClassFilter);
+	
+	double ParsedMaxResults = 0.0;
+	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
+	{
+		Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+	}
+	
+	// Discover nodes with descriptors using ReflectionService
+	auto DescriptorsResult = ReflectionService->DiscoverNodesWithDescriptors(FindResult.GetValue(), Criteria);
+	if (DescriptorsResult.IsError())
+	{
+		return CreateErrorResponse(DescriptorsResult.GetErrorCode(), DescriptorsResult.GetErrorMessage());
+	}
+	
+	// Convert descriptors to JSON
+	TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
+	for (const FNodeDescriptor& Desc : DescriptorsResult.GetValue())
+	{
+		TSharedPtr<FJsonObject> DescJson = MakeShared<FJsonObject>();
+		
+		// Core identification
+		DescJson->SetStringField(TEXT("spawner_key"), Desc.SpawnerKey);
+		DescJson->SetStringField(TEXT("display_name"), Desc.DisplayName);
+		DescJson->SetStringField(TEXT("node_title"), Desc.NodeTitle);
+		DescJson->SetStringField(TEXT("node_class_name"), Desc.NodeClassName);
+		DescJson->SetStringField(TEXT("node_class_path"), Desc.NodeClassPath);
+		
+		// Categorization
+		DescJson->SetStringField(TEXT("category"), Desc.Category);
+		DescJson->SetStringField(TEXT("description"), Desc.Description);
+		DescJson->SetStringField(TEXT("tooltip"), Desc.Tooltip);
+		
+		TArray<TSharedPtr<FJsonValue>> KeywordsArray;
+		for (const FString& Keyword : Desc.Keywords)
+		{
+			KeywordsArray.Add(MakeShared<FJsonValueString>(Keyword));
+		}
+		DescJson->SetArrayField(TEXT("keywords"), KeywordsArray);
+		
+		// Function metadata (if applicable)
+		if (Desc.FunctionMetadata.IsSet())
+		{
+			TSharedPtr<FJsonObject> FunctionMeta = MakeShared<FJsonObject>();
+			const FFunctionMetadata& FuncMeta = Desc.FunctionMetadata.GetValue();
+			FunctionMeta->SetStringField(TEXT("function_name"), FuncMeta.FunctionName);
+			FunctionMeta->SetStringField(TEXT("function_class"), FuncMeta.FunctionClassName);
+			FunctionMeta->SetStringField(TEXT("function_class_path"), FuncMeta.FunctionClassPath);
+			FunctionMeta->SetBoolField(TEXT("is_static"), FuncMeta.bIsStatic);
+			FunctionMeta->SetBoolField(TEXT("is_const"), FuncMeta.bIsConst);
+			FunctionMeta->SetBoolField(TEXT("is_pure"), FuncMeta.bIsPure);
+			FunctionMeta->SetStringField(TEXT("module"), FuncMeta.Module);
+			DescJson->SetObjectField(TEXT("function_metadata"), FunctionMeta);
+		}
+		
+		// Pin information
+		TArray<TSharedPtr<FJsonValue>> PinsArray;
+		for (const FPinInfo& Pin : Desc.Pins)
+		{
+			TSharedPtr<FJsonObject> PinJson = MakeShared<FJsonObject>();
+			PinJson->SetStringField(TEXT("name"), Pin.Name);
+			PinJson->SetStringField(TEXT("type"), Pin.Type);
+			PinJson->SetStringField(TEXT("type_path"), Pin.TypePath);
+			PinJson->SetStringField(TEXT("direction"), Pin.Direction);
+			PinJson->SetStringField(TEXT("category"), Pin.Category);
+			PinJson->SetBoolField(TEXT("is_array"), Pin.bIsArray);
+			PinJson->SetBoolField(TEXT("is_reference"), Pin.bIsReference);
+			PinJson->SetBoolField(TEXT("is_hidden"), Pin.bIsHidden);
+			PinJson->SetBoolField(TEXT("is_advanced"), Pin.bIsAdvanced);
+			PinJson->SetStringField(TEXT("default_value"), Pin.DefaultValue);
+			PinJson->SetStringField(TEXT("tooltip"), Pin.Tooltip);
+			
+			PinsArray.Add(MakeShared<FJsonValueObject>(PinJson));
+		}
+		DescJson->SetArrayField(TEXT("pins"), PinsArray);
+		DescJson->SetNumberField(TEXT("expected_pin_count"), Desc.ExpectedPinCount);
+		DescJson->SetBoolField(TEXT("is_static"), Desc.bIsStatic);
+		
+		DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescJson));
+	}
+	
+	// Build success response
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
+	Response->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
+	Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)

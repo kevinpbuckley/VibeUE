@@ -8,6 +8,96 @@
 // Forward declarations
 struct FPropertyInfo;
 struct FFunctionInfo;
+class UBlueprintNodeSpawner;
+
+/**
+ * Pin information for node descriptors
+ */
+struct VIBEUE_API FPinInfo
+{
+	FString Name;
+	FString Type;
+	FString TypePath;
+	FString Direction;  // "input" or "output"
+	FString Category;
+	bool bIsArray;
+	bool bIsReference;
+	bool bIsHidden;
+	bool bIsAdvanced;
+	FString DefaultValue;
+	FString Tooltip;
+	
+	FPinInfo()
+		: bIsArray(false)
+		, bIsReference(false)
+		, bIsHidden(false)
+		, bIsAdvanced(false)
+	{
+	}
+};
+
+/**
+ * Function metadata for node descriptors
+ */
+struct VIBEUE_API FFunctionMetadata
+{
+	FString FunctionName;
+	FString FunctionClassName;
+	FString FunctionClassPath;
+	bool bIsStatic;
+	bool bIsConst;
+	bool bIsPure;
+	FString Module;
+	
+	FFunctionMetadata()
+		: bIsStatic(false)
+		, bIsConst(false)
+		, bIsPure(false)
+	{
+	}
+};
+
+/**
+ * Complete node descriptor with metadata for AI decision-making
+ */
+struct VIBEUE_API FNodeDescriptor
+{
+	FString SpawnerKey;
+	FString NodeTitle;
+	FString Category;
+	int32 ExpectedPinCount;
+	TArray<FPinInfo> Pins;
+	bool bIsStatic;
+	TOptional<FFunctionMetadata> FunctionMetadata;
+	FString NodeClassName;
+	FString NodeClassPath;
+	FString DisplayName;
+	FString Description;
+	FString Tooltip;
+	TArray<FString> Keywords;
+	
+	FNodeDescriptor()
+		: ExpectedPinCount(0)
+		, bIsStatic(false)
+	{
+	}
+};
+
+/**
+ * Search criteria for node descriptor discovery
+ */
+struct VIBEUE_API FNodeDescriptorSearchCriteria
+{
+	FString SearchTerm;
+	FString CategoryFilter;
+	FString ClassFilter;
+	int32 MaxResults;
+	
+	FNodeDescriptorSearchCriteria()
+		: MaxResults(100)
+	{
+	}
+};
 
 /**
  * Structure for class information
@@ -118,6 +208,21 @@ public:
 	 * @return Result containing true if valid
 	 */
 	TResult<bool> IsValidPropertyType(const FString& PropertyType);
+	
+	// ═══════════════════════════════════════════════════════════
+	// Node Discovery
+	// ═══════════════════════════════════════════════════════════
+	
+	/**
+	 * Discover available Blueprint nodes with complete descriptors
+	 * Returns complete node descriptors including expected pin counts, spawner keys,
+	 * and full metadata for AI decision-making
+	 * 
+	 * @param Blueprint The Blueprint to discover nodes for
+	 * @param Criteria Search criteria including filters and limits
+	 * @return Result containing array of node descriptors
+	 */
+	TResult<TArray<FNodeDescriptor>> DiscoverNodesWithDescriptors(UBlueprint* Blueprint, const FNodeDescriptorSearchCriteria& Criteria);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Conversion
