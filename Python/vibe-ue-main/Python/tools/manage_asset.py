@@ -427,6 +427,9 @@ def _handle_convert_svg(
             background_color=background if background else None
         )
         
+        if png_bytes is None:
+            raise ValueError(f"Failed to convert SVG to PNG: {svg_path}")
+        
         # Load into PIL for post-processing
         img = Image.open(io.BytesIO(png_bytes))
         
