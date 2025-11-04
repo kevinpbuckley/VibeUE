@@ -3,12 +3,12 @@
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
 #include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintFunctionService.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
 
 // Forward declarations
 struct FPropertyInfo;
-struct FFunctionInfo;
 class UBlueprintNodeSpawner;
 
 /**

@@ -527,7 +527,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleAddComponent(const 
                 const TSharedPtr<FJsonValue>& PropertyValue = PropertyPair.Value;
                 
                 // Use PropertyService to set property
-                auto SetResult = PropertyService->SetBlueprintProperty(
+                auto SetResult = PropertyService->SetProperty(
                     FindResult.GetValue(),
                     PropertyName,
                     PropertyValue->AsString()
