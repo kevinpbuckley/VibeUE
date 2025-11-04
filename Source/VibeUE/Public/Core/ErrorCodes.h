@@ -155,6 +155,9 @@ namespace ErrorCodes
 	/** @brief Node type is invalid or unsupported */
 	constexpr const TCHAR* NODE_TYPE_INVALID = TEXT("NODE_TYPE_INVALID");
 
+	/** @brief Node is invalid or not of expected type */
+	constexpr const TCHAR* NODE_INVALID = TEXT("NODE_INVALID");
+
 	/** @brief Pin with specified name not found */
 	constexpr const TCHAR* PIN_NOT_FOUND = TEXT("PIN_NOT_FOUND");
 

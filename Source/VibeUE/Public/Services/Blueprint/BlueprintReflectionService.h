@@ -8,33 +8,9 @@
 // Forward declarations
 struct FPropertyInfo;
 struct FFunctionInfo;
+struct FPinInfo;
+struct FNodeDescriptor;
 class UBlueprintNodeSpawner;
-
-/**
- * Pin information for node descriptors
- */
-struct VIBEUE_API FPinInfo
-{
-	FString Name;
-	FString Type;
-	FString TypePath;
-	FString Direction;  // "input" or "output"
-	FString Category;
-	bool bIsArray;
-	bool bIsReference;
-	bool bIsHidden;
-	bool bIsAdvanced;
-	FString DefaultValue;
-	FString Tooltip;
-	
-	FPinInfo()
-		: bIsArray(false)
-		, bIsReference(false)
-		, bIsHidden(false)
-		, bIsAdvanced(false)
-	{
-	}
-};
 
 /**
  * Function metadata for node descriptors
@@ -53,32 +29,6 @@ struct VIBEUE_API FFunctionMetadata
 		: bIsStatic(false)
 		, bIsConst(false)
 		, bIsPure(false)
-	{
-	}
-};
-
-/**
- * Complete node descriptor with metadata for AI decision-making
- */
-struct VIBEUE_API FNodeDescriptor
-{
-	FString SpawnerKey;
-	FString NodeTitle;
-	FString Category;
-	int32 ExpectedPinCount;
-	TArray<FPinInfo> Pins;
-	bool bIsStatic;
-	TOptional<FFunctionMetadata> FunctionMetadata;
-	FString NodeClassName;
-	FString NodeClassPath;
-	FString DisplayName;
-	FString Description;
-	FString Tooltip;
-	TArray<FString> Keywords;
-	
-	FNodeDescriptor()
-		: ExpectedPinCount(0)
-		, bIsStatic(false)
 	{
 	}
 };

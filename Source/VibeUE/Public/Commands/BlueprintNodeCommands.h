@@ -7,6 +7,7 @@
 // Forward declarations
 class FBlueprintReflectionCommands;
 struct FNodeSummary;
+struct FNodeDescriptor;
 
 /**
  * Handler class for Blueprint Node-related MCP commands
