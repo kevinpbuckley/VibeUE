@@ -4,10 +4,12 @@
 #include "Services/Common/ServiceBase.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
+#include "Dom/JsonObject.h"
 
 // Forward declarations
 struct FPropertyInfo;
 struct FFunctionInfo;
+class UBlueprint;
 
 /**
  * Structure for class information
@@ -25,6 +27,50 @@ struct VIBEUE_API FClassInfo
         , bIsBlueprint(false)
     {
     }
+};
+
+/**
+ * Pin information structure for node types
+ */
+struct VIBEUE_API FPinInfo
+{
+	FString PinName;
+	FString PinType;
+	FString Direction;  // "input" or "output"
+	bool bIsArray;
+	FString DefaultValue;
+	
+	FPinInfo()
+		: bIsArray(false)
+	{
+	}
+};
+
+/**
+ * Search criteria for node type discovery
+ */
+struct VIBEUE_API FNodeTypeSearchCriteria
+{
+	TOptional<FString> Category;
+	TOptional<FString> SearchTerm;
+	bool bIncludeFunctions = true;
+	bool bIncludeVariables = true;
+	bool bIncludeEvents = true;
+	int32 MaxResults = 100;
+};
+
+/**
+ * Node type information returned by discovery
+ */
+struct VIBEUE_API FNodeTypeInfo
+{
+	FString SpawnerKey;
+	FString NodeTitle;
+	FString Category;
+	TArray<FPinInfo> ExpectedPins;
+	FString NodeType;  // "function_call", "variable_get", etc.
+	FString Description;
+	TArray<FString> Keywords;
 };
 
 /**
@@ -136,6 +182,21 @@ public:
 	 * @return Result containing the class path
 	 */
 	TResult<FString> GetClassPath(UClass* Class);
+	
+	// ═══════════════════════════════════════════════════════════
+	// Node Type Discovery (Phase 4 Refactoring)
+	// ═══════════════════════════════════════════════════════════
+	
+	/**
+	 * Get available node types for a Blueprint with filtering
+	 * @param Blueprint The Blueprint to discover nodes for
+	 * @param Criteria Search and filter criteria
+	 * @return Result containing array of available node types
+	 */
+	TResult<TArray<FNodeTypeInfo>> GetAvailableNodeTypes(
+		UBlueprint* Blueprint, 
+		const FNodeTypeSearchCriteria& Criteria);
+
 	
 private:
 	// Helper methods for type cataloging

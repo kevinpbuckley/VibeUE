@@ -157,6 +157,12 @@ private:
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
     TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const;
     
+    // Phase 4: Node type discovery helpers
+    FNodeTypeSearchCriteria ParseSearchCriteria(const TSharedPtr<FJsonObject>& Params) const;
+    TSharedPtr<FJsonObject> ConvertNodeTypesToJson(
+        const TResult<TArray<struct FNodeTypeInfo>>& Result,
+        const FString& BlueprintName) const;
+    
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
     

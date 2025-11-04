@@ -1,6 +1,7 @@
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Commands/BlueprintReflection.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -409,4 +410,81 @@ bool FBlueprintReflectionService::IsComponentTypeValid(UClass* ComponentClass)
 	}
 	
 	return true;
+}
+
+// ═══════════════════════════════════════════════════════════
+// Node Type Discovery Implementation (Phase 4 Refactoring)
+// ═══════════════════════════════════════════════════════════
+
+TResult<TArray<FNodeTypeInfo>> FBlueprintReflectionService::GetAvailableNodeTypes(
+	UBlueprint* Blueprint,
+	const FNodeTypeSearchCriteria& Criteria)
+{
+	if (!Blueprint)
+	{
+		return TResult<TArray<FNodeTypeInfo>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			TEXT("Blueprint is null"));
+	}
+	
+	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Discovering nodes for Blueprint: %s"), *Blueprint->GetName());
+	
+	// Use the descriptor-based discovery from BlueprintReflection
+	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+		FBlueprintReflection::DiscoverNodesWithDescriptors(
+			Blueprint,
+			Criteria.SearchTerm.Get(TEXT("")),
+			Criteria.Category.Get(TEXT("")),
+			TEXT(""),  // ClassFilter
+			Criteria.MaxResults
+		);
+	
+	TArray<FNodeTypeInfo> NodeTypes;
+	NodeTypes.Reserve(Descriptors.Num());
+	
+	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+	{
+		// Apply type filters
+		if (!Criteria.bIncludeFunctions && Desc.NodeType == TEXT("function_call"))
+		{
+			continue;
+		}
+		if (!Criteria.bIncludeVariables && 
+			(Desc.NodeType == TEXT("variable_get") || Desc.NodeType == TEXT("variable_set")))
+		{
+			continue;
+		}
+		if (!Criteria.bIncludeEvents && Desc.NodeType == TEXT("event"))
+		{
+			continue;
+		}
+		
+		// Convert descriptor to NodeTypeInfo
+		FNodeTypeInfo NodeInfo;
+		NodeInfo.SpawnerKey = Desc.SpawnerKey;
+		NodeInfo.NodeTitle = Desc.DisplayName;
+		NodeInfo.Category = Desc.Category;
+		NodeInfo.NodeType = Desc.NodeType;
+		NodeInfo.Description = Desc.Description;
+		NodeInfo.Keywords = Desc.Keywords;
+		
+		// Convert pin descriptors
+		for (const FBlueprintReflection::FPinDescriptor& PinDesc : Desc.Pins)
+		{
+			FPinInfo PinInfo;
+			PinInfo.PinName = PinDesc.Name;
+			PinInfo.PinType = PinDesc.Type;
+			PinInfo.Direction = PinDesc.Direction;
+			PinInfo.bIsArray = PinDesc.bIsArray;
+			PinInfo.DefaultValue = PinDesc.DefaultValue;
+			
+			NodeInfo.ExpectedPins.Add(PinInfo);
+		}
+		
+		NodeTypes.Add(NodeInfo);
+	}
+	
+	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Discovered %d node types"), NodeTypes.Num());
+	
+	return TResult<TArray<FNodeTypeInfo>>::Success(NodeTypes);
 }
