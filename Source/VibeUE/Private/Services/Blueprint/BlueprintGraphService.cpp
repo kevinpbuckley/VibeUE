@@ -12,6 +12,8 @@
 #include "K2Node_MacroInstance.h"
 #include "K2Node.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
 
 FBlueprintGraphService::FBlueprintGraphService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -333,4 +335,108 @@ TResult<bool> FBlueprintGraphService::IsGraphValid(UBlueprint* Blueprint, const 
     
     bool bIsValid = ValidationResult.GetValue().Num() == 0;
     return TResult<bool>::Success(bIsValid);
+}
+
+TResult<TArray<FNodeSummary>> FBlueprintGraphService::ListNodes(UBlueprint* Blueprint, const FString& GraphScope)
+{
+    if (!Blueprint)
+    {
+        return TResult<TArray<FNodeSummary>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+
+    // Resolve the graph based on scope
+    UEdGraph* TargetGraph = nullptr;
+    if (GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
+    {
+        TResult<UEdGraph*> GraphResult = GetEventGraph(Blueprint);
+        if (GraphResult.IsError())
+        {
+            return TResult<TArray<FNodeSummary>>::Error(GraphResult.GetErrorCode(), GraphResult.GetErrorMessage());
+        }
+        TargetGraph = GraphResult.GetValue();
+    }
+    else
+    {
+        TResult<UEdGraph*> GraphResult = GetGraph(Blueprint, GraphScope);
+        if (GraphResult.IsError())
+        {
+            return TResult<TArray<FNodeSummary>>::Error(GraphResult.GetErrorCode(), GraphResult.GetErrorMessage());
+        }
+        TargetGraph = GraphResult.GetValue();
+    }
+
+    if (!TargetGraph)
+    {
+        return TResult<TArray<FNodeSummary>>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            FString::Printf(TEXT("Graph with scope '%s' not found"), *GraphScope));
+    }
+
+    // Build node summaries
+    TArray<FNodeSummary> NodeSummaries;
+    for (UEdGraphNode* Node : TargetGraph->Nodes)
+    {
+        if (!Node)
+        {
+            continue;
+        }
+
+        FNodeSummary Summary;
+        Summary.NodeId = Node->NodeGuid.ToString();
+        Summary.NodeType = GetNodeTypeString(Node);
+        Summary.Title = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+        
+        // Build pin information
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (Pin)
+            {
+                Summary.Pins.Add(MakePinJson(Pin));
+            }
+        }
+        
+        NodeSummaries.Add(Summary);
+    }
+
+    return TResult<TArray<FNodeSummary>>::Success(NodeSummaries);
+}
+
+TSharedPtr<FJsonObject> FBlueprintGraphService::MakePinJson(const UEdGraphPin* Pin) const
+{
+    TSharedPtr<FJsonObject> PinObj = MakeShared<FJsonObject>();
+    if (!Pin)
+    {
+        return PinObj;
+    }
+
+    PinObj->SetStringField(TEXT("name"), Pin->PinName.ToString());
+    PinObj->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("Input") : TEXT("Output"));
+    PinObj->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
+    
+    if (!Pin->DefaultValue.IsEmpty())
+    {
+        PinObj->SetStringField(TEXT("default"), Pin->DefaultValue);
+    }
+    
+    // Connections for output pins
+    if (Pin->Direction == EGPD_Output)
+    {
+        TArray<TSharedPtr<FJsonValue>> Connections;
+        for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+        {
+            if (LinkedPin && LinkedPin->GetOwningNode())
+            {
+                TSharedPtr<FJsonObject> ConnObj = MakeShared<FJsonObject>();
+                ConnObj->SetStringField(TEXT("to_node_id"), LinkedPin->GetOwningNode()->NodeGuid.ToString());
+                ConnObj->SetStringField(TEXT("to_pin"), LinkedPin->PinName.ToString());
+                Connections.Add(MakeShared<FJsonValueObject>(ConnObj));
+            }
+        }
+        
+        if (Connections.Num() > 0)
+        {
+            PinObj->SetArrayField(TEXT("connections"), Connections);
+        }
+    }
+    
+    return PinObj;
 }

@@ -238,6 +238,37 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateErrorResponse(const FStrin
     return Response;
 }
 
+// Helper to convert TResult<TArray<FNodeSummary>> to JSON
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const
+{
+    if (Result.IsError())
+    {
+        return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+    }
+
+    TArray<TSharedPtr<FJsonValue>> NodeArray;
+    for (const FNodeSummary& Summary : Result.GetValue())
+    {
+        TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
+        NodeObj->SetStringField(TEXT("id"), Summary.NodeId);
+        NodeObj->SetStringField(TEXT("node_type"), Summary.NodeType);
+        NodeObj->SetStringField(TEXT("title"), Summary.Title);
+        
+        TArray<TSharedPtr<FJsonValue>> PinArray;
+        for (const TSharedPtr<FJsonObject>& PinObj : Summary.Pins)
+        {
+            PinArray.Add(MakeShared<FJsonValueObject>(PinObj));
+        }
+        NodeObj->SetArrayField(TEXT("pins"), PinArray);
+        
+        NodeArray.Add(MakeShared<FJsonValueObject>(NodeObj));
+    }
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetArrayField(TEXT("nodes"), NodeArray);
+    return Response;
+}
+
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
     UE_LOG(LogVibeUE, Warning, TEXT("MCP: BlueprintNodeCommands::HandleCommand called with CommandType: %s"), *CommandType);
@@ -2175,60 +2206,20 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
-    Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
-    Params->TryGetBoolField(TEXT("include_macros"), bIncludeMacros);
-    Params->TryGetBoolField(TEXT("include_timeline"), bIncludeTimeline);
-
-    // Find blueprint using DiscoveryService
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
-    }
-    
-    UBlueprint* Blueprint = BlueprintResult.GetValue();
-
-    // TODO: Once all handlers refactored, move this logic to GraphService or NodeService
-    FString ScopeError;
-    UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, ScopeError);
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    TArray<TSharedPtr<FJsonValue>> NodeArray;
-    for (UEdGraphNode* Node : EventGraph->Nodes)
-    {
-        const FString Type = GetNodeTypeString(Node);
-        if (!bIncludeFunctions && Type == TEXT("FunctionCall")) continue;
-        if (!bIncludeMacros && Type == TEXT("MacroInstance")) continue;
-        if (!bIncludeTimeline && Type == TEXT("Timeline")) continue;
-
-        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-        Obj->SetStringField(TEXT("id"), Node->NodeGuid.ToString());
-        Obj->SetStringField(TEXT("node_type"), Type);
-        Obj->SetStringField(TEXT("title"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
-
-        TArray<TSharedPtr<FJsonValue>> Pins;
-        for (UEdGraphPin* Pin : Node->Pins)
-        {
-            Pins.Add(MakeShared<FJsonValueObject>(MakePinJson(Pin)));
-        }
-        Obj->SetArrayField(TEXT("pins"), Pins);
-        NodeArray.Add(MakeShared<FJsonValueObject>(Obj));
-    }
-
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetArrayField(TEXT("nodes"), NodeArray);
-    return Result;
+    auto ListResult = GraphService->ListNodes(FindResult.GetValue(), TEXT("event"));
+    return ConvertTResultToJson(ListResult);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
