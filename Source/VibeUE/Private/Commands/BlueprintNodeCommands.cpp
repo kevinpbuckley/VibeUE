@@ -4560,19 +4560,26 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSplitOrRecombinePins(const
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSharedPtr<FJsonObject>& Params)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
+    // Extract and validate parameters
+    FString BlueprintName, NodeIdentifier;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(Error);
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+    }
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
 
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // Lambda to gather pin names from JSON
     auto GatherPinNames = [](const TSharedPtr<FJsonObject>& Source, TArray<FString>& OutPins)
     {
         if (!Source.IsValid())
@@ -4587,6 +4594,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
         CollectStringValues(Source, PinFields, OutPins);
     };
 
+    // Lambda to evaluate reset_all flag from various field names
     auto EvaluateResetAll = [](const TSharedPtr<FJsonObject>& Source) -> bool
     {
         if (!Source.IsValid())
@@ -4605,13 +4613,9 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
         for (const FString& Field : Fields)
         {
             bool BoolValue = false;
-            if (Source->TryGetBoolField(Field, BoolValue))
+            if (Source->TryGetBoolField(Field, BoolValue) && BoolValue)
             {
-                if (BoolValue)
-                {
-                    return true;
-                }
-                continue;
+                return true;
             }
 
             FString StringValue;
@@ -4620,10 +4624,10 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
                 return true;
             }
         }
-
         return false;
     };
 
+    // Gather pin names from all parameter sources
     TArray<FString> PinNames;
     GatherPinNames(Params, PinNames);
 
@@ -4639,31 +4643,64 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
         GatherPinNames(*NodeConfig, PinNames);
     }
 
-    const bool bResetAllPins = EvaluateResetAll(Params) || EvaluateResetAll(Extra ? *Extra : nullptr) || EvaluateResetAll(NodeConfig ? *NodeConfig : nullptr);
+    // Check if reset_all flag is set
+    const bool bResetAllPins = EvaluateResetAll(Params) || 
+                               EvaluateResetAll(Extra ? *Extra : nullptr) || 
+                               EvaluateResetAll(NodeConfig ? *NodeConfig : nullptr);
 
-    if (bResetAllPins && Node)
+    // If reset_all, we need to get all pin names from the node
+    if (bResetAllPins)
     {
-        for (UEdGraphPin* Pin : Node->Pins)
+        // Find the node to get all its pins
+        TArray<UEdGraph*> AllGraphs;
+        Blueprint->GetAllGraphs(AllGraphs);
+        
+        UEdGraphNode* Node = nullptr;
+        for (UEdGraph* Graph : AllGraphs)
         {
-            if (Pin)
+            if (!Graph) continue;
+            for (UEdGraphNode* GraphNode : Graph->Nodes)
             {
-                PinNames.Add(Pin->PinName.ToString());
+                if (GraphNode && GraphNode->NodeGuid.ToString() == NodeIdentifier)
+                {
+                    Node = GraphNode;
+                    break;
+                }
+            }
+            if (Node) break;
+        }
+        
+        if (Node)
+        {
+            for (UEdGraphPin* Pin : Node->Pins)
+            {
+                if (Pin)
+                {
+                    PinNames.AddUnique(Pin->PinName.ToString());
+                }
             }
         }
     }
 
-    // Deduplicate and prune empty names before processing
-    PinNames.RemoveAll([](FString& Name)
+    // Deduplicate and trim pin names
+    TSet<FString> SeenPins;
+    TArray<FString> CleanedPinNames;
+    for (FString& PinName : PinNames)
     {
-        Name.TrimStartAndEndInline();
-        return Name.IsEmpty();
-    });
-
-    if (PinNames.Num() == 0)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("No pin names provided for reset"));
+        PinName.TrimStartAndEndInline();
+        if (!PinName.IsEmpty() && !SeenPins.Contains(PinName))
+        {
+            SeenPins.Add(PinName);
+            CleanedPinNames.Add(PinName);
+        }
     }
 
+    if (CleanedPinNames.Num() == 0)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("No pin names provided for reset"));
+    }
+
+    // Determine compile preference
     auto EvaluateCompilePreference = [](const TSharedPtr<FJsonObject>& Source, bool& bHasValue, bool& bValue)
     {
         if (!Source.IsValid())
@@ -4693,126 +4730,52 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
     EvaluateCompilePreference(NodeConfig ? *NodeConfig : nullptr, bCompileExplicit, bCompileValue);
     const bool bShouldCompile = bCompileExplicit ? bCompileValue : false;
 
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Result->SetBoolField(TEXT("reset_all"), bResetAllPins);
-    Result->SetNumberField(TEXT("requested_count"), PinNames.Num());
-
-    if (Graph)
+    // Execute pin reset using service layer
+    auto ResetResult = NodeService->ResetPinDefaultsBatch(Blueprint, NodeIdentifier, CleanedPinNames);
+    if (ResetResult.IsError())
     {
-        Result->SetStringField(TEXT("graph_name"), Graph->GetName());
+        return CreateErrorResponse(ResetResult.GetErrorCode(), ResetResult.GetErrorMessage());
     }
 
-    const UEdGraphSchema* GraphSchema = Graph ? Graph->GetSchema() : nullptr;
-    UEdGraphSchema_K2* K2Schema = GraphSchema ? const_cast<UEdGraphSchema_K2*>(Cast<UEdGraphSchema_K2>(GraphSchema)) : nullptr;
-    if (!K2Schema)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Graph schema does not support K2 pin defaults"));
-    }
-
-    TUniquePtr<FScopedTransaction> Transaction;
-    TSet<FString> SeenPins;
+    // Convert service results to JSON
+    const TArray<FBlueprintNodeService::FPinOperationResult>& Results = ResetResult.GetValue();
     TArray<TSharedPtr<FJsonValue>> PinReports;
-    int32 FailureCount = 0;
     int32 ChangedCount = 0;
+    int32 FailureCount = 0;
     int32 NoOpCount = 0;
 
-    auto EnsureTransaction = [&]()
+    for (const auto& Result : Results)
     {
-        if (!Transaction.IsValid())
-        {
-            Transaction = MakeUnique<FScopedTransaction>(NSLOCTEXT("VibeUE", "ResetPinDefaultsTransaction", "MCP Reset Blueprint Pin Defaults"));
-            if (Graph)
-            {
-                Graph->Modify();
-            }
-            if (Blueprint)
-            {
-                Blueprint->Modify();
-            }
-            if (Node)
-            {
-                Node->Modify();
-            }
-        }
-    };
-
-    for (const FString& RawName : PinNames)
-    {
-        FString PinName = RawName;
-        PinName.TrimStartAndEndInline();
-        if (PinName.IsEmpty() || SeenPins.Contains(PinName))
-        {
-            continue;
-        }
-        SeenPins.Add(PinName);
-
         TSharedPtr<FJsonObject> PinReport = MakeShared<FJsonObject>();
-        PinReport->SetStringField(TEXT("pin_name"), PinName);
-
-        UEdGraphPin* Pin = FindPinForOperation(Node, PinName);
-        if (!Pin)
-        {
-            ++FailureCount;
-            PinReport->SetStringField(TEXT("status"), TEXT("failed"));
-            PinReport->SetStringField(TEXT("message"), TEXT("Pin not found"));
-            PinReports.Add(MakeShared<FJsonValueObject>(PinReport));
-            continue;
-        }
-
-        PinReport->SetStringField(TEXT("pin_id"), VibeUENodeIntrospection::BuildPinIdentifier(Node, Pin));
-        PinReport->SetStringField(TEXT("original_value"), Pin->GetDefaultAsString());
-        PinReport->SetStringField(TEXT("autogenerated_value"), Pin->AutogeneratedDefaultValue);
-        PinReport->SetBoolField(TEXT("has_connections"), Pin->LinkedTo.Num() > 0);
-
-#if WITH_EDITORONLY_DATA
-        if (Pin->bDefaultValueIsIgnored)
-        {
-            PinReport->SetStringField(TEXT("status"), TEXT("ignored"));
-            PinReport->SetStringField(TEXT("message"), TEXT("Pin default value is ignored by schema"));
-            PinReports.Add(MakeShared<FJsonValueObject>(PinReport));
-            continue;
-        }
-#endif
-
-        if (Pin->DoesDefaultValueMatchAutogenerated())
-        {
-            ++NoOpCount;
-            PinReport->SetStringField(TEXT("status"), TEXT("noop"));
-            PinReport->SetStringField(TEXT("message"), TEXT("Pin already matches autogenerated default"));
-            PinReport->SetStringField(TEXT("new_value"), Pin->GetDefaultAsString());
-            PinReports.Add(MakeShared<FJsonValueObject>(PinReport));
-            continue;
-        }
-
-        EnsureTransaction();
-        Pin->Modify();
-        K2Schema->ResetPinToAutogeneratedDefaultValue(Pin);
-        ++ChangedCount;
-        PinReport->SetStringField(TEXT("status"), TEXT("applied"));
-        PinReport->SetStringField(TEXT("message"), TEXT("Pin default reset to autogenerated value"));
-        PinReport->SetStringField(TEXT("new_value"), Pin->GetDefaultAsString());
+        PinReport->SetStringField(TEXT("pin_name"), Result.PinName);
+        PinReport->SetStringField(TEXT("status"), Result.Status);
+        PinReport->SetStringField(TEXT("message"), Result.Message);
+        PinReport->SetBoolField(TEXT("success"), Result.bSuccess);
+        
         PinReports.Add(MakeShared<FJsonValueObject>(PinReport));
-    }
-
-    if (ChangedCount > 0)
-    {
-        FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-        if (bShouldCompile)
+        
+        if (Result.Status.Equals(TEXT("applied")))
         {
-            FKismetEditorUtilities::CompileBlueprint(Blueprint);
+            ChangedCount++;
+        }
+        else if (Result.Status.Equals(TEXT("noop")) || Result.Status.Equals(TEXT("ignored")))
+        {
+            NoOpCount++;
+        }
+        else if (!Result.bSuccess)
+        {
+            FailureCount++;
         }
     }
 
-    const bool bSuccess = (FailureCount == 0);
-    Result->SetBoolField(TEXT("success"), bSuccess);
-    Result->SetArrayField(TEXT("pins"), PinReports);
-    Result->SetNumberField(TEXT("changed_count"), ChangedCount);
-    Result->SetNumberField(TEXT("failure_count"), FailureCount);
-    Result->SetNumberField(TEXT("noop_count"), NoOpCount);
-    Result->SetBoolField(TEXT("compiled"), bShouldCompile && ChangedCount > 0);
+    // Compile if requested and changes were made
+    if (bShouldCompile && ChangedCount > 0)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
 
+    // Build response
+    const bool bSuccess = (FailureCount == 0);
     FString Message;
     if (FailureCount > 0)
     {
@@ -4824,11 +4787,24 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
     }
     else
     {
-        Message = FString::Printf(TEXT("Reset %d pin%s to autogenerated defaults"), ChangedCount, ChangedCount == 1 ? TEXT("") : TEXT("s"));
+        Message = FString::Printf(TEXT("Reset %d pin%s to autogenerated defaults"), 
+                                 ChangedCount, ChangedCount == 1 ? TEXT("") : TEXT("s"));
     }
 
-    Result->SetStringField(TEXT("message"), Message);
-    return Result;
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), bSuccess);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_id"), NodeIdentifier);
+    Response->SetBoolField(TEXT("reset_all"), bResetAllPins);
+    Response->SetNumberField(TEXT("requested_count"), CleanedPinNames.Num());
+    Response->SetNumberField(TEXT("changed_count"), ChangedCount);
+    Response->SetNumberField(TEXT("failure_count"), FailureCount);
+    Response->SetNumberField(TEXT("noop_count"), NoOpCount);
+    Response->SetBoolField(TEXT("compiled"), bShouldCompile && ChangedCount > 0);
+    Response->SetArrayField(TEXT("pins"), PinReports);
+    Response->SetStringField(TEXT("message"), Message);
+    
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params)
