@@ -5510,11 +5510,11 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAllInputKeys(const TSha
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract required parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString KeyName;
@@ -5530,7 +5530,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
 
     if (KeyName.IsEmpty())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'key_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'key_name' parameter"));
     }
 
     // Parse position
@@ -5542,48 +5542,74 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
         Position.Y = (*PositionArray)[1]->AsNumber();
     }
 
-    // Find Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find the blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Find the key using reflection
+    // Prepare input key node parameters
+    FInputKeyNodeParams InputKeyParams;
+    InputKeyParams.KeyName = KeyName;
+    InputKeyParams.Position = Position;
+
+    // Create input key node using NodeService
+    auto CreateResult = NodeService->CreateInputKeyNode(FindResult.GetValue(), InputKeyParams);
+    if (CreateResult.IsError())
+    {
+        return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
+    }
+
+    // Get the key info for additional metadata in the response
     FInputKeyInfo KeyInfo;
     if (!FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo))
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(
-            TEXT("Input key '%s' not found. Use get_all_input_keys to discover available keys."), *KeyName));
+        // This shouldn't happen since the service already validated the key, but handle it gracefully
+        KeyInfo.KeyName = KeyName;
+        KeyInfo.DisplayName = KeyName;
     }
 
-    // Create input key node
-    FString Error;
-    UK2Node_InputKey* InputKeyNode = FInputKeyEnumerator::CreateInputKeyNode(
-        Blueprint,
-        KeyInfo.Key,
-        Position,
-        Error
-    );
-
-    if (!InputKeyNode)
+    // Find the created node to get additional info
+    UBlueprint* Blueprint = FindResult.GetValue();
+    FGuid NodeGuid;
+    FGuid::Parse(CreateResult.GetValue(), NodeGuid);
+    
+    UK2Node_InputKey* InputKeyNode = nullptr;
+    int32 PinCount = 0;
+    FVector2D NodePosition = Position;
+    
+    // Try to find the node to get accurate metadata
+    UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
+    if (EventGraph)
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(
-            TEXT("Failed to create input key node: %s"), *Error));
+        for (UEdGraphNode* Node : EventGraph->Nodes)
+        {
+            if (Node && Node->NodeGuid == NodeGuid)
+            {
+                InputKeyNode = Cast<UK2Node_InputKey>(Node);
+                if (InputKeyNode)
+                {
+                    PinCount = InputKeyNode->Pins.Num();
+                    NodePosition = FVector2D(InputKeyNode->NodePosX, InputKeyNode->NodePosY);
+                }
+                break;
+            }
+        }
     }
 
     // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), InputKeyNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+    Result->SetStringField(TEXT("node_id"), CreateResult.GetValue());
     Result->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
     Result->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
-    Result->SetNumberField(TEXT("pin_count"), InputKeyNode->Pins.Num());
+    Result->SetNumberField(TEXT("pin_count"), PinCount);
     
     // Add position info
     TArray<TSharedPtr<FJsonValue>> PosArray;
-    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosX));
-    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosY));
+    PosArray.Add(MakeShared<FJsonValueNumber>(NodePosition.X));
+    PosArray.Add(MakeShared<FJsonValueNumber>(NodePosition.Y));
     Result->SetArrayField(TEXT("position"), PosArray);
 
     UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *KeyInfo.KeyName);

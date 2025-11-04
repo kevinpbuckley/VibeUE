@@ -3,6 +3,7 @@
 #include "Core/ErrorCodes.h"
 #include "Commands/CommonUtils.h"
 #include "Commands/BlueprintReflection.h"
+#include "Commands/InputKeyEnumerator.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
 #include "EdGraph/EdGraphNode.h"
@@ -10,6 +11,7 @@
 #include "EdGraphSchema_K2.h"
 #include "K2Node.h"
 #include "K2Node_InputAction.h"
+#include "K2Node_InputKey.h"
 #include "K2Node_CallFunction.h"
 #include "K2Node_VariableGet.h"
 #include "K2Node_VariableSet.h"
@@ -1022,6 +1024,57 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
     
     // Return node ID
     return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
+}
+
+TResult<FString> FBlueprintNodeService::CreateInputKeyNode(UBlueprint* Blueprint, const FInputKeyNodeParams& Params)
+{
+    if (!Blueprint)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(Params.KeyName, TEXT("KeyName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the key using reflection
+    FInputKeyInfo KeyInfo;
+    if (!FInputKeyEnumerator::FindInputKey(Params.KeyName, KeyInfo))
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("Input key '%s' not found. Use get_all_input_keys to discover available keys."), *Params.KeyName));
+    }
+    
+    // Resolve target graph (defaults to EventGraph)
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, TEXT(""), Error);
+    if (!TargetGraph)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
+    }
+    
+    // Create input key node
+    UK2Node_InputKey* InputKeyNode = FInputKeyEnumerator::CreateInputKeyNode(
+        Blueprint,
+        KeyInfo.Key,
+        Params.Position,
+        Error
+    );
+    
+    if (!InputKeyNode)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::NODE_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create input key node: %s"), *Error));
+    }
+    
+    // Mark blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    
+    // Return node ID
+    return TResult<FString>::Success(InputKeyNode->NodeGuid.ToString());
 }
 
 TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
