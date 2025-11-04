@@ -27,6 +27,43 @@ struct VIBEUE_API FClassInfo
     }
 };
 
+// Forward declaration to avoid duplicate definition
+struct FPinInfo;
+
+/**
+ * Search criteria for available node types
+ */
+struct VIBEUE_API FNodeTypeSearchCriteria
+{
+    TOptional<FString> Category;
+    TOptional<FString> SearchTerm;
+    TOptional<FString> ClassFilter;
+    bool bIncludeFunctions = true;
+    bool bIncludeVariables = true;
+    bool bIncludeEvents = true;
+    bool bReturnDescriptors = true;
+    int32 MaxResults = 100;
+    
+    FNodeTypeSearchCriteria() = default;
+};
+
+/**
+ * Information about an available node type
+ */
+struct VIBEUE_API FNodeTypeInfo
+{
+    FString SpawnerKey;
+    FString NodeTitle;
+    FString Category;
+    FString NodeType;
+    FString Description;
+    FString Keywords;
+    int32 ExpectedPinCount = 0;
+    bool bIsStatic = false;
+    
+    FNodeTypeInfo() = default;
+};
+
 /**
  * Blueprint Reflection Service
  * 
@@ -68,6 +105,14 @@ public:
 	 * @return Result containing array of property type names
 	 */
 	TResult<TArray<FString>> GetAvailablePropertyTypes();
+	
+	/**
+	 * Get available node types for Blueprint node palette
+	 * @param Blueprint The Blueprint context for discovery
+	 * @param Criteria Search criteria for filtering nodes
+	 * @return Result containing array of node type information with spawner keys and metadata
+	 */
+	TResult<TArray<FNodeTypeInfo>> GetAvailableNodeTypes(UBlueprint* Blueprint, const FNodeTypeSearchCriteria& Criteria);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Class Metadata

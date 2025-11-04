@@ -9,6 +9,7 @@
 #include "GameFramework/Actor.h"
 #include "UObject/UObjectIterator.h"
 #include "UObject/SoftObjectPath.h"
+#include "Commands/BlueprintReflection.h"  // For FBlueprintReflection static methods
 
 // Declare log category
 DEFINE_LOG_CATEGORY_STATIC(LogBlueprintReflectionService, Log, All);
@@ -59,6 +60,55 @@ TResult<TArray<FString>> FBlueprintReflectionService::GetAvailablePropertyTypes(
 	
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Returned %d property types"), CachedPropertyTypes.Num());
 	return TResult<TArray<FString>>::Success(CachedPropertyTypes);
+}
+
+TResult<TArray<FNodeTypeInfo>> FBlueprintReflectionService::GetAvailableNodeTypes(UBlueprint* Blueprint, const FNodeTypeSearchCriteria& Criteria)
+{
+	// Validate Blueprint
+	auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint"));
+	if (ValidationResult.IsError())
+	{
+		return TResult<TArray<FNodeTypeInfo>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+	
+	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Discovering available node types for Blueprint: %s"), *Blueprint->GetName());
+	
+	// Use descriptor-based discovery from FBlueprintReflection
+	FString SearchTerm = Criteria.SearchTerm.Get(TEXT(""));
+	FString CategoryFilter = Criteria.Category.Get(TEXT(""));
+	FString ClassFilter = Criteria.ClassFilter.Get(TEXT(""));
+	
+	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, Criteria.MaxResults);
+	
+	// Convert descriptors to FNodeTypeInfo
+	TArray<FNodeTypeInfo> NodeTypes;
+	
+	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+	{
+		// Apply type filters
+		if (!Criteria.bIncludeFunctions && Desc.NodeType == TEXT("function_call")) continue;
+		if (!Criteria.bIncludeVariables && (Desc.NodeType == TEXT("variable_get") || Desc.NodeType == TEXT("variable_set"))) continue;
+		if (!Criteria.bIncludeEvents && Desc.NodeType == TEXT("event")) continue;
+		
+		FNodeTypeInfo Info;
+		Info.SpawnerKey = Desc.SpawnerKey;
+		Info.NodeTitle = Desc.DisplayName;
+		Info.Category = Desc.Category;
+		Info.NodeType = Desc.NodeType;
+		Info.Description = Desc.Description;
+		
+		// Convert Keywords array to comma-separated string
+		Info.Keywords = FString::Join(Desc.Keywords, TEXT(", "));
+		
+		Info.ExpectedPinCount = Desc.ExpectedPinCount;
+		Info.bIsStatic = Desc.bIsStatic;
+		
+		NodeTypes.Add(Info);
+	}
+	
+	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Discovered %d node types"), NodeTypes.Num());
+	return TResult<TArray<FNodeTypeInfo>>::Success(NodeTypes);
 }
 
 // ═══════════════════════════════════════════════════════════

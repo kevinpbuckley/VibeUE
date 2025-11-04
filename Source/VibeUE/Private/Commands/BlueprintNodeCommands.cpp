@@ -4435,11 +4435,114 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNodes(cons
 // NEW: Reflection-based command implementations
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    if (ReflectionCommands.IsValid())
-    {
-        return ReflectionCommands->HandleGetAvailableBlueprintNodes(Params);
-    }
-    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+	// 1. Extract blueprint_name parameter
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Missing 'blueprint_name'"));
+	}
+	
+	// 2. Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+	}
+	UBlueprint* Blueprint = FindResult.GetValue();
+	
+	// 3. Parse search criteria from parameters
+	FNodeTypeSearchCriteria Criteria;
+	
+	// Extract search parameters with multiple naming variations
+	FString Category;
+	if (Params->TryGetStringField(TEXT("category"), Category))
+	{
+		Criteria.Category = Category;
+	}
+	
+	FString SearchTerm;
+	if (Params->TryGetStringField(TEXT("search_term"), SearchTerm) ||
+		Params->TryGetStringField(TEXT("searchTerm"), SearchTerm) ||
+		Params->TryGetStringField(TEXT("searchterm"), SearchTerm))
+	{
+		Criteria.SearchTerm = SearchTerm;
+	}
+	
+	FString ClassFilter;
+	if (Params->TryGetStringField(TEXT("class_filter"), ClassFilter))
+	{
+		Criteria.ClassFilter = ClassFilter;
+	}
+	
+	Params->TryGetBoolField(TEXT("include_functions"), Criteria.bIncludeFunctions) ||
+		Params->TryGetBoolField(TEXT("includeFunctions"), Criteria.bIncludeFunctions);
+	
+	Params->TryGetBoolField(TEXT("include_variables"), Criteria.bIncludeVariables) ||
+		Params->TryGetBoolField(TEXT("includeVariables"), Criteria.bIncludeVariables);
+	
+	Params->TryGetBoolField(TEXT("include_events"), Criteria.bIncludeEvents) ||
+		Params->TryGetBoolField(TEXT("includeEvents"), Criteria.bIncludeEvents);
+	
+	Params->TryGetBoolField(TEXT("return_descriptors"), Criteria.bReturnDescriptors) ||
+		Params->TryGetBoolField(TEXT("returnDescriptors"), Criteria.bReturnDescriptors);
+	
+	double ParsedMaxResults = 0.0;
+	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
+		Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
+	{
+		Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+	}
+	
+	// 4. Call ReflectionService to get available node types
+	auto NodesResult = ReflectionService->GetAvailableNodeTypes(Blueprint, Criteria);
+	if (NodesResult.IsError())
+	{
+		return CreateErrorResponse(NodesResult.GetErrorCode(), NodesResult.GetErrorMessage());
+	}
+	
+	// 5. Convert TResult to JSON with category grouping
+	const TArray<FNodeTypeInfo>& NodeTypes = NodesResult.GetValue();
+	
+	// Group nodes by category
+	TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
+	
+	for (const FNodeTypeInfo& NodeInfo : NodeTypes)
+	{
+		TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
+		NodeJson->SetStringField(TEXT("spawner_key"), NodeInfo.SpawnerKey);
+		NodeJson->SetStringField(TEXT("name"), NodeInfo.NodeTitle);
+		NodeJson->SetStringField(TEXT("category"), NodeInfo.Category);
+		NodeJson->SetStringField(TEXT("type"), NodeInfo.NodeType);
+		NodeJson->SetStringField(TEXT("description"), NodeInfo.Description);
+		NodeJson->SetStringField(TEXT("keywords"), NodeInfo.Keywords);
+		NodeJson->SetNumberField(TEXT("expected_pin_count"), NodeInfo.ExpectedPinCount);
+		NodeJson->SetBoolField(TEXT("is_static"), NodeInfo.bIsStatic);
+		
+		// Add to category
+		FString CategoryKey = NodeInfo.Category.IsEmpty() ? TEXT("Other") : NodeInfo.Category;
+		if (!CategoryMap.Contains(CategoryKey))
+		{
+			CategoryMap.Add(CategoryKey, TArray<TSharedPtr<FJsonValue>>());
+		}
+		CategoryMap[CategoryKey].Add(MakeShared<FJsonValueObject>(NodeJson));
+	}
+	
+	// Build final result
+	TSharedPtr<FJsonObject> CategoriesJson = MakeShared<FJsonObject>();
+	for (auto& CategoryPair : CategoryMap)
+	{
+		CategoriesJson->SetArrayField(CategoryPair.Key, CategoryPair.Value);
+	}
+	
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetObjectField(TEXT("categories"), CategoriesJson);
+	Result->SetNumberField(TEXT("total_nodes"), NodeTypes.Num());
+	Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	Result->SetBoolField(TEXT("truncated"), false);
+	Result->SetBoolField(TEXT("with_descriptors"), Criteria.bReturnDescriptors);
+	
+	return Result;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
