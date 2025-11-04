@@ -98,9 +98,16 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
 {
     UE_LOG(LogTemp, Log, TEXT("Blueprint Component Reflection: Getting available components"));
     
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-    TArray<TSharedPtr<FJsonValue>> ComponentsArray;
+    // Get available component types from ReflectionService
+    auto ComponentTypesResult = ReflectionService->GetAvailableComponentTypes();
+    
+    if (ComponentTypesResult.IsError())
+    {
+        return CreateErrorResponse(ComponentTypesResult.GetErrorCode(), ComponentTypesResult.GetErrorMessage());
+    }
 
+    const TArray<FString>& ComponentTypeNames = ComponentTypesResult.GetValue();
+    
     // Check if we want detailed metadata (default: false for performance)
     bool bIncludeDetailedMetadata = false;
     if (Params.IsValid())
@@ -108,142 +115,185 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
         Params->TryGetBoolField(TEXT("detailed_metadata"), bIncludeDetailedMetadata);
     }
 
-    // Discover all component classes using reflection
-    TArray<UClass*> ComponentClasses = DiscoverComponentClasses(Params);
-    
-    // Build categories set as we process
+    // Build component information array
+    TArray<TSharedPtr<FJsonValue>> ComponentsArray;
     TSet<FString> Categories;
     
-    for (UClass* ComponentClass : ComponentClasses)
+    for (const FString& ComponentTypeName : ComponentTypeNames)
     {
-        if (!ComponentClass || ComponentClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+        // Resolve component class
+        auto ResolveResult = ReflectionService->ResolveClass(ComponentTypeName);
+        if (ResolveResult.IsError())
+        {
+            continue; // Skip invalid classes
+        }
+        
+        UClass* ComponentClass = ResolveResult.GetValue();
+        if (!ComponentClass)
+        {
             continue;
+        }
 
-        // Create lightweight component info (similar to UE component browser)
-        TSharedPtr<FJsonObject> ComponentInfo = MakeShareable(new FJsonObject);
+        // Create basic component info
+        TSharedPtr<FJsonObject> ComponentInfo = MakeShared<FJsonObject>();
         
-        // Basic information (fast to extract)
+        // Basic information
         ComponentInfo->SetStringField(TEXT("name"), ComponentClass->GetName());
-        ComponentInfo->SetStringField(TEXT("display_name"), GetFriendlyComponentName(ComponentClass));
-        ComponentInfo->SetStringField(TEXT("class_path"), ComponentClass->GetPathName());
+        ComponentInfo->SetStringField(TEXT("display_name"), ComponentClass->GetDisplayNameText().ToString());
         
-        FString Category = GetComponentCategory(ComponentClass);
-        ComponentInfo->SetStringField(TEXT("category"), Category);
-        Categories.Add(Category);
+        auto PathResult = ReflectionService->GetClassPath(ComponentClass);
+        if (PathResult.IsSuccess())
+        {
+            ComponentInfo->SetStringField(TEXT("class_path"), PathResult.GetValue());
+        }
         
-        // Component type flags (fast checks)
+        // Component type flags
         ComponentInfo->SetBoolField(TEXT("is_scene_component"), ComponentClass->IsChildOf<USceneComponent>());
         ComponentInfo->SetBoolField(TEXT("is_primitive_component"), ComponentClass->IsChildOf<UPrimitiveComponent>());
         ComponentInfo->SetBoolField(TEXT("is_custom"), !ComponentClass->IsNative());
         ComponentInfo->SetBoolField(TEXT("is_abstract"), ComponentClass->HasAnyClassFlags(CLASS_Abstract));
-        ComponentInfo->SetBoolField(TEXT("is_deprecated"), ComponentClass->HasAnyClassFlags(CLASS_Deprecated));
         
-        // Hierarchy info (fast)
+        // Get class category from metadata
+        FString Category = TEXT("Miscellaneous");
+        if (const FString* CategoryMetadata = ComponentClass->FindMetaData(TEXT("Category")))
+        {
+            Category = *CategoryMetadata;
+        }
+        ComponentInfo->SetStringField(TEXT("category"), Category);
+        Categories.Add(Category);
+        
+        // Hierarchy info
         if (ComponentClass->GetSuperClass())
         {
             ComponentInfo->SetStringField(TEXT("base_class"), ComponentClass->GetSuperClass()->GetName());
         }
         
-        // Only include detailed metadata if requested (expensive operations)
+        // Include detailed metadata if requested (uses ReflectionService)
         if (bIncludeDetailedMetadata)
         {
-            TSharedPtr<FJsonObject> DetailedMetadata = ExtractComponentMetadata(ComponentClass);
-            if (DetailedMetadata.IsValid())
+            auto ClassInfoResult = ReflectionService->GetClassInfo(ComponentClass);
+            if (ClassInfoResult.IsSuccess())
             {
-                ComponentInfo = DetailedMetadata; // Replace with full metadata
+                const FClassInfo& ClassInfo = ClassInfoResult.GetValue();
+                ComponentInfo->SetStringField(TEXT("parent_class"), ClassInfo.ParentClass);
+                ComponentInfo->SetBoolField(TEXT("is_blueprint"), ClassInfo.bIsBlueprint);
+            }
+            
+            auto PropertiesResult = ReflectionService->GetClassProperties(ComponentClass);
+            if (PropertiesResult.IsSuccess())
+            {
+                ComponentInfo->SetNumberField(TEXT("property_count"), PropertiesResult.GetValue().Num());
+            }
+            
+            auto FunctionsResult = ReflectionService->GetClassFunctions(ComponentClass);
+            if (FunctionsResult.IsSuccess())
+            {
+                ComponentInfo->SetNumberField(TEXT("function_count"), FunctionsResult.GetValue().Num());
             }
         }
 
-        ComponentsArray.Add(MakeShareable(new FJsonValueObject(ComponentInfo)));
+        ComponentsArray.Add(MakeShared<FJsonValueObject>(ComponentInfo));
     }
 
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
     Response->SetArrayField(TEXT("components"), ComponentsArray);
     Response->SetNumberField(TEXT("total_count"), ComponentsArray.Num());
     
-    // Add categories list (matches UE component browser structure)
+    // Add categories list
     TArray<TSharedPtr<FJsonValue>> CategoriesArray;
     for (const FString& Category : Categories)
     {
-        CategoriesArray.Add(MakeShareable(new FJsonValueString(Category)));
+        CategoriesArray.Add(MakeShared<FJsonValueString>(Category));
     }
     Response->SetArrayField(TEXT("categories"), CategoriesArray);
 
-    UE_LOG(LogTemp, Log, TEXT("Found %d component types in %d categories"), ComponentsArray.Num(), Categories.Num());
+    UE_LOG(LogTemp, Log, TEXT("Found %d component types in %d categories"), 
+        ComponentsArray.Num(), Categories.Num());
+        
     return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentInfo(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString ComponentTypeName;
     if (!Params->TryGetStringField(TEXT("component_type"), ComponentTypeName))
     {
-        return CreateErrorResponse(TEXT("Missing component_type parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
     }
 
-    // Find the component class
-    UClass* ComponentClass = nullptr;
-    if (!ValidateComponentType(ComponentTypeName, ComponentClass))
+    // Validate component type using ReflectionService
+    auto ValidResult = ReflectionService->IsValidComponentType(ComponentTypeName);
+    if (ValidResult.IsError() || !ValidResult.GetValue())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component type '%s' not found"), *ComponentTypeName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_TYPE_INVALID, 
+            FString::Printf(TEXT("Component type '%s' not found or invalid"), *ComponentTypeName));
     }
 
-    TSharedPtr<FJsonObject> ComponentInfo = ExtractComponentMetadata(ComponentClass);
-    if (!ComponentInfo.IsValid())
+    // Resolve component class
+    auto ResolveResult = ReflectionService->ResolveClass(ComponentTypeName);
+    if (ResolveResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to extract metadata for component type '%s'"), *ComponentTypeName));
+        return CreateErrorResponse(ResolveResult.GetErrorCode(), ResolveResult.GetErrorMessage());
     }
 
-    // NEW: Check if property values should be included
-    bool bIncludePropertyValues = false;
-    Params->TryGetBoolField(TEXT("include_property_values"), bIncludePropertyValues);
-
-    FString BlueprintName;
-    FString ComponentName;
-    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
-    Params->TryGetStringField(TEXT("component_name"), ComponentName);
-
-    if (bIncludePropertyValues && !BlueprintName.IsEmpty() && !ComponentName.IsEmpty())
+    UClass* ComponentClass = ResolveResult.GetValue();
+    
+    // Get class information from ReflectionService
+    auto ClassInfoResult = ReflectionService->GetClassInfo(ComponentClass);
+    if (ClassInfoResult.IsError())
     {
-        UE_LOG(LogTemp, Log, TEXT("Extracting property values for component '%s' from Blueprint '%s'"), *ComponentName, *BlueprintName);
+        return CreateErrorResponse(ClassInfoResult.GetErrorCode(), ClassInfoResult.GetErrorMessage());
+    }
+
+    const FClassInfo& ClassInfo = ClassInfoResult.GetValue();
+    
+    // Build component info response
+    TSharedPtr<FJsonObject> ComponentInfo = MakeShared<FJsonObject>();
+    ComponentInfo->SetStringField(TEXT("name"), ClassInfo.ClassName);
+    ComponentInfo->SetStringField(TEXT("class_path"), ClassInfo.ClassPath);
+    ComponentInfo->SetStringField(TEXT("parent_class"), ClassInfo.ParentClass);
+    ComponentInfo->SetBoolField(TEXT("is_abstract"), ClassInfo.bIsAbstract);
+    ComponentInfo->SetBoolField(TEXT("is_blueprint"), ClassInfo.bIsBlueprint);
+    ComponentInfo->SetBoolField(TEXT("is_scene_component"), ComponentClass->IsChildOf<USceneComponent>());
+    ComponentInfo->SetBoolField(TEXT("is_primitive_component"), ComponentClass->IsChildOf<UPrimitiveComponent>());
+    
+    // Get properties
+    auto PropertiesResult = ReflectionService->GetClassProperties(ComponentClass);
+    if (PropertiesResult.IsSuccess())
+    {
+        const TArray<FPropertyInfo>& Properties = PropertiesResult.GetValue();
+        TArray<TSharedPtr<FJsonValue>> PropertiesArray;
         
-        // Try to load the Blueprint and extract property values
-        UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-        if (Blueprint)
+        for (const FPropertyInfo& PropInfo : Properties)
         {
-            UActorComponent* ComponentInstance = FindComponentInBlueprint(Blueprint, ComponentName, ComponentClass);
-            if (ComponentInstance)
-            {
-                TSharedPtr<FJsonObject> PropertyValues = GetComponentPropertyValues(ComponentInstance, ComponentClass);
-                ComponentInfo->SetObjectField(TEXT("property_values"), PropertyValues);
-                ComponentInfo->SetBoolField(TEXT("has_property_values"), true);
-                
-                UE_LOG(LogTemp, Log, TEXT("Successfully extracted %d property values"), PropertyValues->Values.Num());
-            }
-            else
-            {
-                ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
-                ComponentInfo->SetStringField(TEXT("property_values_error"), 
-                    FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
-                UE_LOG(LogTemp, Warning, TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName);
-            }
+            TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+            PropObj->SetStringField(TEXT("name"), PropInfo.PropertyName);
+            PropObj->SetStringField(TEXT("type"), PropInfo.PropertyType);
+            PropObj->SetBoolField(TEXT("is_editable"), PropInfo.bIsEditable);
+            PropObj->SetBoolField(TEXT("is_blueprint_visible"), PropInfo.bIsBlueprintVisible);
+            PropertiesArray.Add(MakeShared<FJsonValueObject>(PropObj));
         }
-        else
-        {
-            ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
-            ComponentInfo->SetStringField(TEXT("property_values_error"), 
-                FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-            UE_LOG(LogTemp, Warning, TEXT("Blueprint '%s' not found"), *BlueprintName);
-        }
+        
+        ComponentInfo->SetArrayField(TEXT("properties"), PropertiesArray);
+        ComponentInfo->SetNumberField(TEXT("property_count"), Properties.Num());
     }
-    else
+    
+    // Get function count (don't try to extract detailed function info due to struct uncertainties)
+    auto FunctionsResult = ReflectionService->GetClassFunctions(ComponentClass);
+    if (FunctionsResult.IsSuccess())
     {
-        ComponentInfo->SetBoolField(TEXT("has_property_values"), false);
+        ComponentInfo->SetNumberField(TEXT("function_count"), FunctionsResult.GetValue().Num());
     }
 
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
     Response->SetObjectField(TEXT("component_info"), ComponentInfo);
+
+    UE_LOG(LogTemp, Log, TEXT("Retrieved component info for type: %s"), *ComponentTypeName);
 
     return Response;
 }
@@ -255,7 +305,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetPropertyMetadata
     
     if (!Params->TryGetStringField(TEXT("component_type"), ComponentTypeName))
     {
-        return CreateErrorResponse(TEXT("Missing component_type parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
     }
     
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
