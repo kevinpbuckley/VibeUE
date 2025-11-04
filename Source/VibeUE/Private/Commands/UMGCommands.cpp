@@ -16,10 +16,6 @@
 #include "Blueprint/WidgetTree.h"
 #include "JsonObjectConverter.h"
 
-// ============================================================================
-// Constructor
-// ============================================================================
-
 FUMGCommands::FUMGCommands()
 {
 	// Initialize service context
@@ -35,21 +31,14 @@ FUMGCommands::FUMGCommands()
 	ReflectionService = MakeShared<FWidgetReflectionService>(ServiceContext);
 }
 
-// ============================================================================
-// Helper Methods
-// ============================================================================
-
 TSharedPtr<FJsonObject> FUMGCommands::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
 {
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
 	if (Data.IsValid())
 	{
-		// Merge Data fields into Response
 		for (const auto& Pair : Data->Values)
-		{
 			Response->SetField(Pair.Key, Pair.Value);
-		}
 	}
 	return Response;
 }
@@ -62,6 +51,7 @@ TSharedPtr<FJsonObject> FUMGCommands::CreateErrorResponse(const FString& ErrorCo
 	Response->SetStringField(TEXT("error"), ErrorMessage);
 	return Response;
 }
+
 
 TSharedPtr<FJsonObject> FUMGCommands::ComponentToJson(UWidget* Component)
 {
@@ -124,17 +114,13 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddComponentGeneric(
 	FString BlueprintName, WidgetName, ParentName;
 	VALIDATE_PARAMS_2(Params, "blueprint_name", BlueprintName, "widget_name", WidgetName)
 	Params->TryGetStringField(TEXT("parent_name"), ParentName);
-	
 	FIND_WIDGET_OR_ERROR(BlueprintName, Widget)
-	
 	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(Widget, ComponentType, WidgetName, ParentName);
 	if (ComponentResult.IsError())
 		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
-	
 	return CreateSuccessResponse(ComponentToJson(ComponentResult.GetValue()));
 }
 
-// Helper to convert FWidgetComponentInfo to JSON
 TSharedPtr<FJsonObject> FUMGCommands::ComponentInfoToJson(const FWidgetComponentInfo& Info)
 {
 	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
@@ -146,7 +132,6 @@ TSharedPtr<FJsonObject> FUMGCommands::ComponentInfoToJson(const FWidgetComponent
 	return Obj;
 }
 
-// Helper to convert FPropertyInfo to JSON
 TSharedPtr<FJsonObject> FUMGCommands::PropertyInfoToJson(const FPropertyInfo& Info)
 {
 	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
@@ -165,111 +150,54 @@ TSharedPtr<FJsonObject> FUMGCommands::PropertyInfoToJson(const FPropertyInfo& In
 	return Obj;
 }
 
-// ============================================================================
-// Command Router
-// ============================================================================
-
 TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
 {
-	// Map of component type commands to their component type strings
 	static const TMap<FString, FString> ComponentTypeMap = {
-		{TEXT("add_text_block_to_widget"), TEXT("TextBlock")},
-		{TEXT("add_button_to_widget"), TEXT("Button")},
-		{TEXT("add_editable_text"), TEXT("EditableText")},
-		{TEXT("add_editable_text_box"), TEXT("EditableTextBox")},
-		{TEXT("add_rich_text_block"), TEXT("RichTextBlock")},
-		{TEXT("add_check_box"), TEXT("CheckBox")},
-		{TEXT("add_slider"), TEXT("Slider")},
-		{TEXT("add_progress_bar"), TEXT("ProgressBar")},
-		{TEXT("add_image"), TEXT("Image")},
-		{TEXT("add_spacer"), TEXT("Spacer")},
-		{TEXT("add_canvas_panel"), TEXT("CanvasPanel")},
-		{TEXT("add_size_box"), TEXT("SizeBox")},
-		{TEXT("add_overlay"), TEXT("Overlay")},
-		{TEXT("add_horizontal_box"), TEXT("HorizontalBox")},
-		{TEXT("add_vertical_box"), TEXT("VerticalBox")},
-		{TEXT("add_scroll_box"), TEXT("ScrollBox")},
-		{TEXT("add_grid_panel"), TEXT("GridPanel")},
-		{TEXT("add_widget_switcher"), TEXT("WidgetSwitcher")}
+		{TEXT("add_text_block_to_widget"), TEXT("TextBlock")}, {TEXT("add_button_to_widget"), TEXT("Button")},
+		{TEXT("add_editable_text"), TEXT("EditableText")}, {TEXT("add_editable_text_box"), TEXT("EditableTextBox")},
+		{TEXT("add_rich_text_block"), TEXT("RichTextBlock")}, {TEXT("add_check_box"), TEXT("CheckBox")},
+		{TEXT("add_slider"), TEXT("Slider")}, {TEXT("add_progress_bar"), TEXT("ProgressBar")},
+		{TEXT("add_image"), TEXT("Image")}, {TEXT("add_spacer"), TEXT("Spacer")},
+		{TEXT("add_canvas_panel"), TEXT("CanvasPanel")}, {TEXT("add_size_box"), TEXT("SizeBox")},
+		{TEXT("add_overlay"), TEXT("Overlay")}, {TEXT("add_horizontal_box"), TEXT("HorizontalBox")},
+		{TEXT("add_vertical_box"), TEXT("VerticalBox")}, {TEXT("add_scroll_box"), TEXT("ScrollBox")},
+		{TEXT("add_grid_panel"), TEXT("GridPanel")}, {TEXT("add_widget_switcher"), TEXT("WidgetSwitcher")}
 	};
 	
-	// Check if this is a component add command
 	if (const FString* ComponentType = ComponentTypeMap.Find(CommandName))
-	{
 		return HandleAddComponentGeneric(Params, *ComponentType);
-	}
 	
-	// Lifecycle Commands
-	if (CommandName == TEXT("create_umg_widget_blueprint"))
-		return HandleCreateUMGWidgetBlueprint(Params);
-	if (CommandName == TEXT("delete_widget_blueprint"))
-		return HandleDeleteWidgetBlueprint(Params);
-	
-	// Discovery Commands
-	if (CommandName == TEXT("search_items"))
-		return HandleSearchItems(Params);
-	if (CommandName == TEXT("get_widget_blueprint_info"))
-		return HandleGetWidgetBlueprintInfo(Params);
-	if (CommandName == TEXT("list_widget_components"))
-		return HandleListWidgetComponents(Params);
-	if (CommandName == TEXT("get_widget_component_properties"))
-		return HandleGetWidgetComponentProperties(Params);
-	if (CommandName == TEXT("get_available_widget_types"))
-		return HandleGetAvailableWidgetTypes(Params);
-	if (CommandName == TEXT("validate_widget_hierarchy"))
-		return HandleValidateWidgetHierarchy(Params);
-	
-	// Layout/Advanced Commands
-	if (CommandName == TEXT("add_widget_switcher_slot"))
-		return HandleAddWidgetSwitcherSlot(Params);
-	if (CommandName == TEXT("add_child_to_panel"))
-		return HandleAddChildToPanel(Params);
-	if (CommandName == TEXT("remove_umg_component"))
-		return HandleRemoveUMGComponent(Params);
-	if (CommandName == TEXT("set_widget_slot_properties"))
-		return HandleSetWidgetSlotProperties(Params);
-	
-	// Property Commands
-	if (CommandName == TEXT("set_widget_property"))
-		return HandleSetWidgetProperty(Params);
-	if (CommandName == TEXT("get_widget_property"))
-		return HandleGetWidgetProperty(Params);
-	if (CommandName == TEXT("list_widget_properties"))
-		return HandleListWidgetProperties(Params);
-	
-	// Event Commands
-	if (CommandName == TEXT("bind_input_events"))
-		return HandleBindInputEvents(Params);
-	if (CommandName == TEXT("get_available_events"))
-		return HandleGetAvailableEvents(Params);
-
+	if (CommandName == TEXT("create_umg_widget_blueprint")) return HandleCreateUMGWidgetBlueprint(Params);
+	if (CommandName == TEXT("delete_widget_blueprint")) return HandleDeleteWidgetBlueprint(Params);
+	if (CommandName == TEXT("search_items")) return HandleSearchItems(Params);
+	if (CommandName == TEXT("get_widget_blueprint_info")) return HandleGetWidgetBlueprintInfo(Params);
+	if (CommandName == TEXT("list_widget_components")) return HandleListWidgetComponents(Params);
+	if (CommandName == TEXT("get_widget_component_properties")) return HandleGetWidgetComponentProperties(Params);
+	if (CommandName == TEXT("get_available_widget_types")) return HandleGetAvailableWidgetTypes(Params);
+	if (CommandName == TEXT("validate_widget_hierarchy")) return HandleValidateWidgetHierarchy(Params);
+	if (CommandName == TEXT("add_widget_switcher_slot")) return HandleAddWidgetSwitcherSlot(Params);
+	if (CommandName == TEXT("add_child_to_panel")) return HandleAddChildToPanel(Params);
+	if (CommandName == TEXT("remove_umg_component")) return HandleRemoveUMGComponent(Params);
+	if (CommandName == TEXT("set_widget_slot_properties")) return HandleSetWidgetSlotProperties(Params);
+	if (CommandName == TEXT("set_widget_property")) return HandleSetWidgetProperty(Params);
+	if (CommandName == TEXT("get_widget_property")) return HandleGetWidgetProperty(Params);
+	if (CommandName == TEXT("list_widget_properties")) return HandleListWidgetProperties(Params);
+	if (CommandName == TEXT("bind_input_events")) return HandleBindInputEvents(Params);
+	if (CommandName == TEXT("get_available_events")) return HandleGetAvailableEvents(Params);
 	return CreateErrorResponse(TEXT("UNKNOWN_COMMAND"), 
 		FString::Printf(TEXT("Unknown UMG command: %s"), *CommandName));
 }
-
-// ============================================================================
-// Lifecycle Commands
-// ============================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
-	{
 		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing 'name' parameter"));
-	}
-
 	FString PackagePath = TEXT("/Game/UI/");
 	Params->TryGetStringField(TEXT("path"), PackagePath);
-	
-	TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> Result = 
-		LifecycleService->CreateWidget(BlueprintName, PackagePath);
-	
+	TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> Result = LifecycleService->CreateWidget(BlueprintName, PackagePath);
 	if (Result.IsError())
-	{
 		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
-	
 	const FWidgetInfo& Info = Result.GetValue().Value;
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("name"), Info.Name);
@@ -281,56 +209,35 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleDeleteWidgetBlueprint(const TSharedP
 {
 	FString WidgetName;
 	VALIDATE_PARAM(Params, "widget_name", WidgetName)
-
-	bool CheckReferences = Params->HasField(TEXT("check_references")) ? 
-		Params->GetBoolField(TEXT("check_references")) : true;
-
+	bool CheckReferences = Params->HasField(TEXT("check_references")) ? Params->GetBoolField(TEXT("check_references")) : true;
 	FIND_WIDGET_OR_ERROR(WidgetName, Widget)
-
 	FString AssetPath = Widget->GetPathName();
 	int32 ReferenceCount = 0;
 	TResult<void> DeleteResult = LifecycleService->DeleteWidget(Widget, CheckReferences, &ReferenceCount);
-
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("widget_name"), WidgetName);
 	Data->SetStringField(TEXT("asset_path"), AssetPath);
 	Data->SetNumberField(TEXT("reference_count"), ReferenceCount);
 	Data->SetBoolField(TEXT("references_checked"), CheckReferences);
-	
 	if (DeleteResult.IsError())
 	{
 		Data->SetBoolField(TEXT("deletion_blocked"), true);
 		return CreateErrorResponse(DeleteResult.GetErrorCode(), DeleteResult.GetErrorMessage());
 	}
-
 	Data->SetBoolField(TEXT("deletion_blocked"), false);
-	Data->SetStringField(TEXT("message"), FString::Printf(
-		TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName));
-
+	Data->SetStringField(TEXT("message"), FString::Printf(TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName));
 	if (ReferenceCount > 0)
-		Data->SetStringField(TEXT("warning"), FString::Printf(
-			TEXT("Widget was referenced by %d other assets - those references may now be broken"), ReferenceCount));
-	
+		Data->SetStringField(TEXT("warning"), FString::Printf(TEXT("Widget was referenced by %d other assets - those references may now be broken"), ReferenceCount));
 	return CreateSuccessResponse(Data);
 }
-
-// ============================================================================
-// Discovery Commands
-// ============================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonObject>& Params)
 {
 	FString SearchTerm = Params->GetStringField(TEXT("search_term"));
-	int32 MaxResults = Params->HasField(TEXT("max_results")) ? 
-		Params->GetIntegerField(TEXT("max_results")) : 100;
-	
+	int32 MaxResults = Params->HasField(TEXT("max_results")) ? Params->GetIntegerField(TEXT("max_results")) : 100;
 	TResult<TArray<FAssetData>> Result = DiscoveryService->SearchWidgets(SearchTerm, MaxResults);
-	
 	if (Result.IsError())
-	{
 		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
-	
 	TArray<TSharedPtr<FJsonValue>> ItemsArray;
 	for (const FAssetData& AssetData : Result.GetValue())
 	{
@@ -340,7 +247,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 		ItemObj->SetStringField(TEXT("type"), TEXT("WidgetBlueprint"));
 		ItemsArray.Add(MakeShared<FJsonValueObject>(ItemObj));
 	}
-	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetArrayField(TEXT("items"), ItemsArray);
 	return CreateSuccessResponse(Data);
@@ -431,43 +337,31 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 	return CreateSuccessResponse(Data);
 }
 
-// ============================================================================
-// Component Add Commands (Delegated to ComponentService)
-// ============================================================================
-
 // All component addition now handled by HandleAddComponentGeneric via command router
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName, SwitcherName, ChildWidgetName;
 	VALIDATE_PARAMS_3(Params, "widget_name", WidgetBlueprintName, "switcher_name", SwitcherName, "child_widget_name", ChildWidgetName)
-	
 	int32 SlotIndex = -1;
 	Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
-	
 	FIND_WIDGET_OR_ERROR(WidgetBlueprintName, Widget)
-	
 	int32 ActualSlotIndex = 0;
 	TResult<void> AddSlotResult = ComponentService->AddWidgetSwitcherSlot(Widget, SwitcherName, ChildWidgetName, SlotIndex, &ActualSlotIndex);
 	if (AddSlotResult.IsError())
 		return CreateErrorResponse(AddSlotResult.GetErrorCode(), AddSlotResult.GetErrorMessage());
-	
-	// Get total slot count
 	int32 TotalSlots = 0;
 	if (Widget->WidgetTree)
 	{
 		TArray<UWidget*> AllWidgets;
 		Widget->WidgetTree->GetAllWidgets(AllWidgets);
 		for (UWidget* W : AllWidgets)
-		{
 			if (W && W->GetName() == SwitcherName && W->IsA<UWidgetSwitcher>())
 			{
 				TotalSlots = Cast<UWidgetSwitcher>(W)->GetNumWidgets();
 				break;
 			}
-		}
 	}
-	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
 	Data->SetStringField(TEXT("switcher_name"), SwitcherName);
@@ -515,14 +409,10 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 {
 	FString WidgetName, ComponentName;
 	VALIDATE_PARAMS_2(Params, "widget_name", WidgetName, "component_name", ComponentName)
-	
 	const TSharedPtr<FJsonObject>* SlotPropsObj;
 	if (!Params->TryGetObjectField(TEXT("slot_properties"), SlotPropsObj))
 		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing 'slot_properties' parameter"));
-	
 	FIND_WIDGET_OR_ERROR(WidgetName, Widget)
-	
-	// Set each slot property using PropertyService
 	for (const auto& Pair : (*SlotPropsObj)->Values)
 	{
 		FString PropertyPath = FString::Printf(TEXT("Slot.%s"), *Pair.Key);
@@ -536,20 +426,14 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Value);
 			FJsonSerializer::Serialize(Pair.Value, TEXT(""), Writer);
 		}
-		
 		TResult<void> SetResult = PropertyService->SetProperty(Widget, ComponentName, PropertyPath, Value);
 		if (SetResult.IsError())
 			return CreateErrorResponse(SetResult.GetErrorCode(), SetResult.GetErrorMessage());
 	}
-	
 	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
 	Data->SetStringField(TEXT("message"), TEXT("Slot properties set successfully"));
 	return CreateSuccessResponse(Data);
 }
-
-// ============================================================================
-// Property Commands
-// ============================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
@@ -599,10 +483,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPt
 	Data->SetArrayField(TEXT("properties"), PropertiesArray);
 	return CreateSuccessResponse(Data);
 }
-
-// ============================================================================
-// Event Commands
-// ============================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params)
 {
