@@ -2429,7 +2429,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     const FString NormalizedAction = Action.ToLower();
     
     // Helper: Get function_name parameter (used by most operations)
-    auto GetFunctionName = [&](FString& OutName) -> bool {
+    auto GetFunctionName = [&Params](FString& OutName) -> bool {
         return Params->TryGetStringField(TEXT("function_name"), OutName);
     };
     
@@ -2597,11 +2597,16 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         return Resp;
     }
     
-    // Unsupported operations
-    if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var") || 
-        NormalizedAction == TEXT("update_properties") || NormalizedAction == TEXT("get_available_local_types") || 
+    // Unsupported operations (require additional service implementation)
+    if (NormalizedAction == TEXT("update_local") || 
+        NormalizedAction == TEXT("update_local_var") || 
+        NormalizedAction == TEXT("update_properties") || 
+        NormalizedAction == TEXT("get_available_local_types") || 
         NormalizedAction == TEXT("list_local_types"))
-        return CreateErrorResponse(OPERATION_NOT_SUPPORTED, TEXT("Operation requires additional service implementation"));
+    {
+        return CreateErrorResponse(OPERATION_NOT_SUPPORTED, 
+            TEXT("Operation requires additional service implementation"));
+    }
     
     return CreateErrorResponse(ACTION_UNSUPPORTED, FString::Printf(TEXT("Unknown action: %s"), *Action));
 }
