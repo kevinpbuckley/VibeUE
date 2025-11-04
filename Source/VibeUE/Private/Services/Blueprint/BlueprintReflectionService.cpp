@@ -430,12 +430,14 @@ TResult<TArray<FNodeTypeInfo>> FBlueprintReflectionService::GetAvailableNodeType
 	UE_LOG(LogBlueprintReflectionService, Log, TEXT("Discovering nodes for Blueprint: %s"), *Blueprint->GetName());
 	
 	// Use the descriptor-based discovery from BlueprintReflection
+	// ClassFilter is intentionally empty as it's not exposed in the current search criteria
+	// This can be added to FNodeTypeSearchCriteria in the future if needed
 	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
 		FBlueprintReflection::DiscoverNodesWithDescriptors(
 			Blueprint,
 			Criteria.SearchTerm.Get(TEXT("")),
 			Criteria.Category.Get(TEXT("")),
-			TEXT(""),  // ClassFilter
+			TEXT(""),  // ClassFilter - not currently exposed in search criteria
 			Criteria.MaxResults
 		);
 	

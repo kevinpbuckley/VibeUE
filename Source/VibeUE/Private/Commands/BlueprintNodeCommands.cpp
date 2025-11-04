@@ -270,6 +270,10 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::ConvertTResultToJson(const TResu
 }
 
 // Helper to parse search criteria from JSON parameters
+// Supports multiple naming conventions for backward compatibility:
+// - snake_case (preferred): search_term, include_functions, max_results
+// - camelCase (legacy): searchTerm, includeFunctions, maxResults
+// - lowercase (legacy): searchterm
 FNodeTypeSearchCriteria FBlueprintNodeCommands::ParseSearchCriteria(const TSharedPtr<FJsonObject>& Params) const
 {
     FNodeTypeSearchCriteria Criteria;
@@ -281,7 +285,7 @@ FNodeTypeSearchCriteria FBlueprintNodeCommands::ParseSearchCriteria(const TShare
         Criteria.Category = Category;
     }
     
-    // Parse search term
+    // Parse search term (supports multiple naming conventions)
     FString SearchTerm;
     if (Params->TryGetStringField(TEXT("search_term"), SearchTerm) ||
         Params->TryGetStringField(TEXT("searchTerm"), SearchTerm) ||
@@ -293,7 +297,7 @@ FNodeTypeSearchCriteria FBlueprintNodeCommands::ParseSearchCriteria(const TShare
         }
     }
     
-    // Parse type filters
+    // Parse type filters (supports both snake_case and camelCase)
     Params->TryGetBoolField(TEXT("include_functions"), Criteria.bIncludeFunctions);
     Params->TryGetBoolField(TEXT("includeFunctions"), Criteria.bIncludeFunctions);
     Params->TryGetBoolField(TEXT("include_variables"), Criteria.bIncludeVariables);
@@ -301,12 +305,15 @@ FNodeTypeSearchCriteria FBlueprintNodeCommands::ParseSearchCriteria(const TShare
     Params->TryGetBoolField(TEXT("include_events"), Criteria.bIncludeEvents);
     Params->TryGetBoolField(TEXT("includeEvents"), Criteria.bIncludeEvents);
     
-    // Parse max results
-    double ParsedMaxResults = 0.0;
-    if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
-        Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
+    // Parse max results (supports both snake_case and camelCase)
+    if (Params->HasField(TEXT("max_results")) || Params->HasField(TEXT("maxResults")))
     {
-        Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+        double ParsedMaxResults = 0.0;
+        if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
+            Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
+        {
+            Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+        }
     }
     
     return Criteria;
