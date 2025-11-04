@@ -304,6 +304,15 @@ struct VIBEUE_API FInputActionNodeParams
 };
 
 /**
+ * Parameters for creating an input key node
+ */
+struct VIBEUE_API FInputKeyNodeParams
+{
+    FString KeyName;
+    FVector2D Position;
+};
+
+/**
  * Configuration for creating an event node
  */
 struct VIBEUE_API FEventConfiguration
@@ -375,6 +384,7 @@ public:
     
     // Specialized node creation
     TResult<FString> CreateInputActionNode(UBlueprint* Blueprint, const FInputActionNodeParams& Params);
+    TResult<FString> CreateInputKeyNode(UBlueprint* Blueprint, const FInputKeyNodeParams& Params);
     TResult<FString> AddEvent(UBlueprint* Blueprint, const FEventConfiguration& Config);
     
     // Pin connections
