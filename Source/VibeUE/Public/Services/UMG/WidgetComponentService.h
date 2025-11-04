@@ -189,6 +189,29 @@ public:
         UWidgetBlueprint* Widget,
         const FString& ComponentName);
 
+    /**
+     * @brief Add a child widget to a widget switcher slot
+     * 
+     * Adds a child widget to a WidgetSwitcher component. The child is always appended
+     * to the end of the switcher's child list (UE4 limitation).
+     * 
+     * @param Widget Widget blueprint containing the switcher
+     * @param SwitcherName Name of the WidgetSwitcher component
+     * @param ChildWidgetName Name of the child widget to add
+     * @param SlotIndex Reserved for future use - currently ignored (always appends)
+     * @param OutActualSlotIndex Optional output parameter for the actual slot index used
+     * @return Success or error result
+     * 
+     * @note SlotIndex parameter is currently ignored. The child is always added to the end.
+     * This matches UWidgetSwitcher::AddChild() behavior in Unreal Engine.
+     */
+    TResult<void> AddWidgetSwitcherSlot(
+        UWidgetBlueprint* Widget,
+        const FString& SwitcherName,
+        const FString& ChildWidgetName,
+        int32 SlotIndex = -1,
+        int32* OutActualSlotIndex = nullptr);
+
 protected:
     /** @brief Gets the service name for logging */
     virtual FString GetServiceName() const override { return TEXT("WidgetComponentService"); }

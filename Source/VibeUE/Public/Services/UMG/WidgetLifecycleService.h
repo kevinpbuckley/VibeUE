@@ -39,6 +39,41 @@ public:
     explicit FWidgetLifecycleService(TSharedPtr<FServiceContext> Context);
 
     // ========================================================================
+    // Lifecycle Operations
+    // ========================================================================
+    
+    /**
+     * @brief Create a new widget blueprint
+     * 
+     * Creates a new widget blueprint asset with the specified name and optional parent class.
+     * The widget will be created with a default canvas panel as the root widget.
+     * 
+     * @param WidgetName Name for the new widget blueprint
+     * @param PackagePath Package path where the widget should be created (default: /Game/UI/)
+     * @param ParentClass Optional parent widget class (default: UUserWidget)
+     * @return TResult containing the created widget blueprint and its info (name and path)
+     */
+    TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> CreateWidget(
+        const FString& WidgetName,
+        const FString& PackagePath = TEXT("/Game/UI/"),
+        UClass* ParentClass = nullptr);
+    
+    /**
+     * @brief Delete a widget blueprint
+     * 
+     * Deletes a widget blueprint asset from the project, optionally checking for references.
+     * 
+     * @param Widget The widget blueprint to delete
+     * @param bCheckReferences Whether to check for references before deletion
+     * @param OutReferenceCount Optional output parameter for number of references found
+     * @return Success or error result
+     */
+    TResult<void> DeleteWidget(
+        UWidgetBlueprint* Widget,
+        bool bCheckReferences = true,
+        int32* OutReferenceCount = nullptr);
+
+    // ========================================================================
     // Editor Operations
     // ========================================================================
     
