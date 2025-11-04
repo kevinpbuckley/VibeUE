@@ -313,6 +313,18 @@ struct VIBEUE_API FInputKeyNodeParams
 };
 
 /**
+ * Result structure for input key node creation
+ */
+struct VIBEUE_API FInputKeyNodeResult
+{
+    FString NodeId;          // GUID of created node
+    FString KeyName;         // Internal key name (e.g., "W", "LeftMouseButton")
+    FString DisplayName;     // Human-readable name (e.g., "W", "Left Mouse Button")
+    int32 PinCount;          // Number of pins on the created node
+    FVector2D Position;      // Final node position
+};
+
+/**
  * Configuration for creating an event node
  */
 struct VIBEUE_API FEventConfiguration
@@ -384,7 +396,7 @@ public:
     
     // Specialized node creation
     TResult<FString> CreateInputActionNode(UBlueprint* Blueprint, const FInputActionNodeParams& Params);
-    TResult<FString> CreateInputKeyNode(UBlueprint* Blueprint, const FInputKeyNodeParams& Params);
+    TResult<FInputKeyNodeResult> CreateInputKeyNode(UBlueprint* Blueprint, const FInputKeyNodeParams& Params);
     TResult<FString> AddEvent(UBlueprint* Blueprint, const FEventConfiguration& Config);
     
     // Pin connections

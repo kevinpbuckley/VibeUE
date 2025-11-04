@@ -5527,68 +5527,31 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
     InputKeyParams.KeyName = KeyName;
     InputKeyParams.Position = Position;
 
-    // Create input key node using NodeService
+    // Create input key node using NodeService - returns complete metadata
     auto CreateResult = NodeService->CreateInputKeyNode(FindResult.GetValue(), InputKeyParams);
     if (CreateResult.IsError())
     {
         return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
     }
 
-    // Get the key info for additional metadata in the response
-    // Service has already validated the key exists, so this should always succeed
-    FInputKeyInfo KeyInfo;
-    bool bKeyFound = FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo);
-    // If key not found (should never happen), use KeyName as fallback
-    if (!bKeyFound)
-    {
-        UE_LOG(LogVibeUE, Warning, TEXT("Key info lookup failed after successful node creation for key: %s"), *KeyName);
-        KeyInfo.KeyName = KeyName;
-        KeyInfo.DisplayName = KeyName;
-    }
+    // Service returns complete result with all metadata
+    const FInputKeyNodeResult& NodeResult = CreateResult.GetValue();
 
-    // Find the created node to get additional info
-    UBlueprint* Blueprint = FindResult.GetValue();
-    FGuid NodeGuid;
-    FGuid::Parse(CreateResult.GetValue(), NodeGuid);
-    
-    UK2Node_InputKey* InputKeyNode = nullptr;
-    int32 PinCount = 0;
-    FVector2D NodePosition = Position;
-    
-    // Try to find the node to get accurate metadata
-    UEdGraph* EventGraph = FBlueprintEditorUtils::FindEventGraph(Blueprint);
-    if (EventGraph)
-    {
-        for (UEdGraphNode* Node : EventGraph->Nodes)
-        {
-            if (Node && Node->NodeGuid == NodeGuid)
-            {
-                InputKeyNode = Cast<UK2Node_InputKey>(Node);
-                if (InputKeyNode)
-                {
-                    PinCount = InputKeyNode->Pins.Num();
-                    NodePosition = FVector2D(InputKeyNode->NodePosX, InputKeyNode->NodePosY);
-                }
-                break;
-            }
-        }
-    }
-
-    // Build success response
+    // Build success response from service result
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), CreateResult.GetValue());
-    Result->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
-    Result->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
-    Result->SetNumberField(TEXT("pin_count"), PinCount);
+    Result->SetStringField(TEXT("node_id"), NodeResult.NodeId);
+    Result->SetStringField(TEXT("key_name"), NodeResult.KeyName);
+    Result->SetStringField(TEXT("display_name"), NodeResult.DisplayName);
+    Result->SetNumberField(TEXT("pin_count"), NodeResult.PinCount);
     
     // Add position info
     TArray<TSharedPtr<FJsonValue>> PosArray;
-    PosArray.Add(MakeShared<FJsonValueNumber>(NodePosition.X));
-    PosArray.Add(MakeShared<FJsonValueNumber>(NodePosition.Y));
+    PosArray.Add(MakeShared<FJsonValueNumber>(NodeResult.Position.X));
+    PosArray.Add(MakeShared<FJsonValueNumber>(NodeResult.Position.Y));
     Result->SetArrayField(TEXT("position"), PosArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *KeyInfo.KeyName);
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *NodeResult.KeyName);
 
     return Result;
 }
