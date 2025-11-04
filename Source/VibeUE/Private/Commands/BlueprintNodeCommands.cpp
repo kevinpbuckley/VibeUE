@@ -255,7 +255,6 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
     ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
     FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
     NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
-    GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
     
     // Set services on ReflectionCommands for Phase 4 refactoring
@@ -1582,7 +1581,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
         return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    auto ListResult = GraphService->ListNodes(FindResult.GetValue(), TEXT("event"));
+    auto ListResult = NodeService->ListNodes(FindResult.GetValue(), TEXT("event"));
     return ConvertTResultToJson(ListResult);
 }
 
