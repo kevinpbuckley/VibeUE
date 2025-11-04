@@ -744,3 +744,101 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
     // Return node ID
     return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
 }
+
+TResult<FNodeDetails> FBlueprintNodeService::GetNodeDetailsExtended(UBlueprint* Blueprint, const FString& NodeId, 
+                                                                     bool bIncludePins, bool bIncludeConnections)
+{
+    if (!Blueprint)
+    {
+        return TResult<FNodeDetails>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FNodeDetails>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<FNodeDetails>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    // Build detailed node information
+    FNodeDetails Details;
+    Details.NodeId = Node->NodeGuid.ToString();
+    Details.NodeType = Node->GetClass()->GetName();
+    Details.DisplayName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+    Details.Position = FVector2D(Node->NodePosX, Node->NodePosY);
+    Details.GraphName = NodeGraph ? NodeGraph->GetName() : TEXT("");
+    Details.bCanUserDeleteNode = Node->CanUserDeleteNode();
+    
+    // Get K2Node-specific metadata
+    if (UK2Node* K2Node = Cast<UK2Node>(Node))
+    {
+        Details.Category = K2Node->GetMenuCategory().ToString();
+        Details.Tooltip = K2Node->GetTooltipText().ToString();
+        Details.Keywords = K2Node->GetKeywords().ToString();
+    }
+    
+    // Gather pin details if requested
+    if (bIncludePins)
+    {
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin)
+            {
+                continue;
+            }
+            
+            FPinDetail PinDetail;
+            PinDetail.PinName = Pin->PinName.ToString();
+            PinDetail.PinType = Pin->PinType.PinCategory.ToString();
+            PinDetail.Direction = (Pin->Direction == EGPD_Input) ? TEXT("Input") : TEXT("Output");
+            PinDetail.bIsHidden = Pin->bHidden;
+            PinDetail.bIsConnected = Pin->LinkedTo.Num() > 0;
+            PinDetail.DefaultValue = Pin->DefaultValue;
+            PinDetail.DefaultObjectName = Pin->DefaultObject ? Pin->DefaultObject->GetName() : TEXT("");
+            PinDetail.DefaultTextValue = Pin->DefaultTextValue.ToString();
+            PinDetail.bIsArray = Pin->PinType.IsArray();
+            PinDetail.bIsReference = Pin->PinType.bIsReference;
+            
+            // Gather connection details if requested
+            if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
+            {
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    {
+                        FPinConnectionInfo ConnInfo;
+                        ConnInfo.SourceNodeId = Details.NodeId;
+                        ConnInfo.SourcePinName = Pin->PinName.ToString();
+                        ConnInfo.TargetNodeId = LinkedPin->GetOwningNode()->NodeGuid.ToString();
+                        ConnInfo.TargetPinName = LinkedPin->PinName.ToString();
+                        ConnInfo.PinType = Pin->PinType.PinCategory.ToString();
+                        PinDetail.Connections.Add(ConnInfo);
+                    }
+                }
+            }
+            
+            // Add to appropriate collection
+            if (Pin->Direction == EGPD_Input)
+            {
+                Details.InputPins.Add(PinDetail);
+            }
+            else
+            {
+                Details.OutputPins.Add(PinDetail);
+            }
+        }
+    }
+    
+    return TResult<FNodeDetails>::Success(Details);
+}

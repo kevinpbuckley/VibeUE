@@ -202,6 +202,44 @@ static UEdGraphPin* FindPinForOperation(UEdGraphNode* Node, const FString& RawPi
 }
 }
 
+// Helper: Convert FPinDetail to JSON
+namespace
+{
+TSharedPtr<FJsonObject> ConvertPinDetailToJson(const FPinDetail& PinDetail, bool bIncludeConnections)
+{
+    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
+    PinInfo->SetStringField(TEXT("name"), PinDetail.PinName);
+    PinInfo->SetStringField(TEXT("type"), PinDetail.PinType);
+    PinInfo->SetStringField(TEXT("direction"), PinDetail.Direction);
+    PinInfo->SetBoolField(TEXT("is_hidden"), PinDetail.bIsHidden);
+    PinInfo->SetBoolField(TEXT("is_connected"), PinDetail.bIsConnected);
+    PinInfo->SetBoolField(TEXT("is_array"), PinDetail.bIsArray);
+    PinInfo->SetBoolField(TEXT("is_reference"), PinDetail.bIsReference);
+    
+    if (!PinDetail.DefaultValue.IsEmpty())
+        PinInfo->SetStringField(TEXT("default_value"), PinDetail.DefaultValue);
+    if (!PinDetail.DefaultObjectName.IsEmpty())
+        PinInfo->SetStringField(TEXT("default_object"), PinDetail.DefaultObjectName);
+    if (!PinDetail.DefaultTextValue.IsEmpty())
+        PinInfo->SetStringField(TEXT("default_text"), PinDetail.DefaultTextValue);
+    
+    if (bIncludeConnections && PinDetail.Connections.Num() > 0)
+    {
+        TArray<TSharedPtr<FJsonValue>> Connections;
+        for (const FPinConnectionInfo& ConnInfo : PinDetail.Connections)
+        {
+            TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
+            Connection->SetStringField(TEXT("to_node_id"), ConnInfo.TargetNodeId);
+            Connection->SetStringField(TEXT("to_pin"), ConnInfo.TargetPinName);
+            Connections.Add(MakeShared<FJsonValueObject>(Connection));
+        }
+        PinInfo->SetArrayField(TEXT("connections"), Connections);
+    }
+    
+    return PinInfo;
+}
+}
+
 FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
     // Initialize reflection system (legacy)
@@ -2244,118 +2282,68 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
     
-    bool bIncludeProperties = true, bIncludePins = true, bIncludeConnections = true;
-    Params->TryGetBoolField(TEXT("include_properties"), bIncludeProperties);
+    // Extract options
+    bool bIncludePins = true, bIncludeConnections = true;
     Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
     Params->TryGetBoolField(TEXT("include_connections"), bIncludeConnections);
     
-    // Find blueprint
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    // Find blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
     
-    // Get node details from NodeService
-    TResult<FNodeInfo> NodeInfoResult = NodeService->GetNodeDetails(BlueprintResult.GetValue(), NodeId);
-    if (!NodeInfoResult.IsSuccess())
+    // Get detailed node information from NodeService
+    auto DetailsResult = NodeService->GetNodeDetailsExtended(FindResult.GetValue(), NodeId, bIncludePins, bIncludeConnections);
+    if (DetailsResult.IsError())
     {
-        return CreateErrorResponse(NodeInfoResult.GetErrorCode(), NodeInfoResult.GetErrorMessage());
+        return CreateErrorResponse(DetailsResult.GetErrorCode(), DetailsResult.GetErrorMessage());
     }
     
-    const FNodeInfo& Info = NodeInfoResult.GetValue();
+    // Convert FNodeDetails to JSON
+    const FNodeDetails& Details = DetailsResult.GetValue();
     
-    // Build basic node info
     TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
-    NodeInfo->SetStringField(TEXT("id"), Info.NodeId);
-    NodeInfo->SetStringField(TEXT("node_class"), Info.NodeType);
-    NodeInfo->SetStringField(TEXT("title"), Info.DisplayName);
+    NodeInfo->SetStringField(TEXT("id"), Details.NodeId);
+    NodeInfo->SetStringField(TEXT("node_class"), Details.NodeType);
+    NodeInfo->SetStringField(TEXT("title"), Details.DisplayName);
+    NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Details.bCanUserDeleteNode);
     
     TArray<TSharedPtr<FJsonValue>> Position;
-    Position.Add(MakeShared<FJsonValueNumber>(Info.Position.X));
-    Position.Add(MakeShared<FJsonValueNumber>(Info.Position.Y));
+    Position.Add(MakeShared<FJsonValueNumber>(Details.Position.X));
+    Position.Add(MakeShared<FJsonValueNumber>(Details.Position.Y));
     NodeInfo->SetArrayField(TEXT("position"), Position);
+    
+    if (!Details.Category.IsEmpty())
+        NodeInfo->SetStringField(TEXT("category"), Details.Category);
+    if (!Details.Tooltip.IsEmpty())
+        NodeInfo->SetStringField(TEXT("tooltip"), Details.Tooltip);
+    if (!Details.Keywords.IsEmpty())
+        NodeInfo->SetStringField(TEXT("keywords"), Details.Keywords);
     
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetObjectField(TEXT("node_info"), NodeInfo);
     
-    // Enhanced details require accessing the actual node (keeping this logic for now)
-    // TODO: Move this introspection logic to NodeService in future refactoring
-    FString GraphError;
-    UEdGraph* TargetGraph = ResolveTargetGraph(BlueprintResult.GetValue(), Params, GraphError);
-    if (TargetGraph)
+    // Add pin information if requested
+    if (bIncludePins)
     {
-        UEdGraphNode* Found = nullptr;
-        for (UEdGraphNode* Node : TargetGraph->Nodes)
+        TArray<TSharedPtr<FJsonValue>> InputPins, OutputPins;
+        
+        for (const FPinDetail& PinDetail : Details.InputPins)
         {
-            if (Node->NodeGuid.ToString() == NodeId)
-            {
-                Found = Node;
-                break;
-            }
+            InputPins.Add(MakeShared<FJsonValueObject>(ConvertPinDetailToJson(PinDetail, bIncludeConnections)));
         }
         
-        if (Found)
+        for (const FPinDetail& PinDetail : Details.OutputPins)
         {
-            NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Found->CanUserDeleteNode());
-            
-            if (UK2Node* K2Node = Cast<UK2Node>(Found))
-            {
-                NodeInfo->SetStringField(TEXT("category"), K2Node->GetMenuCategory().ToString());
-                NodeInfo->SetStringField(TEXT("tooltip"), K2Node->GetTooltipText().ToString());
-                NodeInfo->SetStringField(TEXT("keywords"), K2Node->GetKeywords().ToString());
-            }
-            
-            if (bIncludePins)
-            {
-                TArray<TSharedPtr<FJsonValue>> InputPins, OutputPins;
-                for (UEdGraphPin* Pin : Found->Pins)
-                {
-                    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-                    PinInfo->SetStringField(TEXT("name"), Pin->PinName.ToString());
-                    PinInfo->SetStringField(TEXT("type"), Pin->PinType.PinCategory.ToString());
-                    PinInfo->SetStringField(TEXT("direction"), Pin->Direction == EGPD_Input ? TEXT("Input") : TEXT("Output"));
-                    PinInfo->SetBoolField(TEXT("is_hidden"), Pin->bHidden);
-                    PinInfo->SetBoolField(TEXT("is_connected"), Pin->LinkedTo.Num() > 0);
-                    
-                    if (!Pin->DefaultValue.IsEmpty())
-                        PinInfo->SetStringField(TEXT("default_value"), Pin->DefaultValue);
-                    if (Pin->DefaultObject)
-                        PinInfo->SetStringField(TEXT("default_object"), Pin->DefaultObject->GetName());
-                    if (!Pin->DefaultTextValue.IsEmpty())
-                        PinInfo->SetStringField(TEXT("default_text"), Pin->DefaultTextValue.ToString());
-                    
-                    if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
-                    {
-                        TArray<TSharedPtr<FJsonValue>> Connections;
-                        for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
-                        {
-                            if (LinkedPin && LinkedPin->GetOwningNode())
-                            {
-                                TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
-                                Connection->SetStringField(TEXT("to_node_id"), LinkedPin->GetOwningNode()->NodeGuid.ToString());
-                                Connection->SetStringField(TEXT("to_pin"), LinkedPin->PinName.ToString());
-                                Connections.Add(MakeShared<FJsonValueObject>(Connection));
-                            }
-                        }
-                        PinInfo->SetArrayField(TEXT("connections"), Connections);
-                    }
-                    
-                    PinInfo->SetBoolField(TEXT("is_array"), Pin->PinType.IsArray());
-                    PinInfo->SetBoolField(TEXT("is_reference"), Pin->PinType.bIsReference);
-                    
-                    if (Pin->Direction == EGPD_Input)
-                        InputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-                    else
-                        OutputPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-                }
-                
-                TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
-                PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
-                PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
-                Result->SetObjectField(TEXT("pins"), PinsInfo);
-            }
+            OutputPins.Add(MakeShared<FJsonValueObject>(ConvertPinDetailToJson(PinDetail, bIncludeConnections)));
         }
+        
+        TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
+        PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
+        PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
+        Result->SetObjectField(TEXT("pins"), PinsInfo);
     }
     
     return Result;
