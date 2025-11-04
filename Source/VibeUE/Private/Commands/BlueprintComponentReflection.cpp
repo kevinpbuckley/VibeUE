@@ -552,27 +552,31 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleAddComponent(const 
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {
+    // Extract parameters
     FString BlueprintName, ComponentName, PropertyName;
     
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
         !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
         !Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+            TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
     }
 
     TSharedPtr<FJsonValue> PropertyValue = Params->TryGetField(TEXT("property_value"));
     if (!PropertyValue.IsValid())
     {
-        return CreateErrorResponse(TEXT("Missing property_value parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_value' parameter"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
 
     // Find the component - check both SCS nodes and inherited components
     UActorComponent* TargetComponent = nullptr;
@@ -623,21 +627,24 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentPropert
     
     if (!TargetComponent)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, 
+            FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
     }
 
     // Find the property on the component
     const FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
     if (!Property)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+            FString::Printf(TEXT("Property '%s' not found on component '%s'"), *PropertyName, *ComponentName));
     }
 
     // Set the property value
     void* PropertyPtr = Property->ContainerPtrToValuePtr<void>(TargetComponent);
     if (!SetPropertyFromJson(Property, PropertyPtr, PropertyValue))
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to set property '%s' on component '%s'"), *PropertyName, *ComponentName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_SET_FAILED, 
+            FString::Printf(TEXT("Failed to set property '%s' on component '%s'"), *PropertyName, *ComponentName));
     }
 
     // Critical: Trigger editor viewport refresh for property changes (especially SkeletalMesh changes)
@@ -698,10 +705,15 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentPropert
     }
 #endif
     
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(FString::Printf(TEXT("Property '%s' set successfully"), *PropertyName));
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Property '%s' set successfully"), *PropertyName));
     Response->SetStringField(TEXT("component_name"), ComponentName);
     Response->SetStringField(TEXT("property_name"), PropertyName);
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+
+    UE_LOG(LogTemp, Log, TEXT("Set property '%s' on component '%s' in Blueprint '%s'"), 
+        *PropertyName, *ComponentName, *BlueprintName);
 
     return Response;
 }
