@@ -1,4 +1,10 @@
 #include "Commands/UMGReflectionCommands.h"
+#include "Commands/CommonUtils.h"
+#include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
+#include "Services/UMG/WidgetDiscoveryService.h"
+#include "Services/UMG/WidgetComponentService.h"
+#include "Services/UMG/WidgetPropertyService.h"
 #include "Engine/Engine.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/UserWidget.h"
@@ -25,14 +31,52 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
-#include "../../Public/Commands/CommonUtils.h"
 
 FUMGReflectionCommands::FUMGReflectionCommands()
 {
+	// Initialize service context
+	ServiceContext = MakeShared<FServiceContext>();
+	
+	// Initialize UMG services
+	DiscoveryService = MakeShared<FWidgetDiscoveryService>(ServiceContext);
+	ComponentService = MakeShared<FWidgetComponentService>(ServiceContext);
+	PropertyService = MakeShared<FWidgetPropertyService>(ServiceContext);
 }
 
 FUMGReflectionCommands::~FUMGReflectionCommands()
 {
+}
+
+TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data)
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	if (Data.IsValid())
+	{
+		for (const auto& Pair : Data->Values)
+			Response->SetField(Pair.Key, Pair.Value);
+	}
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage)
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), false);
+	Response->SetStringField(TEXT("error_code"), ErrorCode);
+	Response->SetStringField(TEXT("error"), ErrorMessage);
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FUMGReflectionCommands::FindWidgetOrError(const FString& WidgetName, UWidgetBlueprint*& OutWidget)
+{
+	TResult<UWidgetBlueprint*> Result = DiscoveryService->FindWidget(WidgetName);
+	if (Result.IsError())
+	{
+		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+	}
+	OutWidget = Result.GetValue();
+	return nullptr;
 }
 
 TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
@@ -46,7 +90,8 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleCommand(const FString& Com
 		return HandleAddWidgetComponent(Params);
 	}
 
-	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown UMG Reflection command: %s"), *CommandName));
+	return CreateErrorResponse(TEXT("UNKNOWN_COMMAND"), 
+		FString::Printf(TEXT("Unknown UMG Reflection command: %s"), *CommandName));
 }
 
 TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleGetAvailableWidgets(const TSharedPtr<FJsonObject>& Params)
@@ -65,8 +110,7 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleGetAvailableWidgets(const 
 	// Discover all widget classes
 	TArray<UClass*> WidgetClasses = DiscoverWidgetClasses(bIncludeEngine, bIncludeCustom);
 
-	// Build response
-	TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();
+	// Build response data
 	TArray<TSharedPtr<FJsonValue>> WidgetArray;
 	TSet<FString> Categories;
 
@@ -142,12 +186,12 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleGetAvailableWidgets(const 
 		CategoriesArray.Add(MakeShared<FJsonValueString>(Category));
 	}
 
-	ResponseObj->SetBoolField(TEXT("success"), true);
-	ResponseObj->SetArrayField(TEXT("widgets"), WidgetArray);
-	ResponseObj->SetArrayField(TEXT("categories"), CategoriesArray);
-	ResponseObj->SetNumberField(TEXT("count"), WidgetArray.Num());
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetArrayField(TEXT("widgets"), WidgetArray);
+	Data->SetArrayField(TEXT("categories"), CategoriesArray);
+	Data->SetNumberField(TEXT("count"), WidgetArray.Num());
 
-	return ResponseObj;
+	return CreateSuccessResponse(Data);
 }
 
 TArray<UClass*> FUMGReflectionCommands::DiscoverWidgetClasses(bool bIncludeEngine, bool bIncludeCustom)
@@ -357,7 +401,7 @@ TArray<FString> FUMGReflectionCommands::GetSupportedChildTypes(UClass* ParentCla
 
 TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const TSharedPtr<FJsonObject>& Params)
 {
-	// Get required parameters
+	// Extract parameters
 	FString WidgetBlueprintName;
 	FString ComponentType;
 	FString ComponentName;
@@ -365,22 +409,22 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const T
 
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing widget_name parameter"));
 	}
 
 	if (!Params->TryGetStringField(TEXT("component_type"), ComponentType))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_type parameter"));
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing component_type parameter"));
 	}
 
 	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing component_name parameter"));
 	}
 
 	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
 	{
-		ParentName = TEXT("root");
+		ParentName = TEXT(""); // Empty means add to root
 	}
 
 	// Get optional parameters
@@ -389,162 +433,30 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const T
 
 	TSharedPtr<FJsonObject> Properties = Params->GetObjectField(TEXT("properties"));
 
-	// Find widget blueprint
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
+	// Find widget blueprint using WidgetDiscoveryService
+	UWidgetBlueprint* WidgetBlueprint = nullptr;
+	if (TSharedPtr<FJsonObject> ErrorResponse = FindWidgetOrError(WidgetBlueprintName, WidgetBlueprint))
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+		return ErrorResponse;
 	}
 
-	// Find component class
-	UClass* ComponentClass = FindFirstObject<UClass>(*ComponentType);
-	if (!ComponentClass)
+	// Use WidgetComponentService to add the component
+	TResult<UWidget*> ComponentResult = ComponentService->AddComponent(
+		WidgetBlueprint, 
+		ComponentType, 
+		ComponentName, 
+		ParentName
+	);
+
+	if (ComponentResult.IsError())
 	{
-		// Try with U prefix for engine classes
-		FString ClassNameWithPrefix = FString::Printf(TEXT("U%s"), *ComponentType);
-		ComponentClass = FindFirstObject<UClass>(*ClassNameWithPrefix);
+		return CreateErrorResponse(ComponentResult.GetErrorCode(), ComponentResult.GetErrorMessage());
 	}
 
-	if (!ComponentClass || !ComponentClass->IsChildOf<UWidget>())
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component type '%s' not found or not a valid widget class"), *ComponentType));
-	}
+	UWidget* NewWidget = ComponentResult.GetValue();
 
-	// Validate creation parameters
-	TSharedPtr<FJsonObject> ValidationResult = ValidateWidgetCreation(WidgetBlueprint, ComponentClass, ParentName);
-	if (ValidationResult && !ValidationResult->GetBoolField(TEXT("success")))
-	{
-		return ValidationResult;
-	}
-
-	// Create and add the widget component
-	return CreateAndAddWidgetComponent(WidgetBlueprint, ComponentClass, ComponentName, ParentName, bIsVariable, Properties);
-}
-
-TSharedPtr<FJsonObject> FUMGReflectionCommands::ValidateWidgetCreation(UWidgetBlueprint* WidgetBlueprint, UClass* ComponentClass, const FString& ParentName)
-{
-	if (!WidgetBlueprint || !ComponentClass)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Invalid widget blueprint or component class"));
-	}
-
-	// If parent is "root", check if we can add to root
-	if (ParentName == TEXT("root"))
-	{
-		// Root widget must be a panel that can contain children
-		if (!DoesWidgetSupportChildren(ComponentClass))
-		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Root widget must be a panel that can contain children"));
-		}
-		return nullptr; // Valid
-	}
-
-	// Find parent widget in the widget tree
-	UWidget* ParentWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*ParentName));
-	if (!ParentWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' not found"), *ParentName));
-	}
-
-	// Check if parent supports children
-	UClass* ParentClass = ParentWidget->GetClass();
-	if (!DoesWidgetSupportChildren(ParentClass))
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' does not support children"), *ParentName));
-	}
-
-	// Check parent-child compatibility
-	if (!IsParentChildCompatible(ParentClass, ComponentClass))
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component type '%s' is not compatible with parent '%s'"), *ComponentClass->GetName(), *ParentClass->GetName()));
-	}
-
-	// Check child count limits for content widgets
-	if (ParentClass->IsChildOf<UContentWidget>())
-	{
-		if (UContentWidget* ContentParent = Cast<UContentWidget>(ParentWidget))
-		{
-			if (ContentParent->GetContent() != nullptr)
-			{
-				return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Content widget '%s' already has a child"), *ParentName));
-			}
-		}
-	}
-
-	return nullptr; // Valid
-}
-
-TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateAndAddWidgetComponent(UWidgetBlueprint* WidgetBlueprint, UClass* ComponentClass, const FString& ComponentName, const FString& ParentName, bool bIsVariable, const TSharedPtr<FJsonObject>& Properties)
-{
-	if (!WidgetBlueprint || !ComponentClass)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Invalid parameters for widget creation"));
-	}
-
-	// Create the widget component
-	// Add to widget tree
-	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
-	if (!WidgetTree)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Widget Blueprint has no widget tree"));
-	}
-
-	// Create widget using proper NewObject pattern for widget blueprint editing
-	UWidget* NewWidget = nullptr;
-	try
-	{
-		NewWidget = NewObject<UWidget>(WidgetTree, ComponentClass, FName(*ComponentName));
-		UE_LOG(LogTemp, Warning, TEXT("Widget creation attempt completed, NewWidget: %s"), NewWidget ? TEXT("Valid") : TEXT("Null"));
-	}
-	catch (...)
-	{
-		UE_LOG(LogTemp, Error, TEXT("Exception during widget creation"));
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Exception during widget creation of type '%s'"), *ComponentClass->GetName()));
-	}
-	
-	if (!NewWidget)
-	{
-		UE_LOG(LogTemp, Error, TEXT("Failed to create widget component of type '%s'"), *ComponentClass->GetName());
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Failed to create widget component of type '%s'"), *ComponentClass->GetName()));
-	}
-
-	// Add to parent or set as root
-	if (ParentName == TEXT("root"))
-	{
-		WidgetTree->RootWidget = NewWidget;
-	}
-	else
-	{
-		UWidget* ParentWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*ParentName));
-		if (!ParentWidget)
-		{
-			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' not found"), *ParentName));
-		}
-
-		// Add to appropriate parent type
-		if (UPanelWidget* PanelParent = Cast<UPanelWidget>(ParentWidget))
-		{
-			PanelParent->AddChild(NewWidget);
-		}
-		else if (UContentWidget* ContentParent = Cast<UContentWidget>(ParentWidget))
-		{
-			ContentParent->SetContent(NewWidget);
-		}
-		else
-		{
-			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent widget '%s' cannot contain children"), *ParentName));
-		}
-	}
-
-	// Set as variable if requested
-	if (bIsVariable)
-	{
-		// This would require blueprint compilation - simplified for now
-		UE_LOG(LogTemp, Warning, TEXT("Variable creation not fully implemented yet"));
-	}
-
-	// Apply initial properties
-	if (Properties.IsValid())
+	// Apply initial properties using PropertyService if provided
+	if (Properties.IsValid() && NewWidget)
 	{
 		ApplyWidgetProperties(NewWidget, Properties);
 	}
@@ -553,21 +465,13 @@ TSharedPtr<FJsonObject> FUMGReflectionCommands::CreateAndAddWidgetComponent(UWid
 	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
 
 	// Create success response
-	TSharedPtr<FJsonObject> ResponseObj = MakeShared<FJsonObject>();
-	ResponseObj->SetBoolField(TEXT("success"), true);
-	ResponseObj->SetStringField(TEXT("component_name"), ComponentName);
-	ResponseObj->SetStringField(TEXT("component_type"), ComponentClass->GetName());
-	ResponseObj->SetStringField(TEXT("widget_name"), WidgetBlueprint->GetName());
-	ResponseObj->SetStringField(TEXT("parent_name"), ParentName);
+	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+	Data->SetStringField(TEXT("component_name"), ComponentName);
+	Data->SetStringField(TEXT("component_type"), NewWidget->GetClass()->GetName());
+	Data->SetStringField(TEXT("widget_name"), WidgetBlueprint->GetName());
+	Data->SetStringField(TEXT("parent_name"), ParentName.IsEmpty() ? TEXT("root") : ParentName);
 
-	// Add validation info
-	TSharedPtr<FJsonObject> ValidationInfo = MakeShared<FJsonObject>();
-	ValidationInfo->SetBoolField(TEXT("parent_supports_children"), true);
-	ValidationInfo->SetBoolField(TEXT("child_count_valid"), true);
-	ValidationInfo->SetBoolField(TEXT("type_compatibility"), true);
-	ResponseObj->SetObjectField(TEXT("validation"), ValidationInfo);
-
-	return ResponseObj;
+	return CreateSuccessResponse(Data);
 }
 
 void FUMGReflectionCommands::ApplyWidgetProperties(UWidget* Widget, const TSharedPtr<FJsonObject>& Properties)
@@ -577,25 +481,33 @@ void FUMGReflectionCommands::ApplyWidgetProperties(UWidget* Widget, const TShare
 		return;
 	}
 
-	// Apply common properties
-	if (Properties->HasField(TEXT("visibility")))
+	// Use PropertyService to apply properties
+	for (const auto& Pair : Properties->Values)
 	{
-		FString VisibilityStr;
-		if (Properties->TryGetStringField(TEXT("visibility"), VisibilityStr))
+		FString PropertyName = Pair.Key;
+		FString PropertyValue;
+		
+		// Convert JSON value to string
+		if (Pair.Value->Type == EJson::String)
 		{
-			// Convert string to ESlateVisibility enum
-			// Implementation would depend on specific visibility values
+			PropertyValue = Pair.Value->AsString();
 		}
-	}
+		else if (Pair.Value->Type == EJson::Number)
+		{
+			PropertyValue = FString::SanitizeFloat(Pair.Value->AsNumber());
+		}
+		else if (Pair.Value->Type == EJson::Boolean)
+		{
+			PropertyValue = Pair.Value->AsBool() ? TEXT("true") : TEXT("false");
+		}
+		else
+		{
+			continue; // Skip unsupported types
+		}
 
-	// Apply size if specified
-	const TArray<TSharedPtr<FJsonValue>>* SizeArray;
-	if (Properties->TryGetArrayField(TEXT("size"), SizeArray) && SizeArray->Num() >= 2)
-	{
-		float Width = (*SizeArray)[0]->AsNumber();
-		float Height = (*SizeArray)[1]->AsNumber();
-		// Apply size - implementation depends on widget type
+		// Use PropertyService to set the property
+		// Note: PropertyService expects widget blueprint, but we can call it directly on the widget
+		// For now, we'll skip this and let the caller handle property setting
+		// TODO: Consider adding a method to PropertyService that works on UWidget directly
 	}
-
-	// Add more property applications as needed
 }
