@@ -158,6 +158,25 @@ TResult<void> FBlueprintLifecycleService::ReparentBlueprint(UBlueprint* Blueprin
     return TResult<void>::Success();
 }
 
+TResult<void> FBlueprintLifecycleService::ReparentBlueprint(UBlueprint* Blueprint, const FString& NewParentClassName)
+{
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+
+    // Find the new parent class using the internal helper
+    UClass* NewParentClass = FindParentClass(NewParentClassName);
+    if (!NewParentClass)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::CLASS_NOT_FOUND, 
+            FString::Printf(TEXT("Parent class not found: %s"), *NewParentClassName));
+    }
+
+    // Delegate to the UClass* overload
+    return ReparentBlueprint(Blueprint, NewParentClass);
+}
+
 TResult<void> FBlueprintLifecycleService::DeleteBlueprint(UBlueprint* Blueprint)
 {
     if (!Blueprint)

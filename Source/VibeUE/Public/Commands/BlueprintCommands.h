@@ -2,9 +2,11 @@
 
 #include "CoreMinimal.h"
 #include "Json.h"
+#include "Core/Result.h"
 
 /**
  * Handler class for Blueprint-related MCP commands
+ * Phase 4: Refactored to use service layer architecture
  */
 class VIBEUE_API FBlueprintCommands
 {
@@ -74,4 +76,19 @@ private:
                                                    const FString& ComponentName, const FString& MeshType,
                                                    const TArray<float>& Location, const TArray<float>& Rotation,
                                                    const TArray<float>& Scale, const TSharedPtr<FJsonObject>& ComponentProperties);
+
+private:
+    // Helper methods to convert TResult to JSON
+    TSharedPtr<FJsonObject> CreateSuccessResponse() const;
+    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
+    
+    // Phase 4: Blueprint Services (replacing inline logic)
+    TSharedPtr<class FBlueprintDiscoveryService> DiscoveryService;
+    TSharedPtr<class FBlueprintLifecycleService> LifecycleService;
+    TSharedPtr<class FBlueprintPropertyService> PropertyService;
+    TSharedPtr<class FBlueprintComponentService> ComponentService;
+    TSharedPtr<class FBlueprintFunctionService> FunctionService;
+    TSharedPtr<class FBlueprintNodeService> NodeService;
+    TSharedPtr<class FBlueprintGraphService> GraphService;
+    TSharedPtr<class FBlueprintReflectionService> ReflectionService;
 }; 
