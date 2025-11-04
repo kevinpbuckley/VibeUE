@@ -1221,6 +1221,233 @@ TResult<void> FBlueprintNodeService::RecombinePin(UBlueprint* Blueprint, const F
     return TResult<void>::Success();
 }
 
+TResult<TArray<FBlueprintNodeService::FPinOperationResult>> FBlueprintNodeService::SplitPinsBatch(
+    UBlueprint* Blueprint, const FString& NodeId, const TArray<FString>& PinNames)
+{
+    TArray<FPinOperationResult> Results;
+    
+    if (!Blueprint)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    // Find the node
+    UEdGraphNode* Node = nullptr;
+    TArray<UEdGraph*> AllGraphs;
+    Blueprint->GetAllGraphs(AllGraphs);
+    
+    for (UEdGraph* Graph : AllGraphs)
+    {
+        if (!Graph) continue;
+        for (UEdGraphNode* GraphNode : Graph->Nodes)
+        {
+            if (GraphNode && GraphNode->NodeGuid.ToString() == NodeId)
+            {
+                Node = GraphNode;
+                break;
+            }
+        }
+        if (Node) break;
+    }
+    
+    if (!Node)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId));
+    }
+    
+    UEdGraph* NodeGraph = Node->GetGraph();
+    const UEdGraphSchema_K2* Schema = NodeGraph ? Cast<UEdGraphSchema_K2>(NodeGraph->GetSchema()) : nullptr;
+    
+    if (!Schema)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("Graph schema does not support K2 pin operations"));
+    }
+    
+    TUniquePtr<FScopedTransaction> Transaction;
+    bool bAnyChanges = false;
+    
+    for (const FString& PinName : PinNames)
+    {
+        FPinOperationResult Result;
+        Result.PinName = PinName;
+        
+        // Find the pin
+        UEdGraphPin* Pin = Node->FindPin(*PinName);
+        if (!Pin)
+        {
+            Result.bSuccess = false;
+            Result.Status = TEXT("failed");
+            Result.Message = TEXT("Pin not found");
+            Results.Add(Result);
+            continue;
+        }
+        
+        // Check if already split
+        if (Pin->SubPins.Num() > 0)
+        {
+            Result.bSuccess = true;
+            Result.Status = TEXT("noop");
+            Result.Message = TEXT("Pin already split");
+            Results.Add(Result);
+            continue;
+        }
+        
+        // Check if can be split
+        if (!Node->CanSplitPin(Pin))
+        {
+            Result.bSuccess = false;
+            Result.Status = TEXT("failed");
+            Result.Message = TEXT("Pin cannot be split");
+            Results.Add(Result);
+            continue;
+        }
+        
+        // Create transaction on first modification
+        if (!Transaction.IsValid())
+        {
+            Transaction = MakeUnique<FScopedTransaction>(
+                NSLOCTEXT("VibeUE", "SplitPinsBatch", "Split Blueprint Pins"));
+            if (NodeGraph)
+            {
+                NodeGraph->Modify();
+            }
+            Node->Modify();
+        }
+        
+        // Split the pin
+        Schema->SplitPin(Pin);
+        bAnyChanges = true;
+        
+        Result.bSuccess = true;
+        Result.Status = TEXT("applied");
+        Result.Message = TEXT("Pin split into sub-pins");
+        Results.Add(Result);
+    }
+    
+    if (bAnyChanges && NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+    
+    return TResult<TArray<FPinOperationResult>>::Success(Results);
+}
+
+TResult<TArray<FBlueprintNodeService::FPinOperationResult>> FBlueprintNodeService::RecombinePinsBatch(
+    UBlueprint* Blueprint, const FString& NodeId, const TArray<FString>& PinNames)
+{
+    TArray<FPinOperationResult> Results;
+    
+    if (!Blueprint)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    // Find the node
+    UEdGraphNode* Node = nullptr;
+    TArray<UEdGraph*> AllGraphs;
+    Blueprint->GetAllGraphs(AllGraphs);
+    
+    for (UEdGraph* Graph : AllGraphs)
+    {
+        if (!Graph) continue;
+        for (UEdGraphNode* GraphNode : Graph->Nodes)
+        {
+            if (GraphNode && GraphNode->NodeGuid.ToString() == NodeId)
+            {
+                Node = GraphNode;
+                break;
+            }
+        }
+        if (Node) break;
+    }
+    
+    if (!Node)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId));
+    }
+    
+    UEdGraph* NodeGraph = Node->GetGraph();
+    const UEdGraphSchema_K2* Schema = NodeGraph ? Cast<UEdGraphSchema_K2>(NodeGraph->GetSchema()) : nullptr;
+    
+    if (!Schema)
+    {
+        return TResult<TArray<FPinOperationResult>>::Error(
+            VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            TEXT("Graph schema does not support K2 pin operations"));
+    }
+    
+    TUniquePtr<FScopedTransaction> Transaction;
+    bool bAnyChanges = false;
+    
+    for (const FString& PinName : PinNames)
+    {
+        FPinOperationResult Result;
+        Result.PinName = PinName;
+        
+        // Find the pin
+        UEdGraphPin* Pin = Node->FindPin(*PinName);
+        if (!Pin)
+        {
+            Result.bSuccess = false;
+            Result.Status = TEXT("failed");
+            Result.Message = TEXT("Pin not found");
+            Results.Add(Result);
+            continue;
+        }
+        
+        // Get parent pin if this is a sub-pin
+        UEdGraphPin* ParentPin = Pin->ParentPin ? Pin->ParentPin : Pin;
+        
+        // Check if already recombined
+        if (ParentPin->SubPins.Num() == 0)
+        {
+            Result.bSuccess = true;
+            Result.Status = TEXT("noop");
+            Result.Message = TEXT("Pin is already recombined");
+            Results.Add(Result);
+            continue;
+        }
+        
+        // Create transaction on first modification
+        if (!Transaction.IsValid())
+        {
+            Transaction = MakeUnique<FScopedTransaction>(
+                NSLOCTEXT("VibeUE", "RecombinePinsBatch", "Recombine Blueprint Pins"));
+            if (NodeGraph)
+            {
+                NodeGraph->Modify();
+            }
+            Node->Modify();
+        }
+        
+        // Recombine the pin
+        Schema->RecombinePin(ParentPin);
+        bAnyChanges = true;
+        
+        Result.bSuccess = true;
+        Result.Status = TEXT("applied");
+        Result.Message = TEXT("Pin recombined");
+        Results.Add(Result);
+    }
+    
+    if (bAnyChanges && NodeGraph)
+    {
+        NodeGraph->NotifyGraphChanged();
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    }
+    
+    return TResult<TArray<FPinOperationResult>>::Success(Results);
+}
+
 TResult<void> FBlueprintNodeService::ResetPinToDefault(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
 {
     if (!Blueprint)

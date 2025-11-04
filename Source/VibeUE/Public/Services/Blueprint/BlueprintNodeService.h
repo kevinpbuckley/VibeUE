@@ -425,6 +425,20 @@ public:
     TResult<void> RecombinePin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
     TResult<void> ResetPinToDefault(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
     
+    // Batch pin operations
+    struct FPinOperationResult
+    {
+        FString PinName;
+        bool bSuccess;
+        FString Message;
+        FString Status; // "applied", "noop", "failed"
+    };
+    
+    TResult<TArray<FPinOperationResult>> SplitPinsBatch(UBlueprint* Blueprint, const FString& NodeId, 
+                                                        const TArray<FString>& PinNames);
+    TResult<TArray<FPinOperationResult>> RecombinePinsBatch(UBlueprint* Blueprint, const FString& NodeId, 
+                                                            const TArray<FString>& PinNames);
+    
     // Node discovery
     TResult<TArray<FNodeDescriptor>> DiscoverAvailableNodes(UBlueprint* Blueprint, 
                                                            const FString& SearchTerm);

@@ -4833,19 +4833,26 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
+    // Extract and validate parameters
+    FString BlueprintName, NodeIdentifier;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(Error);
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+    }
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
     }
 
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // Lambda to gather pin names from multiple JSON field name variations
     auto GatherPinSets = [](const TSharedPtr<FJsonObject>& Source, const TArray<FString>& Fields, TArray<FString>& OutPins)
     {
         if (!Source.IsValid())
@@ -4855,6 +4862,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
         CollectStringValues(Source, Fields, OutPins);
     };
 
+    // Lambda to extract pin names from pin_operations arrays
     auto GatherFromOperations = [](const TSharedPtr<FJsonObject>& Source, bool bSplit, TArray<FString>& OutPins)
     {
         if (!Source.IsValid())
@@ -4895,15 +4903,18 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
         }
     };
 
+    // Gather pins to split and recombine from all parameter sources
     TArray<FString> PinsToSplit;
     TArray<FString> PinsToRecombine;
 
     const TArray<FString> SplitFields = {TEXT("split_pin"), TEXT("split_pins"), TEXT("pins_to_split")};
     const TArray<FString> RecombineFields = {TEXT("recombine_pin"), TEXT("recombine_pins"), TEXT("unsplit_pins"), TEXT("collapse_pins")};
 
+    // Gather from main Params
     GatherPinSets(Params, SplitFields, PinsToSplit);
     GatherPinSets(Params, RecombineFields, PinsToRecombine);
 
+    // Gather from "extra" field
     const TSharedPtr<FJsonObject>* Extra = nullptr;
     if (Params->TryGetObjectField(TEXT("extra"), Extra) && Extra)
     {
@@ -4913,6 +4924,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
         GatherFromOperations(*Extra, false, PinsToRecombine);
     }
 
+    // Gather from "node_config" field
     const TSharedPtr<FJsonObject>* NodeConfig = nullptr;
     if (Params->TryGetObjectField(TEXT("node_config"), NodeConfig) && NodeConfig)
     {
@@ -4924,83 +4936,90 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
 
     if (PinsToSplit.Num() == 0 && PinsToRecombine.Num() == 0)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("No configuration operations specified"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::INVALID_PARAMETER, TEXT("No pin operations specified"));
     }
 
-    auto ExecuteOperation = [&](const TArray<FString>& PinList, bool bSplit) -> TSharedPtr<FJsonObject>
-    {
-        if (PinList.Num() == 0)
-        {
-            return nullptr;
-        }
-        return ApplyPinTransform(Blueprint, Node, BlueprintName, NodeIdentifier, PinList, bSplit);
-    };
-
-    TSharedPtr<FJsonObject> SplitResult = ExecuteOperation(PinsToSplit, true);
-    TSharedPtr<FJsonObject> RecombineResult = ExecuteOperation(PinsToRecombine, false);
-
+    // Execute pin operations using service layer
     TArray<TSharedPtr<FJsonValue>> CombinedPins;
     int32 ChangedCount = 0;
     bool bOverallSuccess = true;
     int32 OperationCount = 0;
 
-    auto Accumulate = [&](const TSharedPtr<FJsonObject>& Source)
+    // Convert service results to JSON
+    auto ConvertPinResultsToJson = [&](const TArray<FBlueprintNodeService::FPinOperationResult>& Results)
     {
-        if (!Source.IsValid())
+        for (const auto& Result : Results)
         {
-            return;
-        }
-        ++OperationCount;
-
-        bool bOperationSuccess = true;
-        Source->TryGetBoolField(TEXT("success"), bOperationSuccess);
-        bOverallSuccess &= bOperationSuccess;
-
-        const TArray<TSharedPtr<FJsonValue>>* PinsArray = nullptr;
-        if (Source->TryGetArrayField(TEXT("pins"), PinsArray) && PinsArray)
-        {
-            for (const TSharedPtr<FJsonValue>& Value : *PinsArray)
+            TSharedPtr<FJsonObject> PinObj = MakeShared<FJsonObject>();
+            PinObj->SetStringField(TEXT("pin_name"), Result.PinName);
+            PinObj->SetBoolField(TEXT("success"), Result.bSuccess);
+            PinObj->SetStringField(TEXT("status"), Result.Status);
+            PinObj->SetStringField(TEXT("message"), Result.Message);
+            CombinedPins.Add(MakeShared<FJsonValueObject>(PinObj));
+            
+            if (Result.bSuccess && Result.Status.Equals(TEXT("applied")))
             {
-                CombinedPins.Add(Value);
+                ChangedCount++;
             }
-        }
-
-        double ChangedValue = 0.0;
-        if (Source->TryGetNumberField(TEXT("changed_count"), ChangedValue))
-        {
-            ChangedCount += static_cast<int32>(ChangedValue);
         }
     };
 
-    Accumulate(SplitResult);
-    Accumulate(RecombineResult);
-
-    if (OperationCount == 0)
+    // Execute split operations
+    if (PinsToSplit.Num() > 0)
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("No configuration operations executed"));
+        auto SplitResult = NodeService->SplitPinsBatch(Blueprint, NodeIdentifier, PinsToSplit);
+        if (SplitResult.IsError())
+        {
+            return CreateErrorResponse(SplitResult.GetErrorCode(), SplitResult.GetErrorMessage());
+        }
+        
+        ConvertPinResultsToJson(SplitResult.GetValue());
+        OperationCount++;
+        
+        // Check if any pins failed
+        for (const auto& Result : SplitResult.GetValue())
+        {
+            if (!Result.bSuccess)
+            {
+                bOverallSuccess = false;
+                break;
+            }
+        }
     }
 
+    // Execute recombine operations
+    if (PinsToRecombine.Num() > 0)
+    {
+        auto RecombineResult = NodeService->RecombinePinsBatch(Blueprint, NodeIdentifier, PinsToRecombine);
+        if (RecombineResult.IsError())
+        {
+            return CreateErrorResponse(RecombineResult.GetErrorCode(), RecombineResult.GetErrorMessage());
+        }
+        
+        ConvertPinResultsToJson(RecombineResult.GetValue());
+        OperationCount++;
+        
+        // Check if any pins failed
+        for (const auto& Result : RecombineResult.GetValue())
+        {
+            if (!Result.bSuccess)
+            {
+                bOverallSuccess = false;
+                break;
+            }
+        }
+    }
+
+    // Build response
     TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), bOverallSuccess);
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Response->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Response->SetStringField(TEXT("graph_name"), Graph ? Graph->GetName() : TEXT(""));
     Response->SetNumberField(TEXT("operation_count"), OperationCount);
     Response->SetNumberField(TEXT("changed_count"), ChangedCount);
     Response->SetArrayField(TEXT("pins"), CombinedPins);
-
-    TArray<TSharedPtr<FJsonValue>> OperationSummaries;
-    if (SplitResult.IsValid())
-    {
-        OperationSummaries.Add(MakeShared<FJsonValueObject>(SplitResult));
-    }
-    if (RecombineResult.IsValid())
-    {
-        OperationSummaries.Add(MakeShared<FJsonValueObject>(RecombineResult));
-    }
-    Response->SetArrayField(TEXT("operations"), OperationSummaries);
-
-    Response->SetStringField(TEXT("message"), bOverallSuccess ? TEXT("Node configuration updated") : TEXT("One or more configuration operations failed"));
+    Response->SetStringField(TEXT("message"), bOverallSuccess ? TEXT("Node configuration updated") : TEXT("Some pin operations failed"));
+    
     return Response;
 }
 
