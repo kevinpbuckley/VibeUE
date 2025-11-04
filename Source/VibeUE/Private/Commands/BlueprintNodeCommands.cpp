@@ -5349,45 +5349,37 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentNameFilter;
     Params->TryGetStringField(TEXT("component_name"), ComponentNameFilter);
 
-    // Find Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Discover component events using reflection
-    TArray<FComponentEventInfo> Events;
-    if (!FComponentEventBinder::GetAvailableComponentEvents(Blueprint, ComponentNameFilter, Events))
+    // Get component events using ComponentService
+    auto EventsResult = ComponentService->GetComponentEvents(FindResult.GetValue(), ComponentNameFilter);
+    if (EventsResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to enumerate component events"));
+        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
     }
+
+    // Service returns events grouped by component - convert to JSON
+    const FComponentEventsResult& EventData = EventsResult.GetValue();
 
     // Build response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetNumberField(TEXT("count"), Events.Num());
+    Result->SetNumberField(TEXT("count"), EventData.TotalEventCount);
 
-    // Group events by component
-    TMap<FString, TArray<FComponentEventInfo>> EventsByComponent;
-    for (const FComponentEventInfo& EventInfo : Events)
-    {
-        if (!EventsByComponent.Contains(EventInfo.ComponentName))
-        {
-            EventsByComponent.Add(EventInfo.ComponentName, TArray<FComponentEventInfo>());
-        }
-        EventsByComponent[EventInfo.ComponentName].Add(EventInfo);
-    }
-
-    // Build components array
+    // Build components array from service result
     TArray<TSharedPtr<FJsonValue>> ComponentsArray;
-    for (const auto& Pair : EventsByComponent)
+    for (const auto& Pair : EventData.EventsByComponent)
     {
         TSharedPtr<FJsonObject> ComponentObj = MakeShared<FJsonObject>();
         ComponentObj->SetStringField(TEXT("component_name"), Pair.Key);
@@ -5428,8 +5420,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
 
     Result->SetArrayField(TEXT("components"), ComponentsArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d component events across %d components"), 
-        Events.Num(), EventsByComponent.Num());
+    UE_LOG(LogVibeUE, Log, TEXT("Retrieved %d component events across %d components"), 
+        EventData.TotalEventCount, EventData.EventsByComponent.Num());
 
     return Result;
 }

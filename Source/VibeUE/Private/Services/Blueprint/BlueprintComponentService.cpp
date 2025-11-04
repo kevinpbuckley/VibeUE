@@ -373,3 +373,42 @@ void FBlueprintComponentService::ProcessComponentNode(USCS_Node* Node, TArray<FC
     // Process children recursively
     CollectComponentInfo(ChildNodes, OutComponents);
 }
+
+TResult<FComponentEventsResult> FBlueprintComponentService::GetComponentEvents(
+    UBlueprint* Blueprint,
+    const FString& ComponentNameFilter)
+{
+    if (!Blueprint)
+    {
+        return TResult<FComponentEventsResult>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
+            TEXT("Blueprint is null"));
+    }
+
+    // Use FComponentEventBinder to discover all component events via reflection
+    TArray<FComponentEventInfo> Events;
+    if (!FComponentEventBinder::GetAvailableComponentEvents(Blueprint, ComponentNameFilter, Events))
+    {
+        return TResult<FComponentEventsResult>::Error(
+            VibeUE::ErrorCodes::OPERATION_FAILED,
+            TEXT("Failed to enumerate component events"));
+    }
+
+    // Build result with events grouped by component
+    FComponentEventsResult Result;
+    for (const FComponentEventInfo& EventInfo : Events)
+    {
+        if (!Result.EventsByComponent.Contains(EventInfo.ComponentName))
+        {
+            Result.EventsByComponent.Add(EventInfo.ComponentName, TArray<FComponentEventInfo>());
+        }
+        Result.EventsByComponent[EventInfo.ComponentName].Add(EventInfo);
+        Result.TotalEventCount++;
+    }
+
+    UE_LOG(LogBlueprintComponentService, Log, 
+        TEXT("Discovered %d component events across %d components"), 
+        Result.TotalEventCount, Result.EventsByComponent.Num());
+
+    return TResult<FComponentEventsResult>::Success(Result);
+}

@@ -6,6 +6,7 @@
 #include "Engine/Blueprint.h"
 #include "Components/ActorComponent.h"
 #include "Components/SceneComponent.h"
+#include "Commands/ComponentEventBinder.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogBlueprintComponentService, Log, All);
 
@@ -23,6 +24,20 @@ struct VIBEUE_API FComponentInfo
     
     FComponentInfo()
         : bIsSceneComponent(false)
+    {
+    }
+};
+
+/**
+ * Result structure for component event discovery
+ */
+struct VIBEUE_API FComponentEventsResult
+{
+    TMap<FString, TArray<FComponentEventInfo>> EventsByComponent;  // Component name -> events
+    int32 TotalEventCount;
+    
+    FComponentEventsResult()
+        : TotalEventCount(0)
     {
     }
 };
@@ -96,6 +111,16 @@ public:
         UBlueprint* Blueprint, 
         const FString& ComponentName, 
         const FString& NewParentName);
+
+    /**
+     * Get all available component events using reflection
+     * @param Blueprint Target blueprint
+     * @param ComponentNameFilter Optional filter for specific component (empty = all components)
+     * @return Result containing component events grouped by component name
+     */
+    TResult<FComponentEventsResult> GetComponentEvents(
+        UBlueprint* Blueprint,
+        const FString& ComponentNameFilter = FString());
 
 private:
     /**
