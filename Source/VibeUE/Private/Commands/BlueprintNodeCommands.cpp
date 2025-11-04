@@ -255,6 +255,7 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
     ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
     FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
     NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
+    GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
     
     // Set services on ReflectionCommands for Phase 4 refactoring
