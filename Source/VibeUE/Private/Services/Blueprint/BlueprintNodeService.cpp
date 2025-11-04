@@ -919,7 +919,6 @@ TResult<FString> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Bluepr
     return TResult<FString>::Success(InputActionNode->NodeGuid.ToString());
 }
 
-<<<<<<< HEAD
 TResult<FDetailedNodeInfo> FBlueprintNodeService::DescribeNode(UBlueprint* Blueprint, const FString& NodeId, bool bIncludePins, bool bIncludeInternalPins)
 {
     if (!Blueprint)
