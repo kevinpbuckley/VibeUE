@@ -6,6 +6,15 @@
 - ✅ MCP connection active
 - ✅ Test assets available in project
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_AssetSearchTest" with parent "Actor"
+Create Blueprint "WBP_AssetSearchTest" with parent "UserWidget"
+```
+
 ## Overview
 Tests all 5 actions of `manage_asset` covering search, texture import/export, editor operations, and SVG conversion.
 
@@ -378,6 +387,21 @@ search(search_term="specific_name", max_results=50)
 
 ---
 
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete all test assets:
+- Delete /Game/Blueprints/BP_AssetSearchTest with force_delete=True and show_confirmation=False
+- Delete /Game/Blueprints/WBP_AssetSearchTest with force_delete=True and show_confirmation=False
+```
+
+**For automated testing:** Pass `force_delete=True` and `show_confirmation=False` as **direct parameters** (not in extra dict) to enable instant deletion without confirmation dialogs.
+
+---
+
 **Test Coverage**: 5/5 actions tested ✅  
-**Last Updated**: November 3, 2025  
-**Related Issues**: #69, #76
+**Last Updated**: November 4, 2025  
+**Related Issues**: #69, #76, #91
+

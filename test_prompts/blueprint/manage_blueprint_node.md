@@ -6,6 +6,16 @@
 - ✅ MCP connection active
 - ✅ Test Blueprint with function created
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_NodeTest" with parent "Actor"
+Create function "TestFunction" in Blueprint "/Game/Blueprints/BP_NodeTest"
+Create variable "TestValue" with type float in Blueprint "/Game/Blueprints/BP_NodeTest"
+```
+
 ## Overview
 Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discover → create workflow with spawner_key for exact node creation.
 
@@ -497,6 +507,18 @@ extra = {
 
 ---
 
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete test Blueprint:
+- Delete /Game/Blueprints/BP_NodeTest with force_delete=True and show_confirmation=False
+```
+
+---
+
 **Test Coverage**: 15/15 actions tested ✅  
-**Last Updated**: November 3, 2025  
+**Last Updated**: November 4, 2025  
 **Related Issues**: #69, #74
+

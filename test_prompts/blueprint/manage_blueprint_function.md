@@ -6,6 +6,14 @@
 - ✅ MCP connection active
 - ✅ Test Blueprint available
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_FunctionTest" with parent "Actor"
+```
+
 ## Overview
 Tests all 13 actions of `manage_blueprint_function` including function creation, parameter management, local variables, and function metadata.
 
@@ -337,6 +345,18 @@ Tests all 13 actions of `manage_blueprint_function` including function creation,
 
 ---
 
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete test Blueprint:
+- Delete /Game/Blueprints/BP_FunctionTest with force_delete=True and show_confirmation=False
+```
+
+---
+
 **Test Coverage**: 13/13 actions tested ✅  
-**Last Updated**: November 3, 2025  
+**Last Updated**: November 4, 2025  
 **Related Issues**: #69, #72
+

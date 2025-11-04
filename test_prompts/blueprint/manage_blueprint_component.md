@@ -6,6 +6,14 @@
 - ✅ MCP connection active
 - ✅ Blueprint created (use BP_TestActor from manage_blueprint tests or create new)
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_ComponentTest" with parent "Actor"
+```
+
 ## Overview
 Tests all 12 actions of `manage_blueprint_component` including component discovery, creation, property management, and hierarchy operations.
 
@@ -303,6 +311,18 @@ Tests all 12 actions of `manage_blueprint_component` including component discove
 
 ---
 
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete test Blueprint:
+- Delete /Game/Blueprints/BP_ComponentTest with force_delete=True and show_confirmation=False
+```
+
+---
+
 **Test Coverage**: 12/12 actions tested ✅  
-**Last Updated**: November 3, 2025  
+**Last Updated**: November 4, 2025  
 **Related Issues**: #69, #71
+

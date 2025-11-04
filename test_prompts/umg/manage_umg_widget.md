@@ -5,6 +5,14 @@
 - ✅ VibeUE plugin loaded
 - ✅ MCP connection active
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "WBP_TestWidget" with parent "UserWidget"
+```
+
 ## Overview
 Tests all 11 actions of `manage_umg_widget` covering component lifecycle, property management (including slot properties), and event binding.
 
@@ -445,6 +453,18 @@ MODERN_COLORS = {
 
 ---
 
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete test Widget Blueprint:
+- Delete /Game/Blueprints/WBP_TestWidget with force_delete=True and show_confirmation=False
+```
+
+---
+
 **Test Coverage**: 11/11 actions tested ✅  
-**Last Updated**: November 3, 2025  
+**Last Updated**: November 4, 2025  
 **Related Issues**: #69, #75
+

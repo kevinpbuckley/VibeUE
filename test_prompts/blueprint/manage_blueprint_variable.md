@@ -6,6 +6,14 @@
 - ✅ MCP connection active
 - ✅ Test Blueprint available
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_VariableTest" with parent "Actor"
+```
+
 ## Overview
 Tests all 7 actions of `manage_blueprint_variable` with emphasis on type discovery workflow and complex object type handling.
 
@@ -350,6 +358,18 @@ Format: "/Game/Path/To/BP_Name.BP_Name_C"
 Example: "/Game/Blueprints/Characters/BP_Player.BP_Player_C"
 ```
 
+
+---
+
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete test Blueprint:
+- Delete /Game/Blueprints/BP_VariableTest with force_delete=True and show_confirmation=False
+```
+
 ---
 
 ## Reference: All Actions Summary
@@ -367,5 +387,6 @@ Example: "/Game/Blueprints/Characters/BP_Player.BP_Player_C"
 ---
 
 **Test Coverage**: 7/7 actions tested ✅  
-**Last Updated**: November 3, 2025  
+**Last Updated**: November 4, 2025  
 **Related Issues**: #69, #73
+

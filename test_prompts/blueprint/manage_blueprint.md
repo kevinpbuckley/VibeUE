@@ -6,6 +6,16 @@
 - ✅ MCP server connection established
 - ✅ Working in test project (not production)
 
+## Setup: Create Test Assets
+
+**Run these commands BEFORE starting tests:**
+
+```
+Create Blueprint "BP_TestActor" with parent "Actor"
+Create Blueprint "BP_TestCharacter" with parent "Character"
+Create Blueprint "WBP_TestWidget" with parent "UserWidget"
+```
+
 ## Overview
 This document tests all 8 actions of the `manage_blueprint` MCP tool following natural Blueprint lifecycle workflows.
 
@@ -238,6 +248,21 @@ Delete BP_TestCharacter Blueprint
 | Compilation fails | Invalid property values | Check property types match |
 | Property not found | Typo in property name | Use exact property name (case-sensitive) |
 | Can't set property | Property is read-only | Verify property is editable |
+
+---
+
+## Cleanup: Delete Test Assets
+
+**Run these commands AFTER completing all tests:**
+
+```
+Delete all test Blueprints created during testing:
+- Delete /Game/Blueprints/BP_TestActor with force_delete=True and show_confirmation=False
+- Delete /Game/Blueprints/BP_TestCharacter with force_delete=True and show_confirmation=False
+- Delete /Game/Blueprints/WBP_TestWidget with force_delete=True and show_confirmation=False
+```
+
+**Note**: Using `force_delete=True` and `show_confirmation=False` allows automated cleanup without user clicks.
 
 ---
 
