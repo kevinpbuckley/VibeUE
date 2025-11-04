@@ -181,6 +181,16 @@ struct VIBEUE_API FInputActionNodeParams
 };
 
 /**
+ * Configuration for creating an event node
+ */
+struct VIBEUE_API FEventConfiguration
+{
+    FString EventName;
+    FVector2D Position;
+    FString GraphName; // Optional: target graph name (defaults to EventGraph if empty or not specified)
+};
+
+/**
  * Search criteria for finding nodes in a blueprint
  */
 struct VIBEUE_API FNodeSearchCriteria
@@ -212,6 +222,7 @@ public:
     
     // Specialized node creation
     TResult<FString> CreateInputActionNode(UBlueprint* Blueprint, const FInputActionNodeParams& Params);
+    TResult<FString> AddEvent(UBlueprint* Blueprint, const FEventConfiguration& Config);
     
     // Pin connections
     TResult<FPinConnectionResult> ConnectPins(UBlueprint* Blueprint, const FPinConnectionRequest& Request);

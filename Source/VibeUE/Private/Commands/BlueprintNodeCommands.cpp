@@ -1240,49 +1240,47 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TShar
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // Extract required parameters
     FString BlueprintName;
+    FString EventName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
-
-    FString EventName;
     if (!Params->TryGetStringField(TEXT("event_name"), EventName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'event_name' parameter"));
     }
 
-    // Get position parameters (optional)
-    FVector2D NodePosition(0.0f, 0.0f);
-    if (Params->HasField(TEXT("node_position")))
+    // Find the blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        NodePosition = FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Parse event configuration
+    FEventConfiguration EventConfig;
+    EventConfig.EventName = EventName;
+    EventConfig.Position = Params->HasField(TEXT("node_position"))
+        ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
+        : FVector2D(0.0f, 0.0f);
+    
+    // Extract graph_name if provided (defaults to event graph if empty)
+    Params->TryGetStringField(TEXT("graph_name"), EventConfig.GraphName);
+
+    // Add event using NodeService
+    auto AddResult = NodeService->AddEvent(FindResult.GetValue(), EventConfig);
+    if (AddResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(AddResult.GetErrorCode(), AddResult.GetErrorMessage());
     }
 
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
-
-    // Create the event node
-    UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(EventGraph, EventName, NodePosition);
-    if (!EventNode)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Failed to create event node"));
-    }
-
-    // Mark the blueprint as modified
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-
-    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-    ResultObj->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString());
-    return ResultObj;
+    // Build success response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetStringField(TEXT("node_id"), AddResult.GetValue());
+    return Result;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
