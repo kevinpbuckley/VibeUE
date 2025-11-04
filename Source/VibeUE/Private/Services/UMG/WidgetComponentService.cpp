@@ -609,7 +609,8 @@ TResult<void> FWidgetComponentService::AddWidgetSwitcherSlot(
             FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
     }
 
-    // Add child to switcher
+    // Add child to switcher (always appends to end)
+    // Note: SlotIndex parameter is ignored - UWidgetSwitcher always adds to end
     WidgetSwitcher->AddChild(ChildWidget);
     int32 ActualSlotIndex = WidgetSwitcher->GetNumWidgets() - 1;
 

@@ -98,7 +98,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddComponentGeneric(
 			TEXT("Missing required parameters"));
 	}
 	
-	// parent_name is optional for some handlers
+	// parent_name is optional - if not provided, component is added to root widget
 	Params->TryGetStringField(TEXT("parent_name"), ParentName);
 	
 	TResult<UWidgetBlueprint*> WidgetResult = DiscoveryService->FindWidget(BlueprintName);

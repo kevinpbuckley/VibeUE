@@ -77,9 +77,11 @@ TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> FWidgetLifecycleService::CreateWi
             TEXT("Failed to create Widget Blueprint"));
     }
 
-    // Ensure root widget exists
+    // Ensure root widget exists (defaults to CanvasPanel per UMG standard)
     if (!WidgetBlueprint->WidgetTree->RootWidget)
     {
+        // CanvasPanel is the standard root widget type for UMG blueprints
+        // It provides absolute positioning and layering capabilities
         UCanvasPanel* RootCanvas = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
         WidgetBlueprint->WidgetTree->RootWidget = RootCanvas;
     }
