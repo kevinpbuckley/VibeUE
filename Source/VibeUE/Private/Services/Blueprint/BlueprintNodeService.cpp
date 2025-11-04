@@ -971,3 +971,629 @@ TResult<void> FBlueprintNodeService::ResetPinToDefault(UBlueprint* Blueprint, co
     
     return TResult<void>::Success();
 }
+TResult<FNodeDetails> FBlueprintNodeService::GetNodeDetailsExtended(UBlueprint* Blueprint, const FString& NodeId, 
+                                                                     bool bIncludePins, bool bIncludeConnections)
+{
+    if (!Blueprint)
+    {
+        return TResult<FNodeDetails>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FNodeDetails>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<FNodeDetails>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    // Build detailed node information
+    FNodeDetails Details;
+    Details.NodeId = Node->NodeGuid.ToString();
+    Details.NodeType = Node->GetClass()->GetName();
+    Details.DisplayName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+    Details.Position = FVector2D(Node->NodePosX, Node->NodePosY);
+    Details.GraphName = NodeGraph ? NodeGraph->GetName() : TEXT("");
+    Details.bCanUserDeleteNode = Node->CanUserDeleteNode();
+    
+    // Get K2Node-specific metadata
+    if (UK2Node* K2Node = Cast<UK2Node>(Node))
+    {
+        Details.Category = K2Node->GetMenuCategory().ToString();
+        Details.Tooltip = K2Node->GetTooltipText().ToString();
+        Details.Keywords = K2Node->GetKeywords().ToString();
+    }
+    
+    // Gather pin details if requested
+    if (bIncludePins)
+    {
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin)
+            {
+                continue;
+            }
+            
+            FPinDetail PinDetail;
+            PinDetail.PinName = Pin->PinName.ToString();
+            PinDetail.PinType = Pin->PinType.PinCategory.ToString();
+            PinDetail.Direction = (Pin->Direction == EGPD_Input) ? TEXT("Input") : TEXT("Output");
+            PinDetail.bIsHidden = Pin->bHidden;
+            PinDetail.bIsConnected = Pin->LinkedTo.Num() > 0;
+            PinDetail.DefaultValue = Pin->DefaultValue;
+            PinDetail.DefaultObjectName = Pin->DefaultObject ? Pin->DefaultObject->GetName() : TEXT("");
+            PinDetail.DefaultTextValue = Pin->DefaultTextValue.ToString();
+            PinDetail.bIsArray = Pin->PinType.IsArray();
+            PinDetail.bIsReference = Pin->PinType.bIsReference;
+            
+            // Gather connection details if requested
+            if (bIncludeConnections && Pin->LinkedTo.Num() > 0)
+            {
+                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+                {
+                    if (LinkedPin && LinkedPin->GetOwningNode())
+                    {
+                        FPinConnectionInfo ConnInfo;
+                        ConnInfo.SourceNodeId = Details.NodeId;
+                        ConnInfo.SourcePinName = Pin->PinName.ToString();
+                        ConnInfo.TargetNodeId = LinkedPin->GetOwningNode()->NodeGuid.ToString();
+                        ConnInfo.TargetPinName = LinkedPin->PinName.ToString();
+                        ConnInfo.PinType = Pin->PinType.PinCategory.ToString();
+                        PinDetail.Connections.Add(ConnInfo);
+                    }
+                }
+            }
+            
+            // Add to appropriate collection
+            if (Pin->Direction == EGPD_Input)
+            {
+                Details.InputPins.Add(PinDetail);
+            }
+            else
+            {
+                Details.OutputPins.Add(PinDetail);
+            }
+        }
+    }
+    
+    return TResult<FNodeDetails>::Success(Details);
+}
+TResult<FDetailedNodeInfo> FBlueprintNodeService::DescribeNode(UBlueprint* Blueprint, const FString& NodeId, bool bIncludePins, bool bIncludeInternalPins)
+{
+    if (!Blueprint)
+    {
+        return TResult<FDetailedNodeInfo>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FDetailedNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<FDetailedNodeInfo>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node with ID '%s' not found"), *NodeId));
+    }
+
+    FDetailedNodeInfo Info;
+    Info.NodeId = NormalizeGuid(Node->NodeGuid);
+    Info.DisplayName = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+    Info.ClassPath = Node->GetClass()->GetPathName();
+    Info.GraphScope = DescribeGraphScope(Blueprint, NodeGraph);
+    Info.GraphName = NodeGraph ? NodeGraph->GetName() : TEXT("");
+    Info.GraphGuid = NodeGraph ? NormalizeGuid(NodeGraph->GraphGuid) : TEXT("");
+    Info.Position = FVector2D(Node->NodePosX, Node->NodePosY);
+    Info.Comment = Node->NodeComment;
+    Info.bIsPure = IsPureK2Node(Cast<UK2Node>(Node));
+    Info.ExecState = DescribeExecState(Node);
+
+    // Extract node descriptor if it's a K2Node
+    if (UK2Node* AsK2Node = Cast<UK2Node>(Node))
+    {
+        TSharedPtr<FJsonObject> NodeParams;
+        FString DerivedSpawnerKey;
+        
+        // Extract descriptor information using BlueprintReflection system
+        if (UK2Node_CallFunction* FuncNode = Cast<UK2Node_CallFunction>(AsK2Node))
+        {
+            if (UFunction* TargetFunction = FuncNode->GetTargetFunction())
+            {
+                TStrongObjectPtr<UBlueprintFunctionNodeSpawner> TempSpawner(UBlueprintFunctionNodeSpawner::Create(TargetFunction));
+                if (TempSpawner.IsValid())
+                {
+                    auto Descriptor = FBlueprintReflection::ExtractDescriptorFromSpawner(TempSpawner.Get(), Blueprint);
+                    if (!Descriptor.SpawnerKey.IsEmpty())
+                    {
+                        Info.SpawnerKey = Descriptor.SpawnerKey;
+                    }
+                    Info.NodeDescriptor = Descriptor.ToJson();
+                    
+                    NodeParams = MakeShared<FJsonObject>();
+                    NodeParams->SetStringField(TEXT("spawner_key"), Descriptor.SpawnerKey);
+                    NodeParams->SetStringField(TEXT("function_name"), Descriptor.FunctionName);
+                    if (!Descriptor.FunctionClassPath.IsEmpty())
+                    {
+                        NodeParams->SetStringField(TEXT("function_class"), Descriptor.FunctionClassPath);
+                    }
+                    NodeParams->SetBoolField(TEXT("is_static"), Descriptor.bIsStatic);
+                    Info.NodeParams = NodeParams;
+                    
+                    if (Info.NodeDescriptor.IsValid() && Info.NodeDescriptor->HasField(TEXT("function_metadata")))
+                    {
+                        Info.FunctionMetadata = Info.NodeDescriptor->GetObjectField(TEXT("function_metadata"));
+                    }
+                }
+            }
+        }
+        else if (UK2Node_VariableGet* VarGetNode = Cast<UK2Node_VariableGet>(AsK2Node))
+        {
+            const FName VariableName = VarGetNode->GetVarName();
+            if (!VariableName.IsNone())
+            {
+                using FDescriptor = FBlueprintReflection::FNodeSpawnerDescriptor;
+                FDescriptor Descriptor;
+                Descriptor.NodeType = TEXT("variable_get");
+                Descriptor.DisplayName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+                Descriptor.NodeClassName = Node->GetClass()->GetName();
+                Descriptor.NodeClassPath = Node->GetClass()->GetPathName();
+                Descriptor.VariableName = VariableName.ToString();
+                Descriptor.SpawnerKey = FString::Printf(TEXT("GET %s"), *Descriptor.VariableName);
+                
+                if (UEdGraphPin* ValuePin = VarGetNode->GetValuePin())
+                {
+                    Descriptor.VariableType = ValuePin->PinType.PinCategory.ToString();
+                    if (ValuePin->PinType.PinSubCategoryObject.IsValid())
+                    {
+                        Descriptor.VariableTypePath = ValuePin->PinType.PinSubCategoryObject->GetPathName();
+                    }
+                }
+                
+                FBlueprintReflection::ExtractPinDescriptorsFromNode(VarGetNode, Descriptor.Pins);
+                Descriptor.ExpectedPinCount = Descriptor.Pins.Num();
+                
+                Info.SpawnerKey = Descriptor.SpawnerKey;
+                Info.NodeDescriptor = Descriptor.ToJson();
+                
+                NodeParams = MakeShared<FJsonObject>();
+                NodeParams->SetStringField(TEXT("variable_name"), Descriptor.VariableName);
+                NodeParams->SetStringField(TEXT("operation"), TEXT("get"));
+                Info.NodeParams = NodeParams;
+                
+                if (Info.NodeDescriptor.IsValid() && Info.NodeDescriptor->HasField(TEXT("variable_metadata")))
+                {
+                    Info.VariableMetadata = Info.NodeDescriptor->GetObjectField(TEXT("variable_metadata"));
+                }
+            }
+        }
+        else if (UK2Node_VariableSet* VarSetNode = Cast<UK2Node_VariableSet>(AsK2Node))
+        {
+            const FName VariableName = VarSetNode->GetVarName();
+            if (!VariableName.IsNone())
+            {
+                using FDescriptor = FBlueprintReflection::FNodeSpawnerDescriptor;
+                FDescriptor Descriptor;
+                Descriptor.NodeType = TEXT("variable_set");
+                Descriptor.DisplayName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+                Descriptor.NodeClassName = Node->GetClass()->GetName();
+                Descriptor.NodeClassPath = Node->GetClass()->GetPathName();
+                Descriptor.VariableName = VariableName.ToString();
+                Descriptor.SpawnerKey = FString::Printf(TEXT("SET %s"), *Descriptor.VariableName);
+                
+                UEdGraphPin* ValuePin = VarSetNode->FindPin(VariableName, EGPD_Input);
+                if (!ValuePin)
+                {
+                    for (UEdGraphPin* Pin : VarSetNode->Pins)
+                    {
+                        if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+                        {
+                            ValuePin = Pin;
+                            break;
+                        }
+                    }
+                }
+                
+                if (ValuePin)
+                {
+                    Descriptor.VariableType = ValuePin->PinType.PinCategory.ToString();
+                    if (ValuePin->PinType.PinSubCategoryObject.IsValid())
+                    {
+                        Descriptor.VariableTypePath = ValuePin->PinType.PinSubCategoryObject->GetPathName();
+                    }
+                }
+                
+                FBlueprintReflection::ExtractPinDescriptorsFromNode(VarSetNode, Descriptor.Pins);
+                Descriptor.ExpectedPinCount = Descriptor.Pins.Num();
+                
+                Info.SpawnerKey = Descriptor.SpawnerKey;
+                Info.NodeDescriptor = Descriptor.ToJson();
+                
+                NodeParams = MakeShared<FJsonObject>();
+                NodeParams->SetStringField(TEXT("variable_name"), Descriptor.VariableName);
+                NodeParams->SetStringField(TEXT("operation"), TEXT("set"));
+                Info.NodeParams = NodeParams;
+                
+                if (Info.NodeDescriptor.IsValid() && Info.NodeDescriptor->HasField(TEXT("variable_metadata")))
+                {
+                    Info.VariableMetadata = Info.NodeDescriptor->GetObjectField(TEXT("variable_metadata"));
+                }
+            }
+        }
+        else if (UK2Node_DynamicCast* CastNode = Cast<UK2Node_DynamicCast>(AsK2Node))
+        {
+            if (UClass* TargetClass = CastNode->TargetType)
+            {
+                using FDescriptor = FBlueprintReflection::FNodeSpawnerDescriptor;
+                FDescriptor Descriptor;
+                Descriptor.NodeType = TEXT("dynamic_cast");
+                Descriptor.DisplayName = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+                Descriptor.NodeClassName = Node->GetClass()->GetName();
+                Descriptor.NodeClassPath = Node->GetClass()->GetPathName();
+                Descriptor.TargetClassName = TargetClass->GetName();
+                Descriptor.TargetClassPath = TargetClass->GetPathName();
+                Descriptor.SpawnerKey = FString::Printf(TEXT("Cast To %s"), *Descriptor.TargetClassName);
+                
+                FBlueprintReflection::ExtractPinDescriptorsFromNode(CastNode, Descriptor.Pins);
+                Descriptor.ExpectedPinCount = Descriptor.Pins.Num();
+                
+                Info.SpawnerKey = Descriptor.SpawnerKey;
+                Info.NodeDescriptor = Descriptor.ToJson();
+                
+                NodeParams = MakeShared<FJsonObject>();
+                NodeParams->SetStringField(TEXT("cast_target"), Descriptor.TargetClassPath);
+                Info.NodeParams = NodeParams;
+                
+                if (Info.NodeDescriptor.IsValid() && Info.NodeDescriptor->HasField(TEXT("cast_metadata")))
+                {
+                    Info.CastMetadata = Info.NodeDescriptor->GetObjectField(TEXT("cast_metadata"));
+                }
+            }
+        }
+    }
+
+    // Build pin information
+    if (bIncludePins)
+    {
+        for (UEdGraphPin* Pin : Node->Pins)
+        {
+            if (!Pin)
+            {
+                continue;
+            }
+
+            if (!bIncludeInternalPins && (Pin->bHidden || Pin->bAdvancedView))
+            {
+                continue;
+            }
+
+            FPinInfo PinInfo;
+            PinInfo.PinId = BuildPinIdentifier(Node, Pin);
+            PinInfo.Name = Pin->PinName.ToString();
+            PinInfo.Direction = DescribePinDirection(Pin->Direction);
+            PinInfo.Category = Pin->PinType.PinCategory.ToString();
+            PinInfo.SubCategory = Pin->PinType.PinSubCategory.ToString();
+            if (Pin->PinType.PinSubCategoryObject.IsValid())
+            {
+                PinInfo.PinTypePath = Pin->PinType.PinSubCategoryObject->GetPathName();
+            }
+            PinInfo.Container = DescribeContainerType(Pin->PinType.ContainerType);
+            PinInfo.bIsConst = Pin->PinType.bIsConst;
+            PinInfo.bIsReference = Pin->PinType.bIsReference;
+            PinInfo.bIsArray = Pin->PinType.ContainerType == EPinContainerType::Array;
+            PinInfo.bIsSet = Pin->PinType.ContainerType == EPinContainerType::Set;
+            PinInfo.bIsMap = Pin->PinType.ContainerType == EPinContainerType::Map;
+            PinInfo.bIsHidden = Pin->bHidden;
+            PinInfo.bIsAdvanced = Pin->bAdvancedView;
+            PinInfo.bIsConnected = Pin->LinkedTo.Num() > 0;
+            PinInfo.Tooltip = Pin->PinToolTip;
+            PinInfo.DefaultValue = Pin->DefaultValue;
+            PinInfo.DefaultText = Pin->DefaultTextValue.ToString();
+            if (Pin->DefaultObject)
+            {
+                PinInfo.DefaultObjectPath = Pin->DefaultObject->GetPathName();
+            }
+            PinInfo.DefaultValueJson = BuildDefaultValueJson(Pin);
+
+            // Build links
+            for (const UEdGraphPin* LinkedPin : Pin->LinkedTo)
+            {
+                if (!LinkedPin)
+                {
+                    continue;
+                }
+
+                const UEdGraphNode* LinkedNode = LinkedPin->GetOwningNode();
+                TSharedPtr<FJsonObject> Link = MakeShared<FJsonObject>();
+                if (LinkedNode)
+                {
+                    Link->SetStringField(TEXT("node_id"), NormalizeGuid(LinkedNode->NodeGuid));
+                }
+                Link->SetStringField(TEXT("pin_id"), BuildPinIdentifier(LinkedNode, LinkedPin));
+                Link->SetStringField(TEXT("pin_name"), LinkedPin->PinName.ToString());
+                PinInfo.Links.Add(Link);
+            }
+
+            Info.Pins.Add(PinInfo);
+        }
+    }
+
+    // Build metadata
+    TSharedPtr<FJsonObject> Metadata = MakeShared<FJsonObject>();
+    Metadata->SetStringField(TEXT("guid"), NormalizeGuid(Node->NodeGuid));
+    Metadata->SetNumberField(TEXT("node_flags"), static_cast<int64>(Node->GetFlags()));
+    Metadata->SetBoolField(TEXT("has_compiler_message"), Node->bHasCompilerMessage);
+    if (Node->bHasCompilerMessage)
+    {
+        Metadata->SetNumberField(TEXT("compiler_message_type"), Node->ErrorType);
+        Metadata->SetStringField(TEXT("compiler_message"), Node->ErrorMsg);
+    }
+    Metadata->SetBoolField(TEXT("blueprint_has_breakpoints"), FKismetDebugUtilities::BlueprintHasBreakpoints(Blueprint));
+    Info.Metadata = Metadata;
+
+    return TResult<FDetailedNodeInfo>::Success(Info);
+}
+
+TResult<TArray<FDetailedNodeInfo>> FBlueprintNodeService::DescribeAllNodes(UBlueprint* Blueprint, const FString& GraphScope, 
+                                                                           bool bIncludePins, bool bIncludeInternalPins,
+                                                                           int32 Offset, int32 Limit)
+{
+    if (!Blueprint)
+    {
+        return TResult<TArray<FDetailedNodeInfo>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+
+    // Resolve target graphs based on scope
+    TArray<UEdGraph*> CandidateGraphs;
+    FString Error;
+    
+    bool bAllGraphs = GraphScope.Equals(TEXT("all"), ESearchCase::IgnoreCase);
+    if (!bAllGraphs && !GraphScope.IsEmpty())
+    {
+        UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, GraphScope, Error);
+        if (!PreferredGraph && !Error.IsEmpty())
+        {
+            return TResult<TArray<FDetailedNodeInfo>>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, Error);
+        }
+        if (PreferredGraph)
+        {
+            GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+        }
+    }
+    
+    if (CandidateGraphs.Num() == 0)
+    {
+        GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    }
+
+    TArray<FDetailedNodeInfo> Results;
+    int32 Skipped = 0;
+    int32 Collected = 0;
+
+    for (UEdGraph* Graph : CandidateGraphs)
+    {
+        if (!Graph)
+        {
+            continue;
+        }
+
+        for (UEdGraphNode* Node : Graph->Nodes)
+        {
+            if (!Node)
+            {
+                continue;
+            }
+
+            if (Skipped < Offset)
+            {
+                ++Skipped;
+                continue;
+            }
+
+            if (Limit >= 0 && Collected >= Limit)
+            {
+                break;
+            }
+
+            // Describe this node
+            auto DescribeResult = DescribeNode(Blueprint, Node->NodeGuid.ToString(), bIncludePins, bIncludeInternalPins);
+            if (DescribeResult.IsSuccess())
+            {
+                Results.Add(DescribeResult.GetValue());
+                ++Collected;
+            }
+            else
+            {
+                // Log failure for diagnostics but continue processing other nodes
+                UE_LOG(LogBlueprintNodeService, Warning, TEXT("Failed to describe node %s: %s"), 
+                    *Node->NodeGuid.ToString(), *DescribeResult.GetErrorMessage());
+            }
+        }
+
+        if (Limit >= 0 && Collected >= Limit)
+        {
+            break;
+        }
+    }
+
+    return TResult<TArray<FDetailedNodeInfo>>::Success(Results);
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeService::ConvertPinInfoToJson(const FPinInfo& PinInfo)
+{
+    TSharedPtr<FJsonObject> PinObject = MakeShared<FJsonObject>();
+    PinObject->SetStringField(TEXT("pin_id"), PinInfo.PinId);
+    PinObject->SetStringField(TEXT("name"), PinInfo.Name);
+    PinObject->SetStringField(TEXT("direction"), PinInfo.Direction);
+    PinObject->SetStringField(TEXT("category"), PinInfo.Category);
+    PinObject->SetStringField(TEXT("subcategory"), PinInfo.SubCategory);
+    if (!PinInfo.PinTypePath.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("pin_type_path"), PinInfo.PinTypePath);
+    }
+    PinObject->SetStringField(TEXT("container"), PinInfo.Container);
+    PinObject->SetBoolField(TEXT("is_const"), PinInfo.bIsConst);
+    PinObject->SetBoolField(TEXT("is_reference"), PinInfo.bIsReference);
+    PinObject->SetBoolField(TEXT("is_array"), PinInfo.bIsArray);
+    PinObject->SetBoolField(TEXT("is_set"), PinInfo.bIsSet);
+    PinObject->SetBoolField(TEXT("is_map"), PinInfo.bIsMap);
+    PinObject->SetBoolField(TEXT("is_hidden"), PinInfo.bIsHidden);
+    PinObject->SetBoolField(TEXT("is_advanced"), PinInfo.bIsAdvanced);
+    PinObject->SetBoolField(TEXT("is_connected"), PinInfo.bIsConnected);
+
+    if (!PinInfo.Tooltip.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("tooltip"), PinInfo.Tooltip);
+    }
+
+    if (!PinInfo.DefaultValue.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_value"), PinInfo.DefaultValue);
+    }
+    if (!PinInfo.DefaultText.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_text"), PinInfo.DefaultText);
+    }
+    if (!PinInfo.DefaultObjectPath.IsEmpty())
+    {
+        PinObject->SetStringField(TEXT("default_object_path"), PinInfo.DefaultObjectPath);
+    }
+
+    if (PinInfo.DefaultValueJson.IsValid())
+    {
+        PinObject->SetField(TEXT("default_value_json"), PinInfo.DefaultValueJson);
+    }
+
+    TArray<TSharedPtr<FJsonValue>> LinksArray;
+    for (const TSharedPtr<FJsonObject>& Link : PinInfo.Links)
+    {
+        LinksArray.Add(MakeShared<FJsonValueObject>(Link));
+    }
+    PinObject->SetArrayField(TEXT("links"), LinksArray);
+
+    return PinObject;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeService::ConvertNodeInfoToJson(const FDetailedNodeInfo& NodeInfo, bool bIncludePins)
+{
+    TSharedPtr<FJsonObject> NodeObject = MakeShared<FJsonObject>();
+    NodeObject->SetStringField(TEXT("node_id"), NodeInfo.NodeId);
+    NodeObject->SetStringField(TEXT("display_name"), NodeInfo.DisplayName);
+    NodeObject->SetStringField(TEXT("class_path"), NodeInfo.ClassPath);
+    NodeObject->SetStringField(TEXT("graph_scope"), NodeInfo.GraphScope);
+    NodeObject->SetStringField(TEXT("graph_name"), NodeInfo.GraphName);
+    NodeObject->SetStringField(TEXT("graph_guid"), NodeInfo.GraphGuid);
+
+    TSharedPtr<FJsonObject> Position = MakeShared<FJsonObject>();
+    Position->SetNumberField(TEXT("x"), NodeInfo.Position.X);
+    Position->SetNumberField(TEXT("y"), NodeInfo.Position.Y);
+    NodeObject->SetObjectField(TEXT("position"), Position);
+
+    if (!NodeInfo.Comment.IsEmpty())
+    {
+        NodeObject->SetStringField(TEXT("comment"), NodeInfo.Comment);
+    }
+
+    NodeObject->SetBoolField(TEXT("is_pure"), NodeInfo.bIsPure);
+    NodeObject->SetStringField(TEXT("exec_state"), NodeInfo.ExecState);
+
+    if (NodeInfo.NodeDescriptor.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("node_descriptor"), NodeInfo.NodeDescriptor);
+    }
+
+    if (!NodeInfo.SpawnerKey.IsEmpty())
+    {
+        NodeObject->SetStringField(TEXT("spawner_key"), NodeInfo.SpawnerKey);
+    }
+
+    if (NodeInfo.NodeParams.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("node_params"), NodeInfo.NodeParams);
+    }
+
+    if (NodeInfo.FunctionMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("function_metadata"), NodeInfo.FunctionMetadata);
+    }
+
+    if (NodeInfo.VariableMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("variable_metadata"), NodeInfo.VariableMetadata);
+    }
+
+    if (NodeInfo.CastMetadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("cast_metadata"), NodeInfo.CastMetadata);
+    }
+
+    if (bIncludePins)
+    {
+        TArray<TSharedPtr<FJsonValue>> PinsArray;
+        for (const FPinInfo& PinInfo : NodeInfo.Pins)
+        {
+            PinsArray.Add(MakeShared<FJsonValueObject>(ConvertPinInfoToJson(PinInfo)));
+        }
+        NodeObject->SetArrayField(TEXT("pins"), PinsArray);
+    }
+
+    if (NodeInfo.Metadata.IsValid())
+    {
+        NodeObject->SetObjectField(TEXT("metadata"), NodeInfo.Metadata);
+    }
+
+    return NodeObject;
+}
+
+TResult<FString> FBlueprintNodeService::AddEvent(UBlueprint* Blueprint, const FEventConfiguration& Config)
+{
+    if (!Blueprint)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    auto ValidationResult = ValidateNotEmpty(Config.EventName, TEXT("EventName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+    
+    // Resolve target graph (defaults to EventGraph if Config.GraphName is empty)
+    FString Error;
+    UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, Config.GraphName, Error);
+    if (!TargetGraph)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::GRAPH_NOT_FOUND, 
+            Error.IsEmpty() ? TEXT("Failed to resolve target graph") : Error);
+    }
+    
+    // Create event node
+    // Uses CommonUtils which handles graph modification, GUID generation, and pin allocation
+    UK2Node_Event* EventNode = FCommonUtils::CreateEventNode(TargetGraph, Config.EventName, Config.Position);
+    if (!EventNode)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::NODE_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create event node for event '%s'"), *Config.EventName));
+    }
+    
+    // Mark blueprint as modified
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    
+    // Return node ID
+    return TResult<FString>::Success(EventNode->NodeGuid.ToString());
+}
