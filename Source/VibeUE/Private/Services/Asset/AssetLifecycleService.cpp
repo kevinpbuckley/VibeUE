@@ -255,25 +255,40 @@ TResult<bool> FAssetLifecycleService::DeleteAsset(
     // 3. Check for references using AssetRegistry
     if (!bForceDelete)
     {
-        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-        
-        // Convert asset path to package name
-        FName AssetPackageName = FName(*NormalizedPath);
-        
-        // Get referencers (assets that depend on this asset)
-        TArray<FName> Referencers;
-        AssetRegistry.GetReferencers(AssetPackageName, Referencers);
-        
-        if (Referencers.Num() > 0)
+        // Load the asset to get its package name
+        UObject* Asset = LoadAsset(NormalizedPath);
+        if (Asset && Asset->GetPackage())
         {
-            return TResult<bool>::Error(
-                VibeUE::ErrorCodes::ASSET_IN_USE,
-                FString::Printf(
-                    TEXT("Asset has %d references. Use force_delete=true to override."), 
-                    Referencers.Num()
-                )
-            );
+            FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+            IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+            
+            // Get package name from the loaded asset
+            FName AssetPackageName = Asset->GetPackage()->GetFName();
+            
+            // Get referencers (assets that depend on this asset)
+            TArray<FName> Referencers;
+            AssetRegistry.GetReferencers(AssetPackageName, Referencers);
+            
+            // Count references excluding self-references
+            int32 ExternalReferenceCount = 0;
+            for (const FName& PackageName : Referencers)
+            {
+                if (PackageName != AssetPackageName)
+                {
+                    ExternalReferenceCount++;
+                }
+            }
+            
+            if (ExternalReferenceCount > 0)
+            {
+                return TResult<bool>::Error(
+                    VibeUE::ErrorCodes::ASSET_IN_USE,
+                    FString::Printf(
+                        TEXT("Asset has %d references. Use force_delete=true to override."), 
+                        ExternalReferenceCount
+                    )
+                );
+            }
         }
     }
     
