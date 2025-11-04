@@ -5259,7 +5259,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentName;
@@ -5289,7 +5289,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
 
     if (ComponentName.IsEmpty() || DelegateName.IsEmpty())
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+            TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
     }
 
     // Parse position
@@ -5301,44 +5302,45 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
         Position.Y = (*PositionArray)[1]->AsNumber();
     }
 
-    // Find Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
 
-    // Create component event using reflection-based binder
-    FString Error;
-    UK2Node_ComponentBoundEvent* EventNode = FComponentEventBinder::CreateComponentEvent(
-        Blueprint,
+    // Create component event using ComponentService - returns complete metadata
+    auto EventResult = ComponentService->CreateComponentEvent(
+        FindResult.GetValue(),
         ComponentName,
         DelegateName,
-        Position,
-        Error
+        Position
     );
 
-    if (!EventNode)
+    if (EventResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(
-            TEXT("Failed to create component event: %s"), *Error));
+        return CreateErrorResponse(EventResult.GetErrorCode(), EventResult.GetErrorMessage());
     }
 
-    // Build success response
+    // Service returns complete result with all metadata
+    const FComponentEventResult& EventData = EventResult.GetValue();
+
+    // Build success response from service result
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
-    Result->SetStringField(TEXT("component_name"), ComponentName);
-    Result->SetStringField(TEXT("delegate_name"), DelegateName);
-    Result->SetNumberField(TEXT("pin_count"), EventNode->Pins.Num());
+    Result->SetStringField(TEXT("node_id"), EventData.NodeId);
+    Result->SetStringField(TEXT("component_name"), EventData.ComponentName);
+    Result->SetStringField(TEXT("delegate_name"), EventData.DelegateName);
+    Result->SetNumberField(TEXT("pin_count"), EventData.PinCount);
     
     // Add position info
     TArray<TSharedPtr<FJsonValue>> PosArray;
-    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosX));
-    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosY));
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventData.Position.X));
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventData.Position.Y));
     Result->SetArrayField(TEXT("position"), PosArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Successfully created component event: %s::%s"), *ComponentName, *DelegateName);
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created component event: %s::%s"), 
+        *EventData.ComponentName, *EventData.DelegateName);
 
     return Result;
 }

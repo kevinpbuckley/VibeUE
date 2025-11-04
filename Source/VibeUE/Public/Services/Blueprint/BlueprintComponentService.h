@@ -43,6 +43,18 @@ struct VIBEUE_API FComponentEventsResult
 };
 
 /**
+ * Result structure for component event creation
+ */
+struct VIBEUE_API FComponentEventResult
+{
+    FString NodeId;          // GUID of created event node
+    FString ComponentName;   // Component the event is bound to
+    FString DelegateName;    // Delegate name that was bound
+    int32 PinCount;          // Number of pins on the event node
+    FVector2D Position;      // Final node position
+};
+
+/**
  * Service for Blueprint component CRUD operations
  * Extracted from BlueprintComponentReflection.cpp for focused, testable implementation
  */
@@ -121,6 +133,20 @@ public:
     TResult<FComponentEventsResult> GetComponentEvents(
         UBlueprint* Blueprint,
         const FString& ComponentNameFilter = FString());
+
+    /**
+     * Create a component event binding node
+     * @param Blueprint Target blueprint
+     * @param ComponentName Component with the delegate
+     * @param DelegateName Delegate property name
+     * @param Position Position for the event node
+     * @return Result containing created event node information
+     */
+    TResult<FComponentEventResult> CreateComponentEvent(
+        UBlueprint* Blueprint,
+        const FString& ComponentName,
+        const FString& DelegateName,
+        const FVector2D& Position);
 
 private:
     /**

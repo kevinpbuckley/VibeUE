@@ -412,3 +412,60 @@ TResult<FComponentEventsResult> FBlueprintComponentService::GetComponentEvents(
 
     return TResult<FComponentEventsResult>::Success(Result);
 }
+
+TResult<FComponentEventResult> FBlueprintComponentService::CreateComponentEvent(
+    UBlueprint* Blueprint,
+    const FString& ComponentName,
+    const FString& DelegateName,
+    const FVector2D& Position)
+{
+    if (!Blueprint)
+    {
+        return TResult<FComponentEventResult>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND,
+            TEXT("Blueprint is null"));
+    }
+
+    auto ValidationResult = ValidateNotEmpty(ComponentName, TEXT("ComponentName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FComponentEventResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(DelegateName, TEXT("DelegateName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FComponentEventResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    // Create component event using reflection-based binder
+    FString Error;
+    UK2Node_ComponentBoundEvent* EventNode = FComponentEventBinder::CreateComponentEvent(
+        Blueprint,
+        ComponentName,
+        DelegateName,
+        Position,
+        Error
+    );
+
+    if (!EventNode)
+    {
+        return TResult<FComponentEventResult>::Error(
+            VibeUE::ErrorCodes::NODE_CREATE_FAILED,
+            FString::Printf(TEXT("Failed to create component event: %s"), *Error));
+    }
+
+    // Build result with complete metadata
+    FComponentEventResult Result;
+    Result.NodeId = EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
+    Result.ComponentName = ComponentName;
+    Result.DelegateName = DelegateName;
+    Result.PinCount = EventNode->Pins.Num();
+    Result.Position = FVector2D(EventNode->NodePosX, EventNode->NodePosY);
+
+    UE_LOG(LogBlueprintComponentService, Log, 
+        TEXT("Created component event: %s::%s at (%.0f, %.0f)"), 
+        *ComponentName, *DelegateName, Result.Position.X, Result.Position.Y);
+
+    return TResult<FComponentEventResult>::Success(Result);
+}
