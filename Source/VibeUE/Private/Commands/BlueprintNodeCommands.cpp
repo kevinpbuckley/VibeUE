@@ -3975,7 +3975,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
     
     return Result;
 }
-}
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
