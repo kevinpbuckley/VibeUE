@@ -18,6 +18,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Timeline.h"
 #include "K2Node_Event.h"
+#include "K2Node_CustomEvent.h"
 #include "K2Node_Knot.h"
 #include "BlueprintFunctionNodeSpawner.h"
 #include "Kismet2/BlueprintEditorUtils.h"
