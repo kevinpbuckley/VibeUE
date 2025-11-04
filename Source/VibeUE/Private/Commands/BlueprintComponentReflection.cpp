@@ -2254,12 +2254,14 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
     }
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
 
     // Find the component
     UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
@@ -2309,12 +2311,14 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAllComponentProp
 
     Params->TryGetBoolField(TEXT("include_inherited"), bIncludeInherited);
 
-    // Load the Blueprint
-    UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    if (!Blueprint)
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
     }
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
 
     // Find the component
     UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
@@ -2378,18 +2382,21 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, compare_to_blueprint, compare_to_component"));
     }
 
-    // Load both Blueprints
-    UBlueprint* Blueprint1 = LoadObject<UBlueprint>(nullptr, *BlueprintName);
-    UBlueprint* Blueprint2 = LoadObject<UBlueprint>(nullptr, *CompareToBlueprint);
+    // Find both Blueprints using DiscoveryService
+    auto FindResult1 = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult1.IsError())
+    {
+        return CreateErrorResponse(FindResult1.GetErrorCode(), FindResult1.GetErrorMessage());
+    }
     
-    if (!Blueprint1)
+    auto FindResult2 = DiscoveryService->FindBlueprint(CompareToBlueprint);
+    if (FindResult2.IsError())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(FindResult2.GetErrorCode(), FindResult2.GetErrorMessage());
     }
-    if (!Blueprint2)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *CompareToBlueprint));
-    }
+    
+    UBlueprint* Blueprint1 = FindResult1.GetValue();
+    UBlueprint* Blueprint2 = FindResult2.GetValue();
 
     // Find both components
     UActorComponent* Component1 = FindComponentInBlueprint(Blueprint1, ComponentName);
