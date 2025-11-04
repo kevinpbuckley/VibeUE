@@ -4936,7 +4936,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
 
     if (PinsToSplit.Num() == 0 && PinsToRecombine.Num() == 0)
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::INVALID_PARAMETER, TEXT("No pin operations specified"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("No pin operations specified"));
     }
 
     // Execute pin operations using service layer
