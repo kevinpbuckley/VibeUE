@@ -47,6 +47,8 @@ public:
 	FString ExecuteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
 private:
+	// Route command to appropriate handler
+	TSharedPtr<FJsonObject> RouteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 	// Server state
 	bool bIsRunning;
 	TSharedPtr<FSocket> ListenerSocket;

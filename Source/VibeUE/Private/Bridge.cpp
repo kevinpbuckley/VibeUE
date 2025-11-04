@@ -72,7 +72,8 @@ UBridge::UBridge()
     ServiceContext = MakeShared<FServiceContext>();
     
     // Initialize command handlers
-    // TODO(Issue #38-40): Update command handlers to accept ServiceContext when refactored
+    // Note: Some handlers create their own ServiceContext internally (AssetCommands, UMGCommands, BlueprintNodeCommands)
+    // TODO(Issue #38-40): Update remaining handlers to accept ServiceContext when refactored
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
     BlueprintComponentReflection = MakeShared<FBlueprintComponentReflection>();
@@ -246,6 +247,125 @@ void UBridge::StopServer()
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server stopped successfully"));
 }
 
+// Route command to appropriate handler based on command type
+TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> ResultJson;
+    
+    // Status and System Commands
+    if (CommandType == TEXT("get_system_info"))
+    {
+        ResultJson = MakeShareable(new FJsonObject);
+        ResultJson->SetBoolField(TEXT("success"), true);
+        ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.6"));
+        ResultJson->SetStringField(TEXT("plugin_version"), TEXT("1.0"));
+        ResultJson->SetStringField(TEXT("server_status"), TEXT("running"));
+        ResultJson->SetBoolField(TEXT("editor_connected"), true);
+        
+        TSharedPtr<FJsonObject> AvailableTools = MakeShareable(new FJsonObject);
+        AvailableTools->SetBoolField(TEXT("widget_tools"), true);
+        AvailableTools->SetBoolField(TEXT("blueprint_tools"), true);
+        AvailableTools->SetBoolField(TEXT("actor_tools"), true);
+        AvailableTools->SetBoolField(TEXT("editor_tools"), true);
+        ResultJson->SetObjectField(TEXT("available_tools"), AvailableTools);
+    }
+    // Blueprint Component Reflection Commands
+    else if (CommandType == TEXT("get_available_components") ||
+             CommandType == TEXT("get_component_info") ||
+             CommandType == TEXT("get_property_metadata") ||
+             CommandType == TEXT("get_component_hierarchy") ||
+             CommandType == TEXT("add_component") ||
+             CommandType == TEXT("set_component_property") ||
+             CommandType == TEXT("get_component_property") ||
+             CommandType == TEXT("get_all_component_properties") ||
+             CommandType == TEXT("compare_component_properties") ||
+             CommandType == TEXT("reparent_component") ||
+             CommandType == TEXT("remove_component") ||
+             CommandType == TEXT("reorder_components"))
+    {
+        ResultJson = BlueprintComponentReflection->HandleCommand(CommandType, Params);
+    }
+    // Blueprint Commands
+    else if (CommandType == TEXT("create_blueprint") || 
+             CommandType == TEXT("add_component_to_blueprint") || 
+             CommandType == TEXT("set_component_property") || 
+             CommandType == TEXT("compile_blueprint") || 
+             CommandType == TEXT("get_blueprint_property") || 
+             CommandType == TEXT("set_blueprint_property") || 
+             CommandType == TEXT("reparent_blueprint") ||
+             // Blueprint Variable Commands
+             CommandType == TEXT("manage_blueprint_variable") ||
+             CommandType == TEXT("add_blueprint_variable") ||
+             CommandType == TEXT("get_blueprint_variable") ||
+             CommandType == TEXT("delete_blueprint_variable") ||
+             CommandType == TEXT("get_available_blueprint_variable_types") ||
+             // Reflection-based variable property API (two-method)
+             CommandType == TEXT("get_variable_property") ||
+             CommandType == TEXT("set_variable_property") ||
+             // Comprehensive Blueprint information
+             CommandType == TEXT("get_blueprint_info"))
+    {
+        ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
+    }
+    // Blueprint Node Commands
+    else if (CommandType == TEXT("manage_blueprint_node") ||
+             CommandType == TEXT("manage_blueprint_function") ||
+             CommandType == TEXT("get_available_blueprint_nodes") ||
+             CommandType == TEXT("discover_nodes_with_descriptors"))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
+        ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
+    }
+    // UMG Commands (Reflection-based system)
+    else if (CommandType == TEXT("create_umg_widget_blueprint") ||
+             CommandType == TEXT("delete_widget_blueprint") ||
+             // UMG Discovery Commands
+             CommandType == TEXT("search_items") ||
+             CommandType == TEXT("get_widget_blueprint_info") ||
+             CommandType == TEXT("list_widget_components") ||
+             CommandType == TEXT("get_widget_component_properties") ||
+             CommandType == TEXT("get_available_widget_types") ||
+             CommandType == TEXT("validate_widget_hierarchy") ||
+             CommandType == TEXT("remove_widget_component") ||
+             // UMG Child Management
+             CommandType == TEXT("add_child_to_panel") ||
+             CommandType == TEXT("remove_umg_component") ||  // Universal component removal
+             CommandType == TEXT("set_widget_slot_properties") ||
+             // UMG Styling Commands
+             CommandType == TEXT("set_widget_property") ||
+             CommandType == TEXT("get_widget_property") ||
+             CommandType == TEXT("list_widget_properties") ||
+             // UMG Event Commands
+             CommandType == TEXT("bind_input_events") ||
+             CommandType == TEXT("get_available_events"))
+    {
+        ResultJson = UMGCommands->HandleCommand(CommandType, Params);
+    }
+    // UMG Reflection Commands
+    else if (CommandType == TEXT("get_available_widgets") ||
+             CommandType == TEXT("add_widget_component"))
+    {
+        ResultJson = UMGReflectionCommands->HandleCommand(CommandType, Params);
+    }
+    // Asset Discovery and Procedural Generation Commands
+    else if (CommandType == TEXT("import_texture_asset") ||
+             CommandType == TEXT("export_texture_for_analysis") ||
+             CommandType == TEXT("OpenAssetInEditor"))
+    {
+        ResultJson = AssetCommands->HandleCommand(CommandType, Params);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("VibeUEBridge: Unknown command received: %s"), *CommandType);
+        ResultJson = MakeShareable(new FJsonObject);
+        ResultJson->SetBoolField(TEXT("success"), false);
+        ResultJson->SetStringField(TEXT("error_code"), VibeUE::ErrorCodes::UNKNOWN_COMMAND);
+        ResultJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown command: %s"), *CommandType));
+    }
+    
+    return ResultJson;
+}
+
 // Execute a command received from a client
 FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
@@ -262,118 +382,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
         
         try
         {
-            TSharedPtr<FJsonObject> ResultJson;
-            
-            // Status and System Commands
-            if (CommandType == TEXT("get_system_info"))
-            {
-                ResultJson = MakeShareable(new FJsonObject);
-                ResultJson->SetBoolField(TEXT("success"), true);
-                ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.6"));
-                ResultJson->SetStringField(TEXT("plugin_version"), TEXT("1.0"));
-                ResultJson->SetStringField(TEXT("server_status"), TEXT("running"));
-                ResultJson->SetBoolField(TEXT("editor_connected"), true);
-                
-                TSharedPtr<FJsonObject> AvailableTools = MakeShareable(new FJsonObject);
-                AvailableTools->SetBoolField(TEXT("widget_tools"), true);
-                AvailableTools->SetBoolField(TEXT("blueprint_tools"), true);
-                AvailableTools->SetBoolField(TEXT("actor_tools"), true);
-                AvailableTools->SetBoolField(TEXT("editor_tools"), true);
-                ResultJson->SetObjectField(TEXT("available_tools"), AvailableTools);
-            }
-            // Blueprint Component Reflection Commands
-            else if (CommandType == TEXT("get_available_components") ||
-                     CommandType == TEXT("get_component_info") ||
-                     CommandType == TEXT("get_property_metadata") ||
-                     CommandType == TEXT("get_component_hierarchy") ||
-                     CommandType == TEXT("add_component") ||
-                     CommandType == TEXT("set_component_property") ||
-                     CommandType == TEXT("get_component_property") ||
-                     CommandType == TEXT("get_all_component_properties") ||
-                     CommandType == TEXT("compare_component_properties") ||
-                     CommandType == TEXT("reparent_component") ||
-                     CommandType == TEXT("remove_component") ||
-                     CommandType == TEXT("reorder_components"))
-            {
-                ResultJson = BlueprintComponentReflection->HandleCommand(CommandType, Params);
-            }
-            // Blueprint Commands
-            else if (CommandType == TEXT("create_blueprint") || 
-                     CommandType == TEXT("add_component_to_blueprint") || 
-                     CommandType == TEXT("set_component_property") || 
-                     CommandType == TEXT("compile_blueprint") || 
-                     CommandType == TEXT("get_blueprint_property") || 
-                     CommandType == TEXT("set_blueprint_property") || 
-                     CommandType == TEXT("reparent_blueprint") ||
-                     // Blueprint Variable Commands
-                     CommandType == TEXT("manage_blueprint_variable") ||
-                     CommandType == TEXT("add_blueprint_variable") ||
-                     CommandType == TEXT("get_blueprint_variable") ||
-                     CommandType == TEXT("delete_blueprint_variable") ||
-                     CommandType == TEXT("get_available_blueprint_variable_types") ||
-                     // Reflection-based variable property API (two-method)
-                     CommandType == TEXT("get_variable_property") ||
-                     CommandType == TEXT("set_variable_property") ||
-                     // Comprehensive Blueprint information
-                     CommandType == TEXT("get_blueprint_info"))
-            {
-                ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
-            }
-            // Blueprint Node Commands
-            else if (CommandType == TEXT("manage_blueprint_node") ||
-                     CommandType == TEXT("manage_blueprint_function") ||
-                     CommandType == TEXT("get_available_blueprint_nodes") ||
-                     CommandType == TEXT("discover_nodes_with_descriptors"))
-            {
-                UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
-                ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
-            }
-            // UMG Commands (Reflection-based system)
-            else if (CommandType == TEXT("create_umg_widget_blueprint") ||
-                     CommandType == TEXT("delete_widget_blueprint") ||
-                     // UMG Discovery Commands
-                     CommandType == TEXT("search_items") ||
-                     CommandType == TEXT("get_widget_blueprint_info") ||
-                     CommandType == TEXT("list_widget_components") ||
-                     CommandType == TEXT("get_widget_component_properties") ||
-                     CommandType == TEXT("get_available_widget_types") ||
-                     CommandType == TEXT("validate_widget_hierarchy") ||
-                     CommandType == TEXT("remove_widget_component") ||
-                     // UMG Child Management
-                     CommandType == TEXT("add_child_to_panel") ||
-                     CommandType == TEXT("remove_umg_component") ||  // Universal component removal
-                     CommandType == TEXT("set_widget_slot_properties") ||
-                     // UMG Styling Commands
-                     CommandType == TEXT("set_widget_property") ||
-                     CommandType == TEXT("get_widget_property") ||
-                     CommandType == TEXT("list_widget_properties") ||
-                     // UMG Event Commands
-                     CommandType == TEXT("bind_input_events") ||
-                     CommandType == TEXT("get_available_events"))
-            {
-                ResultJson = UMGCommands->HandleCommand(CommandType, Params);
-            }
-            // UMG Reflection Commands
-            else if (CommandType == TEXT("get_available_widgets") ||
-                     CommandType == TEXT("add_widget_component"))
-            {
-                ResultJson = UMGReflectionCommands->HandleCommand(CommandType, Params);
-            }
-            // Asset Discovery and Procedural Generation Commands
-            else if (CommandType == TEXT("import_texture_asset") ||
-                     CommandType == TEXT("export_texture_for_analysis") ||
-                     CommandType == TEXT("OpenAssetInEditor"))
-            {
-                ResultJson = AssetCommands->HandleCommand(CommandType, Params);
-            }
-            else
-            {
-                UE_LOG(LogTemp, Warning, TEXT("VibeUEBridge: Unknown command received: %s"), *CommandType);
-                ResultJson = MakeShareable(new FJsonObject);
-                ResultJson->SetBoolField(TEXT("success"), false);
-                ResultJson->SetStringField(TEXT("error_code"), VibeUE::ErrorCodes::UNKNOWN_COMMAND);
-                ResultJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown command: %s"), *CommandType));
-            }
+            // Route command to appropriate handler
+            TSharedPtr<FJsonObject> ResultJson = RouteCommand(CommandType, Params);
             
             // Check if the result contains an error
             bool bSuccess = true;
@@ -421,6 +431,11 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                 if (ResultJson->HasField(TEXT("code")))
                 {
                     ResponseJson->SetField(TEXT("error_code"), ResultJson->TryGetField(TEXT("code")));
+                }
+                // Also check for error_code field directly
+                else if (ResultJson->HasField(TEXT("error_code")))
+                {
+                    ResponseJson->SetField(TEXT("error_code"), ResultJson->TryGetField(TEXT("error_code")));
                 }
             }
         }
