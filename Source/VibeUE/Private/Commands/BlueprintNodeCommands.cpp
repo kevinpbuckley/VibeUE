@@ -3934,41 +3934,30 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::ApplyPinTransform(
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract blueprint name parameter
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
     
-    // Use DiscoveryService to find blueprint
+    // 2. Find Blueprint using DiscoveryService
     TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (!BlueprintResult.IsSuccess())
     {
         return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
     }
     
-    UBlueprint* Blueprint = BlueprintResult.GetValue();
-    
-    // Gather custom events from all event graphs
-    TArray<FString> CustomEventNames;
-    TArray<UEdGraph*> AllGraphs;
-    Blueprint->GetAllGraphs(AllGraphs);
-    
-    for (UEdGraph* Graph : AllGraphs)
+    // 3. List custom events using GraphService
+    TResult<TArray<FString>> EventsResult = GraphService->ListCustomEvents(BlueprintResult.GetValue());
+    if (!EventsResult.IsSuccess())
     {
-        if (!Graph) continue;
-        
-        for (UEdGraphNode* Node : Graph->Nodes)
-        {
-            if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node))
-            {
-                CustomEventNames.AddUnique(CustomEvent->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
-            }
-        }
+        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
     }
     
-    // Convert result to JSON
+    const TArray<FString>& CustomEventNames = EventsResult.GetValue();
+    
+    // 4. Convert event names to JSON array
     TArray<TSharedPtr<FJsonValue>> Events;
     for (const FString& EventName : CustomEventNames)
     {
@@ -3977,12 +3966,14 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
         Events.Add(MakeShared<FJsonValueObject>(Evt));
     }
     
+    // 5. Build success response
     TSharedPtr<FJsonObject> Result = CreateSuccessResponse();
     Result->SetArrayField(TEXT("events"), Events);
     Result->SetNumberField(TEXT("count"), Events.Num());
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
     
     return Result;
+}
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)

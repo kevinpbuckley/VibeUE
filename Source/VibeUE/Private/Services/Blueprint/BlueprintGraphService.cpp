@@ -135,22 +135,22 @@ TResult<TArray<FString>> FBlueprintGraphService::ListCustomEvents(UBlueprint* Bl
         return TResult<TArray<FString>>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
     }
 
-    TResult<UEdGraph*> EventGraphResult = GetEventGraph(Blueprint);
-    if (EventGraphResult.IsError())
-    {
-        return TResult<TArray<FString>>::Error(EventGraphResult.GetErrorCode(), EventGraphResult.GetErrorMessage());
-    }
-
-    UEdGraph* EventGraph = EventGraphResult.GetValue();
-    TArray<UK2Node_CustomEvent*> CustomEvents;
-    GatherCustomEvents(EventGraph, CustomEvents);
-    
+    // Search all graphs in the Blueprint for custom events
     TArray<FString> EventNames;
-    for (UK2Node_CustomEvent* Event : CustomEvents)
+    TArray<UEdGraph*> AllGraphs;
+    Blueprint->GetAllGraphs(AllGraphs);
+    
+    for (UEdGraph* Graph : AllGraphs)
     {
-        if (Event)
+        if (!Graph) continue;
+        
+        for (UEdGraphNode* Node : Graph->Nodes)
         {
-            EventNames.Add(Event->CustomFunctionName.ToString());
+            if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node))
+            {
+                FString EventName = CustomEvent->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+                EventNames.AddUnique(EventName);
+            }
         }
     }
     
