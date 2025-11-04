@@ -89,7 +89,8 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCommand(const FStri
         return HandleReparentComponent(Params);
     }
 
-    return CreateErrorResponse(FString::Printf(TEXT("Unknown component reflection command: %s"), *CommandType));
+    return CreateErrorResponse(VibeUE::ErrorCodes::UNKNOWN_COMMAND, 
+        FString::Printf(TEXT("Unknown component reflection command: %s"), *CommandType));
 }
 
 // Discovery Methods Implementation
@@ -310,31 +311,37 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetPropertyMetadata
     
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(TEXT("Missing property_name parameter"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
     }
 
     UClass* ComponentClass = nullptr;
     if (!ValidateComponentType(ComponentTypeName, ComponentClass))
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component type '%s' not found"), *ComponentTypeName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_TYPE_INVALID, 
+            FString::Printf(TEXT("Component type '%s' not found"), *ComponentTypeName));
     }
 
     // Find the property
     const FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
     if (!Property)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentTypeName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+            FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentTypeName));
     }
 
     TSharedPtr<FJsonObject> PropertyInfo = ConvertPropertyToJson(Property);
     if (!PropertyInfo.IsValid())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to extract metadata for property '%s'"), *PropertyName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_GET_FAILED, 
+            FString::Printf(TEXT("Failed to extract metadata for property '%s'"), *PropertyName));
     }
 
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetBoolField(TEXT("success"), true);
     Response->SetObjectField(TEXT("property_metadata"), PropertyInfo);
+
+    UE_LOG(LogTemp, Log, TEXT("Retrieved metadata for property '%s' on component type '%s'"), 
+        *PropertyName, *ComponentTypeName);
 
     return Response;
 }
@@ -2244,21 +2251,21 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
         !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
         !Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
     }
 
     // Load the Blueprint
     UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
     if (!Blueprint)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
 
     // Find the component
     UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
     if (!Component)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
     }
 
     // Find the property
@@ -2266,7 +2273,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
     const FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
     if (!Property)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentName));
     }
 
     // Get property value
@@ -2275,7 +2282,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
 
     if (!PropertyValue.IsValid())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to read property '%s' value"), *PropertyName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_GET_FAILED, FString::Printf(TEXT("Failed to read property '%s' value"), *PropertyName));
     }
 
     // Build response
@@ -2297,7 +2304,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAllComponentProp
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
         !Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name"));
     }
 
     Params->TryGetBoolField(TEXT("include_inherited"), bIncludeInherited);
@@ -2306,14 +2313,14 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAllComponentProp
     UBlueprint* Blueprint = LoadObject<UBlueprint>(nullptr, *BlueprintName);
     if (!Blueprint)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
 
     // Find the component
     UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
     if (!Component)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
     }
 
     // Get all properties
@@ -2368,7 +2375,7 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
         !Params->TryGetStringField(TEXT("compare_to_blueprint"), CompareToBlueprint) ||
         !Params->TryGetStringField(TEXT("compare_to_component"), CompareToComponent))
     {
-        return CreateErrorResponse(TEXT("Missing required parameters: blueprint_name, component_name, compare_to_blueprint, compare_to_component"));
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, compare_to_blueprint, compare_to_component"));
     }
 
     // Load both Blueprints
@@ -2377,11 +2384,11 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
     
     if (!Blueprint1)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     if (!Blueprint2)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *CompareToBlueprint));
+        return CreateErrorResponse(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, FString::Printf(TEXT("Blueprint '%s' not found"), *CompareToBlueprint));
     }
 
     // Find both components
@@ -2390,17 +2397,18 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
     
     if (!Component1)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
     }
     if (!Component2)
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *CompareToComponent, *CompareToBlueprint));
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *CompareToComponent, *CompareToBlueprint));
     }
 
     // Ensure components are same type
     if (Component1->GetClass() != Component2->GetClass())
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Component types don't match: '%s' vs '%s'"), 
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_TYPE_INCOMPATIBLE, 
+            FString::Printf(TEXT("Component types don't match: '%s' vs '%s'"), 
             *Component1->GetClass()->GetName(), *Component2->GetClass()->GetName()));
     }
 
