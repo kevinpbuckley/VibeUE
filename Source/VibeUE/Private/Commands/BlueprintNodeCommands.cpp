@@ -4740,11 +4740,52 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintNode(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    if (ReflectionCommands.IsValid())
-    {
-        return ReflectionCommands->HandleSetBlueprintNodeProperty(Params);
-    }
-    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
+	// Extract required parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
+	}
+	
+	FString PropertyName;
+	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
+	}
+	
+	FString PropertyValue;
+	if (!Params->TryGetStringField(TEXT("property_value"), PropertyValue))
+	{
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_value' parameter"));
+	}
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+	}
+	
+	// Set node property using NodeService
+	auto SetResult = NodeService->SetNodeProperty(FindResult.GetValue(), NodeId, PropertyName, PropertyValue);
+	if (SetResult.IsError())
+	{
+		return CreateErrorResponse(SetResult.GetErrorCode(), SetResult.GetErrorMessage());
+	}
+	
+	// Build success response
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("node_id"), NodeId);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
+	Response->SetStringField(TEXT("property_value"), PropertyValue);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)

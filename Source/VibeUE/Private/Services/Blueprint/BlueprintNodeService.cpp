@@ -522,6 +522,46 @@ TResult<void> FBlueprintNodeService::SetPinDefaultValue(UBlueprint* Blueprint, c
     return TResult<void>::Success();
 }
 
+TResult<void> FBlueprintNodeService::SetNodeProperty(UBlueprint* Blueprint, const FString& NodeId, 
+                                                      const FString& PropertyName, const FString& PropertyValue)
+{
+    // Validate Blueprint
+    if (!Blueprint)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null"));
+    }
+    
+    // Find the node
+    TArray<UEdGraph*> CandidateGraphs;
+    GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+    
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* NodeGraph = nullptr;
+    if (!ResolveNodeIdentifier(NodeId, CandidateGraphs, Node, NodeGraph))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_NOT_FOUND, 
+            FString::Printf(TEXT("Node '%s' not found"), *NodeId));
+    }
+    
+    UK2Node* K2Node = Cast<UK2Node>(Node);
+    if (!K2Node)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::NODE_INVALID, 
+            TEXT("Node is not a K2Node"));
+    }
+    
+    // Use FBlueprintReflection to set the property
+    TSharedPtr<FJsonObject> Result = FBlueprintReflection::SetNodeProperty(K2Node, PropertyName, PropertyValue);
+    
+    if (!Result.IsValid() || !Result->GetBoolField(TEXT("success")))
+    {
+        FString ErrorMsg = Result.IsValid() ? Result->GetStringField(TEXT("error")) : TEXT("Unknown error");
+        return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_FAILED, ErrorMsg);
+    }
+    
+    return TResult<void>::Success();
+}
+
 TResult<FString> FBlueprintNodeService::GetPinDefaultValue(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
 {
     if (!Blueprint) { return TResult<FString>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint is null")); }

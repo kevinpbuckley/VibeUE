@@ -345,6 +345,8 @@ public:
     // Node configuration
     TResult<void> SetPinDefaultValue(UBlueprint* Blueprint, const FString& NodeId,
                                      const FString& PinName, const FString& Value);
+    TResult<void> SetNodeProperty(UBlueprint* Blueprint, const FString& NodeId,
+                                  const FString& PropertyName, const FString& PropertyValue);
     TResult<FString> GetPinDefaultValue(UBlueprint* Blueprint, const FString& NodeId,
                                        const FString& PinName);
     TResult<void> ConfigureNode(UBlueprint* Blueprint, const FString& NodeId,
