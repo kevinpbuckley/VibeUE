@@ -2,40 +2,13 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetTypes.h"
 #include "Core/Result.h"
 
 // Forward declarations
 class UWidgetBlueprint;
 class IAssetRegistry;
 struct FAssetData;
-
-/**
- * @struct FWidgetInfo
- * @brief Structure holding basic widget blueprint information
- * 
- * Contains essential metadata about a widget blueprint asset including its name,
- * path, parent class, and type information.
- */
-struct VIBEUE_API FWidgetInfo
-{
-    /** The name of the widget blueprint asset */
-    FString Name;
-    
-    /** Full object path to the widget blueprint */
-    FString Path;
-    
-    /** Package path containing the widget blueprint */
-    FString PackagePath;
-    
-    /** Name of the parent widget class */
-    FString ParentClass;
-    
-    /** Widget class type name */
-    FString WidgetType;
-
-    FWidgetInfo()
-    {}
-};
 
 /**
  * @class FWidgetDiscoveryService

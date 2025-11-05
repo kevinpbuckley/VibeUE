@@ -2,51 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetStyleTypes.h"
 #include "Core/Result.h"
-#include "Math/Color.h"
-#include "Layout/Margin.h"
-#include "Fonts/SlateFontInfo.h"
-#include "Types/SlateEnums.h"
 
 // Forward declarations
 class UWidgetBlueprint;
 class UWidget;
-
-/**
- * @struct FVibeWidgetStyle
- * @brief Structure defining a complete widget style
- * 
- * Contains style information including colors, fonts, padding, and alignment
- * that can be applied to UMG widgets.
- */
-struct VIBEUE_API FVibeWidgetStyle
-{
-	/** Primary color for the widget */
-	FLinearColor PrimaryColor;
-	
-	/** Secondary/background color */
-	FLinearColor SecondaryColor;
-	
-	/** Font information */
-	FSlateFontInfo Font;
-	
-	/** Padding around the widget */
-	FMargin Padding;
-	
-	/** Horizontal alignment */
-	TEnumAsByte<EHorizontalAlignment> HorizontalAlignment;
-	
-	/** Vertical alignment */
-	TEnumAsByte<EVerticalAlignment> VerticalAlignment;
-
-	FVibeWidgetStyle()
-		: PrimaryColor(FLinearColor::White)
-		, SecondaryColor(FLinearColor::Gray)
-		, Padding(0.0f)
-		, HorizontalAlignment(HAlign_Fill)
-		, VerticalAlignment(VAlign_Fill)
-	{}
-};
 
 /**
  * @class FWidgetStyleService
