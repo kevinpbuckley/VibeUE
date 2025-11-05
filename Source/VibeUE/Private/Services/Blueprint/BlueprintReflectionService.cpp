@@ -1,7 +1,6 @@
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
-#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Commands/BlueprintReflection.h"
 #include "Commands/InputKeyEnumerator.h"
 #include "Core/ErrorCodes.h"
@@ -465,98 +464,10 @@ bool FBlueprintReflectionService::IsComponentTypeValid(UClass* ComponentClass)
 }
 
 // ═══════════════════════════════════════════════════════════
-// Node Discovery
-// ═══════════════════════════════════════════════════════════
-
-TResult<TArray<FNodeDescriptor>> FBlueprintReflectionService::DiscoverNodesWithDescriptors(
-	UBlueprint* Blueprint,
-	const FNodeDescriptorSearchCriteria& Criteria)
-{
-	if (!Blueprint)
-	{
-		return TResult<TArray<FNodeDescriptor>>::Error(
-			VibeUE::ErrorCodes::PARAM_INVALID,
-			TEXT("Blueprint is null"));
-	}
-	
-	// Use the existing FBlueprintReflection functionality to discover nodes
-	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> SourceDescriptors = 
-		FBlueprintReflection::DiscoverNodesWithDescriptors(
-			Blueprint,
-			Criteria.SearchTerm,
-			Criteria.CategoryFilter,
-			Criteria.ClassFilter,
-			Criteria.MaxResults);
-	
-	// Convert from FBlueprintReflection::FNodeSpawnerDescriptor to FNodeDescriptor
-	TArray<FNodeDescriptor> Descriptors;
-	Descriptors.Reserve(SourceDescriptors.Num());
-	
-	for (const FBlueprintReflection::FNodeSpawnerDescriptor& SourceDesc : SourceDescriptors)
-	{
-		FNodeDescriptor Desc;
-		Desc.SpawnerKey = SourceDesc.SpawnerKey;
-		Desc.NodeTitle = SourceDesc.DisplayName;
-		Desc.Category = SourceDesc.Category;
-		Desc.ExpectedPinCount = SourceDesc.ExpectedPinCount;
-		Desc.bIsStatic = SourceDesc.bIsStatic;
-		Desc.NodeClassName = SourceDesc.NodeClassName;
-		Desc.NodeClassPath = SourceDesc.NodeClassPath;
-		Desc.DisplayName = SourceDesc.DisplayName;
-		Desc.Description = SourceDesc.Description;
-		Desc.Tooltip = SourceDesc.Tooltip;
-		Desc.Keywords = SourceDesc.Keywords;
-		
-		// Convert pins
-		Desc.Pins.Reserve(SourceDesc.Pins.Num());
-		for (const FBlueprintReflection::FPinDescriptor& SourcePin : SourceDesc.Pins)
-		{
-			FPinInfo Pin;
-			Pin.Name = SourcePin.Name;
-			Pin.Type = SourcePin.Type;
-			Pin.TypePath = SourcePin.TypePath;
-			Pin.Direction = SourcePin.Direction;
-			Pin.Category = SourcePin.Category;
-			Pin.bIsArray = SourcePin.bIsArray;
-			Pin.bIsReference = SourcePin.bIsReference;
-			Pin.bIsHidden = SourcePin.bIsHidden;
-			Pin.bIsAdvanced = SourcePin.bIsAdvanced;
-			Pin.DefaultValue = SourcePin.DefaultValue;
-			Pin.Tooltip = SourcePin.Tooltip;
-			
-			Desc.Pins.Add(Pin);
-		}
-		
-		// Add function metadata if available
-		if (!SourceDesc.FunctionName.IsEmpty())
-		{
-			FFunctionMetadata FuncMeta;
-			FuncMeta.FunctionName = SourceDesc.FunctionName;
-			FuncMeta.FunctionClassName = SourceDesc.FunctionClassName;
-			FuncMeta.FunctionClassPath = SourceDesc.FunctionClassPath;
-			FuncMeta.bIsStatic = SourceDesc.bIsStatic;
-			FuncMeta.bIsConst = SourceDesc.bIsConst;
-			FuncMeta.bIsPure = SourceDesc.bIsPure;
-			FuncMeta.Module = SourceDesc.Module;
-			
-			Desc.FunctionMetadata = FuncMeta;
-		}
-		
-		Descriptors.Add(Desc);
-	}
-	
-	UE_LOG(LogBlueprintReflectionService, Log, 
-		TEXT("Discovered %d node descriptors for Blueprint: %s"), 
-		Descriptors.Num(), *Blueprint->GetName());
-	
-	return TResult<TArray<FNodeDescriptor>>::Success(Descriptors);
-}
-
-// ═══════════════════════════════════════════════════════════
 // Input Key Discovery
 // ═══════════════════════════════════════════════════════════
 
-TResult<FBlueprintReflectionService::FInputKeyResult> FBlueprintReflectionService::GetAllInputKeys(
+TResult<FInputKeyResult> FBlueprintReflectionService::GetAllInputKeys(
 	const FString& Category, 
 	bool bIncludeDeprecated)
 {

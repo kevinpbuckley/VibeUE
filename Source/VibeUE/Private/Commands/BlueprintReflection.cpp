@@ -2747,342 +2747,82 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
 {
     UE_LOG(LogVibeUEReflection, Log, TEXT("HandleGetAvailableBlueprintNodes called"));
     
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    
-    // Extract parameters
+    // Extract blueprint name
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter"));
-        return Result;
+        return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    
-    FString Category;
-    Params->TryGetStringField(TEXT("category"), Category);
 
-    FString SearchTerm;
-    if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+    // Find Blueprint using DiscoveryService
+    if (!DiscoveryService.IsValid())
     {
-        if (!Params->TryGetStringField(TEXT("searchTerm"), SearchTerm))
-        {
-            Params->TryGetStringField(TEXT("searchterm"), SearchTerm);
-        }
+        return CreateErrorResponse(TEXT("DiscoveryService not initialized"));
     }
 
-    // Normalize user inputs for consistent filtering
-    Category.TrimStartAndEndInline();
-    SearchTerm.TrimStartAndEndInline();
-
-    FString CategoryLower = Category.ToLower();
-    FString SearchTermLower = SearchTerm.ToLower();
-
-    bool bIncludeFunctions = true;
-    bool bIncludeVariables = true;
-    bool bIncludeEvents = true;
-
-    Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
-    Params->TryGetBoolField(TEXT("includeFunctions"), bIncludeFunctions);
-    Params->TryGetBoolField(TEXT("include_variables"), bIncludeVariables);
-    Params->TryGetBoolField(TEXT("includeVariables"), bIncludeVariables);
-    Params->TryGetBoolField(TEXT("include_events"), bIncludeEvents);
-    Params->TryGetBoolField(TEXT("includeEvents"), bIncludeEvents);
-
-    bool bReturnDescriptors = true;  // Default to true for enhanced metadata
-    Params->TryGetBoolField(TEXT("return_descriptors"), bReturnDescriptors);
-    Params->TryGetBoolField(TEXT("returnDescriptors"), bReturnDescriptors);
-
-    int32 MaxResults = 100;
-    double ParsedMaxResults = 0.0;
-    if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
-        Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+        return CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Search params - Category: '%s', SearchTerm: '%s', ReturnDescriptors=%s, IncludeFunctions=%s, IncludeVariables=%s, IncludeEvents=%s, MaxResults=%d"),
-        *Category, *SearchTerm,
-        bReturnDescriptors ? TEXT("true") : TEXT("false"),
-        bIncludeFunctions ? TEXT("true") : TEXT("false"),
-        bIncludeVariables ? TEXT("true") : TEXT("false"),
-        bIncludeEvents ? TEXT("true") : TEXT("false"),
-        MaxResults);
-    
-    // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // Call NodeService with full params (descriptor-based discovery)
+    if (!NodeService.IsValid())
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-        return Result;
+        return CreateErrorResponse(TEXT("NodeService not initialized"));
     }
+
+    auto Result = NodeService->GetAvailableNodes(Blueprint, Params);
     
-    // NEW: Use descriptor-based discovery if requested
-    if (bReturnDescriptors)
+    // Return result directly (already in JSON format)
+    if (Result.IsError())
     {
-        UE_LOG(LogVibeUEReflection, Log, TEXT("Using descriptor-based discovery with complete metadata"));
-        
-        // Use the new descriptor discovery system
-        TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
-            FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, Category, TEXT(""), MaxResults);
-        
-        // Convert descriptors to the category-based format
-        TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
-        int32 TotalNodes = 0;
-        
-        for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
-        {
-            // Apply type filters
-            if (!bIncludeFunctions && Desc.NodeType == TEXT("function_call")) continue;
-            if (!bIncludeVariables && (Desc.NodeType == TEXT("variable_get") || Desc.NodeType == TEXT("variable_set"))) continue;
-            if (!bIncludeEvents && Desc.NodeType == TEXT("event")) continue;
-            
-            // Convert descriptor to JSON (this includes spawner_key, pins, etc.)
-            TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
-            
-            // Add to appropriate category
-            FString DescCategory = Desc.Category;
-            if (DescCategory.IsEmpty())
-            {
-                DescCategory = TEXT("Other");
-            }
-            
-            if (!CategoryMap.Contains(DescCategory))
-            {
-                CategoryMap.Add(DescCategory, TArray<TSharedPtr<FJsonValue>>());
-            }
-            
-            CategoryMap[DescCategory].Add(MakeShared<FJsonValueObject>(DescriptorJson));
-            TotalNodes++;
-        }
-        
-        // Build result
-        TSharedPtr<FJsonObject> Categories = MakeShared<FJsonObject>();
-        for (auto& CategoryPair : CategoryMap)
-        {
-            Categories->SetArrayField(CategoryPair.Key, CategoryPair.Value);
-        }
-        
-        Result->SetObjectField(TEXT("categories"), Categories);
-        Result->SetNumberField(TEXT("total_nodes"), TotalNodes);
-        Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-        Result->SetBoolField(TEXT("truncated"), false);
-        Result->SetBoolField(TEXT("success"), true);
-        Result->SetBoolField(TEXT("with_descriptors"), true);  // Flag to indicate enhanced format
-        
-        UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d nodes with descriptors in %d categories"), 
-               TotalNodes, CategoryMap.Num());
-        
-        return Result;
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    // LEGACY: Use original action-based discovery (without descriptors)
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Using legacy action-based discovery"));
-    
-    // Discover all available actions using Unreal's reflection system
-    TArray<TSharedPtr<FEdGraphSchemaAction>> AllActions;
-    FBlueprintReflection::GetBlueprintActionMenuItems(Blueprint, AllActions);
-    
-    // Organize actions by category
-    TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
-    int32 TotalNodes = 0;
-    
-    TArray<FString> FilterTerms;
-    TArray<FString> SanitizedFilterTerms;
-
-    if (!SearchTermLower.IsEmpty())
-    {
-        SearchTermLower.ParseIntoArray(FilterTerms, TEXT(" "), true);
-        if (FilterTerms.Num() == 0)
-        {
-            FilterTerms.Add(SearchTermLower);
-        }
-
-        for (FString& Term : FilterTerms)
-        {
-            Term.TrimStartAndEndInline();
-            if (!Term.IsEmpty())
-            {
-                FString SanitizedDisplay = FName::NameToDisplayString(Term, false);
-                SanitizedDisplay.ReplaceInline(TEXT(" "), TEXT(""));
-                SanitizedDisplay.ReplaceInline(TEXT("_"), TEXT(""));
-                SanitizedFilterTerms.Add(SanitizedDisplay.ToLower());
-            }
-            else
-            {
-                SanitizedFilterTerms.Add(TEXT(""));
-            }
-        }
-    }
-
-    bool bTruncated = false;
-
-    for (auto& Action : AllActions)
-    {
-        if (!Action.IsValid()) continue;
-        
-        // Process action to JSON
-        TSharedPtr<FJsonObject> ActionJson = FBlueprintReflection::ProcessActionToJson(Action);
-        if (!ActionJson.IsValid()) continue;
-        
-        FString ActionCategory = ActionJson->GetStringField(TEXT("category"));
-        FString ActionName = ActionJson->GetStringField(TEXT("name"));
-        FString ActionDescription = ActionJson->GetStringField(TEXT("description"));
-        FString ActionKeywords = ActionJson->GetStringField(TEXT("keywords"));
-        FString ActionType = ActionJson->GetStringField(TEXT("type"));
-        
-        // Apply filters
-        if (!CategoryLower.IsEmpty() && CategoryLower != TEXT("all") && CategoryLower != TEXT("*"))
-        {
-            FString ActionCategoryLower = ActionCategory.ToLower();
-            if (!ActionCategoryLower.Contains(CategoryLower))
-            {
-                continue;
-            }
-        }
-
-        // Enhanced search term filtering - match all terms across name, description, and keywords (case-insensitive)
-        if (FilterTerms.Num() > 0)
-        {
-            FString ActionNameLower = ActionName.ToLower();
-            FString ActionDescriptionLower = ActionDescription.ToLower();
-            FString ActionKeywordsLower = ActionKeywords.ToLower();
-
-            const FString CombinedSearchText = ActionNameLower + TEXT(" ") + ActionDescriptionLower + TEXT(" ") + ActionKeywordsLower;
-            FString CombinedSanitized = CombinedSearchText;
-            CombinedSanitized.ReplaceInline(TEXT(" "), TEXT(""));
-            CombinedSanitized.ReplaceInline(TEXT("_"), TEXT(""));
-
-            bool bMatchesAllTerms = true;
-            for (int32 TermIndex = 0; TermIndex < FilterTerms.Num() && bMatchesAllTerms; ++TermIndex)
-            {
-                const FString& Term = FilterTerms[TermIndex];
-                const FString& SanitizedTerm = SanitizedFilterTerms.IsValidIndex(TermIndex) ? SanitizedFilterTerms[TermIndex] : Term;
-
-                if (!Term.IsEmpty())
-                {
-                    if (!CombinedSearchText.Contains(Term))
-                    {
-                        if (!CombinedSanitized.Contains(SanitizedTerm))
-                        {
-                            bMatchesAllTerms = false;
-                        }
-                    }
-                }
-            }
-
-            if (!bMatchesAllTerms)
-            {
-                continue;
-            }
-        }
-        
-        // Apply type filters
-        if (!bIncludeFunctions && ActionType == TEXT("function")) continue;
-        if (!bIncludeVariables && ActionType == TEXT("variable")) continue;
-        if (!bIncludeEvents && ActionType == TEXT("event")) continue;
-        
-        // Add to appropriate category
-        if (!CategoryMap.Contains(ActionCategory))
-        {
-            CategoryMap.Add(ActionCategory, TArray<TSharedPtr<FJsonValue>>());
-        }
-        
-        CategoryMap[ActionCategory].Add(MakeShared<FJsonValueObject>(ActionJson));
-        TotalNodes++;
-
-        if (TotalNodes >= MaxResults)
-        {
-            bTruncated = true;
-            break;
-        }
-    }
-    
-    // Build result structure
-    TSharedPtr<FJsonObject> Categories = MakeShared<FJsonObject>();
-    for (auto& CategoryPair : CategoryMap)
-    {
-        Categories->SetArrayField(CategoryPair.Key, CategoryPair.Value);
-    }
-    
-    Result->SetObjectField(TEXT("categories"), Categories);
-    Result->SetNumberField(TEXT("total_nodes"), TotalNodes);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetBoolField(TEXT("truncated"), bTruncated);
-    Result->SetBoolField(TEXT("success"), true);
-    
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d nodes in %d categories for Blueprint: %s"), TotalNodes, CategoryMap.Num(), *BlueprintName);
-    
-    return Result;
+    return Result.GetValue();
 }
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
 {
-    UE_LOG(LogVibeUEReflection, Log, TEXT("HandleDiscoverNodesWithDescriptors called - NEW descriptor-based discovery"));
+    UE_LOG(LogVibeUEReflection, Log, TEXT("HandleDiscoverNodesWithDescriptors called - descriptor-based discovery"));
     
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    
-    // Extract parameters
+    // Extract blueprint name
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter"));
-        return Result;
+        return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    
-    FString SearchTerm;
-    Params->TryGetStringField(TEXT("search_term"), SearchTerm);
-    
-    FString CategoryFilter;
-    Params->TryGetStringField(TEXT("category_filter"), CategoryFilter);
-    
-    FString ClassFilter;
-    Params->TryGetStringField(TEXT("class_filter"), ClassFilter);
-    
-    int32 MaxResults = 100;
-    double ParsedMaxResults = 0.0;
-    if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
+
+    // Find Blueprint using DiscoveryService
+    if (!DiscoveryService.IsValid())
     {
-        MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+        return CreateErrorResponse(TEXT("DiscoveryService not initialized"));
     }
-    
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Descriptor search params - SearchTerm: '%s', CategoryFilter: '%s', ClassFilter: '%s', MaxResults=%d"),
-        *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
-    
-    // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-        Result->SetStringField(TEXT("suggestion"), TEXT("Use exact Blueprint path like '/Game/Blueprints/BP_Player'"));
-        return Result;
+        return CreateErrorResponse(FindResult.GetErrorMessage());
     }
-    
-    // Call the new descriptor-based discovery
-    TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
-        FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
-    
-    // Convert descriptors to JSON
-    TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
-    
-    for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // Call NodeService with full params
+    if (!NodeService.IsValid())
     {
-        TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
-        DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescriptorJson));
+        return CreateErrorResponse(TEXT("NodeService not initialized"));
+    }
+
+    auto Result = NodeService->DiscoverNodesWithDescriptors(Blueprint, Params);
+    
+    // Return result directly (already in JSON format)
+    if (Result.IsError())
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    // Build result
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
-    Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d node descriptors for Blueprint: %s"), 
-           DescriptorJsonArray.Num(), *BlueprintName);
-    
-    return Result;
+    return Result.GetValue();
 }
 
 // === BLUEPRINT REFLECTION COMMANDS IMPLEMENTATION ===
@@ -3460,53 +3200,6 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleSetBlueprintNodeProp
     
     // Use the reflection system to set property
     return FBlueprintReflection::SetNodeProperty(Node, PropertyName, PropertyValue);
-}
-
-TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
-{
-    // Extract required parameters
-    FString BlueprintName, NodeId, PropertyName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-    {
-        return CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-    {
-        return CreateErrorResponse(TEXT("Missing 'property_name' parameter"));
-    }
-    
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return FCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("[%s] %s"), *FindResult.GetErrorCode(), *FindResult.GetErrorMessage()));
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    
-    // Get node property from NodeService
-    auto GetResult = NodeService->GetNodeProperty(Blueprint, NodeId, PropertyName);
-    
-    // Convert TResult to JSON
-    if (GetResult.IsError())
-    {
-        return FCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("[%s] %s"), *GetResult.GetErrorCode(), *GetResult.GetErrorMessage()));
-    }
-    
-    const FNodePropertyInfo& PropertyInfo = GetResult.GetValue();
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-    Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("property_name"), PropertyInfo.PropertyName);
-    Response->SetStringField(TEXT("value"), PropertyInfo.CurrentValue);
-    Response->SetStringField(TEXT("type"), PropertyInfo.PropertyType);
-    Response->SetStringField(TEXT("category"), PropertyInfo.Category);
-    
-    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params)

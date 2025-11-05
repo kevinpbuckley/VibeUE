@@ -310,7 +310,6 @@ public:
     TSharedPtr<FJsonObject> HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params);
 
 private:

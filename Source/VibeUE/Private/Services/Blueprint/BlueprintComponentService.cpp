@@ -386,32 +386,11 @@ TResult<FComponentEventsResult> FBlueprintComponentService::GetComponentEvents(
             TEXT("Blueprint is null"));
     }
 
-    // Use FComponentEventBinder to discover all component events via reflection
-    TArray<FComponentEventInfo> Events;
-    if (!FComponentEventBinder::GetAvailableComponentEvents(Blueprint, ComponentNameFilter, Events))
-    {
-        return TResult<FComponentEventsResult>::Error(
-            VibeUE::ErrorCodes::OPERATION_FAILED,
-            TEXT("Failed to enumerate component events"));
-    }
-
-    // Build result with events grouped by component
-    FComponentEventsResult Result;
-    for (const FComponentEventInfo& EventInfo : Events)
-    {
-        if (!Result.EventsByComponent.Contains(EventInfo.ComponentName))
-        {
-            Result.EventsByComponent.Add(EventInfo.ComponentName, TArray<FComponentEventInfo>());
-        }
-        Result.EventsByComponent[EventInfo.ComponentName].Add(EventInfo);
-        Result.TotalEventCount++;
-    }
-
-    UE_LOG(LogBlueprintComponentService, Log, 
-        TEXT("Discovered %d component events across %d components"), 
-        Result.TotalEventCount, Result.EventsByComponent.Num());
-
-    return TResult<FComponentEventsResult>::Success(Result);
+    // TODO: Restore FComponentEventBinder functionality from deleted BlueprintNodeService
+    // This method was temporarily stubbed to fix build errors after type extraction refactoring
+    return TResult<FComponentEventsResult>::Error(
+        VibeUE::ErrorCodes::NOT_IMPLEMENTED,
+        TEXT("GetComponentEvents is not yet implemented - requires FComponentEventBinder restoration"));
 }
 
 TResult<FComponentEventResult> FBlueprintComponentService::CreateComponentEvent(
@@ -439,34 +418,9 @@ TResult<FComponentEventResult> FBlueprintComponentService::CreateComponentEvent(
         return TResult<FComponentEventResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
     }
 
-    // Create component event using reflection-based binder
-    FString Error;
-    UK2Node_ComponentBoundEvent* EventNode = FComponentEventBinder::CreateComponentEvent(
-        Blueprint,
-        ComponentName,
-        DelegateName,
-        Position,
-        Error
-    );
-
-    if (!EventNode)
-    {
-        return TResult<FComponentEventResult>::Error(
-            VibeUE::ErrorCodes::NODE_CREATE_FAILED,
-            FString::Printf(TEXT("Failed to create component event: %s"), *Error));
-    }
-
-    // Build result with complete metadata
-    FComponentEventResult Result;
-    Result.NodeId = EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
-    Result.ComponentName = ComponentName;
-    Result.DelegateName = DelegateName;
-    Result.PinCount = EventNode->Pins.Num();
-    Result.Position = FVector2D(EventNode->NodePosX, EventNode->NodePosY);
-
-    UE_LOG(LogBlueprintComponentService, Log, 
-        TEXT("Created component event: %s::%s at (%.0f, %.0f)"), 
-        *ComponentName, *DelegateName, Result.Position.X, Result.Position.Y);
-
-    return TResult<FComponentEventResult>::Success(Result);
+    // TODO: Restore FComponentEventBinder functionality from deleted BlueprintNodeService
+    // This method was temporarily stubbed to fix build errors after type extraction refactoring
+    return TResult<FComponentEventResult>::Error(
+        VibeUE::ErrorCodes::NOT_IMPLEMENTED,
+        TEXT("CreateComponentEvent is not yet implemented - requires FComponentEventBinder restoration"));
 }

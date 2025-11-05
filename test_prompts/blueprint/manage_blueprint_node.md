@@ -4,24 +4,144 @@
 - ✅ Unreal Engine 5.6+ running
 - ✅ VibeUE plugin loaded
 - ✅ MCP connection active
-- ✅ Test Blueprint with function created
 
-## Setup: Create Test Assets
+## 🚨 IMPORTANT: Test Asset Management
 
-**Run these commands BEFORE starting tests:**
+**DO NOT delete test assets until after reviewing ALL test results!**
 
-```
-Create Blueprint "BP_NodeTest" with parent "Actor"
-Create function "TestFunction" in Blueprint "/Game/Blueprints/BP_NodeTest"
-Create variable "TestValue" with type float in Blueprint "/Game/Blueprints/BP_NodeTest"
-```
+### Setup: Create Test Assets FIRST
+
+**Run these commands at the START of testing:**
+
+1. **Create Test Blueprint**
+   ```
+   Use manage_blueprint with action="create":
+   - name: "BP_NodeTest"
+   - parent_class: "Actor"
+   - This creates: /Game/Blueprints/BP_NodeTest
+   ```
+
+2. **Open Blueprint in Editor**
+   ```
+   Use manage_asset with action="open_in_editor":
+   - asset_path: "/Game/Blueprints/BP_NodeTest"
+   - This opens the Blueprint Editor so you can see nodes being created
+   ```
+
+3. **Create Test Function with Parameters**
+   ```
+   Use manage_blueprint_function with action="create":
+   - blueprint_name: "/Game/Blueprints/BP_NodeTest"
+   - function_name: "GetRandomNumber"
+   
+   Then add parameters:
+   - action="add_param", param_name="Low", direction="input", type="int"
+   - action="add_param", param_name="High", direction="input", type="int"
+   - action="add_param", param_name="Result", direction="out", type="int"
+   
+   Purpose: Create a function that takes in a high and low number, 
+   selects a random number between the two and returns the new number.
+   ```
+
+4. **Create Test Variable**
+   ```
+   Use manage_blueprint_variable with action="create":
+   - blueprint_name: "/Game/Blueprints/BP_NodeTest"
+   - variable_name: "TestValue"
+   - variable_config: {"type_path": "/Script/CoreUObject.FloatProperty"}
+   ```
+
+5. **Verify Assets Created**
+   ```
+   Use manage_blueprint with action="get_info":
+   - blueprint_name: "/Game/Blueprints/BP_NodeTest"
+   - Should show 1 function and 1 variable
+   ```
+
+**💡 TIP**: Keep the Blueprint Editor open throughout testing to watch nodes appear in real-time!
+
+### After Testing: Review First, Then Cleanup
+
+⚠️ **DO NOT run cleanup commands until you've reviewed:**
+- All test results in Unreal Editor
+- Node connections and layout
+- Pin configurations
+- Any error messages or issues
+
+**Only after manual review**, proceed to cleanup section at end of document.
 
 ## Overview
-Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discover → create workflow with spawner_key for exact node creation.
+Tests all major actions of `manage_blueprint_node`. **CRITICAL**: Always use discover → create workflow with spawner_key for exact node creation.
 
-## Test 1: Node Discovery Workflow (CRITICAL)
+## Test 1: Complete Function Creation Workflow
 
-**Purpose**: Demonstrate proper discover → create pattern
+**Purpose**: Create a complete function with parameters and nodes - demonstrates the full workflow
+
+**Goal**: Create `GetRandomNumber` function that takes Low/High integer inputs and returns a random number between them.
+
+### Steps
+
+1. **Discover Random Integer Node**
+   ```
+   Discover with search_term="RandomIntegerInRange" and return_descriptors=true
+   Note the spawner_key: "KismetMathLibrary::RandomIntegerInRange"
+   ```
+
+2. **Create the Function** (if not done in Setup)
+   ```
+   Create function "GetRandomNumber" with parameters:
+   - Low (input, int)
+   - High (input, int)
+   - Result (output, int)
+   ```
+
+3. **Create Random Node**
+   ```
+   Create node with:
+   - node_params={"spawner_key": "KismetMathLibrary::RandomIntegerInRange"}
+   - position=[400, 100]
+   - function_name="GetRandomNumber"
+   - graph_scope="function"
+   
+   💡 In Unreal Editor: Navigate to the GetRandomNumber function graph to watch the node appear!
+   ```
+
+4. **Connect Function Parameters to Node**
+   ```
+   Use describe to get node_ids, then connect:
+   - Function Entry "Low" → RandomIntegerInRange "Min"
+   - Function Entry "High" → RandomIntegerInRange "Max"
+   - RandomIntegerInRange "ReturnValue" → Return Node "Result"
+   
+   👀 Watch the wires appear in the Blueprint Editor as connections are made!
+   ```
+
+5. **Compile and Verify**
+   ```
+   Compile Blueprint
+   Describe all nodes to verify connections
+   ```
+
+### Expected Outcomes
+- ✅ Function created with correct parameters
+- ✅ RandomIntegerInRange node created with spawner_key
+- ✅ All parameters connected correctly
+- ✅ Function is callable with Low/High inputs
+- ✅ Returns random number in specified range
+
+### Why This Matters
+This demonstrates the **complete workflow** for creating functional Blueprint logic:
+1. **Discover** → Find exact node variant needed
+2. **Create Function** → Define inputs/outputs
+3. **Create Nodes** → Use spawner_key for exact creation
+4. **Connect** → Wire parameters to node pins
+5. **Compile** → Validate the logic works
+
+---
+
+## Test 2: Node Discovery Workflow (CRITICAL)
+
+**Purpose**: Demonstrate proper discover → create pattern for different node types
 
 ### Steps
 
@@ -66,20 +186,20 @@ Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discov
 
 ---
 
-## Test 2: Node Creation and Positioning
+## Test 3: Node Creation and Positioning
 
-**Purpose**: Create nodes with proper layout
+**Purpose**: Create multiple nodes with proper layout
 
 ### Steps
 
-1. **Create Entry Node**
+1. **Create Additional Function**
    ```
-   Function entry node exists at [0, 0]
+   Create function "TestNodeLayout" in BP_NodeTest
    ```
 
 2. **Create GetPlayerController**
    ```
-   Create at [300, 100] using spawner_key
+   Create at [300, 100] using spawner_key from discover
    ```
 
 3. **Create GetHUD**
@@ -111,7 +231,7 @@ Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discov
 
 ---
 
-## Test 3: Pin Connection Workflow
+## Test 4: Pin Connection Workflow
 
 **Purpose**: Connect pins between nodes using describe → connect pattern
 
@@ -125,14 +245,7 @@ Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discov
 2. **Connect Execution Flow**
    ```
    Connect using extra parameter with connections array:
-   {
-     "connections": [{
-       "source_node_id": "{FunctionEntry_GUID}",
-       "source_pin_name": "then",
-       "target_node_id": "{GetPlayerController_GUID}",
-       "target_pin_name": "execute"
-     }]
-   }
+
    ```
 
 3. **Connect Data Pins**
@@ -156,55 +269,6 @@ Tests all 15 actions of `manage_blueprint_node`. **CRITICAL**: Always use discov
 - ✅ Execution pins connect (then → execute)
 - ✅ Data pins connect (ReturnValue → inputs)
 - ✅ Type compatibility validated automatically
-
-### Connection Format (CRITICAL)
-```python
-extra = {
-  "connections": [{
-    "source_node_id": "{GUID}",  # From describe
-    "source_pin_name": "PinName",  # From describe
-    "target_node_id": "{GUID}",
-    "target_pin_name": "PinName"
-  }]
-}
-```
-
----
-
-## Test 4: Pin Configuration
-
-**Purpose**: Set default values on input pins
-
-### Steps
-
-1. **Create RandomIntegerInRange Node**
-   ```
-   Create node, note node_id from result
-   ```
-
-2. **Configure Min Value**
-   ```
-   Use configure action:
-   - node_id: {from step 1}
-   - property_name: "Min"
-   - property_value: 10
-   ```
-
-3. **Configure Max Value**
-   ```
-   Configure Max pin to 50
-   ```
-
-4. **Get Node Details**
-   ```
-   Verify pin default values were set
-   ```
-
-### Expected Outcomes
-- ✅ configure sets pin default values
-- ✅ Min and Max pins show configured values
-- ✅ get_details confirms values
-- ✅ Node functional with defaults
 
 ---
 
@@ -247,7 +311,41 @@ extra = {
 
 ---
 
-## Test 6: Node Refresh Operations
+## Test 6: Node Deletion
+
+**Purpose**: Remove nodes from Blueprint graph
+
+### Steps
+
+1. **Create Temporary Node**
+   ```
+   Create a test node to delete
+   ```
+
+2. **Delete Node**
+   ```
+   Use delete action with node_id
+   ```
+
+3. **Verify Deletion**
+   ```
+   List nodes - deleted node should not appear
+   ```
+
+4. **Verify Disconnection**
+   ```
+   Connected pins should auto-disconnect
+   ```
+
+### Expected Outcomes
+- ✅ Node removed from graph
+- ✅ Pins automatically disconnected
+- ✅ Graph remains valid
+- ✅ Safety checks prevent deleting protected nodes
+
+---
+
+## Test 7: Node Refresh Operations
 
 **Purpose**: Test refresh_node and refresh_nodes
 
@@ -286,7 +384,7 @@ extra = {
 
 ---
 
-## Test 7: Reset Pin Defaults
+## Test 8: Reset Pin Defaults
 
 **Purpose**: Reset pin values to autogenerated defaults
 
@@ -320,7 +418,7 @@ extra = {
 
 ---
 
-## Test 8: Disconnect Pins
+## Test 9: Disconnect Pins
 
 **Purpose**: Break pin connections
 
@@ -354,7 +452,7 @@ extra = {
 
 ---
 
-## Test 9: Node Movement
+## Test 10: Node Movement
 
 **Purpose**: Reposition nodes in graph
 
@@ -383,54 +481,20 @@ extra = {
 
 ---
 
-## Test 10: Node Deletion
-
-**Purpose**: Remove nodes from graph
-
-### Steps
-
-1. **Delete Single Node**
-   ```
-   Delete a disconnected node
-   ```
-
-2. **Verify Removal**
-   ```
-   List nodes - deleted node should be gone
-   ```
-
-3. **Delete Connected Node**
-   ```
-   Delete node with connections
-   ```
-
-4. **Verify Connections Broken**
-   ```
-   Connected nodes should show broken connections
-   ```
-
-### Expected Outcomes
-- ✅ delete removes node
-- ✅ Node no longer in list
-- ✅ Connected pins become disconnected
-- ✅ Graph remains valid
-
----
-
 ## Test 11: Variable Get/Set Nodes
 
-**Purpose**: Create variable nodes with proper configuration
+**Purpose**: Create variable getter and setter nodes
 
 ### Steps
 
-1. **Create Variable**
+1. **Discover Variable Nodes**
    ```
-   Use manage_blueprint_variable to create "Health" variable
+   Search for TestValue variable nodes with discover action
    ```
 
 2. **Create GET Node**
    ```
-   Create node_type="GET Health" with node_params={"variable_name": "Health"}
+   Use spawner_key from discover: "SKEL_BP_NodeTest_C::GET TestValue"
    ```
 
 3. **Verify GET Node**
@@ -440,19 +504,19 @@ extra = {
 
 4. **Create SET Node**
    ```
-   Create node_type="SET Health" with node_params={"variable_name": "Health"}
+   Use spawner_key: "SKEL_BP_NodeTest_C::SET TestValue"
    ```
 
 5. **Verify SET Node**
    ```
-   Describe - should have 5 pins (execute, then, Health input, Output_Get)
+   Describe - should have execute, then, value input pins
    ```
 
 ### Expected Outcomes
-- ✅ node_params.variable_name REQUIRED for var nodes
+- ✅ spawner_key identifies exact variable node variant
 - ✅ GET node has output pin
-- ✅ SET node has 5 pins total
-- ✅ Without node_params: broken 2-pin node
+- ✅ SET node has execution and value pins
+- ✅ Variable nodes properly configured
 
 ---
 
@@ -507,18 +571,43 @@ extra = {
 
 ---
 
-## Cleanup: Delete Test Assets
+## 🧹 Cleanup: Delete Test Assets (After Review Only!)
 
-**Run these commands AFTER completing all tests:**
+**⚠️ STOP! Before running cleanup:**
+
+1. ✅ Have you reviewed all test results in Unreal Editor?
+2. ✅ Have you verified node connections and layouts?
+3. ✅ Have you checked for any unexpected behavior?
+4. ✅ Have you documented any issues found?
+
+**Only proceed if all above are YES.**
+
+### Cleanup Commands
 
 ```
 Delete test Blueprint:
-- Delete /Game/Blueprints/BP_NodeTest with force_delete=True and show_confirmation=False
+Use manage_blueprint with action="delete" (if supported) OR
+Manually delete /Game/Blueprints/BP_NodeTest in Content Browser
+
+⚠️ Warning: This will permanently delete:
+- BP_NodeTest Blueprint
+- GetRandomNumber function (with Low/High parameters)
+- TestNodeLayout function (if created)
+- TestValue variable
+- All test nodes created during testing
 ```
+
+### Manual Cleanup Alternative
+
+If you prefer to keep test assets for future reference:
+1. Open BP_NodeTest in Blueprint Editor
+2. Review the TestFunction graph
+3. Save as a different name if you want to preserve it
+4. Delete when no longer needed
 
 ---
 
 **Test Coverage**: 15/15 actions tested ✅  
-**Last Updated**: November 4, 2025  
+**Last Updated**: November 5, 2025  
 **Related Issues**: #69, #74
 

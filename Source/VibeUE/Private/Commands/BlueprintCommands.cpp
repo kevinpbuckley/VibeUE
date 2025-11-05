@@ -10,7 +10,6 @@
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Services/Blueprint/BlueprintComponentService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
-#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Services/Blueprint/BlueprintGraphService.h"
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Core/ServiceContext.h"
@@ -63,7 +62,6 @@ FBlueprintCommands::FBlueprintCommands()
     PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
     ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
     FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
-    NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
     GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
 }

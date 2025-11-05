@@ -3,8 +3,7 @@
 #include "Commands/CommonUtils.h"
 #include "Commands/ComponentEventBinder.h"
 #include "Commands/InputKeyEnumerator.h"
-
-// Phase 4: Include Blueprint Services
+#include "Core/ServiceContext.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
 #include "Services/Blueprint/BlueprintLifecycleService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
@@ -13,9 +12,6 @@
 #include "Services/Blueprint/BlueprintNodeService.h"
 #include "Services/Blueprint/BlueprintGraphService.h"
 #include "Services/Blueprint/BlueprintReflectionService.h"
-#include "Core/ServiceContext.h"
-#include "Core/ErrorCodes.h"
-
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -32,7 +28,8 @@
 #include "K2Node_IfThenElse.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
-#include "K2Node_Knot.h"
+#include "K2Node_Knot.h"  // NEW (Oct 6, 2025): Reroute node multi-connection support
+// #include "K2Node_ForEachLoop.h"  // Commented out - header not found
 #include "K2Node_Timeline.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_DynamicCast.h"
@@ -202,53 +199,15 @@ static UEdGraphPin* FindPinForOperation(UEdGraphNode* Node, const FString& RawPi
 }
 }
 
-// Helper: Convert FPinDetail to JSON
-namespace
-{
-TSharedPtr<FJsonObject> ConvertPinDetailToJson(const FPinDetail& PinDetail, bool bIncludeConnections)
-{
-    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-    PinInfo->SetStringField(TEXT("name"), PinDetail.PinName);
-    PinInfo->SetStringField(TEXT("type"), PinDetail.PinType);
-    PinInfo->SetStringField(TEXT("direction"), PinDetail.Direction);
-    PinInfo->SetBoolField(TEXT("is_hidden"), PinDetail.bIsHidden);
-    PinInfo->SetBoolField(TEXT("is_connected"), PinDetail.bIsConnected);
-    PinInfo->SetBoolField(TEXT("is_array"), PinDetail.bIsArray);
-    PinInfo->SetBoolField(TEXT("is_reference"), PinDetail.bIsReference);
-    
-    if (!PinDetail.DefaultValue.IsEmpty())
-        PinInfo->SetStringField(TEXT("default_value"), PinDetail.DefaultValue);
-    if (!PinDetail.DefaultObjectName.IsEmpty())
-        PinInfo->SetStringField(TEXT("default_object"), PinDetail.DefaultObjectName);
-    if (!PinDetail.DefaultTextValue.IsEmpty())
-        PinInfo->SetStringField(TEXT("default_text"), PinDetail.DefaultTextValue);
-    
-    if (bIncludeConnections && PinDetail.Connections.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> Connections;
-        for (const FPinConnectionInfo& ConnInfo : PinDetail.Connections)
-        {
-            TSharedPtr<FJsonObject> Connection = MakeShared<FJsonObject>();
-            Connection->SetStringField(TEXT("to_node_id"), ConnInfo.TargetNodeId);
-            Connection->SetStringField(TEXT("to_pin"), ConnInfo.TargetPinName);
-            Connections.Add(MakeShared<FJsonValueObject>(Connection));
-        }
-        PinInfo->SetArrayField(TEXT("connections"), Connections);
-    }
-    
-    return PinInfo;
-}
-}
-
 FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
-    // Initialize reflection system (legacy)
+    // Initialize reflection system
     ReflectionCommands = MakeShareable(new FBlueprintReflectionCommands());
     
-    // Phase 4: Initialize Blueprint Services
-    // Create a shared service context for all services
+    // Initialize service context
     TSharedPtr<FServiceContext> ServiceContext = MakeShared<FServiceContext>();
     
+    // Initialize Blueprint services
     DiscoveryService = MakeShared<FBlueprintDiscoveryService>(ServiceContext);
     LifecycleService = MakeShared<FBlueprintLifecycleService>(ServiceContext);
     PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
@@ -258,121 +217,9 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
     GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
     
-    // Set services on ReflectionCommands for Phase 4 refactoring
+    // Pass services to ReflectionCommands
     ReflectionCommands->SetDiscoveryService(DiscoveryService);
     ReflectionCommands->SetNodeService(NodeService);
-}
-
-// Helper methods for TResult to JSON conversion
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateSuccessResponse() const
-{
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), true);
-    return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const
-{
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), false);
-    Response->SetStringField(TEXT("error_code"), ErrorCode);
-    Response->SetStringField(TEXT("error"), ErrorMessage);
-    return Response;
-}
-
-// Helper to convert TResult<TArray<FNodeSummary>> to JSON
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const
-{
-    if (Result.IsError())
-    {
-        return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-    }
-
-    TArray<TSharedPtr<FJsonValue>> NodeArray;
-    for (const FNodeSummary& Summary : Result.GetValue())
-    {
-        TSharedPtr<FJsonObject> NodeObj = MakeShared<FJsonObject>();
-        NodeObj->SetStringField(TEXT("id"), Summary.NodeId);
-        NodeObj->SetStringField(TEXT("node_type"), Summary.NodeType);
-        NodeObj->SetStringField(TEXT("title"), Summary.Title);
-        
-        TArray<TSharedPtr<FJsonValue>> PinArray;
-        for (const TSharedPtr<FJsonObject>& PinObj : Summary.Pins)
-        {
-            PinArray.Add(MakeShared<FJsonValueObject>(PinObj));
-        }
-        NodeObj->SetArrayField(TEXT("pins"), PinArray);
-        
-        NodeArray.Add(MakeShared<FJsonValueObject>(NodeObj));
-    }
-
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetArrayField(TEXT("nodes"), NodeArray);
-    return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::ConvertNodeDescriptorToJson(const FNodeDescriptor& Desc) const
-{
-	TSharedPtr<FJsonObject> DescJson = MakeShared<FJsonObject>();
-	
-	// Core identification
-	DescJson->SetStringField(TEXT("spawner_key"), Desc.SpawnerKey);
-	DescJson->SetStringField(TEXT("display_name"), Desc.DisplayName);
-	DescJson->SetStringField(TEXT("node_title"), Desc.NodeTitle);
-	DescJson->SetStringField(TEXT("node_class_name"), Desc.NodeClassName);
-	DescJson->SetStringField(TEXT("node_class_path"), Desc.NodeClassPath);
-	
-	// Categorization
-	DescJson->SetStringField(TEXT("category"), Desc.Category);
-	DescJson->SetStringField(TEXT("description"), Desc.Description);
-	DescJson->SetStringField(TEXT("tooltip"), Desc.Tooltip);
-	
-	TArray<TSharedPtr<FJsonValue>> KeywordsArray;
-	for (const FString& Keyword : Desc.Keywords)
-	{
-		KeywordsArray.Add(MakeShared<FJsonValueString>(Keyword));
-	}
-	DescJson->SetArrayField(TEXT("keywords"), KeywordsArray);
-	
-	// Function metadata (if applicable)
-	if (Desc.FunctionMetadata.IsSet())
-	{
-		TSharedPtr<FJsonObject> FunctionMeta = MakeShared<FJsonObject>();
-		const FFunctionMetadata& FuncMeta = Desc.FunctionMetadata.GetValue();
-		FunctionMeta->SetStringField(TEXT("function_name"), FuncMeta.FunctionName);
-		FunctionMeta->SetStringField(TEXT("function_class"), FuncMeta.FunctionClassName);
-		FunctionMeta->SetStringField(TEXT("function_class_path"), FuncMeta.FunctionClassPath);
-		FunctionMeta->SetBoolField(TEXT("is_static"), FuncMeta.bIsStatic);
-		FunctionMeta->SetBoolField(TEXT("is_const"), FuncMeta.bIsConst);
-		FunctionMeta->SetBoolField(TEXT("is_pure"), FuncMeta.bIsPure);
-		FunctionMeta->SetStringField(TEXT("module"), FuncMeta.Module);
-		DescJson->SetObjectField(TEXT("function_metadata"), FunctionMeta);
-	}
-	
-	// Pin information
-	TArray<TSharedPtr<FJsonValue>> PinsArray;
-	for (const FPinInfo& Pin : Desc.Pins)
-	{
-		TSharedPtr<FJsonObject> PinJson = MakeShared<FJsonObject>();
-		PinJson->SetStringField(TEXT("name"), Pin.Name);
-		PinJson->SetStringField(TEXT("type"), Pin.Type);
-		PinJson->SetStringField(TEXT("type_path"), Pin.TypePath);
-		PinJson->SetStringField(TEXT("direction"), Pin.Direction);
-		PinJson->SetStringField(TEXT("category"), Pin.Category);
-		PinJson->SetBoolField(TEXT("is_array"), Pin.bIsArray);
-		PinJson->SetBoolField(TEXT("is_reference"), Pin.bIsReference);
-		PinJson->SetBoolField(TEXT("is_hidden"), Pin.bIsHidden);
-		PinJson->SetBoolField(TEXT("is_advanced"), Pin.bIsAdvanced);
-		PinJson->SetStringField(TEXT("default_value"), Pin.DefaultValue);
-		PinJson->SetStringField(TEXT("tooltip"), Pin.Tooltip);
-		
-		PinsArray.Add(MakeShared<FJsonValueObject>(PinJson));
-	}
-	DescJson->SetArrayField(TEXT("pins"), PinsArray);
-	DescJson->SetNumberField(TEXT("expected_pin_count"), Desc.ExpectedPinCount);
-	DescJson->SetBoolField(TEXT("is_static"), Desc.bIsStatic);
-	
-	return DescJson;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -405,12 +252,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& Com
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // NOTE: This handler is redundant with HandleConnectPins (supports single connection).
-    // HandleConnectPins supports batch connections and is the primary implementation.
-    // This handler simply wraps parameters and forwards to HandleConnectPins.
-    // TODO: After HandleConnectPins is refactored to use NodeService (Issue #95),
-    //       this handler can be simplified or deprecated.
-    
     if (!Params.IsValid())
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Invalid connection payload"));
@@ -460,224 +301,27 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectPins(const TSharedP
     FString BlueprintName;
     if (!Params.IsValid() || !Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find blueprint using DiscoveryService
+    // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
     UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Parse default connection settings
-    bool bAllowConversionDefault = true;
-    Params->TryGetBoolField(TEXT("allow_conversion_node"), bAllowConversionDefault);
-
-    bool bAllowPromotionDefault = true;
-    Params->TryGetBoolField(TEXT("allow_make_array"), bAllowPromotionDefault);
-    Params->TryGetBoolField(TEXT("allow_promotion"), bAllowPromotionDefault);
-
-    bool bBreakExistingDefault = true;
-    Params->TryGetBoolField(TEXT("break_existing_links"), bBreakExistingDefault);
-    Params->TryGetBoolField(TEXT("break_existing_connections"), bBreakExistingDefault);
-
-    // Get connections array
-    const TArray<TSharedPtr<FJsonValue>>* ConnectionArrayPtr = nullptr;
-    Params->TryGetArrayField(TEXT("connections"), ConnectionArrayPtr);
-
-    TArray<TSharedPtr<FJsonObject>> ConnectionObjects;
-    if (ConnectionArrayPtr)
-    {
-        for (const TSharedPtr<FJsonValue>& Value : *ConnectionArrayPtr)
-        {
-            if (Value.IsValid())
-            {
-                const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
-                if (Value->TryGetObject(ObjPtr) && ObjPtr)
-                {
-                    ConnectionObjects.Add(*ObjPtr);
-                }
-            }
-        }
-    }
-
-    if (ConnectionObjects.Num() == 0)
-    {
-        // Use params itself as a single connection request
-        ConnectionObjects.Add(Params);
-    }
-
-    // Convert JSON requests to FPinConnectionRequest structs
-    TArray<FPinConnectionRequest> Requests;
-    for (int32 Index = 0; Index < ConnectionObjects.Num(); ++Index)
-    {
-        const TSharedPtr<FJsonObject>& ConnObj = ConnectionObjects[Index];
-        FPinConnectionRequest Request;
-        Request.Index = Index;
-        
-        // Parse source pin identifier
-        FString SourcePinId;
-        if (ConnObj->TryGetStringField(TEXT("source_pin_id"), SourcePinId) ||
-            ConnObj->TryGetStringField(TEXT("from_pin_id"), SourcePinId))
-        {
-            Request.SourcePinIdentifier = SourcePinId;
-        }
-        else
-        {
-            // Try to build from node_id and pin_name
-            FString NodeId, PinName;
-            if (ConnObj->TryGetStringField(TEXT("source_node_id"), NodeId))
-            {
-                if (ConnObj->TryGetStringField(TEXT("source_pin_name"), PinName) ||
-                    ConnObj->TryGetStringField(TEXT("source_pin"), PinName))
-                {
-                    Request.SourcePinIdentifier = FString::Printf(TEXT("%s:%s"), *NodeId, *PinName);
-                    Request.SourceNodeId = NodeId;
-                }
-            }
-        }
-        
-        // Parse target pin identifier
-        FString TargetPinId;
-        if (ConnObj->TryGetStringField(TEXT("target_pin_id"), TargetPinId) ||
-            ConnObj->TryGetStringField(TEXT("to_pin_id"), TargetPinId))
-        {
-            Request.TargetPinIdentifier = TargetPinId;
-        }
-        else
-        {
-            // Try to build from node_id and pin_name
-            FString NodeId, PinName;
-            if (ConnObj->TryGetStringField(TEXT("target_node_id"), NodeId))
-            {
-                if (ConnObj->TryGetStringField(TEXT("target_pin_name"), PinName) ||
-                    ConnObj->TryGetStringField(TEXT("target_pin"), PinName))
-                {
-                    Request.TargetPinIdentifier = FString::Printf(TEXT("%s:%s"), *NodeId, *PinName);
-                    Request.TargetNodeId = NodeId;
-                }
-            }
-        }
-        
-        // Parse connection options (use request-specific values if provided, otherwise use defaults)
-        Request.bAllowConversionNode = bAllowConversionDefault;
-        ConnObj->TryGetBoolField(TEXT("allow_conversion_node"), Request.bAllowConversionNode);
-        
-        Request.bAllowPromotion = bAllowPromotionDefault;
-        ConnObj->TryGetBoolField(TEXT("allow_make_array"), Request.bAllowPromotion);
-        ConnObj->TryGetBoolField(TEXT("allow_promotion"), Request.bAllowPromotion);
-        
-        Request.bBreakExistingLinks = bBreakExistingDefault;
-        ConnObj->TryGetBoolField(TEXT("break_existing_links"), Request.bBreakExistingLinks);
-        ConnObj->TryGetBoolField(TEXT("break_existing_connections"), Request.bBreakExistingLinks);
-        
-        Requests.Add(Request);
-    }
-
-    // Call NodeService to perform connections
-    auto ConnectResult = NodeService->ConnectPinsBatch(Blueprint, Requests);
-    if (ConnectResult.IsError())
-    {
-        return CreateErrorResponse(ConnectResult.GetErrorCode(), ConnectResult.GetErrorMessage());
-    }
-
-    const FPinConnectionBatchResult& BatchResult = ConnectResult.GetValue();
-
-    // Build response JSON
-    TArray<TSharedPtr<FJsonValue>> Successes;
-    TArray<TSharedPtr<FJsonValue>> Failures;
-
-    for (const FPinConnectionResult& Result : BatchResult.Results)
-    {
-        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-        ResultObj->SetBoolField(TEXT("success"), Result.bSuccess);
-        ResultObj->SetNumberField(TEXT("index"), Result.Index);
-        
-        if (Result.bSuccess)
-        {
-            ResultObj->SetStringField(TEXT("source_node_id"), Result.SourceNodeId);
-            ResultObj->SetStringField(TEXT("source_pin_id"), Result.SourcePinIdentifier);
-            ResultObj->SetStringField(TEXT("target_node_id"), Result.TargetNodeId);
-            ResultObj->SetStringField(TEXT("target_pin_id"), Result.TargetPinIdentifier);
-            ResultObj->SetBoolField(TEXT("already_connected"), Result.bAlreadyConnected);
-            
-            if (!Result.SchemaResponse.IsEmpty())
-            {
-                ResultObj->SetStringField(TEXT("schema_response"), Result.SchemaResponse);
-            }
-            
-            // Add broken links info
-            TArray<TSharedPtr<FJsonValue>> BrokenLinks;
-            for (const FPinLinkBreakInfo& LinkInfo : Result.BrokenLinks)
-            {
-                TSharedPtr<FJsonObject> LinkObj = MakeShared<FJsonObject>();
-                LinkObj->SetStringField(TEXT("other_node_id"), LinkInfo.OtherNodeId);
-                LinkObj->SetStringField(TEXT("other_node_class"), LinkInfo.OtherNodeClass);
-                LinkObj->SetStringField(TEXT("other_pin_id"), LinkInfo.OtherPinId);
-                LinkObj->SetStringField(TEXT("other_pin_name"), LinkInfo.OtherPinName);
-                LinkObj->SetStringField(TEXT("pin_role"), LinkInfo.PinRole);
-                BrokenLinks.Add(MakeShared<FJsonValueObject>(LinkObj));
-            }
-            ResultObj->SetArrayField(TEXT("broken_links"), BrokenLinks);
-            
-            // Add created links info
-            TArray<TSharedPtr<FJsonValue>> CreatedLinks;
-            for (const FPinLinkCreateInfo& LinkInfo : Result.CreatedLinks)
-            {
-                TSharedPtr<FJsonObject> LinkObj = MakeShared<FJsonObject>();
-                LinkObj->SetStringField(TEXT("from_pin_id"), LinkInfo.FromPinId);
-                LinkObj->SetStringField(TEXT("to_pin_id"), LinkInfo.ToPinId);
-                LinkObj->SetStringField(TEXT("to_node_id"), LinkInfo.ToNodeId);
-                LinkObj->SetStringField(TEXT("to_node_class"), LinkInfo.ToNodeClass);
-                LinkObj->SetStringField(TEXT("to_pin_name"), LinkInfo.ToPinName);
-                CreatedLinks.Add(MakeShared<FJsonValueObject>(LinkObj));
-            }
-            ResultObj->SetArrayField(TEXT("created_links"), CreatedLinks);
-            
-            Successes.Add(MakeShared<FJsonValueObject>(ResultObj));
-        }
-        else
-        {
-            ResultObj->SetStringField(TEXT("code"), Result.ErrorCode);
-            ResultObj->SetStringField(TEXT("message"), Result.ErrorMessage);
-            Failures.Add(MakeShared<FJsonValueObject>(ResultObj));
-        }
-    }
-
-    // Build final response
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), Failures.Num() == 0);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetNumberField(TEXT("attempted"), BatchResult.Results.Num());
-    Response->SetNumberField(TEXT("succeeded"), Successes.Num());
-    Response->SetNumberField(TEXT("failed"), Failures.Num());
-    Response->SetArrayField(TEXT("operations"), Successes);
+    // Call service method with full params
+    auto Result = NodeService->ConnectPinsAdvanced(Blueprint, Params);
     
-    if (Failures.Num() > 0)
+    // Return result directly (already in JSON format)
+    if (Result.IsError())
     {
-        Response->SetArrayField(TEXT("failures"), Failures);
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
-
-    // Add modified graphs info
-    if (BatchResult.ModifiedGraphs.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> GraphArray;
-        for (UEdGraph* Graph : BatchResult.ModifiedGraphs)
-        {
-            if (Graph)
-            {
-                TSharedPtr<FJsonObject> GraphInfo = MakeShared<FJsonObject>();
-                GraphInfo->SetStringField(TEXT("graph_name"), Graph->GetName());
-                GraphInfo->SetStringField(TEXT("graph_guid"), VibeUENodeIntrospection::NormalizeGuid(Graph->GraphGuid));
-                GraphArray.Add(MakeShared<FJsonValueObject>(GraphInfo));
-            }
-        }
-        Response->SetArrayField(TEXT("modified_graphs"), GraphArray);
-    }
-
-    return Response;
+    
+    return Result.GetValue();
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TSharedPtr<FJsonObject>& Params)
@@ -686,345 +330,155 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TShar
     FString BlueprintName;
     if (!Params.IsValid() || !Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find blueprint using DiscoveryService
+    // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
     UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Parse disconnection requests from params
-    TArray<FPinDisconnectionRequest> Requests;
+    // Call service method with full params
+    auto Result = NodeService->DisconnectPinsAdvanced(Blueprint, Params);
     
-    // Get default break_all setting
-    bool bBreakAllDefault = true;
-    Params->TryGetBoolField(TEXT("break_all"), bBreakAllDefault);
-    Params->TryGetBoolField(TEXT("break_all_links"), bBreakAllDefault);
-
-    // Check for connections array
-    const TArray<TSharedPtr<FJsonValue>>* ConnectionsArray = nullptr;
-    Params->TryGetArrayField(TEXT("connections"), ConnectionsArray);
-
-    // Check for pin_ids array
-    const TArray<TSharedPtr<FJsonValue>>* PinArray = nullptr;
-    Params->TryGetArrayField(TEXT("pin_ids"), PinArray);
-
-    // Build requests list
-    TArray<TSharedPtr<FJsonObject>> RequestObjects;
-
-    if (ConnectionsArray)
+    // Return result directly (already in JSON format)
+    if (Result.IsError())
     {
-        for (const TSharedPtr<FJsonValue>& Value : *ConnectionsArray)
-        {
-            if (Value.IsValid())
-            {
-                const TSharedPtr<FJsonObject>* ObjPtr = nullptr;
-                if (Value->TryGetObject(ObjPtr) && ObjPtr)
-                {
-                    RequestObjects.Add(*ObjPtr);
-                }
-            }
-        }
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
-
-    if (PinArray)
-    {
-        for (const TSharedPtr<FJsonValue>& Value : *PinArray)
-        {
-            if (Value.IsValid())
-            {
-                TSharedPtr<FJsonObject> PinRequest = MakeShared<FJsonObject>();
-                PinRequest->SetStringField(TEXT("pin_id"), Value->AsString());
-                RequestObjects.Add(PinRequest);
-            }
-        }
-    }
-
-    if (RequestObjects.Num() == 0)
-    {
-        // Use params itself as a single request
-        RequestObjects.Add(Params);
-    }
-
-    // Convert JSON requests to FPinDisconnectionRequest structs
-    for (int32 Index = 0; Index < RequestObjects.Num(); ++Index)
-    {
-        const TSharedPtr<FJsonObject>& RequestObj = RequestObjects[Index];
-        FPinDisconnectionRequest Request;
-        Request.Index = Index;
-        
-        // Parse source pin identifier (multiple field name variations)
-        FString SourcePinId;
-        if (RequestObj->TryGetStringField(TEXT("pin_id"), SourcePinId) ||
-            RequestObj->TryGetStringField(TEXT("source_pin_id"), SourcePinId) ||
-            RequestObj->TryGetStringField(TEXT("from_pin_id"), SourcePinId))
-        {
-            Request.SourcePinIdentifier = SourcePinId;
-        }
-        else
-        {
-            // Try to build identifier from node_id and pin_name
-            FString NodeId, PinName;
-            if (RequestObj->TryGetStringField(TEXT("source_node_id"), NodeId) ||
-                RequestObj->TryGetStringField(TEXT("node_id"), NodeId))
-            {
-                if (RequestObj->TryGetStringField(TEXT("source_pin_name"), PinName) ||
-                    RequestObj->TryGetStringField(TEXT("source_pin"), PinName) ||
-                    RequestObj->TryGetStringField(TEXT("pin_name"), PinName) ||
-                    RequestObj->TryGetStringField(TEXT("pin"), PinName))
-                {
-                    Request.SourcePinIdentifier = FString::Printf(TEXT("%s:%s"), *NodeId, *PinName);
-                }
-            }
-        }
-        
-        // Parse target pin identifier (optional - if not provided, break all links)
-        FString TargetPinId;
-        if (RequestObj->TryGetStringField(TEXT("target_pin_id"), TargetPinId) ||
-            RequestObj->TryGetStringField(TEXT("to_pin_id"), TargetPinId))
-        {
-            Request.TargetPinIdentifier = TargetPinId;
-        }
-        else
-        {
-            // Try to build identifier from target node_id and pin_name
-            FString TargetNodeId, TargetPinName;
-            if (RequestObj->TryGetStringField(TEXT("target_node_id"), TargetNodeId))
-            {
-                if (RequestObj->TryGetStringField(TEXT("target_pin_name"), TargetPinName) ||
-                    RequestObj->TryGetStringField(TEXT("target_pin"), TargetPinName))
-                {
-                    Request.TargetPinIdentifier = FString::Printf(TEXT("%s:%s"), *TargetNodeId, *TargetPinName);
-                }
-            }
-        }
-        
-        // Determine break_all setting for this request
-        Request.bBreakAll = bBreakAllDefault;
-        RequestObj->TryGetBoolField(TEXT("break_all"), Request.bBreakAll);
-        RequestObj->TryGetBoolField(TEXT("break_all_links"), Request.bBreakAll);
-        
-        Requests.Add(Request);
-    }
-
-    // Call NodeService to perform disconnections
-    auto DisconnectResult = NodeService->DisconnectPinsBatch(Blueprint, Requests);
-    if (DisconnectResult.IsError())
-    {
-        return CreateErrorResponse(DisconnectResult.GetErrorCode(), DisconnectResult.GetErrorMessage());
-    }
-
-    const FPinDisconnectionBatchResult& BatchResult = DisconnectResult.GetValue();
-
-    // Build response JSON
-    TArray<TSharedPtr<FJsonValue>> Successes;
-    TArray<TSharedPtr<FJsonValue>> Failures;
-
-    for (const FPinDisconnectionResult& Result : BatchResult.Results)
-    {
-        TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
-        ResultObj->SetBoolField(TEXT("success"), Result.bSuccess);
-        ResultObj->SetNumberField(TEXT("index"), Result.Index);
-        ResultObj->SetStringField(TEXT("pin_id"), Result.PinIdentifier);
-        
-        if (Result.bSuccess)
-        {
-            // Add broken links info
-            TArray<TSharedPtr<FJsonValue>> BrokenLinks;
-            for (const FPinLinkBreakInfo& LinkInfo : Result.BrokenLinks)
-            {
-                TSharedPtr<FJsonObject> LinkObj = MakeShared<FJsonObject>();
-                LinkObj->SetStringField(TEXT("other_node_id"), LinkInfo.OtherNodeId);
-                LinkObj->SetStringField(TEXT("other_node_class"), LinkInfo.OtherNodeClass);
-                LinkObj->SetStringField(TEXT("other_pin_id"), LinkInfo.OtherPinId);
-                LinkObj->SetStringField(TEXT("other_pin_name"), LinkInfo.OtherPinName);
-                LinkObj->SetStringField(TEXT("pin_role"), LinkInfo.PinRole);
-                BrokenLinks.Add(MakeShared<FJsonValueObject>(LinkObj));
-            }
-            ResultObj->SetArrayField(TEXT("broken_links"), BrokenLinks);
-            Successes.Add(MakeShared<FJsonValueObject>(ResultObj));
-        }
-        else
-        {
-            ResultObj->SetStringField(TEXT("code"), Result.ErrorCode);
-            ResultObj->SetStringField(TEXT("message"), Result.ErrorMessage);
-            Failures.Add(MakeShared<FJsonValueObject>(ResultObj));
-        }
-    }
-
-    // Build final response
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), Failures.Num() == 0);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetNumberField(TEXT("attempted"), BatchResult.Results.Num());
-    Response->SetNumberField(TEXT("succeeded"), Successes.Num());
-    Response->SetNumberField(TEXT("failed"), Failures.Num());
-    Response->SetArrayField(TEXT("operations"), Successes);
     
-    if (Failures.Num() > 0)
-    {
-        Response->SetArrayField(TEXT("failures"), Failures);
-    }
-
-    // Add modified graphs info
-    if (BatchResult.ModifiedGraphs.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> GraphArray;
-        for (UEdGraph* Graph : BatchResult.ModifiedGraphs)
-        {
-            if (Graph)
-            {
-                TSharedPtr<FJsonObject> GraphInfo = MakeShared<FJsonObject>();
-                GraphInfo->SetStringField(TEXT("graph_name"), Graph->GetName());
-                GraphInfo->SetStringField(TEXT("graph_guid"), VibeUENodeIntrospection::NormalizeGuid(Graph->GraphGuid));
-                GraphArray.Add(MakeShared<FJsonValueObject>(GraphInfo));
-            }
-        }
-        Response->SetArrayField(TEXT("modified_graphs"), GraphArray);
-    }
-
-    return Response;
+    return Result.GetValue();
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // 1. Extract and validate parameters
     FString BlueprintName;
-    FString EventName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("event_name"), EventName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'event_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find the blueprint using DiscoveryService
+    FString EventName;
+    if (!Params->TryGetStringField(TEXT("event_name"), EventName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+    }
+
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    // 2. Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Parse event configuration
-    FEventConfiguration EventConfig;
-    EventConfig.EventName = EventName;
-    EventConfig.Position = Params->HasField(TEXT("node_position"))
-        ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
-        : FVector2D(0.0f, 0.0f);
-    
-    // Extract graph_name if provided (defaults to event graph if empty)
-    Params->TryGetStringField(TEXT("graph_name"), EventConfig.GraphName);
-
-    // Add event using NodeService
-    auto AddResult = NodeService->AddEvent(FindResult.GetValue(), EventConfig);
-    if (AddResult.IsError())
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->CreateEventNode(Blueprint, EventName, GraphName);
+    if (Result.IsError())
     {
-        return CreateErrorResponse(AddResult.GetErrorCode(), AddResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    // Build success response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), AddResult.GetValue());
-    return Result;
+    const FNodeInfo& NodeInfo = Result.GetValue();
+
+    // 4. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("node_id"), NodeInfo.NodeId);
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
-    FString BlueprintName, ActionName;
+    // 1. Extract and validate parameters
+    FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find the blueprint using DiscoveryService
+    FString ActionName;
+    if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action_name' parameter"));
+    }
+
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    // 2. Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Prepare input action node parameters
-    FInputActionNodeParams InputParams;
-    InputParams.ActionName = ActionName;
-    InputParams.Position = Params->HasField(TEXT("node_position"))
-        ? FCommonUtils::GetVector2DFromJson(Params, TEXT("node_position"))
-        : FVector2D(0.0f, 0.0f);
-
-    // Create input action node using NodeService
-    auto CreateResult = NodeService->CreateInputActionNode(FindResult.GetValue(), InputParams);
-    if (CreateResult.IsError())
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->CreateInputActionNode(Blueprint, ActionName, GraphName);
+    if (Result.IsError())
     {
-        return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    // Build success response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), CreateResult.GetValue());
-    return Result;
+    const FNodeInfo& NodeInfo = Result.GetValue();
+
+    // 4. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetStringField(TEXT("node_id"), NodeInfo.NodeId);
+    return Response;
 }
 
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find the blueprint using DiscoveryService
+    FString NodeType;
+    if (!Params->TryGetStringField(TEXT("node_type"), NodeType))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
+    }
+
+    // 2. Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Extract optional graph name
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    // 4. Call service method - business logic lives in the service
+    auto Result = NodeService->FindNodes(Blueprint, NodeType, GraphName);
+    
+    // 5. Convert TResult to JSON response
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    // Parse search criteria
-    FNodeSearchCriteria Criteria;
-    if (!Params->TryGetStringField(TEXT("node_type"), Criteria.NodeType))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_type' parameter"));
-    }
+    const TArray<FString>& NodeGuids = Result.GetValue();
     
-    Params->TryGetStringField(TEXT("name_pattern"), Criteria.NamePattern);
-    
-    // Determine graph scope from parameters
-    FString GraphScope;
-    if (Params->TryGetStringField(TEXT("graph_name"), GraphScope))
-    {
-        Criteria.GraphScope = GraphScope;
-    }
-    else if (Params->TryGetStringField(TEXT("graph_scope"), GraphScope))
-    {
-        Criteria.GraphScope = GraphScope;
-    }
-    
-    // Search for nodes using NodeService
-    auto SearchResult = NodeService->FindNodes(FindResult.GetValue(), Criteria);
-    if (SearchResult.IsError())
-    {
-        return CreateErrorResponse(SearchResult.GetErrorCode(), SearchResult.GetErrorMessage());
-    }
-    
-    // Convert result to JSON
+    // Build JSON array of node GUIDs
     TArray<TSharedPtr<FJsonValue>> NodeGuidArray;
-    for (const FNodeInfo& NodeInfo : SearchResult.GetValue())
+    for (const FString& Guid : NodeGuids)
     {
-        NodeGuidArray.Add(MakeShared<FJsonValueString>(NodeInfo.NodeId));
+        NodeGuidArray.Add(MakeShared<FJsonValueString>(Guid));
     }
     
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
@@ -1478,101 +932,62 @@ static TSharedPtr<FJsonObject> BuildNodeDescriptorJson(UBlueprint* Blueprint, UK
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract and validate blueprint_name
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Find blueprint using DiscoveryService
+    // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Extract options
+    // Extract pin inclusion parameters
     bool bIncludePins = true;
     Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
-    
+
     bool bIncludeInternalPins = false;
     Params->TryGetBoolField(TEXT("include_internal"), bIncludeInternalPins);
 
-    int32 Offset = 0;
+    // Call service method
+    auto Result = NodeService->DescribeNodesAdvanced(Blueprint, Params, bIncludePins, bIncludeInternalPins);
+
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+    }
+
+    // Build success response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+
+    // Convert array of JSON objects to array of JSON values
+    TArray<TSharedPtr<FJsonValue>> NodesArray;
+    for (const TSharedPtr<FJsonObject>& NodeObj : Result.GetValue())
+    {
+        NodesArray.Add(MakeShared<FJsonValueObject>(NodeObj));
+    }
+    Response->SetArrayField(TEXT("nodes"), NodesArray);
+
+    // Add stats
     double OffsetValue = 0.0;
+    int32 Offset = 0;
     if (Params->TryGetNumberField(TEXT("offset"), OffsetValue))
     {
         Offset = FMath::Max(0, static_cast<int32>(OffsetValue));
     }
 
-    int32 Limit = -1;
     double LimitValue = -1.0;
+    int32 Limit = -1;
     if (Params->TryGetNumberField(TEXT("limit"), LimitValue))
     {
         Limit = static_cast<int32>(LimitValue);
-        if (Limit < 0)
-        {
-            Limit = -1;
-        }
     }
-
-    // Determine graph scope - CRITICAL: Use function_name when graph_scope is "function"
-    FString GraphScope;
-    Params->TryGetStringField(TEXT("graph_scope"), GraphScope);
-    if (GraphScope.IsEmpty())
-    {
-        GraphScope = TEXT("all");
-    }
-    
-    // Phase 4 Fix: ResolveTargetGraph expects actual function name, not "function"
-    FString ResolvedGraphName = GraphScope;
-    if (GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
-    {
-        FString FunctionName;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
-        {
-            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-                TEXT("Missing 'function_name' parameter when graph_scope='function'"));
-        }
-        ResolvedGraphName = FunctionName;
-    }
-    else if (GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
-    {
-        // Event graph is typically "EventGraph" - use empty string to get default event graph
-        ResolvedGraphName = TEXT("");
-    }
-
-    // Use NodeService to describe nodes
-    auto DescribeResult = NodeService->DescribeAllNodes(
-        FindResult.GetValue(),
-        ResolvedGraphName,
-        bIncludePins,
-        bIncludeInternalPins,
-        Offset,
-        Limit
-    );
-
-    if (DescribeResult.IsError())
-    {
-        return CreateErrorResponse(DescribeResult.GetErrorCode(), DescribeResult.GetErrorMessage());
-    }
-
-    // Convert result to JSON using NodeService helper
-    const TArray<FDetailedNodeInfo>& Nodes = DescribeResult.GetValue();
-    TArray<TSharedPtr<FJsonValue>> NodesArray;
-    
-    for (const FDetailedNodeInfo& NodeInfo : Nodes)
-    {
-        NodesArray.Add(MakeShared<FJsonValueObject>(
-            FBlueprintNodeService::ConvertNodeInfoToJson(NodeInfo, bIncludePins)
-        ));
-    }
-
-    // Build response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetArrayField(TEXT("nodes"), NodesArray);
 
     TSharedPtr<FJsonObject> Stats = MakeShared<FJsonObject>();
     Stats->SetNumberField(TEXT("offset"), Offset);
@@ -1581,409 +996,339 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
         Stats->SetNumberField(TEXT("limit"), Limit);
     }
     Stats->SetNumberField(TEXT("returned"), NodesArray.Num());
-    Result->SetObjectField(TEXT("stats"), Stats);
+    Response->SetObjectField(TEXT("stats"), Stats);
 
-    return Result;
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
+    bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
+    Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
+    Params->TryGetBoolField(TEXT("include_macros"), bIncludeMacros);
+    Params->TryGetBoolField(TEXT("include_timeline"), bIncludeTimeline);
+
+    // 2. Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
     if (FindResult.IsError())
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Extract optional graph name
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    // 4. Call service method to list nodes
+    auto Result = NodeService->ListNodes(Blueprint, GraphName);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    // Phase 4 Fix: Determine target graph based on graph_scope and function_name
-    FString GraphScope;
-    Params->TryGetStringField(TEXT("graph_scope"), GraphScope);
-    if (GraphScope.IsEmpty())
-    {
-        GraphScope = TEXT("event");
-    }
+    // 5. Convert TResult to JSON response with filtering
+    const TArray<FNodeSummary>& Summaries = Result.GetValue();
     
-    FString ResolvedGraphName;
-    if (GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    TArray<TSharedPtr<FJsonValue>> NodeArray;
+    for (const FNodeSummary& Summary : Summaries)
     {
-        FString FunctionName;
-        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        // Apply filters
+        if (!bIncludeFunctions && Summary.NodeType == TEXT("FunctionCall")) continue;
+        if (!bIncludeMacros && Summary.NodeType == TEXT("MacroInstance")) continue;
+        if (!bIncludeTimeline && Summary.NodeType == TEXT("Timeline")) continue;
+
+        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+        Obj->SetStringField(TEXT("id"), Summary.NodeId);
+        Obj->SetStringField(TEXT("node_type"), Summary.NodeType);
+        Obj->SetStringField(TEXT("title"), Summary.Title);
+        
+        // Convert TArray<TSharedPtr<FJsonObject>> to TArray<TSharedPtr<FJsonValue>>
+        TArray<TSharedPtr<FJsonValue>> PinValues;
+        for (const auto& PinObj : Summary.Pins)
         {
-            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-                TEXT("Missing 'function_name' parameter when graph_scope='function'"));
+            PinValues.Add(MakeShared<FJsonValueObject>(PinObj));
         }
-        ResolvedGraphName = FunctionName;
-    }
-    else if (GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
-    {
-        // Use empty string to get default event graph
-        ResolvedGraphName = TEXT("");
-    }
-    else
-    {
-        // Use graph_scope as-is for named graphs
-        ResolvedGraphName = GraphScope;
+        Obj->SetArrayField(TEXT("pins"), PinValues);
+        NodeArray.Add(MakeShared<FJsonValueObject>(Obj));
     }
 
-    auto ListResult = NodeService->ListNodes(FindResult.GetValue(), ResolvedGraphName);
-    if (ListResult.IsError())
-    {
-        return CreateErrorResponse(ListResult.GetErrorCode(), ListResult.GetErrorMessage());
-    }
-
-    // Convert TArray<FString> to JSON array
-    TArray<TSharedPtr<FJsonValue>> NodeIdArray;
-    for (const FString& NodeId : ListResult.GetValue())
-    {
-        NodeIdArray.Add(MakeShared<FJsonValueString>(NodeId));
-    }
-
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-    Response->SetArrayField(TEXT("node_ids"), NodeIdArray);
-    Response->SetNumberField(TEXT("count"), NodeIdArray.Num());
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("graph_scope"), GraphScope);
-    if (!ResolvedGraphName.IsEmpty())
-    {
-        Response->SetStringField(TEXT("graph_name"), ResolvedGraphName);
-    }
-    
-    return Response;
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetArrayField(TEXT("nodes"), NodeArray);
+    return ResultObj;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
-    FString BlueprintName, NodeId;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
-    }
-    
-    // Extract options
-    bool bIncludePins = true, bIncludeConnections = true;
-    Params->TryGetBoolField(TEXT("include_pins"), bIncludePins);
-    Params->TryGetBoolField(TEXT("include_connections"), bIncludeConnections);
-    
-    // Find blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    
-    // Get detailed node information from NodeService
-    auto DetailsResult = NodeService->GetNodeDetailsExtended(FindResult.GetValue(), NodeId, bIncludePins, bIncludeConnections);
-    if (DetailsResult.IsError())
-    {
-        return CreateErrorResponse(DetailsResult.GetErrorCode(), DetailsResult.GetErrorMessage());
-    }
-    
-    // Convert FNodeDetails to JSON
-    const FNodeDetails& Details = DetailsResult.GetValue();
-    
-    TSharedPtr<FJsonObject> NodeInfo = MakeShared<FJsonObject>();
-    NodeInfo->SetStringField(TEXT("id"), Details.NodeId);
-    NodeInfo->SetStringField(TEXT("node_class"), Details.NodeType);
-    NodeInfo->SetStringField(TEXT("title"), Details.DisplayName);
-    NodeInfo->SetBoolField(TEXT("can_user_delete_node"), Details.bCanUserDeleteNode);
-    
-    TArray<TSharedPtr<FJsonValue>> Position;
-    Position.Add(MakeShared<FJsonValueNumber>(Details.Position.X));
-    Position.Add(MakeShared<FJsonValueNumber>(Details.Position.Y));
-    NodeInfo->SetArrayField(TEXT("position"), Position);
-    
-    if (!Details.Category.IsEmpty())
-        NodeInfo->SetStringField(TEXT("category"), Details.Category);
-    if (!Details.Tooltip.IsEmpty())
-        NodeInfo->SetStringField(TEXT("tooltip"), Details.Tooltip);
-    if (!Details.Keywords.IsEmpty())
-        NodeInfo->SetStringField(TEXT("keywords"), Details.Keywords);
-    
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetObjectField(TEXT("node_info"), NodeInfo);
-    
-    // Add pin information if requested
-    if (bIncludePins)
-    {
-        TArray<TSharedPtr<FJsonValue>> InputPins, OutputPins;
-        
-        for (const FPinDetail& PinDetail : Details.InputPins)
-        {
-            InputPins.Add(MakeShared<FJsonValueObject>(ConvertPinDetailToJson(PinDetail, bIncludeConnections)));
-        }
-        
-        for (const FPinDetail& PinDetail : Details.OutputPins)
-        {
-            OutputPins.Add(MakeShared<FJsonValueObject>(ConvertPinDetailToJson(PinDetail, bIncludeConnections)));
-        }
-        
-        TSharedPtr<FJsonObject> PinsInfo = MakeShared<FJsonObject>();
-        PinsInfo->SetArrayField(TEXT("input_pins"), InputPins);
-        PinsInfo->SetArrayField(TEXT("output_pins"), OutputPins);
-        Result->SetObjectField(TEXT("pins"), PinsInfo);
-    }
-    
-    return Result;
+	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails called"));
+	
+	// Extract and validate parameters
+	FString BlueprintName, NodeId;
+	
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing blueprint_name parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+	{
+		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing node_id parameter"));
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+	}
+	
+	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Blueprint: %s, NodeId: %s"), *BlueprintName, *NodeId);
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - %s"), *FindResult.GetErrorMessage());
+		return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+	}
+	
+	UBlueprint* Blueprint = FindResult.GetValue();
+	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Found Blueprint: %s"), *Blueprint->GetName());
+	
+	// Call service method to get detailed node information
+	auto Result = NodeService->GetNodeDetailsAdvanced(Blueprint, NodeId, Params);
+	
+	if (Result.IsError())
+	{
+		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - %s"), *Result.GetErrorMessage());
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+	
+	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Success"));
+	return Result.GetValue();
 }
 
 // --- Unified Function Management (Phase 1) ---
-// Helper: Convert FFunctionInfo array to JSON
-static TArray<TSharedPtr<FJsonValue>> FunctionInfoArrayToJson(const TArray<FFunctionInfo>& Functions)
-{
-    TArray<TSharedPtr<FJsonValue>> JsonArray;
-    for (const FFunctionInfo& Info : Functions)
-    {
-        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-        Obj->SetStringField(TEXT("name"), Info.Name);
-        Obj->SetStringField(TEXT("graph_guid"), Info.GraphGuid);
-        Obj->SetNumberField(TEXT("node_count"), Info.NodeCount);
-        JsonArray.Add(MakeShared<FJsonValueObject>(Obj));
-    }
-    return JsonArray;
-}
-
-// Helper: Convert FFunctionParameterInfo array to JSON
-static TArray<TSharedPtr<FJsonValue>> ParameterInfoArrayToJson(const TArray<FFunctionParameterInfo>& Params)
-{
-    TArray<TSharedPtr<FJsonValue>> JsonArray;
-    for (const FFunctionParameterInfo& Info : Params)
-    {
-        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-        Obj->SetStringField(TEXT("name"), Info.Name);
-        Obj->SetStringField(TEXT("direction"), Info.Direction);
-        Obj->SetStringField(TEXT("type"), Info.Type);
-        JsonArray.Add(MakeShared<FJsonValueObject>(Obj));
-    }
-    return JsonArray;
-}
-
-// Helper: Convert FLocalVariableInfo array to JSON
-static TArray<TSharedPtr<FJsonValue>> LocalVariableInfoArrayToJson(const TArray<FLocalVariableInfo>& Locals)
-{
-    TArray<TSharedPtr<FJsonValue>> JsonArray;
-    for (const FLocalVariableInfo& Info : Locals)
-    {
-        TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-        Obj->SetStringField(TEXT("name"), Info.Name);
-        Obj->SetStringField(TEXT("type"), Info.Type);
-        Obj->SetStringField(TEXT("default_value"), Info.DefaultValue);
-        Obj->SetBoolField(TEXT("is_const"), Info.bIsConst);
-        Obj->SetBoolField(TEXT("is_reference"), Info.bIsReference);
-        JsonArray.Add(MakeShared<FJsonValueObject>(Obj));
-    }
-    return JsonArray;
-}
-
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params)
 {
-    using namespace VibeUE::ErrorCodes;
-    
-    // Extract required parameters
-    FString BlueprintName, Action;
+    FString BlueprintName; FString Action;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-        return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     if (!Params->TryGetStringField(TEXT("action"), Action))
-        return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'action' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter"));
 
-    // Find blueprint
-    auto BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
-    
-    UBlueprint* Blueprint = BlueprintResult.GetValue();
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+
     const FString NormalizedAction = Action.ToLower();
-    
-    // Helper: Get function_name parameter (used by most operations)
-    auto GetFunctionName = [&Params](FString& OutName) -> bool {
-        return Params->TryGetStringField(TEXT("function_name"), OutName);
-    };
-    
-    // Helper: Create simple success response
-    auto MakeSuccess = [](const FString& FuncName) -> TSharedPtr<FJsonObject> {
-        auto Resp = MakeShared<FJsonObject>();
-        Resp->SetBoolField(TEXT("success"), true);
-        Resp->SetStringField(TEXT("function_name"), FuncName);
-        return Resp;
-    };
-    
-    // Core CRUD operations
-    if (NormalizedAction == TEXT("list")) {
-        auto Result = FunctionService->ListFunctions(Blueprint);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeShared<FJsonObject>();
-        Resp->SetArrayField(TEXT("functions"), FunctionInfoArrayToJson(Result.GetValue()));
-        Resp->SetNumberField(TEXT("count"), Result.GetValue().Num());
-        return Resp;
+
+    // Core CRUD
+    if (NormalizedAction == TEXT("list"))
+    {
+        return BuildFunctionSummary(Blueprint);
     }
-    
-    if (NormalizedAction == TEXT("get")) {
-        FString FunctionName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        auto Result = FunctionService->GetFunctionGraph(Blueprint, FunctionName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("graph_guid"), Result.GetValue());
-        return Resp;
+    if (NormalizedAction == TEXT("get"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
+        return BuildSingleFunctionInfo(Blueprint, FunctionName);
     }
-    
-    if (NormalizedAction == TEXT("create")) {
-        FString FunctionName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        auto Result = FunctionService->CreateFunction(Blueprint, FunctionName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("graph_name"), Result.GetValue()->GetName());
-        return Resp;
+    if (NormalizedAction == TEXT("create"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
+        return CreateFunctionGraph(Blueprint, FunctionName);
     }
-    
-    if (NormalizedAction == TEXT("delete")) {
-        FString FunctionName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        auto Result = FunctionService->DeleteFunction(Blueprint, FunctionName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        return MakeSuccess(FunctionName);
+    if (NormalizedAction == TEXT("delete"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' parameter"));
+        }
+        FString Err; if (!RemoveFunctionGraph(Blueprint, FunctionName, Err))
+        {
+            return FCommonUtils::CreateErrorResponse(Err);
+        }
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetBoolField(TEXT("success"), true);
+        R->SetStringField(TEXT("function_name"), FunctionName);
+        return R;
     }
 
     // Parameter operations
-    if (NormalizedAction == TEXT("list_params")) {
-        FString FunctionName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name'"));
-        auto Result = FunctionService->ListParameters(Blueprint, FunctionName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetArrayField(TEXT("parameters"), ParameterInfoArrayToJson(Result.GetValue()));
-        Resp->SetNumberField(TEXT("count"), Result.GetValue().Num());
-        return Resp;
+    if (NormalizedAction == TEXT("list_params"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_params"));
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+        R->SetBoolField(TEXT("success"), true);
+        R->SetStringField(TEXT("function_name"), FunctionName);
+        TArray<TSharedPtr<FJsonValue>> ParamsArray = ListFunctionParameters(Blueprint, Graph);
+        R->SetArrayField(TEXT("parameters"), ParamsArray);
+        R->SetNumberField(TEXT("count"), ParamsArray.Num());
+        return R;
     }
-    
-    if (NormalizedAction == TEXT("add_param")) {
-        FString FunctionName, ParamName, TypeDesc, Direction = TEXT("input");
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
-        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'type' parameter"));
-        Params->TryGetStringField(TEXT("direction"), Direction);
-        auto Result = FunctionService->AddParameter(Blueprint, FunctionName, ParamName, TypeDesc, Direction);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("param_name"), ParamName);
-        return Resp;
+    if (NormalizedAction == TEXT("add_param"))
+    {
+        FString FunctionName, ParamName, TypeDesc, Direction;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return AddFunctionParameter(Blueprint, Graph, ParamName, TypeDesc, Direction);
     }
-    
-    if (NormalizedAction == TEXT("remove_param")) {
-        FString FunctionName, ParamName, Direction = TEXT("input");
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
-        Params->TryGetStringField(TEXT("direction"), Direction);
-        auto Result = FunctionService->RemoveParameter(Blueprint, FunctionName, ParamName, Direction);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("param_name"), ParamName);
-        return Resp;
+    if (NormalizedAction == TEXT("remove_param"))
+    {
+        FString FunctionName, ParamName, Direction;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return RemoveFunctionParameter(Blueprint, Graph, ParamName, Direction);
     }
-    
-    if (NormalizedAction == TEXT("update_param")) {
-        FString FunctionName, ParamName, Direction = TEXT("input"), NewType, NewName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name' parameter"));
-        if (!Params->TryGetStringField(TEXT("param_name"), ParamName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'param_name' parameter"));
-        Params->TryGetStringField(TEXT("direction"), Direction);
+    if (NormalizedAction == TEXT("update_param"))
+    {
+        FString FunctionName, ParamName, Direction, NewType, NewName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        if (!Params->TryGetStringField(TEXT("param_name"), ParamName)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'param_name'"));
+        if (!Params->TryGetStringField(TEXT("direction"), Direction)) Direction = TEXT("input");
         Params->TryGetStringField(TEXT("new_type"), NewType);
         Params->TryGetStringField(TEXT("new_name"), NewName);
-        auto Result = FunctionService->UpdateParameter(Blueprint, FunctionName, ParamName, NewType, NewName, Direction);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        return MakeSuccess(FunctionName);
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return UpdateFunctionParameter(Blueprint, Graph, ParamName, Direction, NewType, NewName);
+    }
+    if (NormalizedAction == TEXT("update_properties"))
+    {
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return UpdateFunctionProperties(Blueprint, Graph, Params);
     }
 
     // Local variable operations
-    if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars")) {
-        FString FunctionName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name'"));
-        auto Result = FunctionService->ListLocalVariables(Blueprint, FunctionName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetArrayField(TEXT("locals"), LocalVariableInfoArrayToJson(Result.GetValue()));
-        Resp->SetNumberField(TEXT("count"), Result.GetValue().Num());
-        return Resp;
-    }
-    
-    if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var")) {
-        FString FunctionName, LocalName, TypeDesc, DefaultValue;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name'"));
-        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
-            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
-                return CreateErrorResponse(PARAM_MISSING, TEXT("Missing local name"));
-        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
-            if (!Params->TryGetStringField(TEXT("local_type"), TypeDesc) && !Params->TryGetStringField(TEXT("variable_type"), TypeDesc))
-                return CreateErrorResponse(PARAM_MISSING, TEXT("Missing type"));
-        Params->TryGetStringField(TEXT("default_value"), DefaultValue);
-        bool bIsConst = false, bIsReference = false;
-        Params->TryGetBoolField(TEXT("is_const"), bIsConst);
-        Params->TryGetBoolField(TEXT("is_reference"), bIsReference);
-        auto Result = FunctionService->AddLocalVariable(Blueprint, FunctionName, LocalName, TypeDesc, DefaultValue, bIsConst, bIsReference);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("local_name"), LocalName);
-        return Resp;
-    }
-    
-    if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var")) {
-        FString FunctionName, LocalName;
-        if (!GetFunctionName(FunctionName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing 'function_name'"));
-        if (!Params->TryGetStringField(TEXT("local_name"), LocalName) && !Params->TryGetStringField(TEXT("variable_name"), LocalName))
-            return CreateErrorResponse(PARAM_MISSING, TEXT("Missing local name"));
-        auto Result = FunctionService->RemoveLocalVariable(Blueprint, FunctionName, LocalName);
-        if (!Result.IsSuccess())
-            return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-        auto Resp = MakeSuccess(FunctionName);
-        Resp->SetStringField(TEXT("local_name"), LocalName);
-        return Resp;
-    }
-    
-    // Unsupported operations (require additional service implementation)
-    if (NormalizedAction == TEXT("update_local") || 
-        NormalizedAction == TEXT("update_local_var") || 
-        NormalizedAction == TEXT("update_properties") || 
-        NormalizedAction == TEXT("get_available_local_types") || 
-        NormalizedAction == TEXT("list_local_types"))
+    if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars"))
     {
-        return CreateErrorResponse(OPERATION_NOT_SUPPORTED, 
-            TEXT("Operation requires additional service implementation"));
+        FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name' for list_locals"));
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        TArray<TSharedPtr<FJsonValue>> Locals = ListFunctionLocalVariables(Blueprint, Graph);
+        TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+        Response->SetBoolField(TEXT("success"), true);
+        Response->SetStringField(TEXT("function_name"), FunctionName);
+        Response->SetArrayField(TEXT("locals"), Locals);
+        Response->SetNumberField(TEXT("count"), Locals.Num());
+        return Response;
     }
-    
-    return CreateErrorResponse(ACTION_UNSUPPORTED, FString::Printf(TEXT("Unknown action: %s"), *Action));
+    if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        FString TypeDesc;
+        if (!Params->TryGetStringField(TEXT("type"), TypeDesc))
+        {
+            if (!Params->TryGetStringField(TEXT("local_type"), TypeDesc) && !Params->TryGetStringField(TEXT("variable_type"), TypeDesc))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'type' parameter for local variable"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return AddFunctionLocalVariable(Blueprint, Graph, LocalName, TypeDesc, Params);
+    }
+    if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return RemoveFunctionLocalVariable(Blueprint, Graph, LocalName);
+    }
+    if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var"))
+    {
+        FString FunctionName;
+        if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Missing 'function_name'"));
+        }
+        FString LocalName;
+        if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            {
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+            }
+        }
+        UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
+        {
+            return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
+        }
+        return UpdateFunctionLocalVariable(Blueprint, Graph, LocalName, Params);
+    }
+    if (NormalizedAction == TEXT("get_available_local_types") || NormalizedAction == TEXT("list_local_types"))
+    {
+        return BuildAvailableLocalVariableTypes();
+    }
+
+    return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown function action: %s"), *Action));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const TSharedPtr<FJsonObject>& Params)
@@ -2041,10 +1386,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const 
     if (NormalizedAction == TEXT("set_property") || NormalizedAction == TEXT("update_property"))
     {
         return HandleSetBlueprintNodeProperty(Params);
-    }
-    if (NormalizedAction == TEXT("get_property") || NormalizedAction == TEXT("property"))
-    {
-        return HandleGetBlueprintNodeProperty(Params);
     }
     if (NormalizedAction == TEXT("reset_pin_defaults") || NormalizedAction == TEXT("reset_pin_default") ||
         NormalizedAction == TEXT("reset_pin") || NormalizedAction == TEXT("reset_pins") ||
@@ -3991,500 +3332,214 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
     
     // 2. Find Blueprint using DiscoveryService
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+    
+    // 3. Call service method - business logic lives in GraphService
+    auto Result = GraphService->ListCustomEvents(Blueprint);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    // 3. List custom events using GraphService
-    TResult<TArray<FString>> EventsResult = GraphService->ListCustomEvents(BlueprintResult.GetValue());
-    if (!EventsResult.IsSuccess())
-    {
-        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
-    }
+    // 4. Convert TResult to JSON response
+    const TArray<FString>& EventNames = Result.GetValue();
     
-    const TArray<FString>& CustomEventNames = EventsResult.GetValue();
-    
-    // 4. Convert event names to JSON array
     TArray<TSharedPtr<FJsonValue>> Events;
-    for (const FString& EventName : CustomEventNames)
+    for (const FString& EventName : EventNames)
     {
         TSharedPtr<FJsonObject> Evt = MakeShared<FJsonObject>();
         Evt->SetStringField(TEXT("name"), EventName);
         Events.Add(MakeShared<FJsonValueObject>(Evt));
     }
     
-    // 5. Build success response
-    TSharedPtr<FJsonObject> Result = CreateSuccessResponse();
-    Result->SetArrayField(TEXT("events"), Events);
-    Result->SetNumberField(TEXT("count"), Events.Num());
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    
-    return Result;
+    TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+    ResultObj->SetArrayField(TEXT("events"), Events);
+    return ResultObj;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
-    FString BlueprintName, NodeIdentifier;
+    // 1. Extract and validate parameters
+    FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
+
+    FString NodeId;
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
-    
+
     bool bCompile = true;
     Params->TryGetBoolField(TEXT("compile"), bCompile);
-    
-    // Find blueprint
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
-    
-    // Refresh node using NodeService
-    TResult<void> RefreshResult = NodeService->RefreshNode(BlueprintResult.GetValue(), NodeIdentifier, bCompile);
-    if (!RefreshResult.IsSuccess())
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->RefreshNode(Blueprint, NodeId);
+    if (Result.IsError())
     {
-        return CreateErrorResponse(RefreshResult.GetErrorCode(), RefreshResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
-    
-    // Build success response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Result->SetBoolField(TEXT("compiled"), bCompile);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' refreshed in Blueprint '%s'"), *NodeIdentifier, *BlueprintName));
-    return Result;
+
+    // 4. Compile if requested
+    if (bCompile)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
+
+    // 5. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_id"), NodeId);
+    Response->SetBoolField(TEXT("compiled"), bCompile);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' refreshed in Blueprint '%s'"), *NodeId, *BlueprintName));
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    
+
     bool bCompile = true;
     Params->TryGetBoolField(TEXT("compile"), bCompile);
-    
-    // Find blueprint
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
-    
-    // Refresh all nodes using NodeService
-    TResult<TArray<FGraphInfo>> RefreshResult = NodeService->RefreshAllNodes(BlueprintResult.GetValue(), bCompile);
-    if (!RefreshResult.IsSuccess())
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->RefreshAllNodes(Blueprint);
+    if (Result.IsError())
     {
-        return CreateErrorResponse(RefreshResult.GetErrorCode(), RefreshResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
-    
-    // Build graph summaries for response
+
+    // 4. Compile if requested
+    if (bCompile)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
+
+    // 5. Build JSON response with graph summaries
+    TArray<UEdGraph*> Graphs;
     TArray<TSharedPtr<FJsonValue>> GraphSummaries;
     int32 TotalNodes = 0;
-    
-    for (const FGraphInfo& GraphInfo : RefreshResult.GetValue())
+
+    // Gather graphs for summary
+    if (Blueprint->UbergraphPages.Num() > 0)
     {
-        TotalNodes += GraphInfo.NodeCount;
-        
-        TSharedPtr<FJsonObject> GraphObj = MakeShared<FJsonObject>();
-        GraphObj->SetStringField(TEXT("graph_name"), GraphInfo.Name);
-        GraphObj->SetStringField(TEXT("graph_guid"), GraphInfo.Guid);
-        GraphObj->SetNumberField(TEXT("node_count"), GraphInfo.NodeCount);
-        GraphSummaries.Add(MakeShared<FJsonValueObject>(GraphObj));
+        Graphs.Append(Blueprint->UbergraphPages);
     }
-    
-    // Build success response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetNumberField(TEXT("graph_count"), RefreshResult.GetValue().Num());
-    Result->SetNumberField(TEXT("node_count"), TotalNodes);
-    Result->SetBoolField(TEXT("compiled"), bCompile);
-    Result->SetArrayField(TEXT("graphs"), GraphSummaries);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), 
-        RefreshResult.GetValue().Num(), TotalNodes, *BlueprintName));
-    return Result;
+    Graphs.Append(Blueprint->FunctionGraphs);
+    Graphs.Append(Blueprint->MacroGraphs);
+
+    for (UEdGraph* Graph : Graphs)
+    {
+        if (!Graph)
+        {
+            continue;
+        }
+
+        TotalNodes += Graph->Nodes.Num();
+
+        TSharedPtr<FJsonObject> GraphInfo = MakeShared<FJsonObject>();
+        GraphInfo->SetStringField(TEXT("graph_name"), Graph->GetName());
+        GraphInfo->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+        GraphInfo->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
+        GraphSummaries.Add(MakeShared<FJsonValueObject>(GraphInfo));
+    }
+
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetNumberField(TEXT("graph_count"), Graphs.Num());
+    Response->SetNumberField(TEXT("node_count"), TotalNodes);
+    Response->SetBoolField(TEXT("compiled"), bCompile);
+    Response->SetArrayField(TEXT("graphs"), GraphSummaries);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), Graphs.Num(), TotalNodes, *BlueprintName));
+    return Response;
 }
 
 // NEW: Reflection-based command implementations
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-	// 1. Extract blueprint_name parameter
-	FString BlueprintName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Missing 'blueprint_name'"));
-	}
-	
-	// 2. Find Blueprint using DiscoveryService
-	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-	if (FindResult.IsError())
-	{
-		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-	}
-	UBlueprint* Blueprint = FindResult.GetValue();
-	
-	// 3. Parse search criteria from parameters
-	FNodeTypeSearchCriteria Criteria;
-	
-	// Extract search parameters with multiple naming variations
-	FString Category;
-	if (Params->TryGetStringField(TEXT("category"), Category))
-	{
-		Criteria.Category = Category;
-	}
-	
-	FString SearchTerm;
-	if (Params->TryGetStringField(TEXT("search_term"), SearchTerm) ||
-		Params->TryGetStringField(TEXT("searchTerm"), SearchTerm) ||
-		Params->TryGetStringField(TEXT("searchterm"), SearchTerm))
-	{
-		Criteria.SearchTerm = SearchTerm;
-	}
-	
-	FString ClassFilter;
-	if (Params->TryGetStringField(TEXT("class_filter"), ClassFilter))
-	{
-		Criteria.ClassFilter = ClassFilter;
-	}
-	
-	Params->TryGetBoolField(TEXT("include_functions"), Criteria.bIncludeFunctions) ||
-		Params->TryGetBoolField(TEXT("includeFunctions"), Criteria.bIncludeFunctions);
-	
-	Params->TryGetBoolField(TEXT("include_variables"), Criteria.bIncludeVariables) ||
-		Params->TryGetBoolField(TEXT("includeVariables"), Criteria.bIncludeVariables);
-	
-	Params->TryGetBoolField(TEXT("include_events"), Criteria.bIncludeEvents) ||
-		Params->TryGetBoolField(TEXT("includeEvents"), Criteria.bIncludeEvents);
-	
-	Params->TryGetBoolField(TEXT("return_descriptors"), Criteria.bReturnDescriptors) ||
-		Params->TryGetBoolField(TEXT("returnDescriptors"), Criteria.bReturnDescriptors);
-	
-	double ParsedMaxResults = 0.0;
-	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
-		Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
-	{
-		Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
-	}
-	
-	// 4. Call ReflectionService to get available node types
-	auto NodesResult = ReflectionService->GetAvailableNodeTypes(Blueprint, Criteria);
-	if (NodesResult.IsError())
-	{
-		return CreateErrorResponse(NodesResult.GetErrorCode(), NodesResult.GetErrorMessage());
-	}
-	
-	// 5. Convert TResult to JSON with category grouping
-	const TArray<FNodeTypeInfo>& NodeTypes = NodesResult.GetValue();
-	
-	// Group nodes by category
-	TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
-	
-	for (const FNodeTypeInfo& NodeInfo : NodeTypes)
-	{
-		TSharedPtr<FJsonObject> NodeJson = MakeShared<FJsonObject>();
-		NodeJson->SetStringField(TEXT("spawner_key"), NodeInfo.SpawnerKey);
-		NodeJson->SetStringField(TEXT("name"), NodeInfo.NodeTitle);
-		NodeJson->SetStringField(TEXT("category"), NodeInfo.Category);
-		NodeJson->SetStringField(TEXT("type"), NodeInfo.NodeType);
-		NodeJson->SetStringField(TEXT("description"), NodeInfo.Description);
-		NodeJson->SetStringField(TEXT("keywords"), NodeInfo.Keywords);
-		NodeJson->SetNumberField(TEXT("expected_pin_count"), NodeInfo.ExpectedPinCount);
-		NodeJson->SetBoolField(TEXT("is_static"), NodeInfo.bIsStatic);
-		
-		// Add to category
-		FString CategoryKey = NodeInfo.Category.IsEmpty() ? TEXT("Other") : NodeInfo.Category;
-		if (!CategoryMap.Contains(CategoryKey))
-		{
-			CategoryMap.Add(CategoryKey, TArray<TSharedPtr<FJsonValue>>());
-		}
-		CategoryMap[CategoryKey].Add(MakeShared<FJsonValueObject>(NodeJson));
-	}
-	
-	// Build final result
-	TSharedPtr<FJsonObject> CategoriesJson = MakeShared<FJsonObject>();
-	for (auto& CategoryPair : CategoryMap)
-	{
-		CategoriesJson->SetArrayField(CategoryPair.Key, CategoryPair.Value);
-	}
-	
-	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetObjectField(TEXT("categories"), CategoriesJson);
-	Result->SetNumberField(TEXT("total_nodes"), NodeTypes.Num());
-	Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-	Result->SetBoolField(TEXT("truncated"), false);
-	Result->SetBoolField(TEXT("with_descriptors"), Criteria.bReturnDescriptors);
-	
-	return Result;
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleGetAvailableBlueprintNodes(Params);
+    }
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
 {
-	// Extract parameters
-	FString BlueprintName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Missing 'blueprint_name' parameter"));
-	}
-	
-	// Find the Blueprint using DiscoveryService
-	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-	if (FindResult.IsError())
-	{
-		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-	}
-	
-	// Parse search criteria
-	FNodeDescriptorSearchCriteria Criteria;
-	Params->TryGetStringField(TEXT("search_term"), Criteria.SearchTerm);
-	Params->TryGetStringField(TEXT("category_filter"), Criteria.CategoryFilter);
-	Params->TryGetStringField(TEXT("class_filter"), Criteria.ClassFilter);
-	
-	double ParsedMaxResults = 0.0;
-	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
-	{
-		Criteria.MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
-	}
-	
-	// Discover nodes with descriptors using ReflectionService
-	auto DescriptorsResult = ReflectionService->DiscoverNodesWithDescriptors(FindResult.GetValue(), Criteria);
-	if (DescriptorsResult.IsError())
-	{
-		return CreateErrorResponse(DescriptorsResult.GetErrorCode(), DescriptorsResult.GetErrorMessage());
-	}
-	
-	// Convert descriptors to JSON
-	TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
-	for (const FNodeDescriptor& Desc : DescriptorsResult.GetValue())
-	{
-		DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(ConvertNodeDescriptorToJson(Desc)));
-	}
-	
-	// Build success response
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
-	Response->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
-	Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-	
-	return Response;
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleDiscoverNodesWithDescriptors(Params);
+    }
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-	// Extract required parameters
-	FString BlueprintName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-	}
-	
-	FString SpawnerKey;
-	if (!Params->TryGetStringField(TEXT("spawner_key"), SpawnerKey))
-	{
-		// Check nested node_params
-		const TSharedPtr<FJsonObject>* NodeParamsPtr = nullptr;
-		if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsPtr) && NodeParamsPtr && NodeParamsPtr->IsValid())
-		{
-			(*NodeParamsPtr)->TryGetStringField(TEXT("spawner_key"), SpawnerKey);
-		}
-	}
-	
-	if (SpawnerKey.IsEmpty())
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-			TEXT("Missing 'spawner_key'. Use discover_nodes_with_descriptors() to get valid spawner keys."));
-	}
-	
-	// Find Blueprint using DiscoveryService
-	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-	if (FindResult.IsError())
-	{
-		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-	}
-	
-	// Build node creation parameters
-	FNodeCreationParams NodeParams;
-	NodeParams.SpawnerKey = SpawnerKey;
-	
-	// Extract position
-	const TArray<TSharedPtr<FJsonValue>>* PositionArrayPtr = nullptr;
-	if (Params->TryGetArrayField(TEXT("position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
-	{
-		NodeParams.Position.X = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
-		NodeParams.Position.Y = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
-	}
-	else if (Params->TryGetArrayField(TEXT("node_position"), PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
-	{
-		NodeParams.Position.X = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
-		NodeParams.Position.Y = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
-	}
-	
-	// Extract graph scope and function name
-	Params->TryGetStringField(TEXT("graph_scope"), NodeParams.GraphScope);
-	Params->TryGetStringField(TEXT("function_name"), NodeParams.FunctionName);
-	
-	// Get node_params for additional configuration
-	const TSharedPtr<FJsonObject>* NodeParamsObjPtr = nullptr;
-	if (Params->TryGetObjectField(TEXT("node_params"), NodeParamsObjPtr) && NodeParamsObjPtr && NodeParamsObjPtr->IsValid())
-	{
-		NodeParams.NodeParams = *NodeParamsObjPtr;
-	}
-	
-	// Create node using NodeService
-	auto CreateResult = NodeService->CreateNodeFromSpawnerKey(FindResult.GetValue(), NodeParams);
-	if (CreateResult.IsError())
-	{
-		return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
-	}
-	
-	// Build success response
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetStringField(TEXT("node_id"), CreateResult.GetValue());
-	Response->SetStringField(TEXT("spawner_key"), SpawnerKey);
-	Response->SetNumberField(TEXT("position_x"), NodeParams.Position.X);
-	Response->SetNumberField(TEXT("position_y"), NodeParams.Position.Y);
-	
-	return Response;
+    if (ReflectionCommands.IsValid())
+    {
+        return ReflectionCommands->HandleAddBlueprintNode(Params);
+    }
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
 {
-	// Extract required parameters
-	FString BlueprintName;
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-	}
-	
-	FString NodeId;
-	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
-	}
-	
-	FString PropertyName;
-	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
-	}
-	
-	FString PropertyValue;
-	if (!Params->TryGetStringField(TEXT("property_value"), PropertyValue))
-	{
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_value' parameter"));
-	}
-	
-	// Find Blueprint using DiscoveryService
-	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-	if (FindResult.IsError())
-	{
-		return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-	}
-	
-	// Set node property using NodeService
-	auto SetResult = NodeService->SetNodeProperty(FindResult.GetValue(), NodeId, PropertyName, PropertyValue);
-	if (SetResult.IsError())
-	{
-		return CreateErrorResponse(SetResult.GetErrorCode(), SetResult.GetErrorMessage());
-	}
-	
-	// Build success response
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetStringField(TEXT("node_id"), NodeId);
-	Response->SetStringField(TEXT("property_name"), PropertyName);
-	Response->SetStringField(TEXT("property_value"), PropertyValue);
-	
-	return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
-{
-    // Extract required parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    if (ReflectionCommands.IsValid())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ReflectionCommands->HandleSetBlueprintNodeProperty(Params);
     }
-    
-    FString NodeId;
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
-    }
-    
-    FString PropertyName;
-    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
-    }
-    
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    
-    // Get node property from NodeService
-    auto GetResult = NodeService->GetNodeProperty(FindResult.GetValue(), NodeId, PropertyName);
-    if (GetResult.IsError())
-    {
-        return CreateErrorResponse(GetResult.GetErrorCode(), GetResult.GetErrorMessage());
-    }
-    
-    // Build success response
-    const FNodePropertyInfo& PropertyInfo = GetResult.GetValue();
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-    Response->SetStringField(TEXT("property_name"), PropertyInfo.PropertyName);
-    Response->SetStringField(TEXT("value"), PropertyInfo.CurrentValue);
-    Response->SetStringField(TEXT("type"), PropertyInfo.PropertyType);
-    Response->SetStringField(TEXT("category"), PropertyInfo.Category);
-    Response->SetStringField(TEXT("node_id"), NodeId);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    
-    return Response;
+    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSplitOrRecombinePins(const TSharedPtr<FJsonObject>& Params, bool bSplitPins)
 {
-    // Extract required parameters
-    FString BlueprintName, NodeId;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    UBlueprint* Blueprint = nullptr;
+    UEdGraphNode* Node = nullptr;
+    UEdGraph* Graph = nullptr;
+    TArray<UEdGraph*> CandidateGraphs;
+    FString BlueprintName;
+    FString NodeIdentifier;
+    FString Error;
+
+    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(Error);
     }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
-    }
-    
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return FCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("[%s] %s"), *FindResult.GetErrorCode(), *FindResult.GetErrorMessage()));
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    
-    // Gather pin names from various sources
+
     auto GatherPins = [&](const TSharedPtr<FJsonObject>& Source, TArray<FString>& OutPins)
     {
         if (!Source.IsValid())
@@ -4547,582 +3602,149 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSplitOrRecombinePins(const
     {
         return FCommonUtils::CreateErrorResponse(TEXT("No pin names provided for operation"));
     }
-    
-    // Apply split/recombine to each pin using NodeService
-    TArray<FString> SuccessPins;
-    TArray<FString> FailedPins;
-    FString LastError;
-    
-    for (const FString& PinName : PinNames)
-    {
-        TResult<void> Result = bSplitPins 
-            ? NodeService->SplitPin(Blueprint, NodeId, PinName)
-            : NodeService->RecombinePin(Blueprint, NodeId, PinName);
-        
-        if (Result.IsError())
-        {
-            FailedPins.Add(PinName);
-            LastError = Result.GetErrorMessage();
-        }
-        else
-        {
-            SuccessPins.Add(PinName);
-        }
-    }
-    
-    // Build response
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-    Response->SetBoolField(TEXT("success"), FailedPins.Num() == 0);
-    Response->SetNumberField(TEXT("processed_count"), PinNames.Num());
-    Response->SetNumberField(TEXT("success_count"), SuccessPins.Num());
-    Response->SetNumberField(TEXT("failed_count"), FailedPins.Num());
-    
-    if (SuccessPins.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> SuccessArray;
-        for (const FString& Pin : SuccessPins)
-        {
-            SuccessArray.Add(MakeShareable(new FJsonValueString(Pin)));
-        }
-        Response->SetArrayField(TEXT("success_pins"), SuccessArray);
-    }
-    
-    if (FailedPins.Num() > 0)
-    {
-        TArray<TSharedPtr<FJsonValue>> FailedArray;
-        for (const FString& Pin : FailedPins)
-        {
-            FailedArray.Add(MakeShareable(new FJsonValueString(Pin)));
-        }
-        Response->SetArrayField(TEXT("failed_pins"), FailedArray);
-        Response->SetStringField(TEXT("error"), LastError);
-    }
-    
-    return Response;
+
+    return ApplyPinTransform(Blueprint, Node, BlueprintName, NodeIdentifier, PinNames, bSplitPins);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract and validate parameters
-    FString BlueprintName, NodeIdentifier;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
-    }
-
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-
-    // Lambda to gather pin names from JSON
-    auto GatherPinNames = [](const TSharedPtr<FJsonObject>& Source, TArray<FString>& OutPins)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-
-        const TArray<FString> PinFields = {
-            TEXT("pin"), TEXT("pin_name"), TEXT("pin_names"), TEXT("pins"), TEXT("pin_display_name"),
-            TEXT("pin_identifier"), TEXT("pin_identifiers"), TEXT("pin_ids")
-        };
-        CollectStringValues(Source, PinFields, OutPins);
-    };
-
-    // Lambda to evaluate reset_all flag from various field names
-    auto EvaluateResetAll = [](const TSharedPtr<FJsonObject>& Source) -> bool
-    {
-        if (!Source.IsValid())
-        {
-            return false;
-        }
-
-        auto MatchesTrueString = [](FString Value) -> bool
-        {
-            Value.TrimStartAndEndInline();
-            Value.ToLowerInline();
-            return Value == TEXT("true") || Value == TEXT("1") || Value == TEXT("all") || Value == TEXT("yes");
-        };
-
-        const TArray<FString> Fields = {TEXT("reset_all"), TEXT("all_pins"), TEXT("all"), TEXT("reset_defaults")};
-        for (const FString& Field : Fields)
-        {
-            bool BoolValue = false;
-            if (Source->TryGetBoolField(Field, BoolValue) && BoolValue)
-            {
-                return true;
-            }
-
-            FString StringValue;
-            if (Source->TryGetStringField(Field, StringValue) && MatchesTrueString(StringValue))
-            {
-                return true;
-            }
-        }
-        return false;
-    };
-
-    // Gather pin names from all parameter sources
-    TArray<FString> PinNames;
-    GatherPinNames(Params, PinNames);
-
-    const TSharedPtr<FJsonObject>* Extra = nullptr;
-    if (Params->TryGetObjectField(TEXT("extra"), Extra) && Extra)
-    {
-        GatherPinNames(*Extra, PinNames);
-    }
-
-    const TSharedPtr<FJsonObject>* NodeConfig = nullptr;
-    if (Params->TryGetObjectField(TEXT("node_config"), NodeConfig) && NodeConfig)
-    {
-        GatherPinNames(*NodeConfig, PinNames);
-    }
-
-    // Check if reset_all flag is set
-    const bool bResetAllPins = EvaluateResetAll(Params) || 
-                               EvaluateResetAll(Extra ? *Extra : nullptr) || 
-                               EvaluateResetAll(NodeConfig ? *NodeConfig : nullptr);
-
-    // If reset_all, we need to get all pin names from the node
-    if (bResetAllPins)
-    {
-        // Find the node to get all its pins
-        TArray<UEdGraph*> AllGraphs;
-        Blueprint->GetAllGraphs(AllGraphs);
-        
-        UEdGraphNode* Node = nullptr;
-        for (UEdGraph* Graph : AllGraphs)
-        {
-            if (!Graph) continue;
-            for (UEdGraphNode* GraphNode : Graph->Nodes)
-            {
-                if (GraphNode && GraphNode->NodeGuid.ToString() == NodeIdentifier)
-                {
-                    Node = GraphNode;
-                    break;
-                }
-            }
-            if (Node) break;
-        }
-        
-        if (Node)
-        {
-            for (UEdGraphPin* Pin : Node->Pins)
-            {
-                if (Pin)
-                {
-                    PinNames.AddUnique(Pin->PinName.ToString());
-                }
-            }
-        }
-    }
-
-    // Deduplicate and trim pin names
-    TSet<FString> SeenPins;
-    TArray<FString> CleanedPinNames;
-    for (FString& PinName : PinNames)
-    {
-        PinName.TrimStartAndEndInline();
-        if (!PinName.IsEmpty() && !SeenPins.Contains(PinName))
-        {
-            SeenPins.Add(PinName);
-            CleanedPinNames.Add(PinName);
-        }
-    }
-
-    if (CleanedPinNames.Num() == 0)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("No pin names provided for reset"));
-    }
-
-    // Determine compile preference
-    auto EvaluateCompilePreference = [](const TSharedPtr<FJsonObject>& Source, bool& bHasValue, bool& bValue)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-
-        bool CompileFlag = false;
-        if (Source->TryGetBoolField(TEXT("compile"), CompileFlag))
-        {
-            bHasValue = true;
-            bValue = CompileFlag;
-        }
-
-        bool SkipFlag = false;
-        if (Source->TryGetBoolField(TEXT("skip_compile"), SkipFlag) && SkipFlag)
-        {
-            bHasValue = true;
-            bValue = false;
-        }
-    };
-
-    bool bCompileExplicit = false;
-    bool bCompileValue = false;
-    EvaluateCompilePreference(Params, bCompileExplicit, bCompileValue);
-    EvaluateCompilePreference(Extra ? *Extra : nullptr, bCompileExplicit, bCompileValue);
-    EvaluateCompilePreference(NodeConfig ? *NodeConfig : nullptr, bCompileExplicit, bCompileValue);
-    const bool bShouldCompile = bCompileExplicit ? bCompileValue : false;
-
-    // Execute pin reset using service layer
-    auto ResetResult = NodeService->ResetPinDefaultsBatch(Blueprint, NodeIdentifier, CleanedPinNames);
-    if (ResetResult.IsError())
-    {
-        return CreateErrorResponse(ResetResult.GetErrorCode(), ResetResult.GetErrorMessage());
-    }
-
-    // Convert service results to JSON
-    const TArray<FBlueprintNodeService::FPinOperationResult>& Results = ResetResult.GetValue();
-    TArray<TSharedPtr<FJsonValue>> PinReports;
-    int32 ChangedCount = 0;
-    int32 FailureCount = 0;
-    int32 NoOpCount = 0;
-
-    for (const auto& Result : Results)
-    {
-        TSharedPtr<FJsonObject> PinReport = MakeShared<FJsonObject>();
-        PinReport->SetStringField(TEXT("pin_name"), Result.PinName);
-        PinReport->SetStringField(TEXT("status"), Result.Status);
-        PinReport->SetStringField(TEXT("message"), Result.Message);
-        PinReport->SetBoolField(TEXT("success"), Result.bSuccess);
-        
-        PinReports.Add(MakeShared<FJsonValueObject>(PinReport));
-        
-        if (Result.Status.Equals(TEXT("applied")))
-        {
-            ChangedCount++;
-        }
-        else if (Result.Status.Equals(TEXT("noop")) || Result.Status.Equals(TEXT("ignored")))
-        {
-            NoOpCount++;
-        }
-        else if (!Result.bSuccess)
-        {
-            FailureCount++;
-        }
-    }
-
-    // Compile if requested and changes were made
-    if (bShouldCompile && ChangedCount > 0)
-    {
-        FKismetEditorUtilities::CompileBlueprint(Blueprint);
-    }
-
-    // Build response
-    const bool bSuccess = (FailureCount == 0);
-    FString Message;
-    if (FailureCount > 0)
-    {
-        Message = TEXT("Some pins could not be reset to defaults");
-    }
-    else if (ChangedCount == 0)
-    {
-        Message = TEXT("All pins already matched their autogenerated defaults");
-    }
-    else
-    {
-        Message = FString::Printf(TEXT("Reset %d pin%s to autogenerated defaults"), 
-                                 ChangedCount, ChangedCount == 1 ? TEXT("") : TEXT("s"));
-    }
-
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), bSuccess);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Response->SetBoolField(TEXT("reset_all"), bResetAllPins);
-    Response->SetNumberField(TEXT("requested_count"), CleanedPinNames.Num());
-    Response->SetNumberField(TEXT("changed_count"), ChangedCount);
-    Response->SetNumberField(TEXT("failure_count"), FailureCount);
-    Response->SetNumberField(TEXT("noop_count"), NoOpCount);
-    Response->SetBoolField(TEXT("compiled"), bShouldCompile && ChangedCount > 0);
-    Response->SetArrayField(TEXT("pins"), PinReports);
-    Response->SetStringField(TEXT("message"), Message);
-    
-    return Response;
+	// Extract and validate parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+	}
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+	}
+	
+	UBlueprint* Blueprint = FindResult.GetValue();
+	
+	// Call service method to reset pin defaults
+	auto Result = NodeService->ResetPinDefaultsAdvanced(Blueprint, NodeId, Params);
+	
+	if (Result.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+	
+	// Add blueprint name to response
+	TSharedPtr<FJsonObject> Response = Result.GetValue();
+	Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract and validate parameters
-    FString BlueprintName, NodeIdentifier;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeIdentifier))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
-    }
-
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-
-    // Lambda to gather pin names from multiple JSON field name variations
-    auto GatherPinSets = [](const TSharedPtr<FJsonObject>& Source, const TArray<FString>& Fields, TArray<FString>& OutPins)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-        CollectStringValues(Source, Fields, OutPins);
-    };
-
-    // Lambda to extract pin names from pin_operations arrays
-    auto GatherFromOperations = [](const TSharedPtr<FJsonObject>& Source, bool bSplit, TArray<FString>& OutPins)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-
-        const TArray<TSharedPtr<FJsonValue>>* PinOperations = nullptr;
-        if (!Source->TryGetArrayField(TEXT("pin_operations"), PinOperations) || !PinOperations)
-        {
-            return;
-        }
-
-        for (const TSharedPtr<FJsonValue>& Value : *PinOperations)
-        {
-            const TSharedPtr<FJsonObject>* OperationObject = nullptr;
-            if (!Value.IsValid() || !Value->TryGetObject(OperationObject) || !OperationObject)
-            {
-                continue;
-            }
-
-            FString Action;
-            if (!(*OperationObject)->TryGetStringField(TEXT("action"), Action))
-            {
-                continue;
-            }
-            Action.TrimStartAndEndInline();
-
-            const bool bMatches = bSplit
-                ? Action.Equals(TEXT("split"), ESearchCase::IgnoreCase)
-                : (Action.Equals(TEXT("recombine"), ESearchCase::IgnoreCase) || Action.Equals(TEXT("unsplit"), ESearchCase::IgnoreCase));
-            if (!bMatches)
-            {
-                continue;
-            }
-
-            CollectStringValues(*OperationObject, {TEXT("pin"), TEXT("pin_name"), TEXT("name")}, OutPins);
-        }
-    };
-
-    // Gather pins to split and recombine from all parameter sources
-    TArray<FString> PinsToSplit;
-    TArray<FString> PinsToRecombine;
-
-    const TArray<FString> SplitFields = {TEXT("split_pin"), TEXT("split_pins"), TEXT("pins_to_split")};
-    const TArray<FString> RecombineFields = {TEXT("recombine_pin"), TEXT("recombine_pins"), TEXT("unsplit_pins"), TEXT("collapse_pins")};
-
-    // Gather from main Params
-    GatherPinSets(Params, SplitFields, PinsToSplit);
-    GatherPinSets(Params, RecombineFields, PinsToRecombine);
-
-    // Gather from "extra" field
-    const TSharedPtr<FJsonObject>* Extra = nullptr;
-    if (Params->TryGetObjectField(TEXT("extra"), Extra) && Extra)
-    {
-        GatherPinSets(*Extra, SplitFields, PinsToSplit);
-        GatherPinSets(*Extra, RecombineFields, PinsToRecombine);
-        GatherFromOperations(*Extra, true, PinsToSplit);
-        GatherFromOperations(*Extra, false, PinsToRecombine);
-    }
-
-    // Gather from "node_config" field
-    const TSharedPtr<FJsonObject>* NodeConfig = nullptr;
-    if (Params->TryGetObjectField(TEXT("node_config"), NodeConfig) && NodeConfig)
-    {
-        GatherPinSets(*NodeConfig, SplitFields, PinsToSplit);
-        GatherPinSets(*NodeConfig, RecombineFields, PinsToRecombine);
-        GatherFromOperations(*NodeConfig, true, PinsToSplit);
-        GatherFromOperations(*NodeConfig, false, PinsToRecombine);
-    }
-
-    if (PinsToSplit.Num() == 0 && PinsToRecombine.Num() == 0)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("No pin operations specified"));
-    }
-
-    // Execute pin operations using service layer
-    TArray<TSharedPtr<FJsonValue>> CombinedPins;
-    int32 ChangedCount = 0;
-    bool bOverallSuccess = true;
-    int32 OperationCount = 0;
-
-    // Convert service results to JSON
-    auto ConvertPinResultsToJson = [&](const TArray<FBlueprintNodeService::FPinOperationResult>& Results)
-    {
-        for (const auto& Result : Results)
-        {
-            TSharedPtr<FJsonObject> PinObj = MakeShared<FJsonObject>();
-            PinObj->SetStringField(TEXT("pin_name"), Result.PinName);
-            PinObj->SetBoolField(TEXT("success"), Result.bSuccess);
-            PinObj->SetStringField(TEXT("status"), Result.Status);
-            PinObj->SetStringField(TEXT("message"), Result.Message);
-            CombinedPins.Add(MakeShared<FJsonValueObject>(PinObj));
-            
-            if (Result.bSuccess && Result.Status.Equals(TEXT("applied")))
-            {
-                ChangedCount++;
-            }
-        }
-    };
-
-    // Execute split operations
-    if (PinsToSplit.Num() > 0)
-    {
-        auto SplitResult = NodeService->SplitPinsBatch(Blueprint, NodeIdentifier, PinsToSplit);
-        if (SplitResult.IsError())
-        {
-            return CreateErrorResponse(SplitResult.GetErrorCode(), SplitResult.GetErrorMessage());
-        }
-        
-        ConvertPinResultsToJson(SplitResult.GetValue());
-        OperationCount++;
-        
-        // Check if any pins failed
-        for (const auto& Result : SplitResult.GetValue())
-        {
-            if (!Result.bSuccess)
-            {
-                bOverallSuccess = false;
-                break;
-            }
-        }
-    }
-
-    // Execute recombine operations
-    if (PinsToRecombine.Num() > 0)
-    {
-        auto RecombineResult = NodeService->RecombinePinsBatch(Blueprint, NodeIdentifier, PinsToRecombine);
-        if (RecombineResult.IsError())
-        {
-            return CreateErrorResponse(RecombineResult.GetErrorCode(), RecombineResult.GetErrorMessage());
-        }
-        
-        ConvertPinResultsToJson(RecombineResult.GetValue());
-        OperationCount++;
-        
-        // Check if any pins failed
-        for (const auto& Result : RecombineResult.GetValue())
-        {
-            if (!Result.bSuccess)
-            {
-                bOverallSuccess = false;
-                break;
-            }
-        }
-    }
-
-    // Build response
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), bOverallSuccess);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Response->SetNumberField(TEXT("operation_count"), OperationCount);
-    Response->SetNumberField(TEXT("changed_count"), ChangedCount);
-    Response->SetArrayField(TEXT("pins"), CombinedPins);
-    Response->SetStringField(TEXT("message"), bOverallSuccess ? TEXT("Node configuration updated") : TEXT("Some pin operations failed"));
-    
-    return Response;
+	// Extract and validate parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+	}
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+	}
+	
+	UBlueprint* Blueprint = FindResult.GetValue();
+	
+	// Call service method to configure node
+	auto Result = NodeService->ConfigureNodeAdvanced(Blueprint, NodeId, Params);
+	
+	if (Result.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+	
+	// Add blueprint name to response
+	TSharedPtr<FJsonObject> Response = Result.GetValue();
+	Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
-    FString BlueprintName, NodeID;
+    // 1. Extract and validate parameters
+    FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
+    
+    FString NodeID;
     if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
     
-    bool bDisconnectPins = true;
-    Params->TryGetBoolField(TEXT("disconnect_pins"), bDisconnectPins);
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
     
-    // Find blueprint
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
     
-    // Delete node using NodeService
-    TResult<FNodeDeletionInfo> DeleteResult = NodeService->DeleteNode(BlueprintResult.GetValue(), NodeID, bDisconnectPins);
-    if (!DeleteResult.IsSuccess())
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->DeleteNode(Blueprint, NodeID, GraphName);
+    if (Result.IsError())
     {
-        return CreateErrorResponse(DeleteResult.GetErrorCode(), DeleteResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    // Compile blueprint
-    FKismetEditorUtilities::CompileBlueprint(BlueprintResult.GetValue());
+    // 4. Compile blueprint
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
     
-    // Build disconnected pins array for response
-    const FNodeDeletionInfo& DeletionInfo = DeleteResult.GetValue();
-    TArray<TSharedPtr<FJsonValue>> DisconnectedPins;
-    for (const FPinConnectionInfo& ConnInfo : DeletionInfo.DisconnectedPins)
-    {
-        TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-        PinInfo->SetStringField(TEXT("pin_name"), ConnInfo.SourcePinName);
-        PinInfo->SetStringField(TEXT("pin_type"), ConnInfo.PinType);
-        PinInfo->SetStringField(TEXT("linked_node"), ConnInfo.TargetNodeId);
-        PinInfo->SetStringField(TEXT("linked_pin"), ConnInfo.TargetPinName);
-        DisconnectedPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-    }
-    
-    // Build success response
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_guid"), DeletionInfo.NodeId);
-    Result->SetStringField(TEXT("node_type"), DeletionInfo.NodeType);
-    Result->SetStringField(TEXT("graph_name"), DeletionInfo.GraphName);
-    Result->SetArrayField(TEXT("disconnected_pins"), DisconnectedPins);
-    Result->SetBoolField(TEXT("pins_disconnected"), bDisconnectPins);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), 
-        *NodeID, *BlueprintName));
-    
-    TSharedPtr<FJsonObject> SafetyChecks = MakeShared<FJsonObject>();
-    SafetyChecks->SetBoolField(TEXT("can_delete_check_passed"), true);
-    SafetyChecks->SetBoolField(TEXT("is_protected_node"), DeletionInfo.bWasProtected);
-    SafetyChecks->SetNumberField(TEXT("pins_disconnected_count"), DisconnectedPins.Num());
-    Result->SetObjectField(TEXT("safety_checks"), SafetyChecks);
-    
-    return Result;
+    // 5. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_guid"), NodeID);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
-    FString BlueprintName, NodeID;
+    // 1. Extract and validate parameters
+    FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'node_id' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    // Parse position from various possible formats
+    FString NodeID;
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+    }
+
+    // Parse position from various possible field formats
     FVector2D NewPosition(0.0f, 0.0f);
     bool bHasPosition = false;
 
@@ -5142,7 +3764,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TS
 
     if (!bHasPosition)
     {
-        double PosX = 0.0, PosY = 0.0;
+        double PosX = 0.0;
+        double PosY = 0.0;
         const bool bHasX = Params->TryGetNumberField(TEXT("x"), PosX) || Params->TryGetNumberField(TEXT("pos_x"), PosX);
         const bool bHasY = Params->TryGetNumberField(TEXT("y"), PosY) || Params->TryGetNumberField(TEXT("pos_y"), PosY);
 
@@ -5156,41 +3779,41 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TS
 
     if (!bHasPosition)
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
     }
 
-    // Find blueprint
-    TResult<UBlueprint*> BlueprintResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (!BlueprintResult.IsSuccess())
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return CreateErrorResponse(BlueprintResult.GetErrorCode(), BlueprintResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    // Move node using NodeService
-    TResult<void> MoveResult = NodeService->MoveNode(BlueprintResult.GetValue(), NodeID, NewPosition);
-    if (!MoveResult.IsSuccess())
-    {
-        return CreateErrorResponse(MoveResult.GetErrorCode(), MoveResult.GetErrorMessage());
-    }
-
-    // Build success response
+    // 3. Call service method - business logic lives in the service
     const int32 RoundedX = FMath::RoundToInt(NewPosition.X);
     const int32 RoundedY = FMath::RoundToInt(NewPosition.Y);
+    
+    auto Result = NodeService->MoveNode(Blueprint, NodeID, RoundedX, RoundedY);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+    }
 
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeID);
-    Result->SetNumberField(TEXT("new_x"), RoundedX);
-    Result->SetNumberField(TEXT("new_y"), RoundedY);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
+    // 4. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_id"), NodeID);
+    Response->SetNumberField(TEXT("new_x"), RoundedX);
+    Response->SetNumberField(TEXT("new_y"), RoundedY);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
 
-    return Result;
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // 1. Extract and validate parameters
     FString BlueprintName;
     FString EventName;
     bool RemoveCustomEventsOnly = true;
@@ -5205,57 +3828,138 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintEventNode(c
         return FCommonUtils::CreateErrorResponse(TEXT("Missing event_name parameter"));
     }
     
+    // Optional parameter with default
     Params->TryGetBoolField(TEXT("remove_custom_events_only"), RemoveCustomEventsOnly);
     
-    // 2. Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
+    // Find the Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    
-    // 3. Delete event node using NodeService
-    auto DeleteResult = NodeService->DeleteEventNode(Blueprint, EventName, RemoveCustomEventsOnly);
-    if (DeleteResult.IsError())
-    {
-        return CreateErrorResponse(DeleteResult.GetErrorCode(), DeleteResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
     }
     
-    const FEventNodeDeletionInfo& DeletionInfo = DeleteResult.GetValue();
+    // Find the Event Graph
+    UEdGraph* EventGraph = nullptr;
+    for (UEdGraph* Graph : Blueprint->UbergraphPages)
+    {
+        if (Graph && Graph->GetFName() == "EventGraph")
+        {
+            EventGraph = Graph;
+            break;
+        }
+    }
     
-    // 4. Compile Blueprint
+    if (!EventGraph)
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("EventGraph not found in Blueprint"));
+    }
+    
+    // Find the event node
+    UK2Node_Event* EventNode = nullptr;
+    UK2Node_CustomEvent* CustomEventNode = nullptr;
+    FString EventType = TEXT("Unknown");
+    
+    for (UEdGraphNode* Node : EventGraph->Nodes)
+    {
+        if (UK2Node_Event* Event = Cast<UK2Node_Event>(Node))
+        {
+            FString NodeEventName = Event->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+            if (NodeEventName.Contains(EventName) || Event->EventReference.GetMemberName().ToString() == EventName)
+            {
+                EventNode = Event;
+                
+                // Check if it's a custom event
+                if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Event))
+                {
+                    CustomEventNode = CustomEvent;
+                    EventType = TEXT("Custom");
+                }
+                else
+                {
+                    EventType = TEXT("Engine");
+                }
+                break;
+            }
+        }
+    }
+    
+    if (!EventNode)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Event '%s' not found in Blueprint"), *EventName));
+    }
+    
+    // Safety check: Protect engine events if safety is enabled
+    if (RemoveCustomEventsOnly && EventType == TEXT("Engine"))
+    {
+        // Check for protected engine events
+        FString EventMemberName = EventNode->EventReference.GetMemberName().ToString();
+        if (EventMemberName == TEXT("ReceiveBeginPlay") || 
+            EventMemberName == TEXT("ReceiveConstruct") || 
+            EventMemberName == TEXT("ReceiveTick") ||
+            EventMemberName == TEXT("ReceiveEndPlay") ||
+            EventMemberName.StartsWith(TEXT("InputAction")) ||
+            EventMemberName.StartsWith(TEXT("InputAxis")))
+        {
+            return FCommonUtils::CreateErrorResponse(FString::Printf(
+                TEXT("Cannot delete protected engine event '%s'. Use remove_custom_events_only=false to override (not recommended)"), 
+                *EventName
+            ));
+        }
+    }
+    
+    // Safety check: Can the user delete this node?
+    if (!EventNode->CanUserDeleteNode())
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Event node '%s' cannot be deleted (protected)"), *EventName));
+    }
+    
+    // Collect information about connected nodes
+    TArray<TSharedPtr<FJsonValue>> ConnectedNodes;
+    
+    for (UEdGraphPin* Pin : EventNode->Pins)
+    {
+        if (Pin && Pin->LinkedTo.Num() > 0)
+        {
+            for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+            {
+                TSharedPtr<FJsonObject> NodeInfo = MakeShareable(new FJsonObject);
+                NodeInfo->SetStringField(TEXT("connected_node"), LinkedPin->GetOwningNode()->GetName());
+                NodeInfo->SetStringField(TEXT("connected_node_type"), LinkedPin->GetOwningNode()->GetClass()->GetName());
+                NodeInfo->SetStringField(TEXT("pin_name"), LinkedPin->PinName.ToString());
+                ConnectedNodes.Add(MakeShareable(new FJsonValueObject(NodeInfo)));
+            }
+            
+            // Break all connections
+            Pin->BreakAllPinLinks();
+        }
+    }
+    
+    // Remove the event node from the graph
+    EventGraph->RemoveNode(EventNode, true);
+    
+    // Mark Blueprint as modified and recompile
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
     FKismetEditorUtilities::CompileBlueprint(Blueprint);
     
-    // 5. Convert deletion info to JSON response (preserving original format)
-    TArray<TSharedPtr<FJsonValue>> ConnectedNodes;
-    for (const FPinConnectionInfo& ConnInfo : DeletionInfo.ConnectedNodes)
-    {
-        TSharedPtr<FJsonObject> NodeInfo = MakeShareable(new FJsonObject);
-        NodeInfo->SetStringField(TEXT("connected_node"), ConnInfo.TargetNodeId);
-        NodeInfo->SetStringField(TEXT("connected_node_type"), ConnInfo.PinType);
-        NodeInfo->SetStringField(TEXT("pin_name"), ConnInfo.TargetPinName);
-        ConnectedNodes.Add(MakeShareable(new FJsonValueObject(NodeInfo)));
-    }
-    
+    // Create success response
     TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
     Result->SetBoolField(TEXT("success"), true);
     Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("event_name"), DeletionInfo.EventName);
-    Result->SetStringField(TEXT("event_type"), DeletionInfo.EventType);
+    Result->SetStringField(TEXT("event_name"), EventName);
+    Result->SetStringField(TEXT("event_type"), EventType);
     Result->SetBoolField(TEXT("protection_active"), RemoveCustomEventsOnly);
     Result->SetArrayField(TEXT("connected_nodes"), ConnectedNodes);
     Result->SetNumberField(TEXT("connected_nodes_count"), ConnectedNodes.Num());
     Result->SetStringField(TEXT("message"), FString::Printf(
         TEXT("%s event '%s' successfully deleted from Blueprint '%s'"), 
-        *DeletionInfo.EventType, *DeletionInfo.EventName, *BlueprintName
+        *EventType, *EventName, *BlueprintName
     ));
     
     // Add safety information
     TSharedPtr<FJsonObject> SafetyInfo = MakeShareable(new FJsonObject);
     SafetyInfo->SetBoolField(TEXT("custom_events_only"), RemoveCustomEventsOnly);
-    SafetyInfo->SetBoolField(TEXT("is_custom_event"), DeletionInfo.bIsCustomEvent);
-    SafetyInfo->SetBoolField(TEXT("is_protected_event"), DeletionInfo.bWasProtectedEvent);
+    SafetyInfo->SetBoolField(TEXT("is_custom_event"), EventType == TEXT("Custom"));
+    SafetyInfo->SetBoolField(TEXT("is_protected_event"), false);  // If we got here, it wasn't protected
     Result->SetObjectField(TEXT("safety_info"), SafetyInfo);
     
     return Result;
@@ -5289,7 +3993,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentName;
@@ -5319,8 +4023,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
 
     if (ComponentName.IsEmpty() || DelegateName.IsEmpty())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-            TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
     }
 
     // Parse position
@@ -5332,45 +4035,44 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
         Position.Y = (*PositionArray)[1]->AsNumber();
     }
 
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Create component event using ComponentService - returns complete metadata
-    auto EventResult = ComponentService->CreateComponentEvent(
-        FindResult.GetValue(),
+    // Create component event using reflection-based binder
+    FString Error;
+    UK2Node_ComponentBoundEvent* EventNode = FComponentEventBinder::CreateComponentEvent(
+        Blueprint,
         ComponentName,
         DelegateName,
-        Position
+        Position,
+        Error
     );
 
-    if (EventResult.IsError())
+    if (!EventNode)
     {
-        return CreateErrorResponse(EventResult.GetErrorCode(), EventResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Failed to create component event: %s"), *Error));
     }
 
-    // Service returns complete result with all metadata
-    const FComponentEventResult& EventData = EventResult.GetValue();
-
-    // Build success response from service result
+    // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), EventData.NodeId);
-    Result->SetStringField(TEXT("component_name"), EventData.ComponentName);
-    Result->SetStringField(TEXT("delegate_name"), EventData.DelegateName);
-    Result->SetNumberField(TEXT("pin_count"), EventData.PinCount);
+    Result->SetStringField(TEXT("node_id"), EventNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+    Result->SetStringField(TEXT("component_name"), ComponentName);
+    Result->SetStringField(TEXT("delegate_name"), DelegateName);
+    Result->SetNumberField(TEXT("pin_count"), EventNode->Pins.Num());
     
     // Add position info
     TArray<TSharedPtr<FJsonValue>> PosArray;
-    PosArray.Add(MakeShared<FJsonValueNumber>(EventData.Position.X));
-    PosArray.Add(MakeShared<FJsonValueNumber>(EventData.Position.Y));
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosX));
+    PosArray.Add(MakeShared<FJsonValueNumber>(EventNode->NodePosY));
     Result->SetArrayField(TEXT("position"), PosArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Successfully created component event: %s::%s"), 
-        *EventData.ComponentName, *EventData.DelegateName);
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created component event: %s::%s"), *ComponentName, *DelegateName);
 
     return Result;
 }
@@ -5381,37 +4083,45 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString ComponentNameFilter;
     Params->TryGetStringField(TEXT("component_name"), ComponentNameFilter);
 
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Get component events using ComponentService
-    auto EventsResult = ComponentService->GetComponentEvents(FindResult.GetValue(), ComponentNameFilter);
-    if (EventsResult.IsError())
+    // Discover component events using reflection
+    TArray<FComponentEventInfo> Events;
+    if (!FComponentEventBinder::GetAvailableComponentEvents(Blueprint, ComponentNameFilter, Events))
     {
-        return CreateErrorResponse(EventsResult.GetErrorCode(), EventsResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(TEXT("Failed to enumerate component events"));
     }
-
-    // Service returns events grouped by component - convert to JSON
-    const FComponentEventsResult& EventData = EventsResult.GetValue();
 
     // Build response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetNumberField(TEXT("count"), EventData.TotalEventCount);
+    Result->SetNumberField(TEXT("count"), Events.Num());
 
-    // Build components array from service result
+    // Group events by component
+    TMap<FString, TArray<FComponentEventInfo>> EventsByComponent;
+    for (const FComponentEventInfo& EventInfo : Events)
+    {
+        if (!EventsByComponent.Contains(EventInfo.ComponentName))
+        {
+            EventsByComponent.Add(EventInfo.ComponentName, TArray<FComponentEventInfo>());
+        }
+        EventsByComponent[EventInfo.ComponentName].Add(EventInfo);
+    }
+
+    // Build components array
     TArray<TSharedPtr<FJsonValue>> ComponentsArray;
-    for (const auto& Pair : EventData.EventsByComponent)
+    for (const auto& Pair : EventsByComponent)
     {
         TSharedPtr<FJsonObject> ComponentObj = MakeShared<FJsonObject>();
         ComponentObj->SetStringField(TEXT("component_name"), Pair.Key);
@@ -5452,8 +4162,8 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
 
     Result->SetArrayField(TEXT("components"), ComponentsArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Retrieved %d component events across %d components"), 
-        EventData.TotalEventCount, EventData.EventsByComponent.Num());
+    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d component events across %d components"), 
+        Events.Num(), EventsByComponent.Num());
 
     return Result;
 }
@@ -5464,54 +4174,81 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetComponentEvents(const T
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetAllInputKeys(const TSharedPtr<FJsonObject>& Params)
 {
-	// 1. Extract parameters
-	FString Category = TEXT("All");
-	Params->TryGetStringField(TEXT("category"), Category);
+    // Extract parameters
+    FString Category = TEXT("All");
+    Params->TryGetStringField(TEXT("category"), Category);
 
-	bool bIncludeDeprecated = false;
-	Params->TryGetBoolField(TEXT("include_deprecated"), bIncludeDeprecated);
+    bool bIncludeDeprecated = false;
+    Params->TryGetBoolField(TEXT("include_deprecated"), bIncludeDeprecated);
 
-	// 2. Call ReflectionService to get input keys
-	auto Result = ReflectionService->GetAllInputKeys(Category, bIncludeDeprecated);
-	
-	if (Result.IsError())
-	{
-		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
+    // Get input keys using reflection
+    TArray<FInputKeyInfo> Keys;
+    int32 Count = 0;
+    
+    if (Category == TEXT("All"))
+    {
+        Count = FInputKeyEnumerator::GetAllInputKeys(Keys, bIncludeDeprecated);
+    }
+    else
+    {
+        Count = FInputKeyEnumerator::GetInputKeysByCategory(Category, Keys);
+    }
 
-	// 3. Build JSON response
-	const auto& InputKeyResult = Result.GetValue();
-	
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-	Response->SetBoolField(TEXT("success"), true);
-	Response->SetNumberField(TEXT("count"), InputKeyResult.TotalCount);
-	Response->SetStringField(TEXT("category"), InputKeyResult.Category);
+    // Build response
+    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+    Result->SetBoolField(TEXT("success"), true);
+    Result->SetNumberField(TEXT("count"), Count);
+    Result->SetStringField(TEXT("category"), Category);
 
-	// Convert key objects to JSON values
-	TArray<TSharedPtr<FJsonValue>> KeysArray;
-	for (const auto& KeyObj : InputKeyResult.Keys)
-	{
-		KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
-	}
-	Response->SetArrayField(TEXT("keys"), KeysArray);
+    // Build keys array
+    TArray<TSharedPtr<FJsonValue>> KeysArray;
+    for (const FInputKeyInfo& KeyInfo : Keys)
+    {
+        TSharedPtr<FJsonObject> KeyObj = MakeShared<FJsonObject>();
+        KeyObj->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
+        KeyObj->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
+        KeyObj->SetStringField(TEXT("menu_category"), KeyInfo.MenuCategory);
+        KeyObj->SetStringField(TEXT("category"), KeyInfo.Category);
+        KeyObj->SetBoolField(TEXT("is_gamepad"), KeyInfo.bIsGamepadKey);
+        KeyObj->SetBoolField(TEXT("is_mouse"), KeyInfo.bIsMouseButton);
+        KeyObj->SetBoolField(TEXT("is_keyboard"), KeyInfo.bIsKeyboard);
+        KeyObj->SetBoolField(TEXT("is_modifier"), KeyInfo.bIsModifierKey);
+        KeyObj->SetBoolField(TEXT("is_digital"), KeyInfo.bIsDigital);
+        KeyObj->SetBoolField(TEXT("is_analog"), KeyInfo.bIsAnalog);
+        KeyObj->SetBoolField(TEXT("is_bindable"), KeyInfo.bIsBindableInBlueprints);
 
-	// Add statistics
-	TSharedPtr<FJsonObject> StatsObj = MakeShared<FJsonObject>();
-	StatsObj->SetNumberField(TEXT("keyboard_keys"), InputKeyResult.KeyboardCount);
-	StatsObj->SetNumberField(TEXT("mouse_keys"), InputKeyResult.MouseCount);
-	StatsObj->SetNumberField(TEXT("gamepad_keys"), InputKeyResult.GamepadCount);
-	StatsObj->SetNumberField(TEXT("other_keys"), InputKeyResult.OtherCount);
-	Response->SetObjectField(TEXT("statistics"), StatsObj);
+        KeysArray.Add(MakeShared<FJsonValueObject>(KeyObj));
+    }
+    Result->SetArrayField(TEXT("keys"), KeysArray);
 
-	return Response;
+    // Add category statistics
+    TSharedPtr<FJsonObject> StatsObj = MakeShared<FJsonObject>();
+    int32 KeyboardCount = 0, MouseCount = 0, GamepadCount = 0, OtherCount = 0;
+    for (const FInputKeyInfo& KeyInfo : Keys)
+    {
+        if (KeyInfo.bIsGamepadKey) GamepadCount++;
+        else if (KeyInfo.bIsMouseButton) MouseCount++;
+        else if (KeyInfo.bIsKeyboard) KeyboardCount++;
+        else OtherCount++;
+    }
+    StatsObj->SetNumberField(TEXT("keyboard_keys"), KeyboardCount);
+    StatsObj->SetNumberField(TEXT("mouse_keys"), MouseCount);
+    StatsObj->SetNumberField(TEXT("gamepad_keys"), GamepadCount);
+    StatsObj->SetNumberField(TEXT("other_keys"), OtherCount);
+    Result->SetObjectField(TEXT("statistics"), StatsObj);
+
+    UE_LOG(LogVibeUE, Log, TEXT("Discovered %d input keys via reflection (Category: %s)"), Count, *Category);
+
+    return Result;
 }
+
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Extract parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
     FString KeyName;
@@ -5527,7 +4264,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
 
     if (KeyName.IsEmpty())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'key_name' parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'key_name' parameter"));
     }
 
     // Parse position
@@ -5539,43 +4276,51 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
         Position.Y = (*PositionArray)[1]->AsNumber();
     }
 
-    // Find the blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
+    // Find Blueprint
+    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
+    if (!Blueprint)
     {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
     }
 
-    // Prepare input key node parameters
-    FInputKeyNodeParams InputKeyParams;
-    InputKeyParams.KeyName = KeyName;
-    InputKeyParams.Position = Position;
-
-    // Create input key node using NodeService - returns complete metadata
-    auto CreateResult = NodeService->CreateInputKeyNode(FindResult.GetValue(), InputKeyParams);
-    if (CreateResult.IsError())
+    // Find the key using reflection
+    FInputKeyInfo KeyInfo;
+    if (!FInputKeyEnumerator::FindInputKey(KeyName, KeyInfo))
     {
-        return CreateErrorResponse(CreateResult.GetErrorCode(), CreateResult.GetErrorMessage());
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Input key '%s' not found. Use get_all_input_keys to discover available keys."), *KeyName));
     }
 
-    // Service returns complete result with all metadata
-    const FInputKeyNodeResult& NodeResult = CreateResult.GetValue();
+    // Create input key node
+    FString Error;
+    UK2Node_InputKey* InputKeyNode = FInputKeyEnumerator::CreateInputKeyNode(
+        Blueprint,
+        KeyInfo.Key,
+        Position,
+        Error
+    );
 
-    // Build success response from service result
+    if (!InputKeyNode)
+    {
+        return FCommonUtils::CreateErrorResponse(FString::Printf(
+            TEXT("Failed to create input key node: %s"), *Error));
+    }
+
+    // Build success response
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("node_id"), NodeResult.NodeId);
-    Result->SetStringField(TEXT("key_name"), NodeResult.KeyName);
-    Result->SetStringField(TEXT("display_name"), NodeResult.DisplayName);
-    Result->SetNumberField(TEXT("pin_count"), NodeResult.PinCount);
+    Result->SetStringField(TEXT("node_id"), InputKeyNode->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+    Result->SetStringField(TEXT("key_name"), KeyInfo.KeyName);
+    Result->SetStringField(TEXT("display_name"), KeyInfo.DisplayName);
+    Result->SetNumberField(TEXT("pin_count"), InputKeyNode->Pins.Num());
     
     // Add position info
     TArray<TSharedPtr<FJsonValue>> PosArray;
-    PosArray.Add(MakeShared<FJsonValueNumber>(NodeResult.Position.X));
-    PosArray.Add(MakeShared<FJsonValueNumber>(NodeResult.Position.Y));
+    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosX));
+    PosArray.Add(MakeShared<FJsonValueNumber>(InputKeyNode->NodePosY));
     Result->SetArrayField(TEXT("position"), PosArray);
 
-    UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *NodeResult.KeyName);
+    UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *KeyInfo.KeyName);
 
     return Result;
 }

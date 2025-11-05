@@ -3,40 +3,12 @@
 #include "CoreMinimal.h"
 #include "Core/Result.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/Blueprint/Types/GraphTypes.h"
 #include "Engine/Blueprint.h"
 #include "EdGraph/EdGraph.h"
 
 // Forward declarations
 class UK2Node_CustomEvent;
-
-/**
- * Information about a graph
- */
-struct VIBEUE_API FGraphInfo
-{
-    FString Name;
-    FString Guid;
-    FString GraphType; // "event", "function", "macro", etc.
-    int32 NodeCount;
-    
-    FGraphInfo()
-        : NodeCount(0)
-    {}
-};
-
-/**
- * Summary information about a node in a graph
- */
-struct VIBEUE_API FNodeSummary
-{
-    FString NodeId;
-    FString NodeType;
-    FString Title;
-    TArray<TSharedPtr<FJsonObject>> Pins;
-    
-    FNodeSummary()
-    {}
-};
 
 /**
  * Service for Blueprint graph introspection and manipulation
