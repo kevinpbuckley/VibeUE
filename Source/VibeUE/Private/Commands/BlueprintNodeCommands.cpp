@@ -216,6 +216,10 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
     NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
     GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
     ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
+    
+    // Pass services to ReflectionCommands
+    ReflectionCommands->SetDiscoveryService(DiscoveryService);
+    ReflectionCommands->SetNodeService(NodeService);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)

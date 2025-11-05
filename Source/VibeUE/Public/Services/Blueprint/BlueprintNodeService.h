@@ -361,6 +361,14 @@ public:
 	 */
 	TResult<TSharedPtr<FJsonObject>> DisconnectPinsAdvanced(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params);
 
+	/**
+	 * Get available Blueprint nodes with filtering and discovery
+	 * @param Blueprint The blueprint to discover nodes for
+	 * @param Params JSON parameters containing search_term, category, filters, and options
+	 * @return JSON object with categorized node information
+	 */
+	TResult<TSharedPtr<FJsonObject>> GetAvailableNodes(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params);
+
 private:
 	// Helper methods for graph resolution
 	UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName) const;

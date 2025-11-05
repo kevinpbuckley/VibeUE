@@ -303,6 +303,7 @@ public:
 
     // Service initialization
     void SetDiscoveryService(TSharedPtr<class FBlueprintDiscoveryService> InDiscoveryService) { DiscoveryService = InDiscoveryService; }
+    void SetNodeService(TSharedPtr<class FBlueprintNodeService> InNodeService) { NodeService = InNodeService; }
 
     // Enhanced MCP command handlers
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintNodes(const TSharedPtr<FJsonObject>& Params);
@@ -314,6 +315,7 @@ public:
 private:
     // Services
     TSharedPtr<class FBlueprintDiscoveryService> DiscoveryService;
+    TSharedPtr<class FBlueprintNodeService> NodeService;
     
     // Helper methods
     UBlueprint* FindBlueprint(const FString& BlueprintName);

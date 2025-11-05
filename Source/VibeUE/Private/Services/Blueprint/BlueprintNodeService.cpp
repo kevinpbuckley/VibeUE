@@ -1904,6 +1904,117 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DisconnectPinsAdvanced(U
 	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
 }
 
+TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params)
+{
+	// Validate Blueprint
+	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+
+	if (!Params.IsValid())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			TEXT("Invalid parameters object")
+		);
+	}
+
+	// Extract parameters
+	FString SearchTerm;
+	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+	{
+		if (!Params->TryGetStringField(TEXT("searchTerm"), SearchTerm))
+		{
+			Params->TryGetStringField(TEXT("searchterm"), SearchTerm);
+		}
+	}
+	SearchTerm.TrimStartAndEndInline();
+
+	FString Category;
+	Params->TryGetStringField(TEXT("category"), Category);
+	Category.TrimStartAndEndInline();
+
+	// Extract filter options
+	bool bIncludeFunctions = true;
+	bool bIncludeVariables = true;
+	bool bIncludeEvents = true;
+	Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
+	Params->TryGetBoolField(TEXT("includeFunctions"), bIncludeFunctions);
+	Params->TryGetBoolField(TEXT("include_variables"), bIncludeVariables);
+	Params->TryGetBoolField(TEXT("includeVariables"), bIncludeVariables);
+	Params->TryGetBoolField(TEXT("include_events"), bIncludeEvents);
+	Params->TryGetBoolField(TEXT("includeEvents"), bIncludeEvents);
+
+	int32 MaxResults = 100;
+	double ParsedMaxResults = 0.0;
+	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
+		Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
+	{
+		MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+	}
+
+	// Use descriptor-based discovery (modern approach)
+	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, Category, TEXT(""), MaxResults);
+
+	// Convert descriptors to category-based format with type filtering
+	TMap<FString, TArray<TSharedPtr<FJsonValue>>> CategoryMap;
+	int32 TotalNodes = 0;
+
+	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+	{
+		// Apply type filters
+		if (!bIncludeFunctions && Desc.NodeType == TEXT("function_call"))
+		{
+			continue;
+		}
+		if (!bIncludeVariables && (Desc.NodeType == TEXT("variable_get") || Desc.NodeType == TEXT("variable_set")))
+		{
+			continue;
+		}
+		if (!bIncludeEvents && Desc.NodeType == TEXT("event"))
+		{
+			continue;
+		}
+
+		// Convert descriptor to JSON (includes spawner_key, pins, metadata, etc.)
+		TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+
+		// Organize by category
+		FString DescCategory = Desc.Category;
+		if (DescCategory.IsEmpty())
+		{
+			DescCategory = TEXT("Other");
+		}
+
+		if (!CategoryMap.Contains(DescCategory))
+		{
+			CategoryMap.Add(DescCategory, TArray<TSharedPtr<FJsonValue>>());
+		}
+
+		CategoryMap[DescCategory].Add(MakeShared<FJsonValueObject>(DescriptorJson));
+		TotalNodes++;
+	}
+
+	// Build result structure
+	TSharedPtr<FJsonObject> Categories = MakeShared<FJsonObject>();
+	for (auto& CategoryPair : CategoryMap)
+	{
+		Categories->SetArrayField(CategoryPair.Key, CategoryPair.Value);
+	}
+
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetObjectField(TEXT("categories"), Categories);
+	Result->SetNumberField(TEXT("total_nodes"), TotalNodes);
+	Result->SetStringField(TEXT("blueprint_name"), Blueprint->GetName());
+	Result->SetBoolField(TEXT("truncated"), false);
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetBoolField(TEXT("with_descriptors"), true);  // Descriptor mode
+
+	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
+}
+
 TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
 {
 	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())
