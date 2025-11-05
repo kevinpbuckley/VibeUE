@@ -364,10 +364,73 @@ TResult<void> FBlueprintNodeService::DeleteNode(UBlueprint* Blueprint, const FSt
 		return ValidationResult;
 	}
 	
-	return TResult<void>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("DeleteNode not yet implemented - needs extraction from HandleManageBlueprintNode")
-	);
+	// Gather candidate graphs
+	TArray<UEdGraph*> CandidateGraphs;
+	UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, GraphName);
+	GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+	
+	if (CandidateGraphs.Num() == 0)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			TEXT("No graphs available to search")
+		);
+	}
+	
+	// Find the node
+	UEdGraphNode* NodeToDelete = FindNodeByGuid(CandidateGraphs, NodeId);
+	if (!NodeToDelete)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::NODE_NOT_FOUND,
+			FString::Printf(TEXT("Node not found: %s"), *NodeId)
+		);
+	}
+	
+	// Check if node can be deleted
+	if (!NodeToDelete->CanUserDeleteNode())
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::OPERATION_NOT_ALLOWED,
+			FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeId)
+		);
+	}
+	
+	UEdGraph* NodeGraph = NodeToDelete->GetGraph();
+	
+	// Disconnect all pins first
+	for (UEdGraphPin* Pin : NodeToDelete->Pins)
+	{
+		if (Pin && Pin->LinkedTo.Num() > 0)
+		{
+			Pin->BreakAllPinLinks();
+		}
+	}
+	
+	// Delete the node with transaction
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "Delete Blueprint Node"));
+	
+	if (NodeGraph)
+	{
+		NodeGraph->Modify();
+	}
+	NodeToDelete->Modify();
+	
+	if (NodeGraph)
+	{
+		NodeGraph->RemoveNode(NodeToDelete, true);
+		NodeGraph->NotifyGraphChanged();
+	}
+	else
+	{
+		NodeToDelete->DestroyNode();
+	}
+	
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Deleted node '%s' from Blueprint '%s'"), *NodeId, *Blueprint->GetName()));
+	
+	return TResult<void>::Success();
 }
 
 TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FString& NodeId, int32 PosX, int32 PosY)
@@ -382,10 +445,53 @@ TResult<void> FBlueprintNodeService::MoveNode(UBlueprint* Blueprint, const FStri
 		return ValidationResult;
 	}
 	
-	return TResult<void>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("MoveNode not yet implemented - needs extraction from HandleManageBlueprintNode")
-	);
+	// Gather candidate graphs
+	TArray<UEdGraph*> CandidateGraphs;
+	GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+	
+	if (CandidateGraphs.Num() == 0)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			TEXT("No graphs available to search")
+		);
+	}
+	
+	// Find the node
+	UEdGraphNode* Node = FindNodeByGuid(CandidateGraphs, NodeId);
+	if (!Node)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::NODE_NOT_FOUND,
+			FString::Printf(TEXT("Node not found: %s"), *NodeId)
+		);
+	}
+	
+	UEdGraph* NodeGraph = Node->GetGraph();
+	
+	// Move the node with transaction
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "MoveBlueprintNode", "Move Blueprint Node"));
+	
+	if (NodeGraph)
+	{
+		NodeGraph->Modify();
+	}
+	Node->Modify();
+	
+	Node->NodePosX = PosX;
+	Node->NodePosY = PosY;
+	
+	if (NodeGraph)
+	{
+		NodeGraph->NotifyGraphChanged();
+	}
+	
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Moved node '%s' to position (%d, %d) in Blueprint '%s'"), 
+		*NodeId, PosX, PosY, *Blueprint->GetName()));
+	
+	return TResult<void>::Success();
 }
 
 TResult<void> FBlueprintNodeService::RefreshNode(UBlueprint* Blueprint, const FString& NodeId)

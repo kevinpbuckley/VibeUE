@@ -5375,139 +5375,65 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
+    // 1. Extract and validate parameters
     FString BlueprintName;
-    FString NodeID;
-    bool DisconnectPins = true;
-    
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing blueprint_name parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
     
+    FString NodeID;
     if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing node_id parameter"));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
     
-    // Optional parameter with default
-    Params->TryGetBoolField(TEXT("disconnect_pins"), DisconnectPins);
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
     
-    // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+    
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->DeleteNode(Blueprint, NodeID, GraphName);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    FString ScopeError;
-    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!PreferredGraph && !ScopeError.IsEmpty())
-    {
-        return FCommonUtils::CreateErrorResponse(ScopeError);
-    }
-
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
-
-    UEdGraphNode* NodeToDelete = nullptr;
-    UEdGraph* NodeGraph = nullptr;
-    ResolveNodeIdentifier(NodeID, CandidateGraphs, NodeToDelete, NodeGraph);
-
-    if (!NodeToDelete)
-    {
-        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
-        UE_LOG(LogVibeUE, Error, TEXT("DeleteBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
-    }
-
-    if (!NodeToDelete->CanUserDeleteNode())
-    {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node '%s' cannot be deleted (protected engine node)"), *NodeID));
-    }
-
-    TArray<TSharedPtr<FJsonValue>> DisconnectedPins;
-    if (DisconnectPins)
-    {
-        for (UEdGraphPin* Pin : NodeToDelete->Pins)
-        {
-            if (Pin && Pin->LinkedTo.Num() > 0)
-            {
-                for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
-                {
-                    if (!LinkedPin)
-                    {
-                        continue;
-                    }
-
-                    TSharedPtr<FJsonObject> PinInfo = MakeShared<FJsonObject>();
-                    PinInfo->SetStringField(TEXT("pin_name"), Pin->PinName.ToString());
-                    PinInfo->SetStringField(TEXT("pin_type"), Pin->PinType.PinCategory.ToString());
-                    PinInfo->SetStringField(TEXT("linked_node"), LinkedPin->GetOwningNode()->GetName());
-                    PinInfo->SetStringField(TEXT("linked_pin"), LinkedPin->PinName.ToString());
-                    DisconnectedPins.Add(MakeShared<FJsonValueObject>(PinInfo));
-                }
-
-                Pin->BreakAllPinLinks();
-            }
-        }
-    }
-
-    const FString NodeType = NodeToDelete->GetClass()->GetName();
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "DeleteBlueprintNode", "MCP Delete Blueprint Node"));
-
-    if (NodeGraph)
-    {
-        NodeGraph->Modify();
-    }
-    NodeToDelete->Modify();
-
-    if (NodeGraph)
-    {
-        NodeGraph->RemoveNode(NodeToDelete, true);
-        NodeGraph->NotifyGraphChanged();
-    }
-    else
-    {
-        NodeToDelete->DestroyNode();
-    }
-
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+    // 4. Compile blueprint
     FKismetEditorUtilities::CompileBlueprint(Blueprint);
-
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_guid"), NodeID);
-    Result->SetStringField(TEXT("node_type"), NodeType);
-    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
-    Result->SetArrayField(TEXT("disconnected_pins"), DisconnectedPins);
-    Result->SetBoolField(TEXT("pins_disconnected"), DisconnectPins);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
-
-    TSharedPtr<FJsonObject> SafetyChecks = MakeShared<FJsonObject>();
-    SafetyChecks->SetBoolField(TEXT("can_delete_check_passed"), true);
-    SafetyChecks->SetBoolField(TEXT("is_protected_node"), false);
-    SafetyChecks->SetNumberField(TEXT("pins_disconnected_count"), DisconnectedPins.Num());
-    Result->SetObjectField(TEXT("safety_checks"), SafetyChecks);
-
-    return Result;
+    
+    // 5. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_guid"), NodeID);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' successfully deleted from Blueprint '%s'"), *NodeID, *BlueprintName));
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
+    // 1. Extract and validate parameters
     FString BlueprintName;
-    FString NodeID;
-
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
+    FString NodeID;
     if (!Params->TryGetStringField(TEXT("node_id"), NodeID))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
 
+    // Parse position from various possible field formats
     FVector2D NewPosition(0.0f, 0.0f);
     bool bHasPosition = false;
 
@@ -5545,72 +5471,34 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleMoveBlueprintNode(const TS
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'position' (array) or 'x'/'y' fields for node move"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
     }
+    UBlueprint* Blueprint = FindResult.GetValue();
 
-    FString ScopeError;
-    UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!PreferredGraph && !ScopeError.IsEmpty())
-    {
-        return FCommonUtils::CreateErrorResponse(ScopeError);
-    }
-
-    TArray<UEdGraph*> CandidateGraphs;
-    GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
-
-    UEdGraphNode* TargetNode = nullptr;
-    UEdGraph* NodeGraph = nullptr;
-    ResolveNodeIdentifier(NodeID, CandidateGraphs, TargetNode, NodeGraph);
-
-    if (!TargetNode)
-    {
-        const FString AvailableNodes = DescribeAvailableNodes(CandidateGraphs);
-        UE_LOG(LogVibeUE, Error, TEXT("MoveBlueprintNode: Node '%s' not found. Candidates: %s"), *NodeID, *AvailableNodes);
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Node with ID '%s' not found"), *NodeID));
-    }
-
-    if (!NodeGraph)
-    {
-        NodeGraph = PreferredGraph;
-    }
-
-    const int32 PreviousX = TargetNode->NodePosX;
-    const int32 PreviousY = TargetNode->NodePosY;
+    // 3. Call service method - business logic lives in the service
     const int32 RoundedX = FMath::RoundToInt(NewPosition.X);
     const int32 RoundedY = FMath::RoundToInt(NewPosition.Y);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "MoveBlueprintNode", "MCP Move Blueprint Node"));
-    if (NodeGraph)
+    
+    auto Result = NodeService->MoveNode(Blueprint, NodeID, RoundedX, RoundedY);
+    if (Result.IsError())
     {
-        NodeGraph->Modify();
-    }
-    TargetNode->Modify();
-
-    TargetNode->NodePosX = RoundedX;
-    TargetNode->NodePosY = RoundedY;
-
-    if (NodeGraph)
-    {
-        NodeGraph->NotifyGraphChanged();
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    // 4. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_id"), NodeID);
+    Response->SetNumberField(TEXT("new_x"), RoundedX);
+    Response->SetNumberField(TEXT("new_y"), RoundedY);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
 
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeID);
-    Result->SetStringField(TEXT("graph_name"), NodeGraph ? NodeGraph->GetName() : TEXT(""));
-    Result->SetNumberField(TEXT("previous_x"), PreviousX);
-    Result->SetNumberField(TEXT("previous_y"), PreviousY);
-    Result->SetNumberField(TEXT("new_x"), RoundedX);
-    Result->SetNumberField(TEXT("new_y"), RoundedY);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' moved to (%d, %d)"), *NodeID, RoundedX, RoundedY));
-
-    return Result;
+    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintEventNode(const TSharedPtr<FJsonObject>& Params)
