@@ -298,6 +298,18 @@ public:
 	 */
 	TResult<void> ResetPinDefaults(UBlueprint* Blueprint, const FString& NodeId, const TArray<FString>& PinNames = TArray<FString>());
 	
+	/**
+	 * Reset pin defaults with detailed per-pin results
+	 * @param Blueprint The blueprint containing the node
+	 * @param NodeId The node ID to reset pins on
+	 * @param Params JSON object with optional pin list, reset_all flag, compile flag
+	 * @return Detailed reset results with per-pin status as JSON
+	 */
+	TResult<TSharedPtr<FJsonObject>> ResetPinDefaultsAdvanced(
+		UBlueprint* Blueprint,
+		const FString& NodeId,
+		const TSharedPtr<FJsonObject>& Params);
+	
 	// Node Lifecycle
 	/**
 	 * Delete a node
