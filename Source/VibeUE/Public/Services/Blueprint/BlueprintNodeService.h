@@ -345,6 +345,14 @@ public:
 	 */
 	TResult<void> RefreshAllNodes(UBlueprint* Blueprint);
 
+	/**
+	 * Connect pins (batch operation with JSON parameters)
+	 * @param Blueprint The blueprint containing the pins
+	 * @param Params JSON parameters containing connection array
+	 * @return JSON object with connection results
+	 */
+	TResult<TSharedPtr<FJsonObject>> ConnectPinsAdvanced(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params);
+
 private:
 	// Helper methods for graph resolution
 	UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName) const;
