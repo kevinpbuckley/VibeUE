@@ -1034,6 +1034,241 @@ TResult<void> FBlueprintNodeService::RecombinePin(UBlueprint* Blueprint, const F
 	return TResult<void>::Success();
 }
 
+TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConfigureNodeAdvanced(
+	UBlueprint* Blueprint,
+	const FString& NodeId,
+	const TSharedPtr<FJsonObject>& Params)
+{
+	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+	
+	if (auto ValidationResult = ValidateNotEmpty(NodeId, TEXT("NodeId")); ValidationResult.IsError())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+	
+	// Helper to collect string values from various field names
+	auto CollectStrings = [](const TSharedPtr<FJsonObject>& Source, const TArray<FString>& Fields, TArray<FString>& OutValues)
+	{
+		if (!Source.IsValid())
+		{
+			return;
+		}
+		
+		for (const FString& Field : Fields)
+		{
+			// Try as single string
+			FString SingleValue;
+			if (Source->TryGetStringField(Field, SingleValue))
+			{
+				OutValues.AddUnique(SingleValue);
+			}
+			
+			// Try as array
+			const TArray<TSharedPtr<FJsonValue>>* ArrayValue = nullptr;
+			if (Source->TryGetArrayField(Field, ArrayValue) && ArrayValue)
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *ArrayValue)
+				{
+					if (Value.IsValid() && Value->Type == EJson::String)
+					{
+						OutValues.AddUnique(Value->AsString());
+					}
+				}
+			}
+		}
+	};
+	
+	// Helper to gather pins from pin_operations array
+	auto GatherFromOperations = [](const TSharedPtr<FJsonObject>& Source, bool bSplit, TArray<FString>& OutPins)
+	{
+		if (!Source.IsValid())
+		{
+			return;
+		}
+		
+		const TArray<TSharedPtr<FJsonValue>>* PinOperations = nullptr;
+		if (!Source->TryGetArrayField(TEXT("pin_operations"), PinOperations) || !PinOperations)
+		{
+			return;
+		}
+		
+		for (const TSharedPtr<FJsonValue>& Value : *PinOperations)
+		{
+			const TSharedPtr<FJsonObject>* OperationObject = nullptr;
+			if (!Value.IsValid() || !Value->TryGetObject(OperationObject) || !OperationObject)
+			{
+				continue;
+			}
+			
+			FString Action;
+			if (!(*OperationObject)->TryGetStringField(TEXT("action"), Action))
+			{
+				continue;
+			}
+			Action.TrimStartAndEndInline();
+			
+			const bool bMatches = bSplit
+				? Action.Equals(TEXT("split"), ESearchCase::IgnoreCase)
+				: (Action.Equals(TEXT("recombine"), ESearchCase::IgnoreCase) || Action.Equals(TEXT("unsplit"), ESearchCase::IgnoreCase));
+			
+			if (!bMatches)
+			{
+				continue;
+			}
+			
+			// Collect pin names from various field names
+			TArray<FString> PinFields = {TEXT("pin"), TEXT("pin_name"), TEXT("name")};
+			for (const FString& Field : PinFields)
+			{
+				FString PinName;
+				if ((*OperationObject)->TryGetStringField(Field, PinName))
+				{
+					OutPins.AddUnique(PinName);
+				}
+			}
+		}
+	};
+	
+	// Collect pins to split and recombine
+	TArray<FString> PinsToSplit;
+	TArray<FString> PinsToRecombine;
+	
+	const TArray<FString> SplitFields = {TEXT("split_pin"), TEXT("split_pins"), TEXT("pins_to_split")};
+	const TArray<FString> RecombineFields = {TEXT("recombine_pin"), TEXT("recombine_pins"), TEXT("unsplit_pins"), TEXT("collapse_pins")};
+	
+	// Gather from main params
+	CollectStrings(Params, SplitFields, PinsToSplit);
+	CollectStrings(Params, RecombineFields, PinsToRecombine);
+	
+	// Gather from extra object
+	const TSharedPtr<FJsonObject>* Extra = nullptr;
+	if (Params->TryGetObjectField(TEXT("extra"), Extra) && Extra)
+	{
+		CollectStrings(*Extra, SplitFields, PinsToSplit);
+		CollectStrings(*Extra, RecombineFields, PinsToRecombine);
+		GatherFromOperations(*Extra, true, PinsToSplit);
+		GatherFromOperations(*Extra, false, PinsToRecombine);
+	}
+	
+	// Gather from node_config object
+	const TSharedPtr<FJsonObject>* NodeConfig = nullptr;
+	if (Params->TryGetObjectField(TEXT("node_config"), NodeConfig) && NodeConfig)
+	{
+		CollectStrings(*NodeConfig, SplitFields, PinsToSplit);
+		CollectStrings(*NodeConfig, RecombineFields, PinsToRecombine);
+		GatherFromOperations(*NodeConfig, true, PinsToSplit);
+		GatherFromOperations(*NodeConfig, false, PinsToRecombine);
+	}
+	
+	if (PinsToSplit.Num() == 0 && PinsToRecombine.Num() == 0)
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::INVALID_PARAMETER,
+			TEXT("No configuration operations specified")
+		);
+	}
+	
+	// Execute split operations
+	TArray<TSharedPtr<FJsonValue>> SplitResults;
+	int32 SplitSuccessCount = 0;
+	
+	for (const FString& PinName : PinsToSplit)
+	{
+		TSharedPtr<FJsonObject> PinResult = MakeShared<FJsonObject>();
+		PinResult->SetStringField(TEXT("pin"), PinName);
+		PinResult->SetStringField(TEXT("operation"), TEXT("split"));
+		
+		auto Result = SplitPin(Blueprint, NodeId, PinName);
+		if (Result.IsSuccess())
+		{
+			PinResult->SetBoolField(TEXT("success"), true);
+			SplitSuccessCount++;
+		}
+		else
+		{
+			PinResult->SetBoolField(TEXT("success"), false);
+			PinResult->SetStringField(TEXT("error"), Result.GetErrorMessage());
+		}
+		
+		SplitResults.Add(MakeShared<FJsonValueObject>(PinResult));
+	}
+	
+	// Execute recombine operations
+	TArray<TSharedPtr<FJsonValue>> RecombineResults;
+	int32 RecombineSuccessCount = 0;
+	
+	for (const FString& PinName : PinsToRecombine)
+	{
+		TSharedPtr<FJsonObject> PinResult = MakeShared<FJsonObject>();
+		PinResult->SetStringField(TEXT("pin"), PinName);
+		PinResult->SetStringField(TEXT("operation"), TEXT("recombine"));
+		
+		auto Result = RecombinePin(Blueprint, NodeId, PinName);
+		if (Result.IsSuccess())
+		{
+			PinResult->SetBoolField(TEXT("success"), true);
+			RecombineSuccessCount++;
+		}
+		else
+		{
+			PinResult->SetBoolField(TEXT("success"), false);
+			PinResult->SetStringField(TEXT("error"), Result.GetErrorMessage());
+		}
+		
+		RecombineResults.Add(MakeShared<FJsonValueObject>(PinResult));
+	}
+	
+	// Build comprehensive response
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	
+	const int32 TotalOperations = PinsToSplit.Num() + PinsToRecombine.Num();
+	const int32 TotalSuccess = SplitSuccessCount + RecombineSuccessCount;
+	const bool bOverallSuccess = (TotalSuccess == TotalOperations);
+	
+	Response->SetBoolField(TEXT("success"), bOverallSuccess);
+	Response->SetStringField(TEXT("node_id"), NodeId);
+	Response->SetNumberField(TEXT("operation_count"), TotalOperations);
+	Response->SetNumberField(TEXT("changed_count"), TotalSuccess);
+	
+	// Combine all pin results
+	TArray<TSharedPtr<FJsonValue>> AllPinResults;
+	AllPinResults.Append(SplitResults);
+	AllPinResults.Append(RecombineResults);
+	Response->SetArrayField(TEXT("pins"), AllPinResults);
+	
+	// Add operation summaries
+	TArray<TSharedPtr<FJsonValue>> OperationSummaries;
+	
+	if (SplitResults.Num() > 0)
+	{
+		TSharedPtr<FJsonObject> SplitSummary = MakeShared<FJsonObject>();
+		SplitSummary->SetStringField(TEXT("operation"), TEXT("split"));
+		SplitSummary->SetNumberField(TEXT("total"), PinsToSplit.Num());
+		SplitSummary->SetNumberField(TEXT("success"), SplitSuccessCount);
+		SplitSummary->SetArrayField(TEXT("pins"), SplitResults);
+		OperationSummaries.Add(MakeShared<FJsonValueObject>(SplitSummary));
+	}
+	
+	if (RecombineResults.Num() > 0)
+	{
+		TSharedPtr<FJsonObject> RecombineSummary = MakeShared<FJsonObject>();
+		RecombineSummary->SetStringField(TEXT("operation"), TEXT("recombine"));
+		RecombineSummary->SetNumberField(TEXT("total"), PinsToRecombine.Num());
+		RecombineSummary->SetNumberField(TEXT("success"), RecombineSuccessCount);
+		RecombineSummary->SetArrayField(TEXT("pins"), RecombineResults);
+		OperationSummaries.Add(MakeShared<FJsonValueObject>(RecombineSummary));
+	}
+	
+	Response->SetArrayField(TEXT("operations"), OperationSummaries);
+	Response->SetStringField(TEXT("message"), 
+		bOverallSuccess ? TEXT("Node configuration updated") : TEXT("One or more configuration operations failed"));
+	
+	return TResult<TSharedPtr<FJsonObject>>::Success(Response);
+}
+
 // ============================================================================
 // Node Configuration
 // ============================================================================

@@ -4715,175 +4715,41 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleResetPinDefaults(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConfigureBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
-    {
-        return FCommonUtils::CreateErrorResponse(Error);
-    }
-
-    auto GatherPinSets = [](const TSharedPtr<FJsonObject>& Source, const TArray<FString>& Fields, TArray<FString>& OutPins)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-        CollectStringValues(Source, Fields, OutPins);
-    };
-
-    auto GatherFromOperations = [](const TSharedPtr<FJsonObject>& Source, bool bSplit, TArray<FString>& OutPins)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-
-        const TArray<TSharedPtr<FJsonValue>>* PinOperations = nullptr;
-        if (!Source->TryGetArrayField(TEXT("pin_operations"), PinOperations) || !PinOperations)
-        {
-            return;
-        }
-
-        for (const TSharedPtr<FJsonValue>& Value : *PinOperations)
-        {
-            const TSharedPtr<FJsonObject>* OperationObject = nullptr;
-            if (!Value.IsValid() || !Value->TryGetObject(OperationObject) || !OperationObject)
-            {
-                continue;
-            }
-
-            FString Action;
-            if (!(*OperationObject)->TryGetStringField(TEXT("action"), Action))
-            {
-                continue;
-            }
-            Action.TrimStartAndEndInline();
-
-            const bool bMatches = bSplit
-                ? Action.Equals(TEXT("split"), ESearchCase::IgnoreCase)
-                : (Action.Equals(TEXT("recombine"), ESearchCase::IgnoreCase) || Action.Equals(TEXT("unsplit"), ESearchCase::IgnoreCase));
-            if (!bMatches)
-            {
-                continue;
-            }
-
-            CollectStringValues(*OperationObject, {TEXT("pin"), TEXT("pin_name"), TEXT("name")}, OutPins);
-        }
-    };
-
-    TArray<FString> PinsToSplit;
-    TArray<FString> PinsToRecombine;
-
-    const TArray<FString> SplitFields = {TEXT("split_pin"), TEXT("split_pins"), TEXT("pins_to_split")};
-    const TArray<FString> RecombineFields = {TEXT("recombine_pin"), TEXT("recombine_pins"), TEXT("unsplit_pins"), TEXT("collapse_pins")};
-
-    GatherPinSets(Params, SplitFields, PinsToSplit);
-    GatherPinSets(Params, RecombineFields, PinsToRecombine);
-
-    const TSharedPtr<FJsonObject>* Extra = nullptr;
-    if (Params->TryGetObjectField(TEXT("extra"), Extra) && Extra)
-    {
-        GatherPinSets(*Extra, SplitFields, PinsToSplit);
-        GatherPinSets(*Extra, RecombineFields, PinsToRecombine);
-        GatherFromOperations(*Extra, true, PinsToSplit);
-        GatherFromOperations(*Extra, false, PinsToRecombine);
-    }
-
-    const TSharedPtr<FJsonObject>* NodeConfig = nullptr;
-    if (Params->TryGetObjectField(TEXT("node_config"), NodeConfig) && NodeConfig)
-    {
-        GatherPinSets(*NodeConfig, SplitFields, PinsToSplit);
-        GatherPinSets(*NodeConfig, RecombineFields, PinsToRecombine);
-        GatherFromOperations(*NodeConfig, true, PinsToSplit);
-        GatherFromOperations(*NodeConfig, false, PinsToRecombine);
-    }
-
-    if (PinsToSplit.Num() == 0 && PinsToRecombine.Num() == 0)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("No configuration operations specified"));
-    }
-
-    auto ExecuteOperation = [&](const TArray<FString>& PinList, bool bSplit) -> TSharedPtr<FJsonObject>
-    {
-        if (PinList.Num() == 0)
-        {
-            return nullptr;
-        }
-        return ApplyPinTransform(Blueprint, Node, BlueprintName, NodeIdentifier, PinList, bSplit);
-    };
-
-    TSharedPtr<FJsonObject> SplitResult = ExecuteOperation(PinsToSplit, true);
-    TSharedPtr<FJsonObject> RecombineResult = ExecuteOperation(PinsToRecombine, false);
-
-    TArray<TSharedPtr<FJsonValue>> CombinedPins;
-    int32 ChangedCount = 0;
-    bool bOverallSuccess = true;
-    int32 OperationCount = 0;
-
-    auto Accumulate = [&](const TSharedPtr<FJsonObject>& Source)
-    {
-        if (!Source.IsValid())
-        {
-            return;
-        }
-        ++OperationCount;
-
-        bool bOperationSuccess = true;
-        Source->TryGetBoolField(TEXT("success"), bOperationSuccess);
-        bOverallSuccess &= bOperationSuccess;
-
-        const TArray<TSharedPtr<FJsonValue>>* PinsArray = nullptr;
-        if (Source->TryGetArrayField(TEXT("pins"), PinsArray) && PinsArray)
-        {
-            for (const TSharedPtr<FJsonValue>& Value : *PinsArray)
-            {
-                CombinedPins.Add(Value);
-            }
-        }
-
-        double ChangedValue = 0.0;
-        if (Source->TryGetNumberField(TEXT("changed_count"), ChangedValue))
-        {
-            ChangedCount += static_cast<int32>(ChangedValue);
-        }
-    };
-
-    Accumulate(SplitResult);
-    Accumulate(RecombineResult);
-
-    if (OperationCount == 0)
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("No configuration operations executed"));
-    }
-
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    Response->SetBoolField(TEXT("success"), bOverallSuccess);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Response->SetStringField(TEXT("graph_name"), Graph ? Graph->GetName() : TEXT(""));
-    Response->SetNumberField(TEXT("operation_count"), OperationCount);
-    Response->SetNumberField(TEXT("changed_count"), ChangedCount);
-    Response->SetArrayField(TEXT("pins"), CombinedPins);
-
-    TArray<TSharedPtr<FJsonValue>> OperationSummaries;
-    if (SplitResult.IsValid())
-    {
-        OperationSummaries.Add(MakeShared<FJsonValueObject>(SplitResult));
-    }
-    if (RecombineResult.IsValid())
-    {
-        OperationSummaries.Add(MakeShared<FJsonValueObject>(RecombineResult));
-    }
-    Response->SetArrayField(TEXT("operations"), OperationSummaries);
-
-    Response->SetStringField(TEXT("message"), bOverallSuccess ? TEXT("Node configuration updated") : TEXT("One or more configuration operations failed"));
-    return Response;
+	// Extract and validate parameters
+	FString BlueprintName;
+	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+	}
+	
+	FString NodeId;
+	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+	}
+	
+	// Find Blueprint using DiscoveryService
+	auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+	if (FindResult.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+	}
+	
+	UBlueprint* Blueprint = FindResult.GetValue();
+	
+	// Call service method to configure node
+	auto Result = NodeService->ConfigureNodeAdvanced(Blueprint, NodeId, Params);
+	
+	if (Result.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+	
+	// Add blueprint name to response
+	TSharedPtr<FJsonObject> Response = Result.GetValue();
+	Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+	
+	return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDeleteBlueprintNode(const TSharedPtr<FJsonObject>& Params)

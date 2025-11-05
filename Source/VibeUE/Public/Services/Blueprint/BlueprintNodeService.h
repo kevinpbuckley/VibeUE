@@ -266,6 +266,18 @@ public:
 	 */
 	TResult<void> RecombinePin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName);
 	
+	/**
+	 * Configure node with batch pin split/recombine operations
+	 * @param Blueprint The blueprint containing the node
+	 * @param NodeId The node ID to configure
+	 * @param Params JSON object with split/recombine pin lists
+	 * @return Configuration result with operation details as JSON
+	 */
+	TResult<TSharedPtr<FJsonObject>> ConfigureNodeAdvanced(
+		UBlueprint* Blueprint,
+		const FString& NodeId,
+		const TSharedPtr<FJsonObject>& Params);
+	
 	// Node Configuration
 	/**
 	 * Set a pin default value or node property
