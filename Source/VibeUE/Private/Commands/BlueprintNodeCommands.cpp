@@ -4689,133 +4689,124 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListCustomEvents(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNode(const TSharedPtr<FJsonObject>& Params)
 {
-    UBlueprint* Blueprint = nullptr;
-    UEdGraphNode* Node = nullptr;
-    UEdGraph* Graph = nullptr;
-    TArray<UEdGraph*> CandidateGraphs;
-    FString BlueprintName;
-    FString NodeIdentifier;
-    FString Error;
-
-    if (!ResolveNodeContext(Params, Blueprint, Node, Graph, CandidateGraphs, BlueprintName, NodeIdentifier, Error))
-    {
-        return FCommonUtils::CreateErrorResponse(Error);
-    }
-
-    bool bCompile = true;
-    Params->TryGetBoolField(TEXT("compile"), bCompile);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNode", "MCP Refresh Blueprint Node"));
-
-    if (Blueprint)
-    {
-        Blueprint->Modify();
-    }
-    if (Graph)
-    {
-        Graph->Modify();
-    }
-    if (Node)
-    {
-        Node->Modify();
-        Node->ReconstructNode();
-    }
-
-    if (Graph)
-    {
-        Graph->NotifyGraphChanged();
-    }
-
-    if (Blueprint)
-    {
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-        if (bCompile)
-        {
-            FKismetEditorUtilities::CompileBlueprint(Blueprint);
-        }
-    }
-
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetStringField(TEXT("node_id"), NodeIdentifier);
-    Result->SetStringField(TEXT("graph_name"), Graph ? Graph->GetName() : TEXT(""));
-    Result->SetStringField(TEXT("node_class"), Node ? Node->GetClass()->GetPathName() : TEXT(""));
-    Result->SetBoolField(TEXT("compiled"), bCompile);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' refreshed in Blueprint '%s'"), *NodeIdentifier, *BlueprintName));
-    return Result;
-}
-
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
-{
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
 
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    FString NodeId;
+    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
     }
 
     bool bCompile = true;
     Params->TryGetBoolField(TEXT("compile"), bCompile);
 
-    TArray<UEdGraph*> Graphs;
-    GatherCandidateGraphs(Blueprint, nullptr, Graphs);
-
-    const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNodes", "MCP Refresh Blueprint Nodes"));
-
-    Blueprint->Modify();
-    for (UEdGraph* Graph : Graphs)
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        if (Graph)
-        {
-            Graph->Modify();
-        }
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->RefreshNode(Blueprint, NodeId);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
+    // 4. Compile if requested
+    if (bCompile)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
 
+    // 5. Build JSON response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("node_id"), NodeId);
+    Response->SetBoolField(TEXT("compiled"), bCompile);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Node '%s' refreshed in Blueprint '%s'"), *NodeId, *BlueprintName));
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleRefreshBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
+{
+    // 1. Extract and validate parameters
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    }
+
+    bool bCompile = true;
+    Params->TryGetBoolField(TEXT("compile"), bCompile);
+
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Call service method - business logic lives in the service
+    auto Result = NodeService->RefreshAllNodes(Blueprint);
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+    }
+
+    // 4. Compile if requested
+    if (bCompile)
+    {
+        FKismetEditorUtilities::CompileBlueprint(Blueprint);
+    }
+
+    // 5. Build JSON response with graph summaries
+    TArray<UEdGraph*> Graphs;
     TArray<TSharedPtr<FJsonValue>> GraphSummaries;
     int32 TotalNodes = 0;
 
-    TArray<UEdGraph*> SummaryGraphs;
-    GatherCandidateGraphs(Blueprint, nullptr, SummaryGraphs);
-    for (UEdGraph* Graph : SummaryGraphs)
+    // Gather graphs for summary
+    if (Blueprint->UbergraphPages.Num() > 0)
+    {
+        Graphs.Append(Blueprint->UbergraphPages);
+    }
+    Graphs.Append(Blueprint->FunctionGraphs);
+    Graphs.Append(Blueprint->MacroGraphs);
+
+    for (UEdGraph* Graph : Graphs)
     {
         if (!Graph)
         {
             continue;
         }
 
-        Graph->NotifyGraphChanged();
         TotalNodes += Graph->Nodes.Num();
 
         TSharedPtr<FJsonObject> GraphInfo = MakeShared<FJsonObject>();
         GraphInfo->SetStringField(TEXT("graph_name"), Graph->GetName());
-        GraphInfo->SetStringField(TEXT("graph_guid"), VibeUENodeIntrospection::NormalizeGuid(Graph->GraphGuid));
+        GraphInfo->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
         GraphInfo->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
         GraphSummaries.Add(MakeShared<FJsonValueObject>(GraphInfo));
     }
 
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    if (bCompile)
-    {
-        FKismetEditorUtilities::CompileBlueprint(Blueprint);
-    }
-
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Result->SetNumberField(TEXT("graph_count"), SummaryGraphs.Num());
-    Result->SetNumberField(TEXT("node_count"), TotalNodes);
-    Result->SetBoolField(TEXT("compiled"), bCompile);
-    Result->SetArrayField(TEXT("graphs"), GraphSummaries);
-    Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), SummaryGraphs.Num(), TotalNodes, *BlueprintName));
-    return Result;
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetNumberField(TEXT("graph_count"), Graphs.Num());
+    Response->SetNumberField(TEXT("node_count"), TotalNodes);
+    Response->SetBoolField(TEXT("compiled"), bCompile);
+    Response->SetArrayField(TEXT("graphs"), GraphSummaries);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), Graphs.Num(), TotalNodes, *BlueprintName));
+    return Response;
 }
 
 // NEW: Reflection-based command implementations

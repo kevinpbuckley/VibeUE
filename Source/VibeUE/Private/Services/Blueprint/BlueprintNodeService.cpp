@@ -16,6 +16,8 @@
 #include "K2Node_CustomEvent.h"
 #include "K2Node_InputAction.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
+#include "ScopedTransaction.h"
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 
@@ -391,10 +393,51 @@ TResult<void> FBlueprintNodeService::RefreshNode(UBlueprint* Blueprint, const FS
 		return ValidationResult;
 	}
 	
-	return TResult<void>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("RefreshNode not yet implemented - needs extraction from HandleRefreshBlueprintNode")
-	);
+	// Gather candidate graphs
+	TArray<UEdGraph*> CandidateGraphs;
+	GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+	
+	if (CandidateGraphs.Num() == 0)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			TEXT("No graphs available to search")
+		);
+	}
+	
+	// Find the node
+	UEdGraphNode* Node = FindNodeByGuid(CandidateGraphs, NodeId);
+	if (!Node)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::NODE_NOT_FOUND,
+			FString::Printf(TEXT("Node not found: %s"), *NodeId)
+		);
+	}
+	
+	UEdGraph* Graph = Node->GetGraph();
+	
+	// Perform refresh
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNode", "Refresh Blueprint Node"));
+	
+	Blueprint->Modify();
+	if (Graph)
+	{
+		Graph->Modify();
+	}
+	Node->Modify();
+	Node->ReconstructNode();
+	
+	if (Graph)
+	{
+		Graph->NotifyGraphChanged();
+	}
+	
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Refreshed node '%s' in Blueprint '%s'"), *NodeId, *Blueprint->GetName()));
+	
+	return TResult<void>::Success();
 }
 
 TResult<void> FBlueprintNodeService::RefreshAllNodes(UBlueprint* Blueprint)
@@ -404,10 +447,48 @@ TResult<void> FBlueprintNodeService::RefreshAllNodes(UBlueprint* Blueprint)
 		return ValidationResult;
 	}
 	
-	return TResult<void>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("RefreshAllNodes not yet implemented - needs extraction from HandleRefreshBlueprintNodes")
-	);
+	// Gather all graphs
+	TArray<UEdGraph*> Graphs;
+	GatherCandidateGraphs(Blueprint, nullptr, Graphs);
+	
+	if (Graphs.Num() == 0)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			TEXT("No graphs available to refresh")
+		);
+	}
+	
+	// Perform refresh
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RefreshBlueprintNodes", "Refresh Blueprint Nodes"));
+	
+	Blueprint->Modify();
+	for (UEdGraph* Graph : Graphs)
+	{
+		if (Graph)
+		{
+			Graph->Modify();
+		}
+	}
+	
+	FBlueprintEditorUtils::RefreshAllNodes(Blueprint);
+	
+	// Notify all graphs of changes
+	int32 TotalNodes = 0;
+	for (UEdGraph* Graph : Graphs)
+	{
+		if (Graph)
+		{
+			Graph->NotifyGraphChanged();
+			TotalNodes += Graph->Nodes.Num();
+		}
+	}
+	
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Refreshed %d graphs (%d nodes) in Blueprint '%s'"), Graphs.Num(), TotalNodes, *Blueprint->GetName()));
+	
+	return TResult<void>::Success();
 }
 
 // ============================================================================
