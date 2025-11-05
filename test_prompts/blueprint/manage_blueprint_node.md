@@ -21,7 +21,14 @@
    - This creates: /Game/Blueprints/BP_NodeTest
    ```
 
-2. **Create Test Function with Parameters**
+2. **Open Blueprint in Editor**
+   ```
+   Use manage_asset with action="open_in_editor":
+   - asset_path: "/Game/Blueprints/BP_NodeTest"
+   - This opens the Blueprint Editor so you can see nodes being created
+   ```
+
+3. **Create Test Function with Parameters**
    ```
    Use manage_blueprint_function with action="create":
    - blueprint_name: "/Game/Blueprints/BP_NodeTest"
@@ -36,7 +43,7 @@
    selects a random number between the two and returns the new number.
    ```
 
-3. **Create Test Variable**
+4. **Create Test Variable**
    ```
    Use manage_blueprint_variable with action="create":
    - blueprint_name: "/Game/Blueprints/BP_NodeTest"
@@ -44,12 +51,14 @@
    - variable_config: {"type_path": "/Script/CoreUObject.FloatProperty"}
    ```
 
-4. **Verify Assets Created**
+5. **Verify Assets Created**
    ```
    Use manage_blueprint with action="get_info":
    - blueprint_name: "/Game/Blueprints/BP_NodeTest"
    - Should show 1 function and 1 variable
    ```
+
+**💡 TIP**: Keep the Blueprint Editor open throughout testing to watch nodes appear in real-time!
 
 ### After Testing: Review First, Then Cleanup
 
@@ -93,6 +102,8 @@ Tests all major actions of `manage_blueprint_node`. **CRITICAL**: Always use dis
    - position=[400, 100]
    - function_name="GetRandomNumber"
    - graph_scope="function"
+   
+   💡 In Unreal Editor: Navigate to the GetRandomNumber function graph to watch the node appear!
    ```
 
 4. **Connect Function Parameters to Node**
@@ -101,6 +112,8 @@ Tests all major actions of `manage_blueprint_node`. **CRITICAL**: Always use dis
    - Function Entry "Low" → RandomIntegerInRange "Min"
    - Function Entry "High" → RandomIntegerInRange "Max"
    - RandomIntegerInRange "ReturnValue" → Return Node "Result"
+   
+   👀 Watch the wires appear in the Blueprint Editor as connections are made!
    ```
 
 5. **Compile and Verify**
