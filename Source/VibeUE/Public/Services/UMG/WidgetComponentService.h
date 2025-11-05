@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetTypes.h"
 #include "Core/Result.h"
 
 // Forward declarations
@@ -11,36 +12,6 @@ class UWidget;
 class UWidgetBlueprint;
 class UPanelWidget;
 class UWidgetTree;
-
-/**
- * @struct FWidgetComponentInfo
- * @brief Structure holding widget component information
- * 
- * Contains essential metadata about a widget component including its name,
- * type, parent, children, and variable status.
- */
-struct VIBEUE_API FWidgetComponentInfo
-{
-    /** Component name */
-    FString Name;
-    
-    /** Component type (class name) */
-    FString Type;
-    
-    /** Parent component name (empty if root) */
-    FString ParentName;
-    
-    /** Child component names */
-    TArray<FString> Children;
-    
-    /** Whether this component is exposed as a variable */
-    bool bIsVariable;
-
-    FWidgetComponentInfo()
-        : bIsVariable(false)
-    {
-    }
-};
 
 /**
  * @class FWidgetComponentService

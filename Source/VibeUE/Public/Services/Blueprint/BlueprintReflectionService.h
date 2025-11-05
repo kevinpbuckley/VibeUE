@@ -3,64 +3,14 @@
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Services/Blueprint/Types/BlueprintTypes.h"
+#include "Services/Blueprint/Types/ReflectionTypes.h"
+#include "Services/Blueprint/Types/PropertyTypes.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
 
 // Forward declarations
-struct FPropertyInfo;
 class UBlueprintNodeSpawner;
-
-/**
- * Structure for class information
- */
-struct VIBEUE_API FClassInfo
-{
-    FString ClassName;
-    FString ClassPath;
-    FString ParentClass;
-    bool bIsAbstract;
-    bool bIsBlueprint;
-    
-    FClassInfo()
-        : bIsAbstract(false)
-        , bIsBlueprint(false)
-    {
-    }
-};
-
-/**
- * Search criteria for available node types
- */
-struct VIBEUE_API FNodeTypeSearchCriteria
-{
-    TOptional<FString> Category;
-    TOptional<FString> SearchTerm;
-    TOptional<FString> ClassFilter;
-    bool bIncludeFunctions = true;
-    bool bIncludeVariables = true;
-    bool bIncludeEvents = true;
-    bool bReturnDescriptors = true;
-    int32 MaxResults = 100;
-    
-    FNodeTypeSearchCriteria() = default;
-};
-
-/**
- * Information about an available node type
- */
-struct VIBEUE_API FNodeTypeInfo
-{
-    FString SpawnerKey;
-    FString NodeTitle;
-    FString Category;
-    FString NodeType;
-    FString Description;
-    FString Keywords;
-    int32 ExpectedPinCount = 0;
-    bool bIsStatic = false;
-    
-    FNodeTypeInfo() = default;
-};
 
 /**
  * Blueprint Reflection Service
@@ -186,27 +136,6 @@ public:
 	 * @param bIncludeDeprecated Whether to include deprecated keys
 	 * @return Result containing array of input key information with statistics
 	 */
-	struct FInputKeyResult
-	{
-		TArray<TSharedPtr<FJsonObject>> Keys;
-		int32 TotalCount;
-		int32 KeyboardCount;
-		int32 MouseCount;
-		int32 GamepadCount;
-		int32 OtherCount;
-		FString Category;
-		
-		FInputKeyResult()
-			: TotalCount(0)
-			, KeyboardCount(0)
-			, MouseCount(0)
-			, GamepadCount(0)
-			, OtherCount(0)
-			, Category(TEXT("All"))
-		{
-		}
-	};
-	
 	TResult<FInputKeyResult> GetAllInputKeys(const FString& Category = TEXT("All"), bool bIncludeDeprecated = false);
 	
 private:

@@ -3,43 +3,13 @@
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
 #include "Services/Blueprint/BlueprintReflectionService.h"
+#include "Services/UMG/Types/WidgetTypes.h"
 #include "Core/Result.h"
 
 // Forward declarations
 class UClass;
 class UWidget;
 class FProperty;
-
-/**
- * @struct FWidgetTypeInfo
- * @brief Structure holding metadata about a widget type
- * 
- * Contains information about a widget class including its type name,
- * full class path, whether it's a panel type, and other metadata.
- */
-struct VIBEUE_API FWidgetTypeInfo
-{
-    /** The widget type name (e.g., "Button", "TextBlock") */
-    FString TypeName;
-    
-    /** Full class path to the widget class */
-    FString ClassPath;
-    
-    /** Display category for the widget */
-    FString Category;
-    
-    /** Whether this widget type can contain children */
-    bool bIsPanelWidget;
-    
-    /** Whether this is a commonly used widget type */
-    bool bIsCommonWidget;
-    
-    FWidgetTypeInfo()
-        : bIsPanelWidget(false)
-        , bIsCommonWidget(false)
-    {
-    }
-};
 
 /**
  * @class FWidgetReflectionService

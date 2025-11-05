@@ -1,6 +1,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
+#include "Services/Blueprint/Types/ComponentTypes.h"
 #include "Engine/Blueprint.h"
 
 // Forward declarations for editor-only types
@@ -21,36 +22,6 @@ class UK2Node_ComponentBoundEvent;
  * Architectural Principle: Uses reflection exclusively for future-proofing
  * and plugin compatibility. Works with any component type, any delegate.
  */
-
-/**
- * Structure to hold delegate parameter information
- */
-struct FParameterInfo
-{
-	FString Name;
-	FString Type;
-	FString CPPType;
-	FString Direction; // "input" or "output"
-	bool bIsOutParam;
-	bool bIsReturnParam;
-};
-
-/**
- * Structure to hold component event information discovered via reflection
- */
-struct FComponentEventInfo
-{
-	FString ComponentName;
-	FString ComponentClassName;
-	FString DelegateName;
-	FString DisplayName;
-	FString Signature;
-	TArray<FParameterInfo> Parameters;
-	
-	// Metadata from reflection
-	UActorComponent* ComponentTemplate;
-	FMulticastDelegateProperty* DelegateProperty;
-};
 
 /**
  * Utility class for creating and binding component delegate events

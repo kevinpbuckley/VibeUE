@@ -4,64 +4,13 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetPropertyTypes.h"
 #include "Core/Result.h"
 
 // Forward declarations
 class UWidgetBlueprint;
 class UWidget;
 class FProperty;
-
-/**
- * @struct FPropertyInfo
- * @brief Structure containing detailed property metadata
- * 
- * Holds comprehensive information about a widget property including
- * its type, constraints, current value, and editability.
- */
-struct VIBEUE_API FPropertyInfo
-{
-	/** The name of the property */
-	FString PropertyName;
-	
-	/** The type of the property (e.g., "String", "float", "bool", "Struct<FVector2D>") */
-	FString PropertyType;
-	
-	/** The property's class name from reflection */
-	FString PropertyClass;
-	
-	/** Current value of the property as a string */
-	FString CurrentValue;
-	
-	/** Whether the property can be edited */
-	bool bIsEditable;
-	
-	/** Whether the property is blueprint visible */
-	bool bIsBlueprintVisible;
-	
-	/** Whether the property is blueprint read-only */
-	bool bIsBlueprintReadOnly;
-	
-	/** Category for organization */
-	FString Category;
-	
-	/** Tooltip/description text */
-	FString Tooltip;
-	
-	/** Min value for numeric properties */
-	FString MinValue;
-	
-	/** Max value for numeric properties */
-	FString MaxValue;
-	
-	/** Available values for enum properties */
-	TArray<FString> EnumValues;
-
-	FPropertyInfo()
-		: bIsEditable(false)
-		, bIsBlueprintVisible(false)
-		, bIsBlueprintReadOnly(false)
-	{}
-};
 
 /**
  * @class FWidgetPropertyService
