@@ -234,12 +234,64 @@ TResult<FNodeInfo> FBlueprintNodeService::CreateEventNode(UBlueprint* Blueprint,
 		return TResult<FNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 	}
 	
-	// TODO(Phase 4): Implement event node creation - needs extraction from HandleAddBlueprintEvent
-	// Currently uses FCommonUtils::CreateEventNode helper
-	return TResult<FNodeInfo>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("CreateEventNode not yet implemented - needs extraction from HandleAddBlueprintEvent")
-	);
+	// Resolve target graph
+	UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName);
+	if (!TargetGraph)
+	{
+		return TResult<FNodeInfo>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			FString::Printf(TEXT("Graph not found: %s"), GraphName.IsEmpty() ? TEXT("EventGraph") : *GraphName)
+		);
+	}
+	
+	// Check for existing event node with this name
+	for (UEdGraphNode* Node : TargetGraph->Nodes)
+	{
+		UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node);
+		if (EventNode && EventNode->EventReference.GetMemberName() == FName(*EventName))
+		{
+			LogInfo(FString::Printf(TEXT("Using existing event node with name %s"), *EventName));
+			return TResult<FNodeInfo>::Success(BuildNodeInfo(Blueprint, EventNode));
+		}
+	}
+	
+	// Find the function to create the event
+	UClass* BlueprintClass = Blueprint->GeneratedClass;
+	if (!BlueprintClass)
+	{
+		return TResult<FNodeInfo>::Error(
+			VibeUE::ErrorCodes::BLUEPRINT_NOT_COMPILED,
+			TEXT("Blueprint has no generated class - compile blueprint first")
+		);
+	}
+	
+	UFunction* EventFunction = BlueprintClass->FindFunctionByName(FName(*EventName));
+	if (!EventFunction)
+	{
+		return TResult<FNodeInfo>::Error(
+			VibeUE::ErrorCodes::FUNCTION_NOT_FOUND,
+			FString::Printf(TEXT("Event function not found: %s"), *EventName)
+		);
+	}
+	
+	// Create the event node
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "CreateEventNode", "Create Event Node"));
+	TargetGraph->Modify();
+	
+	UK2Node_Event* EventNode = NewObject<UK2Node_Event>(TargetGraph);
+	EventNode->EventReference.SetExternalMember(FName(*EventName), BlueprintClass);
+	EventNode->NodePosX = 0;
+	EventNode->NodePosY = 0;
+	TargetGraph->AddNode(EventNode, true);
+	EventNode->PostPlacedNewNode();
+	EventNode->AllocateDefaultPins();
+	
+	TargetGraph->NotifyGraphChanged();
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Created event node '%s' in Blueprint '%s'"), *EventName, *Blueprint->GetName()));
+	
+	return TResult<FNodeInfo>::Success(BuildNodeInfo(Blueprint, EventNode));
 }
 
 TResult<FNodeInfo> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Blueprint, const FString& ActionName, const FString& GraphName)
@@ -254,12 +306,35 @@ TResult<FNodeInfo> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Blue
 		return TResult<FNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 	}
 	
-	// TODO(Phase 4): Implement input action node creation - needs extraction from HandleAddBlueprintInputActionNode
-	// Currently uses FCommonUtils::CreateInputActionNode helper
-	return TResult<FNodeInfo>::Error(
-		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
-		TEXT("CreateInputActionNode not yet implemented - needs extraction from HandleAddBlueprintInputActionNode")
-	);
+	// Resolve target graph
+	UEdGraph* TargetGraph = ResolveTargetGraph(Blueprint, GraphName);
+	if (!TargetGraph)
+	{
+		return TResult<FNodeInfo>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			FString::Printf(TEXT("Graph not found: %s"), GraphName.IsEmpty() ? TEXT("EventGraph") : *GraphName)
+		);
+	}
+	
+	// Create the input action node
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "CreateInputActionNode", "Create Input Action Node"));
+	TargetGraph->Modify();
+	
+	UK2Node_InputAction* InputActionNode = NewObject<UK2Node_InputAction>(TargetGraph);
+	InputActionNode->InputActionName = FName(*ActionName);
+	InputActionNode->NodePosX = 0;
+	InputActionNode->NodePosY = 0;
+	TargetGraph->AddNode(InputActionNode, true);
+	InputActionNode->CreateNewGuid();
+	InputActionNode->PostPlacedNewNode();
+	InputActionNode->AllocateDefaultPins();
+	
+	TargetGraph->NotifyGraphChanged();
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	
+	LogInfo(FString::Printf(TEXT("Created input action node '%s' in Blueprint '%s'"), *ActionName, *Blueprint->GetName()));
+	
+	return TResult<FNodeInfo>::Success(BuildNodeInfo(Blueprint, InputActionNode));
 }
 
 // ============================================================================
