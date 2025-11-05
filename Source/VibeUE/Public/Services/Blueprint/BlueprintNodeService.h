@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include "CoreMinimal.h"
 #include "Core/Result.h"
@@ -159,6 +159,21 @@ public:
 	 * @return Array of node summaries
 	 */
 	TResult<TArray<FNodeSummary>> DescribeNodes(UBlueprint* Blueprint, const TArray<FString>& NodeIds, const FString& GraphName = FString());
+	
+	/**
+	 * Describe nodes with advanced filtering and pagination
+	 * @param Blueprint The blueprint containing the nodes
+	 * @param Params JSON object containing filter parameters (graph_scope, node_ids, pin_names, offset, limit, etc.)
+	 * @param bIncludePins Whether to include pin information
+	 * @param bIncludeInternalPins Whether to include hidden/advanced pins
+	 * @return Array of fully described nodes as JSON objects
+	 */
+	TResult<TArray<TSharedPtr<FJsonObject>>> DescribeNodesAdvanced(
+		UBlueprint* Blueprint,
+		const TSharedPtr<FJsonObject>& Params,
+		bool bIncludePins = true,
+		bool bIncludeInternalPins = false
+	);
 	
 	/**
 	 * List all nodes in a graph

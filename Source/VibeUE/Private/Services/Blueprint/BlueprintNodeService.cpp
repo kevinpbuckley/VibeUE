@@ -191,6 +191,264 @@ TResult<TArray<FNodeSummary>> FBlueprintNodeService::ListNodes(UBlueprint* Bluep
 	return TResult<TArray<FNodeSummary>>::Success(Summaries);
 }
 
+TResult<TArray<TSharedPtr<FJsonObject>>> FBlueprintNodeService::DescribeNodesAdvanced(
+	UBlueprint* Blueprint,
+	const TSharedPtr<FJsonObject>& Params,
+	bool bIncludePins,
+	bool bIncludeInternalPins)
+{
+	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())
+	{
+		return TResult<TArray<TSharedPtr<FJsonObject>>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+
+	if (!Params.IsValid())
+	{
+		return TResult<TArray<TSharedPtr<FJsonObject>>>::Error(
+			VibeUE::ErrorCodes::INVALID_PARAMETER,
+			TEXT("Params object is null")
+		);
+	}
+
+	// Extract pagination parameters
+	double OffsetValue = 0.0;
+	int32 Offset = 0;
+	if (Params->TryGetNumberField(TEXT("offset"), OffsetValue))
+	{
+		Offset = FMath::Max(0, static_cast<int32>(OffsetValue));
+	}
+
+	double LimitValue = -1.0;
+	int32 Limit = -1;
+	if (Params->TryGetNumberField(TEXT("limit"), LimitValue))
+	{
+		Limit = static_cast<int32>(LimitValue);
+		if (Limit < 0)
+		{
+			Limit = -1;
+		}
+	}
+
+	// Extract graph scope
+	FString GraphScopeValue;
+	Params->TryGetStringField(TEXT("graph_scope"), GraphScopeValue);
+	const bool bAllGraphs = GraphScopeValue.Equals(TEXT("all"), ESearchCase::IgnoreCase);
+
+	FString GraphName;
+	Params->TryGetStringField(TEXT("function_name"), GraphName);
+
+	// Gather candidate graphs
+	TArray<UEdGraph*> CandidateGraphs;
+	if (bAllGraphs)
+	{
+		GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+	}
+	else
+	{
+		UEdGraph* PreferredGraph = ResolveTargetGraph(Blueprint, GraphName);
+		GatherCandidateGraphs(Blueprint, PreferredGraph, CandidateGraphs);
+		
+		if (CandidateGraphs.Num() == 0 && PreferredGraph)
+		{
+			CandidateGraphs.Add(PreferredGraph);
+		}
+	}
+
+	if (CandidateGraphs.Num() == 0)
+	{
+		return TResult<TArray<TSharedPtr<FJsonObject>>>::Error(
+			VibeUE::ErrorCodes::GRAPH_NOT_FOUND,
+			TEXT("No graphs available for description")
+		);
+	}
+
+	// Extract node ID filters
+	TSet<FGuid> NodeGuidFilters;
+	TSet<FString> NodeStringFilters;
+	const TArray<TSharedPtr<FJsonValue>>* NodeIdArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("node_ids"), NodeIdArray))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *NodeIdArray)
+		{
+			if (!Value.IsValid())
+			{
+				continue;
+			}
+
+			FString RawId = Value->AsString();
+			RawId.TrimStartAndEndInline();
+			if (RawId.IsEmpty())
+			{
+				continue;
+			}
+
+			FGuid ParsedGuid;
+			if (FGuid::Parse(RawId, ParsedGuid))
+			{
+				NodeGuidFilters.Add(ParsedGuid);
+			}
+			else
+			{
+				RawId.ToLowerInline();
+				NodeStringFilters.Add(RawId);
+			}
+		}
+	}
+
+	// Extract pin name filters
+	TSet<FName> PinNameFilters;
+	const TArray<TSharedPtr<FJsonValue>>* PinArray = nullptr;
+	if (Params->TryGetArrayField(TEXT("pin_names"), PinArray))
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *PinArray)
+		{
+			if (!Value.IsValid())
+			{
+				continue;
+			}
+
+			const FString PinName = Value->AsString();
+			if (!PinName.IsEmpty())
+			{
+				PinNameFilters.Add(FName(*PinName));
+			}
+		}
+	}
+	const bool bHasPinFilter = PinNameFilters.Num() > 0;
+
+	// Node matching lambda
+	auto NodeMatchesFilters = [&NodeGuidFilters, &NodeStringFilters](UEdGraphNode* Node) -> bool
+	{
+		if (!Node)
+		{
+			return false;
+		}
+
+		if (NodeGuidFilters.Num() == 0 && NodeStringFilters.Num() == 0)
+		{
+			return true;
+		}
+
+		if (NodeGuidFilters.Contains(Node->NodeGuid))
+		{
+			return true;
+		}
+
+		FString GuidString = Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
+		GuidString.ToLowerInline();
+		if (NodeStringFilters.Contains(GuidString))
+		{
+			return true;
+		}
+
+		FString CompactGuid = Node->NodeGuid.ToString(EGuidFormats::Digits);
+		CompactGuid.ToLowerInline();
+		if (NodeStringFilters.Contains(CompactGuid))
+		{
+			return true;
+		}
+
+		FString NodeName = Node->GetName();
+		NodeName.ToLowerInline();
+		if (NodeStringFilters.Contains(NodeName))
+		{
+			return true;
+		}
+
+		return false;
+	};
+
+	// Collect and describe nodes
+	TArray<TSharedPtr<FJsonObject>> NodesArray;
+	int32 Skipped = 0;
+	int32 Collected = 0;
+
+	for (UEdGraph* Graph : CandidateGraphs)
+	{
+		if (!Graph)
+		{
+			continue;
+		}
+
+		for (UEdGraphNode* Node : Graph->Nodes)
+		{
+			if (!Node || !NodeMatchesFilters(Node))
+			{
+				continue;
+			}
+
+			if (Skipped < Offset)
+			{
+				++Skipped;
+				continue;
+			}
+
+			if (Limit >= 0 && Collected >= Limit)
+			{
+				break;
+			}
+
+			// Build node descriptor
+			TSharedPtr<FJsonObject> NodeObject = MakeShared<FJsonObject>();
+			NodeObject->SetStringField(TEXT("node_id"), Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+			NodeObject->SetStringField(TEXT("display_name"), Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString());
+			NodeObject->SetStringField(TEXT("class_path"), Node->GetClass()->GetPathName());
+			NodeObject->SetStringField(TEXT("graph_name"), Graph->GetName());
+			NodeObject->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces));
+
+			// Position
+			TSharedPtr<FJsonObject> Position = MakeShared<FJsonObject>();
+			Position->SetNumberField(TEXT("x"), Node->NodePosX);
+			Position->SetNumberField(TEXT("y"), Node->NodePosY);
+			NodeObject->SetObjectField(TEXT("position"), Position);
+
+			// Comment
+			if (!Node->NodeComment.IsEmpty())
+			{
+				NodeObject->SetStringField(TEXT("comment"), Node->NodeComment);
+			}
+
+			// Include pins if requested
+			if (bIncludePins)
+			{
+				TArray<TSharedPtr<FJsonValue>> PinArrayJson;
+				for (UEdGraphPin* Pin : Node->Pins)
+				{
+					if (!Pin)
+					{
+						continue;
+					}
+
+					if (!bIncludeInternalPins && (Pin->bHidden || Pin->bAdvancedView))
+					{
+						continue;
+					}
+
+					if (bHasPinFilter && !PinNameFilters.Contains(Pin->PinName))
+					{
+						continue;
+					}
+
+					PinArrayJson.Add(MakeShared<FJsonValueObject>(BuildPinDescriptor(Pin)));
+				}
+				NodeObject->SetArrayField(TEXT("pins"), PinArrayJson);
+			}
+
+			NodesArray.Add(NodeObject);
+			++Collected;
+		}
+
+		if (Limit >= 0 && Collected >= Limit)
+		{
+			break;
+		}
+	}
+
+	LogInfo(FString::Printf(TEXT("Described %d nodes from %d graphs"), NodesArray.Num(), CandidateGraphs.Num()));
+
+	return TResult<TArray<TSharedPtr<FJsonObject>>>::Success(NodesArray);
+}
+
 TResult<TArray<FNodeTypeInfo>> FBlueprintNodeService::DiscoverNodeTypes(const FNodeTypeSearchCriteria& Criteria)
 {
 	// TODO(Phase 4): Implement node type discovery - will delegate to BlueprintReflectionService
