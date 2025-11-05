@@ -176,6 +176,18 @@ namespace ErrorCodes
 	/** @brief Failed to delete node */
 	constexpr const TCHAR* NODE_DELETE_FAILED = TEXT("NODE_DELETE_FAILED");
 
+	/** @brief Invalid parameter provided to operation */
+	constexpr const TCHAR* INVALID_PARAMETER = TEXT("INVALID_PARAMETER");
+
+	/** @brief Invalid node type specified */
+	constexpr const TCHAR* INVALID_NODE_TYPE = TEXT("INVALID_NODE_TYPE");
+
+	/** @brief Blueprint must be compiled before operation */
+	constexpr const TCHAR* BLUEPRINT_NOT_COMPILED = TEXT("BLUEPRINT_NOT_COMPILED");
+
+	/** @brief Operation not allowed in current state */
+	constexpr const TCHAR* OPERATION_NOT_ALLOWED = TEXT("OPERATION_NOT_ALLOWED");
+
 	// ============================================================================
 	// UMG/Widget Errors (3000-3099)
 	// ============================================================================

@@ -2190,7 +2190,14 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
         Obj->SetStringField(TEXT("id"), Summary.NodeId);
         Obj->SetStringField(TEXT("node_type"), Summary.NodeType);
         Obj->SetStringField(TEXT("title"), Summary.Title);
-        Obj->SetArrayField(TEXT("pins"), Summary.Pins);
+        
+        // Convert TArray<TSharedPtr<FJsonObject>> to TArray<TSharedPtr<FJsonValue>>
+        TArray<TSharedPtr<FJsonValue>> PinValues;
+        for (const auto& PinObj : Summary.Pins)
+        {
+            PinValues.Add(MakeShared<FJsonValueObject>(PinObj));
+        }
+        Obj->SetArrayField(TEXT("pins"), PinValues);
         NodeArray.Add(MakeShared<FJsonValueObject>(Obj));
     }
 
