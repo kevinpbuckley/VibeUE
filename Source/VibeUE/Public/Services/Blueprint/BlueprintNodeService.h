@@ -369,6 +369,14 @@ public:
 	 */
 	TResult<TSharedPtr<FJsonObject>> GetAvailableNodes(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params);
 
+	/**
+	 * Discover Blueprint nodes with full descriptors
+	 * @param Blueprint The blueprint to discover nodes for
+	 * @param Params JSON parameters containing search_term, category_filter, class_filter, max_results
+	 * @return JSON object with array of node descriptors
+	 */
+	TResult<TSharedPtr<FJsonObject>> DiscoverNodesWithDescriptors(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params);
+
 private:
 	// Helper methods for graph resolution
 	UEdGraph* ResolveTargetGraph(UBlueprint* Blueprint, const FString& GraphName) const;

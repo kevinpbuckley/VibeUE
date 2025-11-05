@@ -2015,6 +2015,61 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
 }
 
+TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DiscoverNodesWithDescriptors(UBlueprint* Blueprint, const TSharedPtr<FJsonObject>& Params)
+{
+	// Validate Blueprint
+	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+	}
+
+	if (!Params.IsValid())
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			TEXT("Invalid parameters object")
+		);
+	}
+
+	// Extract parameters
+	FString SearchTerm;
+	Params->TryGetStringField(TEXT("search_term"), SearchTerm);
+
+	FString CategoryFilter;
+	Params->TryGetStringField(TEXT("category_filter"), CategoryFilter);
+
+	FString ClassFilter;
+	Params->TryGetStringField(TEXT("class_filter"), ClassFilter);
+
+	int32 MaxResults = 100;
+	double ParsedMaxResults = 0.0;
+	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
+	{
+		MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+	}
+
+	// Call descriptor-based discovery system
+	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
+		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
+
+	// Convert descriptors to JSON
+	TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
+	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+	{
+		TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+		DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescriptorJson));
+	}
+
+	// Build result
+	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
+	Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
+	Result->SetStringField(TEXT("blueprint_name"), Blueprint->GetName());
+
+	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
+}
+
 TResult<void> FBlueprintNodeService::SplitPin(UBlueprint* Blueprint, const FString& NodeId, const FString& PinName)
 {
 	if (auto ValidationResult = ValidateNotNull(Blueprint, TEXT("Blueprint")); ValidationResult.IsError())

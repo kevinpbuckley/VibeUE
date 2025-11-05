@@ -2786,71 +2786,43 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetAvailableBlueprin
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleDiscoverNodesWithDescriptors(const TSharedPtr<FJsonObject>& Params)
 {
-    UE_LOG(LogVibeUEReflection, Log, TEXT("HandleDiscoverNodesWithDescriptors called - NEW descriptor-based discovery"));
+    UE_LOG(LogVibeUEReflection, Log, TEXT("HandleDiscoverNodesWithDescriptors called - descriptor-based discovery"));
     
-    TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    
-    // Extract parameters
+    // Extract blueprint name
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), TEXT("Missing blueprint_name parameter"));
-        return Result;
+        return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
     }
-    
-    FString SearchTerm;
-    Params->TryGetStringField(TEXT("search_term"), SearchTerm);
-    
-    FString CategoryFilter;
-    Params->TryGetStringField(TEXT("category_filter"), CategoryFilter);
-    
-    FString ClassFilter;
-    Params->TryGetStringField(TEXT("class_filter"), ClassFilter);
-    
-    int32 MaxResults = 100;
-    double ParsedMaxResults = 0.0;
-    if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
+
+    // Find Blueprint using DiscoveryService
+    if (!DiscoveryService.IsValid())
     {
-        MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
+        return CreateErrorResponse(TEXT("DiscoveryService not initialized"));
     }
-    
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Descriptor search params - SearchTerm: '%s', CategoryFilter: '%s', ClassFilter: '%s', MaxResults=%d"),
-        *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
-    
-    // Find the Blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        Result->SetBoolField(TEXT("success"), false);
-        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-        Result->SetStringField(TEXT("suggestion"), TEXT("Use exact Blueprint path like '/Game/Blueprints/BP_Player'"));
-        return Result;
+        return CreateErrorResponse(FindResult.GetErrorMessage());
     }
-    
-    // Call the new descriptor-based discovery
-    TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
-        FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
-    
-    // Convert descriptors to JSON
-    TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
-    
-    for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // Call NodeService with full params
+    if (!NodeService.IsValid())
     {
-        TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
-        DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescriptorJson));
+        return CreateErrorResponse(TEXT("NodeService not initialized"));
+    }
+
+    auto Result = NodeService->DiscoverNodesWithDescriptors(Blueprint, Params);
+    
+    // Return result directly (already in JSON format)
+    if (Result.IsError())
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
     
-    // Build result
-    Result->SetBoolField(TEXT("success"), true);
-    Result->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
-    Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
-    Result->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    
-    UE_LOG(LogVibeUEReflection, Log, TEXT("Discovered %d node descriptors for Blueprint: %s"), 
-           DescriptorJsonArray.Num(), *BlueprintName);
-    
-    return Result;
+    return Result.GetValue();
 }
 
 // === BLUEPRINT REFLECTION COMMANDS IMPLEMENTATION ===
