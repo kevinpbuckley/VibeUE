@@ -152,6 +152,18 @@ public:
 	TResult<FNodeInfo> GetNodeDetails(UBlueprint* Blueprint, const FString& NodeId, const FString& GraphName = FString());
 	
 	/**
+	 * Get advanced detailed information about a specific node with optional pin details, properties, and connections
+	 * @param Blueprint The blueprint containing the node
+	 * @param NodeId The GUID of the node to describe
+	 * @param Params JSON object with optional parameters (graph_scope, include_pins, include_properties, include_connections)
+	 * @return Complete node descriptor with all requested details as JSON object
+	 */
+	TResult<TSharedPtr<FJsonObject>> GetNodeDetailsAdvanced(
+		UBlueprint* Blueprint,
+		const FString& NodeId,
+		const TSharedPtr<FJsonObject>& Params);
+	
+	/**
 	 * Describe multiple nodes
 	 * @param Blueprint The blueprint containing the nodes
 	 * @param NodeIds Array of node GUIDs to describe
