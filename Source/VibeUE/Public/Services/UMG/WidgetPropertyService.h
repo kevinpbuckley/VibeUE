@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
 #include "Services/UMG/Types/WidgetPropertyTypes.h"
+#include "Services/Blueprint/Types/PropertyTypes.h"  // For FPropertyInfo (shared between Blueprint and UMG)
 #include "Core/Result.h"
 
 // Forward declarations

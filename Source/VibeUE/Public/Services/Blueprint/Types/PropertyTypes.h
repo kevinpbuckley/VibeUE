@@ -32,4 +32,13 @@ struct VIBEUE_API FPropertyInfo
     FString UIMax;
     FString ObjectClass;
     FString ObjectValue;
+    
+    /** Available values for enum properties */
+    TArray<FString> EnumValues;
+
+    FPropertyInfo()
+        : bIsEditable(false)
+        , bIsBlueprintVisible(false)
+        , bIsBlueprintReadOnly(false)
+    {}
 };

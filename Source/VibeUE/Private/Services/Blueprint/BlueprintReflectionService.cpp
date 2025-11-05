@@ -467,7 +467,7 @@ bool FBlueprintReflectionService::IsComponentTypeValid(UClass* ComponentClass)
 // Input Key Discovery
 // ═══════════════════════════════════════════════════════════
 
-TResult<FBlueprintReflectionService::FInputKeyResult> FBlueprintReflectionService::GetAllInputKeys(
+TResult<FInputKeyResult> FBlueprintReflectionService::GetAllInputKeys(
 	const FString& Category, 
 	bool bIncludeDeprecated)
 {
