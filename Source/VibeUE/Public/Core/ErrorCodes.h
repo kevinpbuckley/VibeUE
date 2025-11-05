@@ -188,6 +188,9 @@ namespace ErrorCodes
 	/** @brief Operation not allowed in current state */
 	constexpr const TCHAR* OPERATION_NOT_ALLOWED = TEXT("OPERATION_NOT_ALLOWED");
 
+	/** @brief Graph schema is invalid or not K2 */
+	constexpr const TCHAR* INVALID_GRAPH_SCHEMA = TEXT("INVALID_GRAPH_SCHEMA");
+
 	// ============================================================================
 	// UMG/Widget Errors (3000-3099)
 	// ============================================================================
