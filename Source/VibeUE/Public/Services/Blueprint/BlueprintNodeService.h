@@ -5,6 +5,7 @@
 #include "Services/Common/ServiceBase.h"
 #include "Services/Blueprint/Types/GraphTypes.h"
 #include "Services/Blueprint/Types/ReflectionTypes.h"
+#include "Services/Blueprint/Types/BlueprintNodeTypes.h"
 #include "EdGraph/EdGraphPin.h"
 
 // Forward declarations
@@ -13,111 +14,6 @@ class UEdGraph;
 class UEdGraphNode;
 class UEdGraphPin;
 class FJsonObject;
-
-/**
- * Pin connection request structure
- */
-struct VIBEUE_API FPinConnectionRequest
-{
-	FString SourcePinId;
-	FString TargetPinId;
-	FString SourceNodeId;
-	FString TargetNodeId;
-	FString SourcePinName;
-	FString TargetPinName;
-	bool bAllowConversion = true;
-	bool bAllowPromotion = true;
-	bool bBreakExisting = true;
-	
-	FPinConnectionRequest() = default;
-};
-
-/**
- * Information about a broken pin link
- */
-struct VIBEUE_API FPinLinkBreakInfo
-{
-	FString NodeId;
-	FString PinName;
-	FString OtherNodeId;
-	FString OtherPinName;
-	
-	FPinLinkBreakInfo() = default;
-};
-
-/**
- * Information about a created pin link
- */
-struct VIBEUE_API FPinLinkCreateInfo
-{
-	FString SourceNodeId;
-	FString SourcePinName;
-	FString TargetNodeId;
-	FString TargetPinName;
-	
-	FPinLinkCreateInfo() = default;
-};
-
-/**
- * Result of a pin connection operation
- */
-struct VIBEUE_API FPinConnectionResult
-{
-	bool bSuccess = false;
-	TArray<FPinLinkBreakInfo> BrokenLinks;
-	TArray<FPinLinkCreateInfo> CreatedLinks;
-	FString ErrorMessage;
-	FString ErrorCode;
-	
-	FPinConnectionResult() = default;
-};
-
-/**
- * Result of a pin disconnection operation
- */
-struct VIBEUE_API FPinDisconnectionResult
-{
-	bool bSuccess = false;
-	int32 DisconnectedCount = 0;
-	TArray<FPinLinkBreakInfo> DisconnectedLinks;
-	FString ErrorMessage;
-	FString ErrorCode;
-	
-	FPinDisconnectionResult() = default;
-};
-
-/**
- * Node creation parameters
- */
-struct VIBEUE_API FNodeCreationParams
-{
-	FString SpawnerKey;
-	FString NodeType;
-	FString GraphName;
-	int32 PosX = 0;
-	int32 PosY = 0;
-	TArray<TSharedPtr<FJsonObject>> AdditionalParams;
-	
-	FNodeCreationParams() = default;
-};
-
-/**
- * Node information (detailed)
- */
-struct VIBEUE_API FNodeInfo
-{
-	FString NodeId;
-	FString NodeType;
-	FString NodeClass;
-	FString Title;
-	FString GraphName;
-	int32 PosX = 0;
-	int32 PosY = 0;
-	TArray<TSharedPtr<FJsonObject>> Pins;
-	TSharedPtr<FJsonObject> AdditionalInfo;
-	
-	FNodeInfo() = default;
-};
 
 /**
  * Service for Blueprint node manipulation
