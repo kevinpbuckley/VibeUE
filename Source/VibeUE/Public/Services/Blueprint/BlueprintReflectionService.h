@@ -2,7 +2,6 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
-#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
@@ -10,22 +9,6 @@
 // Forward declarations
 struct FPropertyInfo;
 class UBlueprintNodeSpawner;
-
-/**
- * Search criteria for node descriptor discovery
- */
-struct VIBEUE_API FNodeDescriptorSearchCriteria
-{
-	FString SearchTerm;
-	FString CategoryFilter;
-	FString ClassFilter;
-	int32 MaxResults;
-	
-	FNodeDescriptorSearchCriteria()
-		: MaxResults(100)
-	{
-	}
-};
 
 /**
  * Structure for class information
@@ -178,21 +161,6 @@ public:
 	 * @return Result containing true if valid
 	 */
 	TResult<bool> IsValidPropertyType(const FString& PropertyType);
-	
-	// ═══════════════════════════════════════════════════════════
-	// Node Discovery
-	// ═══════════════════════════════════════════════════════════
-	
-	/**
-	 * Discover available Blueprint nodes with complete descriptors
-	 * Returns complete node descriptors including expected pin counts, spawner keys,
-	 * and full metadata for AI decision-making
-	 * 
-	 * @param Blueprint The Blueprint to discover nodes for
-	 * @param Criteria Search criteria including filters and limits
-	 * @return Result containing array of node descriptors
-	 */
-	TResult<TArray<FNodeDescriptor>> DiscoverNodesWithDescriptors(UBlueprint* Blueprint, const FNodeDescriptorSearchCriteria& Criteria);
 	
 	// ═══════════════════════════════════════════════════════════
 	// Type Conversion

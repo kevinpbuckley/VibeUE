@@ -88,7 +88,6 @@ private:
     TSharedPtr<class FBlueprintPropertyService> PropertyService;
     TSharedPtr<class FBlueprintComponentService> ComponentService;
     TSharedPtr<class FBlueprintFunctionService> FunctionService;
-    TSharedPtr<class FBlueprintNodeService> NodeService;
     TSharedPtr<class FBlueprintGraphService> GraphService;
     TSharedPtr<class FBlueprintReflectionService> ReflectionService;
 }; 

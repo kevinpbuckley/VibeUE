@@ -2692,10 +2692,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const 
     {
         return HandleSetBlueprintNodeProperty(Params);
     }
-    if (NormalizedAction == TEXT("get_property") || NormalizedAction == TEXT("property"))
-    {
-        return HandleGetBlueprintNodeProperty(Params);
-    }
     if (NormalizedAction == TEXT("reset_pin_defaults") || NormalizedAction == TEXT("reset_pin_default") ||
         NormalizedAction == TEXT("reset_pin") || NormalizedAction == TEXT("reset_pins") ||
         NormalizedAction == TEXT("reset_defaults"))
@@ -4831,15 +4827,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleSetBlueprintNodeProperty(c
     if (ReflectionCommands.IsValid())
     {
         return ReflectionCommands->HandleSetBlueprintNodeProperty(Params);
-    }
-    return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
-}
-
-TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
-{
-    if (ReflectionCommands.IsValid())
-    {
-        return ReflectionCommands->HandleGetBlueprintNodeProperty(Params);
     }
     return FCommonUtils::CreateErrorResponse(TEXT("Reflection system not initialized"));
 }

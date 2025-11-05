@@ -1,6 +1,5 @@
 #include "Commands/BlueprintReflection.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
-#include "Services/Blueprint/BlueprintNodeService.h"
 #include "Engine/Blueprint.h"
 #include "K2Node.h"
 #include "K2Node_Event.h"
@@ -3460,53 +3459,6 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleSetBlueprintNodeProp
     
     // Use the reflection system to set property
     return FBlueprintReflection::SetNodeProperty(Node, PropertyName, PropertyValue);
-}
-
-TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetBlueprintNodeProperty(const TSharedPtr<FJsonObject>& Params)
-{
-    // Extract required parameters
-    FString BlueprintName, NodeId, PropertyName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
-    {
-        return CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
-    }
-    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-    {
-        return CreateErrorResponse(TEXT("Missing 'property_name' parameter"));
-    }
-    
-    // Find Blueprint using DiscoveryService
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return FCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("[%s] %s"), *FindResult.GetErrorCode(), *FindResult.GetErrorMessage()));
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    
-    // Get node property from NodeService
-    auto GetResult = NodeService->GetNodeProperty(Blueprint, NodeId, PropertyName);
-    
-    // Convert TResult to JSON
-    if (GetResult.IsError())
-    {
-        return FCommonUtils::CreateErrorResponse(
-            FString::Printf(TEXT("[%s] %s"), *GetResult.GetErrorCode(), *GetResult.GetErrorMessage()));
-    }
-    
-    const FNodePropertyInfo& PropertyInfo = GetResult.GetValue();
-    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-    Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("property_name"), PropertyInfo.PropertyName);
-    Response->SetStringField(TEXT("value"), PropertyInfo.CurrentValue);
-    Response->SetStringField(TEXT("type"), PropertyInfo.PropertyType);
-    Response->SetStringField(TEXT("category"), PropertyInfo.Category);
-    
-    return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleGetEnhancedNodeDetails(const TSharedPtr<FJsonObject>& Params)
