@@ -2,10 +2,10 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
-#include "Services/Blueprint/BlueprintFunctionService.h"
 #include "Services/Blueprint/Types/BlueprintTypes.h"
 #include "Services/Blueprint/Types/ReflectionTypes.h"
 #include "Services/Blueprint/Types/PropertyTypes.h"
+#include "Services/Blueprint/Types/FunctionTypes.h"
 #include "Core/Result.h"
 #include "UObject/Class.h"
 
