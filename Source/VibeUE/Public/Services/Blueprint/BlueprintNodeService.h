@@ -12,6 +12,7 @@ class UBlueprint;
 class UEdGraph;
 class UEdGraphNode;
 class UEdGraphPin;
+class FJsonObject;
 
 /**
  * Pin connection request structure
@@ -95,7 +96,7 @@ struct VIBEUE_API FNodeCreationParams
 	FString GraphName;
 	int32 PosX = 0;
 	int32 PosY = 0;
-	TSharedPtr<class FJsonObject> AdditionalParams;
+	TArray<TSharedPtr<FJsonObject>> AdditionalParams;
 	
 	FNodeCreationParams() = default;
 };
@@ -112,8 +113,8 @@ struct VIBEUE_API FNodeInfo
 	FString GraphName;
 	int32 PosX = 0;
 	int32 PosY = 0;
-	TArray<TSharedPtr<class FJsonObject>> Pins;
-	TSharedPtr<class FJsonObject> AdditionalInfo;
+	TArray<TSharedPtr<FJsonObject>> Pins;
+	TSharedPtr<FJsonObject> AdditionalInfo;
 	
 	FNodeInfo() = default;
 };
@@ -304,6 +305,7 @@ private:
 	FNodeInfo BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNode* Node) const;
 	FNodeSummary BuildNodeSummary(UBlueprint* Blueprint, UEdGraphNode* Node) const;
 	TSharedPtr<FJsonObject> BuildPinDescriptor(const UEdGraphPin* Pin) const;
+	FString DetermineNodeType(UEdGraphNode* Node) const;
 	
 	// Helper methods for validation
 	bool ValidateNodeGuid(const FString& Guid) const;

@@ -193,8 +193,9 @@ TResult<TArray<FNodeSummary>> FBlueprintNodeService::ListNodes(UBlueprint* Bluep
 
 TResult<TArray<FNodeTypeInfo>> FBlueprintNodeService::DiscoverNodeTypes(const FNodeTypeSearchCriteria& Criteria)
 {
-	// This will delegate to the reflection system
-	// For now, return placeholder to establish the pattern
+	// TODO(Phase 4): Implement node type discovery - will delegate to BlueprintReflectionService
+	// This functionality exists in ReflectionCommands and needs to be extracted to ReflectionService
+	// See HandleGetAvailableBlueprintNodes and HandleDiscoverNodesWithDescriptors
 	return TResult<TArray<FNodeTypeInfo>>::Error(
 		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
 		TEXT("DiscoverNodeTypes not yet implemented - will delegate to BlueprintReflectionService")
@@ -212,7 +213,9 @@ TResult<FNodeInfo> FBlueprintNodeService::CreateNode(UBlueprint* Blueprint, cons
 		return TResult<FNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 	}
 	
-	// This will delegate to the reflection system for node spawning
+	// TODO(Phase 4): Implement node creation - complex logic needs extraction from HandleAddBlueprintNode
+	// This involves spawner key resolution, node placement, pin configuration
+	// Currently handled by ReflectionCommands->HandleAddBlueprintNode
 	return TResult<FNodeInfo>::Error(
 		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
 		TEXT("CreateNode not yet implemented - complex logic needs extraction from HandleAddBlueprintNode")
@@ -231,6 +234,8 @@ TResult<FNodeInfo> FBlueprintNodeService::CreateEventNode(UBlueprint* Blueprint,
 		return TResult<FNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 	}
 	
+	// TODO(Phase 4): Implement event node creation - needs extraction from HandleAddBlueprintEvent
+	// Currently uses FCommonUtils::CreateEventNode helper
 	return TResult<FNodeInfo>::Error(
 		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
 		TEXT("CreateEventNode not yet implemented - needs extraction from HandleAddBlueprintEvent")
@@ -249,6 +254,8 @@ TResult<FNodeInfo> FBlueprintNodeService::CreateInputActionNode(UBlueprint* Blue
 		return TResult<FNodeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
 	}
 	
+	// TODO(Phase 4): Implement input action node creation - needs extraction from HandleAddBlueprintInputActionNode
+	// Currently uses FCommonUtils::CreateInputActionNode helper
 	return TResult<FNodeInfo>::Error(
 		VibeUE::ErrorCodes::NOT_IMPLEMENTED,
 		TEXT("CreateInputActionNode not yet implemented - needs extraction from HandleAddBlueprintInputActionNode")
@@ -642,17 +649,7 @@ FNodeInfo FBlueprintNodeService::BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNo
 	Info.Title = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
 	Info.PosX = Node->NodePosX;
 	Info.PosY = Node->NodePosY;
-	
-	// Determine node type
-	if (Cast<UK2Node_Event>(Node)) Info.NodeType = TEXT("Event");
-	else if (Cast<UK2Node_CallFunction>(Node)) Info.NodeType = TEXT("FunctionCall");
-	else if (Cast<UK2Node_VariableGet>(Node)) Info.NodeType = TEXT("VariableGet");
-	else if (Cast<UK2Node_VariableSet>(Node)) Info.NodeType = TEXT("VariableSet");
-	else if (Cast<UK2Node_IfThenElse>(Node)) Info.NodeType = TEXT("Branch");
-	else if (Cast<UK2Node_Timeline>(Node)) Info.NodeType = TEXT("Timeline");
-	else if (Cast<UK2Node_MacroInstance>(Node)) Info.NodeType = TEXT("MacroInstance");
-	else if (Cast<UK2Node_CustomEvent>(Node)) Info.NodeType = TEXT("CustomEvent");
-	else Info.NodeType = Info.NodeClass;
+	Info.NodeType = DetermineNodeType(Node);
 	
 	// Build pin descriptors
 	for (UEdGraphPin* Pin : Node->Pins)
@@ -677,17 +674,7 @@ FNodeSummary FBlueprintNodeService::BuildNodeSummary(UBlueprint* Blueprint, UEdG
 	
 	Summary.NodeId = Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
 	Summary.Title = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
-	
-	// Determine node type
-	if (Cast<UK2Node_Event>(Node)) Summary.NodeType = TEXT("Event");
-	else if (Cast<UK2Node_CallFunction>(Node)) Summary.NodeType = TEXT("FunctionCall");
-	else if (Cast<UK2Node_VariableGet>(Node)) Summary.NodeType = TEXT("VariableGet");
-	else if (Cast<UK2Node_VariableSet>(Node)) Summary.NodeType = TEXT("VariableSet");
-	else if (Cast<UK2Node_IfThenElse>(Node)) Summary.NodeType = TEXT("Branch");
-	else if (Cast<UK2Node_Timeline>(Node)) Summary.NodeType = TEXT("Timeline");
-	else if (Cast<UK2Node_MacroInstance>(Node)) Summary.NodeType = TEXT("MacroInstance");
-	else if (Cast<UK2Node_CustomEvent>(Node)) Summary.NodeType = TEXT("CustomEvent");
-	else Summary.NodeType = Node->GetClass()->GetName();
+	Summary.NodeType = DetermineNodeType(Node);
 	
 	// Build pin descriptors
 	for (UEdGraphPin* Pin : Node->Pins)
@@ -699,6 +686,26 @@ FNodeSummary FBlueprintNodeService::BuildNodeSummary(UBlueprint* Blueprint, UEdG
 	}
 	
 	return Summary;
+}
+
+FString FBlueprintNodeService::DetermineNodeType(UEdGraphNode* Node) const
+{
+	if (!Node)
+	{
+		return TEXT("Unknown");
+	}
+	
+	// Determine node type by casting to known K2Node types
+	if (Cast<UK2Node_Event>(Node)) return TEXT("Event");
+	if (Cast<UK2Node_CallFunction>(Node)) return TEXT("FunctionCall");
+	if (Cast<UK2Node_VariableGet>(Node)) return TEXT("VariableGet");
+	if (Cast<UK2Node_VariableSet>(Node)) return TEXT("VariableSet");
+	if (Cast<UK2Node_IfThenElse>(Node)) return TEXT("Branch");
+	if (Cast<UK2Node_Timeline>(Node)) return TEXT("Timeline");
+	if (Cast<UK2Node_MacroInstance>(Node)) return TEXT("MacroInstance");
+	if (Cast<UK2Node_CustomEvent>(Node)) return TEXT("CustomEvent");
+	
+	return Node->GetClass()->GetName();
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeService::BuildPinDescriptor(const UEdGraphPin* Pin) const
