@@ -3,6 +3,15 @@
 #include "Commands/CommonUtils.h"
 #include "Commands/ComponentEventBinder.h"
 #include "Commands/InputKeyEnumerator.h"
+#include "Core/ServiceContext.h"
+#include "Services/Blueprint/BlueprintDiscoveryService.h"
+#include "Services/Blueprint/BlueprintLifecycleService.h"
+#include "Services/Blueprint/BlueprintPropertyService.h"
+#include "Services/Blueprint/BlueprintComponentService.h"
+#include "Services/Blueprint/BlueprintFunctionService.h"
+#include "Services/Blueprint/BlueprintNodeService.h"
+#include "Services/Blueprint/BlueprintGraphService.h"
+#include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "EdGraph/EdGraph.h"
@@ -194,6 +203,19 @@ FBlueprintNodeCommands::FBlueprintNodeCommands()
 {
     // Initialize reflection system
     ReflectionCommands = MakeShareable(new FBlueprintReflectionCommands());
+    
+    // Initialize service context
+    TSharedPtr<FServiceContext> ServiceContext = MakeShared<FServiceContext>();
+    
+    // Initialize Blueprint services
+    DiscoveryService = MakeShared<FBlueprintDiscoveryService>(ServiceContext);
+    LifecycleService = MakeShared<FBlueprintLifecycleService>(ServiceContext);
+    PropertyService = MakeShared<FBlueprintPropertyService>(ServiceContext);
+    ComponentService = MakeShared<FBlueprintComponentService>(ServiceContext);
+    FunctionService = MakeShared<FBlueprintFunctionService>(ServiceContext);
+    NodeService = MakeShared<FBlueprintNodeService>(ServiceContext);
+    GraphService = MakeShared<FBlueprintGraphService>(ServiceContext);
+    ReflectionService = MakeShared<FBlueprintReflectionService>(ServiceContext);
 }
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -1262,7 +1284,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
-    // Get required parameters
+    // 1. Extract and validate parameters
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
@@ -1275,49 +1297,35 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const T
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
     }
 
-    // Find the blueprint
-    UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
-    if (!Blueprint)
+    // 2. Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
     {
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
+        return FCommonUtils::CreateErrorResponse(FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // 3. Extract optional graph name
+    FString GraphName;
+    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+
+    // 4. Call service method - business logic lives in the service
+    auto Result = NodeService->FindNodes(Blueprint, NodeType, GraphName);
+    
+    // 5. Convert TResult to JSON response
+    if (Result.IsError())
+    {
+        return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
     }
 
-    FString ScopeError; UEdGraph* EventGraph = ResolveTargetGraph(Blueprint, Params, ScopeError);
-    if (!EventGraph) return FCommonUtils::CreateErrorResponse(ScopeError);
-
-    // Create a JSON array for the node GUIDs
+    const TArray<FString>& NodeGuids = Result.GetValue();
+    
+    // Build JSON array of node GUIDs
     TArray<TSharedPtr<FJsonValue>> NodeGuidArray;
-    
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching for node type: %s"), *NodeType);
-    
-    // Use pure reflection-based node type resolution
-    UClass* TargetNodeClass = FBlueprintReflection::ResolveNodeClass(NodeType);
-    
-    if (TargetNodeClass)
+    for (const FString& Guid : NodeGuids)
     {
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Resolved node class via reflection: %s"), *TargetNodeClass->GetName());
-        
-        // Search through nodes using reflection-based type matching
-        UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Searching %d nodes for type: %s"), EventGraph->Nodes.Num(), *TargetNodeClass->GetName());
-        
-        for (UEdGraphNode* Node : EventGraph->Nodes)
-        {
-            if (Node && Node->IsA(TargetNodeClass))
-            {
-                UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found matching node: %s"), *Node->NodeGuid.ToString());
-                NodeGuidArray.Add(MakeShared<FJsonValueString>(Node->NodeGuid.ToString()));
-            }
-        }
+        NodeGuidArray.Add(MakeShared<FJsonValueString>(Guid));
     }
-    else
-    {
-        UE_LOG(LogVibeUE, Error, TEXT("MCP: FindBlueprintNodes - Failed to resolve node type via reflection: %s"), *NodeType);
-        
-        // Since we don't want hardcoded fallbacks, return an error if reflection fails
-        return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown node type '%s' - reflection system could not resolve this node type"), *NodeType));
-    }
-    
-    UE_LOG(LogVibeUE, Warning, TEXT("MCP: FindBlueprintNodes - Found %d matching nodes for type: %s"), NodeGuidArray.Num(), *NodeType);
     
     TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
     ResultObj->SetArrayField(TEXT("node_guids"), NodeGuidArray);
