@@ -55,6 +55,36 @@ public:
     TResult<void> SetWidgetProperty(UWidget* Widget, const FString& PropertyPath, const FString& Value);
 
     /**
+     * @brief Set a widget property on a blueprint widget by name using rich request payload
+     *
+     * @param WidgetBlueprint Owning widget blueprint
+     * @param WidgetName Name of the widget component
+     * @param Request Property mutation request payload
+     * @return TResult containing details about the mutation or error information
+     */
+    TResult<FWidgetPropertySetResult> SetWidgetProperty(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FWidgetPropertySetRequest& Request);
+
+    /**
+     * @brief Get a widget property value with metadata for blueprint-owned widgets
+     *
+     * @param WidgetBlueprint Owning widget blueprint
+     * @param WidgetName Name of the widget component
+     * @param PropertyPath Property path (supports nested like "Slot.Padding")
+     * @return TResult containing detailed property information
+     */
+    TResult<FWidgetPropertyGetResult> GetWidgetProperty(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FString& PropertyPath);
+
+    /**
+     * @brief List properties for a widget component within a blueprint
+     *
+     * @param WidgetBlueprint Owning widget blueprint
+     * @param WidgetName Name of the widget component
+     * @param bIncludeSlotProperties Include slot properties if widget is in a slot
+     * @return TResult containing array of property info structures
+     */
+    TResult<TArray<FWidgetPropertyInfo>> ListWidgetProperties(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, bool bIncludeSlotProperties = true);
+
+    /**
      * @brief List all properties for a widget
      * 
      * @param Widget Widget to list properties for

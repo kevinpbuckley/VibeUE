@@ -1,6 +1,8 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"
+#include "Services/UMG/WidgetPropertyService.h"
+#include "Core/ServiceContext.h"
 // TODO: Add WidgetComponentService include when implementing Issue #191
 // TODO: Issue #188 skipped - discovery handlers already well-structured
 #include "Editor.h"
@@ -29,11 +31,14 @@
 #include "Components/Border.h"
 #include "Components/Spacer.h"
 #include "Components/SizeBox.h"
+#include "Modules/ModuleManager.h"
 #include "Styling/SlateBrush.h"
 #include "Styling/SlateTypes.h"
 #include "UObject/UnrealType.h"
 #include "Containers/Map.h"
 #include "Containers/Set.h"
+#include "UObject/Class.h"
+#include "UObject/TopLevelAssetPath.h"
 
 namespace
 {
@@ -424,10 +429,13 @@ namespace UMGHelpers
 	WidgetType* CreateWidgetWithParent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FString& ParentName = TEXT(""));
 }
 
-FUMGCommands::FUMGCommands()
+FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 {
-	// Initialize services
-	LifecycleService = MakeShared<FWidgetLifecycleService>(nullptr);
+	ServiceContext = InServiceContext.IsValid() ? InServiceContext : MakeShared<FServiceContext>();
+
+	// Initialize services using shared context
+	LifecycleService = MakeShared<FWidgetLifecycleService>(ServiceContext);
+	PropertyService = MakeShared<FWidgetPropertyService>(ServiceContext);
 	// TODO: Initialize ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
 	// TODO: Issue #188 skipped - discovery handlers already well-structured
 }
@@ -866,168 +874,93 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonObject>& Params)
 {
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-	
-	// Get search parameters
-	FString SearchTerm = TEXT("");
-	Params->TryGetStringField(TEXT("search_term"), SearchTerm);
-	
-	FString AssetType = TEXT("");
+	FString SearchTerm;
+	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'search_term' parameter"));
+	}
+
+	FString AssetType;
 	Params->TryGetStringField(TEXT("asset_type"), AssetType);
-	
+
 	FString Path = TEXT("/Game");
 	Params->TryGetStringField(TEXT("path"), Path);
-	
+
 	bool bCaseSensitive = false;
 	Params->TryGetBoolField(TEXT("case_sensitive"), bCaseSensitive);
-	
+
 	bool bIncludeEngineContent = false;
 	Params->TryGetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
-	
+
 	int32 MaxResults = 100;
-	Params->TryGetNumberField(TEXT("max_results"), MaxResults);
-	
-	// Use Asset Registry for proper recursive search
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-	
-	// Create filter for asset search
+	double MaxResultsValue = 0.0;
+	if (Params->TryGetNumberField(TEXT("max_results"), MaxResultsValue))
+	{
+		MaxResults = FMath::Max(0, static_cast<int32>(MaxResultsValue));
+	}
+
 	FARFilter Filter;
 	Filter.bRecursivePaths = true;
-	Filter.PackagePaths.Add(*Path); // Search recursively from specified path
-	
-	// If including engine content, also add engine paths
+	Filter.PackagePaths.Add(*Path);
 	if (bIncludeEngineContent)
 	{
 		Filter.PackagePaths.Add(TEXT("/Engine"));
 	}
-	
-	// Set up class filter based on asset type
 	if (!AssetType.IsEmpty())
 	{
-		if (AssetType == TEXT("WidgetBlueprint") || AssetType == TEXT("Widget"))
+		FTopLevelAssetPath AssetClassPath = UClass::TryConvertShortTypeNameToPathName<UClass>(AssetType, ELogVerbosity::NoLogging);
+		if (AssetClassPath.IsNull())
 		{
-			Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
+			if (AssetType.Contains(TEXT("/")))
+			{
+				AssetClassPath = FTopLevelAssetPath(*AssetType);
+			}
+			else if (UClass* AssetClass = FindFirstObjectSafe<UClass>(*AssetType))
+			{
+				AssetClassPath = AssetClass->GetClassPathName();
+			}
 		}
-		else if (AssetType == TEXT("Texture2D") || AssetType == TEXT("Texture"))
+
+		if (!AssetClassPath.IsNull())
 		{
-			Filter.ClassPaths.Add(UTexture2D::StaticClass()->GetClassPathName());
+			Filter.ClassPaths.Add(AssetClassPath);
 		}
-		else if (AssetType == TEXT("Material"))
-		{
-			Filter.ClassPaths.Add(UMaterial::StaticClass()->GetClassPathName());
-		}
-		else if (AssetType == TEXT("MaterialInstance"))
-		{
-			Filter.ClassPaths.Add(UMaterialInstance::StaticClass()->GetClassPathName());
-			Filter.ClassPaths.Add(UMaterialInstanceConstant::StaticClass()->GetClassPathName());
-		}
-		else if (AssetType == TEXT("Blueprint"))
-		{
-			Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-		}
-		else if (AssetType == TEXT("StaticMesh"))
-		{
-			Filter.ClassPaths.Add(UStaticMesh::StaticClass()->GetClassPathName());
-		}
-		else if (AssetType == TEXT("SkeletalMesh"))
-		{
-			Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
-		}
-		else if (AssetType == TEXT("Audio") || AssetType == TEXT("SoundWave"))
-		{
-			Filter.ClassPaths.Add(USoundWave::StaticClass()->GetClassPathName());
-		}
-		// If asset type not recognized, search all assets (no class filter)
 	}
-	
-	TArray<FAssetData> AssetDataList;
-	AssetRegistry.GetAssets(Filter, AssetDataList);
-	
-	// Create response array
+
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	TArray<FAssetData> Assets;
+	AssetRegistryModule.Get().GetAssets(Filter, Assets);
+
 	TArray<TSharedPtr<FJsonValue>> ItemArray;
-	int32 ResultCount = 0;
-	
-	for (const FAssetData& AssetData : AssetDataList)
+	const ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;
+
+	for (const FAssetData& Asset : Assets)
 	{
-		if (ResultCount >= MaxResults)
+		const FString AssetName = Asset.AssetName.ToString();
+		if (!SearchTerm.IsEmpty() && !AssetName.Contains(SearchTerm, SearchCase))
+		{
+			continue;
+		}
+
+		TSharedPtr<FJsonObject> ItemObj = MakeShared<FJsonObject>();
+		ItemObj->SetStringField(TEXT("asset_name"), AssetName);
+		ItemObj->SetStringField(TEXT("object_path"), Asset.GetObjectPathString());
+		ItemObj->SetStringField(TEXT("package_name"), Asset.PackageName.ToString());
+		ItemObj->SetStringField(TEXT("class_name"), Asset.AssetClassPath.ToString());
+
+		ItemArray.Add(MakeShared<FJsonValueObject>(ItemObj));
+
+		if (MaxResults > 0 && ItemArray.Num() >= MaxResults)
 		{
 			break;
 		}
-		
-		FString AssetName = AssetData.AssetName.ToString();
-		FString AssetPath = AssetData.GetObjectPathString();
-		
-		// Apply search term filter if provided
-		bool bMatches = true;
-		if (!SearchTerm.IsEmpty())
-		{
-			ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;
-			bMatches = AssetName.Contains(SearchTerm, SearchCase);
-		}
-		
-		if (bMatches)
-		{
-			TSharedPtr<FJsonObject> ItemInfo = MakeShared<FJsonObject>();
-			ItemInfo->SetStringField(TEXT("name"), AssetName);
-			ItemInfo->SetStringField(TEXT("path"), AssetPath);
-			ItemInfo->SetStringField(TEXT("package_path"), AssetData.PackageName.ToString());
-			ItemInfo->SetStringField(TEXT("asset_class"), AssetData.AssetClassPath.ToString());
-			
-			// Add specific info based on asset type
-			if (AssetData.AssetClassPath == UWidgetBlueprint::StaticClass()->GetClassPathName())
-			{
-				UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(AssetData.GetAsset());
-				if (WidgetBlueprint)
-				{
-					ItemInfo->SetStringField(TEXT("parent_class"), WidgetBlueprint->ParentClass ? WidgetBlueprint->ParentClass->GetName() : TEXT("UserWidget"));
-				}
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Widget"));
-			}
-			else if (AssetData.AssetClassPath == UTexture2D::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Texture"));
-			}
-			else if (AssetData.AssetClassPath == UMaterial::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Material"));
-			}
-			else if (AssetData.AssetClassPath == UMaterialInstance::StaticClass()->GetClassPathName() ||
-					 AssetData.AssetClassPath == UMaterialInstanceConstant::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("MaterialInstance"));
-			}
-			else if (AssetData.AssetClassPath == UBlueprint::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Blueprint"));
-			}
-			else if (AssetData.AssetClassPath == UStaticMesh::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("StaticMesh"));
-			}
-			else if (AssetData.AssetClassPath == USkeletalMesh::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("SkeletalMesh"));
-			}
-			else if (AssetData.AssetClassPath == USoundWave::StaticClass()->GetClassPathName())
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Audio"));
-			}
-			else
-			{
-				ItemInfo->SetStringField(TEXT("type"), TEXT("Other"));
-			}
-			
-			ItemArray.Add(MakeShared<FJsonValueObject>(ItemInfo));
-			ResultCount++;
-		}
 	}
-	
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetArrayField(TEXT("items"), ItemArray);
 	Response->SetNumberField(TEXT("count"), ItemArray.Num());
-	
-	// Add search info
+
 	TSharedPtr<FJsonObject> SearchInfo = MakeShared<FJsonObject>();
 	SearchInfo->SetStringField(TEXT("search_term"), SearchTerm);
 	SearchInfo->SetStringField(TEXT("asset_type"), AssetType);
@@ -1036,7 +969,115 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 	SearchInfo->SetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
 	SearchInfo->SetNumberField(TEXT("max_results"), MaxResults);
 	Response->SetObjectField(TEXT("search_info"), SearchInfo);
-	
+
+	return Response;
+}
+
+// TODO: Remove legacy HandleSetWidgetProperty once all handlers are refactored to service layer.
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	if (!PropertyService.IsValid())
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetPropertyService not available"));
+	}
+
+	FString WidgetBlueprintName;
+	FString WidgetName;
+	FString PropertyName;
+
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+	}
+
+	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+	}
+
+	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+	}
+
+	FWidgetPropertySetRequest Request;
+	Request.PropertyPath = PropertyName;
+
+	FString PropertyValueString;
+	const bool bHasStringValue = Params->TryGetStringField(TEXT("property_value"), PropertyValueString);
+	if (bHasStringValue)
+	{
+		Request.Value.SetString(PropertyValueString);
+	}
+	else
+	{
+		const TSharedPtr<FJsonValue>* PropertyValueField = Params->Values.Find(TEXT("property_value"));
+		if (PropertyValueField && PropertyValueField->IsValid())
+		{
+			Request.Value.SetJson(*PropertyValueField);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
+		}
+	}
+
+	FString CollectionOp;
+	if (Params->TryGetStringField(TEXT("collection_op"), CollectionOp) && !CollectionOp.IsEmpty())
+	{
+		FWidgetCollectionOperation Operation;
+		Operation.Operation = CollectionOp;
+		double IndexValue = 0.0;
+		if (Params->TryGetNumberField(TEXT("index"), IndexValue))
+		{
+			Operation.Index = static_cast<int32>(IndexValue);
+		}
+		Request.CollectionOperation = Operation;
+	}
+
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+
+	const auto Result = PropertyService->SetWidgetProperty(WidgetBlueprint, WidgetName, Request);
+	if (Result.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+
+	const FWidgetPropertySetResult& Payload = Result.GetValue();
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("component_name"), WidgetName);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
+
+	if (Payload.bChildOrderUpdated)
+	{
+		Response->SetNumberField(TEXT("property_value"), Payload.ChildOrderValue);
+	}
+	else if (Payload.AppliedValue.HasJson())
+	{
+		Response->SetField(TEXT("property_value"), Payload.AppliedValue.JsonValue);
+	}
+	else if (Payload.AppliedValue.HasString())
+	{
+		Response->SetStringField(TEXT("property_value"), Payload.AppliedValue.StringValue);
+	}
+	else
+	{
+		Response->SetStringField(TEXT("property_value"), TEXT(""));
+	}
+
+	if (!Payload.CollectionOperation.IsEmpty())
+	{
+		Response->SetStringField(TEXT("collection_op"), Payload.CollectionOperation);
+	}
+
+	Response->SetStringField(TEXT("note"), Payload.Note.IsEmpty() ? TEXT("Property set successfully") : Payload.Note);
+
 	return Response;
 }
 
@@ -1488,6 +1529,344 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 // UMG Component Methods Implementation
 // ===================================================================
 
+TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WidgetBlueprintName;
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+	}
+
+	FString ChildName;
+	if (!Params->TryGetStringField(TEXT("child_name"), ChildName))
+	{
+		if (!Params->TryGetStringField(TEXT("component_name"), ChildName) &&
+			!Params->TryGetStringField(TEXT("widget_component_name"), ChildName))
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing child_name parameter"));
+		}
+	}
+
+	FString ParentName;
+	bool bHasParentName = Params->TryGetStringField(TEXT("parent_name"), ParentName) ||
+		Params->TryGetStringField(TEXT("panel_name"), ParentName) ||
+		Params->TryGetStringField(TEXT("parent_component_name"), ParentName);
+
+	FString ParentType = TEXT("CanvasPanel");
+	Params->TryGetStringField(TEXT("parent_type"), ParentType);
+
+	bool bReparentIfExists = true;
+	Params->TryGetBoolField(TEXT("reparent_if_exists"), bReparentIfExists);
+
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+
+	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
+	if (!WidgetTree)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+	}
+
+	UWidget* ChildWidget = WidgetTree->FindWidget(FName(*ChildName));
+	if (!ChildWidget)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildName));
+	}
+
+	UPanelWidget* ParentPanel = nullptr;
+	if (bHasParentName && !ParentName.IsEmpty())
+	{
+		ParentPanel = UMGHelpers::FindOrCreateParentPanel(WidgetBlueprint, ParentName, ParentType);
+	}
+	else
+	{
+		ParentPanel = Cast<UPanelWidget>(WidgetTree->RootWidget);
+		if (ParentPanel)
+		{
+			ParentName = ParentPanel->GetName();
+		}
+	}
+
+	if (!ParentPanel)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Parent panel not found or could not be created"));
+	}
+
+	bool bStructureChanged = false;
+	bool bReparented = false;
+	UPanelWidget* ExistingParent = ChildWidget->GetParent();
+
+	if (ExistingParent && ExistingParent != ParentPanel)
+	{
+		if (!bReparentIfExists)
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' already has a different parent"), *ChildName));
+		}
+
+		ExistingParent->RemoveChild(ChildWidget);
+		bStructureChanged = true;
+		bReparented = true;
+	}
+
+	if (!ExistingParent)
+	{
+		if (WidgetTree->RootWidget == ChildWidget)
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Cannot reparent the root widget using add_child_to_panel"));
+		}
+	}
+
+	bool bAlreadyInParent = (ChildWidget->GetParent() == ParentPanel);
+	double InsertIndexValue = 0.0;
+	int32 DesiredIndex = INDEX_NONE;
+	if (Params->TryGetNumberField(TEXT("child_index"), InsertIndexValue) ||
+		Params->TryGetNumberField(TEXT("insert_index"), InsertIndexValue))
+	{
+		DesiredIndex = FMath::Max(0, static_cast<int32>(InsertIndexValue));
+	}
+
+	if (!bAlreadyInParent)
+	{
+		if (DesiredIndex != INDEX_NONE)
+		{
+			DesiredIndex = FMath::Min(DesiredIndex, ParentPanel->GetChildrenCount());
+			ParentPanel->InsertChildAt(DesiredIndex, ChildWidget);
+		}
+		else
+		{
+			ParentPanel->AddChild(ChildWidget);
+		}
+		bStructureChanged = true;
+	}
+	else if (DesiredIndex != INDEX_NONE)
+	{
+		const int32 CurrentIndex = ParentPanel->GetChildIndex(ChildWidget);
+		DesiredIndex = FMath::Min(DesiredIndex, ParentPanel->GetChildrenCount() - 1);
+		if (CurrentIndex != DesiredIndex && CurrentIndex != INDEX_NONE)
+		{
+			ParentPanel->RemoveChild(ChildWidget);
+			ParentPanel->InsertChildAt(DesiredIndex, ChildWidget);
+			bStructureChanged = true;
+		}
+	}
+
+	bool bSlotPropsApplied = false;
+	if (Params->HasTypedField<EJson::Object>(TEXT("slot_properties")))
+	{
+		TSharedPtr<FJsonObject> SlotProperties = Params->GetObjectField(TEXT("slot_properties"));
+		if (SlotProperties.IsValid())
+		{
+			bSlotPropsApplied = UMGHelpers::SetSlotProperties(ChildWidget, ParentPanel, SlotProperties);
+		}
+	}
+
+	if (bStructureChanged)
+	{
+		WidgetBlueprint->Modify();
+		WidgetBlueprint->MarkPackageDirty();
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+		FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
+	}
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("child_name"), ChildWidget->GetName());
+	Response->SetStringField(TEXT("parent_name"), ParentPanel->GetName());
+	Response->SetStringField(TEXT("parent_type"), ParentPanel->GetClass()->GetName());
+	Response->SetBoolField(TEXT("reparented"), bReparented);
+	Response->SetBoolField(TEXT("slot_properties_applied"), bSlotPropsApplied);
+	if (DesiredIndex != INDEX_NONE)
+	{
+		Response->SetNumberField(TEXT("child_index"), ParentPanel->GetChildIndex(ChildWidget));
+	}
+
+	Response->SetStringField(TEXT("note"), TEXT("Child widget successfully attached to parent panel"));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params)
+{
+	FString WidgetBlueprintName;
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+	}
+
+	FString ComponentName;
+	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+	{
+		// Fallbacks used by some callers
+		if (!Params->TryGetStringField(TEXT("widget_component_name"), ComponentName))
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		}
+	}
+
+	bool bRemoveChildren = false;
+	Params->TryGetBoolField(TEXT("remove_children"), bRemoveChildren);
+
+	bool bRemoveFromVariables = false;
+	Params->TryGetBoolField(TEXT("remove_from_variables"), bRemoveFromVariables);
+
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+
+	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
+	if (!WidgetTree)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+	}
+
+	UWidget* TargetComponent = WidgetTree->FindWidget(FName(*ComponentName));
+	if (!TargetComponent)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+	}
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	TArray<TSharedPtr<FJsonValue>> RemovedComponents;
+	TArray<TSharedPtr<FJsonValue>> OrphanedChildren;
+
+	// Recursively walk children so we can either detach or report them
+	TArray<UWidget*> CollectedChildren;
+	TFunction<void(UWidget*, TArray<UWidget*>&)> CollectChildren = [&](UWidget* Widget, TArray<UWidget*>& Children)
+	{
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 ChildIndex = 0; ChildIndex < Panel->GetChildrenCount(); ++ChildIndex)
+			{
+				if (UWidget* Child = Panel->GetChildAt(ChildIndex))
+				{
+					Children.Add(Child);
+					CollectChildren(Child, Children);
+				}
+			}
+		}
+	};
+
+	CollectChildren(TargetComponent, CollectedChildren);
+
+	if (!bRemoveChildren && CollectedChildren.Num() > 0)
+	{
+		UWidget* RootWidget = WidgetTree->RootWidget;
+		if (UPanelWidget* RootPanel = Cast<UPanelWidget>(RootWidget))
+		{
+			for (UWidget* Child : CollectedChildren)
+			{
+				if (!Child)
+				{
+					continue;
+				}
+
+				if (UWidget* CurrentParent = Child->GetParent())
+				{
+					if (UPanelWidget* CurrentPanel = Cast<UPanelWidget>(CurrentParent))
+					{
+						CurrentPanel->RemoveChild(Child);
+					}
+				}
+
+				RootPanel->AddChild(Child);
+
+				TSharedPtr<FJsonObject> OrphanInfo = MakeShared<FJsonObject>();
+				OrphanInfo->SetStringField(TEXT("name"), Child->GetName());
+				OrphanInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
+				OrphanedChildren.Add(MakeShared<FJsonValueObject>(OrphanInfo));
+			}
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Root widget is not a panel; cannot reparent children"));
+		}
+	}
+
+	UWidget* ParentWidget = TargetComponent->GetParent();
+	FString ParentName = ParentWidget ? ParentWidget->GetName() : TEXT("Root");
+	FString ParentType = ParentWidget ? ParentWidget->GetClass()->GetName() : TEXT("N/A");
+
+	if (ParentWidget)
+	{
+		if (UPanelWidget* ParentPanel = Cast<UPanelWidget>(ParentWidget))
+		{
+			ParentPanel->RemoveChild(TargetComponent);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
+		}
+	}
+	else if (WidgetTree->RootWidget == TargetComponent)
+	{
+		WidgetTree->RootWidget = nullptr;
+	}
+
+	TSharedPtr<FJsonObject> MainComponentInfo = MakeShared<FJsonObject>();
+	MainComponentInfo->SetStringField(TEXT("name"), ComponentName);
+	MainComponentInfo->SetStringField(TEXT("type"), TargetComponent->GetClass()->GetName());
+	RemovedComponents.Add(MakeShared<FJsonValueObject>(MainComponentInfo));
+
+	if (bRemoveChildren)
+	{
+		for (UWidget* Child : CollectedChildren)
+		{
+			if (!Child)
+			{
+				continue;
+			}
+
+			TSharedPtr<FJsonObject> ChildInfo = MakeShared<FJsonObject>();
+			ChildInfo->SetStringField(TEXT("name"), Child->GetName());
+			ChildInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
+			RemovedComponents.Add(MakeShared<FJsonValueObject>(ChildInfo));
+		}
+	}
+
+	bool bVariableCleanupPerformed = false;
+	if (bRemoveFromVariables)
+	{
+		for (int32 Index = WidgetBlueprint->NewVariables.Num() - 1; Index >= 0; --Index)
+		{
+			if (WidgetBlueprint->NewVariables[Index].VarName.ToString() == ComponentName)
+			{
+				WidgetBlueprint->NewVariables.RemoveAt(Index);
+				bVariableCleanupPerformed = true;
+				break;
+			}
+		}
+	}
+
+	WidgetBlueprint->Modify();
+	WidgetBlueprint->MarkPackageDirty();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
+
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("component_name"), ComponentName);
+	Response->SetArrayField(TEXT("removed_components"), RemovedComponents);
+	Response->SetArrayField(TEXT("orphaned_children"), OrphanedChildren);
+	Response->SetBoolField(TEXT("variable_cleanup"), bVariableCleanupPerformed);
+
+	TSharedPtr<FJsonObject> ParentInfo = MakeShared<FJsonObject>();
+	ParentInfo->SetStringField(TEXT("name"), ParentName);
+	ParentInfo->SetStringField(TEXT("type"), ParentType);
+	Response->SetObjectField(TEXT("parent_info"), ParentInfo);
+
+	Response->SetStringField(TEXT("note"), FString::Printf(
+		TEXT("Universal component removal completed. Removed %d components, orphaned %d children"),
+		RemovedComponents.Num(),
+		OrphanedChildren.Num()));
+
+	return Response;
+}
+
 
 
 
@@ -1507,271 +1886,84 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 
 
 
-TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
+TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
+	if (!PropertyService.IsValid())
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetPropertyService not available"));
+	}
+
 	FString WidgetBlueprintName;
-	FString ParentPanelName;
-	FString ChildWidgetName;
-	int32 SlotIndex = -1;
-	
+	FString WidgetName;
+	FString PropertyName;
+
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
-	
-	if (!Params->TryGetStringField(TEXT("parent_panel_name"), ParentPanelName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing parent_panel_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("child_widget_name"), ChildWidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing child_widget_name parameter"));
-	}
-	
-	Params->TryGetNumberField(TEXT("slot_index"), SlotIndex);
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-	
 
-	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
-	if (!WidgetTree)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
-	}
-
-	UWidget* ParentPanel = WidgetTree->FindWidget(FName(*ParentPanelName));
-	UWidget* ChildWidget = WidgetTree->FindWidget(FName(*ChildWidgetName));
-	if (!ParentPanel)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Parent panel '%s' not found"), *ParentPanelName));
-	}
-	if (!ChildWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Child widget '%s' not found"), *ChildWidgetName));
-	}
-
-	UPanelWidget* PanelWidget = Cast<UPanelWidget>(ParentPanel);
-	if (!PanelWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
-	}
-
-	if (SlotIndex < 0 || SlotIndex >= PanelWidget->GetChildrenCount())
-	{
-		PanelWidget->AddChild(ChildWidget);
-	}
-	else
-	{
-		PanelWidget->InsertChildAt(SlotIndex, ChildWidget);
-	}
-
-	WidgetBlueprint->MarkPackageDirty();
-	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("parent_panel_name"), ParentPanelName);
-	Result->SetStringField(TEXT("child_widget_name"), ChildWidgetName);
-	Result->SetNumberField(TEXT("slot_index"), SlotIndex);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("note"), TEXT("Child widget added to parent panel"));
-	
-	// Add best practice guidance for AI assistants
-	TSharedPtr<FJsonObject> BestPracticeGuide = MakeShareable(new FJsonObject);
-	BestPracticeGuide->SetStringField(TEXT("background_styling"), TEXT("For background colors/images, use Overlay panels instead of Canvas panels. Add background Image widgets as children to their specific containers (ScrollBox, Panel sections) not the main canvas."));
-	BestPracticeGuide->SetStringField(TEXT("root_canvas_structure"), TEXT("CRITICAL: Root Canvas should contain Overlay widgets for each major UI section. Each Overlay manages its own background and content. Never add backgrounds directly to the root Canvas."));
-	BestPracticeGuide->SetStringField(TEXT("proper_nesting"), TEXT("Background elements should be nested within their content containers, not globally positioned. This ensures automatic layout and proper visual hierarchy."));
-	BestPracticeGuide->SetStringField(TEXT("z_order_layering"), TEXT("Use negative Z-order values (-10 to -100) for background elements to ensure they appear behind content."));
-	BestPracticeGuide->SetStringField(TEXT("overlay_usage"), TEXT("When adding backgrounds: 1) Create/use Overlay panels, 2) Add background Image as child, 3) Add content widgets as children, 4) Set proper Z-order"));
-	BestPracticeGuide->SetStringField(TEXT("size_to_fill"), TEXT("Background images should use 'Fill' size rule in their slot properties to cover the entire container area."));
-	Result->SetObjectField(TEXT("ai_guidance"), BestPracticeGuide);
-	
-	return Result;
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString ComponentName;
-	bool RemoveChildren = true;
-	bool RemoveFromVariables = true;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
-	
-	// Optional parameters with defaults
-	Params->TryGetBoolField(TEXT("remove_children"), RemoveChildren);
-	Params->TryGetBoolField(TEXT("remove_from_variables"), RemoveFromVariables);
-	
+
+	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+	}
+
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
-	
-	UWidgetTree* WidgetTree = WidgetBlueprint->WidgetTree;
-	if (!WidgetTree)
+
+	const auto Result = PropertyService->GetWidgetProperty(WidgetBlueprint, WidgetName, PropertyName);
+	if (Result.IsError())
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetTree not found in Widget Blueprint"));
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
 	}
 
-	// Find the target component
-	UWidget* TargetComponent = WidgetTree->FindWidget(FName(*ComponentName));
-	if (!TargetComponent)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
-	}
+	const FWidgetPropertyGetResult& Payload = Result.GetValue();
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("component_name"), WidgetName);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
 
-	// Prepare response data
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	TArray<TSharedPtr<FJsonValue>> RemovedComponents;
-	TArray<TSharedPtr<FJsonValue>> OrphanedChildren;
-	
-	// Function to recursively collect all child components
-	TFunction<void(UWidget*, TArray<UWidget*>&)> CollectChildren = [&](UWidget* Widget, TArray<UWidget*>& Children) -> void
+	if (Payload.bIsChildOrder)
 	{
-		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
-		{
-			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
-			{
-				UWidget* Child = Panel->GetChildAt(i);
-				if (Child)
-				{
-					Children.Add(Child);
-					CollectChildren(Child, Children);  // Recursive collection
-				}
-			}
-		}
-	};
-
-	// Collect all children of the target component
-	TArray<UWidget*> AllChildren;
-	CollectChildren(TargetComponent, AllChildren);
-	
-	// Handle children based on remove_children flag
-	if (!RemoveChildren && AllChildren.Num() > 0)
-	{
-		// Reparent children to root (or appropriate parent)
-		UWidget* RootWidget = WidgetTree->RootWidget;
-		if (UPanelWidget* RootPanel = Cast<UPanelWidget>(RootWidget))
-		{
-			for (UWidget* Child : AllChildren)
-			{
-				// Remove from current parent first
-				if (UWidget* CurrentParent = Child->GetParent())
-				{
-					if (UPanelWidget* CurrentPanel = Cast<UPanelWidget>(CurrentParent))
-					{
-						CurrentPanel->RemoveChild(Child);
-					}
-				}
-				
-				// Add to root panel
-				RootPanel->AddChild(Child);
-				
-				// Track orphaned children
-				TSharedPtr<FJsonObject> OrphanInfo = MakeShareable(new FJsonObject);
-				OrphanInfo->SetStringField(TEXT("name"), Child->GetName());
-				OrphanInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
-				OrphanedChildren.Add(MakeShared<FJsonValueObject>(OrphanInfo));
-			}
-		}
+		Response->SetNumberField(TEXT("property_value"), Payload.ChildOrderValue);
 	}
-	
-	// Remove the target component from its parent
-	UWidget* ParentWidget = TargetComponent->GetParent();
-	FString ParentName = ParentWidget ? ParentWidget->GetName() : TEXT("Root");
-	FString ParentType = ParentWidget ? ParentWidget->GetClass()->GetName() : TEXT("N/A");
-	
-	if (ParentWidget)
+	else if (Payload.Value.HasJson())
 	{
-		if (UPanelWidget* ParentPanel = Cast<UPanelWidget>(ParentWidget))
-		{
-			ParentPanel->RemoveChild(TargetComponent);
-		}
-		else
-		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Parent is not a panel widget"));
-		}
+		Response->SetField(TEXT("property_value"), Payload.Value.JsonValue);
+	}
+	else if (Payload.Value.HasString())
+	{
+		Response->SetStringField(TEXT("property_value"), Payload.Value.StringValue);
 	}
 	else
 	{
-		// Removing root widget
-		if (WidgetTree->RootWidget == TargetComponent)
-		{
-			WidgetTree->RootWidget = nullptr;
-		}
+		Response->SetStringField(TEXT("property_value"), TEXT(""));
 	}
-	
-	// Track the main removed component
-	TSharedPtr<FJsonObject> MainComponentInfo = MakeShareable(new FJsonObject);
-	MainComponentInfo->SetStringField(TEXT("name"), ComponentName);
-	MainComponentInfo->SetStringField(TEXT("type"), TargetComponent->GetClass()->GetName());
-	RemovedComponents.Add(MakeShared<FJsonValueObject>(MainComponentInfo));
-	
-	// Add children to removed components if they were removed
-	if (RemoveChildren)
-	{
-		for (UWidget* Child : AllChildren)
-		{
-			TSharedPtr<FJsonObject> ChildInfo = MakeShareable(new FJsonObject);
-			ChildInfo->SetStringField(TEXT("name"), Child->GetName());
-			ChildInfo->SetStringField(TEXT("type"), Child->GetClass()->GetName());
-			RemovedComponents.Add(MakeShared<FJsonValueObject>(ChildInfo));
-		}
-	}
-	
-	// Handle variable cleanup if requested
-	bool VariableCleanupPerformed = false;
-	if (RemoveFromVariables)
-	{
-		// Find and remove the Blueprint variable for this component
-		for (int32 i = WidgetBlueprint->NewVariables.Num() - 1; i >= 0; i--)
-		{
-			if (WidgetBlueprint->NewVariables[i].VarName.ToString() == ComponentName)
-			{
-				WidgetBlueprint->NewVariables.RemoveAt(i);
-				VariableCleanupPerformed = true;
-				break;
-			}
-		}
-	}
-	
-	// Mark Blueprint as dirty and recompile
-	WidgetBlueprint->MarkPackageDirty();
-	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-	
-	// Build response
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), ComponentName);
-	Result->SetArrayField(TEXT("removed_components"), RemovedComponents);
-	Result->SetArrayField(TEXT("orphaned_children"), OrphanedChildren);
-	Result->SetBoolField(TEXT("variable_cleanup"), VariableCleanupPerformed);
-	
-	// Parent info
-	TSharedPtr<FJsonObject> ParentInfo = MakeShareable(new FJsonObject);
-	ParentInfo->SetStringField(TEXT("name"), ParentName);
-	ParentInfo->SetStringField(TEXT("type"), ParentType);
-	Result->SetObjectField(TEXT("parent_info"), ParentInfo);
-	
-	Result->SetStringField(TEXT("note"), FString::Printf(TEXT("Universal component removal completed. Removed %d components, orphaned %d children"), RemovedComponents.Num(), OrphanedChildren.Num()));
-	
-	return Result;
-}
 
+	Response->SetStringField(TEXT("property_type"), Payload.PropertyType);
+	Response->SetBoolField(TEXT("editable"), Payload.bIsEditable);
+
+	TSharedPtr<FJsonObject> Constraints = Payload.Constraints.IsValid() ? Payload.Constraints : MakeShared<FJsonObject>();
+	Response->SetObjectField(TEXT("constraints"), Constraints);
+
+	TSharedPtr<FJsonObject> Schema = Payload.Schema.IsValid() ? Payload.Schema : MakeShared<FJsonObject>();
+	Response->SetObjectField(TEXT("schema"), Schema);
+
+	TSharedPtr<FJsonObject> AdapterInfo = MakeShared<FJsonObject>();
+	AdapterInfo->SetStringField(TEXT("component_kind"), TEXT("UMG"));
+	AdapterInfo->SetStringField(TEXT("slot_class"), Payload.SlotClass);
+	Response->SetObjectField(TEXT("adapter_info"), AdapterInfo);
+
+	return Response;
+}
 TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
@@ -2314,1112 +2506,77 @@ bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, FPropert
 	return false;
 }
 
-TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString WidgetName;
-	FString PropertyName;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
-	}
-	
-	// Support both string and JSON object values
-	FString PropertyValue;
-	TSharedPtr<FJsonValue> PropertyValueJson;
-	bool bHasStringValue = Params->TryGetStringField(TEXT("property_value"), PropertyValue);
-	bool bHasJsonValue = Params->Values.Contains(TEXT("property_value")) && !bHasStringValue;
-	
-	if (!bHasStringValue && !bHasJsonValue)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
-	}
-	
-	if (bHasJsonValue)
-	{
-		PropertyValueJson = Params->Values[TEXT("property_value")];
-	}
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-
-	// Find the widget component in the widget tree
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
-	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
-	}
-
-	if (!FoundWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
-	}
-
-	// Use reflection to find and set the property
-	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
-	void* ContainerPtrForSet = (void*)FoundWidget;
-	bool bUsedResolver = false;
-	if (!Property)
-	{
-		// We now support dotted paths and Slot.* context, plus IsVariable alias
-		// Resolve path
-		bool bSlotRoot = false;
-		TArray<FPathSegment> Segs;
-		if (!ParsePropertyPath(PropertyName, bSlotRoot, Segs))
-		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Invalid property_name path"));
-		}
-		FString ResolveError;
-		FResolvedTarget Target;
-		if (!ResolvePath(FoundWidget, Segs, bSlotRoot, Target, ResolveError))
-		{
-			return FCommonUtils::CreateErrorResponse(ResolveError);
-		}
-
-	bUsedResolver = true;
-	// Synthetic child order setter
-		if (Target.bIsSyntheticChildOrder)
-		{
-			int32 DesiredIndex = INDEX_NONE;
-			if (bHasStringValue)
-			{
-				DesiredIndex = FCString::Atoi(*PropertyValue);
-			}
-			else if (bHasJsonValue && PropertyValueJson.IsValid() && PropertyValueJson->Type == EJson::Number)
-			{
-				DesiredIndex = (int32)PropertyValueJson->AsNumber();
-			}
-			else
-			{
-				return FCommonUtils::CreateErrorResponse(TEXT("ChildOrder requires integer value"));
-			}
-			UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
-			if (!Slot || !Slot->Parent)
-			{
-				return FCommonUtils::CreateErrorResponse(TEXT("Widget has no parent panel for ChildOrder"));
-			}
-			UPanelWidget* Parent = Slot->Parent;
-			int32 CurrentIndex = Parent->GetChildIndex(FoundWidget);
-			DesiredIndex = FMath::Clamp(DesiredIndex, 0, Parent->GetChildrenCount() - 1);
-			if (CurrentIndex != DesiredIndex)
-			{
-				Parent->RemoveChildAt(CurrentIndex);
-				Parent->InsertChildAt(DesiredIndex, FoundWidget);
-			}
-			FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-			if (GEditor)
-			{
-				GEditor->NoteSelectionChange();
-				TArray<IAssetEditorInstance*> AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAsset(WidgetBlueprint);
-				for (IAssetEditorInstance* Editor : AssetEditors)
-				{
-					if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(Editor))
-					{
-						WidgetEditor->RefreshEditors();
-					}
-				}
-			}
-			TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-			Result->SetBoolField(TEXT("success"), true);
-			Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-			Result->SetStringField(TEXT("component_name"), WidgetName);
-			Result->SetStringField(TEXT("property_name"), PropertyName);
-			Result->SetNumberField(TEXT("property_value"), DesiredIndex);
-			Result->SetStringField(TEXT("note"), TEXT("ChildOrder updated"));
-			return Result;
-		}
-
-		FProperty* ResolvedProperty = Target.Property;
-		if (!ResolvedProperty)
-		{
-			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on target"), *PropertyName));
-		}
-		Property = ResolvedProperty;
-		ContainerPtrForSet = Target.ContainerPtr ? Target.ContainerPtr : (void*)FoundWidget;
-	}
-
-	// Optional collection operation (for arrays/sets/maps)
-	FString CollectionOp;
-	Params->TryGetStringField(TEXT("collection_op"), CollectionOp);
-
-	// Flag for structural modification (e.g., IsVariable toggles)
-	bool bStructuralChange = false;
-
-	// Handle collection operations first when applicable
-	if (!CollectionOp.IsEmpty())
-	{
-		if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
-		{
-			void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-			FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
-
-			auto ConvertAndAssignElement = [&](int32 DestIndex, const TSharedPtr<FJsonValue>& JsonElem, FString& OutErrStr) -> bool
-			{
-				ArrayHelper.ExpandForIndex(DestIndex);
-				void* ElemPtr = ArrayHelper.GetRawPtr(DestIndex);
-				FProperty* ElemProp = ArrayProperty->Inner;
-
-				if (FStrProperty* PropStr = CastField<FStrProperty>(ElemProp))
-				{
-					FString V;
-					if (JsonElem->Type == EJson::String) V = JsonElem->AsString();
-					else if (JsonElem->Type == EJson::Number) V = FString::SanitizeFloat(JsonElem->AsNumber());
-					else if (JsonElem->Type == EJson::Boolean) V = JsonElem->AsBool() ? TEXT("true") : TEXT("false");
-					else V = JsonElem->AsString();
-					PropStr->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FTextProperty* PropText = CastField<FTextProperty>(ElemProp))
-				{
-					FText V = FText::FromString(JsonElem->AsString());
-					PropText->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FBoolProperty* PropBool = CastField<FBoolProperty>(ElemProp))
-				{
-					bool V = (JsonElem->Type == EJson::Boolean) ? JsonElem->AsBool() : JsonElem->AsString().Equals(TEXT("true"), ESearchCase::IgnoreCase);
-					PropBool->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FFloatProperty* PropFloat = CastField<FFloatProperty>(ElemProp))
-				{
-					float V = (float)((JsonElem->Type == EJson::Number) ? JsonElem->AsNumber() : FCString::Atof(*JsonElem->AsString()));
-					PropFloat->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FIntProperty* PropInt = CastField<FIntProperty>(ElemProp))
-				{
-					int32 V = (int32)((JsonElem->Type == EJson::Number) ? JsonElem->AsNumber() : FCString::Atoi(*JsonElem->AsString()));
-					PropInt->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FByteProperty* PropByte = CastField<FByteProperty>(ElemProp))
-				{
-					if (PropByte->Enum)
-					{
-						FString NameStr = JsonElem->AsString();
-						int64 EnumVal = PropByte->Enum->GetValueByNameString(NameStr);
-						if (EnumVal == INDEX_NONE)
-						{
-							OutErrStr = FString::Printf(TEXT("Invalid enum value '%s'"), *NameStr);
-							return false;
-						}
-						PropByte->SetPropertyValue(ElemPtr, (uint8)EnumVal);
-						return true;
-					}
-					uint8 V = (uint8)((JsonElem->Type == EJson::Number) ? (int32)JsonElem->AsNumber() : FCString::Atoi(*JsonElem->AsString()));
-					PropByte->SetPropertyValue(ElemPtr, V);
-					return true;
-				}
-				if (FStructProperty* PropStruct = CastField<FStructProperty>(ElemProp))
-				{
-					if (JsonElem->Type != EJson::Object)
-					{
-						OutErrStr = TEXT("Struct array element requires JSON object");
-						return false;
-					}
-					TSharedPtr<FJsonObject> Obj = JsonElem->AsObject();
-					return FJsonObjectConverter::JsonObjectToUStruct(Obj.ToSharedRef(), PropStruct->Struct, ElemPtr, 0, 0);
-				}
-				OutErrStr = TEXT("Unsupported array element type");
-				return false;
-			};
-
-			FString Op = CollectionOp.ToLower();
-			if (Op == TEXT("clear"))
-			{
-				ArrayHelper.Resize(0);
-			}
-			else if (Op == TEXT("set") || Op == TEXT("append"))
-			{
-				const TArray<TSharedPtr<FJsonValue>>* JsonArr = nullptr;
-				if (!bHasJsonValue || !PropertyValueJson.IsValid() || PropertyValueJson->Type != EJson::Array)
-				{
-					return FCommonUtils::CreateErrorResponse(TEXT("collection_op requires property_value to be an array"));
-				}
-				JsonArr = &PropertyValueJson->AsArray();
-				int32 StartIndex = (Op == TEXT("set")) ? 0 : ArrayHelper.Num();
-				if (Op == TEXT("set"))
-				{
-					ArrayHelper.Resize(0);
-				}
-				for (int32 i = 0; i < JsonArr->Num(); ++i)
-				{
-					FString CErr;
-					if (!ConvertAndAssignElement(StartIndex + i, (*JsonArr)[i], CErr))
-					{
-						return FCommonUtils::CreateErrorResponse(CErr);
-					}
-				}
-			}
-			else if (Op == TEXT("insert") || Op == TEXT("updateat") || Op == TEXT("removeat"))
-			{
-				int32 Index = 0;
-				if (!Params->TryGetNumberField(TEXT("index"), Index))
-				{
-					return FCommonUtils::CreateErrorResponse(TEXT("collection_op requires 'index' parameter"));
-				}
-				if (Op == TEXT("removeat"))
-				{
-					if (Index < 0 || Index >= ArrayHelper.Num())
-					{
-						return FCommonUtils::CreateErrorResponse(TEXT("removeAt index out of range"));
-					}
-					ArrayHelper.RemoveValues(Index, 1);
-				}
-				else
-				{
-					if (!bHasJsonValue)
-					{
-						return FCommonUtils::CreateErrorResponse(TEXT("insert/updateAt requires JSON property_value for element"));
-					}
-					if (Op == TEXT("insert"))
-					{
-						Index = FMath::Clamp(Index, 0, ArrayHelper.Num());
-						ArrayHelper.InsertValues(Index, 1);
-					}
-					else
-					{
-						if (Index < 0 || Index >= ArrayHelper.Num())
-						{
-							return FCommonUtils::CreateErrorResponse(TEXT("updateAt index out of range"));
-						}
-					}
-					FString CErr;
-					if (!ConvertAndAssignElement(Index, PropertyValueJson, CErr))
-					{
-						return FCommonUtils::CreateErrorResponse(CErr);
-					}
-				}
-			}
-			else
-			{
-				return FCommonUtils::CreateErrorResponse(TEXT("Unsupported collection_op for arrays"));
-			}
-
-			// Mark and refresh
-			FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-			if (GEditor)
-			{
-				GEditor->NoteSelectionChange();
-				TArray<IAssetEditorInstance*> AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAsset(WidgetBlueprint);
-				for (IAssetEditorInstance* Editor : AssetEditors)
-				{
-					if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(Editor))
-					{
-						WidgetEditor->RefreshEditors();
-					}
-				}
-			}
-			TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-			Result->SetBoolField(TEXT("success"), true);
-			Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-			Result->SetStringField(TEXT("component_name"), WidgetName);
-			Result->SetStringField(TEXT("property_name"), PropertyName);
-			Result->SetStringField(TEXT("collection_op"), CollectionOp);
-			Result->SetStringField(TEXT("note"), TEXT("Array collection operation applied"));
-			return Result;
-		}
-		// TODO: Add TSet/TMap support
-		return FCommonUtils::CreateErrorResponse(TEXT("collection_op currently supports TArray only"));
-	}
-
-	// Handle different property types
-	bool bPropertySet = false;
-	FString ErrorMessage;
-
-	// First: handle struct properties with JSON reflectively.
-	// IMPORTANT: If ResolvePath was used, ContainerPtrForSet may already be the struct VALUE pointer.
-	// In that case, do NOT call ContainerPtrToValuePtr again (avoids double-offset into memory).
-	if (!bPropertySet && bHasJsonValue && PropertyValueJson.IsValid())
-	{
-		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
-		{
-			if (PropertyValueJson->Type != EJson::Object)
-			{
-				ErrorMessage = FString::Printf(TEXT("Struct property '%s' requires JSON object"), *PropertyName);
-			}
-			else
-			{
-				TSharedPtr<FJsonObject> JsonObj = PropertyValueJson->AsObject();
-				// If we resolved via dotted path, ContainerPtrForSet points to the VALUE already.
-				// Otherwise it's the owning object; derive value pointer via reflection.
-				void* ValuePtr = bUsedResolver
-					? ContainerPtrForSet
-					: StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-				bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
-				if (!bPropertySet)
-				{
-					ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct for property '%s'"), *PropertyName);
-				}
-			}
-		}
-	}
-
-	// Next: try complex non-struct types when JSON is provided
-	if (!bPropertySet && bHasJsonValue && PropertyValueJson.IsValid())
-	{
-		if (!CastField<FStructProperty>(Property))
-		{
-			bPropertySet = ParseComplexPropertyValue(PropertyValueJson, Property, FoundWidget, ErrorMessage);
-		}
-	}
-	
-	// If complex type parsing failed or we have string data, try basic types
-	if (!bPropertySet && bHasStringValue)
-	{
-		if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
-		{
-			StrProperty->SetPropertyValue_InContainer(ContainerPtrForSet, PropertyValue);
-			bPropertySet = true;
-		}
-		else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
-		{
-			FText TextValue = FText::FromString(PropertyValue);
-			TextProperty->SetPropertyValue_InContainer(ContainerPtrForSet, TextValue);
-			bPropertySet = true;
-		}
-		else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
-		{
-			bool BoolValue = PropertyValue.Equals(TEXT("true"), ESearchCase::IgnoreCase) || PropertyValue.Equals(TEXT("1"));
-			BoolProperty->SetPropertyValue_InContainer(ContainerPtrForSet, BoolValue);
-			bPropertySet = true;
-		}
-		else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
-		{
-			float FloatValue = FCString::Atof(*PropertyValue);
-			FloatProperty->SetPropertyValue_InContainer(ContainerPtrForSet, FloatValue);
-			bPropertySet = true;
-		}
-		else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
-		{
-			int32 IntValue = FCString::Atoi(*PropertyValue);
-			IntProperty->SetPropertyValue_InContainer(ContainerPtrForSet, IntValue);
-			bPropertySet = true;
-		}
-		else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
-		{
-			// Handle enum properties (like ESlateVisibility)
-			if (ByteProperty->Enum)
-			{
-				int64 EnumValue = ByteProperty->Enum->GetValueByNameString(PropertyValue);
-				if (EnumValue != INDEX_NONE)
-				{
-					ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, (uint8)EnumValue);
-					bPropertySet = true;
-				}
-				else
-				{
-					ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property '%s'"), *PropertyValue, *PropertyName);
-				}
-			}
-			else
-			{
-				uint8 ByteValue = (uint8)FCString::Atoi(*PropertyValue);
-				ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, ByteValue);
-				bPropertySet = true;
-			}
-		}
-		else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
-		{
-			if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
-			{
-				int64 EnumValue = EnumProperty->GetEnum()->GetValueByNameString(PropertyValue);
-				if (EnumValue != INDEX_NONE)
-				{
-					uint8* EnumValuePtr = (uint8*)EnumProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-					EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(EnumValuePtr, EnumValue);
-					bPropertySet = true;
-				}
-				else
-				{
-					ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property '%s'"), *PropertyValue, *PropertyName);
-				}
-			}
-			else
-			{
-				ErrorMessage = FString::Printf(TEXT("Cannot set enum property '%s' - missing underlying property or enum"), *PropertyName);
-			}
-		}
-		else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
-		{
-			// Try to parse as JSON string for struct properties
-			TSharedPtr<FJsonObject> JsonObj;
-			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertyValue);
-			if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
-			{
-				void* ValuePtr = bUsedResolver
-					? ContainerPtrForSet
-					: StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-				bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
-				if (!bPropertySet)
-				{
-					// Fallback to legacy complex parser for non-standard shapes
-					TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
-					bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
-				}
-			}
-			else
-			{
-				ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *PropertyName);
-			}
-		}
-	}
-
-	// Special handling: IsVariable toggle should be structural
-	if (bPropertySet)
-	{
-		// Notify the widget that a property has changed (similar to Details Panel)
-		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
-		{
-			// Create a property change event for struct properties
-			FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
-			PropertyChangedEvent.MemberProperty = Property;
-			
-			// Call PostEditChangeProperty on the widget to trigger proper notifications
-			FoundWidget->PostEditChangeProperty(PropertyChangedEvent);
-		}
-		if (Property->GetFName() == TEXT("bIsVariable") || PropertyName.Equals(TEXT("IsVariable"), ESearchCase::IgnoreCase))
-		{
-			bStructuralChange = true;
-		}
-	}
-
-	if (!bPropertySet)
-	{
-		if (ErrorMessage.IsEmpty())
-		{
-			ErrorMessage = FString::Printf(TEXT("Unsupported property type for '%s'"), *PropertyName);
-		}
-		return FCommonUtils::CreateErrorResponse(ErrorMessage);
-	}
-
-	// Mark the blueprint as modified and compile
-	if (bStructuralChange)
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
-	}
-	else
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
-	}
-	
-	// Force refresh the widget in the designer
-	if (GEditor)
-	{
-		// Refresh the properties panel
-		GEditor->NoteSelectionChange();
-		
-		// Force update any open widget blueprint editors
-		TArray<IAssetEditorInstance*> AssetEditors = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->FindEditorsForAsset(WidgetBlueprint);
-		for (IAssetEditorInstance* Editor : AssetEditors)
-		{
-			if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(Editor))
-			{
-				// Refresh the designer view using available UE 5.6 methods
-				WidgetEditor->RefreshEditors();
-			}
-		}
-	}
-	
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-	Result->SetStringField(TEXT("property_name"), PropertyName);
-	
-	// Include the property value in the response (prefer string if available)
-	if (bHasStringValue)
-	{
-		Result->SetStringField(TEXT("property_value"), PropertyValue);
-	}
-	else if (bHasJsonValue && PropertyValueJson.IsValid())
-	{
-		Result->SetField(TEXT("property_value"), PropertyValueJson);
-	}
-	
-	Result->SetStringField(TEXT("note"), TEXT("Property set successfully"));
-	
-	// Mark the widget blueprint as dirty so changes persist
-	WidgetBlueprint->MarkPackageDirty();
-	
-	return Result;
-}
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetBlueprintName;
-	FString WidgetName;
-	FString PropertyName;
-	
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
-	}
-	
-	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
-	}
-	
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
-	}
-
-	// Find the widget component in the widget tree
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
-	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
-	}
-
-	if (!FoundWidget)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
-	}
-
-	// Resolve dotted path with Slot prefix and aliases
-	bool bSlotRoot = false;
-	TArray<FPathSegment> Segs;
-	if (!ParsePropertyPath(PropertyName, bSlotRoot, Segs))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Invalid property_name path"));
-	}
-	FString ResolveError;
-	FResolvedTarget Target;
-	if (!ResolvePath(FoundWidget, Segs, bSlotRoot, Target, ResolveError))
-	{
-		return FCommonUtils::CreateErrorResponse(ResolveError);
-	}
-
-	// Synthetic ChildOrder
-	if (Target.bIsSyntheticChildOrder)
-	{
-		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-		Result->SetBoolField(TEXT("success"), true);
-		Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-		Result->SetStringField(TEXT("component_name"), WidgetName);
-		Result->SetStringField(TEXT("property_name"), PropertyName);
-		UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
-		UPanelWidget* Parent = Slot ? Slot->Parent : nullptr;
-		int32 Index = (Parent) ? Parent->GetChildIndex(FoundWidget) : 0;
-		Result->SetNumberField(TEXT("property_value"), Index);
-		Result->SetStringField(TEXT("property_type"), TEXT("int"));
-		TSharedPtr<FJsonObject> Constraints = MakeShareable(new FJsonObject);
-		Constraints->SetNumberField(TEXT("child_count"), Parent ? Parent->GetChildrenCount() : 0);
-		Result->SetObjectField(TEXT("constraints"), Constraints);
-		Result->SetBoolField(TEXT("editable"), true);
-		return Result;
-	}
-
-	FProperty* Property = Target.Property;
-	if (!Property)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Property '%s' not found on target"), *PropertyName));
-	}
-
-	// Get property value based on type
-	FString PropertyValue;
-	FString PropertyType;
-	TSharedPtr<FJsonValue> PropertyJson; // prefer structured JSON when applicable
-
-	if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
-	{
-		PropertyValue = StrProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		PropertyType = TEXT("String");
-	}
-	else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
-	{
-		FText TextValue = TextProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		PropertyValue = TextValue.ToString();
-		PropertyType = TEXT("Text");
-	}
-	else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
-	{
-		bool BoolValue = BoolProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		PropertyValue = BoolValue ? TEXT("true") : TEXT("false");
-		PropertyType = TEXT("bool");
-	}
-	else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
-	{
-		float FloatValue = FloatProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		PropertyValue = FString::SanitizeFloat(FloatValue);
-		PropertyType = TEXT("float");
-	}
-	else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
-	{
-		int32 IntValue = IntProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		PropertyValue = FString::FromInt(IntValue);
-		PropertyType = TEXT("int");
-	}
-	else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
-	{
-		uint8 ByteValue = ByteProperty->GetPropertyValue_InContainer(Target.ContainerPtr);
-		if (ByteProperty->Enum)
-		{
-			PropertyValue = ByteProperty->Enum->GetNameStringByValue(ByteValue);
-			PropertyType = FString::Printf(TEXT("Enum<%s>"), *ByteProperty->Enum->GetName());
-		}
-		else
-		{
-			PropertyValue = FString::FromInt(ByteValue);
-			PropertyType = TEXT("byte");
-		}
-	}
-	else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
-	{
-		if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
-		{
-			uint8* EnumValuePtr = (uint8*)EnumProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-			int64 EnumValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(EnumValuePtr);
-			PropertyValue = EnumProperty->GetEnum()->GetNameStringByValue(EnumValue);
-			PropertyType = FString::Printf(TEXT("Enum<%s>"), *EnumProperty->GetEnum()->GetName());
-		}
-		else
-		{
-			PropertyValue = TEXT("UnknownEnum");
-			PropertyType = TEXT("EnumProperty");
-		}
-	}
-	else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
-	{
-		// IMPORTANT: Respect resolver semantics.
-		// When ResolvePath targets a struct field, Target.ContainerPtr is the struct VALUE pointer.
-		// Otherwise, derive the value pointer from the owning object via ContainerPtrToValuePtr.
-		void* ValuePtr = Target.ContainerPtr ? Target.ContainerPtr
-											 : StructProperty->ContainerPtrToValuePtr<void>((void*)FoundWidget);
-		TSharedPtr<FJsonObject> Obj = MakeShareable(new FJsonObject);
-		if (FJsonObjectConverter::UStructToJsonObject(StructProperty->Struct, ValuePtr, Obj.ToSharedRef(), 0, 0))
-		{
-			PropertyJson = MakeShareable(new FJsonValueObject(Obj));
-			PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
-		}
-		else
-		{
-			PropertyValue = TEXT("StructSerializationFailed");
-			PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
-		}
-	}
-	else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
-	{
-		void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
-		TArray<TSharedPtr<FJsonValue>> JsonArr;
-		for (int32 i = 0; i < ArrayHelper.Num(); ++i)
-		{
-			void* ElemPtr = ArrayHelper.GetRawPtr(i);
-			FProperty* ElemProp = ArrayProperty->Inner;
-			if (FStrProperty* PStr = CastField<FStrProperty>(ElemProp))
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueString(PStr->GetPropertyValue(ElemPtr))));
-			}
-			else if (FTextProperty* PText = CastField<FTextProperty>(ElemProp))
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueString(PText->GetPropertyValue(ElemPtr).ToString())));
-			}
-			else if (FBoolProperty* PBool = CastField<FBoolProperty>(ElemProp))
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueBoolean(PBool->GetPropertyValue(ElemPtr))));
-			}
-			else if (FFloatProperty* PFloat = CastField<FFloatProperty>(ElemProp))
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueNumber(PFloat->GetPropertyValue(ElemPtr))));
-			}
-			else if (FIntProperty* PInt = CastField<FIntProperty>(ElemProp))
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueNumber(PInt->GetPropertyValue(ElemPtr))));
-			}
-			else if (FByteProperty* PByte = CastField<FByteProperty>(ElemProp))
-			{
-				if (PByte->Enum)
-				{
-					uint8 V = PByte->GetPropertyValue(ElemPtr);
-					JsonArr.Add(MakeShareable(new FJsonValueString(PByte->Enum->GetNameStringByValue(V))));
-				}
-				else
-				{
-					JsonArr.Add(MakeShareable(new FJsonValueNumber(PByte->GetPropertyValue(ElemPtr))));
-				}
-			}
-			else if (FStructProperty* PStruct = CastField<FStructProperty>(ElemProp))
-			{
-				TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
-				FJsonObjectConverter::UStructToJsonObject(PStruct->Struct, ElemPtr, ElemObj.ToSharedRef(), 0, 0);
-				JsonArr.Add(MakeShareable(new FJsonValueObject(ElemObj)));
-			}
-			else
-			{
-				JsonArr.Add(MakeShareable(new FJsonValueString(TEXT("UnsupportedArrayElemType"))));
-			}
-		}
-		PropertyJson = MakeShareable(new FJsonValueArray(JsonArr));
-		PropertyType = TEXT("Array");
-	}
-	else if (FSetProperty* SetProperty = CastField<FSetProperty>(Property))
-	{
-		void* SetAddr = SetProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptSetHelper SetHelper(SetProperty, SetAddr);
-		TArray<TSharedPtr<FJsonValue>> JsonArr;
-		for (int32 Idx = 0; Idx < SetHelper.Num(); ++Idx)
-		{
-			if (!SetHelper.IsValidIndex(Idx)) continue;
-			void* ElemPtr = SetHelper.GetElementPtr(Idx);
-			FProperty* ElemProp = SetProperty->ElementProp;
-			if (FStrProperty* SProp = CastField<FStrProperty>(ElemProp))
-				JsonArr.Add(MakeShareable(new FJsonValueString(SProp->GetPropertyValue(ElemPtr))));
-			else if (FTextProperty* TProp = CastField<FTextProperty>(ElemProp))
-				JsonArr.Add(MakeShareable(new FJsonValueString(TProp->GetPropertyValue(ElemPtr).ToString())));
-			else if (FBoolProperty* BProp = CastField<FBoolProperty>(ElemProp))
-				JsonArr.Add(MakeShareable(new FJsonValueBoolean(BProp->GetPropertyValue(ElemPtr))));
-			else if (FFloatProperty* FProp = CastField<FFloatProperty>(ElemProp))
-				JsonArr.Add(MakeShareable(new FJsonValueNumber(FProp->GetPropertyValue(ElemPtr))));
-			else if (FIntProperty* IProp = CastField<FIntProperty>(ElemProp))
-				JsonArr.Add(MakeShareable(new FJsonValueNumber(IProp->GetPropertyValue(ElemPtr))));
-			else if (FByteProperty* ByProp = CastField<FByteProperty>(ElemProp))
-			{
-				if (ByProp->Enum)
-				{
-					uint8 V = ByProp->GetPropertyValue(ElemPtr);
-					JsonArr.Add(MakeShareable(new FJsonValueString(ByProp->Enum->GetNameStringByValue(V))));
-				}
-				else
-				{
-					JsonArr.Add(MakeShareable(new FJsonValueNumber(ByProp->GetPropertyValue(ElemPtr))));
-				}
-			}
-			else if (FStructProperty* StProp = CastField<FStructProperty>(ElemProp))
-			{
-				TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
-				FJsonObjectConverter::UStructToJsonObject(StProp->Struct, ElemPtr, ElemObj.ToSharedRef(), 0, 0);
-				JsonArr.Add(MakeShareable(new FJsonValueObject(ElemObj)));
-			}
-		}
-		PropertyJson = MakeShareable(new FJsonValueArray(JsonArr));
-		PropertyType = TEXT("Set");
-	}
-	else if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
-	{
-		void* MapAddr = MapProperty->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptMapHelper MapHelper(MapProperty, MapAddr);
-		TSharedPtr<FJsonObject> MapObj = MakeShareable(new FJsonObject);
-		for (int32 Idx = 0; Idx < MapHelper.GetMaxIndex(); ++Idx)
-		{
-			if (!MapHelper.IsValidIndex(Idx)) continue;
-			uint8* PairPtr = (uint8*)MapHelper.GetPairPtr(Idx);
-			void* KeyPtr = PairPtr;
-			void* ValPtr = PairPtr + MapProperty->MapLayout.ValueOffset;
-
-			// Key to string
-			FString KeyStr;
-			if (FNameProperty* KP = CastField<FNameProperty>(MapProperty->KeyProp))
-				KeyStr = KP->GetPropertyValue(KeyPtr).ToString();
-			else if (FStrProperty* KP2 = CastField<FStrProperty>(MapProperty->KeyProp))
-				KeyStr = KP2->GetPropertyValue(KeyPtr);
-			else if (FIntProperty* KP3 = CastField<FIntProperty>(MapProperty->KeyProp))
-				KeyStr = FString::FromInt(KP3->GetPropertyValue(KeyPtr));
-			else if (FByteProperty* KP4 = CastField<FByteProperty>(MapProperty->KeyProp))
-			{
-				if (KP4->Enum)
-					KeyStr = KP4->Enum->GetNameStringByValue(KP4->GetPropertyValue(KeyPtr));
-				else
-					KeyStr = FString::FromInt(KP4->GetPropertyValue(KeyPtr));
-			}
-			else
-				KeyStr = TEXT("UnsupportedKey");
-
-			// Value to JSON
-			TSharedPtr<FJsonValue> ValJson;
-			FProperty* VP = MapProperty->ValueProp;
-			if (FStrProperty* VPStr = CastField<FStrProperty>(VP))
-				ValJson = MakeShareable(new FJsonValueString(VPStr->GetPropertyValue(ValPtr)));
-			else if (FTextProperty* VPText = CastField<FTextProperty>(VP))
-				ValJson = MakeShareable(new FJsonValueString(VPText->GetPropertyValue(ValPtr).ToString()));
-			else if (FBoolProperty* VPBool = CastField<FBoolProperty>(VP))
-				ValJson = MakeShareable(new FJsonValueBoolean(VPBool->GetPropertyValue(ValPtr)));
-			else if (FFloatProperty* VPFloat = CastField<FFloatProperty>(VP))
-				ValJson = MakeShareable(new FJsonValueNumber(VPFloat->GetPropertyValue(ValPtr)));
-			else if (FIntProperty* VPInt = CastField<FIntProperty>(VP))
-				ValJson = MakeShareable(new FJsonValueNumber(VPInt->GetPropertyValue(ValPtr)));
-			else if (FByteProperty* VPByte = CastField<FByteProperty>(VP))
-			{
-				if (VPByte->Enum)
-					ValJson = MakeShareable(new FJsonValueString(VPByte->Enum->GetNameStringByValue(VPByte->GetPropertyValue(ValPtr))));
-				else
-					ValJson = MakeShareable(new FJsonValueNumber(VPByte->GetPropertyValue(ValPtr)));
-			}
-			else if (FStructProperty* VPStruct = CastField<FStructProperty>(VP))
-			{
-				TSharedPtr<FJsonObject> VObj = MakeShareable(new FJsonObject);
-				FJsonObjectConverter::UStructToJsonObject(VPStruct->Struct, ValPtr, VObj.ToSharedRef(), 0, 0);
-				ValJson = MakeShareable(new FJsonValueObject(VObj));
-			}
-			else
-			{
-				ValJson = MakeShareable(new FJsonValueString(TEXT("UnsupportedValueType")));
-			}
-
-			MapObj->SetField(KeyStr, ValJson);
-		}
-		PropertyJson = MakeShareable(new FJsonValueObject(MapObj));
-		PropertyType = TEXT("Map");
-	}
-	else
-	{
-		PropertyValue = TEXT("UnsupportedType");
-		PropertyType = Property->GetClass()->GetName();
-	}
-	
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-	Result->SetStringField(TEXT("property_name"), PropertyName);
-	if (PropertyJson.IsValid())
-	{
-		Result->SetField(TEXT("property_value"), PropertyJson);
-	}
-	else
-	{
-		Result->SetStringField(TEXT("property_value"), PropertyValue);
-	}
-	Result->SetStringField(TEXT("property_type"), PropertyType);
-	// Constraints and editable metadata
-	TSharedPtr<FJsonObject> Constraints = MakeShareable(new FJsonObject);
-	AddEnumConstraints(Property, Constraints);
-	AddNumericConstraints(Property, Constraints);
-	// Add collection lengths
-	if (FArrayProperty* APc = CastField<FArrayProperty>(Property))
-	{
-		void* ArrayAddr = APc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptArrayHelper H(APc, ArrayAddr);
-		Constraints->SetNumberField(TEXT("length"), H.Num());
-	}
-	else if (FSetProperty* SPc = CastField<FSetProperty>(Property))
-	{
-		void* SetAddr = SPc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptSetHelper H(SPc, SetAddr);
-		Constraints->SetNumberField(TEXT("length"), H.Num());
-	}
-	else if (FMapProperty* MPc = CastField<FMapProperty>(Property))
-	{
-		void* MapAddr = MPc->ContainerPtrToValuePtr<void>(Target.ContainerPtr);
-		FScriptMapHelper H(MPc, MapAddr);
-		Constraints->SetNumberField(TEXT("length"), H.Num());
-	}
-	Result->SetObjectField(TEXT("constraints"), Constraints);
-	Result->SetBoolField(TEXT("editable"), Property->HasAnyPropertyFlags(CPF_Edit));
-	// Adapter info
-	TSharedPtr<FJsonObject> AdapterInfo = MakeShareable(new FJsonObject);
-	AdapterInfo->SetStringField(TEXT("component_kind"), TEXT("UMG"));
-	if (FoundWidget->Slot)
-	{
-		AdapterInfo->SetStringField(TEXT("slot_class"), FoundWidget->Slot->GetClass()->GetName());
-	}
-	else
-	{
-		AdapterInfo->SetStringField(TEXT("slot_class"), TEXT(""));
-	}
-	Result->SetObjectField(TEXT("adapter_info"), AdapterInfo);
-	// Schema hints
-	TSharedPtr<FJsonObject> Schema = MakeShareable(new FJsonObject);
-	if (FStructProperty* SPC = CastField<FStructProperty>(Property))
-	{
-		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
-		S->SetStringField(TEXT("name"), SPC->Struct->GetName());
-		Schema->SetObjectField(TEXT("struct"), S);
-	}
-	else if (FArrayProperty* APC = CastField<FArrayProperty>(Property))
-	{
-		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
-		S->SetStringField(TEXT("element_type"), APC->Inner->GetClass()->GetName());
-		Schema->SetObjectField(TEXT("array"), S);
-	}
-	else if (FSetProperty* SETC = CastField<FSetProperty>(Property))
-	{
-		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
-		S->SetStringField(TEXT("element_type"), SETC->ElementProp->GetClass()->GetName());
-		Schema->SetObjectField(TEXT("set"), S);
-	}
-	else if (FMapProperty* MPC = CastField<FMapProperty>(Property))
-	{
-		TSharedPtr<FJsonObject> S = MakeShareable(new FJsonObject);
-		S->SetStringField(TEXT("key_type"), MPC->KeyProp->GetClass()->GetName());
-		S->SetStringField(TEXT("value_type"), MPC->ValueProp->GetClass()->GetName());
-		Schema->SetObjectField(TEXT("map"), S);
-	}
-	Result->SetObjectField(TEXT("schema"), Schema);
-	
-	return Result;
-}
-
 TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params)
 {
+	if (!PropertyService.IsValid())
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetPropertyService not available"));
+	}
+
 	FString WidgetBlueprintName;
-	FString WidgetName;
-	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
-	
+
+	FString WidgetName;
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
 	}
-	
+
+	bool bIncludeSlotProperties = true;
+	Params->TryGetBoolField(TEXT("include_slot_properties"), bIncludeSlotProperties);
+
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
 
-	// Find the widget component in the widget tree
-	UWidget* FoundWidget = nullptr;
-	if (WidgetBlueprint->WidgetTree)
+	const auto Result = PropertyService->ListWidgetProperties(WidgetBlueprint, WidgetName, bIncludeSlotProperties);
+	if (Result.IsError())
 	{
-		TArray<UWidget*> AllWidgets;
-		WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
-		
-		for (UWidget* Widget : AllWidgets)
-		{
-			if (Widget && Widget->GetName() == WidgetName)
-			{
-				FoundWidget = Widget;
-				break;
-			}
-		}
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
 	}
 
-	if (!FoundWidget)
+	const TArray<FWidgetPropertyInfo>& Properties = Result.GetValue();
+
+	TArray<TSharedPtr<FJsonValue>> PropertiesJson;
+	PropertiesJson.Reserve(Properties.Num());
+
+	for (const FWidgetPropertyInfo& Info : Properties)
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprintName));
+		TSharedPtr<FJsonObject> PropertyObj = MakeShared<FJsonObject>();
+		PropertyObj->SetStringField(TEXT("name"), Info.PropertyName);
+		PropertyObj->SetStringField(TEXT("type"), Info.PropertyType);
+		PropertyObj->SetStringField(TEXT("value"), Info.CurrentValue.IsEmpty() ? TEXT("") : Info.CurrentValue);
+
+		if (!Info.DefaultValue.IsEmpty())
+		{
+			PropertyObj->SetStringField(TEXT("default_value"), Info.DefaultValue);
+		}
+
+		if (!Info.Category.IsEmpty())
+		{
+			PropertyObj->SetStringField(TEXT("category"), Info.Category);
+		}
+
+		PropertyObj->SetBoolField(TEXT("editable"), Info.bIsEditable);
+		PropertyObj->SetBoolField(TEXT("blueprint_visible"), Info.bIsBlueprintVisible);
+
+		PropertiesJson.Add(MakeShared<FJsonValueObject>(PropertyObj));
 	}
 
-	// Get all properties via reflection
-	TArray<TSharedPtr<FJsonValue>> Properties;
-	
-	for (TFieldIterator<FProperty> PropertyIterator(FoundWidget->GetClass()); PropertyIterator; ++PropertyIterator)
-	{
-		FProperty* Property = *PropertyIterator;
-		if (!Property)
-		{
-			continue;
-		}
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("component_name"), WidgetName);
+	Response->SetArrayField(TEXT("properties"), PropertiesJson);
+	Response->SetNumberField(TEXT("count"), PropertiesJson.Num());
+	Response->SetBoolField(TEXT("include_slot_properties"), bIncludeSlotProperties);
 
-		// Skip private/protected properties and functions
-		if (Property->HasAnyPropertyFlags(CPF_NativeAccessSpecifierPrivate | CPF_NativeAccessSpecifierProtected))
-		{
-			continue;
-		}
-
-		FString PropertyName = Property->GetName();
-		FString PropertyType = Property->GetClass()->GetName();
-		FString PropertyValue;
-
-		// Get the current value
-		if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
-		{
-			PropertyValue = StrProperty->GetPropertyValue_InContainer(FoundWidget);
-			PropertyType = TEXT("String");
-		}
-		else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
-		{
-			FText TextValue = TextProperty->GetPropertyValue_InContainer(FoundWidget);
-			PropertyValue = TextValue.ToString();
-			PropertyType = TEXT("Text");
-		}
-		else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
-		{
-			bool BoolValue = BoolProperty->GetPropertyValue_InContainer(FoundWidget);
-			PropertyValue = BoolValue ? TEXT("true") : TEXT("false");
-			PropertyType = TEXT("bool");
-		}
-		else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
-		{
-			float FloatValue = FloatProperty->GetPropertyValue_InContainer(FoundWidget);
-			PropertyValue = FString::SanitizeFloat(FloatValue);
-			PropertyType = TEXT("float");
-		}
-		else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
-		{
-			int32 IntValue = IntProperty->GetPropertyValue_InContainer(FoundWidget);
-			PropertyValue = FString::FromInt(IntValue);
-			PropertyType = TEXT("int32");
-		}
-		else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
-		{
-			uint8 ByteValue = ByteProperty->GetPropertyValue_InContainer(FoundWidget);
-			if (ByteProperty->Enum)
-			{
-				PropertyValue = ByteProperty->Enum->GetNameStringByValue(ByteValue);
-				PropertyType = ByteProperty->Enum->GetName();
-			}
-			else
-			{
-				PropertyValue = FString::FromInt(ByteValue);
-				PropertyType = TEXT("uint8");
-			}
-		}
-		else
-		{
-			PropertyValue = TEXT("ComplexType");
-		}
-
-		TSharedPtr<FJsonObject> PropertyObj = MakeShareable(new FJsonObject);
-		PropertyObj->SetStringField(TEXT("name"), PropertyName);
-		PropertyObj->SetStringField(TEXT("type"), PropertyType);
-		PropertyObj->SetStringField(TEXT("value"), PropertyValue);
-		Properties.Add(MakeShareable(new FJsonValueObject(PropertyObj)));
-	}
-	
-	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
-	Result->SetBoolField(TEXT("success"), true);
-	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetStringField(TEXT("component_name"), WidgetName);
-	Result->SetArrayField(TEXT("properties"), Properties);
-	
-	return Result;
+	return Response;
 }
 
 

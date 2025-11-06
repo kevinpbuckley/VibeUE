@@ -7,6 +7,7 @@
 class UWidget;
 class UWidgetBlueprint;
 class UUserWidget;
+class FWidgetPropertyService;
 
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
@@ -16,7 +17,7 @@ class UUserWidget;
 class VIBEUE_API FUMGCommands
 {
 public:
-    FUMGCommands();
+    explicit FUMGCommands(TSharedPtr<class FServiceContext> InServiceContext = nullptr);
 
     /**
      * Handle UMG-related commands
@@ -62,13 +63,9 @@ private:
 
 private:
     // Service instances
+    TSharedPtr<class FServiceContext> ServiceContext;
     TSharedPtr<class FWidgetLifecycleService> LifecycleService;
+    TSharedPtr<FWidgetPropertyService> PropertyService;
     // TODO: Add ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
     // TODO: Issue #188 skipped - discovery handlers already well-structured
-    
-    // Helper method to validate property before setting - Added based on Issues Report
-    static bool ValidatePropertyValue(UWidget* Widget, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& ErrorMessage);
-    
-    // Helper method to batch property operations - Added based on Issues Report
-    static bool SetPropertiesWithRetry(UWidget* Widget, const TArray<TPair<FString, TSharedPtr<FJsonValue>>>& Properties, TArray<FString>& Errors);
 }; 

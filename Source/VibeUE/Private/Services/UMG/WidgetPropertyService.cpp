@@ -8,12 +8,821 @@
 
 #include "Services/UMG/WidgetPropertyService.h"
 #include "Core/ErrorCodes.h"
-#include "Components/Widget.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Border.h"
+#include "Components/Button.h"
+#include "Components/CanvasPanel.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/CheckBox.h"
+#include "Components/EditableText.h"
+#include "Components/GridSlot.h"
+#include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/Image.h"
+#include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/PanelSlot.h"
-#include "UObject/UnrealType.h"
+#include "Components/PanelWidget.h"
+#include "Components/Widget.h"
+#include "Components/ProgressBar.h"
+#include "Components/RichTextBlock.h"
+#include "Components/ScrollBox.h"
+#include "Components/ScrollBoxSlot.h"
+#include "Components/SizeBox.h"
+#include "Components/Slider.h"
+#include "Components/Spacer.h"
+#include "Components/TextBlock.h"
+#include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
+#include "Editor.h"
+#include "EditorSubsystem.h"
+#include "Engine/Font.h"
+#include "Engine/Texture2D.h"
+#include "Dom/JsonObject.h"
 #include "JsonObjectConverter.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "Layout/Margin.h"
+#include "Math/Color.h"
+#include "Math/Vector2D.h"
+#include "Core/ServiceContext.h"
+#include "Styling/SlateBrush.h"
+#include "Styling/SlateColor.h"
+#include "Styling/SlateTypes.h"
+#include "UObject/UnrealType.h"
+#include "WidgetBlueprint.h"
+#include "WidgetBlueprintEditor.h"
 
-DEFINE_LOG_CATEGORY_STATIC(LogWidgetProperty, Log, All);
+DEFINE_LOG_CATEGORY_STATIC(LogWidgetPropertyService, Log, All);
+
+namespace
+{
+struct FPathSegment
+{
+    FString Name;
+    bool bHasIndex = false;
+    int32 Index = INDEX_NONE;
+    bool bHasKey = false;
+    FString Key;
+};
+
+static bool ParsePropertyPath(const FString& InPath, bool& bSlotRoot, TArray<FPathSegment>& Out)
+{
+    bSlotRoot = false;
+    Out.Reset();
+
+    TArray<FString> Parts;
+    InPath.ParseIntoArray(Parts, TEXT("."), true);
+    if (Parts.Num() == 0)
+    {
+        return false;
+    }
+
+    int32 Start = 0;
+    if (Parts[0].Equals(TEXT("Slot"), ESearchCase::IgnoreCase))
+    {
+        bSlotRoot = true;
+        Start = 1;
+        if (Parts.Num() == 1)
+        {
+            return false;
+        }
+    }
+
+    for (int32 Index = Start; Index < Parts.Num(); ++Index)
+    {
+        FPathSegment Segment;
+        const FString& Token = Parts[Index];
+
+        int32 BracketIdx;
+        if (Token.FindChar('[', BracketIdx) && Token.EndsWith("]"))
+        {
+            Segment.Name = Token.Left(BracketIdx);
+            const FString Inside = Token.Mid(BracketIdx + 1, Token.Len() - BracketIdx - 2);
+            if (Inside.IsNumeric())
+            {
+                Segment.bHasIndex = true;
+                Segment.Index = FCString::Atoi(*Inside);
+            }
+            else
+            {
+                Segment.bHasKey = true;
+                Segment.Key = Inside;
+            }
+        }
+        else
+        {
+            Segment.Name = Token;
+        }
+
+        Out.Add(Segment);
+    }
+
+    return Out.Num() > 0;
+}
+
+struct FResolvedTarget
+{
+    UObject* RootObject = nullptr;
+    void* ContainerPtr = nullptr;
+    FProperty* Property = nullptr;
+    bool bIsSyntheticChildOrder = false;
+};
+
+static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segments, bool bSlotRoot, FResolvedTarget& Out, FString& Error)
+{
+    UObject* CurrentObject = bSlotRoot ? static_cast<UObject*>(Widget->Slot) : static_cast<UObject*>(Widget);
+    void* CurrentPtr = CurrentObject;
+    FProperty* CurrentProperty = nullptr;
+
+    if (!CurrentObject)
+    {
+        Error = TEXT("Slot is null for this widget (no parent panel)");
+        return false;
+    }
+
+    for (int32 SegmentIndex = 0; SegmentIndex < Segments.Num(); ++SegmentIndex)
+    {
+        const FPathSegment& Segment = Segments[SegmentIndex];
+
+        if (SegmentIndex == Segments.Num() - 1 && bSlotRoot && Segment.Name.Equals(TEXT("ChildOrder"), ESearchCase::IgnoreCase))
+        {
+            Out.RootObject = CurrentObject;
+            Out.ContainerPtr = CurrentPtr;
+            Out.Property = nullptr;
+            Out.bIsSyntheticChildOrder = true;
+            return true;
+        }
+
+        if (UObject* AsObject = Cast<UObject>(CurrentObject))
+        {
+            CurrentProperty = AsObject->GetClass()->FindPropertyByName(*Segment.Name);
+        }
+        else if (CurrentProperty && CurrentProperty->IsA<FStructProperty>())
+        {
+            FStructProperty* StructProperty = CastFieldChecked<FStructProperty>(CurrentProperty);
+            CurrentProperty = StructProperty->Struct->FindPropertyByName(*Segment.Name);
+        }
+        else
+        {
+            return false;
+        }
+
+        if (!CurrentProperty)
+        {
+            if (!bSlotRoot && Segment.Name.Equals(TEXT("IsVariable"), ESearchCase::IgnoreCase))
+            {
+                CurrentProperty = Widget->GetClass()->FindPropertyByName(TEXT("bIsVariable"));
+            }
+        }
+
+        if (!CurrentProperty)
+        {
+            Error = FString::Printf(TEXT("Property '%s' not found"), *Segment.Name);
+            return false;
+        }
+
+        if (FStructProperty* StructProperty = CastField<FStructProperty>(CurrentProperty))
+        {
+            CurrentPtr = StructProperty->ContainerPtrToValuePtr<void>(CurrentPtr);
+            CurrentObject = nullptr;
+        }
+        else if (FObjectProperty* ObjectProperty = CastField<FObjectProperty>(CurrentProperty))
+        {
+            UObject* const* ObjectPtr = ObjectProperty->ContainerPtrToValuePtr<UObject*>(CurrentPtr);
+            CurrentObject = *ObjectPtr;
+            CurrentPtr = CurrentObject;
+        }
+        else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(CurrentProperty))
+        {
+            void* ArrayPtr = ArrayProperty->ContainerPtrToValuePtr<void>(CurrentPtr);
+            FScriptArrayHelper Helper(ArrayProperty, ArrayPtr);
+
+            if (Segment.bHasIndex)
+            {
+                if (!Helper.IsValidIndex(Segment.Index))
+                {
+                    Error = FString::Printf(TEXT("Array index out of bounds: %d (len=%d)"), Segment.Index, Helper.Num());
+                    return false;
+                }
+
+                CurrentPtr = Helper.GetRawPtr(Segment.Index);
+                CurrentProperty = ArrayProperty->Inner;
+            }
+            else
+            {
+                if (SegmentIndex != Segments.Num() - 1)
+                {
+                    Error = TEXT("Array path must specify index to access elements");
+                    return false;
+                }
+            }
+        }
+        else if (FMapProperty* MapProperty = CastField<FMapProperty>(CurrentProperty))
+        {
+            void* MapPtr = MapProperty->ContainerPtrToValuePtr<void>(CurrentPtr);
+            FScriptMapHelper Helper(MapProperty, MapPtr);
+
+            if (Segment.bHasKey)
+            {
+                TArray<uint8> KeyStorage;
+                KeyStorage.SetNumUninitialized(MapProperty->KeyProp->GetSize());
+                MapProperty->KeyProp->InitializeValue(KeyStorage.GetData());
+
+                if (FNameProperty* NameKey = CastField<FNameProperty>(MapProperty->KeyProp))
+                {
+                    const FName ValueName(*Segment.Key);
+                    NameKey->CopyCompleteValue(KeyStorage.GetData(), &ValueName);
+                }
+                else if (FStrProperty* StringKey = CastField<FStrProperty>(MapProperty->KeyProp))
+                {
+                    const FString ValueString = Segment.Key;
+                    StringKey->CopyCompleteValue(KeyStorage.GetData(), &ValueString);
+                }
+                else if (FIntProperty* IntKey = CastField<FIntProperty>(MapProperty->KeyProp))
+                {
+                    const int32 ValueInt = FCString::Atoi(*Segment.Key);
+                    IntKey->CopyCompleteValue(KeyStorage.GetData(), &ValueInt);
+                }
+                else if (FByteProperty* ByteKey = CastField<FByteProperty>(MapProperty->KeyProp))
+                {
+                    uint8 ValueByte = 0;
+                    if (ByteKey->Enum)
+                    {
+                        const int64 EnumVal = ByteKey->Enum->GetValueByNameString(Segment.Key);
+                        ValueByte = EnumVal == INDEX_NONE ? static_cast<uint8>(FCString::Atoi(*Segment.Key)) : static_cast<uint8>(EnumVal);
+                    }
+                    else
+                    {
+                        ValueByte = static_cast<uint8>(FCString::Atoi(*Segment.Key));
+                    }
+                    ByteKey->CopyCompleteValue(KeyStorage.GetData(), &ValueByte);
+                }
+                else
+                {
+                    Error = TEXT("Unsupported map key type");
+                    return false;
+                }
+
+                int32 FoundIndex = INDEX_NONE;
+                for (int32 It = 0; It < Helper.GetMaxIndex(); ++It)
+                {
+                    if (!Helper.IsValidIndex(It))
+                    {
+                        continue;
+                    }
+
+                    uint8* Pair = static_cast<uint8*>(Helper.GetPairPtr(It));
+                    void* ExistingKeyPtr = Pair;
+                    if (MapProperty->KeyProp->Identical(KeyStorage.GetData(), ExistingKeyPtr))
+                    {
+                        FoundIndex = It;
+                        break;
+                    }
+                }
+
+                if (FoundIndex == INDEX_NONE)
+                {
+                    Error = TEXT("Map key not found");
+                    return false;
+                }
+
+                CurrentPtr = Helper.GetPairPtr(FoundIndex) + MapProperty->MapLayout.ValueOffset;
+                CurrentProperty = MapProperty->ValueProp;
+            }
+            else if (SegmentIndex != Segments.Num() - 1)
+            {
+                Error = TEXT("Map path must specify [Key] to access value");
+                return false;
+            }
+        }
+        else if (FSetProperty* SetProperty = CastField<FSetProperty>(CurrentProperty))
+        {
+            if (SegmentIndex != Segments.Num() - 1)
+            {
+                Error = TEXT("Set path cannot traverse into elements; use collection_op");
+                return false;
+            }
+        }
+        else
+        {
+            if (SegmentIndex != Segments.Num() - 1)
+            {
+                Error = FString::Printf(TEXT("Cannot traverse into non-composite property '%s'"), *Segment.Name);
+                return false;
+            }
+        }
+    }
+
+    Out.RootObject = Cast<UObject>(CurrentObject) ? Cast<UObject>(CurrentObject) : Widget;
+    Out.ContainerPtr = CurrentPtr;
+    Out.Property = CurrentProperty;
+    return true;
+}
+
+static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, FProperty* Property, UWidget* Widget, FString& ErrorMessage)
+{
+    if (!JsonValue.IsValid() || !Property || !Widget)
+    {
+        ErrorMessage = TEXT("Invalid parameters for property parsing");
+        return false;
+    }
+
+    if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+    {
+        if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
+        {
+            FLinearColor ColorValue;
+
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
+                ColorValue.R = ColorObj->GetNumberField(TEXT("R"));
+                ColorValue.G = ColorObj->GetNumberField(TEXT("G"));
+                ColorValue.B = ColorObj->GetNumberField(TEXT("B"));
+                ColorValue.A = ColorObj->GetNumberField(TEXT("A"));
+            }
+            else if (JsonValue->Type == EJson::Array)
+            {
+                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
+                if (ColorArray.Num() >= 3)
+                {
+                    ColorValue.R = ColorArray[0]->AsNumber();
+                    ColorValue.G = ColorArray[1]->AsNumber();
+                    ColorValue.B = ColorArray[2]->AsNumber();
+                    ColorValue.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
+                }
+            }
+            else
+            {
+                ErrorMessage = TEXT("LinearColor must be object {R,G,B,A} or array [R,G,B,A]");
+                return false;
+            }
+
+            Property->SetValue_InContainer(Widget, &ColorValue);
+            return true;
+        }
+        else if (StructProperty->Struct == TBaseStructure<FSlateColor>::Get())
+        {
+            FSlateColor SlateColorValue;
+
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
+                FLinearColor LinearColor;
+                LinearColor.R = ColorObj->GetNumberField(TEXT("R"));
+                LinearColor.G = ColorObj->GetNumberField(TEXT("G"));
+                LinearColor.B = ColorObj->GetNumberField(TEXT("B"));
+                LinearColor.A = ColorObj->GetNumberField(TEXT("A"));
+                SlateColorValue = FSlateColor(LinearColor);
+            }
+            else if (JsonValue->Type == EJson::Array)
+            {
+                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
+                if (ColorArray.Num() >= 3)
+                {
+                    FLinearColor LinearColor;
+                    LinearColor.R = ColorArray[0]->AsNumber();
+                    LinearColor.G = ColorArray[1]->AsNumber();
+                    LinearColor.B = ColorArray[2]->AsNumber();
+                    LinearColor.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
+                    SlateColorValue = FSlateColor(LinearColor);
+                }
+            }
+
+            Property->SetValue_InContainer(Widget, &SlateColorValue);
+            return true;
+        }
+        else if (StructProperty->Struct == TBaseStructure<FMargin>::Get())
+        {
+            FMargin MarginValue;
+
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> MarginObj = JsonValue->AsObject();
+                MarginValue.Left = MarginObj->GetNumberField(TEXT("Left"));
+                MarginValue.Top = MarginObj->GetNumberField(TEXT("Top"));
+                MarginValue.Right = MarginObj->GetNumberField(TEXT("Right"));
+                MarginValue.Bottom = MarginObj->GetNumberField(TEXT("Bottom"));
+            }
+            else if (JsonValue->Type == EJson::Array)
+            {
+                const TArray<TSharedPtr<FJsonValue>> MarginArray = JsonValue->AsArray();
+                if (MarginArray.Num() >= 4)
+                {
+                    MarginValue.Left = MarginArray[0]->AsNumber();
+                    MarginValue.Top = MarginArray[1]->AsNumber();
+                    MarginValue.Right = MarginArray[2]->AsNumber();
+                    MarginValue.Bottom = MarginArray[3]->AsNumber();
+                }
+            }
+
+            Property->SetValue_InContainer(Widget, &MarginValue);
+            return true;
+        }
+        else if (StructProperty->Struct == TBaseStructure<FVector2D>::Get())
+        {
+            FVector2D VectorValue;
+
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> VectorObj = JsonValue->AsObject();
+                VectorValue.X = VectorObj->GetNumberField(TEXT("X"));
+                VectorValue.Y = VectorObj->GetNumberField(TEXT("Y"));
+            }
+            else if (JsonValue->Type == EJson::Array)
+            {
+                const TArray<TSharedPtr<FJsonValue>> VectorArray = JsonValue->AsArray();
+                if (VectorArray.Num() >= 2)
+                {
+                    VectorValue.X = VectorArray[0]->AsNumber();
+                    VectorValue.Y = VectorArray[1]->AsNumber();
+                }
+            }
+
+            Property->SetValue_InContainer(Widget, &VectorValue);
+            return true;
+        }
+        else if (StructProperty->Struct->GetName().Contains(TEXT("SlateBrush")))
+        {
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> BrushObj = JsonValue->AsObject();
+                void* BrushPtr = StructProperty->ContainerPtrToValuePtr<void>(Widget);
+                if (!BrushPtr)
+                {
+                    ErrorMessage = TEXT("Unable to access SlateBrush instance");
+                    return false;
+                }
+
+                FSlateBrush* SlateBrush = static_cast<FSlateBrush*>(BrushPtr);
+                bool bModified = false;
+
+                if (BrushObj->HasField(TEXT("ResourceObject")))
+                {
+                    const FString ResourcePath = BrushObj->GetStringField(TEXT("ResourceObject"));
+                    if (!ResourcePath.IsEmpty())
+                    {
+                        if (UTexture2D* Texture = LoadObject<UTexture2D>(nullptr, *ResourcePath))
+                        {
+                            SlateBrush->SetResourceObject(Texture);
+                            bModified = true;
+                        }
+                        else
+                        {
+                            UE_LOG(LogWidgetPropertyService, Warning, TEXT("Failed to load texture '%s' for SlateBrush"), *ResourcePath);
+                        }
+                    }
+                }
+
+                if (BrushObj->HasField(TEXT("DrawAs")))
+                {
+                    const FString DrawAsStr = BrushObj->GetStringField(TEXT("DrawAs"));
+                    if (DrawAsStr.Equals(TEXT("Image"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->DrawAs = ESlateBrushDrawType::Image;
+                        bModified = true;
+                    }
+                    else if (DrawAsStr.Equals(TEXT("Box"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->DrawAs = ESlateBrushDrawType::Box;
+                        bModified = true;
+                    }
+                    else if (DrawAsStr.Equals(TEXT("Border"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->DrawAs = ESlateBrushDrawType::Border;
+                        bModified = true;
+                    }
+                    else if (DrawAsStr.Equals(TEXT("RoundedBox"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->DrawAs = ESlateBrushDrawType::RoundedBox;
+                        bModified = true;
+                    }
+                }
+
+                if (BrushObj->HasField(TEXT("Tiling")))
+                {
+                    const FString TilingStr = BrushObj->GetStringField(TEXT("Tiling"));
+                    if (TilingStr.Equals(TEXT("NoTile"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->Tiling = ESlateBrushTileType::NoTile;
+                        bModified = true;
+                    }
+                    else if (TilingStr.Equals(TEXT("Horizontal"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->Tiling = ESlateBrushTileType::Horizontal;
+                        bModified = true;
+                    }
+                    else if (TilingStr.Equals(TEXT("Vertical"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->Tiling = ESlateBrushTileType::Vertical;
+                        bModified = true;
+                    }
+                    else if (TilingStr.Equals(TEXT("Both"), ESearchCase::IgnoreCase))
+                    {
+                        SlateBrush->Tiling = ESlateBrushTileType::Both;
+                        bModified = true;
+                    }
+                }
+
+                if (BrushObj->HasField(TEXT("TintColor")))
+                {
+                    const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+                    if (BrushObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
+                    {
+                        FLinearColor TintColor;
+                        TintColor.R = (*ColorArray)[0]->AsNumber();
+                        TintColor.G = (*ColorArray)[1]->AsNumber();
+                        TintColor.B = (*ColorArray)[2]->AsNumber();
+                        TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
+
+                        SlateBrush->TintColor = FSlateColor(TintColor);
+                        bModified = true;
+                    }
+                }
+
+                if (bModified)
+                {
+                    if (UImage* ImageWidget = Cast<UImage>(Widget))
+                    {
+                        ImageWidget->SetBrush(*SlateBrush);
+                    }
+                    return true;
+                }
+
+                ErrorMessage = TEXT("SlateBrush JSON did not modify any fields");
+                return false;
+            }
+
+            ErrorMessage = TEXT("Invalid SlateBrush JSON format - expected object with ResourceObject, DrawAs, Tiling, and/or TintColor");
+            return false;
+        }
+        else if (StructProperty->Struct->GetName().Contains(TEXT("ButtonStyle")))
+        {
+            if (JsonValue->Type == EJson::Object)
+            {
+                const TSharedPtr<FJsonObject> StyleObj = JsonValue->AsObject();
+                void* StylePtr = StructProperty->ContainerPtrToValuePtr<void>(Widget);
+                if (!StylePtr)
+                {
+                    ErrorMessage = TEXT("Unable to access ButtonStyle instance");
+                    return false;
+                }
+
+                bool bModified = false;
+
+                if (StyleObj->HasField(TEXT("Normal")))
+                {
+                    const TSharedPtr<FJsonObject> NormalObj = StyleObj->GetObjectField(TEXT("Normal"));
+                    if (NormalObj->HasField(TEXT("TintColor")))
+                    {
+                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+                        if (NormalObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
+                        {
+                            FLinearColor TintColor;
+                            TintColor.R = (*ColorArray)[0]->AsNumber();
+                            TintColor.G = (*ColorArray)[1]->AsNumber();
+                            TintColor.B = (*ColorArray)[2]->AsNumber();
+                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
+
+                            if (FProperty* NormalProp = StructProperty->Struct->FindPropertyByName(TEXT("Normal")))
+                            {
+                                if (FStructProperty* NormalStructProp = CastField<FStructProperty>(NormalProp))
+                                {
+                                    void* NormalPtr = NormalStructProp->ContainerPtrToValuePtr<void>(StylePtr);
+                                    if (FProperty* TintProp = NormalStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
+                                    {
+                                        TintProp->SetValue_InContainer(NormalPtr, &TintColor);
+                                        bModified = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (StyleObj->HasField(TEXT("Hovered")))
+                {
+                    const TSharedPtr<FJsonObject> HoveredObj = StyleObj->GetObjectField(TEXT("Hovered"));
+                    if (HoveredObj->HasField(TEXT("TintColor")))
+                    {
+                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+                        if (HoveredObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
+                        {
+                            FLinearColor TintColor;
+                            TintColor.R = (*ColorArray)[0]->AsNumber();
+                            TintColor.G = (*ColorArray)[1]->AsNumber();
+                            TintColor.B = (*ColorArray)[2]->AsNumber();
+                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
+
+                            if (FProperty* HoveredProp = StructProperty->Struct->FindPropertyByName(TEXT("Hovered")))
+                            {
+                                if (FStructProperty* HoveredStructProp = CastField<FStructProperty>(HoveredProp))
+                                {
+                                    void* HoveredPtr = HoveredStructProp->ContainerPtrToValuePtr<void>(StylePtr);
+                                    if (FProperty* TintProp = HoveredStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
+                                    {
+                                        TintProp->SetValue_InContainer(HoveredPtr, &TintColor);
+                                        bModified = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (StyleObj->HasField(TEXT("Pressed")))
+                {
+                    const TSharedPtr<FJsonObject> PressedObj = StyleObj->GetObjectField(TEXT("Pressed"));
+                    if (PressedObj->HasField(TEXT("TintColor")))
+                    {
+                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
+                        if (PressedObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
+                        {
+                            FLinearColor TintColor;
+                            TintColor.R = (*ColorArray)[0]->AsNumber();
+                            TintColor.G = (*ColorArray)[1]->AsNumber();
+                            TintColor.B = (*ColorArray)[2]->AsNumber();
+                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
+
+                            if (FProperty* PressedProp = StructProperty->Struct->FindPropertyByName(TEXT("Pressed")))
+                            {
+                                if (FStructProperty* PressedStructProp = CastField<FStructProperty>(PressedProp))
+                                {
+                                    void* PressedPtr = PressedStructProp->ContainerPtrToValuePtr<void>(StylePtr);
+                                    if (FProperty* TintProp = PressedStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
+                                    {
+                                        TintProp->SetValue_InContainer(PressedPtr, &TintColor);
+                                        bModified = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (bModified)
+                {
+                    return true;
+                }
+
+                ErrorMessage = TEXT("ButtonStyle JSON did not modify any fields");
+                return false;
+            }
+
+            ErrorMessage = TEXT("ButtonStyle requires object with Normal/Hovered/Pressed states containing TintColor arrays");
+            return false;
+        }
+    }
+
+    ErrorMessage = FString::Printf(TEXT("Unsupported complex property type: %s"), *Property->GetClass()->GetName());
+    return false;
+}
+
+static void AddEnumConstraints(FProperty* Property, TSharedPtr<FJsonObject>& Constraints)
+{
+    if (!Property)
+    {
+        return;
+    }
+
+    if (!Constraints.IsValid())
+    {
+        Constraints = MakeShareable(new FJsonObject);
+    }
+
+    if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+    {
+        if (UEnum* Enum = ByteProperty->Enum)
+        {
+            TArray<TSharedPtr<FJsonValue>> Values;
+            for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+            {
+                const FString Name = Enum->GetNameStringByIndex(Index);
+                if (!Name.EndsWith(TEXT("_MAX")))
+                {
+                    Values.Add(MakeShared<FJsonValueString>(Name));
+                }
+            }
+            Constraints->SetArrayField(TEXT("enum_values"), Values);
+        }
+    }
+    else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+    {
+        if (UEnum* Enum = EnumProperty->GetEnum())
+        {
+            TArray<TSharedPtr<FJsonValue>> Values;
+            for (int32 Index = 0; Index < Enum->NumEnums() - 1; ++Index)
+            {
+                const FString Name = Enum->GetNameStringByIndex(Index);
+                if (!Name.EndsWith(TEXT("_MAX")))
+                {
+                    Values.Add(MakeShared<FJsonValueString>(Name));
+                }
+            }
+            Constraints->SetArrayField(TEXT("enum_values"), Values);
+        }
+    }
+}
+
+static void AddNumericConstraints(FProperty* Property, TSharedPtr<FJsonObject>& Constraints)
+{
+    if (!Property)
+    {
+        return;
+    }
+
+    if (!Constraints.IsValid())
+    {
+        Constraints = MakeShareable(new FJsonObject);
+    }
+
+    auto TryNumberMeta = [&](const TCHAR* Key, const TCHAR* OutKey)
+    {
+        if (Property->HasMetaData(Key))
+        {
+            const FString MetaValue = Property->GetMetaData(Key);
+            const double NumericValue = FCString::Atod(*MetaValue);
+            Constraints->SetNumberField(OutKey, NumericValue);
+        }
+    };
+
+    TryNumberMeta(TEXT("ClampMin"), TEXT("min"));
+    TryNumberMeta(TEXT("ClampMax"), TEXT("max"));
+    TryNumberMeta(TEXT("UIMin"), TEXT("uiMin"));
+    TryNumberMeta(TEXT("UIMax"), TEXT("uiMax"));
+}
+
+static void AppendCollectionLength(FProperty* Property, void* ContainerPtr, TSharedPtr<FJsonObject>& Constraints)
+{
+    if (!Property || !ContainerPtr)
+    {
+        return;
+    }
+
+    if (!Constraints.IsValid())
+    {
+        Constraints = MakeShareable(new FJsonObject);
+    }
+
+    if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+    {
+        void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptArrayHelper Helper(ArrayProperty, ArrayAddr);
+        Constraints->SetNumberField(TEXT("length"), Helper.Num());
+    }
+    else if (FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+    {
+        void* SetAddr = SetProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptSetHelper Helper(SetProperty, SetAddr);
+        Constraints->SetNumberField(TEXT("length"), Helper.Num());
+    }
+    else if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+    {
+        void* MapAddr = MapProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptMapHelper Helper(MapProperty, MapAddr);
+        Constraints->SetNumberField(TEXT("length"), Helper.Num());
+    }
+}
+
+static void AppendSchemaHints(FProperty* Property, TSharedPtr<FJsonObject>& Schema)
+{
+    if (!Property)
+    {
+        return;
+    }
+
+    if (!Schema.IsValid())
+    {
+        Schema = MakeShareable(new FJsonObject);
+    }
+
+    if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+    {
+        TSharedPtr<FJsonObject> StructInfo = MakeShareable(new FJsonObject);
+        StructInfo->SetStringField(TEXT("name"), StructProperty->Struct->GetName());
+        Schema->SetObjectField(TEXT("struct"), StructInfo);
+    }
+    else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+    {
+        TSharedPtr<FJsonObject> ArrayInfo = MakeShareable(new FJsonObject);
+        ArrayInfo->SetStringField(TEXT("element_type"), ArrayProperty->Inner->GetClass()->GetName());
+        Schema->SetObjectField(TEXT("array"), ArrayInfo);
+    }
+    else if (FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+    {
+        TSharedPtr<FJsonObject> SetInfo = MakeShareable(new FJsonObject);
+        SetInfo->SetStringField(TEXT("element_type"), SetProperty->ElementProp->GetClass()->GetName());
+        Schema->SetObjectField(TEXT("set"), SetInfo);
+    }
+    else if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+    {
+        TSharedPtr<FJsonObject> MapInfo = MakeShareable(new FJsonObject);
+        MapInfo->SetStringField(TEXT("key_type"), MapProperty->KeyProp->GetClass()->GetName());
+        MapInfo->SetStringField(TEXT("value_type"), MapProperty->ValueProp->GetClass()->GetName());
+        Schema->SetObjectField(TEXT("map"), MapInfo);
+    }
+}
+} // namespace
 
 FWidgetPropertyService::FWidgetPropertyService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -86,6 +895,1062 @@ TResult<void> FWidgetPropertyService::SetWidgetProperty(UWidget* Widget, const F
     return TResult<void>::Success();
 }
 
+TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FWidgetPropertySetRequest& Request)
+{
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertySetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(WidgetName, TEXT("WidgetName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertySetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(Request.PropertyPath, TEXT("PropertyPath"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertySetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    if (!WidgetBlueprint->WidgetTree)
+    {
+        return TResult<FWidgetPropertySetResult>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            TEXT("Widget blueprint has no widget tree")
+        );
+    }
+
+    UWidget* FoundWidget = nullptr;
+    TArray<UWidget*> AllWidgets;
+    WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+    for (UWidget* Widget : AllWidgets)
+    {
+        if (Widget && Widget->GetName() == WidgetName)
+        {
+            FoundWidget = Widget;
+            break;
+        }
+    }
+
+    if (!FoundWidget)
+    {
+        return TResult<FWidgetPropertySetResult>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprint->GetName())
+        );
+    }
+
+    FWidgetPropertySetResult ResultPayload;
+    ResultPayload.PropertyPath = Request.PropertyPath;
+
+    FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*Request.PropertyPath);
+    void* ContainerPtrForSet = static_cast<void*>(FoundWidget);
+    bool bUsedResolver = false;
+    FResolvedTarget ResolvedTarget;
+
+    if (!Property)
+    {
+        bool bSlotRoot = false;
+        TArray<FPathSegment> Segments;
+        if (!ParsePropertyPath(Request.PropertyPath, bSlotRoot, Segments))
+        {
+            return TResult<FWidgetPropertySetResult>::Error(
+                VibeUE::ErrorCodes::PARAM_INVALID,
+                TEXT("Invalid property_path")
+            );
+        }
+
+        FString ResolveError;
+        if (!ResolvePath(FoundWidget, Segments, bSlotRoot, ResolvedTarget, ResolveError))
+        {
+            return TResult<FWidgetPropertySetResult>::Error(
+                VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+                ResolveError
+            );
+        }
+
+        bUsedResolver = true;
+
+        if (ResolvedTarget.bIsSyntheticChildOrder)
+        {
+            int32 DesiredIndex = INDEX_NONE;
+            if (Request.Value.HasString())
+            {
+                DesiredIndex = FCString::Atoi(*Request.Value.StringValue);
+            }
+            else if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Number)
+            {
+                DesiredIndex = static_cast<int32>(Request.Value.JsonValue->AsNumber());
+            }
+            else
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PARAM_TYPE_MISMATCH,
+                    TEXT("ChildOrder requires integer value")
+                );
+            }
+
+            UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
+            if (!Slot || !Slot->Parent)
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                    TEXT("Widget has no parent panel for ChildOrder")
+                );
+            }
+
+            UPanelWidget* Parent = Slot->Parent;
+            int32 CurrentIndex = Parent->GetChildIndex(FoundWidget);
+            DesiredIndex = FMath::Clamp(DesiredIndex, 0, Parent->GetChildrenCount() - 1);
+            if (CurrentIndex != DesiredIndex)
+            {
+                Parent->RemoveChildAt(CurrentIndex);
+                Parent->InsertChildAt(DesiredIndex, FoundWidget);
+            }
+
+            FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+
+            if (GEditor)
+            {
+                GEditor->NoteSelectionChange();
+                if (UAssetEditorSubsystem* AssetSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+                {
+                    TArray<IAssetEditorInstance*> AssetEditors = AssetSubsystem->FindEditorsForAsset(WidgetBlueprint);
+                    for (IAssetEditorInstance* EditorInstance : AssetEditors)
+                    {
+                        if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(EditorInstance))
+                        {
+                            WidgetEditor->RefreshEditors();
+                        }
+                    }
+                }
+            }
+
+            WidgetBlueprint->MarkPackageDirty();
+
+            ResultPayload.AppliedValue.SetString(FString::FromInt(DesiredIndex));
+            ResultPayload.bChildOrderUpdated = true;
+            ResultPayload.ChildOrderValue = DesiredIndex;
+            ResultPayload.Note = TEXT("ChildOrder updated");
+            return TResult<FWidgetPropertySetResult>::Success(ResultPayload);
+        }
+
+        if (!ResolvedTarget.Property)
+        {
+            return TResult<FWidgetPropertySetResult>::Error(
+                VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+                FString::Printf(TEXT("Property '%s' not found on target"), *Request.PropertyPath)
+            );
+        }
+
+        Property = ResolvedTarget.Property;
+        ContainerPtrForSet = ResolvedTarget.ContainerPtr ? ResolvedTarget.ContainerPtr : static_cast<void*>(FoundWidget);
+    }
+
+    if (Request.CollectionOperation.IsSet())
+    {
+        const FString Operation = Request.CollectionOperation->Operation.ToLower();
+        FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property);
+        if (!ArrayProperty)
+        {
+            return TResult<FWidgetPropertySetResult>::Error(
+                VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                TEXT("collection_op currently supports TArray only")
+            );
+        }
+
+        void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+        FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
+
+        auto ConvertAndAssignElement = [&](int32 DestIndex, const TSharedPtr<FJsonValue>& JsonElem, FString& OutError) -> bool
+        {
+            ArrayHelper.ExpandForIndex(DestIndex);
+            void* ElemPtr = ArrayHelper.GetRawPtr(DestIndex);
+            FProperty* ElemProp = ArrayProperty->Inner;
+
+            if (FStrProperty* PropStr = CastField<FStrProperty>(ElemProp))
+            {
+                FString Value;
+                if (JsonElem->Type == EJson::String)
+                {
+                    Value = JsonElem->AsString();
+                }
+                else if (JsonElem->Type == EJson::Number)
+                {
+                    Value = FString::SanitizeFloat(JsonElem->AsNumber());
+                }
+                else if (JsonElem->Type == EJson::Boolean)
+                {
+                    Value = JsonElem->AsBool() ? TEXT("true") : TEXT("false");
+                }
+                else
+                {
+                    Value = JsonElem->AsString();
+                }
+                PropStr->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FTextProperty* PropText = CastField<FTextProperty>(ElemProp))
+            {
+                FText Value = FText::FromString(JsonElem->AsString());
+                PropText->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FBoolProperty* PropBool = CastField<FBoolProperty>(ElemProp))
+            {
+                bool Value = (JsonElem->Type == EJson::Boolean) ? JsonElem->AsBool() : JsonElem->AsString().Equals(TEXT("true"), ESearchCase::IgnoreCase);
+                PropBool->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FFloatProperty* PropFloat = CastField<FFloatProperty>(ElemProp))
+            {
+                float Value = (JsonElem->Type == EJson::Number) ? static_cast<float>(JsonElem->AsNumber()) : FCString::Atof(*JsonElem->AsString());
+                PropFloat->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FIntProperty* PropInt = CastField<FIntProperty>(ElemProp))
+            {
+                int32 Value = (JsonElem->Type == EJson::Number) ? static_cast<int32>(JsonElem->AsNumber()) : FCString::Atoi(*JsonElem->AsString());
+                PropInt->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FByteProperty* PropByte = CastField<FByteProperty>(ElemProp))
+            {
+                if (PropByte->Enum)
+                {
+                    const FString NameStr = JsonElem->AsString();
+                    const int64 EnumValue = PropByte->Enum->GetValueByNameString(NameStr);
+                    if (EnumValue == INDEX_NONE)
+                    {
+                        OutError = FString::Printf(TEXT("Invalid enum value '%s'"), *NameStr);
+                        return false;
+                    }
+                    PropByte->SetPropertyValue(ElemPtr, static_cast<uint8>(EnumValue));
+                    return true;
+                }
+
+                const uint8 Value = (JsonElem->Type == EJson::Number) ? static_cast<uint8>(JsonElem->AsNumber()) : static_cast<uint8>(FCString::Atoi(*JsonElem->AsString()));
+                PropByte->SetPropertyValue(ElemPtr, Value);
+                return true;
+            }
+
+            if (FStructProperty* PropStruct = CastField<FStructProperty>(ElemProp))
+            {
+                if (JsonElem->Type != EJson::Object)
+                {
+                    OutError = TEXT("Struct array element requires JSON object");
+                    return false;
+                }
+
+                TSharedPtr<FJsonObject> Obj = JsonElem->AsObject();
+                return FJsonObjectConverter::JsonObjectToUStruct(Obj.ToSharedRef(), PropStruct->Struct, ElemPtr, 0, 0);
+            }
+
+            OutError = TEXT("Unsupported array element type");
+            return false;
+        };
+
+        if (Operation == TEXT("clear"))
+        {
+            ArrayHelper.Resize(0);
+        }
+        else if (Operation == TEXT("set") || Operation == TEXT("append"))
+        {
+            if (!Request.Value.HasJson() || Request.Value.JsonValue->Type != EJson::Array)
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PARAM_TYPE_MISMATCH,
+                    TEXT("collection_op requires property_value to be an array")
+                );
+            }
+
+            const TArray<TSharedPtr<FJsonValue>>& JsonArr = Request.Value.JsonValue->AsArray();
+            int32 StartIndex = (Operation == TEXT("set")) ? 0 : ArrayHelper.Num();
+            if (Operation == TEXT("set"))
+            {
+                ArrayHelper.Resize(0);
+            }
+
+            for (int32 Index = 0; Index < JsonArr.Num(); ++Index)
+            {
+                FString ConversionError;
+                if (!ConvertAndAssignElement(StartIndex + Index, JsonArr[Index], ConversionError))
+                {
+                    return TResult<FWidgetPropertySetResult>::Error(
+                        VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                        ConversionError
+                    );
+                }
+            }
+        }
+        else if (Operation == TEXT("insert") || Operation == TEXT("updateat") || Operation == TEXT("removeat"))
+        {
+            if (!Request.CollectionOperation->Index.IsSet())
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PARAM_FIELD_REQUIRED,
+                    TEXT("collection_op requires 'index' parameter")
+                );
+            }
+
+            int32 IndexValue = Request.CollectionOperation->Index.GetValue();
+
+            if (Operation == TEXT("removeat"))
+            {
+                if (IndexValue < 0 || IndexValue >= ArrayHelper.Num())
+                {
+                    return TResult<FWidgetPropertySetResult>::Error(
+                        VibeUE::ErrorCodes::PARAM_OUT_OF_RANGE,
+                        TEXT("removeAt index out of range")
+                    );
+                }
+                ArrayHelper.RemoveValues(IndexValue, 1);
+            }
+            else
+            {
+                if (!Request.Value.HasJson())
+                {
+                    return TResult<FWidgetPropertySetResult>::Error(
+                        VibeUE::ErrorCodes::PARAM_TYPE_MISMATCH,
+                        TEXT("insert/updateAt requires JSON property_value for element")
+                    );
+                }
+
+                if (Operation == TEXT("insert"))
+                {
+                    IndexValue = FMath::Clamp(IndexValue, 0, ArrayHelper.Num());
+                    ArrayHelper.InsertValues(IndexValue, 1);
+                }
+                else
+                {
+                    if (IndexValue < 0 || IndexValue >= ArrayHelper.Num())
+                    {
+                        return TResult<FWidgetPropertySetResult>::Error(
+                            VibeUE::ErrorCodes::PARAM_OUT_OF_RANGE,
+                            TEXT("updateAt index out of range")
+                        );
+                    }
+                }
+
+                FString ConversionError;
+                if (!ConvertAndAssignElement(IndexValue, Request.Value.JsonValue, ConversionError))
+                {
+                    return TResult<FWidgetPropertySetResult>::Error(
+                        VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                        ConversionError
+                    );
+                }
+            }
+        }
+        else
+        {
+            return TResult<FWidgetPropertySetResult>::Error(
+                VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                TEXT("Unsupported collection_op for arrays")
+            );
+        }
+
+        FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+        if (GEditor)
+        {
+            GEditor->NoteSelectionChange();
+            if (UAssetEditorSubsystem* AssetSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+            {
+                TArray<IAssetEditorInstance*> AssetEditors = AssetSubsystem->FindEditorsForAsset(WidgetBlueprint);
+                for (IAssetEditorInstance* EditorInstance : AssetEditors)
+                {
+                    if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(EditorInstance))
+                    {
+                        WidgetEditor->RefreshEditors();
+                    }
+                }
+            }
+        }
+
+        WidgetBlueprint->MarkPackageDirty();
+
+        ResultPayload.CollectionOperation = Request.CollectionOperation->Operation;
+        ResultPayload.Note = TEXT("Array collection operation applied");
+        return TResult<FWidgetPropertySetResult>::Success(ResultPayload);
+    }
+
+    bool bPropertySet = false;
+    FString ErrorMessage;
+
+    if (Request.Value.HasJson())
+    {
+        if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+        {
+            if (Request.Value.JsonValue->Type != EJson::Object)
+            {
+                ErrorMessage = FString::Printf(TEXT("Struct property '%s' requires JSON object"), *Request.PropertyPath);
+            }
+            else
+            {
+                TSharedPtr<FJsonObject> JsonObj = Request.Value.JsonValue->AsObject();
+                void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                if (!bPropertySet)
+                {
+                    ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct for property '%s'"), *Request.PropertyPath);
+                }
+            }
+        }
+    }
+
+    if (!bPropertySet && Request.Value.HasJson())
+    {
+        if (!CastField<FStructProperty>(Property))
+        {
+            bPropertySet = ParseComplexPropertyValue(Request.Value.JsonValue, Property, FoundWidget, ErrorMessage);
+        }
+    }
+
+    if (!bPropertySet && Request.Value.HasString())
+    {
+        const FString& StringValue = Request.Value.StringValue;
+
+        if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
+        {
+            StrProperty->SetPropertyValue_InContainer(ContainerPtrForSet, StringValue);
+            bPropertySet = true;
+        }
+        else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
+        {
+            FText TextValue = FText::FromString(StringValue);
+            TextProperty->SetPropertyValue_InContainer(ContainerPtrForSet, TextValue);
+            bPropertySet = true;
+        }
+        else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
+        {
+            bool BoolValue = StringValue.Equals(TEXT("true"), ESearchCase::IgnoreCase) || StringValue.Equals(TEXT("1"));
+            BoolProperty->SetPropertyValue_InContainer(ContainerPtrForSet, BoolValue);
+            bPropertySet = true;
+        }
+        else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+        {
+            float FloatValue = FCString::Atof(*StringValue);
+            FloatProperty->SetPropertyValue_InContainer(ContainerPtrForSet, FloatValue);
+            bPropertySet = true;
+        }
+        else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
+        {
+            int32 IntValue = FCString::Atoi(*StringValue);
+            IntProperty->SetPropertyValue_InContainer(ContainerPtrForSet, IntValue);
+            bPropertySet = true;
+        }
+        else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+        {
+            if (ByteProperty->Enum)
+            {
+                const int64 EnumValue = ByteProperty->Enum->GetValueByNameString(StringValue);
+                if (EnumValue != INDEX_NONE)
+                {
+                    ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, static_cast<uint8>(EnumValue));
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property '%s'"), *StringValue, *Request.PropertyPath);
+                }
+            }
+            else
+            {
+                const uint8 ByteValue = static_cast<uint8>(FCString::Atoi(*StringValue));
+                ByteProperty->SetPropertyValue_InContainer(ContainerPtrForSet, ByteValue);
+                bPropertySet = true;
+            }
+        }
+        else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+        {
+            if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
+            {
+                const int64 EnumValue = EnumProperty->GetEnum()->GetValueByNameString(StringValue);
+                if (EnumValue != INDEX_NONE)
+                {
+                    uint8* EnumValuePtr = static_cast<uint8*>(EnumProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet));
+                    EnumProperty->GetUnderlyingProperty()->SetIntPropertyValue(EnumValuePtr, EnumValue);
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid enum value '%s' for property '%s'"), *StringValue, *Request.PropertyPath);
+                }
+            }
+            else
+            {
+                ErrorMessage = FString::Printf(TEXT("Cannot set enum property '%s'"), *Request.PropertyPath);
+            }
+        }
+        else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+        {
+            TSharedPtr<FJsonObject> JsonObj;
+            const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StringValue);
+            if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+            {
+                void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                if (!bPropertySet)
+                {
+                    TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
+                    bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+                }
+            }
+            else
+            {
+                ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *Request.PropertyPath);
+            }
+        }
+    }
+
+    if (!bPropertySet)
+    {
+        if (ErrorMessage.IsEmpty())
+        {
+            ErrorMessage = FString::Printf(TEXT("Unsupported property type for '%s'"), *Request.PropertyPath);
+        }
+
+        return TResult<FWidgetPropertySetResult>::Error(
+            VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+            ErrorMessage
+        );
+    }
+
+    bool bStructuralChange = false;
+
+    if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+    {
+        FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
+        PropertyChangedEvent.MemberProperty = Property;
+        FoundWidget->PostEditChangeProperty(PropertyChangedEvent);
+    }
+
+    if (Property->GetFName() == TEXT("bIsVariable") || Request.PropertyPath.Equals(TEXT("IsVariable"), ESearchCase::IgnoreCase))
+    {
+        bStructuralChange = true;
+    }
+
+    if (bStructuralChange)
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+    }
+    else
+    {
+        FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+    }
+
+    if (GEditor)
+    {
+        GEditor->NoteSelectionChange();
+        if (UAssetEditorSubsystem* AssetSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+        {
+            TArray<IAssetEditorInstance*> AssetEditors = AssetSubsystem->FindEditorsForAsset(WidgetBlueprint);
+            for (IAssetEditorInstance* EditorInstance : AssetEditors)
+            {
+                if (FWidgetBlueprintEditor* WidgetEditor = static_cast<FWidgetBlueprintEditor*>(EditorInstance))
+                {
+                    WidgetEditor->RefreshEditors();
+                }
+            }
+        }
+    }
+
+    WidgetBlueprint->MarkPackageDirty();
+
+    if (Request.Value.HasJson())
+    {
+        ResultPayload.AppliedValue.SetJson(Request.Value.JsonValue);
+    }
+    if (Request.Value.HasString())
+    {
+        ResultPayload.AppliedValue.SetString(Request.Value.StringValue);
+    }
+
+    ResultPayload.bStructuralChange = bStructuralChange;
+    ResultPayload.Note = TEXT("Property set successfully");
+    return TResult<FWidgetPropertySetResult>::Success(ResultPayload);
+}
+
+TResult<FWidgetPropertyGetResult> FWidgetPropertyService::GetWidgetProperty(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, const FString& PropertyPath)
+{
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(WidgetName, TEXT("WidgetName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(PropertyPath, TEXT("PropertyPath"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    if (!WidgetBlueprint->WidgetTree)
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            TEXT("Widget blueprint has no widget tree")
+        );
+    }
+
+    UWidget* FoundWidget = nullptr;
+    TArray<UWidget*> AllWidgets;
+    WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+    for (UWidget* Widget : AllWidgets)
+    {
+        if (Widget && Widget->GetName() == WidgetName)
+        {
+            FoundWidget = Widget;
+            break;
+        }
+    }
+
+    if (!FoundWidget)
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprint->GetName())
+        );
+    }
+
+    bool bSlotRoot = false;
+    TArray<FPathSegment> Segments;
+    if (!ParsePropertyPath(PropertyPath, bSlotRoot, Segments))
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            TEXT("Invalid property_name path")
+        );
+    }
+
+    FString ResolveError;
+    FResolvedTarget Target;
+    if (!ResolvePath(FoundWidget, Segments, bSlotRoot, Target, ResolveError))
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(
+            VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+            ResolveError
+        );
+    }
+
+    FWidgetPropertyGetResult ResultPayload;
+    ResultPayload.PropertyPath = PropertyPath;
+    ResultPayload.SlotClass = FoundWidget->Slot ? FoundWidget->Slot->GetClass()->GetName() : TEXT("");
+
+    if (Target.bIsSyntheticChildOrder)
+    {
+        UPanelSlot* Slot = Cast<UPanelSlot>(FoundWidget->Slot);
+        UPanelWidget* Parent = Slot ? Slot->Parent : nullptr;
+        const int32 Index = Parent ? Parent->GetChildIndex(FoundWidget) : 0;
+
+        ResultPayload.Value.SetString(FString::FromInt(Index));
+        ResultPayload.PropertyType = TEXT("int");
+        ResultPayload.bIsEditable = true;
+        ResultPayload.bIsChildOrder = true;
+        ResultPayload.ChildOrderValue = Index;
+        ResultPayload.ChildCount = Parent ? Parent->GetChildrenCount() : 0;
+
+        ResultPayload.Constraints = MakeShareable(new FJsonObject);
+        ResultPayload.Constraints->SetNumberField(TEXT("child_count"), ResultPayload.ChildCount);
+
+        return TResult<FWidgetPropertyGetResult>::Success(ResultPayload);
+    }
+
+    FProperty* Property = Target.Property;
+    if (!Property)
+    {
+        return TResult<FWidgetPropertyGetResult>::Error(
+            VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+            FString::Printf(TEXT("Property '%s' not found on target"), *PropertyPath)
+        );
+    }
+
+    FString PropertyValueString;
+    FString PropertyType;
+    TSharedPtr<FJsonValue> PropertyJson;
+    TSharedPtr<FJsonObject> Constraints;
+    TSharedPtr<FJsonObject> Schema;
+
+    void* ContainerPtr = Target.ContainerPtr ? Target.ContainerPtr : static_cast<void*>(FoundWidget);
+
+    if (FStrProperty* StrProperty = CastField<FStrProperty>(Property))
+    {
+        PropertyValueString = StrProperty->GetPropertyValue_InContainer(ContainerPtr);
+        PropertyType = TEXT("String");
+    }
+    else if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
+    {
+        const FText TextValue = TextProperty->GetPropertyValue_InContainer(ContainerPtr);
+        PropertyValueString = TextValue.ToString();
+        PropertyType = TEXT("Text");
+    }
+    else if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
+    {
+        const bool BoolValue = BoolProperty->GetPropertyValue_InContainer(ContainerPtr);
+        PropertyValueString = BoolValue ? TEXT("true") : TEXT("false");
+        PropertyType = TEXT("bool");
+    }
+    else if (FFloatProperty* FloatProperty = CastField<FFloatProperty>(Property))
+    {
+        const float FloatValue = FloatProperty->GetPropertyValue_InContainer(ContainerPtr);
+        PropertyValueString = FString::SanitizeFloat(FloatValue);
+        PropertyType = TEXT("float");
+    }
+    else if (FIntProperty* IntProperty = CastField<FIntProperty>(Property))
+    {
+        const int32 IntValue = IntProperty->GetPropertyValue_InContainer(ContainerPtr);
+        PropertyValueString = FString::FromInt(IntValue);
+        PropertyType = TEXT("int");
+    }
+    else if (FByteProperty* ByteProperty = CastField<FByteProperty>(Property))
+    {
+        const uint8 ByteValue = ByteProperty->GetPropertyValue_InContainer(ContainerPtr);
+        if (ByteProperty->Enum)
+        {
+            PropertyValueString = ByteProperty->Enum->GetNameStringByValue(ByteValue);
+            PropertyType = FString::Printf(TEXT("Enum<%s>"), *ByteProperty->Enum->GetName());
+        }
+        else
+        {
+            PropertyValueString = FString::FromInt(ByteValue);
+            PropertyType = TEXT("byte");
+        }
+    }
+    else if (FEnumProperty* EnumProperty = CastField<FEnumProperty>(Property))
+    {
+        if (EnumProperty->GetUnderlyingProperty() && EnumProperty->GetEnum())
+        {
+            uint8* EnumValuePtr = static_cast<uint8*>(EnumProperty->ContainerPtrToValuePtr<void>(ContainerPtr));
+            const int64 EnumValue = EnumProperty->GetUnderlyingProperty()->GetSignedIntPropertyValue(EnumValuePtr);
+            PropertyValueString = EnumProperty->GetEnum()->GetNameStringByValue(EnumValue);
+            PropertyType = FString::Printf(TEXT("Enum<%s>"), *EnumProperty->GetEnum()->GetName());
+        }
+        else
+        {
+            PropertyValueString = TEXT("UnknownEnum");
+            PropertyType = TEXT("EnumProperty");
+        }
+    }
+    else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+    {
+        void* ValuePtr = Target.ContainerPtr ? Target.ContainerPtr : StructProperty->ContainerPtrToValuePtr<void>(FoundWidget);
+        TSharedPtr<FJsonObject> JsonObject = MakeShareable(new FJsonObject);
+        if (FJsonObjectConverter::UStructToJsonObject(StructProperty->Struct, ValuePtr, JsonObject.ToSharedRef(), 0, 0))
+        {
+            PropertyJson = MakeShareable(new FJsonValueObject(JsonObject));
+            PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
+        }
+        else
+        {
+            PropertyValueString = TEXT("StructSerializationFailed");
+            PropertyType = FString::Printf(TEXT("Struct<%s>"), *StructProperty->Struct->GetName());
+        }
+    }
+    else if (FArrayProperty* ArrayProperty = CastField<FArrayProperty>(Property))
+    {
+        void* ArrayAddr = ArrayProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptArrayHelper ArrayHelper(ArrayProperty, ArrayAddr);
+        TArray<TSharedPtr<FJsonValue>> JsonArray;
+        for (int32 Index = 0; Index < ArrayHelper.Num(); ++Index)
+        {
+            void* ElementPtr = ArrayHelper.GetRawPtr(Index);
+            FProperty* ElementProperty = ArrayProperty->Inner;
+            if (FStrProperty* StrProp = CastField<FStrProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueString(StrProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FTextProperty* TextProp = CastField<FTextProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueString(TextProp->GetPropertyValue(ElementPtr).ToString())));
+            }
+            else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueBoolean(BoolProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueNumber(FloatProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FIntProperty* IntProp = CastField<FIntProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueNumber(IntProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FByteProperty* ByteProp = CastField<FByteProperty>(ElementProperty))
+            {
+                if (ByteProp->Enum)
+                {
+                    const uint8 EnumValue = ByteProp->GetPropertyValue(ElementPtr);
+                    JsonArray.Add(MakeShareable(new FJsonValueString(ByteProp->Enum->GetNameStringByValue(EnumValue))));
+                }
+                else
+                {
+                    JsonArray.Add(MakeShareable(new FJsonValueNumber(ByteProp->GetPropertyValue(ElementPtr))));
+                }
+            }
+            else if (FStructProperty* StructProp = CastField<FStructProperty>(ElementProperty))
+            {
+                TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
+                FJsonObjectConverter::UStructToJsonObject(StructProp->Struct, ElementPtr, ElemObj.ToSharedRef(), 0, 0);
+                JsonArray.Add(MakeShareable(new FJsonValueObject(ElemObj)));
+            }
+            else
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueString(TEXT("UnsupportedArrayElemType"))));
+            }
+        }
+        PropertyJson = MakeShareable(new FJsonValueArray(JsonArray));
+        PropertyType = TEXT("Array");
+        AppendCollectionLength(Property, ContainerPtr, Constraints);
+    }
+    else if (FSetProperty* SetProperty = CastField<FSetProperty>(Property))
+    {
+        void* SetAddr = SetProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptSetHelper SetHelper(SetProperty, SetAddr);
+        TArray<TSharedPtr<FJsonValue>> JsonArray;
+        for (int32 Index = 0; Index < SetHelper.Num(); ++Index)
+        {
+            if (!SetHelper.IsValidIndex(Index))
+            {
+                continue;
+            }
+
+            void* ElementPtr = SetHelper.GetElementPtr(Index);
+            FProperty* ElementProperty = SetProperty->ElementProp;
+
+            if (FStrProperty* StrProp = CastField<FStrProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueString(StrProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FTextProperty* TextProp = CastField<FTextProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueString(TextProp->GetPropertyValue(ElementPtr).ToString())));
+            }
+            else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueBoolean(BoolProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueNumber(FloatProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FIntProperty* IntProp = CastField<FIntProperty>(ElementProperty))
+            {
+                JsonArray.Add(MakeShareable(new FJsonValueNumber(IntProp->GetPropertyValue(ElementPtr))));
+            }
+            else if (FByteProperty* ByteProp = CastField<FByteProperty>(ElementProperty))
+            {
+                if (ByteProp->Enum)
+                {
+                    const uint8 EnumValue = ByteProp->GetPropertyValue(ElementPtr);
+                    JsonArray.Add(MakeShareable(new FJsonValueString(ByteProp->Enum->GetNameStringByValue(EnumValue))));
+                }
+                else
+                {
+                    JsonArray.Add(MakeShareable(new FJsonValueNumber(ByteProp->GetPropertyValue(ElementPtr))));
+                }
+            }
+            else if (FStructProperty* StructProp = CastField<FStructProperty>(ElementProperty))
+            {
+                TSharedPtr<FJsonObject> ElemObj = MakeShareable(new FJsonObject);
+                FJsonObjectConverter::UStructToJsonObject(StructProp->Struct, ElementPtr, ElemObj.ToSharedRef(), 0, 0);
+                JsonArray.Add(MakeShareable(new FJsonValueObject(ElemObj)));
+            }
+        }
+
+        PropertyJson = MakeShareable(new FJsonValueArray(JsonArray));
+        PropertyType = TEXT("Set");
+        AppendCollectionLength(Property, ContainerPtr, Constraints);
+    }
+    else if (FMapProperty* MapProperty = CastField<FMapProperty>(Property))
+    {
+        void* MapAddr = MapProperty->ContainerPtrToValuePtr<void>(ContainerPtr);
+        FScriptMapHelper MapHelper(MapProperty, MapAddr);
+        TSharedPtr<FJsonObject> MapObject = MakeShareable(new FJsonObject);
+        for (int32 Index = 0; Index < MapHelper.GetMaxIndex(); ++Index)
+        {
+            if (!MapHelper.IsValidIndex(Index))
+            {
+                continue;
+            }
+
+            uint8* PairPtr = static_cast<uint8*>(MapHelper.GetPairPtr(Index));
+            void* KeyPtr = PairPtr;
+            void* ValuePtr = PairPtr + MapProperty->MapLayout.ValueOffset;
+
+            FString KeyString;
+            if (FNameProperty* NameProp = CastField<FNameProperty>(MapProperty->KeyProp))
+            {
+                KeyString = NameProp->GetPropertyValue(KeyPtr).ToString();
+            }
+            else if (FStrProperty* StrProp = CastField<FStrProperty>(MapProperty->KeyProp))
+            {
+                KeyString = StrProp->GetPropertyValue(KeyPtr);
+            }
+            else if (FIntProperty* IntProp = CastField<FIntProperty>(MapProperty->KeyProp))
+            {
+                KeyString = FString::FromInt(IntProp->GetPropertyValue(KeyPtr));
+            }
+            else if (FByteProperty* ByteProp = CastField<FByteProperty>(MapProperty->KeyProp))
+            {
+                if (ByteProp->Enum)
+                {
+                    KeyString = ByteProp->Enum->GetNameStringByValue(ByteProp->GetPropertyValue(KeyPtr));
+                }
+                else
+                {
+                    KeyString = FString::FromInt(ByteProp->GetPropertyValue(KeyPtr));
+                }
+            }
+            else
+            {
+                KeyString = TEXT("UnsupportedKey");
+            }
+
+            TSharedPtr<FJsonValue> ValueJson;
+            FProperty* ValueProperty = MapProperty->ValueProp;
+            if (FStrProperty* StrProp = CastField<FStrProperty>(ValueProperty))
+            {
+                ValueJson = MakeShareable(new FJsonValueString(StrProp->GetPropertyValue(ValuePtr)));
+            }
+            else if (FTextProperty* TextProp = CastField<FTextProperty>(ValueProperty))
+            {
+                ValueJson = MakeShareable(new FJsonValueString(TextProp->GetPropertyValue(ValuePtr).ToString()));
+            }
+            else if (FBoolProperty* BoolProp = CastField<FBoolProperty>(ValueProperty))
+            {
+                ValueJson = MakeShareable(new FJsonValueBoolean(BoolProp->GetPropertyValue(ValuePtr)));
+            }
+            else if (FFloatProperty* FloatProp = CastField<FFloatProperty>(ValueProperty))
+            {
+                ValueJson = MakeShareable(new FJsonValueNumber(FloatProp->GetPropertyValue(ValuePtr)));
+            }
+            else if (FIntProperty* IntProp = CastField<FIntProperty>(ValueProperty))
+            {
+                ValueJson = MakeShareable(new FJsonValueNumber(IntProp->GetPropertyValue(ValuePtr)));
+            }
+            else if (FByteProperty* ByteProp = CastField<FByteProperty>(ValueProperty))
+            {
+                if (ByteProp->Enum)
+                {
+                    ValueJson = MakeShareable(new FJsonValueString(ByteProp->Enum->GetNameStringByValue(ByteProp->GetPropertyValue(ValuePtr))));
+                }
+                else
+                {
+                    ValueJson = MakeShareable(new FJsonValueNumber(ByteProp->GetPropertyValue(ValuePtr)));
+                }
+            }
+            else if (FStructProperty* StructProp = CastField<FStructProperty>(ValueProperty))
+            {
+                TSharedPtr<FJsonObject> ValueObject = MakeShareable(new FJsonObject);
+                FJsonObjectConverter::UStructToJsonObject(StructProp->Struct, ValuePtr, ValueObject.ToSharedRef(), 0, 0);
+                ValueJson = MakeShareable(new FJsonValueObject(ValueObject));
+            }
+            else
+            {
+                ValueJson = MakeShareable(new FJsonValueString(TEXT("UnsupportedValueType")));
+            }
+
+            MapObject->SetField(KeyString, ValueJson);
+        }
+
+        PropertyJson = MakeShareable(new FJsonValueObject(MapObject));
+        PropertyType = TEXT("Map");
+        AppendCollectionLength(Property, ContainerPtr, Constraints);
+    }
+    else
+    {
+        PropertyValueString = TEXT("UnsupportedType");
+        PropertyType = Property->GetClass()->GetName();
+    }
+
+    AddEnumConstraints(Property, Constraints);
+    AddNumericConstraints(Property, Constraints);
+    AppendSchemaHints(Property, Schema);
+
+    ResultPayload.PropertyType = PropertyType;
+    ResultPayload.bIsEditable = Property->HasAnyPropertyFlags(CPF_Edit);
+
+    if (PropertyJson.IsValid())
+    {
+        ResultPayload.Value.SetJson(PropertyJson);
+    }
+    else
+    {
+        ResultPayload.Value.SetString(PropertyValueString);
+    }
+
+    if (Constraints.IsValid())
+    {
+        ResultPayload.Constraints = Constraints;
+    }
+
+    if (Schema.IsValid())
+    {
+        ResultPayload.Schema = Schema;
+    }
+
+    return TResult<FWidgetPropertyGetResult>::Success(ResultPayload);
+}
+
+TResult<TArray<FWidgetPropertyInfo>> FWidgetPropertyService::ListWidgetProperties(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName, bool bIncludeSlotProperties)
+{
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<TArray<FWidgetPropertyInfo>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(WidgetName, TEXT("WidgetName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<TArray<FWidgetPropertyInfo>>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    if (!WidgetBlueprint->WidgetTree)
+    {
+        return TResult<TArray<FWidgetPropertyInfo>>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            TEXT("Widget blueprint has no widget tree")
+        );
+    }
+
+    UWidget* FoundWidget = nullptr;
+    TArray<UWidget*> AllWidgets;
+    WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+    for (UWidget* Widget : AllWidgets)
+    {
+        if (Widget && Widget->GetName() == WidgetName)
+        {
+            FoundWidget = Widget;
+            break;
+        }
+    }
+
+    if (!FoundWidget)
+    {
+        return TResult<TArray<FWidgetPropertyInfo>>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Widget component '%s' not found in blueprint '%s'"), *WidgetName, *WidgetBlueprint->GetName())
+        );
+    }
+
+    return ListWidgetProperties(FoundWidget, bIncludeSlotProperties);
+}
+
 TResult<TArray<FWidgetPropertyInfo>> FWidgetPropertyService::ListWidgetProperties(UWidget* Widget, bool bIncludeSlotProperties)
 {
     auto ValidationResult = ValidateNotNull(Widget, TEXT("Widget"));
@@ -111,6 +1976,12 @@ TResult<TArray<FWidgetPropertyInfo>> FWidgetPropertyService::ListWidgetPropertie
         Info.Category = Property->GetMetaData(TEXT("Category"));
         Info.bIsEditable = Property->HasAnyPropertyFlags(CPF_Edit);
         Info.bIsBlueprintVisible = Property->HasAnyPropertyFlags(CPF_BlueprintVisible);
+
+        void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Widget);
+        if (ValuePtr)
+        {
+            Info.CurrentValue = PropertyValueToString(Property, ValuePtr);
+        }
         
         Properties.Add(Info);
     }
@@ -134,6 +2005,12 @@ TResult<TArray<FWidgetPropertyInfo>> FWidgetPropertyService::ListWidgetPropertie
                 Info.PropertyType = Property->GetCPPType();
                 Info.Category = TEXT("Slot");
                 Info.bIsEditable = Property->HasAnyPropertyFlags(CPF_Edit);
+
+                void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Slot);
+                if (ValuePtr)
+                {
+                    Info.CurrentValue = PropertyValueToString(Property, ValuePtr);
+                }
                 
                 Properties.Add(Info);
             }

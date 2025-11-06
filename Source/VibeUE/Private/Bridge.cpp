@@ -77,7 +77,7 @@ UBridge::UBridge()
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
     BlueprintComponentReflection = MakeShared<FBlueprintComponentReflection>();
-    UMGCommands = MakeShared<FUMGCommands>();
+    UMGCommands = MakeShared<FUMGCommands>(ServiceContext);
     UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
 }
