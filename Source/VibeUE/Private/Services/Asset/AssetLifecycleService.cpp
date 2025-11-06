@@ -344,3 +344,79 @@ TResult<bool> FAssetLifecycleService::DoesAssetExist(const FString& AssetPath)
     bool bExists = UEditorAssetLibrary::DoesAssetExist(NormalizedPath);
     return TResult<bool>::Success(bExists);
 }
+
+TResult<FAssetDuplicateResult> FAssetLifecycleService::DuplicateAsset(
+    const FString& SourceAssetPath,
+    const FString& DestinationPath,
+    const FString& NewName
+)
+{
+    // Normalize source path
+    FString NormalizedSourcePath = NormalizeAssetPath(SourceAssetPath);
+    
+    // 1. Validate source asset exists
+    if (!UEditorAssetLibrary::DoesAssetExist(NormalizedSourcePath))
+    {
+        return TResult<FAssetDuplicateResult>::Error(
+            VibeUE::ErrorCodes::ASSET_NOT_FOUND,
+            FString::Printf(TEXT("Source asset not found: %s"), *NormalizedSourcePath)
+        );
+    }
+    
+    // 2. Normalize and validate destination path
+    FString NormalizedDestPath = NormalizeAssetPath(DestinationPath);
+    
+    // Ensure destination path exists as a directory
+    if (!UEditorAssetLibrary::DoesDirectoryExist(NormalizedDestPath))
+    {
+        return TResult<FAssetDuplicateResult>::Error(
+            VibeUE::ErrorCodes::INVALID_PATH,
+            FString::Printf(TEXT("Destination directory does not exist: %s"), *NormalizedDestPath)
+        );
+    }
+    
+    // 3. Determine the new asset name
+    FString FinalNewName = NewName;
+    if (FinalNewName.IsEmpty())
+    {
+        // Extract the asset name from source path
+        FString AssetName;
+        FString PathPart;
+        NormalizedSourcePath.Split(TEXT("/"), &PathPart, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+        FinalNewName = AssetName;
+    }
+    
+    // 4. Build the destination asset path
+    FString DestinationAssetPath = NormalizedDestPath;
+    if (!DestinationAssetPath.EndsWith(TEXT("/")))
+    {
+        DestinationAssetPath += TEXT("/");
+    }
+    DestinationAssetPath += FinalNewName;
+    
+    // 5. Duplicate the asset using UEditorAssetLibrary
+    UObject* DuplicatedAsset = UEditorAssetLibrary::DuplicateAsset(
+        NormalizedSourcePath,
+        DestinationAssetPath
+    );
+    
+    if (!DuplicatedAsset)
+    {
+        return TResult<FAssetDuplicateResult>::Error(
+            VibeUE::ErrorCodes::OPERATION_FAILED,
+            FString::Printf(
+                TEXT("Failed to duplicate asset from '%s' to '%s'"),
+                *NormalizedSourcePath,
+                *DestinationAssetPath
+            )
+        );
+    }
+    
+    // 6. Build result
+    FAssetDuplicateResult Result;
+    Result.OriginalPath = NormalizedSourcePath;
+    Result.NewPath = DestinationAssetPath;
+    Result.AssetType = DuplicatedAsset->GetClass()->GetName();
+    
+    return TResult<FAssetDuplicateResult>::Success(Result);
+}

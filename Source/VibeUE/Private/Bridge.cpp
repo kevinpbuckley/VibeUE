@@ -351,6 +351,7 @@ TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const 
     else if (CommandType == TEXT("import_texture_asset") ||
              CommandType == TEXT("export_texture_for_analysis") ||
              CommandType == TEXT("delete_asset") ||
+             CommandType == TEXT("duplicate_asset") ||
              CommandType == TEXT("OpenAssetInEditor"))
     {
         ResultJson = AssetCommands->HandleCommand(CommandType, Params);
