@@ -30,10 +30,15 @@ static FString ExtractAssetNameFromPath(const FString& Path)
 // Helper function to try loading a widget blueprint by path
 static UWidgetBlueprint* TryLoadWidgetBlueprintByPath(const FString& AssetPath)
 {
+    if (AssetPath.IsEmpty())
+    {
+        return nullptr;
+    }
+
     // CRITICAL: Cannot load assets during garbage collection or serialization
     if (IsGarbageCollecting() || GIsSavingPackage || FUObjectThreadContext::Get().IsRoutingPostLoad)
     {
-        UE_LOG(LogWidgetDiscovery, Warning, TEXT("Cannot load Widget Blueprint '%s' during serialization/GC"), *AssetPath);
+        UE_LOG(LogWidgetDiscovery, Warning, TEXT("Cannot load Widget Blueprint during serialization/GC"));
         return nullptr;
     }
 

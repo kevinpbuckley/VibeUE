@@ -107,7 +107,7 @@ The original UMGCommands.cpp and UMGReflectionCommands.cpp files need to be refa
 4. Remove duplicated business logic
 5. Keep only JSON parameter extraction and response formatting
 
-**Scope**: ~40+ command handlers across both files (~5977 lines total)
+**Scope**: 40+ command handlers across both files (UMGCommands.cpp and UMGReflectionCommands.cpp)
 
 **Approach**: Incremental refactoring following the guide in `docs/UMG_SERVICE_REFACTORING_GUIDE.md`
 

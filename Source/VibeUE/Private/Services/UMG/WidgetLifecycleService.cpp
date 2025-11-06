@@ -61,11 +61,12 @@ TResult<UWidgetBlueprint*> FWidgetLifecycleService::CreateWidgetBlueprint(
     FString FullPackageName = NormalizedPackagePath + WidgetName;
 
     // Check if already exists
-    if (UEditorAssetLibrary::DoesAssetExist(FullPackageName))
+    FString CheckPath = FullPackageName;
+    if (UEditorAssetLibrary::DoesAssetExist(CheckPath))
     {
         return TResult<UWidgetBlueprint*>::Error(
             VibeUE::ErrorCodes::WIDGET_ALREADY_EXISTS,
-            FString::Printf(TEXT("Widget blueprint already exists at '%s'"), *FullPackageName)
+            FString::Printf(TEXT("Widget blueprint already exists at path"))
         );
     }
 

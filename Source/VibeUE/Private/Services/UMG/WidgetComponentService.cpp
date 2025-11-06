@@ -226,8 +226,15 @@ TResult<UWidget*> FWidgetComponentService::CreateAndAddWidget(
         return CreateResult;
     }
 
-    // TODO: Apply initial properties using WidgetPropertyService
-    // This would require dependency injection or service lookup
+    UWidget* Widget = CreateResult.GetValue();
+
+    // Apply initial properties if provided
+    // Note: This requires WidgetPropertyService which would create a circular dependency
+    // Properties should be set by the caller after widget creation
+    if (InitialProperties.Num() > 0)
+    {
+        LogWarning(TEXT("InitialProperties not applied - caller should use WidgetPropertyService after creation"));
+    }
 
     return CreateResult;
 }

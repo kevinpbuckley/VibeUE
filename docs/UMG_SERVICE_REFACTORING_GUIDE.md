@@ -90,11 +90,21 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
         return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
     }
     
-    // Format response
+    // Format response using WidgetDiscoveryService for consistent info
     UWidgetBlueprint* NewWidgetBP = Result.GetValue();
+    TResult<FWidgetBlueprintInfo> InfoResult = WidgetDiscoveryService->GetWidgetBlueprintInfo(NewWidgetBP);
+    
     TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
     Response->SetStringField(TEXT("name"), NewWidgetBP->GetName());
     Response->SetStringField(TEXT("path"), NewWidgetBP->GetPathName());
+    
+    if (InfoResult.IsSuccess())
+    {
+        const FWidgetBlueprintInfo& Info = InfoResult.GetValue();
+        Response->SetStringField(TEXT("package_path"), Info.PackagePath);
+        Response->SetStringField(TEXT("parent_class"), Info.ParentClass);
+    }
+    
     return CreateSuccessResponse(Response);
 }
 ```

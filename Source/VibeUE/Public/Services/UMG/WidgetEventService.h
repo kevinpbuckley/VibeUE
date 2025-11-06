@@ -44,6 +44,10 @@ public:
     /**
      * @brief Bind an event for a widget
      * 
+     * @note Current implementation validates event existence only. Full event binding
+     * requires creating event graph nodes and function delegates, which is deferred
+     * to future implementation. Callers should check return value for validation.
+     * 
      * @param WidgetBlueprint Widget blueprint containing the widget
      * @param WidgetName Name of widget to bind event for
      * @param EventName Name of event to bind (e.g., "OnClicked")
@@ -60,6 +64,9 @@ public:
     /**
      * @brief Get bound events for a widget
      * 
+     * @note Current implementation returns empty map. Full implementation requires
+     * inspecting event graph nodes for bound events, which is deferred to future work.
+     * 
      * @param WidgetBlueprint Widget blueprint containing the widget
      * @param WidgetName Name of widget to get bound events for
      * @return TResult containing map of event name to function name or error
@@ -71,6 +78,9 @@ public:
 
     /**
      * @brief Unbind an event
+     * 
+     * @note Current implementation validates parameters only. Full unbinding requires
+     * removing event graph nodes, which is deferred to future implementation.
      * 
      * @param WidgetBlueprint Widget blueprint containing the widget
      * @param WidgetName Name of widget
@@ -85,6 +95,9 @@ public:
 
     /**
      * @brief Check if an event is bound
+     * 
+     * @note Current implementation always returns false. Full implementation requires
+     * checking event graph nodes, which is deferred to future work.
      * 
      * @param WidgetBlueprint Widget blueprint containing the widget
      * @param WidgetName Name of widget
