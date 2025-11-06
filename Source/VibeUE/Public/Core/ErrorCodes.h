@@ -246,6 +246,9 @@ namespace ErrorCodes
 
 	/** @brief Asset path is invalid or malformed */
 	constexpr const TCHAR* ASSET_PATH_INVALID = TEXT("ASSET_PATH_INVALID");
+	
+	/** @brief Provided path is invalid or does not exist */
+	constexpr const TCHAR* INVALID_PATH = TEXT("INVALID_PATH");
 
 	/** @brief Asset type is incorrect for operation */
 	constexpr const TCHAR* ASSET_TYPE_INCORRECT = TEXT("ASSET_TYPE_INCORRECT");

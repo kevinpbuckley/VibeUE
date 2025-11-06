@@ -16,7 +16,7 @@ Create Blueprint "WBP_AssetSearchTest" with parent "UserWidget"
 ```
 
 ## Overview
-Tests all 5 actions of `manage_asset` covering search, texture import/export, editor operations, and SVG conversion.
+Tests all 6 actions of `manage_asset` covering search, texture import/export, editor operations, SVG conversion, and asset duplication.
 
 ## Test 1: Asset Search
 
@@ -375,6 +375,62 @@ search(search_term="specific_name", max_results=50)
 
 ---
 
+## Test 9: Asset Duplication
+
+**Purpose**: Duplicate existing assets to new locations
+
+### Steps
+
+1. **Duplicate Blueprint**
+   ```
+   Duplicate asset:
+   - asset_path: "/Game/Blueprints/BP_Player"
+   - destination_path: "/Game/Blueprints/Characters"
+   - new_name: "BP_Player2"
+   ```
+
+2. **Duplicate Widget Blueprint**
+   ```
+   Duplicate asset:
+   - asset_path: "/Game/UI/WBP_MainMenu"
+   - destination_path: "/Game/UI/Menus"
+   - new_name: "WBP_PauseMenu"
+   ```
+
+3. **Duplicate Material**
+   ```
+   Duplicate asset:
+   - asset_path: "/Game/Materials/M_Base"
+   - destination_path: "/Game/Materials/Variants"
+   - new_name: "M_Base_Red"
+   ```
+
+4. **Duplicate Without New Name**
+   ```
+   Duplicate with auto-generated name (omit new_name parameter)
+   ```
+
+5. **Verify Duplicated Asset**
+   ```
+   Search for duplicated asset to confirm it exists
+   Open duplicated asset in editor to verify it's correct
+   ```
+
+### Expected Outcomes
+- ✅ Asset duplicated to specified location
+- ✅ new_name applied correctly
+- ✅ Auto-generated name when new_name omitted
+- ✅ Returns original_path, new_path, and asset_type
+- ✅ Duplicated asset maintains original functionality
+- ✅ Works with different asset types (Blueprints, Widgets, Materials, Textures)
+
+### Error Cases to Test
+- ❌ Source asset doesn't exist → ASSET_NOT_FOUND error
+- ❌ Destination path invalid → INVALID_PATH error
+- ❌ Name conflict at destination → handled by Unreal with suffix
+
+---
+
 ## Reference: All Actions Summary
 
 | Action | Purpose | Key Parameters |
@@ -384,6 +440,7 @@ search(search_term="specific_name", max_results=50)
 | **export_texture** | Export for analysis | asset_path, export_format, max_size |
 | **open_in_editor** | Open asset | asset_path, force_open |
 | **svg_to_png** | Convert SVG | svg_path, output_path, size, scale, background |
+| **duplicate** | Duplicate asset | asset_path, destination_path, new_name |
 
 ---
 
@@ -401,7 +458,7 @@ Delete all test assets:
 
 ---
 
-**Test Coverage**: 5/5 actions tested ✅  
-**Last Updated**: November 4, 2025  
+**Test Coverage**: 6/6 actions tested ✅  
+**Last Updated**: November 6, 2025  
 **Related Issues**: #69, #76, #91
 
