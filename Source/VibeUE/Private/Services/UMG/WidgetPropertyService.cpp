@@ -7,6 +7,11 @@
 #include "Components/Widget.h"
 #include "Components/PanelSlot.h"
 #include "Components/PanelWidget.h"
+#include "Components/ScrollBoxSlot.h"
+#include "Components/OverlaySlot.h"
+#include "Components/CanvasPanelSlot.h"
+#include "Components/HorizontalBoxSlot.h"
+#include "Components/VerticalBoxSlot.h"
 #include "UObject/UnrealType.h"
 #include "JsonObjectConverter.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -127,6 +132,12 @@ TResult<void> FWidgetPropertyService::SetProperty(UWidgetBlueprint* Widget, cons
 		return TResult<void>::Error(
 			VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
 			FString::Printf(TEXT("Widget component '%s' not found"), *ComponentName));
+	}
+
+	// Check if this is a Slot property (starts with "Slot.")
+	if (PropertyName.StartsWith(TEXT("Slot."), ESearchCase::IgnoreCase))
+	{
+		return SetSlotProperty(FoundWidget, PropertyName, Value);
 	}
 
 	// Find the property
@@ -679,7 +690,222 @@ bool FWidgetPropertyService::SetPropertyValue(FProperty* Property, void* Contain
 			return false;
 		}
 	}
+	else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		// Handle FLinearColor struct - format: "(R=0.8,G=0,B=0,A=0.5)"
+		if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
+		{
+			FLinearColor ColorValue;
+			// InitFromString modifies the object in place
+			if (ColorValue.InitFromString(Value))
+			{
+				StructProperty->SetValue_InContainer(Container, &ColorValue);
+				return true;
+			}
+			return false;
+		}
+	}
 
 	// Unsupported type
 	return false;
+}
+
+TResult<void> FWidgetPropertyService::SetSlotProperty(UWidget* FoundWidget, const FString& PropertyPath, const FString& Value)
+{
+	if (!FoundWidget || !FoundWidget->Slot)
+	{
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+			TEXT("Widget does not have a panel slot"));
+	}
+
+	UPanelSlot* Slot = FoundWidget->Slot;
+	
+	// Remove "Slot." prefix to get the actual property name
+	FString PropertyName = PropertyPath.RightChop(5); // Remove "Slot."
+
+	// Handle ScrollBox slots (CRITICAL for backgrounds!)
+	if (UScrollBoxSlot* ScrollSlot = Cast<UScrollBoxSlot>(Slot))
+	{
+		// Handle Size.SizeRule (nested property)
+		if (PropertyName.StartsWith(TEXT("Size.SizeRule"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Equals(TEXT("Fill"), ESearchCase::IgnoreCase))
+			{
+				ScrollSlot->SetSize(ESlateSizeRule::Fill);
+				return TResult<void>::Success();
+			}
+			else if (Value.Equals(TEXT("Auto"), ESearchCase::IgnoreCase) || Value.Equals(TEXT("Automatic"), ESearchCase::IgnoreCase))
+			{
+				ScrollSlot->SetSize(ESlateSizeRule::Automatic);
+				return TResult<void>::Success();
+			}
+			return TResult<void>::Error(
+				VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+				FString::Printf(TEXT("Invalid SizeRule value '%s'. Use 'Fill' or 'Auto'"), *Value));
+		}
+		
+		if (PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				ScrollSlot->SetHorizontalAlignment(HAlign_Fill);
+			else if (Value.Contains(TEXT("Left")))
+				ScrollSlot->SetHorizontalAlignment(HAlign_Left);
+			else if (Value.Contains(TEXT("Center")))
+				ScrollSlot->SetHorizontalAlignment(HAlign_Center);
+			else if (Value.Contains(TEXT("Right")))
+				ScrollSlot->SetHorizontalAlignment(HAlign_Right);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid HorizontalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+		
+		if (PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				ScrollSlot->SetVerticalAlignment(VAlign_Fill);
+			else if (Value.Contains(TEXT("Top")))
+				ScrollSlot->SetVerticalAlignment(VAlign_Top);
+			else if (Value.Contains(TEXT("Center")))
+				ScrollSlot->SetVerticalAlignment(VAlign_Center);
+			else if (Value.Contains(TEXT("Bottom")))
+				ScrollSlot->SetVerticalAlignment(VAlign_Bottom);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid VerticalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+	}
+
+	// Handle Overlay slots
+	if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(Slot))
+	{
+		if (PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				OverlaySlot->SetHorizontalAlignment(HAlign_Fill);
+			else if (Value.Contains(TEXT("Left")))
+				OverlaySlot->SetHorizontalAlignment(HAlign_Left);
+			else if (Value.Contains(TEXT("Center")))
+				OverlaySlot->SetHorizontalAlignment(HAlign_Center);
+			else if (Value.Contains(TEXT("Right")))
+				OverlaySlot->SetHorizontalAlignment(HAlign_Right);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid HorizontalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+		
+		if (PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				OverlaySlot->SetVerticalAlignment(VAlign_Fill);
+			else if (Value.Contains(TEXT("Top")))
+				OverlaySlot->SetVerticalAlignment(VAlign_Top);
+			else if (Value.Contains(TEXT("Center")))
+				OverlaySlot->SetVerticalAlignment(VAlign_Center);
+			else if (Value.Contains(TEXT("Bottom")))
+				OverlaySlot->SetVerticalAlignment(VAlign_Bottom);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid VerticalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+	}
+
+	// Handle Horizontal/Vertical Box slots
+	if (UHorizontalBoxSlot* HBoxSlot = Cast<UHorizontalBoxSlot>(Slot))
+	{
+		if (PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				HBoxSlot->SetHorizontalAlignment(HAlign_Fill);
+			else if (Value.Contains(TEXT("Left")))
+				HBoxSlot->SetHorizontalAlignment(HAlign_Left);
+			else if (Value.Contains(TEXT("Center")))
+				HBoxSlot->SetHorizontalAlignment(HAlign_Center);
+			else if (Value.Contains(TEXT("Right")))
+				HBoxSlot->SetHorizontalAlignment(HAlign_Right);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid HorizontalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+		
+		if (PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				HBoxSlot->SetVerticalAlignment(VAlign_Fill);
+			else if (Value.Contains(TEXT("Top")))
+				HBoxSlot->SetVerticalAlignment(VAlign_Top);
+			else if (Value.Contains(TEXT("Center")))
+				HBoxSlot->SetVerticalAlignment(VAlign_Center);
+			else if (Value.Contains(TEXT("Bottom")))
+				HBoxSlot->SetVerticalAlignment(VAlign_Bottom);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid VerticalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+	}
+	
+	if (UVerticalBoxSlot* VBoxSlot = Cast<UVerticalBoxSlot>(Slot))
+	{
+		if (PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				VBoxSlot->SetHorizontalAlignment(HAlign_Fill);
+			else if (Value.Contains(TEXT("Left")))
+				VBoxSlot->SetHorizontalAlignment(HAlign_Left);
+			else if (Value.Contains(TEXT("Center")))
+				VBoxSlot->SetHorizontalAlignment(HAlign_Center);
+			else if (Value.Contains(TEXT("Right")))
+				VBoxSlot->SetHorizontalAlignment(HAlign_Right);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid HorizontalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+		
+		if (PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase))
+		{
+			if (Value.Contains(TEXT("Fill")))
+				VBoxSlot->SetVerticalAlignment(VAlign_Fill);
+			else if (Value.Contains(TEXT("Top")))
+				VBoxSlot->SetVerticalAlignment(VAlign_Top);
+			else if (Value.Contains(TEXT("Center")))
+				VBoxSlot->SetVerticalAlignment(VAlign_Center);
+			else if (Value.Contains(TEXT("Bottom")))
+				VBoxSlot->SetVerticalAlignment(VAlign_Bottom);
+			else
+				return TResult<void>::Error(
+					VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+					FString::Printf(TEXT("Invalid VerticalAlignment value '%s'"), *Value));
+			return TResult<void>::Success();
+		}
+	}
+
+	// Handle Canvas Panel slots (position, size, anchors, z-order)
+	if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Slot))
+	{
+		// Note: Canvas slots don't have HorizontalAlignment/VerticalAlignment like other slots
+		// They use Anchors and Alignment properties instead
+		// For now, return unsupported for canvas slot properties via this method
+		return TResult<void>::Error(
+			VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+			FString::Printf(TEXT("Canvas slot property '%s' not yet supported. Use set_widget_transform for canvas slots."), *PropertyName));
+	}
+
+	return TResult<void>::Error(
+		VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+		FString::Printf(TEXT("Slot property '%s' not supported for slot type '%s'"), 
+			*PropertyName, *Slot->GetClass()->GetName()));
 }

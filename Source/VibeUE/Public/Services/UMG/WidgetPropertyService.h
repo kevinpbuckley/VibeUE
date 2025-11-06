@@ -188,4 +188,13 @@ private:
 	 * @return true if value was successfully set, false otherwise
 	 */
 	bool SetPropertyValue(FProperty* Property, void* Container, const FString& Value);
+
+	/**
+	 * @brief Set a slot property on a widget (handles properties starting with "Slot.")
+	 * @param FoundWidget The widget whose slot property should be set
+	 * @param PropertyPath The full property path (including "Slot." prefix)
+	 * @param Value The value to set (as string, will be converted based on property type)
+	 * @return TResult indicating success or error
+	 */
+	TResult<void> SetSlotProperty(UWidget* FoundWidget, const FString& PropertyPath, const FString& Value);
 };

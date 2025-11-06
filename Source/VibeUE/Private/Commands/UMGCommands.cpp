@@ -15,6 +15,7 @@
 #include "Components/WidgetSwitcher.h"
 #include "Blueprint/WidgetTree.h"
 #include "JsonObjectConverter.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 
 FUMGCommands::FUMGCommands()
 {
@@ -437,17 +438,151 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params)
 {
-	FString WidgetName, ComponentName, PropertyName, Value;
-	VALIDATE_PARAMS_4(Params, "widget_name", WidgetName, "component_name", ComponentName, "property_name", PropertyName, "value", Value)
+	FString WidgetName, ComponentName, PropertyName;
+	VALIDATE_PARAMS_3(Params, "widget_name", WidgetName, "component_name", ComponentName, "property_name", PropertyName)
+
+	// Support both string and JSON object values
+	// Accept either "value" or "property_value" parameter (Python MCP uses "property_value")
+	FString PropertyValue;
+	TSharedPtr<FJsonValue> PropertyValueJson;
+	bool bHasStringValue = Params->TryGetStringField(TEXT("value"), PropertyValue) || Params->TryGetStringField(TEXT("property_value"), PropertyValue);
+	bool bHasJsonValue = (Params->Values.Contains(TEXT("value")) || Params->Values.Contains(TEXT("property_value"))) && !bHasStringValue;
+
+	if (!bHasStringValue && !bHasJsonValue)
+		return CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing 'value' or 'property_value' parameter"));
+
+	if (bHasJsonValue)
+	{
+		PropertyValueJson = Params->Values.Contains(TEXT("property_value")) ? Params->Values[TEXT("property_value")] : Params->Values[TEXT("value")];
+	}
+
 	FIND_WIDGET_OR_ERROR(WidgetName, Widget)
 	
-	TResult<void> SetResult = PropertyService->SetProperty(Widget, ComponentName, PropertyName, Value);
-	if (SetResult.IsError())
-		return CreateErrorResponse(SetResult.GetErrorCode(), SetResult.GetErrorMessage());
+	// Check if this is a slot property (Slot.* prefix)
+	if (PropertyName.StartsWith(TEXT("Slot.")))
+	{
+		// Route to service layer for slot properties
+		if (!bHasStringValue)
+			return CreateErrorResponse(TEXT("SLOT_REQUIRES_STRING"), TEXT("Slot properties currently require string values"));
+		
+		TResult<void> SlotResult = PropertyService->SetProperty(Widget, ComponentName, PropertyName, PropertyValue);
+		if (SlotResult.IsError())
+			return CreateErrorResponse(SlotResult.GetErrorCode(), SlotResult.GetErrorMessage());
+		
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetStringField(TEXT("message"), TEXT("Slot property set successfully"));
+		return CreateSuccessResponse(Data);
+	}
 	
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetStringField(TEXT("message"), TEXT("Property set successfully"));
-	return CreateSuccessResponse(Data);
+	// Find the component
+	TArray<UWidget*> AllWidgets;
+	Widget->WidgetTree->GetAllWidgets(AllWidgets);
+	UWidget* FoundWidget = nullptr;
+	for (UWidget* W : AllWidgets)
+	{
+		if (W && W->GetName() == ComponentName)
+		{
+			FoundWidget = W;
+			break;
+		}
+	}
+	
+	if (!FoundWidget)
+		return CreateErrorResponse(TEXT("COMPONENT_NOT_FOUND"), FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+
+	// Find the property using reflection
+	FProperty* Property = FoundWidget->GetClass()->FindPropertyByName(*PropertyName);
+	if (!Property)
+		return CreateErrorResponse(TEXT("PROPERTY_NOT_FOUND"), FString::Printf(TEXT("Property '%s' not found"), *PropertyName));
+
+	// Handle struct properties with JSON using FJsonObjectConverter (DYNAMIC approach from master)
+	bool bPropertySet = false;
+	FString ErrorMessage;
+	
+	if (bHasJsonValue && PropertyValueJson.IsValid())
+	{
+		if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+		{
+			if (PropertyValueJson->Type == EJson::Object)
+			{
+				TSharedPtr<FJsonObject> JsonObj = PropertyValueJson->AsObject();
+				void* ValuePtr = StructProperty->ContainerPtrToValuePtr<void>(FoundWidget);
+				
+				// Use FJsonObjectConverter for GENERIC struct conversion (handles ALL types dynamically!)
+				bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+				
+				if (!bPropertySet)
+				{
+					ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct '%s'"), *StructProperty->Struct->GetName());
+				}
+			}
+			else if (PropertyValueJson->Type == EJson::Array)
+			{
+				// Handle array format (e.g., [0.8, 0, 0, 0.5] for FLinearColor)
+				const TArray<TSharedPtr<FJsonValue>> JsonArray = PropertyValueJson->AsArray();
+				
+				// FLinearColor from array
+				if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get() && JsonArray.Num() >= 3)
+				{
+					FLinearColor ColorValue;
+					ColorValue.R = JsonArray[0]->AsNumber();
+					ColorValue.G = JsonArray[1]->AsNumber();
+					ColorValue.B = JsonArray[2]->AsNumber();
+					ColorValue.A = JsonArray.Num() > 3 ? JsonArray[3]->AsNumber() : 1.0;
+					StructProperty->SetValue_InContainer(FoundWidget, &ColorValue);
+					bPropertySet = true;
+				}
+				// FVector2D from array
+				else if (StructProperty->Struct == TBaseStructure<FVector2D>::Get() && JsonArray.Num() >= 2)
+				{
+					FVector2D VectorValue;
+					VectorValue.X = JsonArray[0]->AsNumber();
+					VectorValue.Y = JsonArray[1]->AsNumber();
+					StructProperty->SetValue_InContainer(FoundWidget, &VectorValue);
+					bPropertySet = true;
+				}
+				// FMargin from array
+				else if (StructProperty->Struct->GetName() == TEXT("Margin") && JsonArray.Num() >= 4)
+				{
+					FMargin MarginValue;
+					MarginValue.Left = JsonArray[0]->AsNumber();
+					MarginValue.Top = JsonArray[1]->AsNumber();
+					MarginValue.Right = JsonArray[2]->AsNumber();
+					MarginValue.Bottom = JsonArray[3]->AsNumber();
+					StructProperty->SetValue_InContainer(FoundWidget, &MarginValue);
+					bPropertySet = true;
+				}
+			}
+		}
+	}
+	
+	// If JSON struct handling succeeded, mark widget as modified and return
+	if (bPropertySet)
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsModified(Widget);
+		
+		TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+		Result->SetBoolField(TEXT("success"), true);
+		Result->SetStringField(TEXT("widget_name"), WidgetName);
+		Result->SetStringField(TEXT("component_name"), ComponentName);
+		Result->SetStringField(TEXT("property_name"), PropertyName);
+		return Result;
+	}
+
+	// Fallback to service layer for primitive types with string values
+	if (!bPropertySet && bHasStringValue)
+	{
+		TResult<void> SetResult = PropertyService->SetProperty(Widget, ComponentName, PropertyName, PropertyValue);
+		if (SetResult.IsError())
+			return CreateErrorResponse(SetResult.GetErrorCode(), SetResult.GetErrorMessage());
+		
+		TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+		Data->SetStringField(TEXT("message"), TEXT("Property set successfully"));
+		return CreateSuccessResponse(Data);
+	}
+	
+	// If neither JSON nor string handling worked, return error
+	return CreateErrorResponse(TEXT("UNSUPPORTED_PROPERTY"), TEXT("Property type not supported or value format invalid"));
 }
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params)

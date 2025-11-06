@@ -77,15 +77,31 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
             FString::Printf(TEXT("Failed to create widget of type '%s'"), *ComponentType));
     }
 
-    // Find parent and add widget
-    UPanelWidget* ParentPanel = nullptr;
+    // Handle root widget case (empty UserWidget) vs adding to parent
     if (ParentName.IsEmpty())
     {
-        // Add to root
-        ParentPanel = Cast<UPanelWidget>(Widget->WidgetTree->RootWidget);
+        // Check if root widget exists
+        if (!Widget->WidgetTree->RootWidget)
+        {
+            // Set as root widget for empty UserWidget
+            Widget->WidgetTree->RootWidget = NewWidget;
+        }
+        else
+        {
+            // Add to existing root panel
+            UPanelWidget* ParentPanel = Cast<UPanelWidget>(Widget->WidgetTree->RootWidget);
+            if (!ParentPanel)
+            {
+                return TResult<UWidget*>::Error(
+                    VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
+                    TEXT("Root widget must be a panel widget that can contain children"));
+            }
+            ParentPanel->AddChild(NewWidget);
+        }
     }
     else
     {
+        // Find parent component
         UWidget* ParentWidget = FindComponent(Widget->WidgetTree, ParentName);
         if (!ParentWidget)
         {
@@ -93,21 +109,19 @@ TResult<UWidget*> FWidgetComponentService::AddComponent(
                 VibeUE::ErrorCodes::WIDGET_COMPONENT_NOT_FOUND,
                 FString::Printf(TEXT("Parent component '%s' not found"), *ParentName));
         }
-        ParentPanel = Cast<UPanelWidget>(ParentWidget);
+        
+        // Verify parent is a panel widget
+        UPanelWidget* ParentPanel = Cast<UPanelWidget>(ParentWidget);
+        if (!ParentPanel)
+        {
+            return TResult<UWidget*>::Error(
+                VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
+                TEXT("Parent is not a panel widget that can contain children"));
+        }
+        
+        // Add to parent
+        ParentPanel->AddChild(NewWidget);
     }
-
-    if (!ParentPanel)
-    {
-        FString ErrorMsg = ParentName.IsEmpty() 
-            ? TEXT("Root widget must be a panel widget that can contain children")
-            : TEXT("Parent is not a panel widget that can contain children");
-        return TResult<UWidget*>::Error(
-            VibeUE::ErrorCodes::WIDGET_PARENT_INCOMPATIBLE,
-            ErrorMsg);
-    }
-
-    // Add to parent
-    ParentPanel->AddChild(NewWidget);
 
     // Mark blueprint as modified and compile
     Widget->MarkPackageDirty();
