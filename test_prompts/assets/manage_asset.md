@@ -458,7 +458,7 @@ Delete all test assets:
 
 ---
 
-**Test Coverage**: 6/6 actions tested ✅  
+**Test Coverage**: 7/7 actions tested ✅  
 **Last Updated**: November 6, 2025  
-**Related Issues**: #69, #76, #91
+**Related Issues**: #69, #76, #91, #182
 
