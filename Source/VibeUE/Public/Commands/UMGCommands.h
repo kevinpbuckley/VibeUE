@@ -107,6 +107,8 @@ private:
     TSharedPtr<FJsonObject> HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
 
 private:
+    // Service instances
+    TSharedPtr<class FWidgetLifecycleService> LifecycleService;
     
     // Helper method to validate property before setting - Added based on Issues Report
     static bool ValidatePropertyValue(UWidget* Widget, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& ErrorMessage);

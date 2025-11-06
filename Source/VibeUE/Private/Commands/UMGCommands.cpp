@@ -1,5 +1,6 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
+#include "Services/UMG/WidgetLifecycleService.h"
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -423,6 +424,8 @@ namespace UMGHelpers
 
 FUMGCommands::FUMGCommands()
 {
+	// Initialize services
+	LifecycleService = MakeShared<FWidgetLifecycleService>(nullptr);
 }
 
 // Static member definition
@@ -896,77 +899,35 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-	// Get required parameters
+	// 1. Extract and validate parameters
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
 	{
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
 	}
 
-	// Get optional path parameter, default to /Game/UI
+	// Get optional parameters
 	FString PackagePath = TEXT("/Game/UI/");
 	Params->TryGetStringField(TEXT("path"), PackagePath);
 	
-	// Ensure path ends with /
-	if (!PackagePath.EndsWith(TEXT("/")))
-	{
-		PackagePath += TEXT("/");
-	}
+	FString ParentClass = TEXT("UserWidget");
+	Params->TryGetStringField(TEXT("parent_class"), ParentClass);
+
+	// 2. Call service method
+	auto Result = LifecycleService->CreateWidgetBlueprint(BlueprintName, PackagePath, ParentClass);
 	
-	FString AssetName = BlueprintName;
-	FString FullPath = PackagePath + AssetName;
-
-	// Check if asset already exists
-	if (UEditorAssetLibrary::DoesAssetExist(FullPath))
+	// 3. Handle result
+	if (Result.IsError())
 	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *BlueprintName));
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
 	}
 
-	// Create package
-	UPackage* Package = CreatePackage(*FullPath);
-	if (!Package)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create package"));
-	}
-
-	// Create Widget Blueprint using WidgetBlueprintFactory
-	UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-	Factory->ParentClass = UUserWidget::StaticClass();
+	UWidgetBlueprint* WidgetBlueprint = Result.GetValue();
 	
-	UObject* NewAsset = Factory->FactoryCreateNew(
-		UWidgetBlueprint::StaticClass(),
-		Package,
-		FName(*AssetName),
-		RF_Standalone | RF_Public,
-		nullptr,
-		GWarn
-	);
-
-	// Make sure the Blueprint was created successfully
-	UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Failed to create Widget Blueprint"));
-	}
-
-	// Add a default Canvas Panel if one doesn't exist
-	if (!WidgetBlueprint->WidgetTree->RootWidget)
-	{
-		UCanvasPanel* RootCanvas = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
-		WidgetBlueprint->WidgetTree->RootWidget = RootCanvas;
-	}
-
-	// Mark the package dirty and notify asset registry
-	Package->MarkPackageDirty();
-	FAssetRegistryModule::AssetCreated(WidgetBlueprint);
-
-	// Compile the blueprint
-	FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-
-	// Create success response
+	// 4. Create success response
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
 	ResultObj->SetStringField(TEXT("name"), BlueprintName);
-	ResultObj->SetStringField(TEXT("path"), FullPath);
+	ResultObj->SetStringField(TEXT("path"), WidgetBlueprint->GetPathName());
 	return ResultObj;
 }
 
