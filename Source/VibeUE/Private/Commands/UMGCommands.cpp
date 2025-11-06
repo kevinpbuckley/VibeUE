@@ -2,6 +2,7 @@
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"
 // TODO: Add WidgetComponentService include when implementing Issue #191
+// TODO: Issue #188 skipped - discovery handlers already well-structured
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -428,6 +429,7 @@ FUMGCommands::FUMGCommands()
 	// Initialize services
 	LifecycleService = MakeShared<FWidgetLifecycleService>(nullptr);
 	// TODO: Initialize ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
+	// TODO: Issue #188 skipped - discovery handlers already well-structured
 }
 
 // Static member definition
