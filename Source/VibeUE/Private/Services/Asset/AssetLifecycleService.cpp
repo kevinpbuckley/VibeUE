@@ -12,6 +12,7 @@
 #include "Engine/DataTable.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/MessageDialog.h"
+#include "Misc/Paths.h"
 
 FAssetLifecycleService::FAssetLifecycleService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -379,11 +380,8 @@ TResult<FAssetDuplicateResult> FAssetLifecycleService::DuplicateAsset(
     FString FinalNewName = NewName;
     if (FinalNewName.IsEmpty())
     {
-        // Extract the asset name from source path
-        FString AssetName;
-        FString PathPart;
-        NormalizedSourcePath.Split(TEXT("/"), &PathPart, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
-        FinalNewName = AssetName;
+        // Extract the asset name from source path using FPaths
+        FinalNewName = FPaths::GetBaseFilename(NormalizedSourcePath);
     }
     
     // 4. Build the destination asset path

@@ -10,6 +10,17 @@ from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
 
+# Valid actions for the manage_asset tool
+VALID_ACTIONS = [
+    "search",
+    "import_texture",
+    "export_texture",
+    "delete",
+    "open_in_editor",
+    "svg_to_png",
+    "duplicate"
+]
+
 
 def register_asset_tools(mcp: FastMCP):
     """Register unified asset manager tool with the MCP server."""
@@ -220,7 +231,7 @@ def register_asset_tools(mcp: FastMCP):
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, delete, open_in_editor, svg_to_png, duplicate"
+                "error": f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
             }
 
 
