@@ -3,25 +3,15 @@
 #include "CoreMinimal.h"
 #include "Dom/JsonObject.h"
 
-// Forward declarations
+// Forward declarations to avoid heavy includes in header
 class UWidgetBlueprint;
 class UWidget;
-class FWidgetDiscoveryService;
-class FWidgetComponentService;
-class FWidgetPropertyService;
-class FServiceContext;
 
 /**
  * UMG Reflection Commands - Generic widget discovery and creation using reflection
  * 
  * This class provides reflection-based tools for discovering and adding UMG widgets,
  * mirroring the functionality of Unreal Engine's Widget Palette.
- * 
- * Refactored in Phase 4 to use service layer architecture:
- * - Uses WidgetDiscoveryService for finding widget blueprints
- * - Uses WidgetComponentService for adding components
- * - Uses WidgetPropertyService for property operations
- * - Follows TResult pattern for error handling
  */
 class VIBEUE_API FUMGReflectionCommands
 {
@@ -35,17 +25,6 @@ public:
 	TSharedPtr<FJsonObject> HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params);
 
 private:
-	// Service instances
-	TSharedPtr<FServiceContext> ServiceContext;
-	TSharedPtr<FWidgetDiscoveryService> DiscoveryService;
-	TSharedPtr<FWidgetComponentService> ComponentService;
-	TSharedPtr<FWidgetPropertyService> PropertyService;
-
-	// Helper methods for JSON response creation
-	TSharedPtr<FJsonObject> CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data = nullptr);
-	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage);
-	TSharedPtr<FJsonObject> FindWidgetOrError(const FString& WidgetName, UWidgetBlueprint*& OutWidget);
-
 	/**
 	 * Get all available widget types using reflection
 	 * Parameters: category (optional), include_custom (bool), include_engine (bool), parent_compatibility (optional)
@@ -54,7 +33,7 @@ private:
 
 	/**
 	 * Add widget component using reflection-based validation
-	 * Parameters: widget_name, component_type, component_name, parent_name, is_variable, properties
+	 * Parameters: widget_name, component_type, component_name, parent_name, position, size, is_variable, properties
 	 */
 	TSharedPtr<FJsonObject> HandleAddWidgetComponent(const TSharedPtr<FJsonObject>& Params);
 
@@ -88,6 +67,28 @@ private:
 	 * Get supported child types for a parent widget
 	 */
 	TArray<FString> GetSupportedChildTypes(UClass* ParentClass);
+
+	// Widget Creation Helpers
+	/**
+	 * Create widget component instance and add to parent
+	 */
+	TSharedPtr<FJsonObject> CreateAndAddWidgetComponent(
+		UWidgetBlueprint* WidgetBlueprint,
+		UClass* ComponentClass,
+		const FString& ComponentName,
+		const FString& ParentName,
+		bool bIsVariable,
+		const TSharedPtr<FJsonObject>& Properties
+	);
+
+	/**
+	 * Validate widget creation parameters
+	 */
+	TSharedPtr<FJsonObject> ValidateWidgetCreation(
+		UWidgetBlueprint* WidgetBlueprint,
+		UClass* ComponentClass,
+		const FString& ParentName
+	);
 
 	/**
 	 * Apply initial properties to widget component
