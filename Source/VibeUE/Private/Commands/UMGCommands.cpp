@@ -1,7 +1,7 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"
-#include "Services/UMG/WidgetComponentService.h"
+// TODO: Add WidgetComponentService include when implementing Issue #191
 #include "Editor.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
@@ -427,7 +427,7 @@ FUMGCommands::FUMGCommands()
 {
 	// Initialize services
 	LifecycleService = MakeShared<FWidgetLifecycleService>(nullptr);
-	ComponentService = MakeShared<FWidgetComponentService>(nullptr);
+	// TODO: Initialize ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
 }
 
 // Static member definition

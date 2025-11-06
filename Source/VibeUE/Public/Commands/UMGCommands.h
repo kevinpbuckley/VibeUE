@@ -63,7 +63,7 @@ private:
 private:
     // Service instances
     TSharedPtr<class FWidgetLifecycleService> LifecycleService;
-    TSharedPtr<class FWidgetComponentService> ComponentService;
+    // TODO: Add ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
     
     // Helper method to validate property before setting - Added based on Issues Report
     static bool ValidatePropertyValue(UWidget* Widget, const FString& PropertyName, const TSharedPtr<FJsonValue>& Value, FString& ErrorMessage);
