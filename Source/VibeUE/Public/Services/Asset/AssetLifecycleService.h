@@ -5,6 +5,17 @@
 #include "Core/Result.h"
 
 /**
+ * @struct FAssetDuplicateResult
+ * @brief Result data for asset duplication operations
+ */
+struct FAssetDuplicateResult
+{
+    FString OriginalPath;
+    FString NewPath;
+    FString AssetType;
+};
+
+/**
  * @class FAssetLifecycleService
  * @brief Service responsible for asset lifecycle operations
  * 
@@ -107,6 +118,27 @@ public:
         const FString& AssetPath,
         bool bForceDelete = false,
         bool bShowConfirmation = true
+    );
+    
+    /**
+     * @brief Duplicate an asset to a new location
+     * 
+     * Creates a copy of the specified asset at the destination path.
+     * Handles name conflicts and validates paths.
+     * 
+     * @param SourceAssetPath The full path to the source asset (e.g., "/Game/Blueprints/BP_Player")
+     * @param DestinationPath The target directory path (e.g., "/Game/Blueprints/Characters")
+     * @param NewName Optional new name for the duplicated asset (if empty, auto-generates name)
+     * @return TResult containing struct with new asset path and type information
+     *         Error codes:
+     *         - ASSET_NOT_FOUND: Source asset doesn't exist
+     *         - INVALID_PATH: Destination path is invalid
+     *         - OPERATION_FAILED: Duplication operation failed
+     */
+    TResult<FAssetDuplicateResult> DuplicateAsset(
+        const FString& SourceAssetPath,
+        const FString& DestinationPath,
+        const FString& NewName = TEXT("")
     );
     
     /**

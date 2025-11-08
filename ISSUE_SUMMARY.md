@@ -143,3 +143,43 @@ Complete CastToMicrosubHUD manually in Unreal Editor, then continue with other 4
 ---
 
 **Bottom Line**: Our tools can discover exact node information via `get_available_blueprint_nodes()`, but `describe()` doesn't return that same information. This forces inefficient multi-call workflows and creates ambiguity in node recreation.
+
+---
+
+# Issue Summary: Missing Modules Dialog on Fresh Project Launch
+
+**Date**: November 7, 2025  
+**Status**: Needs investigation
+
+## What Happened
+
+When launching a brand-new Unreal project with the VibeUE plugin enabled, the editor displays a blocking dialog:
+
+```
+Missing Modules
+
+The following modules are missing or built with a different engine version:
+    VibeUE
+
+Engine modules cannot be compiled at runtime. Please build through your IDE.
+```
+
+## Reproduction Steps
+
+1. Create a clean UE 5.6 project.  
+2. Enable or copy in the VibeUE plugin.  
+3. Launch the project in the editor without performing a native code build.
+
+## Impact
+
+- Blocks artists/designers from opening the project because the engine refuses to hot-rebuild the plugin.  
+- Creates confusion for new adopters who expect the plugin to "just work" after being copied into a fresh project.  
+- Requires manual IDE build before the editor can run, which is easy to overlook.
+
+## Open Questions / Next Actions
+
+1. Do we need to ship prebuilt binaries for common engine versions, or detect the first-run scenario and prompt users with clearer instructions?  
+2. Can BuildAndLaunch.ps1 be extended to detect the missing-binary state and compile automatically?  
+3. Should documentation (README / quickstart) include an explicit "Run the build script before opening UE" call-out?
+
+Attaching screenshot reference in repo history (see conversation attachment dated 2025-11-07).

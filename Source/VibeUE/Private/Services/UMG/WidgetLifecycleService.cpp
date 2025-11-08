@@ -1,292 +1,226 @@
+/**
+ * @file WidgetLifecycleService.cpp
+ * @brief Implementation of widget blueprint lifecycle management
+ * 
+ * This service provides widget blueprint creation and deletion,
+ * extracted from UMGCommands.cpp as part of Phase 4 refactoring.
+ */
+
 #include "Services/UMG/WidgetLifecycleService.h"
 #include "Core/ErrorCodes.h"
 #include "WidgetBlueprint.h"
-#include "WidgetBlueprintFactory.h"
-#include "Blueprint/WidgetTree.h"
 #include "Blueprint/UserWidget.h"
-#include "Components/Widget.h"
-#include "Components/PanelWidget.h"
+#include "Blueprint/WidgetTree.h"
 #include "Components/CanvasPanel.h"
-#include "EditorAssetLibrary.h"
+#include "WidgetBlueprintFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "EditorAssetLibrary.h"
+#include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 
-FWidgetLifecycleService::FWidgetLifecycleService(TSharedPtr<FServiceContext> Context) : FServiceBase(Context) {}
+DEFINE_LOG_CATEGORY_STATIC(LogWidgetLifecycle, Log, All);
 
-// ============================================================================
-// Lifecycle Operations
-// ============================================================================
-
-TResult<TPair<UWidgetBlueprint*, FWidgetInfo>> FWidgetLifecycleService::CreateWidget(
-    const FString& WidgetName,
-    const FString& PackagePath,
-    UClass* ParentClass)
+FWidgetLifecycleService::FWidgetLifecycleService(TSharedPtr<FServiceContext> Context)
+    : FServiceBase(Context)
 {
-    if (WidgetName.IsEmpty())
-    {
-        return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::PARAM_MISSING,
-            TEXT("Widget name cannot be empty"));
-    }
-
-    // Normalize package path
-    FString NormalizedPath = PackagePath;
-    if (!NormalizedPath.EndsWith(TEXT("/")))
-    {
-        NormalizedPath += TEXT("/");
-    }
-
-    FString FullPath = NormalizedPath + WidgetName;
-
-    // Check if asset already exists
-    if (UEditorAssetLibrary::DoesAssetExist(FullPath))
-    {
-        return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::WIDGET_ALREADY_EXISTS,
-            FString::Printf(TEXT("Widget Blueprint '%s' already exists"), *WidgetName));
-    }
-
-    // Create package
-    UPackage* Package = CreatePackage(*FullPath);
-    if (!Package)
-    {
-        return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::WIDGET_CREATE_FAILED,
-            TEXT("Failed to create package"));
-    }
-
-    // Create factory
-    UWidgetBlueprintFactory* Factory = NewObject<UWidgetBlueprintFactory>();
-    Factory->ParentClass = ParentClass ? ParentClass : UUserWidget::StaticClass();
-
-    // Create widget blueprint
-    UObject* NewAsset = Factory->FactoryCreateNew(
-        UWidgetBlueprint::StaticClass(),
-        Package,
-        FName(*WidgetName),
-        RF_Standalone | RF_Public,
-        nullptr,
-        GWarn
-    );
-
-    UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(NewAsset);
-    if (!WidgetBlueprint)
-    {
-        return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Error(
-            VibeUE::ErrorCodes::WIDGET_CREATE_FAILED,
-            TEXT("Failed to create Widget Blueprint"));
-    }
-
-    // Ensure root widget exists (defaults to CanvasPanel per UMG standard)
-    if (!WidgetBlueprint->WidgetTree->RootWidget)
-    {
-        // CanvasPanel is the standard root widget type for UMG blueprints
-        // It provides absolute positioning and layering capabilities
-        UCanvasPanel* RootCanvas = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass());
-        WidgetBlueprint->WidgetTree->RootWidget = RootCanvas;
-    }
-
-    // Mark package dirty and register
-    Package->MarkPackageDirty();
-    FAssetRegistryModule::AssetCreated(WidgetBlueprint);
-    FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
-
-    // Build widget info
-    FWidgetInfo Info;
-    Info.Name = WidgetName;
-    Info.Path = FullPath;
-    Info.PackagePath = Package->GetPathName();
-    Info.ParentClass = Factory->ParentClass->GetName();
-    Info.WidgetType = WidgetBlueprint->GetClass()->GetName();
-
-    return TResult<TPair<UWidgetBlueprint*, FWidgetInfo>>::Success(
-        TPair<UWidgetBlueprint*, FWidgetInfo>(WidgetBlueprint, Info));
 }
 
-TResult<void> FWidgetLifecycleService::DeleteWidget(
-    UWidgetBlueprint* Widget,
-    bool bCheckReferences,
-    int32* OutReferenceCount)
+TResult<UWidgetBlueprint*> FWidgetLifecycleService::CreateWidgetBlueprint(
+    const FString& WidgetName,
+    const FString& PackagePath,
+    const FString& ParentClass)
 {
-    if (!Widget)
+    auto ValidationResult = ValidateNotEmpty(WidgetName, TEXT("WidgetName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<UWidgetBlueprint*>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    if (!IsValidWidgetName(WidgetName))
+    {
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("Widget name '%s' is not valid"), *WidgetName)
+        );
+    }
+
+    // Get parent class
+    UClass* ParentUClass = GetParentClass(ParentClass);
+    if (!ParentUClass)
+    {
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::BLUEPRINT_INVALID_PARENT,
+            FString::Printf(TEXT("Parent class '%s' not found"), *ParentClass)
+        );
+    }
+
+    // Construct package path
+    FString NormalizedPackagePath = PackagePath;
+    if (!NormalizedPackagePath.EndsWith(TEXT("/")))
+    {
+        NormalizedPackagePath += TEXT("/");
+    }
+    FString FullPackageName = NormalizedPackagePath + WidgetName;
+
+    // Check if already exists
+    FString CheckPath = FullPackageName;
+    if (UEditorAssetLibrary::DoesAssetExist(CheckPath))
+    {
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::WIDGET_ALREADY_EXISTS,
+            FString::Printf(TEXT("Widget blueprint already exists at path"))
+        );
+    }
+
+    // Create the widget blueprint
+    UWidgetBlueprint* NewWidgetBP = Cast<UWidgetBlueprint>(
+        FKismetEditorUtilities::CreateBlueprint(
+            ParentUClass,
+            CreatePackage(*FullPackageName),
+            FName(*WidgetName),
+            BPTYPE_Normal,
+            UWidgetBlueprint::StaticClass(),
+            UWidgetBlueprintGeneratedClass::StaticClass(),
+            NAME_None
+        )
+    );
+
+    if (!NewWidgetBP)
+    {
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::WIDGET_CREATE_FAILED,
+            FString::Printf(TEXT("Failed to create widget blueprint '%s'"), *WidgetName)
+        );
+    }
+
+    // Initialize widget tree
+    if (!NewWidgetBP->WidgetTree)
+    {
+        NewWidgetBP->WidgetTree = NewObject<UWidgetTree>(NewWidgetBP);
+    }
+
+    // Save the asset
+    FAssetRegistryModule::AssetCreated(NewWidgetBP);
+    NewWidgetBP->MarkPackageDirty();
+
+    return TResult<UWidgetBlueprint*>::Success(NewWidgetBP);
+}
+
+TResult<void> FWidgetLifecycleService::DeleteWidgetBlueprint(const FString& WidgetBlueprintPath)
+{
+    auto ValidationResult = ValidateNotEmpty(WidgetBlueprintPath, TEXT("WidgetBlueprintPath"));
+    if (ValidationResult.IsError())
+    {
+        return ValidationResult;
+    }
+
+    if (!UEditorAssetLibrary::DoesAssetExist(WidgetBlueprintPath))
     {
         return TResult<void>::Error(
-            VibeUE::ErrorCodes::PARAM_INVALID,
-            TEXT("Widget blueprint cannot be null"));
+            VibeUE::ErrorCodes::WIDGET_BLUEPRINT_NOT_FOUND,
+            FString::Printf(TEXT("Widget blueprint not found at '%s'"), *WidgetBlueprintPath)
+        );
     }
 
-    int32 ReferenceCount = 0;
-
-    // Check for references if requested
-    if (bCheckReferences)
-    {
-        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-        IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-        TArray<FName> PackageNamesReferencingAsset;
-        AssetRegistry.GetReferencers(Widget->GetPackage()->GetFName(), PackageNamesReferencingAsset);
-
-        // Count references excluding self-references
-        for (const FName& PackageName : PackageNamesReferencingAsset)
-        {
-            if (PackageName != Widget->GetPackage()->GetFName())
-            {
-                ReferenceCount++;
-            }
-        }
-    }
-
-    // Set output parameter if provided
-    if (OutReferenceCount)
-    {
-        *OutReferenceCount = ReferenceCount;
-    }
-
-    // Attempt deletion
-    FString AssetPath = Widget->GetPathName();
-    bool bDeletionSuccess = UEditorAssetLibrary::DeleteAsset(AssetPath);
-
-    if (!bDeletionSuccess)
+    bool bSuccess = UEditorAssetLibrary::DeleteAsset(WidgetBlueprintPath);
+    if (!bSuccess)
     {
         return TResult<void>::Error(
             VibeUE::ErrorCodes::WIDGET_DELETE_FAILED,
-            FString::Printf(TEXT("Failed to delete Widget Blueprint '%s'"), *Widget->GetName()));
+            FString::Printf(TEXT("Failed to delete widget blueprint at '%s'"), *WidgetBlueprintPath)
+        );
     }
 
     return TResult<void>::Success();
 }
 
-// ============================================================================
-// Editor Operations
-// ============================================================================
-TResult<void> FWidgetLifecycleService::OpenWidgetInEditor(const FString& WidgetName)
+TResult<bool> FWidgetLifecycleService::CanDeleteWidgetBlueprint(UWidgetBlueprint* WidgetBlueprint)
 {
-    return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, TEXT("Widget editor operations not yet implemented"));
-}
-
-TResult<bool> FWidgetLifecycleService::IsWidgetOpen(const FString& WidgetName) { return TResult<bool>::Success(false); }
-
-TResult<void> FWidgetLifecycleService::CloseWidget(const FString& WidgetName)
-{
-    return TResult<void>::Error(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, TEXT("Widget editor operations not yet implemented"));
-}
-
-TResult<TArray<FString>> FWidgetLifecycleService::ValidateWidget(UWidgetBlueprint* Widget)
-{
-    if (!Widget) return TResult<TArray<FString>>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Widget blueprint cannot be null"));
-
-    TArray<FString> Errors;
-
-    if (!Widget->WidgetTree)
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
     {
-        Errors.Add(TEXT("Widget blueprint has no WidgetTree"));
-        return TResult<TArray<FString>>::Success(Errors);
+        return TResult<bool>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
     }
 
-    if (!Widget->WidgetTree->RootWidget)
+    // Check if widget blueprint is in engine content
+    FString PackageName = WidgetBlueprint->GetPackage()->GetName();
+    if (PackageName.StartsWith(TEXT("/Engine/")))
     {
-        Errors.Add(TEXT("Widget tree has no root widget"));
-        return TResult<TArray<FString>>::Success(Errors);
+        return TResult<bool>::Success(false);
     }
 
-    ValidateWidgetRecursive(Widget->WidgetTree->RootWidget, Errors);
-
-    TSet<UWidget*> Visited;
-    if (DetectCircularReference(Widget->WidgetTree->RootWidget, Visited))
-        Errors.Add(TEXT("Circular reference detected in widget hierarchy"));
-
-    return TResult<TArray<FString>>::Success(Errors);
+    // Check for references (simplified - full implementation would check asset registry)
+    // For now, allow deletion
+    return TResult<bool>::Success(true);
 }
 
-TResult<bool> FWidgetLifecycleService::IsWidgetValid(UWidgetBlueprint* Widget)
+TResult<void> FWidgetLifecycleService::CompileWidgetBlueprint(UWidgetBlueprint* WidgetBlueprint)
 {
-    if (!Widget) return TResult<bool>::Success(false);
-    
-    bool bHasWidgetTree = Widget->WidgetTree != nullptr;
-    bool bHasRootWidget = bHasWidgetTree && Widget->WidgetTree->RootWidget != nullptr;
-    bool bIsValidLowLevel = Widget->IsValidLowLevel();
-    bool bIsValidObject = IsValid(Widget);
-    bool bIsValid = bHasWidgetTree && bHasRootWidget && bIsValidLowLevel && bIsValidObject;
-    
-    return TResult<bool>::Success(bIsValid);
-}
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return ValidationResult;
+    }
 
-TResult<void> FWidgetLifecycleService::ValidateHierarchy(UWidgetBlueprint* Widget)
-{
-    if (!Widget) return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Widget blueprint cannot be null"));
-
-    auto ValidationResult = ValidateWidget(Widget);
-    if (!ValidationResult.IsSuccess())
-        return TResult<void>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
-
-    const TArray<FString>& Errors = ValidationResult.GetValue();
-    if (Errors.Num() > 0)
-        return TResult<void>::Error(VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
-            FString::Printf(TEXT("Widget hierarchy validation failed: %s"), *FString::Join(Errors, TEXT("; "))));
+    FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+    FKismetEditorUtilities::CompileBlueprint(WidgetBlueprint);
 
     return TResult<void>::Success();
 }
 
-TResult<FWidgetInfo> FWidgetLifecycleService::GetWidgetInfo(UWidgetBlueprint* Widget)
+TResult<void> FWidgetLifecycleService::SaveWidgetBlueprint(UWidgetBlueprint* WidgetBlueprint)
 {
-    if (!Widget) return TResult<FWidgetInfo>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Widget blueprint cannot be null"));
-
-    FWidgetInfo Info;
-    Info.Name = Widget->GetName();
-    Info.Path = Widget->GetPathName();
-    Info.PackagePath = Widget->GetPackage() ? Widget->GetPackage()->GetPathName() : TEXT("");
-    Info.ParentClass = Widget->ParentClass ? Widget->ParentClass->GetName() : TEXT("UserWidget");
-    Info.WidgetType = Widget->GetClass()->GetName();
-    return TResult<FWidgetInfo>::Success(Info);
-}
-
-TResult<TArray<FString>> FWidgetLifecycleService::GetWidgetCategories(UWidgetBlueprint* Widget)
-{
-    if (!Widget) return TResult<TArray<FString>>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Widget blueprint cannot be null"));
-
-    TArray<FString> Categories;
-    if (Widget->GetPackage())
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
     {
-        TArray<FString> PathParts;
-        Widget->GetPackage()->GetPathName().ParseIntoArray(PathParts, TEXT("/"), true);
-        for (int32 i = 1; i < PathParts.Num() - 1; ++i)
-            if (!PathParts[i].IsEmpty()) Categories.Add(PathParts[i]);
+        return ValidationResult;
     }
-    return TResult<TArray<FString>>::Success(Categories);
-}
 
-void FWidgetLifecycleService::ValidateWidgetRecursive(UWidget* Widget, TArray<FString>& Errors)
-{
-    if (!Widget) { Errors.Add(TEXT("Null widget found in hierarchy")); return; }
-    if (!Widget->IsValidLowLevel() || !IsValid(Widget))
-        Errors.Add(FString::Printf(TEXT("Invalid widget: %s"), *Widget->GetName()));
-    if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
-        for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
-            ValidateWidgetRecursive(PanelWidget->GetChildAt(i), Errors);
-}
-
-bool FWidgetLifecycleService::DetectCircularReference(UWidget* Widget, TSet<UWidget*>& Visited)
-{
-    if (!Widget) return false;
-    if (Visited.Contains(Widget)) return true;
+    FString PackageName = WidgetBlueprint->GetPackage()->GetName();
+    bool bSuccess = UEditorAssetLibrary::SaveAsset(PackageName);
     
-    Visited.Add(Widget);
-    
-    bool bCircularRefFound = false;
-    if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
+    if (!bSuccess)
     {
-        for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
+        return TResult<void>::Error(
+            VibeUE::ErrorCodes::OPERATION_FAILED,
+            FString::Printf(TEXT("Failed to save widget blueprint '%s'"), *PackageName)
+        );
+    }
+
+    return TResult<void>::Success();
+}
+
+bool FWidgetLifecycleService::IsValidWidgetName(const FString& WidgetName)
+{
+    if (WidgetName.IsEmpty())
+    {
+        return false;
+    }
+
+    // Check for invalid characters
+    for (TCHAR Ch : WidgetName)
+    {
+        if (!FChar::IsAlnum(Ch) && Ch != TEXT('_'))
         {
-            if (DetectCircularReference(PanelWidget->GetChildAt(i), Visited))
-            {
-                bCircularRefFound = true;
-                break;
-            }
+            return false;
         }
     }
-    
-    // Remove from visited set to allow widget in different branches
-    Visited.Remove(Widget);
-    
-    return bCircularRefFound;
+
+    return true;
+}
+
+UClass* FWidgetLifecycleService::GetParentClass(const FString& ParentClassName)
+{
+    if (ParentClassName.IsEmpty() || ParentClassName.Equals(TEXT("UserWidget"), ESearchCase::IgnoreCase))
+    {
+        return UUserWidget::StaticClass();
+    }
+
+    UClass* ParentClass = FindObject<UClass>(ANY_PACKAGE, *ParentClassName);
+    if (!ParentClass || !ParentClass->IsChildOf(UUserWidget::StaticClass()))
+    {
+        return nullptr;
+    }
+
+    return ParentClass;
 }

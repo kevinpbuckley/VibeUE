@@ -10,6 +10,17 @@ from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
 
+# Valid actions for the manage_asset tool
+VALID_ACTIONS = [
+    "search",
+    "import_texture",
+    "export_texture",
+    "delete",
+    "open_in_editor",
+    "svg_to_png",
+    "duplicate"
+]
+
 
 def register_asset_tools(mcp: FastMCP):
     """Register unified asset manager tool with the MCP server."""
@@ -51,7 +62,9 @@ def register_asset_tools(mcp: FastMCP):
         output_path: Optional[str] = None,
         size: Optional[List[int]] = None,
         scale: float = 1.0,
-        background: Optional[str] = None
+        background: Optional[str] = None,
+        # Duplicate parameters
+        new_name: str = ""
     ) -> Dict[str, Any]:
         """
         Single multi-action tool for all asset operations.
@@ -139,8 +152,19 @@ def register_asset_tools(mcp: FastMCP):
         )
         ```
         
+        **duplicate** - Duplicate an existing asset to a new location
+        ```python
+        manage_asset(
+            action="duplicate",
+            asset_path="/Game/Blueprints/BP_Player",
+            destination_path="/Game/Blueprints/Characters",
+            new_name="BP_Player2"
+        )
+        # Returns new asset path and type
+        ```
+        
         Args:
-            action: Action to perform (search|import_texture|export_texture|delete|open_in_editor|svg_to_png)
+            action: Action to perform (search|import_texture|export_texture|delete|open_in_editor|svg_to_png|duplicate)
             search_term: Text to search for in asset names (for search)
             asset_type: Filter by asset type (for search - examples: Widget, Texture2D, Material, Blueprint)
             path: Content browser path to search in (for search, default: /Game)
@@ -148,9 +172,9 @@ def register_asset_tools(mcp: FastMCP):
             include_engine_content: Whether to include engine content (for search)
             max_results: Maximum number of results to return (for search)
             file_path: Source file path (for import_texture)
-            asset_path: Asset path in project (for export_texture, delete, open_in_editor)
+            asset_path: Asset path in project (for export_texture, delete, open_in_editor, duplicate)
             svg_path: SVG file path (for svg_to_png)
-            destination_path: Destination in content browser (for import_texture)
+            destination_path: Destination in content browser (for import_texture, duplicate)
             texture_name: Custom texture name (for import_texture)
             compression_settings: Texture compression (for import_texture)
             export_format: Export format (for export_texture)
@@ -167,6 +191,7 @@ def register_asset_tools(mcp: FastMCP):
             size: Output size (for svg_to_png)
             scale: Scale multiplier (for svg_to_png)
             background: Background color (for svg_to_png)
+            new_name: New asset name (for duplicate - optional, defaults to source name with suffix)
             
         Returns:
             Dict containing action results with success field
@@ -199,10 +224,14 @@ def register_asset_tools(mcp: FastMCP):
             return _handle_convert_svg(
                 svg_path, output_path, size, scale, background
             )
+        elif action == "duplicate":
+            return _handle_duplicate_asset(
+                asset_path, destination_path, new_name
+            )
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, delete, open_in_editor, svg_to_png"
+                "error": f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
             }
 
 
@@ -497,3 +526,39 @@ def _handle_convert_svg(
     except Exception as e:
         logger.error(f"Error converting SVG: {e}")
         return {"success": False, "error": str(e), "png_path": None}
+
+
+def _handle_duplicate_asset(
+    asset_path: str,
+    destination_path: str,
+    new_name: str
+) -> Dict[str, Any]:
+    """Handle asset duplication."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not asset_path:
+        return {"success": False, "error": "'asset_path' is required for duplicate action"}
+    
+    if not destination_path:
+        return {"success": False, "error": "'destination_path' is required for duplicate action"}
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Duplicating asset from {asset_path} to {destination_path}")
+        response = unreal.send_command("duplicate_asset", {
+            "asset_path": asset_path,
+            "destination_path": destination_path,
+            "new_name": new_name
+        })
+        
+        if not response:
+            return {"success": False, "error": "No response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error duplicating asset: {e}")
+        return {"success": False, "error": str(e)}

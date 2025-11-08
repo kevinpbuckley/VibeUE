@@ -3,97 +3,173 @@
 #include "CoreMinimal.h"
 
 /**
- * UMG Widget Type Definitions
+ * Core Widget Type Definitions
  * 
- * This header contains data structures related to UMG widgets,
- * widget components, and widget hierarchies.
+ * This header contains core widget data structures used across UMG services.
  */
-
-/**
- * @struct FWidgetComponentInfo
- * @brief Structure holding widget component information
- * 
- * Contains essential metadata about a widget component including its name,
- * type, parent, children, and variable status.
- */
-struct VIBEUE_API FWidgetComponentInfo
-{
-    /** Component name */
-    FString Name;
-    
-    /** Component type (class name) */
-    FString Type;
-    
-    /** Parent component name (empty if root) */
-    FString ParentName;
-    
-    /** Child component names */
-    TArray<FString> Children;
-    
-    /** Whether this component is exposed as a variable */
-    bool bIsVariable;
-
-    FWidgetComponentInfo()
-        : bIsVariable(false)
-    {
-    }
-};
 
 /**
  * @struct FWidgetInfo
- * @brief Structure holding basic widget blueprint information
- * 
- * Contains essential metadata about a widget blueprint asset including its name,
- * path, parent class, and type information.
+ * @brief Information about a single widget component
  */
 struct VIBEUE_API FWidgetInfo
 {
-    /** The name of the widget blueprint asset */
+    /** Name of the widget */
     FString Name;
     
-    /** Full object path to the widget blueprint */
-    FString Path;
+    /** Widget class type (e.g., "TextBlock", "Button") */
+    FString Type;
     
-    /** Package path containing the widget blueprint */
-    FString PackagePath;
+    /** Name of the parent widget (empty if root) */
+    FString ParentName;
     
-    /** Name of the parent widget class */
-    FString ParentClass;
+    /** Names of child widgets */
+    TArray<FString> Children;
     
-    /** Widget class type name */
-    FString WidgetType;
+    /** Whether this widget is exposed as a variable */
+    bool bIsVariable;
 
     FWidgetInfo()
+        : bIsVariable(false)
     {}
 };
 
 /**
- * @struct FWidgetTypeInfo
- * @brief Structure holding metadata about a widget type
- * 
- * Contains information about a widget class including its type name,
- * full class path, whether it's a panel type, and other metadata.
+ * @struct FWidgetHierarchy
+ * @brief Complete widget hierarchy information
  */
-struct VIBEUE_API FWidgetTypeInfo
+struct VIBEUE_API FWidgetHierarchy
 {
-    /** The widget type name (e.g., "Button", "TextBlock") */
-    FString TypeName;
+    /** All widget components in the hierarchy */
+    TArray<FWidgetInfo> Components;
     
-    /** Full class path to the widget class */
-    FString ClassPath;
+    /** Total number of widgets */
+    int32 TotalCount;
+
+    FWidgetHierarchy()
+        : TotalCount(0)
+    {}
+};
+
+/**
+ * @struct FWidgetBlueprintInfo
+ * @brief Detailed information about a Widget Blueprint
+ */
+struct VIBEUE_API FWidgetBlueprintInfo
+{
+    /** Name of the widget blueprint */
+    FString Name;
     
-    /** Display category for the widget */
-    FString Category;
+    /** Full object path */
+    FString Path;
     
-    /** Whether this widget type can contain children */
-    bool bIsPanelWidget;
+    /** Package path */
+    FString PackagePath;
     
-    /** Whether this is a commonly used widget type */
-    bool bIsCommonWidget;
+    /** Parent class name */
+    FString ParentClass;
     
-    FWidgetTypeInfo()
-        : bIsPanelWidget(false)
-        , bIsCommonWidget(false)
-    {
-    }
+    /** Root widget name (if any) */
+    FString RootWidget;
+    
+    /** Total widget count */
+    int32 WidgetCount;
+
+    FWidgetBlueprintInfo()
+        : WidgetCount(0)
+    {}
+    /** Detailed components (if requested) */
+    TArray<FWidgetInfo> Components;
+
+    /** Variable names exposed by the blueprint */
+    TArray<FString> VariableNames;
+
+    /** Discovered event names */
+    TArray<FString> EventNames;
+
+    /** Animation names */
+    TArray<FString> AnimationNames;
+};
+
+/**
+ * @struct FWidgetSlotInfo
+ * @brief Information about a widget slot configuration
+ */
+struct VIBEUE_API FWidgetSlotInfo
+{
+    /** Widget name */
+    FString WidgetName;
+    
+    /** Slot type (e.g., "CanvasPanelSlot", "HorizontalBoxSlot") */
+    FString SlotType;
+    
+    /** Slot properties as key-value pairs */
+    TMap<FString, FString> Properties;
+};
+
+/**
+ * @struct FWidgetComponentInfo
+ * @brief Detailed information about a single widget component used by handlers
+ */
+struct VIBEUE_API FWidgetComponentInfo
+{
+    FString Name;
+    FString Type;
+    bool bIsVariable = false;
+    bool bIsEnabled = true;
+    FString Visibility;
+    TOptional<FWidgetSlotInfo> SlotInfo;
+    FWidgetComponentInfo() : bIsVariable(false), bIsEnabled(true) {}
+};
+
+/**
+ * @struct FWidgetEventInfo
+ * @brief Representation of an event or callable function on a widget class/blueprint
+ */
+struct VIBEUE_API FWidgetEventInfo
+{
+    FString Name;
+    FString Type;
+    FString Description;
+    FWidgetEventInfo() {}
+};
+
+/**
+ * @struct FWidgetInputMapping
+ * @brief Mapping request for binding an input/event to a blueprint function
+ */
+struct VIBEUE_API FWidgetInputMapping
+{
+    FString EventName;
+    FString FunctionName;
+    FWidgetInputMapping() {}
+};
+
+/**
+ * @struct FWidgetReferenceInfo
+ * @brief Reference information discovered during widget deletion checks
+ */
+struct VIBEUE_API FWidgetReferenceInfo
+{
+    FString PackageName;
+    FString ReferenceType;
+    FWidgetReferenceInfo() {}
+};
+
+/**
+ * @struct FWidgetDeleteResult
+ * @brief Result payload returned when deleting a widget blueprint asset
+ */
+struct VIBEUE_API FWidgetDeleteResult
+{
+    FString WidgetName;
+    FString AssetPath;
+    bool bReferencesChecked = false;
+    TArray<FWidgetReferenceInfo> References;
+    int32 ReferenceCount = 0;
+    bool bWasOpenInEditor = false;
+    bool bDeletionSucceeded = false;
+    FString ErrorMessage;
+
+    FWidgetDeleteResult() {}
 };

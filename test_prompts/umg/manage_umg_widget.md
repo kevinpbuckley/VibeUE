@@ -453,6 +453,157 @@ MODERN_COLORS = {
 
 ---
 
+## Test 12: Widget Duplication and Christmas Restyling
+
+**Purpose**: Duplicate existing widget and apply festive theme using help system guidance
+
+### Overview
+This test demonstrates the complete workflow for duplicating a widget and applying a coordinated Christmas color scheme with proper verification before cleanup.
+
+### Steps
+
+1. **Get Help System Guidance**
+   ```
+   Use get_help(topic="umg-guide") to review:
+   - Widget styling best practices
+   - Slot property patterns
+   - Color value formats
+   - Container-specific styling
+   ```
+
+2. **Find Source Widget**
+   ```
+   Search for WBP_Inventory widget using manage_asset search action
+   ```
+
+3. **Duplicate Widget**
+   ```
+   Use manage_asset duplicate action:
+   - asset_path: "/Game/Blueprints/UI/WBP_Inventory"
+   - destination_path: "/Game/Blueprints/UI"
+   - new_name: "WBP_InventoryChristmas"
+   ```
+
+4. **List Components for Styling Plan**
+   ```
+   List all components in WBP_InventoryChristmas to identify:
+   - Background elements (Images, Overlays)
+   - Text elements (TextBlocks)
+   - Interactive elements (Buttons)
+   - Layout containers (Panels, Boxes)
+   ```
+
+5. **Apply Christmas Color Scheme**
+   ```
+   Set colors following festive palette:
+   
+   Backgrounds:
+   - Main background: Deep Christmas red [0.8, 0.1, 0.2, 1.0]
+   - Accent panels: Forest green [0.13, 0.55, 0.13, 1.0]
+   - Overlays: Gold accent [1.0, 0.84, 0.0, 0.8]
+   
+   Text:
+   - Primary text: Snow white [1.0, 1.0, 1.0, 1.0]
+   - Secondary text: Cream [1.0, 0.99, 0.82, 1.0]
+   - Headers: Gold [1.0, 0.84, 0.0, 1.0]
+   
+   Buttons:
+   - Normal: Christmas green [0.3, 0.69, 0.31, 1.0]
+   - Hover: Bright green [0.4, 0.8, 0.4, 1.0]
+   - Pressed: Dark green [0.2, 0.5, 0.2, 1.0]
+   ```
+
+6. **Apply Slot Properties for Layout**
+   ```
+   For background elements:
+   - Set Slot.HorizontalAlignment: "HAlign_Fill"
+   - Set Slot.VerticalAlignment: "VAlign_Fill"
+   
+   For centered content:
+   - Set Slot.HorizontalAlignment: "HAlign_Center"
+   - Set Slot.VerticalAlignment: "VAlign_Center"
+   ```
+
+7. **Validate Hierarchy**
+   ```
+   Use validate action to check:
+   - All components properly parented
+   - No structural issues
+   - Layout properties correctly set
+   ```
+
+8. **Open for Visual Verification**
+   ```
+   Use manage_asset open_in_editor action to open WBP_InventoryChristmas
+   PAUSE HERE - User must verify styling looks correct before deletion
+   ```
+
+9. **User Verification Checkpoint**
+   ```
+   STOP AND WAIT - Ask user to confirm:
+   ✅ Colors are festive and coordinated
+   ✅ Layout fills properly
+   ✅ Text is readable
+   ✅ No visual glitches
+   
+   DO NOT PROCEED TO DELETION WITHOUT USER APPROVAL
+   ```
+
+10. **Cleanup After Verification**
+    ```
+    Only after user confirms styling is correct:
+    Delete WBP_InventoryChristmas using manage_asset:
+    - action: "delete"
+    - asset_path: "/Game/Blueprints/UI/WBP_InventoryChristmas"
+    - force_delete: True
+    - show_confirmation: False
+    ```
+
+### Expected Outcomes
+- ✅ Help system provides useful styling guidance
+- ✅ Widget duplicated successfully
+- ✅ All components identified for styling
+- ✅ Christmas colors applied systematically
+- ✅ Slot properties control layout correctly
+- ✅ Validation passes with no errors
+- ✅ Widget opens in editor for review
+- ✅ User can verify appearance before deletion
+- ✅ Cleanup executes only after approval
+
+### Christmas Color Palette Reference
+```python
+CHRISTMAS_COLORS = {
+    # Backgrounds
+    "deep_christmas_red": [0.8, 0.1, 0.2, 1.0],
+    "forest_green": [0.13, 0.55, 0.13, 1.0],
+    "gold_accent": [1.0, 0.84, 0.0, 0.8],
+    
+    # Text
+    "snow_white": [1.0, 1.0, 1.0, 1.0],
+    "cream": [1.0, 0.99, 0.82, 1.0],
+    "gold_text": [1.0, 0.84, 0.0, 1.0],
+    
+    # Interactive
+    "christmas_green": [0.3, 0.69, 0.31, 1.0],
+    "bright_green": [0.4, 0.8, 0.4, 1.0],
+    "dark_green": [0.2, 0.5, 0.2, 1.0],
+    
+    # Accents
+    "holly_red": [0.72, 0.11, 0.11, 1.0],
+    "silver": [0.75, 0.75, 0.75, 1.0],
+    "pine_green": [0.0, 0.5, 0.25, 1.0]
+}
+```
+
+### Critical Workflow Notes
+- **ALWAYS consult help system first** - Use get_help() for current best practices
+- **VERIFY before delete** - User must see results before cleanup
+- **Systematic approach** - Style backgrounds → text → interactive elements in order
+- **Use slot properties** - Critical for proper layout control
+- **Check hierarchy** - Validate before opening in editor
+
+---
+
 ## Cleanup: Delete Test Assets
 
 **Run these commands AFTER completing all tests:**
@@ -460,11 +611,13 @@ MODERN_COLORS = {
 ```
 Delete test Widget Blueprint:
 - Delete /Game/Blueprints/WBP_TestWidget with force_delete=True and show_confirmation=False
+
+Note: WBP_InventoryChristmas is deleted as part of Test 12 after user verification
 ```
 
 ---
 
-**Test Coverage**: 11/11 actions tested ✅  
-**Last Updated**: November 4, 2025  
-**Related Issues**: #69, #75
+**Test Coverage**: 12/12 actions tested ✅  
+**Last Updated**: November 6, 2025  
+**Related Issues**: #69, #75, #182
 

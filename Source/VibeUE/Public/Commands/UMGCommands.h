@@ -7,28 +7,20 @@
 class UWidget;
 class UWidgetBlueprint;
 class UUserWidget;
-class FWidgetDiscoveryService;
-class FWidgetLifecycleService;
-class FWidgetComponentService;
 class FWidgetPropertyService;
-class FWidgetStyleService;
-class FWidgetEventService;
-class FWidgetReflectionService;
-class FServiceContext;
-
-// Forward declare structs from service headers
-struct FWidgetComponentInfo;
-struct FPropertyInfo;
+class FWidgetComponentService;
+class FWidgetHierarchyService;
+class FWidgetAssetService;
 
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
- * Thin command handler that delegates to UMG services.
- * Refactored in Phase 4, Task 18 to use service layer.
+ * Responsible for creating and modifying UMG Widget Blueprints,
+ * adding widget components
  */
 class VIBEUE_API FUMGCommands
 {
 public:
-    FUMGCommands();
+    explicit FUMGCommands(TSharedPtr<class FServiceContext> InServiceContext = nullptr);
 
     /**
      * Handle UMG-related commands
@@ -54,42 +46,34 @@ private:
     TSharedPtr<FJsonObject> HandleGetAvailableWidgetTypes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleValidateWidgetHierarchy(const TSharedPtr<FJsonObject>& Params);
 
-    // UMG Layout/Advanced Methods
-    TSharedPtr<FJsonObject> HandleAddWidgetSwitcherSlot(const TSharedPtr<FJsonObject>& Params);
+    // UMG Hierarchy Methods
     TSharedPtr<FJsonObject> HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params);  // Universal component removal
     TSharedPtr<FJsonObject> HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params);
 
     // Property Management Methods
     TSharedPtr<FJsonObject> HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetWidgetProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params);
+    // set_widget_transform/visibility/z_order removed
 
-    // Event and Data Binding Methods
+    // Event and Data Binding Methods (Active)
     TSharedPtr<FJsonObject> HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params);
 
-    // Deletion Methods
+    // NEW: Deletion Methods (Active)
     TSharedPtr<FJsonObject> HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
 
 private:
     // Service instances
-    TSharedPtr<FServiceContext> ServiceContext;
-    TSharedPtr<FWidgetDiscoveryService> DiscoveryService;
-    TSharedPtr<FWidgetLifecycleService> LifecycleService;
-    TSharedPtr<FWidgetComponentService> ComponentService;
+    TSharedPtr<class FServiceContext> ServiceContext;
+    TSharedPtr<class FWidgetLifecycleService> LifecycleService;
     TSharedPtr<FWidgetPropertyService> PropertyService;
-    TSharedPtr<FWidgetStyleService> StyleService;
-    TSharedPtr<FWidgetEventService> EventService;
-    TSharedPtr<FWidgetReflectionService> ReflectionService;
-    
-    // Helper methods for JSON conversion
-    TSharedPtr<FJsonObject> CreateSuccessResponse(const TSharedPtr<FJsonObject>& Data = nullptr);
-    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage);
-    TSharedPtr<FJsonObject> ComponentToJson(UWidget* Component);
-    TArray<TSharedPtr<FJsonValue>> StringArrayToJson(const TArray<FString>& Strings);
-    TSharedPtr<FJsonObject> ComponentInfoToJson(const FWidgetComponentInfo& Info);
-    TSharedPtr<FJsonObject> PropertyInfoToJson(const FPropertyInfo& Info);
-    TSharedPtr<FJsonObject> HandleAddComponentGeneric(const TSharedPtr<FJsonObject>& Params, const FString& ComponentType);
-    TSharedPtr<FJsonObject> FindWidgetOrError(const FString& WidgetName, UWidgetBlueprint*& OutWidget);
+    TSharedPtr<FWidgetComponentService> ComponentService;
+    TSharedPtr<FWidgetHierarchyService> HierarchyService;
+    TSharedPtr<class FWidgetBlueprintInfoService> BlueprintInfoService;
+    TSharedPtr<class FWidgetDiscoveryService> DiscoveryService;
+    TSharedPtr<class FWidgetEventService> EventService;
+    TSharedPtr<FWidgetAssetService> AssetService;
+    // TODO: Issue #188 skipped - discovery handlers already well-structured
 }; 

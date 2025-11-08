@@ -32,6 +32,10 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
     {
         return HandleOpenAssetInEditor(Params);
     }
+    else if (CommandType == TEXT("duplicate_asset"))
+    {
+        return HandleDuplicateAsset(Params);
+    }
 
     return CreateErrorResponse(FString::Printf(TEXT("Unknown asset command: %s"), *CommandType));
 }
@@ -206,6 +210,49 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJson
         );
         Response->SetStringField(TEXT("asset_path"), AssetPath);
         Response->SetBoolField(TEXT("deleted"), Result.GetValue());
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameters
+    FString AssetPath;
+    FString DestinationPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+    }
+    if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'destination_path' parameter"));
+    }
+    
+    // Extract optional parameter
+    FString NewName;
+    Params->TryGetStringField(TEXT("new_name"), NewName);
+    
+    // Delegate to LifecycleService
+    TResult<FAssetDuplicateResult> Result = LifecycleService->DuplicateAsset(
+        AssetPath,
+        DestinationPath,
+        NewName
+    );
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
+    {
+        const FAssetDuplicateResult& DuplicateResult = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully duplicated asset: %s"), *DuplicateResult.NewPath)
+        );
+        Response->SetStringField(TEXT("original_path"), DuplicateResult.OriginalPath);
+        Response->SetStringField(TEXT("new_path"), DuplicateResult.NewPath);
+        Response->SetStringField(TEXT("asset_type"), DuplicateResult.AssetType);
         return Response;
     }
     else

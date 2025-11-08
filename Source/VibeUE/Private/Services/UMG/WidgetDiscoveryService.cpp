@@ -1,348 +1,325 @@
+/**
+ * @file WidgetDiscoveryService.cpp
+ * @brief Implementation of widget blueprint discovery functionality
+ * 
+ * This service provides widget blueprint discovery and loading,
+ * extracted from UMGCommands.cpp as part of Phase 4 refactoring.
+ */
+
 #include "Services/UMG/WidgetDiscoveryService.h"
 #include "Core/ErrorCodes.h"
 #include "WidgetBlueprint.h"
-#include "AssetRegistry/AssetRegistryModule.h"
+#include "Blueprint/WidgetTree.h"
+#include "Components/Widget.h"
 #include "EditorAssetLibrary.h"
-#include "UObject/UObjectGlobals.h"
-#include "UObject/GarbageCollection.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+
+DEFINE_LOG_CATEGORY_STATIC(LogWidgetDiscovery, Log, All);
+
+// Helper function to extract asset name from path
+static FString ExtractAssetNameFromPath(const FString& Path)
+{
+    int32 SlashIndex = INDEX_NONE;
+    if (Path.FindLastChar(TEXT('/'), SlashIndex))
+    {
+        return Path.Mid(SlashIndex + 1);
+    }
+    return Path;
+}
+
+// Helper function to try loading a widget blueprint by path
+static UWidgetBlueprint* TryLoadWidgetBlueprintByPath(const FString& AssetPath)
+{
+    if (AssetPath.IsEmpty())
+    {
+        return nullptr;
+    }
+
+    // CRITICAL: Cannot load assets during garbage collection or serialization
+    if (IsGarbageCollecting() || GIsSavingPackage || FUObjectThreadContext::Get().IsRoutingPostLoad)
+    {
+        UE_LOG(LogWidgetDiscovery, Warning, TEXT("Cannot load Widget Blueprint during serialization/GC"));
+        return nullptr;
+    }
+
+    UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(AssetPath));
+    if (!WidgetBP)
+    {
+        WidgetBP = LoadObject<UWidgetBlueprint>(nullptr, *AssetPath);
+    }
+    return WidgetBP;
+}
 
 FWidgetDiscoveryService::FWidgetDiscoveryService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
 {
 }
 
-bool FWidgetDiscoveryService::IsInSerializationContext() const
+TResult<UWidgetBlueprint*> FWidgetDiscoveryService::FindWidgetBlueprint(const FString& WidgetBlueprintName)
 {
-    return IsGarbageCollecting() || GIsSavingPackage || IsLoading();
-}
-
-IAssetRegistry& FWidgetDiscoveryService::GetAssetRegistry()
-{
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    return AssetRegistryModule.Get();
-}
-
-TResult<UWidgetBlueprint*> FWidgetDiscoveryService::FindWidget(const FString& WidgetName)
-{
-    // Check if we're in a serialization context to prevent crashes
-    if (IsInSerializationContext())
+    if (WidgetBlueprintName.IsEmpty())
     {
         return TResult<UWidgetBlueprint*>::Error(
-            VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
-            TEXT("Cannot find widget during serialization context")
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            TEXT("Widget blueprint name cannot be empty")
         );
     }
 
-    if (WidgetName.IsEmpty())
-    {
-        return TResult<UWidgetBlueprint*>::Error(
-            VibeUE::ErrorCodes::PARAM_EMPTY,
-            TEXT("Widget name cannot be empty")
-        );
-    }
+    FString NormalizedName = WidgetBlueprintName.TrimStartAndEnd();
 
-    UE_LOG(LogTemp, Log, TEXT("WidgetDiscoveryService: Searching for widget '%s'"), *WidgetName);
-    
-    // PRIORITY 1: First try direct path loading for exact matches (most reliable)
-    UWidgetBlueprint* DirectLoad = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(WidgetName));
-    if (DirectLoad)
+    // Handle full asset paths
+    if (NormalizedName.StartsWith(TEXT("/")))
     {
-        UE_LOG(LogTemp, Log, TEXT("WidgetDiscoveryService: Found widget via direct load"));
-        return TResult<UWidgetBlueprint*>::Success(DirectLoad);
-    }
-
-    // PRIORITY 2: If it's a package path without object name, try append .AssetName
-    if (WidgetName.StartsWith(TEXT("/Game")) && !WidgetName.Contains(TEXT(".")))
-    {
-        FString AssetName;
-        int32 SlashIdx;
-        if (WidgetName.FindLastChar('/', SlashIdx))
+        FString AssetPath = NormalizedName;
+        if (!AssetPath.Contains(TEXT(".")))
         {
-            AssetName = WidgetName.Mid(SlashIdx + 1);
+            const FString AssetName = ExtractAssetNameFromPath(AssetPath);
             if (!AssetName.IsEmpty())
             {
-                const FString ObjectPath = WidgetName + TEXT(".") + AssetName;
-                UE_LOG(LogTemp, Verbose, TEXT("WidgetDiscoveryService: Trying object path '%s'"), *ObjectPath);
-                DirectLoad = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(ObjectPath));
-                if (DirectLoad)
-                {
-                    UE_LOG(LogTemp, Log, TEXT("WidgetDiscoveryService: Found widget via constructed object path"));
-                    return TResult<UWidgetBlueprint*>::Success(DirectLoad);
-                }
+                AssetPath += TEXT(".") + AssetName;
             }
         }
-    }
-    
-    // PRIORITY 3: Use Asset Registry for search with priority-based matching
-    IAssetRegistry& AssetRegistry = GetAssetRegistry();
-    
-    // Create filter to find all Widget Blueprints
-    FARFilter Filter;
-    Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
-    Filter.bRecursivePaths = true;
-    Filter.PackagePaths.Add("/Game"); // Search recursively from /Game
-    
-    TArray<FAssetData> AssetDataList;
-    AssetRegistry.GetAssets(Filter, AssetDataList);
-    
-    UE_LOG(LogTemp, Verbose, TEXT("WidgetDiscoveryService: Found %d widget blueprints in asset registry"), AssetDataList.Num());
-    
-    // IMPROVED MATCHING LOGIC: Use priority-based matching to avoid wrong widget selection
-    UWidgetBlueprint* BestMatch = nullptr;
-    int32 BestMatchPriority = 0;
-    
-    for (const FAssetData& AssetData : AssetDataList)
-    {
-        FString AssetName = AssetData.AssetName.ToString();
-        FString PackagePath = AssetData.PackageName.ToString();
-        const FString ObjectPath = AssetData.GetObjectPathString();
-        
-        int32 MatchPriority = 0;
-        
-        // PRIORITY 1 (10): Exact asset name match (case sensitive)
-        if (AssetName.Equals(WidgetName, ESearchCase::CaseSensitive))
-        {
-            MatchPriority = 10;
-        }
-        // PRIORITY 2 (9): Exact asset name match (case insensitive)
-        else if (AssetName.Equals(WidgetName, ESearchCase::IgnoreCase))
-        {
-            MatchPriority = 9;
-        }
-        // PRIORITY 3 (8): Full object path match (case sensitive)
-        else if (ObjectPath.Equals(WidgetName, ESearchCase::CaseSensitive))
-        {
-            MatchPriority = 8;
-        }
-        // PRIORITY 4 (7): Full package path match (case sensitive)
-        else if (PackagePath.Equals(WidgetName, ESearchCase::CaseSensitive))
-        {
-            MatchPriority = 7;
-        }
-        // PRIORITY 5 (6): Full object path match (case insensitive)
-        else if (ObjectPath.Equals(WidgetName, ESearchCase::IgnoreCase))
-        {
-            MatchPriority = 6;
-        }
-        // PRIORITY 6 (5): Full package path match (case insensitive)
-        else if (PackagePath.Equals(WidgetName, ESearchCase::IgnoreCase))
-        {
-            MatchPriority = 5;
-        }
-        // PRIORITY 7 (3): Asset name starts with search term (exact prefix match)
-        else if (AssetName.StartsWith(WidgetName, ESearchCase::IgnoreCase) && AssetName.Len() > WidgetName.Len())
-        {
-            MatchPriority = 3;
-        }
-        // PRIORITY 8 (2): Asset name contains search term (but avoid partial matches that could be wrong)
-        else if (AssetName.Contains(WidgetName, ESearchCase::IgnoreCase) && 
-                 WidgetName.Len() >= 3) // Only allow contains matching for terms 3+ chars to avoid false positives
-        {
-            MatchPriority = 2;
-        }
-        // PRIORITY 9 (1): Package path contains search term (lowest priority, most error-prone)
-        else if (PackagePath.Contains(WidgetName, ESearchCase::IgnoreCase) && 
-                 WidgetName.Len() >= 4) // Only allow contains matching for terms 4+ chars
-        {
-            MatchPriority = 1;
-        }
-        
-        // Only consider this match if it's better than what we have
-        if (MatchPriority > BestMatchPriority)
-        {
-            UWidgetBlueprint* CandidateWidget = Cast<UWidgetBlueprint>(AssetData.GetAsset());
-            if (CandidateWidget)
-            {
-                UE_LOG(LogTemp, Verbose, TEXT("WidgetDiscoveryService: Found better match '%s' with priority %d"), *AssetName, MatchPriority);
-                BestMatch = CandidateWidget;
-                BestMatchPriority = MatchPriority;
-                
-                // If we found an exact match, we can stop searching
-                if (MatchPriority >= 9)
-                {
-                    break;
-                }
-            }
-        }
-    }
-    
-    if (BestMatch)
-    {
-        UE_LOG(LogTemp, Log, TEXT("WidgetDiscoveryService: Returning best match '%s' with priority %d"), 
-            *BestMatch->GetName(), BestMatchPriority);
-        return TResult<UWidgetBlueprint*>::Success(BestMatch);
-    }
-    
-    return TResult<UWidgetBlueprint*>::Error(
-        VibeUE::ErrorCodes::ASSET_NOT_FOUND,
-        FString::Printf(TEXT("Widget blueprint '%s' not found"), *WidgetName)
-    );
-}
 
-TResult<UWidgetBlueprint*> FWidgetDiscoveryService::LoadWidget(const FString& WidgetPath)
-{
-    if (IsInSerializationContext())
+        UWidgetBlueprint* WidgetBP = TryLoadWidgetBlueprintByPath(AssetPath);
+        if (WidgetBP)
+        {
+            return TResult<UWidgetBlueprint*>::Success(WidgetBP);
+        }
+    }
+    else
     {
-        return TResult<UWidgetBlueprint*>::Error(
-            VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED,
-            TEXT("Cannot load widget during serialization context")
-        );
+        // Try default path under /Game/UI/
+        const FString DefaultPackage = FString::Printf(TEXT("/Game/UI/%s"), *NormalizedName);
+        FString DefaultAssetPath = DefaultPackage;
+        if (!DefaultAssetPath.Contains(TEXT(".")))
+        {
+            const FString AssetName = ExtractAssetNameFromPath(DefaultPackage);
+            DefaultAssetPath += TEXT(".") + AssetName;
+        }
+
+        UWidgetBlueprint* WidgetBP = TryLoadWidgetBlueprintByPath(DefaultAssetPath);
+        if (WidgetBP)
+        {
+            return TResult<UWidgetBlueprint*>::Success(WidgetBP);
+        }
     }
 
-    if (WidgetPath.IsEmpty())
-    {
-        return TResult<UWidgetBlueprint*>::Error(
-            VibeUE::ErrorCodes::PARAM_EMPTY,
-            TEXT("Widget path cannot be empty")
-        );
-    }
-
-    UWidgetBlueprint* Widget = Cast<UWidgetBlueprint>(UEditorAssetLibrary::LoadAsset(WidgetPath));
-    if (!Widget)
-    {
-        return TResult<UWidgetBlueprint*>::Error(
-            VibeUE::ErrorCodes::ASSET_LOAD_FAILED,
-            FString::Printf(TEXT("Failed to load widget from path '%s'"), *WidgetPath)
-        );
-    }
-
-    return TResult<UWidgetBlueprint*>::Success(Widget);
-}
-
-TResult<TArray<FAssetData>> FWidgetDiscoveryService::SearchWidgets(const FString& SearchTerm, int32 MaxResults)
-{
-    IAssetRegistry& AssetRegistry = GetAssetRegistry();
+    // Use Asset Registry for recursive search by name
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
     
-    // Create filter for Widget Blueprints
     FARFilter Filter;
     Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
     Filter.bRecursivePaths = true;
     Filter.PackagePaths.Add("/Game");
     
-    TArray<FAssetData> AllWidgets;
-    AssetRegistry.GetAssets(Filter, AllWidgets);
+    TArray<FAssetData> AssetDataList;
+    AssetRegistry.GetAssets(Filter, AssetDataList);
     
-    if (SearchTerm.IsEmpty())
+    for (const FAssetData& AssetData : AssetDataList)
     {
-        // Return all widgets, limited by MaxResults
-        if (AllWidgets.Num() > MaxResults)
+        FString AssetName = AssetData.AssetName.ToString();
+        if (AssetName.Equals(WidgetBlueprintName, ESearchCase::IgnoreCase))
         {
-            AllWidgets.SetNum(MaxResults);
-        }
-        return TResult<TArray<FAssetData>>::Success(AllWidgets);
-    }
-    
-    // Filter by search term
-    TArray<FAssetData> MatchingWidgets;
-    for (const FAssetData& AssetData : AllWidgets)
-    {
-        const FString AssetName = AssetData.AssetName.ToString();
-        const FString PackagePath = AssetData.PackageName.ToString();
-        
-        if (AssetName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
-            PackagePath.Contains(SearchTerm, ESearchCase::IgnoreCase))
-        {
-            MatchingWidgets.Add(AssetData);
-            
-            if (MatchingWidgets.Num() >= MaxResults)
+            UWidgetBlueprint* FoundWidgetBP = Cast<UWidgetBlueprint>(AssetData.GetAsset());
+            if (FoundWidgetBP)
             {
-                break;
+                return TResult<UWidgetBlueprint*>::Success(FoundWidgetBP);
             }
         }
     }
     
-    return TResult<TArray<FAssetData>>::Success(MatchingWidgets);
+    return TResult<UWidgetBlueprint*>::Error(
+        VibeUE::ErrorCodes::WIDGET_BLUEPRINT_NOT_FOUND,
+        FString::Printf(TEXT("Widget blueprint '%s' not found"), *WidgetBlueprintName)
+    );
 }
 
-TResult<TArray<FAssetData>> FWidgetDiscoveryService::GetAllWidgets()
+TResult<UWidgetBlueprint*> FWidgetDiscoveryService::LoadWidgetBlueprint(const FString& WidgetBlueprintPath)
 {
-    return SearchWidgets(TEXT(""), 1000); // Large default limit
-}
-
-TResult<bool> FWidgetDiscoveryService::WidgetExists(const FString& WidgetName)
-{
-    auto Result = FindWidget(WidgetName);
-    return TResult<bool>::Success(Result.IsSuccess());
-}
-
-TResult<bool> FWidgetDiscoveryService::IsValidWidget(const FString& WidgetName)
-{
-    auto Result = FindWidget(WidgetName);
-    if (!Result.IsSuccess())
+    if (WidgetBlueprintPath.IsEmpty())
     {
-        return TResult<bool>::Success(false);
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            TEXT("Widget blueprint path cannot be empty")
+        );
     }
+
+    UWidgetBlueprint* WidgetBP = TryLoadWidgetBlueprintByPath(WidgetBlueprintPath);
+    if (!WidgetBP)
+    {
+        return TResult<UWidgetBlueprint*>::Error(
+            VibeUE::ErrorCodes::WIDGET_BLUEPRINT_NOT_FOUND,
+            FString::Printf(TEXT("Failed to load widget blueprint from '%s'"), *WidgetBlueprintPath)
+        );
+    }
+
+    return TResult<UWidgetBlueprint*>::Success(WidgetBP);
+}
+
+TResult<TArray<FWidgetBlueprintInfo>> FWidgetDiscoveryService::SearchWidgetBlueprints(const FString& SearchTerm, int32 MaxResults)
+{
+    TArray<FWidgetBlueprintInfo> Results;
+
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
     
-    // Additional validation: check if widget is valid
-    UWidgetBlueprint* Widget = Result.GetValue();
-    bool bIsValid = Widget != nullptr && Widget->IsValidLowLevel() && IsValid(Widget);
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
+    Filter.bRecursivePaths = true;
+    Filter.PackagePaths.Add("/Game");
     
-    return TResult<bool>::Success(bIsValid);
+    TArray<FAssetData> AssetDataList;
+    AssetRegistry.GetAssets(Filter, AssetDataList);
+    
+    for (const FAssetData& AssetData : AssetDataList)
+    {
+        if (Results.Num() >= MaxResults)
+        {
+            break;
+        }
+
+        FString AssetName = AssetData.AssetName.ToString();
+        if (SearchTerm.IsEmpty() || AssetName.Contains(SearchTerm, ESearchCase::IgnoreCase))
+        {
+            FWidgetBlueprintInfo Info;
+            Info.Name = AssetName;
+            Info.Path = AssetData.GetObjectPathString();
+            Info.PackagePath = AssetData.PackagePath.ToString();
+            
+            Results.Add(Info);
+        }
+    }
+
+    return TResult<TArray<FWidgetBlueprintInfo>>::Success(Results);
+}
+
+TResult<TArray<FString>> FWidgetDiscoveryService::ListAllWidgetBlueprints(const FString& BasePath)
+{
+    TArray<FString> WidgetBlueprintPaths;
+
+    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    
+    FARFilter Filter;
+    Filter.ClassPaths.Add(UWidgetBlueprint::StaticClass()->GetClassPathName());
+    Filter.bRecursivePaths = true;
+    Filter.PackagePaths.Add(*BasePath);
+    
+    TArray<FAssetData> AssetDataList;
+    AssetRegistry.GetAssets(Filter, AssetDataList);
+    
+    for (const FAssetData& AssetData : AssetDataList)
+    {
+        WidgetBlueprintPaths.Add(AssetData.GetObjectPathString());
+    }
+
+    return TResult<TArray<FString>>::Success(WidgetBlueprintPaths);
+}
+
+TResult<FWidgetBlueprintInfo> FWidgetDiscoveryService::GetWidgetBlueprintInfo(UWidgetBlueprint* WidgetBlueprint)
+{
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<FWidgetBlueprintInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    FWidgetBlueprintInfo Info;
+    Info.Name = WidgetBlueprint->GetName();
+    Info.Path = WidgetBlueprint->GetPathName();
+    Info.PackagePath = WidgetBlueprint->GetPackage()->GetName();
+
+    if (WidgetBlueprint->ParentClass)
+    {
+        Info.ParentClass = WidgetBlueprint->ParentClass->GetName();
+    }
+
+    if (WidgetBlueprint->WidgetTree && WidgetBlueprint->WidgetTree->RootWidget)
+    {
+        Info.RootWidget = WidgetBlueprint->WidgetTree->RootWidget->GetName();
+        
+        // Count widgets in tree
+        TArray<UWidget*> AllWidgets;
+        WidgetBlueprint->WidgetTree->GetAllWidgets(AllWidgets);
+        Info.WidgetCount = AllWidgets.Num();
+    }
+
+    return TResult<FWidgetBlueprintInfo>::Success(Info);
 }
 
 TResult<TArray<FString>> FWidgetDiscoveryService::GetAvailableWidgetTypes()
 {
     TArray<FString> WidgetTypes = {
-        TEXT("Border"),
+        TEXT("TextBlock"),
         TEXT("Button"),
-        TEXT("CheckBox"),
-        TEXT("CircularThrobber"),
-        TEXT("ComboBoxString"),
         TEXT("EditableText"),
         TEXT("EditableTextBox"),
-        TEXT("Image"),
-        TEXT("ProgressBar"),
-        TEXT("ScrollBar"),
-        TEXT("Slider"),
-        TEXT("Spacer"),
-        TEXT("Spinner"),
-        TEXT("TextBlock"),
-        TEXT("Throbber"),
-        TEXT("NamedSlot"),
         TEXT("RichTextBlock"),
-        TEXT("InputKeySelector"),
-        TEXT("AnalogSlider"),
-        TEXT("CommonButton"),
-        TEXT("CommonTextBlock")
+        TEXT("CheckBox"),
+        TEXT("Slider"),
+        TEXT("ProgressBar"),
+        TEXT("Image"),
+        TEXT("Spacer"),
+        TEXT("CanvasPanel"),
+        TEXT("Overlay"),
+        TEXT("HorizontalBox"),
+        TEXT("VerticalBox"),
+        TEXT("ScrollBox"),
+        TEXT("GridPanel"),
+        TEXT("ListView"),
+        TEXT("TileView"),
+        TEXT("TreeView"),
+        TEXT("WidgetSwitcher")
     };
-    
+
     return TResult<TArray<FString>>::Success(WidgetTypes);
 }
 
-TResult<TArray<FString>> FWidgetDiscoveryService::GetAvailablePanelTypes()
+TResult<bool> FWidgetDiscoveryService::WidgetBlueprintExists(const FString& WidgetBlueprintName)
 {
-    TArray<FString> PanelTypes = {
-        TEXT("CanvasPanel"),
-        TEXT("VerticalBox"),
-        TEXT("HorizontalBox"),
-        TEXT("GridPanel"),
-        TEXT("UniformGridPanel"),
-        TEXT("WrapBox"),
-        TEXT("ScrollBox"),
-        TEXT("Overlay"),
-        TEXT("SizeBox"),
-        TEXT("ScaleBox"),
-        TEXT("WidgetSwitcher"),
-        TEXT("InvalidationBox")
-    };
-    
-    return TResult<TArray<FString>>::Success(PanelTypes);
+    if (WidgetBlueprintName.IsEmpty())
+    {
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            TEXT("Widget blueprint name cannot be empty")
+        );
+    }
+
+    TResult<UWidgetBlueprint*> Result = FindWidgetBlueprint(WidgetBlueprintName);
+    return TResult<bool>::Success(Result.IsSuccess());
 }
 
-TResult<TArray<FString>> FWidgetDiscoveryService::GetCommonWidgets()
+TResult<UWidget*> FWidgetDiscoveryService::FindWidgetByName(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
 {
-    TArray<FString> CommonWidgets = {
-        TEXT("Button"),
-        TEXT("TextBlock"),
-        TEXT("Image"),
-        TEXT("VerticalBox"),
-        TEXT("HorizontalBox"),
-        TEXT("CanvasPanel"),
-        TEXT("Border"),
-        TEXT("EditableTextBox"),
-        TEXT("ProgressBar"),
-        TEXT("Slider")
-    };
-    
-    return TResult<TArray<FString>>::Success(CommonWidgets);
+    auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<UWidget*>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    ValidationResult = ValidateNotEmpty(WidgetName, TEXT("WidgetName"));
+    if (ValidationResult.IsError())
+    {
+        return TResult<UWidget*>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+    }
+
+    if (!WidgetBlueprint->WidgetTree)
+    {
+        return TResult<UWidget*>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            TEXT("Widget blueprint has no widget tree")
+        );
+    }
+
+    UWidget* FoundWidget = WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName));
+    if (!FoundWidget)
+    {
+        return TResult<UWidget*>::Error(
+            VibeUE::ErrorCodes::WIDGET_NOT_FOUND,
+            FString::Printf(TEXT("Widget '%s' not found in blueprint"), *WidgetName)
+        );
+    }
+
+    return TResult<UWidget*>::Success(FoundWidget);
 }

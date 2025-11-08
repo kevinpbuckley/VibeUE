@@ -7,27 +7,20 @@
 
 // Forward declarations
 class UWidgetBlueprint;
-class IAssetRegistry;
-struct FAssetData;
+class UWidget;
 
 /**
  * @class FWidgetDiscoveryService
- * @brief Service responsible for discovering and loading UMG Widget Blueprints
+ * @brief Service responsible for discovering and loading widget blueprints
  * 
  * This service provides focused widget blueprint discovery functionality extracted from
- * UMGCommands.cpp and CommonUtils.cpp. It handles finding, loading, searching, and listing
- * widget blueprint assets using the Unreal Engine Asset Registry with sophisticated
- * priority-based matching.
+ * UMGCommands.cpp. It handles finding, loading, searching, and listing widget blueprints
+ * using the Unreal Engine Asset Registry.
  * 
- * All methods return TResult<T> for type-safe error handling, avoiding the need
- * for runtime JSON parsing in the service layer.
- * 
- * @note This is part of Phase 3 refactoring (Task 10) to extract UMG domain into
- * focused services as per CPP_REFACTORING_DESIGN.md
+ * All methods return TResult<T> for type-safe error handling.
  * 
  * @see TResult
  * @see FServiceBase
- * @see Issue #31
  */
 class VIBEUE_API FWidgetDiscoveryService : public FServiceBase
 {
@@ -44,117 +37,72 @@ public:
     /**
      * @brief Find a widget blueprint by name or path
      * 
-     * Attempts to find and load a widget blueprint using sophisticated priority-based matching:
-     * 1. Direct path loading for exact matches
-     * 2. Constructed object path (package.asset_name)
-     * 3. Asset Registry search with priority scoring:
-     *    - Priority 10: Exact asset name (case sensitive)
-     *    - Priority 9: Exact asset name (case insensitive)
-     *    - Priority 8: Full object path (case sensitive)
-     *    - Priority 7: Full package path (case sensitive)
-     *    - Priority 6: Full object path (case insensitive)
-     *    - Priority 5: Full package path (case insensitive)
-     *    - Priority 3: Asset name prefix match
-     *    - Priority 2: Asset name contains (3+ chars)
-     *    - Priority 1: Package path contains (4+ chars)
+     * Attempts to find and load a widget blueprint using multiple strategies:
+     * 1. Direct path loading if input starts with "/"
+     * 2. Default path search under /Game/UI/
+     * 3. Recursive Asset Registry search
      * 
-     * @param WidgetName Widget blueprint name or full path (e.g., "WBP_MainMenu" or "/Game/UI/WBP_MainMenu")
-     * @return TResult containing the widget blueprint pointer on success, or error code and message on failure
-     * 
-     * @note Extracted from CommonUtils::FindWidgetBlueprint with enhanced error handling
+     * @param WidgetBlueprintName Widget blueprint name or full path
+     * @return TResult containing the widget blueprint pointer on success, or error
      */
-    TResult<UWidgetBlueprint*> FindWidget(const FString& WidgetName);
+    TResult<UWidgetBlueprint*> FindWidgetBlueprint(const FString& WidgetBlueprintName);
 
     /**
      * @brief Load a widget blueprint from a specific path
      * 
-     * Loads a widget blueprint directly from the specified asset path without fallback search.
-     * 
-     * @param WidgetPath Full asset path to the widget blueprint
-     * @return TResult containing the widget blueprint pointer on success, or error code and message on failure
+     * @param WidgetBlueprintPath Full asset path to the widget blueprint
+     * @return TResult containing the widget blueprint pointer on success, or error
      */
-    TResult<UWidgetBlueprint*> LoadWidget(const FString& WidgetPath);
+    TResult<UWidgetBlueprint*> LoadWidgetBlueprint(const FString& WidgetBlueprintPath);
 
     /**
      * @brief Search for widget blueprints matching a search term
      * 
-     * Performs a case-insensitive search across all widget blueprints in the /Game directory,
-     * returning detailed information about matching assets.
-     * 
-     * @param SearchTerm Search string to match against widget blueprint names (empty = return all)
+     * @param SearchTerm Search string to match against widget blueprint names
      * @param MaxResults Maximum number of results to return (default 100)
-     * @return TResult containing array of FAssetData on success, or error code and message on failure
+     * @return TResult containing array of FWidgetBlueprintInfo structures or error
      */
-    TResult<TArray<FAssetData>> SearchWidgets(const FString& SearchTerm = TEXT(""), int32 MaxResults = 100);
+    TResult<TArray<FWidgetBlueprintInfo>> SearchWidgetBlueprints(const FString& SearchTerm, int32 MaxResults = 100);
 
     /**
-     * @brief Get all widget blueprints in the project
+     * @brief List all widget blueprints in a given base path
      * 
-     * Returns comprehensive list of all widget blueprints found in the Asset Registry.
-     * 
-     * @return TResult containing array of FAssetData for all widget blueprints
+     * @param BasePath Root path to search from (default "/Game")
+     * @return TResult containing array of widget blueprint object paths or error
      */
-    TResult<TArray<FAssetData>> GetAllWidgets();
+    TResult<TArray<FString>> ListAllWidgetBlueprints(const FString& BasePath = TEXT("/Game"));
+
+    /**
+     * @brief Get detailed information about a widget blueprint
+     * 
+     * @param WidgetBlueprint Widget blueprint to get information from (must not be null)
+     * @return TResult containing FWidgetBlueprintInfo structure or error
+     */
+    TResult<FWidgetBlueprintInfo> GetWidgetBlueprintInfo(UWidgetBlueprint* WidgetBlueprint);
 
     /**
      * @brief Check if a widget blueprint exists
      * 
-     * Verifies that a widget blueprint with the given name can be found.
-     * 
-     * @param WidgetName Widget blueprint name to check
-     * @return TResult containing true if widget exists, false otherwise
+     * @param WidgetBlueprintName Widget blueprint name or path to check
+     * @return TResult containing true if exists, false otherwise
      */
-    TResult<bool> WidgetExists(const FString& WidgetName);
+    TResult<bool> WidgetBlueprintExists(const FString& WidgetBlueprintName);
 
     /**
-     * @brief Validate if a widget blueprint is valid
+     * @brief Find a widget in a blueprint's widget tree by name
      * 
-     * Checks if the widget blueprint exists and can be loaded successfully.
-     * 
-     * @param WidgetName Widget blueprint name to validate
-     * @return TResult containing true if widget is valid, false otherwise
+     * @param WidgetBlueprint Widget blueprint to search in
+     * @param WidgetName Name of the widget to find
+     * @return TResult containing widget pointer on success, or error
      */
-    TResult<bool> IsValidWidget(const FString& WidgetName);
+    TResult<UWidget*> FindWidgetByName(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
 
     /**
-     * @brief Get available widget types from the palette
-     * 
-     * Returns list of available UMG widget class names that can be added to widget blueprints.
-     * 
-     * @return TResult containing array of widget type names
+     * @brief Return supported UMG widget types available for creation
+     *
+     * This returns a list of UMG widget type names (e.g. "TextBlock", "Button") used
+     * by the tooling layer to present a palette of widget types. Implemented here so
+     * handlers can delegate to the discovery service for consistent lists.
      */
     TResult<TArray<FString>> GetAvailableWidgetTypes();
-
-    /**
-     * @brief Get available panel widget types
-     * 
-     * Returns list of panel widget types (Canvas, Vertical Box, Horizontal Box, etc.)
-     * that can contain other widgets.
-     * 
-     * @return TResult containing array of panel type names
-     */
-    TResult<TArray<FString>> GetAvailablePanelTypes();
-
-    /**
-     * @brief Get common widget types
-     * 
-     * Returns list of frequently used widget types (Button, Text, Image, etc.)
-     * for quick access.
-     * 
-     * @return TResult containing array of common widget type names
-     */
-    TResult<TArray<FString>> GetCommonWidgets();
-
-private:
-    /**
-     * @brief Get Asset Registry instance
-     * @return Reference to the Asset Registry
-     */
-    IAssetRegistry& GetAssetRegistry();
-
-    /**
-     * @brief Check if code is executing during serialization
-     * @return True if in serialization context, false otherwise
-     */
-    bool IsInSerializationContext() const;
 };

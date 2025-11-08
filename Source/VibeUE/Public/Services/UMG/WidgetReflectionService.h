@@ -2,206 +2,154 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
-#include "Services/Blueprint/BlueprintReflectionService.h"
-#include "Services/UMG/Types/WidgetTypes.h"
+#include "Services/UMG/Types/WidgetReflectionTypes.h"
 #include "Core/Result.h"
 
 // Forward declarations
-class UClass;
 class UWidget;
-class FProperty;
 
 /**
  * @class FWidgetReflectionService
- * @brief Service responsible for UMG widget type discovery and metadata
+ * @brief Service for widget class discovery and reflection
  * 
- * This service provides focused widget type reflection functionality extracted from
- * UMGCommands.cpp. It handles widget type enumeration, categorization, validation,
- * and metadata extraction.
+ * This service provides reflection-based widget discovery functionality extracted from
+ * UMGReflectionCommands.cpp. It handles discovering available widget types, categories,
+ * and compatibility information using UClass reflection.
  * 
- * All methods return TResult<T> for type-safe error handling, avoiding the need
- * for runtime JSON parsing in the service layer.
- * 
- * @note This is part of Phase 3 refactoring (Task 16) to extract UMG domain into
- * focused services as per CPP_REFACTORING_DESIGN.md
+ * All methods return TResult<T> for type-safe error handling.
  * 
  * @see TResult
  * @see FServiceBase
- * @see Issue #32
  */
 class VIBEUE_API FWidgetReflectionService : public FServiceBase
 {
 public:
     /**
      * @brief Constructor
-     * @param Context Service context for shared state
+     * @param Context Service context for shared state (can be nullptr)
      */
     explicit FWidgetReflectionService(TSharedPtr<FServiceContext> Context);
-    
-    // ═══════════════════════════════════════════════════════════
-    // Type Discovery
-    // ═══════════════════════════════════════════════════════════
-    
+
+    // FServiceBase interface
+    virtual FString GetServiceName() const override { return TEXT("WidgetReflectionService"); }
+
     /**
-     * @brief Get list of available widget types
+     * @brief Get all available widget types
      * 
-     * Returns all supported widget types that can be added to widget blueprints.
-     * Optionally filter by category.
-     * 
-     * @param Category Optional category filter (e.g., "Panel", "Common")
      * @return TResult containing array of widget type names
      */
-    TResult<TArray<FString>> GetAvailableWidgetTypes(const FString& Category = TEXT(""));
-    
+    TResult<TArray<FString>> GetAvailableWidgetTypes();
+
     /**
-     * @brief Get list of widget categories
-     * 
-     * Returns all available widget categories (e.g., "Panel", "Common", "Input").
+     * @brief Get all widget categories
      * 
      * @return TResult containing array of category names
      */
     TResult<TArray<FString>> GetWidgetCategories();
-    
+
     /**
-     * @brief Get list of panel widget types
+     * @brief Get detailed information about available widget classes
      * 
-     * Returns widget types that can contain other widgets (CanvasPanel, VerticalBox, etc.).
+     * @param bIncludeEngine Include engine widget classes
+     * @param bIncludeCustom Include custom widget classes
+     * @return TResult containing array of FWidgetClassInfo structures
+     */
+    TResult<TArray<FWidgetClassInfo>> GetAvailableWidgetClasses(bool bIncludeEngine = true, bool bIncludeCustom = true);
+
+    /**
+     * @brief Get widgets by category
      * 
-     * @return TResult containing array of panel widget type names
+     * @param Category Category name (e.g., "Panel", "Common", "Input")
+     * @return TResult containing array of widget class names in that category
+     */
+    TResult<TArray<FString>> GetWidgetsByCategory(const FString& Category);
+
+    /**
+     * @brief Get panel widgets (widgets that can contain children)
+     * 
+     * @return TResult containing array of panel widget class names
      */
     TResult<TArray<FString>> GetPanelWidgets();
-    
+
     /**
-     * @brief Get list of common widget types
+     * @brief Get common widgets (frequently used widgets)
      * 
-     * Returns frequently used widget types for quick access.
-     * 
-     * @return TResult containing array of common widget type names
+     * @return TResult containing array of common widget class names
      */
     TResult<TArray<FString>> GetCommonWidgets();
-    
-    // ═══════════════════════════════════════════════════════════
-    // Type Metadata
-    // ═══════════════════════════════════════════════════════════
-    
-    /**
-     * @brief Get detailed information about a widget type
-     * 
-     * Returns metadata including class path, category, and capabilities.
-     * 
-     * @param WidgetType Widget type name (e.g., "Button")
-     * @return TResult containing widget type information
-     */
-    TResult<FWidgetTypeInfo> GetWidgetTypeInfo(const FString& WidgetType);
-    
-    /**
-     * @brief Get properties available for a widget type
-     * 
-     * Returns list of editable properties for the specified widget type.
-     * Uses FPropertyInfo from BlueprintReflectionService.h
-     * 
-     * @param WidgetType Widget type name
-     * @return TResult containing array of property information
-     */
-    TResult<TArray<FPropertyInfo>> GetWidgetTypeProperties(const FString& WidgetType);
-    
-    /**
-     * @brief Get events available for a widget type
-     * 
-     * Returns list of bindable events for the specified widget type.
-     * 
-     * @param WidgetType Widget type name
-     * @return TResult containing array of event names
-     */
-    TResult<TArray<FString>> GetWidgetTypeEvents(const FString& WidgetType);
-    
-    // ═══════════════════════════════════════════════════════════
-    // Type Validation
-    // ═══════════════════════════════════════════════════════════
-    
-    /**
-     * @brief Check if a widget type is valid/supported
-     * 
-     * Validates that the widget type exists and can be used.
-     * 
-     * @param WidgetType Widget type name to validate
-     * @return TResult containing true if valid, false otherwise
-     */
-    TResult<bool> IsValidWidgetType(const FString& WidgetType);
-    
-    /**
-     * @brief Check if a widget type is a panel widget
-     * 
-     * Determines whether the widget type can contain children.
-     * 
-     * @param WidgetType Widget type name to check
-     * @return TResult containing true if panel widget, false otherwise
-     */
-    TResult<bool> IsPanelWidget(const FString& WidgetType);
-    
-    /**
-     * @brief Check if a widget type can contain children
-     * 
-     * Determines whether widgets of this type can have child widgets.
-     * 
-     * @param WidgetType Widget type name to check
-     * @return TResult containing true if can contain children, false otherwise
-     */
-    TResult<bool> CanContainChildren(const FString& WidgetType);
-    
-    // ═══════════════════════════════════════════════════════════
-    // Type Resolution
-    // ═══════════════════════════════════════════════════════════
-    
-    /**
-     * @brief Resolve widget type name to UClass
-     * 
-     * Converts a widget type name to its corresponding UClass pointer.
-     * 
-     * @param WidgetType Widget type name
-     * @return TResult containing UClass pointer
-     */
-    TResult<UClass*> ResolveWidgetClass(const FString& WidgetType);
-    
-    /**
-     * @brief Get full class path for a widget type
-     * 
-     * Returns the full Unreal Engine class path for a widget type.
-     * 
-     * @param WidgetType Widget type name
-     * @return TResult containing full class path
-     */
-    TResult<FString> GetWidgetTypePath(const FString& WidgetType);
 
-protected:
     /**
-     * @brief Gets the service name for logging
-     * @return The service name "WidgetReflectionService"
+     * @brief Get widget class information by name
+     * 
+     * @param WidgetClassName Name of the widget class
+     * @return TResult containing FWidgetClassInfo structure or error
      */
-    virtual FString GetServiceName() const override { return TEXT("WidgetReflectionService"); }
+    TResult<FWidgetClassInfo> GetWidgetClassInfo(const FString& WidgetClassName);
+
+    /**
+     * @brief Check if a widget class supports children
+     * 
+     * @param WidgetClassName Name of the widget class
+     * @return TResult containing true if supports children, false otherwise
+     */
+    TResult<bool> SupportsChildren(const FString& WidgetClassName);
+
+    /**
+     * @brief Check parent-child compatibility
+     * 
+     * @param ParentClassName Parent widget class name
+     * @param ChildClassName Child widget class name
+     * @return TResult containing FWidgetCompatibilityInfo structure
+     */
+    TResult<FWidgetCompatibilityInfo> CheckCompatibility(const FString& ParentClassName, const FString& ChildClassName);
+
+    /**
+     * @brief Get maximum children count for a widget class
+     * 
+     * @param WidgetClassName Name of the widget class
+     * @return TResult containing max children count (-1 for unlimited)
+     */
+    TResult<int32> GetMaxChildrenCount(const FString& WidgetClassName);
+
+    /**
+     * @brief Get widget category for a specific widget class
+     * 
+     * @param WidgetClassName Name of the widget class
+     * @return TResult containing category name
+     */
+    TResult<FString> GetWidgetCategory(const FString& WidgetClassName);
 
 private:
     /**
-     * @brief Initialize widget type catalogs
+     * @brief Discover all widget classes using reflection
      * 
-     * Builds internal lookup tables for widget types, panels, and common widgets.
+     * @param bIncludeEngine Include engine classes
+     * @param bIncludeCustom Include custom classes
+     * @return Array of UClass pointers
      */
-    void InitializeWidgetCatalogs();
-    
+    TArray<UClass*> DiscoverWidgetClasses(bool bIncludeEngine, bool bIncludeCustom);
+
     /**
-     * @brief Check if catalogs have been initialized
-     * @return True if initialized, false otherwise
+     * @brief Get category for a widget UClass
+     * 
+     * @param WidgetClass Widget UClass
+     * @return Category name
      */
-    bool AreCatalogsInitialized() const { return bCatalogsInitialized; }
-    
-    // Widget type catalogs
-    TArray<FString> AllWidgetTypes;
-    TArray<FString> PanelWidgetTypes;
-    TArray<FString> CommonWidgetTypes;
-    TMap<FString, FString> WidgetTypeToClassPath;
-    TMap<FString, FString> WidgetTypeToCategory;
-    TMap<FString, TArray<FString>> WidgetTypeToEvents;
-    
-    // Initialization flag
-    bool bCatalogsInitialized;
+    FString GetCategoryForClass(UClass* WidgetClass);
+
+    /**
+     * @brief Check if a UClass supports children
+     * 
+     * @param WidgetClass Widget UClass
+     * @return True if supports children
+     */
+    bool DoesClassSupportChildren(UClass* WidgetClass);
+
+    /**
+     * @brief Get maximum children for a UClass
+     * 
+     * @param WidgetClass Widget UClass
+     * @return Max children count
+     */
+    int32 GetMaxChildrenForClass(UClass* WidgetClass);
 };

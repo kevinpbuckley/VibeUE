@@ -1,9 +1,8 @@
-// Copyright Epic Games, Inc. All Rights Reserved.
-
 #pragma once
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetComponentTypes.h"
 #include "Services/UMG/Types/WidgetTypes.h"
 #include "Core/Result.h"
 
@@ -11,25 +10,20 @@
 class UWidget;
 class UWidgetBlueprint;
 class UPanelWidget;
-class UWidgetTree;
+class UPanelSlot;
 
 /**
  * @class FWidgetComponentService
- * @brief Service responsible for UMG component management
+ * @brief Service for adding and removing widget components
  * 
- * This service provides focused widget component CRUD operations extracted from
- * UMGCommands.cpp. It handles component lifecycle (add, remove, list), hierarchy
- * management (parent/child relationships), and component information queries.
+ * This service provides widget component management functionality extracted from
+ * UMGCommands.cpp and UMGReflectionCommands.cpp. It handles adding widgets to
+ * blueprints, removing widgets, and managing parent-child relationships.
  * 
- * All methods return TResult<T> for type-safe error handling, avoiding the need
- * for runtime JSON parsing in the service layer.
- * 
- * @note This is part of Phase 3 refactoring (Task 12) to extract UMG component
- * management into focused services as per CPP_REFACTORING_DESIGN.md
+ * All methods return TResult<T> for type-safe error handling.
  * 
  * @see TResult
  * @see FServiceBase
- * @see Issue #32
  */
 class VIBEUE_API FWidgetComponentService : public FServiceBase
 {
@@ -40,180 +34,131 @@ public:
      */
     explicit FWidgetComponentService(TSharedPtr<FServiceContext> Context);
 
-    /**
-     * @brief Add a component to a widget blueprint
-     * 
-     * Creates a new widget component of the specified type and adds it to the widget tree.
-     * The component can be added to a specific parent or to the root widget.
-     * 
-     * @param Widget Widget blueprint to add component to
-     * @param ComponentType Widget class type (e.g., "TextBlock", "Button")
-     * @param ComponentName Unique name for the component
-     * @param ParentName Name of parent component (empty for root)
-     * @return TResult containing the created widget on success, or error code and message on failure
-     * 
-     * @note Extracted from UMGCommands.cpp component add logic
-     */
-    TResult<UWidget*> AddComponent(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentType,
-        const FString& ComponentName,
-        const FString& ParentName = FString());
-
-    /**
-     * @brief Remove a component from a widget blueprint
-     * 
-     * Removes the specified component from the widget tree. Can optionally remove
-     * child components or reparent them to the root.
-     * 
-     * @param Widget Widget blueprint to remove component from
-     * @param ComponentName Name of component to remove
-     * @param bRemoveChildren If true, remove child components; if false, reparent them
-     * @return TResult indicating success or error
-     * 
-     * @note Extracted from HandleRemoveUMGComponent (~80 lines)
-     */
-    TResult<void> RemoveComponent(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName,
-        bool bRemoveChildren = true);
-
-    /**
-     * @brief List all components in a widget blueprint
-     * 
-     * Returns comprehensive information about all components in the widget tree
-     * including their names, types, parents, children, and variable status.
-     * 
-     * @param Widget Widget blueprint to list components from
-     * @return TResult containing array of component information
-     * 
-     * @note Extracted from HandleListWidgetComponents (~60 lines)
-     */
-    TResult<TArray<FWidgetComponentInfo>> ListComponents(UWidgetBlueprint* Widget);
-
-    /**
-     * @brief Set parent of a component
-     * 
-     * Changes the parent of a component in the widget tree hierarchy.
-     * 
-     * @param Widget Widget blueprint containing the component
-     * @param ComponentName Name of component to reparent
-     * @param NewParentName Name of new parent component
-     * @return TResult indicating success or error
-     * 
-     * @note Extracted from hierarchy manipulation logic (~70 lines)
-     */
-    TResult<void> SetParent(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName,
-        const FString& NewParentName);
-
-    /**
-     * @brief Get parent of a component
-     * 
-     * Returns the name of the parent component.
-     * 
-     * @param Widget Widget blueprint containing the component
-     * @param ComponentName Name of component
-     * @return TResult containing parent component name (empty if root)
-     */
-    TResult<FString> GetParent(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName);
-
-    /**
-     * @brief Get children of a component
-     * 
-     * Returns list of child component names for a panel widget.
-     * 
-     * @param Widget Widget blueprint containing the component
-     * @param ComponentName Name of component
-     * @return TResult containing array of child component names
-     */
-    TResult<TArray<FString>> GetChildren(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName);
-
-    /**
-     * @brief Get detailed information about a component
-     * 
-     * Returns comprehensive information about a specific component.
-     * 
-     * @param Widget Widget blueprint containing the component
-     * @param ComponentName Name of component
-     * @return TResult containing component information
-     */
-    TResult<FWidgetComponentInfo> GetComponentInfo(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName);
-
-    /**
-     * @brief Check if a component exists
-     * 
-     * Verifies that a component with the given name exists in the widget tree.
-     * 
-     * @param Widget Widget blueprint to check
-     * @param ComponentName Name of component to check
-     * @return TResult containing true if component exists, false otherwise
-     */
-    TResult<bool> ComponentExists(
-        UWidgetBlueprint* Widget,
-        const FString& ComponentName);
-
-    /**
-     * @brief Add a child widget to a widget switcher slot
-     * 
-     * Adds a child widget to a WidgetSwitcher component. The child is always appended
-     * to the end of the switcher's child list (UE4 limitation).
-     * 
-     * @param Widget Widget blueprint containing the switcher
-     * @param SwitcherName Name of the WidgetSwitcher component
-     * @param ChildWidgetName Name of the child widget to add
-     * @param SlotIndex Reserved for future use - currently ignored (always appends)
-     * @param OutActualSlotIndex Optional output parameter for the actual slot index used
-     * @return Success or error result
-     * 
-     * @note SlotIndex parameter is currently ignored. The child is always added to the end.
-     * This matches UWidgetSwitcher::AddChild() behavior in Unreal Engine.
-     */
-    TResult<void> AddWidgetSwitcherSlot(
-        UWidgetBlueprint* Widget,
-        const FString& SwitcherName,
-        const FString& ChildWidgetName,
-        int32 SlotIndex = -1,
-        int32* OutActualSlotIndex = nullptr);
-
-protected:
-    /** @brief Gets the service name for logging */
+    // FServiceBase interface
     virtual FString GetServiceName() const override { return TEXT("WidgetComponentService"); }
+
+    /**
+     * @brief Add a widget component to a widget blueprint
+     * 
+     * @param WidgetBlueprint Target widget blueprint
+     * @param WidgetClassName Class name of widget to add (e.g., "Button", "TextBlock")
+     * @param WidgetName Name for the new widget
+     * @param ParentName Name of parent widget (empty for root)
+     * @param bIsVariable Whether to expose as a variable
+     * @return TResult containing the created widget pointer or error
+     */
+    TResult<UWidget*> AddWidgetComponent(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FString& WidgetClassName,
+        const FString& WidgetName,
+        const FString& ParentName = TEXT(""),
+        bool bIsVariable = true
+    );
+
+    /**
+     * @brief Remove a widget component from a widget blueprint
+     * 
+     * @param WidgetBlueprint Target widget blueprint
+     * @param WidgetName Name of widget to remove
+     * @return TResult indicating success or error
+     */
+    TResult<void> RemoveWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
+
+    /**
+     * @brief Add an existing child widget to a panel with optional slot configuration.
+     */
+    TResult<FWidgetAddChildResult> AddChildToPanel(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FWidgetAddChildRequest& Request
+    );
+
+    /**
+     * @brief Create and add a specific widget type with properties
+     * 
+     * @param WidgetBlueprint Target widget blueprint
+     * @param WidgetClassName Widget class name
+     * @param WidgetName Widget name
+     * @param ParentName Parent widget name
+     * @param bIsVariable Whether to expose as variable
+     * @param InitialProperties Map of initial property values
+     * @return TResult containing the created widget or error
+     */
+    TResult<UWidget*> CreateAndAddWidget(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FString& WidgetClassName,
+        const FString& WidgetName,
+        const FString& ParentName,
+        bool bIsVariable,
+        const TMap<FString, FString>& InitialProperties
+    );
+
+    /**
+     * @brief Validate widget creation parameters
+     * 
+     * @param WidgetBlueprint Target widget blueprint
+     * @param WidgetClassName Widget class to validate
+     * @param WidgetName Proposed widget name
+     * @param ParentName Parent widget name
+     * @return TResult indicating if parameters are valid
+     */
+    TResult<bool> ValidateWidgetCreation(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FString& WidgetClassName,
+        const FString& WidgetName,
+        const FString& ParentName
+    );
+
+    /**
+     * @brief Remove a widget component with optional recursive behaviour.
+     */
+    TResult<FWidgetRemoveComponentResult> RemoveComponent(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FWidgetRemoveComponentRequest& Request
+    );
+
+    /**
+     * @brief Update slot properties for an existing widget.
+     */
+    TResult<FWidgetSlotUpdateResult> SetSlotProperties(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FWidgetSlotUpdateRequest& Request
+    );
+
+    /**
+     * @brief Get parent panel widget for a widget
+     * 
+     * @param WidgetBlueprint Widget blueprint containing the widget
+     * @param WidgetName Name of widget to get parent for
+     * @return TResult containing parent panel widget or error
+     */
+    TResult<UPanelWidget*> GetParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
+
+    /**
+     * @brief Retrieve component information for a widget component
+     */
+    TResult<FWidgetComponentInfo> GetWidgetComponentInfo(UWidgetBlueprint* WidgetBlueprint, const FString& ComponentName, bool bIncludeSlotInfo = true);
 
 private:
     /**
-     * @brief Validate widget blueprint is not null
-     * @param Widget Widget blueprint to validate
-     * @return Success or error result
+     * @brief Get widget class from name
+     * 
+     * @param WidgetClassName Class name
+     * @return UClass pointer or nullptr
      */
-    TResult<void> ValidateWidget(UWidgetBlueprint* Widget) const;
+    UClass* GetWidgetClass(const FString& WidgetClassName);
 
     /**
-     * @brief Find a widget component by name
-     * @param WidgetTree Widget tree to search
-     * @param ComponentName Name of component to find
-     * @return Pointer to widget or nullptr if not found
+     * @brief Check if widget name is unique in blueprint
+     * 
+     * @param WidgetBlueprint Widget blueprint
+     * @param WidgetName Name to check
+     * @return True if unique
      */
-    UWidget* FindComponent(UWidgetTree* WidgetTree, const FString& ComponentName) const;
+    bool IsWidgetNameUnique(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
 
-    /**
-     * @brief Collect all children of a widget recursively
-     * @param Widget Parent widget
-     * @param OutChildren Output array for children
-     */
-    void CollectChildren(UWidget* Widget, TArray<UWidget*>& OutChildren) const;
+    TResult<UPanelWidget*> ResolveParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& ParentName, const FString& ParentType);
 
-    /**
-     * @brief Get widget class from type string
-     * @param ComponentType Type string (e.g., "TextBlock")
-     * @return Widget class or nullptr if not found
-     */
-    UClass* GetWidgetClass(const FString& ComponentType) const;
+    bool ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, UWidget* Widget, UPanelSlot* PanelSlot, UPanelWidget* ParentPanel, const TSharedPtr<FJsonObject>& SlotProperties, FString& OutSlotType);
+
+    void CollectChildWidgets(UWidget* Widget, TArray<UWidget*>& OutChildren) const;
 };

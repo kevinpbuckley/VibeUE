@@ -1,309 +1,315 @@
+/**
+ * @file WidgetReflectionService.cpp
+ * @brief Implementation of widget reflection and discovery functionality
+ * 
+ * This service provides widget class discovery using UClass reflection,
+ * extracted from UMGReflectionCommands.cpp as part of Phase 4 refactoring.
+ */
+
 #include "Services/UMG/WidgetReflectionService.h"
-#include "Services/UMG/WidgetPropertyService.h"
-#include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Core/ErrorCodes.h"
 #include "Components/Widget.h"
 #include "Components/PanelWidget.h"
-#include "Components/CanvasPanel.h"
-#include "Components/VerticalBox.h"
-#include "Components/HorizontalBox.h"
-#include "Components/Overlay.h"
-#include "Components/ScrollBox.h"
-#include "Components/GridPanel.h"
 #include "Components/Button.h"
 #include "Components/TextBlock.h"
 #include "Components/Image.h"
-#include "Components/EditableText.h"
-#include "Components/EditableTextBox.h"
-#include "Components/Slider.h"
-#include "Components/ProgressBar.h"
-#include "Components/CheckBox.h"
-#include "Components/Spacer.h"
-#include "UObject/UObjectGlobals.h"
+#include "Components/CanvasPanel.h"
+#include "Components/VerticalBox.h"
+#include "Components/HorizontalBox.h"
+#include "Components/ScrollBox.h"
+#include "Components/Overlay.h"
+#include "Components/GridPanel.h"
+#include "UObject/UObjectIterator.h"
 
-namespace
-{
-    // Common events for all widgets
-    const TArray<FString> CommonWidgetEvents = { TEXT("OnVisibilityChanged") };
-}
+DEFINE_LOG_CATEGORY_STATIC(LogWidgetReflection, Log, All);
 
 FWidgetReflectionService::FWidgetReflectionService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
-    , bCatalogsInitialized(false)
 {
 }
 
-void FWidgetReflectionService::InitializeWidgetCatalogs()
+TResult<TArray<FString>> FWidgetReflectionService::GetAvailableWidgetTypes()
 {
-    if (bCatalogsInitialized) return;
+    TArray<FString> WidgetTypes;
     
-    PanelWidgetTypes = { TEXT("CanvasPanel"), TEXT("VerticalBox"), TEXT("HorizontalBox"), 
-        TEXT("Overlay"), TEXT("ScrollBox"), TEXT("GridPanel"), TEXT("UniformGridPanel"), 
-        TEXT("WidgetSwitcher"), TEXT("SizeBox"), TEXT("Border") };
-    
-    CommonWidgetTypes = { TEXT("Button"), TEXT("TextBlock"), TEXT("Image"), 
-        TEXT("EditableTextBox"), TEXT("Slider"), TEXT("ProgressBar"), TEXT("CheckBox") };
-    
-    AllWidgetTypes = { TEXT("TextBlock"), TEXT("Button"), TEXT("EditableText"), 
-        TEXT("EditableTextBox"), TEXT("RichTextBlock"), TEXT("CheckBox"), TEXT("Slider"), 
-        TEXT("ProgressBar"), TEXT("Image"), TEXT("Spacer"), TEXT("Border"), TEXT("SizeBox"), 
-        TEXT("CanvasPanel"), TEXT("VerticalBox"), TEXT("HorizontalBox"), TEXT("Overlay"), 
-        TEXT("ScrollBox"), TEXT("GridPanel"), TEXT("UniformGridPanel"), TEXT("WidgetSwitcher") };
-    
-    WidgetTypeToClassPath = {
-        {TEXT("TextBlock"), TEXT("/Script/UMG.TextBlock")},
-        {TEXT("Button"), TEXT("/Script/UMG.Button")},
-        {TEXT("EditableText"), TEXT("/Script/UMG.EditableText")},
-        {TEXT("EditableTextBox"), TEXT("/Script/UMG.EditableTextBox")},
-        {TEXT("RichTextBlock"), TEXT("/Script/UMG.RichTextBlock")},
-        {TEXT("CheckBox"), TEXT("/Script/UMG.CheckBox")},
-        {TEXT("Slider"), TEXT("/Script/UMG.Slider")},
-        {TEXT("ProgressBar"), TEXT("/Script/UMG.ProgressBar")},
-        {TEXT("Image"), TEXT("/Script/UMG.Image")},
-        {TEXT("Spacer"), TEXT("/Script/UMG.Spacer")},
-        {TEXT("Border"), TEXT("/Script/UMG.Border")},
-        {TEXT("SizeBox"), TEXT("/Script/UMG.SizeBox")},
-        {TEXT("CanvasPanel"), TEXT("/Script/UMG.CanvasPanel")},
-        {TEXT("VerticalBox"), TEXT("/Script/UMG.VerticalBox")},
-        {TEXT("HorizontalBox"), TEXT("/Script/UMG.HorizontalBox")},
-        {TEXT("Overlay"), TEXT("/Script/UMG.Overlay")},
-        {TEXT("ScrollBox"), TEXT("/Script/UMG.ScrollBox")},
-        {TEXT("GridPanel"), TEXT("/Script/UMG.GridPanel")},
-        {TEXT("UniformGridPanel"), TEXT("/Script/UMG.UniformGridPanel")},
-        {TEXT("WidgetSwitcher"), TEXT("/Script/UMG.WidgetSwitcher")}
-    };
-    
-    // Category mappings (Panel widgets get "Panel" automatically in GetWidgetTypeInfo)
-    WidgetTypeToCategory = {
-        {TEXT("EditableText"), TEXT("Input")}, {TEXT("EditableTextBox"), TEXT("Input")},
-        {TEXT("Slider"), TEXT("Input")}, {TEXT("CheckBox"), TEXT("Input")},
-        {TEXT("Button"), TEXT("Input")},
-        {TEXT("TextBlock"), TEXT("Display")}, {TEXT("Image"), TEXT("Display")},
-        {TEXT("ProgressBar"), TEXT("Display")}, {TEXT("RichTextBlock"), TEXT("Display")},
-        {TEXT("Spacer"), TEXT("Layout")}, {TEXT("Border"), TEXT("Layout")},
-        {TEXT("SizeBox"), TEXT("Layout")}
-    };
-    
-    // Event mappings
-    WidgetTypeToEvents = {
-        {TEXT("Button"), {TEXT("OnClicked"), TEXT("OnPressed"), TEXT("OnReleased"), TEXT("OnHovered"), TEXT("OnUnhovered")}},
-        {TEXT("CheckBox"), {TEXT("OnCheckStateChanged")}},
-        {TEXT("Slider"), {TEXT("OnValueChanged"), TEXT("OnMouseCaptureBegin"), TEXT("OnMouseCaptureEnd")}},
-        {TEXT("EditableText"), {TEXT("OnTextChanged"), TEXT("OnTextCommitted")}},
-        {TEXT("EditableTextBox"), {TEXT("OnTextChanged"), TEXT("OnTextCommitted")}}
-    };
-    
-    bCatalogsInitialized = true;
-}
-
-TResult<TArray<FString>> FWidgetReflectionService::GetAvailableWidgetTypes(const FString& Category)
-{
-    InitializeWidgetCatalogs();
-    
-    if (Category.IsEmpty())
+    TArray<UClass*> Classes = DiscoverWidgetClasses(true, true);
+    for (UClass* Class : Classes)
     {
-        return TResult<TArray<FString>>::Success(AllWidgetTypes);
+        if (Class)
+        {
+            WidgetTypes.Add(Class->GetName());
+        }
     }
     
-    if (Category.Equals(TEXT("Panel"), ESearchCase::IgnoreCase))
-    {
-        return TResult<TArray<FString>>::Success(PanelWidgetTypes);
-    }
-    else if (Category.Equals(TEXT("Common"), ESearchCase::IgnoreCase))
-    {
-        return TResult<TArray<FString>>::Success(CommonWidgetTypes);
-    }
-    else
-    {
-        return TResult<TArray<FString>>::Error(
-            VibeUE::ErrorCodes::PARAM_INVALID,
-            FString::Printf(TEXT("Unknown widget category: %s"), *Category)
-        );
-    }
+    return TResult<TArray<FString>>::Success(WidgetTypes);
 }
 
 TResult<TArray<FString>> FWidgetReflectionService::GetWidgetCategories()
 {
-    return TResult<TArray<FString>>::Success(TArray<FString>{ 
-        TEXT("Panel"), TEXT("Common"), TEXT("Input"), TEXT("Display"), TEXT("Layout") 
-    });
+    TArray<FString> Categories;
+    
+    // Standard UMG categories
+    Categories.Add(TEXT("Panel"));
+    Categories.Add(TEXT("Common"));
+    Categories.Add(TEXT("Input"));
+    Categories.Add(TEXT("Primitive"));
+    Categories.Add(TEXT("Misc"));
+    
+    return TResult<TArray<FString>>::Success(Categories);
+}
+
+TResult<TArray<FWidgetClassInfo>> FWidgetReflectionService::GetAvailableWidgetClasses(bool bIncludeEngine, bool bIncludeCustom)
+{
+    TArray<FWidgetClassInfo> ClassInfos;
+    
+    TArray<UClass*> Classes = DiscoverWidgetClasses(bIncludeEngine, bIncludeCustom);
+    for (UClass* Class : Classes)
+    {
+        if (Class)
+        {
+            FWidgetClassInfo Info;
+            Info.ClassName = Class->GetName();
+            Info.ClassPath = Class->GetPathName();
+            Info.Category = GetCategoryForClass(Class);
+            Info.bSupportsChildren = DoesClassSupportChildren(Class);
+            Info.MaxChildren = GetMaxChildrenForClass(Class);
+            Info.bIsPanel = Class->IsChildOf(UPanelWidget::StaticClass());
+            Info.bIsEngineWidget = Class->GetOutermost()->GetName().StartsWith(TEXT("/Script/UMG"));
+            Info.bIsCustomWidget = !Info.bIsEngineWidget;
+            
+            ClassInfos.Add(Info);
+        }
+    }
+    
+    return TResult<TArray<FWidgetClassInfo>>::Success(ClassInfos);
+}
+
+TResult<TArray<FString>> FWidgetReflectionService::GetWidgetsByCategory(const FString& Category)
+{
+    TArray<FString> Widgets;
+    
+    TArray<UClass*> Classes = DiscoverWidgetClasses(true, true);
+    for (UClass* Class : Classes)
+    {
+        if (Class && GetCategoryForClass(Class).Equals(Category, ESearchCase::IgnoreCase))
+        {
+            Widgets.Add(Class->GetName());
+        }
+    }
+    
+    return TResult<TArray<FString>>::Success(Widgets);
 }
 
 TResult<TArray<FString>> FWidgetReflectionService::GetPanelWidgets()
 {
-    InitializeWidgetCatalogs();
-    return TResult<TArray<FString>>::Success(PanelWidgetTypes);
+    TArray<FString> PanelWidgets;
+    
+    TArray<UClass*> Classes = DiscoverWidgetClasses(true, true);
+    for (UClass* Class : Classes)
+    {
+        if (Class && Class->IsChildOf(UPanelWidget::StaticClass()) && !Class->HasAnyClassFlags(CLASS_Abstract))
+        {
+            PanelWidgets.Add(Class->GetName());
+        }
+    }
+    
+    return TResult<TArray<FString>>::Success(PanelWidgets);
 }
 
 TResult<TArray<FString>> FWidgetReflectionService::GetCommonWidgets()
 {
-    InitializeWidgetCatalogs();
-    return TResult<TArray<FString>>::Success(CommonWidgetTypes);
+    TArray<FString> CommonWidgets;
+    
+    // Commonly used widgets
+    CommonWidgets.Add(TEXT("Button"));
+    CommonWidgets.Add(TEXT("TextBlock"));
+    CommonWidgets.Add(TEXT("Image"));
+    CommonWidgets.Add(TEXT("EditableText"));
+    CommonWidgets.Add(TEXT("CheckBox"));
+    CommonWidgets.Add(TEXT("Slider"));
+    CommonWidgets.Add(TEXT("ProgressBar"));
+    
+    return TResult<TArray<FString>>::Success(CommonWidgets);
 }
 
-TResult<FWidgetTypeInfo> FWidgetReflectionService::GetWidgetTypeInfo(const FString& WidgetType)
+TResult<FWidgetClassInfo> FWidgetReflectionService::GetWidgetClassInfo(const FString& WidgetClassName)
 {
-    InitializeWidgetCatalogs();
-    
-    auto ValidationResult = IsValidWidgetType(WidgetType);
-    if (ValidationResult.IsError())
+    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
-        return TResult<FWidgetTypeInfo>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+        return TResult<FWidgetClassInfo>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            FString::Printf(TEXT("Widget class '%s' not found"), *WidgetClassName)
+        );
     }
     
-    FWidgetTypeInfo Info;
-    Info.TypeName = WidgetType;
-    Info.ClassPath = WidgetTypeToClassPath.Contains(WidgetType) ? WidgetTypeToClassPath[WidgetType] : TEXT("");
-    Info.bIsPanelWidget = PanelWidgetTypes.Contains(WidgetType);
-    Info.bIsCommonWidget = CommonWidgetTypes.Contains(WidgetType);
+    FWidgetClassInfo Info;
+    Info.ClassName = WidgetClass->GetName();
+    Info.ClassPath = WidgetClass->GetPathName();
+    Info.Category = GetCategoryForClass(WidgetClass);
+    Info.bSupportsChildren = DoesClassSupportChildren(WidgetClass);
+    Info.MaxChildren = GetMaxChildrenForClass(WidgetClass);
+    Info.bIsPanel = WidgetClass->IsChildOf(UPanelWidget::StaticClass());
+    Info.bIsEngineWidget = WidgetClass->GetOutermost()->GetName().StartsWith(TEXT("/Script/UMG"));
+    Info.bIsCustomWidget = !Info.bIsEngineWidget;
     
-    // Assign category from lookup table or default
-    if (Info.bIsPanelWidget)
-    {
-        Info.Category = TEXT("Panel");
-    }
-    else if (WidgetTypeToCategory.Contains(WidgetType))
-    {
-        Info.Category = WidgetTypeToCategory[WidgetType];
-    }
-    else
-    {
-        Info.Category = TEXT("Other");
-    }
-    
-    return TResult<FWidgetTypeInfo>::Success(Info);
+    return TResult<FWidgetClassInfo>::Success(Info);
 }
 
-TResult<TArray<FPropertyInfo>> FWidgetReflectionService::GetWidgetTypeProperties(const FString& WidgetType)
+TResult<bool> FWidgetReflectionService::SupportsChildren(const FString& WidgetClassName)
 {
-    auto ClassResult = ResolveWidgetClass(WidgetType);
-    if (ClassResult.IsError())
+    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
-        return TResult<TArray<FPropertyInfo>>::Error(ClassResult.GetErrorCode(), ClassResult.GetErrorMessage());
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            FString::Printf(TEXT("Widget class '%s' not found"), *WidgetClassName)
+        );
     }
     
-    UClass* WidgetClass = ClassResult.GetValue();
+    bool bSupports = DoesClassSupportChildren(WidgetClass);
+    return TResult<bool>::Success(bSupports);
+}
+
+TResult<FWidgetCompatibilityInfo> FWidgetReflectionService::CheckCompatibility(const FString& ParentClassName, const FString& ChildClassName)
+{
+    UClass* ParentClass = FindObject<UClass>(ANY_PACKAGE, *ParentClassName);
+    UClass* ChildClass = FindObject<UClass>(ANY_PACKAGE, *ChildClassName);
+    
+    FWidgetCompatibilityInfo Info;
+    Info.ParentClass = ParentClassName;
+    Info.ChildClass = ChildClassName;
+    
+    if (!ParentClass || !ParentClass->IsChildOf(UWidget::StaticClass()))
+    {
+        Info.bIsCompatible = false;
+        Info.IncompatibilityReason = FString::Printf(TEXT("Parent class '%s' not found"), *ParentClassName);
+        return TResult<FWidgetCompatibilityInfo>::Success(Info);
+    }
+    
+    if (!ChildClass || !ChildClass->IsChildOf(UWidget::StaticClass()))
+    {
+        Info.bIsCompatible = false;
+        Info.IncompatibilityReason = FString::Printf(TEXT("Child class '%s' not found"), *ChildClassName);
+        return TResult<FWidgetCompatibilityInfo>::Success(Info);
+    }
+    
+    // Check if parent supports children
+    if (!ParentClass->IsChildOf(UPanelWidget::StaticClass()))
+    {
+        Info.bIsCompatible = false;
+        Info.IncompatibilityReason = FString::Printf(TEXT("Parent '%s' is not a panel widget and cannot have children"), *ParentClassName);
+        return TResult<FWidgetCompatibilityInfo>::Success(Info);
+    }
+    
+    // All panel widgets accept all widget children by default
+    Info.bIsCompatible = true;
+    return TResult<FWidgetCompatibilityInfo>::Success(Info);
+}
+
+TResult<int32> FWidgetReflectionService::GetMaxChildrenCount(const FString& WidgetClassName)
+{
+    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
+    {
+        return TResult<int32>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            FString::Printf(TEXT("Widget class '%s' not found"), *WidgetClassName)
+        );
+    }
+    
+    int32 MaxChildren = GetMaxChildrenForClass(WidgetClass);
+    return TResult<int32>::Success(MaxChildren);
+}
+
+TResult<FString> FWidgetReflectionService::GetWidgetCategory(const FString& WidgetClassName)
+{
+    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
+    {
+        return TResult<FString>::Error(
+            VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
+            FString::Printf(TEXT("Widget class '%s' not found"), *WidgetClassName)
+        );
+    }
+    
+    FString Category = GetCategoryForClass(WidgetClass);
+    return TResult<FString>::Success(Category);
+}
+
+TArray<UClass*> FWidgetReflectionService::DiscoverWidgetClasses(bool bIncludeEngine, bool bIncludeCustom)
+{
+    TArray<UClass*> WidgetClasses;
+    
+    for (TObjectIterator<UClass> It; It; ++It)
+    {
+        UClass* Class = *It;
+        if (!Class || !Class->IsChildOf(UWidget::StaticClass()) || Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated))
+        {
+            continue;
+        }
+        
+        bool bIsEngineWidget = Class->GetOutermost()->GetName().StartsWith(TEXT("/Script/UMG"));
+        
+        if ((bIncludeEngine && bIsEngineWidget) || (bIncludeCustom && !bIsEngineWidget))
+        {
+            WidgetClasses.Add(Class);
+        }
+    }
+    
+    return WidgetClasses;
+}
+
+FString FWidgetReflectionService::GetCategoryForClass(UClass* WidgetClass)
+{
     if (!WidgetClass)
     {
-        return TResult<TArray<FPropertyInfo>>::Error(VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
-            FString::Printf(TEXT("Failed to resolve widget class for type: %s"), *WidgetType));
+        return TEXT("Misc");
     }
     
-    TArray<FPropertyInfo> Properties;
-    for (TFieldIterator<FProperty> PropIt(WidgetClass); PropIt; ++PropIt)
+    // Panel widgets
+    if (WidgetClass->IsChildOf(UPanelWidget::StaticClass()))
     {
-        FProperty* Prop = *PropIt;
-        if (!Prop || !Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
-        
-        FPropertyInfo PropInfo;
-        PropInfo.PropertyName = Prop->GetName();
-        PropInfo.PropertyType = Prop->GetCPPType();
-        PropInfo.bIsEditable = true;
-        
-        const FString* CategoryPtr = Prop->FindMetaData(TEXT("Category"));
-        if (CategoryPtr) PropInfo.Category = *CategoryPtr;
-        
-        Properties.Add(PropInfo);
+        return TEXT("Panel");
     }
     
-    return TResult<TArray<FPropertyInfo>>::Success(Properties);
+    // Common widgets
+    if (WidgetClass == UButton::StaticClass() ||
+        WidgetClass == UTextBlock::StaticClass() ||
+        WidgetClass == UImage::StaticClass())
+    {
+        return TEXT("Common");
+    }
+    
+    // Input widgets
+    FString ClassName = WidgetClass->GetName();
+    if (ClassName.Contains(TEXT("Editable")) || 
+        ClassName.Contains(TEXT("CheckBox")) ||
+        ClassName.Contains(TEXT("Slider")))
+    {
+        return TEXT("Input");
+    }
+    
+    return TEXT("Misc");
 }
 
-TResult<TArray<FString>> FWidgetReflectionService::GetWidgetTypeEvents(const FString& WidgetType)
+bool FWidgetReflectionService::DoesClassSupportChildren(UClass* WidgetClass)
 {
-    InitializeWidgetCatalogs();
-    
-    auto ClassResult = ResolveWidgetClass(WidgetType);
-    if (ClassResult.IsError())
-    {
-        return TResult<TArray<FString>>::Error(ClassResult.GetErrorCode(), ClassResult.GetErrorMessage());
-    }
-    
-    TArray<FString> Events;
-    
-    // Get widget-specific events from lookup table
-    if (WidgetTypeToEvents.Contains(WidgetType))
-    {
-        Events = WidgetTypeToEvents[WidgetType];
-    }
-    
-    // Add common events for all widgets
-    Events.Append(CommonWidgetEvents);
-    
-    return TResult<TArray<FString>>::Success(Events);
-}
-
-TResult<bool> FWidgetReflectionService::IsValidWidgetType(const FString& WidgetType)
-{
-    InitializeWidgetCatalogs();
-    
-    if (WidgetType.IsEmpty())
-    {
-        return TResult<bool>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("Widget type cannot be empty"));
-    }
-    
-    return TResult<bool>::Success(AllWidgetTypes.Contains(WidgetType));
-}
-
-TResult<bool> FWidgetReflectionService::IsPanelWidget(const FString& WidgetType)
-{
-    InitializeWidgetCatalogs();
-    
-    auto ValidationResult = IsValidWidgetType(WidgetType);
-    if (ValidationResult.IsError())
-    {
-        return TResult<bool>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
-    }
-    
-    return TResult<bool>::Success(PanelWidgetTypes.Contains(WidgetType));
-}
-
-TResult<bool> FWidgetReflectionService::CanContainChildren(const FString& WidgetType)
-{
-    return IsPanelWidget(WidgetType);
-}
-
-TResult<UClass*> FWidgetReflectionService::ResolveWidgetClass(const FString& WidgetType)
-{
-    InitializeWidgetCatalogs();
-    
-    auto ValidationResult = IsValidWidgetType(WidgetType);
-    if (ValidationResult.IsError())
-    {
-        return TResult<UClass*>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
-    }
-    
-    if (!WidgetTypeToClassPath.Contains(WidgetType))
-    {
-        return TResult<UClass*>::Error(VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
-            FString::Printf(TEXT("No class path mapping for widget type: %s"), *WidgetType));
-    }
-    
-    UClass* WidgetClass = FindObject<UClass>(nullptr, *WidgetTypeToClassPath[WidgetType]);
     if (!WidgetClass)
     {
-        return TResult<UClass*>::Error(VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
-            FString::Printf(TEXT("Failed to find widget class at path: %s"), *WidgetTypeToClassPath[WidgetType]));
+        return false;
     }
     
-    return TResult<UClass*>::Success(WidgetClass);
+    return WidgetClass->IsChildOf(UPanelWidget::StaticClass());
 }
 
-TResult<FString> FWidgetReflectionService::GetWidgetTypePath(const FString& WidgetType)
+int32 FWidgetReflectionService::GetMaxChildrenForClass(UClass* WidgetClass)
 {
-    InitializeWidgetCatalogs();
-    
-    auto ValidationResult = IsValidWidgetType(WidgetType);
-    if (ValidationResult.IsError())
+    if (!WidgetClass || !DoesClassSupportChildren(WidgetClass))
     {
-        return TResult<FString>::Error(ValidationResult.GetErrorCode(), ValidationResult.GetErrorMessage());
+        return 0;
     }
     
-    if (!WidgetTypeToClassPath.Contains(WidgetType))
-    {
-        return TResult<FString>::Error(VibeUE::ErrorCodes::WIDGET_TYPE_INVALID,
-            FString::Printf(TEXT("No class path mapping for widget type: %s"), *WidgetType));
-    }
-    
-    return TResult<FString>::Success(WidgetTypeToClassPath[WidgetType]);
+    // Most panel widgets support unlimited children
+    return -1;
 }
