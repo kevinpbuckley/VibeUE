@@ -33,6 +33,7 @@
 #include "Dom/JsonValue.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogWidgetComponent, Log, All);
 
@@ -626,7 +627,7 @@ TResult<FWidgetComponentInfo> FWidgetComponentService::GetWidgetComponentInfo(UW
 
 UClass* FWidgetComponentService::GetWidgetClass(const FString& WidgetClassName)
 {
-    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
         return nullptr;

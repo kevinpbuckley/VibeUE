@@ -20,6 +20,7 @@
 #include "Components/Overlay.h"
 #include "Components/GridPanel.h"
 #include "UObject/UObjectIterator.h"
+#include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogWidgetReflection, Log, All);
 
@@ -134,7 +135,7 @@ TResult<TArray<FString>> FWidgetReflectionService::GetCommonWidgets()
 
 TResult<FWidgetClassInfo> FWidgetReflectionService::GetWidgetClassInfo(const FString& WidgetClassName)
 {
-    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
         return TResult<FWidgetClassInfo>::Error(
@@ -158,7 +159,7 @@ TResult<FWidgetClassInfo> FWidgetReflectionService::GetWidgetClassInfo(const FSt
 
 TResult<bool> FWidgetReflectionService::SupportsChildren(const FString& WidgetClassName)
 {
-    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
         return TResult<bool>::Error(
@@ -173,8 +174,8 @@ TResult<bool> FWidgetReflectionService::SupportsChildren(const FString& WidgetCl
 
 TResult<FWidgetCompatibilityInfo> FWidgetReflectionService::CheckCompatibility(const FString& ParentClassName, const FString& ChildClassName)
 {
-    UClass* ParentClass = FindObject<UClass>(ANY_PACKAGE, *ParentClassName);
-    UClass* ChildClass = FindObject<UClass>(ANY_PACKAGE, *ChildClassName);
+    UClass* ParentClass = FindFirstObjectSafe<UClass>(*ParentClassName);
+    UClass* ChildClass = FindFirstObjectSafe<UClass>(*ChildClassName);
     
     FWidgetCompatibilityInfo Info;
     Info.ParentClass = ParentClassName;
@@ -209,7 +210,7 @@ TResult<FWidgetCompatibilityInfo> FWidgetReflectionService::CheckCompatibility(c
 
 TResult<int32> FWidgetReflectionService::GetMaxChildrenCount(const FString& WidgetClassName)
 {
-    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
         return TResult<int32>::Error(
@@ -224,7 +225,7 @@ TResult<int32> FWidgetReflectionService::GetMaxChildrenCount(const FString& Widg
 
 TResult<FString> FWidgetReflectionService::GetWidgetCategory(const FString& WidgetClassName)
 {
-    UClass* WidgetClass = FindObject<UClass>(ANY_PACKAGE, *WidgetClassName);
+    UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
     {
         return TResult<FString>::Error(

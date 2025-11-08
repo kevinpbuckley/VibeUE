@@ -17,6 +17,7 @@
 #include "EditorAssetLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "UObject/UObjectGlobals.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogWidgetLifecycle, Log, All);
 
@@ -216,7 +217,7 @@ UClass* FWidgetLifecycleService::GetParentClass(const FString& ParentClassName)
         return UUserWidget::StaticClass();
     }
 
-    UClass* ParentClass = FindObject<UClass>(ANY_PACKAGE, *ParentClassName);
+    UClass* ParentClass = FindFirstObjectSafe<UClass>(*ParentClassName);
     if (!ParentClass || !ParentClass->IsChildOf(UUserWidget::StaticClass()))
     {
         return nullptr;

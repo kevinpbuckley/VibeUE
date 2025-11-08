@@ -10,6 +10,7 @@
 #include "EditorAssetLibrary.h"
 #include "UObject/Package.h"
 #include "Misc/App.h"
+#include "UObject/UObjectGlobals.h"
 
 FBlueprintLifecycleService::FBlueprintLifecycleService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -250,7 +251,7 @@ UClass* FBlueprintLifecycleService::FindParentClass(const FString& ClassDescript
     }
 
     // Try existing objects in memory
-    if (UClass* Existing = FindObject<UClass>(ANY_PACKAGE, *Descriptor))
+    if (UClass* Existing = FindFirstObjectSafe<UClass>(*Descriptor))
     {
         return Existing;
     }
@@ -275,7 +276,7 @@ UClass* FBlueprintLifecycleService::FindParentClass(const FString& ClassDescript
 
     for (const FString& NameVariant : NamePermutations)
     {
-        if (UClass* ExistingVariant = FindObject<UClass>(ANY_PACKAGE, *NameVariant))
+    if (UClass* ExistingVariant = FindFirstObjectSafe<UClass>(*NameVariant))
         {
             return ExistingVariant;
         }
