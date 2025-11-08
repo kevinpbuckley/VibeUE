@@ -27,8 +27,7 @@ private:
     TSharedPtr<FJsonObject> HandleSetPawnProperties(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleReparentBlueprint(const TSharedPtr<FJsonObject>& Params);
 
-    // Variable management commands
-    TSharedPtr<FJsonObject> HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
+    // Variable management commands (internal helpers for HandleManageBlueprintVariables)
     TSharedPtr<FJsonObject> HandleGetBlueprintVariableInfo(const TSharedPtr<FJsonObject>& Params);  
     TSharedPtr<FJsonObject> HandleDeleteBlueprintVariable(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableBlueprintVariableTypes(const TSharedPtr<FJsonObject>& Params);

@@ -61,9 +61,6 @@ private:
     TSharedPtr<FJsonObject> HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params);
 
-    // NEW: Deletion Methods (Active)
-    TSharedPtr<FJsonObject> HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params);
-
 private:
     // Service instances
     TSharedPtr<class FServiceContext> ServiceContext;

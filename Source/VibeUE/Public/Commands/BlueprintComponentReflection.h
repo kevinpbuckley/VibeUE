@@ -31,7 +31,6 @@ private:
 
     // Manipulation Methods (100% Reflection-Based)
     TSharedPtr<FJsonObject> HandleAddComponent(const TSharedPtr<FJsonObject>& Params);
-    TSharedPtr<FJsonObject> HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleRemoveComponent(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleReorderComponents(const TSharedPtr<FJsonObject>& Params);
     

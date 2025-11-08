@@ -25,18 +25,6 @@ public:
 	TSharedPtr<FJsonObject> HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params);
 
 private:
-	/**
-	 * Get all available widget types using reflection
-	 * Parameters: category (optional), include_custom (bool), include_engine (bool), parent_compatibility (optional)
-	 */
-	TSharedPtr<FJsonObject> HandleGetAvailableWidgets(const TSharedPtr<FJsonObject>& Params);
-
-	/**
-	 * Add widget component using reflection-based validation
-	 * Parameters: widget_name, component_type, component_name, parent_name, position, size, is_variable, properties
-	 */
-	TSharedPtr<FJsonObject> HandleAddWidgetComponent(const TSharedPtr<FJsonObject>& Params);
-
 	// Widget Discovery System
 	/**
 	 * Discover all available widget classes using UClass reflection
