@@ -113,37 +113,17 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     {
         return HandleReparentBlueprint(Params);
     }
-    else if (CommandType == TEXT("add_blueprint_variable"))
-    {
-        return HandleAddBlueprintVariable(Params);
-    }
     else if (CommandType == TEXT("manage_blueprint_variable"))
     {
         return HandleManageBlueprintVariables(Params);
-    }
-    else if (CommandType == TEXT("get_blueprint_variable_info"))
-    {
-        return HandleGetBlueprintVariableInfo(Params);
     }
     else if (CommandType == TEXT("get_blueprint_info"))
     {
         return HandleGetBlueprintInfo(Params);
     }
-    else if (CommandType == TEXT("delete_blueprint_variable"))
-    {
-        return HandleDeleteBlueprintVariable(Params);
-    }
     else if (CommandType == TEXT("get_available_blueprint_variable_types"))
     {
         return HandleGetAvailableBlueprintVariableTypes(Params);
-    }
-    else if (CommandType == TEXT("get_variable_property"))
-    {
-        return HandleGetVariableProperty(Params);
-    }
-    else if (CommandType == TEXT("set_variable_property"))
-    {
-        return HandleSetVariableProperty(Params);
     }
     
     return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
@@ -1040,397 +1020,6 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TShare
     return Response;
 } 
 
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddBlueprintVariable(const TSharedPtr<FJsonObject>& Params)
-{
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    
-    // Get parameters
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
-    }
-    
-    FString VariableName;
-    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
-    }
-    
-    FString VariableType;
-    if (!Params->TryGetStringField(TEXT("variable_type"), VariableType))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_type parameter"));
-    }
-    
-    // Find the Blueprint
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    if (!Blueprint)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-    
-    // Create a comprehensive pin type mapping using reflection-based system
-    FEdGraphPinType PinType;
-    
-    // Basic types
-    if (VariableType == TEXT("Boolean"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Boolean;
-    }
-    else if (VariableType == TEXT("Byte"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Byte;
-    }
-    else if (VariableType == TEXT("Integer"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Int;
-    }
-    else if (VariableType == TEXT("Integer64"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Int64;
-    }
-    else if (VariableType == TEXT("Float"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Float;
-    }
-    else if (VariableType == TEXT("Double"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Double;
-    }
-    else if (VariableType == TEXT("Name"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Name;
-    }
-    else if (VariableType == TEXT("String"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
-    }
-    else if (VariableType == TEXT("Text"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Text;
-    }
-    // Struct types
-    else if (VariableType == TEXT("Vector"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FVector>::Get();
-    }
-    else if (VariableType == TEXT("Vector2D"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FVector2D>::Get();
-    }
-    else if (VariableType == TEXT("Vector4"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FVector4>::Get();
-    }
-    else if (VariableType == TEXT("Rotator"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FRotator>::Get();
-    }
-    else if (VariableType == TEXT("Transform"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FTransform>::Get();
-    }
-    else if (VariableType == TEXT("Color"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FColor>::Get();
-    }
-    else if (VariableType == TEXT("LinearColor"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
-        PinType.PinSubCategoryObject = TBaseStructure<FLinearColor>::Get();
-    }
-    // Object types (basic implementation)
-    else if (VariableType == TEXT("Actor"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
-        PinType.PinSubCategoryObject = AActor::StaticClass();
-    }
-    else if (VariableType == TEXT("Pawn"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
-        PinType.PinSubCategoryObject = APawn::StaticClass();
-    }
-    else if (VariableType == TEXT("StaticMesh"))
-    {
-        PinType.PinCategory = UEdGraphSchema_K2::PC_Object;
-        PinType.PinSubCategoryObject = UStaticMesh::StaticClass();
-    }
-    else
-    {
-        // Default to String for unsupported types
-        PinType.PinCategory = UEdGraphSchema_K2::PC_String;
-    }
-    
-    // Get default value
-    FString DefaultValue;
-    Params->TryGetStringField(TEXT("default_value"), DefaultValue);
-    
-    // Get is_exposed parameter
-    bool bIsExposed = false;
-    Params->TryGetBoolField(TEXT("is_exposed"), bIsExposed);
-    
-    // Add the variable
-    if (FBlueprintEditorUtils::AddMemberVariable(Blueprint, FName(*VariableName), PinType, DefaultValue))
-    {
-        // Set the Instance Editable flag if specified
-        if (bIsExposed)
-        {
-            FName VarName(*VariableName);
-            for (FBPVariableDescription& Variable : Blueprint->NewVariables)
-            {
-                if (Variable.VarName == VarName)
-                {
-                    Variable.PropertyFlags |= CPF_Edit;
-                    Variable.PropertyFlags |= CPF_BlueprintVisible;
-                    Variable.RepNotifyFunc = FName(); // Clear rep notify
-                    break;
-                }
-            }
-        }
-        
-        Response->SetBoolField(TEXT("success"), true);
-        Response->SetStringField(TEXT("message"), TEXT("Variable added successfully"));
-        Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-        Response->SetStringField(TEXT("variable_name"), VariableName);
-        Response->SetStringField(TEXT("variable_type"), VariableType);
-        Response->SetBoolField(TEXT("is_exposed"), bIsExposed);
-        
-        // Compile the Blueprint
-        FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-    }
-    else
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Failed to add variable to Blueprint"));
-    }
-    
-    return Response;
-}
-
-TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const TSharedPtr<FJsonObject>& Params)
-{
-    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
-    }
-    
-    FString VariableName;
-    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
-    }
-
-    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
-    if (FindResult.IsError())
-    {
-        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
-    }
-    UBlueprint* Blueprint = FindResult.GetValue();
-    if (!Blueprint)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
-    }
-
-    // Find the variable
-    FName VarName(*VariableName);
-    FBPVariableDescription* VarDesc = nullptr;
-    
-    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
-    {
-        if (Blueprint->NewVariables[i].VarName == VarName)
-        {
-            VarDesc = &Blueprint->NewVariables[i];
-            break;
-        }
-    }
-
-    if (!VarDesc)
-    {
-        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
-    }
-
-    // Build comprehensive response
-    Response->SetBoolField(TEXT("success"), true);
-    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Response->SetStringField(TEXT("variable_name"), VariableName);
-    
-    // Get the actual variable value using our enhanced reflection system
-    TSharedPtr<FJsonObject> ValueParams = MakeShared<FJsonObject>();
-    ValueParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    ValueParams->SetStringField(TEXT("path"), VariableName);
-    TSharedPtr<FJsonObject> ValueResponse = HandleGetVariableProperty(ValueParams);
-    
-    if (ValueResponse.IsValid() && ValueResponse->GetBoolField(TEXT("success")))
-    {
-        TSharedPtr<FJsonValue> ValueField = ValueResponse->TryGetField(TEXT("value"));
-        if (ValueField.IsValid())
-        {
-            Response->SetField(TEXT("value"), ValueField);
-        }
-        else
-        {
-            Response->SetStringField(TEXT("value"), TEXT("Value not found"));
-        }
-    }
-    else
-    {
-        FString FallbackValue = VarDesc->DefaultValue;
-        if (FallbackValue.IsEmpty())
-        {
-            FallbackValue = TEXT("None");
-        }
-
-        Response->SetStringField(TEXT("value"), FallbackValue);
-        if (ValueResponse.IsValid() && ValueResponse->HasField(TEXT("error")))
-        {
-            Response->SetStringField(TEXT("value_error"), ValueResponse->GetStringField(TEXT("error")));
-        }
-        else
-        {
-            Response->SetStringField(TEXT("value_error"), TEXT("Value resolved from blueprint defaults"));
-        }
-    }
-
-    // Get comprehensive type info using reflection-based reverse mapping
-    FString TypeName;
-    
-    // Basic types
-    if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
-        TypeName = TEXT("Boolean");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Byte)
-        TypeName = TEXT("Byte");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int)
-        TypeName = TEXT("Integer");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int64)
-        TypeName = TEXT("Integer64");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Float)
-        TypeName = TEXT("Float");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Double)
-        TypeName = TEXT("Double");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Real)
-        TypeName = TEXT("Float");  // PC_Real maps to Float for backwards compatibility
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Name)
-        TypeName = TEXT("Name");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_String)
-        TypeName = TEXT("String");
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Text)
-        TypeName = TEXT("Text");
-    // Struct types - check SubCategoryObject
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Struct)
-    {
-        if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector>::Get())
-            TypeName = TEXT("Vector");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector2D>::Get())
-            TypeName = TEXT("Vector2D");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector4>::Get())
-            TypeName = TEXT("Vector4");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FRotator>::Get())
-            TypeName = TEXT("Rotator");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FTransform>::Get())
-            TypeName = TEXT("Transform");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FColor>::Get())
-            TypeName = TEXT("Color");
-        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FLinearColor>::Get())
-            TypeName = TEXT("LinearColor");
-        else
-            TypeName = TEXT("Struct");
-    }
-    // Object types - check SubCategoryObject class
-    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Object)
-    {
-        if (VarDesc->VarType.PinSubCategoryObject == AActor::StaticClass())
-            TypeName = TEXT("Actor");
-        else if (VarDesc->VarType.PinSubCategoryObject == APawn::StaticClass())
-            TypeName = TEXT("Pawn");
-        else if (VarDesc->VarType.PinSubCategoryObject == UStaticMesh::StaticClass())
-            TypeName = TEXT("StaticMesh");
-        else
-            TypeName = TEXT("Object");
-    }
-    else
-        TypeName = TEXT("Unknown");
-
-    Response->SetStringField(TEXT("variable_type"), TypeName);
-    Response->SetStringField(TEXT("category"), VarDesc->Category.ToString());
-    Response->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
-
-    // Get all metadata using our internal metadata system (efficient internal call)
-    TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
-    MetadataParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    MetadataParams->SetStringField(TEXT("variable_name"), VariableName);
-    TSharedPtr<FJsonObject> MetadataResponse = GetBlueprintVariableMetadata(MetadataParams);
-    
-    if (MetadataResponse->GetBoolField(TEXT("success")))
-    {
-        const TSharedPtr<FJsonObject>* MetadataObj;
-        if (MetadataResponse->TryGetObjectField(TEXT("metadata"), MetadataObj))
-        {
-            Response->SetObjectField(TEXT("metadata"), *MetadataObj);
-        }
-        else
-        {
-            Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
-        }
-    }
-    else
-    {
-        Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
-    }
-
-    // Add array/container information if applicable
-    if (VarDesc->VarType.ContainerType != EPinContainerType::None)
-    {
-        FString ContainerType;
-        switch (VarDesc->VarType.ContainerType)
-        {
-        case EPinContainerType::Array:
-            ContainerType = TEXT("Array");
-            break;
-        case EPinContainerType::Set:
-            ContainerType = TEXT("Set");
-            break;
-        case EPinContainerType::Map:
-            ContainerType = TEXT("Map");
-            break;
-        default:
-            ContainerType = TEXT("None");
-            break;
-        }
-        Response->SetStringField(TEXT("container_type"), ContainerType);
-    }
-    else
-    {
-        Response->SetStringField(TEXT("container_type"), TEXT("None"));
-    }
-
-    // Add property flags information
-    TSharedPtr<FJsonObject> FlagsInfo = MakeShared<FJsonObject>();
-    FlagsInfo->SetBoolField(TEXT("is_editable"), (VarDesc->PropertyFlags & CPF_Edit) != 0);
-    FlagsInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc->PropertyFlags & CPF_BlueprintReadOnly) != 0);
-    FlagsInfo->SetBoolField(TEXT("is_expose_on_spawn"), (VarDesc->PropertyFlags & CPF_ExposeOnSpawn) != 0);
-    FlagsInfo->SetBoolField(TEXT("is_private"), (VarDesc->PropertyFlags & CPF_DisableEditOnInstance) != 0);
-    Response->SetObjectField(TEXT("property_flags"), FlagsInfo);
-
-    UE_LOG(LogTemp, Warning, TEXT("MCP: Enhanced variable info for '%s': Type=%s, Container=%s"), 
-           *VariableName, *TypeName, *Response->GetStringField(TEXT("container_type")));
-    
-    return Response;
-}
-
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract blueprint identifier (accepts name or full path)
@@ -1817,6 +1406,221 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteBlueprintVariable(const 
         Response->SetStringField(TEXT("compile_warning"), CompileError);
     }
     
+    return Response;
+}
+
+// INTERNAL HELPER: Called by HandleManageBlueprintVariables for "get" action
+// Keep as helper until Phase 5 refactoring completes
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintVariableInfo(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing blueprint_name parameter"));
+    }
+
+    FString VariableName;
+    if (!Params->TryGetStringField(TEXT("variable_name"), VariableName))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, TEXT("Missing variable_name parameter"));
+    }
+
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    UBlueprint* Blueprint = FindResult.GetValue();
+    if (!Blueprint)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName));
+    }
+
+    // Find the variable
+    FName VarName(*VariableName);
+    FBPVariableDescription* VarDesc = nullptr;
+
+    for (int32 i = 0; i < Blueprint->NewVariables.Num(); ++i)
+    {
+        if (Blueprint->NewVariables[i].VarName == VarName)
+        {
+            VarDesc = &Blueprint->NewVariables[i];
+            break;
+        }
+    }
+
+    if (!VarDesc)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Variable '%s' not found in Blueprint '%s'"), *VariableName, *BlueprintName));
+    }
+
+    // Build comprehensive response
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    Response->SetStringField(TEXT("variable_name"), VariableName);
+
+    // Get the actual variable value using our enhanced reflection system
+    TSharedPtr<FJsonObject> ValueParams = MakeShared<FJsonObject>();
+    ValueParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    ValueParams->SetStringField(TEXT("path"), VariableName);
+    TSharedPtr<FJsonObject> ValueResponse = HandleGetVariableProperty(ValueParams);
+
+    if (ValueResponse.IsValid() && ValueResponse->GetBoolField(TEXT("success")))
+    {
+        TSharedPtr<FJsonValue> ValueField = ValueResponse->TryGetField(TEXT("value"));
+        if (ValueField.IsValid())
+        {
+            Response->SetField(TEXT("value"), ValueField);
+        }
+        else
+        {
+            Response->SetStringField(TEXT("value"), TEXT("Value not found"));
+        }
+    }
+    else
+    {
+        FString FallbackValue = VarDesc->DefaultValue;
+        if (FallbackValue.IsEmpty())
+        {
+            FallbackValue = TEXT("None");
+        }
+
+        Response->SetStringField(TEXT("value"), FallbackValue);
+        if (ValueResponse.IsValid() && ValueResponse->HasField(TEXT("error")))
+        {
+            Response->SetStringField(TEXT("value_error"), ValueResponse->GetStringField(TEXT("error")));
+        }
+        else
+        {
+            Response->SetStringField(TEXT("value_error"), TEXT("Value resolved from blueprint defaults"));
+        }
+    }
+
+    // Get comprehensive type info using reflection-based reverse mapping
+    FString TypeName;
+
+    // Basic types
+    if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Boolean)
+        TypeName = TEXT("Boolean");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Byte)
+        TypeName = TEXT("Byte");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int)
+        TypeName = TEXT("Integer");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Int64)
+        TypeName = TEXT("Integer64");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Float)
+        TypeName = TEXT("Float");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Double)
+        TypeName = TEXT("Double");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Real)
+        TypeName = TEXT("Float");  // PC_Real maps to Float for backwards compatibility
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Name)
+        TypeName = TEXT("Name");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_String)
+        TypeName = TEXT("String");
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Text)
+        TypeName = TEXT("Text");
+    // Struct types - check SubCategoryObject
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Struct)
+    {
+        if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector>::Get())
+            TypeName = TEXT("Vector");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector2D>::Get())
+            TypeName = TEXT("Vector2D");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FVector4>::Get())
+            TypeName = TEXT("Vector4");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FRotator>::Get())
+            TypeName = TEXT("Rotator");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FTransform>::Get())
+            TypeName = TEXT("Transform");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FColor>::Get())
+            TypeName = TEXT("Color");
+        else if (VarDesc->VarType.PinSubCategoryObject == TBaseStructure<FLinearColor>::Get())
+            TypeName = TEXT("LinearColor");
+        else
+            TypeName = TEXT("Struct");
+    }
+    // Object types - check SubCategoryObject class
+    else if (VarDesc->VarType.PinCategory == UEdGraphSchema_K2::PC_Object)
+    {
+        if (VarDesc->VarType.PinSubCategoryObject == AActor::StaticClass())
+            TypeName = TEXT("Actor");
+        else if (VarDesc->VarType.PinSubCategoryObject == APawn::StaticClass())
+            TypeName = TEXT("Pawn");
+        else if (VarDesc->VarType.PinSubCategoryObject == UStaticMesh::StaticClass())
+            TypeName = TEXT("StaticMesh");
+        else
+            TypeName = TEXT("Object");
+    }
+    else
+        TypeName = TEXT("Unknown");
+
+    Response->SetStringField(TEXT("variable_type"), TypeName);
+    Response->SetStringField(TEXT("category"), VarDesc->Category.ToString());
+    Response->SetStringField(TEXT("tooltip"), VarDesc->FriendlyName);
+
+    // Get all metadata using our internal metadata system (efficient internal call)
+    TSharedPtr<FJsonObject> MetadataParams = MakeShared<FJsonObject>();
+    MetadataParams->SetStringField(TEXT("blueprint_name"), BlueprintName);
+    MetadataParams->SetStringField(TEXT("variable_name"), VariableName);
+    TSharedPtr<FJsonObject> MetadataResponse = GetBlueprintVariableMetadata(MetadataParams);
+
+    if (MetadataResponse->GetBoolField(TEXT("success")))
+    {
+        const TSharedPtr<FJsonObject>* MetadataObj;
+        if (MetadataResponse->TryGetObjectField(TEXT("metadata"), MetadataObj))
+        {
+            Response->SetObjectField(TEXT("metadata"), *MetadataObj);
+        }
+        else
+        {
+            Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
+        }
+    }
+    else
+    {
+        Response->SetObjectField(TEXT("metadata"), MakeShared<FJsonObject>());
+    }
+
+    // Add array/container information if applicable
+    if (VarDesc->VarType.ContainerType != EPinContainerType::None)
+    {
+        FString ContainerType;
+        switch (VarDesc->VarType.ContainerType)
+        {
+        case EPinContainerType::Array:
+            ContainerType = TEXT("Array");
+            break;
+        case EPinContainerType::Set:
+            ContainerType = TEXT("Set");
+            break;
+        case EPinContainerType::Map:
+            ContainerType = TEXT("Map");
+            break;
+        default:
+            ContainerType = TEXT("None");
+            break;
+        }
+        Response->SetStringField(TEXT("container_type"), ContainerType);
+    }
+    else
+    {
+        Response->SetStringField(TEXT("container_type"), TEXT("None"));
+    }
+
+    // Add property flags information
+    TSharedPtr<FJsonObject> FlagsInfo = MakeShared<FJsonObject>();
+    FlagsInfo->SetBoolField(TEXT("is_editable"), (VarDesc->PropertyFlags & CPF_Edit) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_blueprint_readonly"), (VarDesc->PropertyFlags & CPF_BlueprintReadOnly) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_expose_on_spawn"), (VarDesc->PropertyFlags & CPF_ExposeOnSpawn) != 0);
+    FlagsInfo->SetBoolField(TEXT("is_private"), (VarDesc->PropertyFlags & CPF_DisableEditOnInstance) != 0);
+    Response->SetObjectField(TEXT("property_flags"), FlagsInfo);
+
+    UE_LOG(LogTemp, Warning, TEXT("MCP: Enhanced variable info for '%s': Type=%s, Container=%s"),
+           *VariableName, *TypeName, *Response->GetStringField(TEXT("container_type")));
+
     return Response;
 }
 

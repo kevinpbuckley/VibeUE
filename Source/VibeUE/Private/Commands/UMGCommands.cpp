@@ -192,10 +192,6 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 	{
 		return HandleGetAvailableEvents(Params);
 	}
-	else if (CommandName == TEXT("delete_widget_blueprint"))
-	{
-		return HandleDeleteWidgetBlueprint(Params);
-	}
 
 	// All event handling, data binding, animation, and bulk operations have been removed
 	// Only keeping core working functions
@@ -1394,71 +1390,4 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 // ============================================================================
 // NEW BULK OPERATIONS AND IMPROVED FUNCTIONALITY - Added based on Issues Report
 // ============================================================================
-
-TSharedPtr<FJsonObject> FUMGCommands::HandleDeleteWidgetBlueprint(const TSharedPtr<FJsonObject>& Params)
-{
-	FString WidgetName;
-	bool bCheckReferences = true;
-
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
-	}
-
-	Params->TryGetBoolField(TEXT("check_references"), bCheckReferences);
-
-	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetName);
-	if (!WidgetBlueprint)
-	{
-		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetName));
-	}
-
-	if (!AssetService.IsValid())
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetAssetService not available"));
-	}
-
-	const auto ResultT = AssetService->DeleteWidgetBlueprint(WidgetBlueprint, bCheckReferences);
-	if (ResultT.IsError())
-	{
-		return FCommonUtils::CreateErrorResponse(ResultT.GetErrorMessage());
-	}
-
-	const FWidgetDeleteResult& Payload = ResultT.GetValue();
-
-	TArray<TSharedPtr<FJsonValue>> ReferencesFound;
-	for (const FWidgetReferenceInfo& Reference : Payload.References)
-	{
-		TSharedPtr<FJsonObject> RefObj = MakeShared<FJsonObject>();
-		RefObj->SetStringField(TEXT("package_name"), Reference.PackageName);
-		RefObj->SetStringField(TEXT("reference_type"), Reference.ReferenceType);
-		ReferencesFound.Add(MakeShared<FJsonValueObject>(RefObj));
-	}
-
-	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-	Result->SetBoolField(TEXT("success"), Payload.bDeletionSucceeded);
-	Result->SetStringField(TEXT("widget_name"), WidgetName);
-	Result->SetStringField(TEXT("asset_path"), Payload.AssetPath);
-	Result->SetArrayField(TEXT("references_found"), ReferencesFound);
-	Result->SetNumberField(TEXT("reference_count"), Payload.ReferenceCount);
-	Result->SetBoolField(TEXT("deletion_blocked"), !Payload.bDeletionSucceeded);
-	Result->SetBoolField(TEXT("was_open_in_editor"), Payload.bWasOpenInEditor);
-	Result->SetBoolField(TEXT("references_checked"), Payload.bReferencesChecked);
-
-	if (Payload.bDeletionSucceeded)
-	{
-		Result->SetStringField(TEXT("message"), FString::Printf(TEXT("Widget Blueprint '%s' successfully deleted from project"), *WidgetName));
-		if (Payload.ReferenceCount > 0)
-		{
-			Result->SetStringField(TEXT("warning"), FString::Printf(TEXT("Widget was referenced by %d other assets - those references may now be broken"), Payload.ReferenceCount));
-		}
-	}
-	else
-	{
-		const FString ErrorMessage = Payload.ErrorMessage.IsEmpty() ? TEXT("Failed to delete Widget Blueprint for unknown reason") : Payload.ErrorMessage;
-		Result->SetStringField(TEXT("error"), ErrorMessage);
-	}
-
-	return Result;
-}
 
