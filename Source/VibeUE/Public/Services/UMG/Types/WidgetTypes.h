@@ -78,6 +78,17 @@ struct VIBEUE_API FWidgetBlueprintInfo
     FWidgetBlueprintInfo()
         : WidgetCount(0)
     {}
+    /** Detailed components (if requested) */
+    TArray<FWidgetInfo> Components;
+
+    /** Variable names exposed by the blueprint */
+    TArray<FString> VariableNames;
+
+    /** Discovered event names */
+    TArray<FString> EventNames;
+
+    /** Animation names */
+    TArray<FString> AnimationNames;
 };
 
 /**
@@ -94,4 +105,71 @@ struct VIBEUE_API FWidgetSlotInfo
     
     /** Slot properties as key-value pairs */
     TMap<FString, FString> Properties;
+};
+
+/**
+ * @struct FWidgetComponentInfo
+ * @brief Detailed information about a single widget component used by handlers
+ */
+struct VIBEUE_API FWidgetComponentInfo
+{
+    FString Name;
+    FString Type;
+    bool bIsVariable = false;
+    bool bIsEnabled = true;
+    FString Visibility;
+    TOptional<FWidgetSlotInfo> SlotInfo;
+    FWidgetComponentInfo() : bIsVariable(false), bIsEnabled(true) {}
+};
+
+/**
+ * @struct FWidgetEventInfo
+ * @brief Representation of an event or callable function on a widget class/blueprint
+ */
+struct VIBEUE_API FWidgetEventInfo
+{
+    FString Name;
+    FString Type;
+    FString Description;
+    FWidgetEventInfo() {}
+};
+
+/**
+ * @struct FWidgetInputMapping
+ * @brief Mapping request for binding an input/event to a blueprint function
+ */
+struct VIBEUE_API FWidgetInputMapping
+{
+    FString EventName;
+    FString FunctionName;
+    FWidgetInputMapping() {}
+};
+
+/**
+ * @struct FWidgetReferenceInfo
+ * @brief Reference information discovered during widget deletion checks
+ */
+struct VIBEUE_API FWidgetReferenceInfo
+{
+    FString PackageName;
+    FString ReferenceType;
+    FWidgetReferenceInfo() {}
+};
+
+/**
+ * @struct FWidgetDeleteResult
+ * @brief Result payload returned when deleting a widget blueprint asset
+ */
+struct VIBEUE_API FWidgetDeleteResult
+{
+    FString WidgetName;
+    FString AssetPath;
+    bool bReferencesChecked = false;
+    TArray<FWidgetReferenceInfo> References;
+    int32 ReferenceCount = 0;
+    bool bWasOpenInEditor = false;
+    bool bDeletionSucceeded = false;
+    FString ErrorMessage;
+
+    FWidgetDeleteResult() {}
 };

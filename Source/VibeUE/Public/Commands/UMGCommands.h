@@ -8,6 +8,9 @@ class UWidget;
 class UWidgetBlueprint;
 class UUserWidget;
 class FWidgetPropertyService;
+class FWidgetComponentService;
+class FWidgetHierarchyService;
+class FWidgetAssetService;
 
 /**
  * Handles UMG (Widget Blueprint) related MCP commands
@@ -66,6 +69,11 @@ private:
     TSharedPtr<class FServiceContext> ServiceContext;
     TSharedPtr<class FWidgetLifecycleService> LifecycleService;
     TSharedPtr<FWidgetPropertyService> PropertyService;
-    // TODO: Add ComponentService when implementing Issue #191 (generic HandleAddWidgetComponent)
+    TSharedPtr<FWidgetComponentService> ComponentService;
+    TSharedPtr<FWidgetHierarchyService> HierarchyService;
+    TSharedPtr<class FWidgetBlueprintInfoService> BlueprintInfoService;
+    TSharedPtr<class FWidgetDiscoveryService> DiscoveryService;
+    TSharedPtr<class FWidgetEventService> EventService;
+    TSharedPtr<FWidgetAssetService> AssetService;
     // TODO: Issue #188 skipped - discovery handlers already well-structured
 }; 

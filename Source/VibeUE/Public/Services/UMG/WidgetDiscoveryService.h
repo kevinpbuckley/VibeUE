@@ -96,4 +96,13 @@ public:
      * @return TResult containing widget pointer on success, or error
      */
     TResult<UWidget*> FindWidgetByName(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
+
+    /**
+     * @brief Return supported UMG widget types available for creation
+     *
+     * This returns a list of UMG widget type names (e.g. "TextBlock", "Button") used
+     * by the tooling layer to present a palette of widget types. Implemented here so
+     * handlers can delegate to the discovery service for consistent lists.
+     */
+    TResult<TArray<FString>> GetAvailableWidgetTypes();
 };

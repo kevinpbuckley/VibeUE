@@ -2,6 +2,7 @@
 
 #include "CoreMinimal.h"
 #include "Services/Common/ServiceBase.h"
+#include "Services/UMG/Types/WidgetComponentTypes.h"
 #include "Services/UMG/Types/WidgetTypes.h"
 #include "Core/Result.h"
 
@@ -9,6 +10,7 @@
 class UWidget;
 class UWidgetBlueprint;
 class UPanelWidget;
+class UPanelSlot;
 
 /**
  * @class FWidgetComponentService
@@ -63,17 +65,11 @@ public:
     TResult<void> RemoveWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
 
     /**
-     * @brief Add a child widget to a panel widget
-     * 
-     * @param WidgetBlueprint Target widget blueprint
-     * @param ChildName Name of child widget
-     * @param ParentName Name of parent panel widget
-     * @return TResult indicating success or error
+     * @brief Add an existing child widget to a panel with optional slot configuration.
      */
-    TResult<void> AddChildToPanel(
+    TResult<FWidgetAddChildResult> AddChildToPanel(
         UWidgetBlueprint* WidgetBlueprint,
-        const FString& ChildName,
-        const FString& ParentName
+        const FWidgetAddChildRequest& Request
     );
 
     /**
@@ -113,6 +109,22 @@ public:
     );
 
     /**
+     * @brief Remove a widget component with optional recursive behaviour.
+     */
+    TResult<FWidgetRemoveComponentResult> RemoveComponent(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FWidgetRemoveComponentRequest& Request
+    );
+
+    /**
+     * @brief Update slot properties for an existing widget.
+     */
+    TResult<FWidgetSlotUpdateResult> SetSlotProperties(
+        UWidgetBlueprint* WidgetBlueprint,
+        const FWidgetSlotUpdateRequest& Request
+    );
+
+    /**
      * @brief Get parent panel widget for a widget
      * 
      * @param WidgetBlueprint Widget blueprint containing the widget
@@ -120,6 +132,11 @@ public:
      * @return TResult containing parent panel widget or error
      */
     TResult<UPanelWidget*> GetParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
+
+    /**
+     * @brief Retrieve component information for a widget component
+     */
+    TResult<FWidgetComponentInfo> GetWidgetComponentInfo(UWidgetBlueprint* WidgetBlueprint, const FString& ComponentName, bool bIncludeSlotInfo = true);
 
 private:
     /**
@@ -138,4 +155,10 @@ private:
      * @return True if unique
      */
     bool IsWidgetNameUnique(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName);
+
+    TResult<UPanelWidget*> ResolveParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& ParentName, const FString& ParentType);
+
+    bool ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, UWidget* Widget, UPanelSlot* PanelSlot, UPanelWidget* ParentPanel, const TSharedPtr<FJsonObject>& SlotProperties, FString& OutSlotType);
+
+    void CollectChildWidgets(UWidget* Widget, TArray<UWidget*>& OutChildren) const;
 };

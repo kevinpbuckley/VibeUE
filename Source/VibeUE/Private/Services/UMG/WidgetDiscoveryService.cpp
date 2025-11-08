@@ -248,6 +248,34 @@ TResult<FWidgetBlueprintInfo> FWidgetDiscoveryService::GetWidgetBlueprintInfo(UW
     return TResult<FWidgetBlueprintInfo>::Success(Info);
 }
 
+TResult<TArray<FString>> FWidgetDiscoveryService::GetAvailableWidgetTypes()
+{
+    TArray<FString> WidgetTypes = {
+        TEXT("TextBlock"),
+        TEXT("Button"),
+        TEXT("EditableText"),
+        TEXT("EditableTextBox"),
+        TEXT("RichTextBlock"),
+        TEXT("CheckBox"),
+        TEXT("Slider"),
+        TEXT("ProgressBar"),
+        TEXT("Image"),
+        TEXT("Spacer"),
+        TEXT("CanvasPanel"),
+        TEXT("Overlay"),
+        TEXT("HorizontalBox"),
+        TEXT("VerticalBox"),
+        TEXT("ScrollBox"),
+        TEXT("GridPanel"),
+        TEXT("ListView"),
+        TEXT("TileView"),
+        TEXT("TreeView"),
+        TEXT("WidgetSwitcher")
+    };
+
+    return TResult<TArray<FString>>::Success(WidgetTypes);
+}
+
 TResult<bool> FWidgetDiscoveryService::WidgetBlueprintExists(const FString& WidgetBlueprintName)
 {
     if (WidgetBlueprintName.IsEmpty())
