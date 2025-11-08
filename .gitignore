@@ -145,3 +145,6 @@ node_modules/
 # Local configuration files
 *.local.ini
 local.properties
+
+# CodeQL artifacts
+_codeql_detected_source_root

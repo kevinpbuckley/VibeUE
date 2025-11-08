@@ -452,7 +452,8 @@ def _handle_summarize_event_graph(blueprint_name: str, max_nodes: int, ctx) -> D
         nodes_resp = unreal.send_command("manage_blueprint_node", params)
         
         if not nodes_resp or nodes_resp.get("success") is False:
-            return {"success": False, "error": nodes_resp.get("error", "No nodes"), "summary": ""}
+            error_msg = nodes_resp.get("error", "No nodes") if nodes_resp else "No response"
+            return {"success": False, "error": error_msg, "summary": ""}
         
         nodes = nodes_resp.get("nodes", [])[:max_nodes]
         lines: List[str] = []

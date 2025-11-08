@@ -1,34 +1,17 @@
 #include "Commands/AssetCommands.h"
-#include "Commands/CommonUtils.h"
-#include "Engine/Engine.h"
-#include "AssetRegistry/AssetRegistryModule.h"
-#include "Editor/EditorEngine.h"
-#include "EditorAssetLibrary.h"
-#include "Subsystems/AssetEditorSubsystem.h"
-#include "AssetToolsModule.h"
-#include "AssetImportTask.h"
-#include "ContentBrowserModule.h"
-#include "ObjectTools.h"
-#include "Misc/FileHelper.h"
-#include "Misc/Paths.h"
-#include "Factories/TextureFactory.h"
-#include "Interfaces/IPluginManager.h"
-#include "ImageUtils.h"
-#include "IImageWrapperModule.h"
-#include "IImageWrapper.h"
-#include "Engine/Texture2D.h"
-#include "Engine/TextureRenderTarget2D.h"
-#include "HAL/PlatformFilemanager.h"
-#include "Misc/DateTime.h"
-#include "Misc/Guid.h"
-#include "TextureResource.h"
-#include "RenderUtils.h"
-
-// Reentrancy guard for texture import to avoid TaskGraph recursion/assertions
-static FThreadSafeBool GVibeUE_ImportInProgress(false);
+#include "Services/Asset/AssetDiscoveryService.h"
+#include "Services/Asset/AssetLifecycleService.h"
+#include "Services/Asset/AssetImportService.h"
+#include "Core/ServiceContext.h"
+#include "Core/Result.h"
 
 FAssetCommands::FAssetCommands()
 {
+    // Initialize service context and services
+    ServiceContext = MakeShared<FServiceContext>();
+    DiscoveryService = MakeShared<FAssetDiscoveryService>(ServiceContext);
+    LifecycleService = MakeShared<FAssetLifecycleService>(ServiceContext);
+    ImportService = MakeShared<FAssetImportService>(ServiceContext);
 }
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
@@ -41,9 +24,17 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
     {
         return HandleExportTextureForAnalysis(Params);
     }
+    else if (CommandType == TEXT("delete_asset"))
+    {
+        return HandleDeleteAsset(Params);
+    }
     else if (CommandType == TEXT("OpenAssetInEditor"))
     {
         return HandleOpenAssetInEditor(Params);
+    }
+    else if (CommandType == TEXT("duplicate_asset"))
+    {
+        return HandleDuplicateAsset(Params);
     }
 
     return CreateErrorResponse(FString::Printf(TEXT("Unknown asset command: %s"), *CommandType));
@@ -52,7 +43,7 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // IMPORT-ONLY: All rasterization / SVG / procedural generation moved to Python side.
+    // Extract parameters
     FString SourceFile;
     FString DestinationPath = TEXT("/Game/Textures/Imported");
     FString TextureName;
@@ -68,127 +59,41 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPt
         Params->TryGetBoolField(TEXT("save"), bSave);
     }
 
-    if (SourceFile.IsEmpty())
-    {
-        return CreateErrorResponse(TEXT("file_path is required"));
-    }
-    if (!FPaths::FileExists(SourceFile))
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Source file does not exist: %s"), *SourceFile));
-    }
+    // Delegate to ImportService
+    TResult<FTextureImportResult> Result = ImportService->ImportTexture(
+        SourceFile,
+        DestinationPath,
+        TextureName,
+        bReplaceExisting,
+        bSave
+    );
 
-    if (!DestinationPath.StartsWith(TEXT("/")))
+    // Convert result to JSON response
+    if (Result.IsSuccess())
     {
-        DestinationPath = TEXT("/Game/") + DestinationPath;
+        const FTextureImportResult& ImportResult = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Texture imported"));
+        Response->SetStringField(TEXT("asset_path"), ImportResult.AssetPath);
+        Response->SetStringField(TEXT("destination_path"), ImportResult.DestinationPath);
+        Response->SetStringField(TEXT("source_file"), ImportResult.SourceFile);
+        Response->SetStringField(TEXT("asset_class"), ImportResult.AssetClass);
+        Response->SetBoolField(TEXT("import_only"), true);
+        return Response;
     }
-    if (!UEditorAssetLibrary::DoesDirectoryExist(DestinationPath) && !UEditorAssetLibrary::MakeDirectory(DestinationPath))
+    else
     {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to create destination path: %s"), *DestinationPath));
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
-
-    // Reentrancy guard retained (avoids prior TaskGraph recursion crash when multiple imports fired).
-    if (GVibeUE_ImportInProgress)
-    {
-        return CreateErrorResponse(TEXT("Another texture import is already in progress"));
-    }
-    struct FScopedImportFlag { FScopedImportFlag(){ GVibeUE_ImportInProgress = true; } ~FScopedImportFlag(){ GVibeUE_ImportInProgress = false; } } ScopedImportFlag;
-
-    FString Ext = FPaths::GetExtension(SourceFile, false).ToLower();
-    const TSet<FString> RasterExt = { TEXT("png"), TEXT("jpg"), TEXT("jpeg"), TEXT("tga"), TEXT("bmp"), TEXT("exr"), TEXT("hdr"), TEXT("tif"), TEXT("tiff"), TEXT("dds"), TEXT("psd") };
-    if (!RasterExt.Contains(Ext))
-    {
-        return CreateErrorResponse(TEXT("Unsupported format for import-only path (convert externally first)"));
-    }
-
-    // Load & decode raster via ImageWrapper only – no gradients, no dithering, no SVG logic.
-    TArray<uint8> FileData;
-    if (!FFileHelper::LoadFileToArray(FileData, *SourceFile))
-    {
-        return CreateErrorResponse(TEXT("Failed to read file"));
-    }
-    if (FileData.Num() == 0)
-    {
-        return CreateErrorResponse(TEXT("File is empty"));
-    }
-
-    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(TEXT("ImageWrapper"));
-    EImageFormat Detected = ImageWrapperModule.DetectImageFormat(FileData.GetData(), FileData.Num());
-    if (Detected == EImageFormat::Invalid)
-    {
-        return CreateErrorResponse(TEXT("Unable to detect image format"));
-    }
-    TSharedPtr<IImageWrapper> Wrapper = ImageWrapperModule.CreateImageWrapper(Detected);
-    if (!Wrapper.IsValid() || !Wrapper->SetCompressed(FileData.GetData(), FileData.Num()))
-    {
-        return CreateErrorResponse(TEXT("Failed to parse image data"));
-    }
-    TArray<uint8> Raw;
-    if (!Wrapper->GetRaw(ERGBFormat::RGBA, 8, Raw))
-    {
-        return CreateErrorResponse(TEXT("Failed to decode raw RGBA"));
-    }
-    const int32 Width = Wrapper->GetWidth();
-    const int32 Height = Wrapper->GetHeight();
-    if (Width <= 0 || Height <= 0)
-    {
-        return CreateErrorResponse(TEXT("Invalid image dimensions"));
-    }
-    if (Raw.Num() != Width * Height * 4)
-    {
-        return CreateErrorResponse(TEXT("Decoded size mismatch"));
-    }
-
-    TArray<FColor> Pixels; Pixels.SetNumUninitialized(Width * Height);
-    const uint8* Src = Raw.GetData();
-    for (int32 i=0; i<Width*Height; ++i)
-    {
-        int32 bi = i*4; Pixels[i] = FColor(Src[bi+0], Src[bi+1], Src[bi+2], Src[bi+3]);
-    }
-
-    FString FinalName = TextureName;
-    if (FinalName.IsEmpty())
-    {
-        FinalName = TEXT("T_") + FPaths::GetBaseFilename(SourceFile);
-    }
-    const FString PackagePath = DestinationPath + TEXT("/") + FinalName;
-    const FString AssetObjectPath = PackagePath + TEXT(".") + FinalName;
-    if (bReplaceExisting && UEditorAssetLibrary::DoesAssetExist(AssetObjectPath))
-    {
-        UEditorAssetLibrary::DeleteAsset(AssetObjectPath);
-    }
-
-    UPackage* Pkg = CreatePackage(*PackagePath);
-    EObjectFlags Flags = RF_Public | RF_Standalone;
-    FCreateTexture2DParameters TexParams; TexParams.bDeferCompression = true; TexParams.bSRGB = true;
-    UTexture2D* NewTex = FImageUtils::CreateTexture2D(Width, Height, Pixels, Pkg, FinalName, Flags, TexParams);
-    if (!NewTex)
-    {
-        return CreateErrorResponse(TEXT("Failed to create texture asset"));
-    }
-    NewTex->CompressionSettings = TC_Default;
-    NewTex->SRGB = true;
-    NewTex->MarkPackageDirty();
-    if (bSave && !UEditorAssetLibrary::SaveAsset(AssetObjectPath, bSave))
-    {
-        return CreateErrorResponse(TEXT("Failed to save asset"));
-    }
-
-    TSharedPtr<FJsonObject> Resp = CreateSuccessResponse(TEXT("Texture imported"));
-    Resp->SetStringField(TEXT("asset_path"), AssetObjectPath);
-    Resp->SetStringField(TEXT("destination_path"), DestinationPath);
-    Resp->SetStringField(TEXT("source_file"), SourceFile);
-    Resp->SetStringField(TEXT("asset_class"), TEXT("Texture2D"));
-    Resp->SetBoolField(TEXT("import_only"), true);
-    return Resp;
 }
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract parameters
-    FString AssetPath = TEXT("");
+    FString AssetPath;
     FString ExportFormat = TEXT("PNG");
-    FString TempFolder = TEXT("");
-    TArray<int32> MaxSize;
+    FString TempFolder;
+    int32 MaxWidth = 0;
+    int32 MaxHeight = 0;
     
     if (Params.IsValid())
     {
@@ -200,239 +105,49 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSh
         const TArray<TSharedPtr<FJsonValue>>* MaxSizeArray = nullptr;
         if (Params->TryGetArrayField(TEXT("max_size"), MaxSizeArray) && MaxSizeArray->Num() >= 2)
         {
-            MaxSize.Add((*MaxSizeArray)[0]->AsNumber());
-            MaxSize.Add((*MaxSizeArray)[1]->AsNumber());
+            MaxWidth = (*MaxSizeArray)[0]->AsNumber();
+            MaxHeight = (*MaxSizeArray)[1]->AsNumber();
         }
     }
     
-    if (AssetPath.IsEmpty())
+    // Delegate to ImportService
+    TResult<FTextureExportResult> Result = ImportService->ExportTextureForAnalysis(
+        AssetPath,
+        ExportFormat,
+        TempFolder,
+        MaxWidth,
+        MaxHeight
+    );
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
     {
-        return CreateErrorResponse(TEXT("Asset path is required"));
-    }
-    
-    // Load the texture asset
-    UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
-    if (!Asset)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath));
-    }
-    
-    UTexture2D* Texture = Cast<UTexture2D>(Asset);
-    if (!Texture)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Asset is not a Texture2D: %s"), *AssetPath));
-    }
-    
-    // Get texture dimensions
-    int32 TextureWidth = Texture->GetSizeX();
-    int32 TextureHeight = Texture->GetSizeY();
-    
-    // Apply max size constraint if specified
-    int32 ExportWidth = TextureWidth;
-    int32 ExportHeight = TextureHeight;
-    
-    if (MaxSize.Num() >= 2 && MaxSize[0] > 0 && MaxSize[1] > 0)
-    {
-        float ScaleX = (float)MaxSize[0] / (float)TextureWidth;
-        float ScaleY = (float)MaxSize[1] / (float)TextureHeight;
-        float Scale = FMath::Min(ScaleX, ScaleY);
+        const FTextureExportResult& ExportResult = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Texture exported successfully"));
+        Response->SetStringField(TEXT("asset_path"), ExportResult.AssetPath);
+        Response->SetStringField(TEXT("temp_file_path"), ExportResult.TempFilePath);
+        Response->SetStringField(TEXT("export_format"), ExportResult.ExportFormat);
         
-        if (Scale < 1.0f)
-        {
-            ExportWidth = FMath::RoundToInt(TextureWidth * Scale);
-            ExportHeight = FMath::RoundToInt(TextureHeight * Scale);
-        }
-    }
-    
-    // Generate temp file path
-    if (TempFolder.IsEmpty())
-    {
-        TempFolder = FPaths::ProjectSavedDir() / TEXT("Temp") / TEXT("TextureExports");
-    }
-    
-    // Ensure temp directory exists
-    IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
-    if (!PlatformFile.DirectoryExists(*TempFolder))
-    {
-        if (!PlatformFile.CreateDirectoryTree(*TempFolder))
-        {
-            return CreateErrorResponse(FString::Printf(TEXT("Failed to create temp directory: %s"), *TempFolder));
-        }
-    }
-    
-    // Generate unique filename
-    FString AssetName = FPaths::GetBaseFilename(AssetPath);
-    FString Timestamp = FDateTime::Now().ToString(TEXT("%Y%m%d_%H%M%S"));
-    FString UniqueId = FGuid::NewGuid().ToString(EGuidFormats::Short);
-    FString FileName = FString::Printf(TEXT("%s_%s_%s.%s"), *AssetName, *Timestamp, *UniqueId, *ExportFormat.ToLower());
-    FString TempFilePath = TempFolder / FileName;
-    
-    // Read texture data
-    TArray<FColor> RawData;
-    
-    // Ensure texture is loaded and has valid platform data
-    if (!Texture->GetPlatformData() || !Texture->GetPlatformData()->Mips.Num())
-    {
-        return CreateErrorResponse(TEXT("Texture has no valid platform data"));
-    }
-    
-    // Get the first mip level
-    const FTexture2DMipMap& Mip = Texture->GetPlatformData()->Mips[0];
-    
-    // Lock the texture data
-    const void* TextureData = Mip.BulkData.LockReadOnly();
-    if (!TextureData)
-    {
-        return CreateErrorResponse(TEXT("Failed to lock texture data"));
-    }
-    
-    // Convert texture data to FColor array
-    EPixelFormat PixelFormat = Texture->GetPixelFormat();
-    
-    if (PixelFormat == PF_B8G8R8A8)
-    {
-        // BGRA format - most common
-        const FColor* ColorData = static_cast<const FColor*>(TextureData);
-        RawData.Append(ColorData, TextureWidth * TextureHeight);
-    }
-    else if (PixelFormat == PF_R8G8B8A8)
-    {
-        // RGBA format
-        const uint8* ByteData = static_cast<const uint8*>(TextureData);
-        RawData.Reserve(TextureWidth * TextureHeight);
+        TArray<TSharedPtr<FJsonValue>> ExportedSizeArray;
+        ExportedSizeArray.Add(MakeShareable(new FJsonValueNumber(ExportResult.ExportedWidth)));
+        ExportedSizeArray.Add(MakeShareable(new FJsonValueNumber(ExportResult.ExportedHeight)));
+        Response->SetArrayField(TEXT("exported_size"), ExportedSizeArray);
         
-        for (int32 i = 0; i < TextureWidth * TextureHeight; i++)
-        {
-            uint8 R = ByteData[i * 4 + 0];
-            uint8 G = ByteData[i * 4 + 1];
-            uint8 B = ByteData[i * 4 + 2];
-            uint8 A = ByteData[i * 4 + 3];
-            RawData.Add(FColor(R, G, B, A));
-        }
+        Response->SetNumberField(TEXT("file_size"), (double)ExportResult.FileSize);
+        Response->SetBoolField(TEXT("cleanup_required"), true);
+        
+        return Response;
     }
     else
     {
-        // Unlock and return error for unsupported formats
-        Mip.BulkData.Unlock();
-        return CreateErrorResponse(FString::Printf(TEXT("Unsupported pixel format: %d"), (int32)PixelFormat));
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
-    
-    // Unlock the texture data
-    Mip.BulkData.Unlock();
-    
-    // Resize if needed
-    TArray<FColor> FinalData;
-    if (ExportWidth != TextureWidth || ExportHeight != TextureHeight)
-    {
-        // Simple bilinear resize
-        FinalData.Reserve(ExportWidth * ExportHeight);
-        
-        for (int32 Y = 0; Y < ExportHeight; Y++)
-        {
-            for (int32 X = 0; X < ExportWidth; X++)
-            {
-                float SrcX = (float)X * (float)TextureWidth / (float)ExportWidth;
-                float SrcY = (float)Y * (float)TextureHeight / (float)ExportHeight;
-                
-                int32 X1 = FMath::FloorToInt(SrcX);
-                int32 Y1 = FMath::FloorToInt(SrcY);
-                int32 X2 = FMath::Min(X1 + 1, TextureWidth - 1);
-                int32 Y2 = FMath::Min(Y1 + 1, TextureHeight - 1);
-                
-                FColor Color = RawData[Y1 * TextureWidth + X1];
-                FinalData.Add(Color);
-            }
-        }
-    }
-    else
-    {
-        FinalData = MoveTemp(RawData);
-    }
-    
-    // Convert to requested format and save
-    bool bSaveSuccess = false;
-    
-    if (ExportFormat.ToUpper() == TEXT("PNG"))
-    {
-        // Convert FColor to uint8 array for PNG
-        TArray<uint8> PNGData;
-        PNGData.Reserve(ExportWidth * ExportHeight * 4);
-        
-        for (const FColor& Color : FinalData)
-        {
-            PNGData.Add(Color.R);
-            PNGData.Add(Color.G);
-            PNGData.Add(Color.B);
-            PNGData.Add(Color.A);
-        }
-        
-        // Use ImageWrapper to save as PNG
-        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
-        
-        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(PNGData.GetData(), PNGData.Num(), ExportWidth, ExportHeight, ERGBFormat::RGBA, 8))
-        {
-            const TArray64<uint8>& CompressedData = ImageWrapper->GetCompressed();
-            bSaveSuccess = FFileHelper::SaveArrayToFile(TArray<uint8>(CompressedData), *TempFilePath);
-        }
-    }
-    else if (ExportFormat.ToUpper() == TEXT("TGA"))
-    {
-        // Convert FColor to uint8 array for TGA
-        TArray<uint8> TGAData;
-        TGAData.Reserve(ExportWidth * ExportHeight * 4);
-        
-        for (const FColor& Color : FinalData)
-        {
-            TGAData.Add(Color.B);  // TGA is BGR
-            TGAData.Add(Color.G);
-            TGAData.Add(Color.R);
-            TGAData.Add(Color.A);
-        }
-        
-        IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
-        TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::TGA);
-        
-        if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(TGAData.GetData(), TGAData.Num(), ExportWidth, ExportHeight, ERGBFormat::BGRA, 8))
-        {
-            const TArray64<uint8>& CompressedData = ImageWrapper->GetCompressed();
-            bSaveSuccess = FFileHelper::SaveArrayToFile(TArray<uint8>(CompressedData), *TempFilePath);
-        }
-    }
-    else
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Unsupported export format: %s"), *ExportFormat));
-    }
-    
-    if (!bSaveSuccess)
-    {
-        return CreateErrorResponse(TEXT("Failed to save exported texture file"));
-    }
-    
-    // Get file size
-    int64 FileSize = PlatformFile.FileSize(*TempFilePath);
-    
-    // Create success response
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Texture exported successfully"));
-    Response->SetStringField(TEXT("asset_path"), AssetPath);
-    Response->SetStringField(TEXT("temp_file_path"), TempFilePath);
-    Response->SetStringField(TEXT("export_format"), ExportFormat);
-    
-    TArray<TSharedPtr<FJsonValue>> ExportedSizeArray;
-    ExportedSizeArray.Add(MakeShareable(new FJsonValueNumber(ExportWidth)));
-    ExportedSizeArray.Add(MakeShareable(new FJsonValueNumber(ExportHeight)));
-    Response->SetArrayField(TEXT("exported_size"), ExportedSizeArray);
-    
-    Response->SetNumberField(TEXT("file_size"), (double)FileSize);
-    Response->SetBoolField(TEXT("cleanup_required"), true);
-    
-    return Response;
 }
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params)
 {
     // Extract parameters
-    FString AssetPath = TEXT("");
+    FString AssetPath;
     bool bForceOpen = false;
     
     if (Params.IsValid())
@@ -441,145 +156,109 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr
         Params->TryGetBoolField(TEXT("force_open"), bForceOpen);
     }
     
-    if (AssetPath.IsEmpty())
+    // Delegate to LifecycleService
+    TResult<FString> Result = LifecycleService->OpenAssetInEditor(AssetPath, bForceOpen);
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
     {
-        return CreateErrorResponse(TEXT("asset_path parameter is required"));
+        const FString& EditorType = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(FString::Printf(TEXT("Successfully opened asset: %s"), *AssetPath));
+        Response->SetStringField(TEXT("asset_path"), AssetPath);
+        Response->SetStringField(TEXT("editor_type"), EditorType);
+        
+        // Check if it was already open by querying the service
+        TResult<bool> WasOpenResult = LifecycleService->IsAssetOpen(AssetPath);
+        bool bWasAlreadyOpen = WasOpenResult.IsSuccess() && WasOpenResult.GetValue();
+        Response->SetBoolField(TEXT("was_already_open"), bWasAlreadyOpen);
+        
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameter
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
     }
     
-    // Ensure asset path starts with /Game or other valid mount point
-    if (!AssetPath.StartsWith(TEXT("/Game")) && !AssetPath.StartsWith(TEXT("/Engine")) && !AssetPath.StartsWith(TEXT("/Script")))
+    // Extract optional parameters
+    bool bForceDelete = false;
+    bool bShowConfirmation = true;
+    
+    if (Params.IsValid())
     {
-        // Try adding /Game prefix if it's a relative path
-        if (!AssetPath.StartsWith(TEXT("/")))
-        {
-            AssetPath = TEXT("/Game/") + AssetPath;
-        }
-        else
-        {
-            AssetPath = TEXT("/Game") + AssetPath;
-        }
+        Params->TryGetBoolField(TEXT("force_delete"), bForceDelete);
+        Params->TryGetBoolField(TEXT("show_confirmation"), bShowConfirmation);
     }
     
-    // Try to find the asset
-    UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
-    if (!Asset)
+    // Delegate to LifecycleService
+    TResult<bool> Result = LifecycleService->DeleteAsset(AssetPath, bForceDelete, bShowConfirmation);
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
     {
-        // Try with different extensions if not found
-        TArray<FString> Extensions = {TEXT(".uasset"), TEXT("")};
-        bool bFoundAsset = false;
-        
-        for (const FString& Extension : Extensions)
-        {
-            FString TestPath = AssetPath + Extension;
-            Asset = UEditorAssetLibrary::LoadAsset(TestPath);
-            if (Asset)
-            {
-                AssetPath = TestPath;
-                bFoundAsset = true;
-                break;
-            }
-        }
-        
-        if (!bFoundAsset)
-        {
-            // Check if the asset exists in the Content Browser but failed to load
-            FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-            IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-            
-            FAssetData AssetData = AssetRegistry.GetAssetByObjectPath(FSoftObjectPath(AssetPath));
-            if (AssetData.IsValid())
-            {
-                return CreateErrorResponse(FString::Printf(TEXT("Asset exists but failed to load: %s. Asset may be corrupted or have dependencies issues."), *AssetPath));
-            }
-            else
-            {
-                return CreateErrorResponse(FString::Printf(TEXT("Asset not found in registry: %s. Check if the asset path is correct."), *AssetPath));
-            }
-        }
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully deleted asset: %s"), *AssetPath)
+        );
+        Response->SetStringField(TEXT("asset_path"), AssetPath);
+        Response->SetBoolField(TEXT("deleted"), Result.GetValue());
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameters
+    FString AssetPath;
+    FString DestinationPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+    }
+    if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'destination_path' parameter"));
     }
     
-    // Get the Asset Editor Subsystem
-    UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
-    if (!AssetEditorSubsystem)
-    {
-        return CreateErrorResponse(TEXT("Failed to get Asset Editor Subsystem"));
-    }
+    // Extract optional parameter
+    FString NewName;
+    Params->TryGetStringField(TEXT("new_name"), NewName);
     
-    // Check if asset is already open
-    bool bWasAlreadyOpen = AssetEditorSubsystem->FindEditorForAsset(Asset, false) != nullptr;
+    // Delegate to LifecycleService
+    TResult<FAssetDuplicateResult> Result = LifecycleService->DuplicateAsset(
+        AssetPath,
+        DestinationPath,
+        NewName
+    );
     
-    // Open the asset in its appropriate editor
-    bool bSuccess = false;
-    FString EditorType = TEXT("Unknown");
-    
-    try
+    // Convert result to JSON response
+    if (Result.IsSuccess())
     {
-        if (bForceOpen && bWasAlreadyOpen)
-        {
-            // Close existing editor first if force open is requested
-            AssetEditorSubsystem->CloseAllEditorsForAsset(Asset);
-        }
-        
-        bSuccess = AssetEditorSubsystem->OpenEditorForAsset(Asset);
-        
-        // Determine editor type based on asset class (do this regardless of bSuccess value)
-        if (Asset->IsA<UTexture>())
-        {
-            EditorType = TEXT("Texture Editor");
-        }
-        else if (Asset->IsA<UMaterial>() || Asset->IsA<UMaterialInstance>())
-        {
-            EditorType = TEXT("Material Editor");
-        }
-        else if (Asset->IsA<UBlueprint>())
-        {
-            EditorType = TEXT("Blueprint Editor");
-        }
-        else if (Asset->IsA<UStaticMesh>())
-        {
-            EditorType = TEXT("Static Mesh Editor");
-        }
-        else if (Asset->IsA<USoundBase>())
-        {
-            EditorType = TEXT("Audio Editor");
-        }
-        else if (Asset->IsA<UDataTable>())
-        {
-            EditorType = TEXT("Data Table Editor");
-        }
-        else
-        {
-            EditorType = Asset->GetClass()->GetName() + TEXT(" Editor");
-        }
-        
-        // Check if editor is now open (sometimes OpenEditorForAsset returns false but still opens the editor)
-        bool bIsNowOpen = AssetEditorSubsystem->FindEditorForAsset(Asset, false) != nullptr;
-        
-        if (!bSuccess && !bIsNowOpen)
-        {
-            // Only return error if both the function failed AND the editor is not actually open
-            FString AssetClassName = Asset ? Asset->GetClass()->GetName() : TEXT("Unknown");
-            return CreateErrorResponse(FString::Printf(TEXT("OpenEditorForAsset failed for %s (Class: %s). Asset may not have an appropriate editor or the editor subsystem failed."), *AssetPath, *AssetClassName));
-        }
-        
-        // If we get here, either bSuccess was true OR the editor is actually open despite bSuccess being false
-        bSuccess = true; // Force success since the editor is open
+        const FAssetDuplicateResult& DuplicateResult = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully duplicated asset: %s"), *DuplicateResult.NewPath)
+        );
+        Response->SetStringField(TEXT("original_path"), DuplicateResult.OriginalPath);
+        Response->SetStringField(TEXT("new_path"), DuplicateResult.NewPath);
+        Response->SetStringField(TEXT("asset_type"), DuplicateResult.AssetType);
+        return Response;
     }
-    catch (const std::exception& e)
+    else
     {
-        return CreateErrorResponse(FString::Printf(TEXT("C++ exception occurred while opening asset %s: %s"), *AssetPath, UTF8_TO_TCHAR(e.what())));
+        return CreateErrorResponse(Result.GetErrorMessage());
     }
-    catch (...)
-    {
-        return CreateErrorResponse(FString::Printf(TEXT("Unknown exception occurred while opening asset: %s"), *AssetPath));
-    }
-    
-    // Success case - this should only be reached if bSuccess is true
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(FString::Printf(TEXT("Successfully opened asset: %s"), *AssetPath));
-    Response->SetStringField(TEXT("asset_path"), AssetPath);
-    Response->SetStringField(TEXT("editor_type"), EditorType);
-    Response->SetBoolField(TEXT("was_already_open"), bWasAlreadyOpen);
-    return Response;
 }
 
 TSharedPtr<FJsonObject> FAssetCommands::CreateSuccessResponse(const FString& Message)

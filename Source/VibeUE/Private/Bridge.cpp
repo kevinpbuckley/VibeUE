@@ -58,6 +58,9 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
+// Include service architecture
+#include "Core/ServiceContext.h"
+#include "Core/ErrorCodes.h"
 
 // Default settings
 #define MCP_SERVER_HOST "127.0.0.1"
@@ -65,10 +68,16 @@
 
 UBridge::UBridge()
 {
+    // Create service context (shared across all services and command handlers)
+    ServiceContext = MakeShared<FServiceContext>();
+    
+    // Initialize command handlers
+    // Note: Some handlers create their own ServiceContext internally (AssetCommands, UMGCommands, BlueprintNodeCommands)
+    // TODO(Issue #38-40): Update remaining handlers to accept ServiceContext when refactored
     BlueprintCommands = MakeShared<FBlueprintCommands>();
     BlueprintNodeCommands = MakeShared<FBlueprintNodeCommands>();
     BlueprintComponentReflection = MakeShared<FBlueprintComponentReflection>();
-    UMGCommands = MakeShared<FUMGCommands>();
+    UMGCommands = MakeShared<FUMGCommands>(ServiceContext);
     UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
 }
@@ -81,12 +90,19 @@ UBridge::~UBridge()
     UMGCommands.Reset();
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
+    
+    // Defensive cleanup - Deinitialize() should have been called by UEditorSubsystem,
+    // but ensure ServiceContext is cleaned up even if lifecycle was abnormal
+    if (ServiceContext.IsValid())
+    {
+        ServiceContext.Reset();
+    }
 }
 
 // Initialize subsystem
 void UBridge::Initialize(FSubsystemCollectionBase& Collection)
 {
-    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Initializing"));
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Initializing with service architecture"));
     
     bIsRunning = false;
     ListenerSocket = nullptr;
@@ -95,6 +111,17 @@ void UBridge::Initialize(FSubsystemCollectionBase& Collection)
     Port = MCP_SERVER_PORT;
     FIPv4Address::Parse(MCP_SERVER_HOST, ServerAddress);
 
+    // Log service context initialization
+    if (ServiceContext.IsValid())
+    {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: ServiceContext initialized successfully"));
+    }
+    else
+    {
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to initialize ServiceContext"));
+        return;
+    }
+
     // Start the server automatically
     StartServer();
 }
@@ -102,8 +129,17 @@ void UBridge::Initialize(FSubsystemCollectionBase& Collection)
 // Clean up resources when subsystem is destroyed
 void UBridge::Deinitialize()
 {
-    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Shutting down"));
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Graceful shutdown initiated"));
     StopServer();
+    
+    // Clean up service context
+    if (ServiceContext.IsValid())
+    {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: ServiceContext cleaned up"));
+        ServiceContext.Reset();
+    }
+    
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Shutdown complete"));
 }
 
 // Start the MCP server
@@ -111,15 +147,17 @@ void UBridge::StartServer()
 {
     if (bIsRunning)
     {
-        UE_LOG(LogTemp, Warning, TEXT("VibeUEBridge: Server is already running"));
+        UE_LOG(LogTemp, Warning, TEXT("VibeUEBridge: Server is already running on %s:%d"), *ServerAddress.ToString(), Port);
         return;
     }
+
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Starting server on %s:%d"), *ServerAddress.ToString(), Port);
 
     // Create socket subsystem
     ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
     if (!SocketSubsystem)
     {
-        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to get socket subsystem"));
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to get socket subsystem - network services unavailable"));
         return;
     }
 
@@ -127,7 +165,7 @@ void UBridge::StartServer()
     TSharedPtr<FSocket> NewListenerSocket = MakeShareable(SocketSubsystem->CreateSocket(NAME_Stream, TEXT("VibeUEListener"), false));
     if (!NewListenerSocket.IsValid())
     {
-        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to create listener socket"));
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to create listener socket - cannot start server"));
         return;
     }
 
@@ -139,20 +177,20 @@ void UBridge::StartServer()
     FIPv4Endpoint Endpoint(ServerAddress, Port);
     if (!NewListenerSocket->Bind(*Endpoint.ToInternetAddr()))
     {
-        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to bind listener socket to %s:%d"), *ServerAddress.ToString(), Port);
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to bind listener socket to %s:%d - address may be in use"), *ServerAddress.ToString(), Port);
         return;
     }
 
     // Start listening
     if (!NewListenerSocket->Listen(5))
     {
-        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to start listening"));
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to start listening on %s:%d"), *ServerAddress.ToString(), Port);
         return;
     }
 
     ListenerSocket = NewListenerSocket;
     bIsRunning = true;
-    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server started on %s:%d"), *ServerAddress.ToString(), Port);
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server started successfully on %s:%d - ready for connections"), *ServerAddress.ToString(), Port);
 
     // Start server thread
     ServerThread = FRunnableThread::Create(
@@ -163,10 +201,12 @@ void UBridge::StartServer()
 
     if (!ServerThread)
     {
-        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to create server thread"));
+        UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: Failed to create server thread - stopping server"));
         StopServer();
         return;
     }
+    
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server thread created successfully"));
 }
 
 // Stop the MCP server
@@ -177,11 +217,13 @@ void UBridge::StopServer()
         return;
     }
 
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Stopping server..."));
     bIsRunning = false;
 
     // Clean up thread
     if (ServerThread)
     {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Terminating server thread"));
         ServerThread->Kill(true);
         delete ServerThread;
         ServerThread = nullptr;
@@ -190,17 +232,140 @@ void UBridge::StopServer()
     // Close sockets
     if (ConnectionSocket.IsValid())
     {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Closing connection socket"));
         ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ConnectionSocket.Get());
         ConnectionSocket.Reset();
     }
 
     if (ListenerSocket.IsValid())
     {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Closing listener socket"));
         ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ListenerSocket.Get());
         ListenerSocket.Reset();
     }
 
-    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server stopped"));
+    UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server stopped successfully"));
+}
+
+// Route command to appropriate handler based on command type
+TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> ResultJson;
+    
+    // Status and System Commands
+    if (CommandType == TEXT("get_system_info"))
+    {
+        ResultJson = MakeShareable(new FJsonObject);
+        ResultJson->SetBoolField(TEXT("success"), true);
+        ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.6"));
+        ResultJson->SetStringField(TEXT("plugin_version"), TEXT("1.0"));
+        ResultJson->SetStringField(TEXT("server_status"), TEXT("running"));
+        ResultJson->SetBoolField(TEXT("editor_connected"), true);
+        
+        TSharedPtr<FJsonObject> AvailableTools = MakeShareable(new FJsonObject);
+        AvailableTools->SetBoolField(TEXT("widget_tools"), true);
+        AvailableTools->SetBoolField(TEXT("blueprint_tools"), true);
+        AvailableTools->SetBoolField(TEXT("actor_tools"), true);
+        AvailableTools->SetBoolField(TEXT("editor_tools"), true);
+        ResultJson->SetObjectField(TEXT("available_tools"), AvailableTools);
+    }
+    // Blueprint Component Reflection Commands
+    else if (CommandType == TEXT("get_available_components") ||
+             CommandType == TEXT("get_component_info") ||
+             CommandType == TEXT("get_property_metadata") ||
+             CommandType == TEXT("get_component_hierarchy") ||
+             CommandType == TEXT("add_component") ||
+             CommandType == TEXT("set_component_property") ||
+             CommandType == TEXT("get_component_property") ||
+             CommandType == TEXT("get_all_component_properties") ||
+             CommandType == TEXT("compare_component_properties") ||
+             CommandType == TEXT("reparent_component") ||
+             CommandType == TEXT("remove_component") ||
+             CommandType == TEXT("reorder_components"))
+    {
+        ResultJson = BlueprintComponentReflection->HandleCommand(CommandType, Params);
+    }
+    // Blueprint Commands
+    else if (CommandType == TEXT("create_blueprint") || 
+             CommandType == TEXT("add_component_to_blueprint") || 
+             CommandType == TEXT("set_component_property") || 
+             CommandType == TEXT("compile_blueprint") || 
+             CommandType == TEXT("get_blueprint_property") || 
+             CommandType == TEXT("set_blueprint_property") || 
+             CommandType == TEXT("reparent_blueprint") ||
+             // Blueprint Variable Commands
+             CommandType == TEXT("manage_blueprint_variable") ||
+             CommandType == TEXT("add_blueprint_variable") ||
+             CommandType == TEXT("get_blueprint_variable") ||
+             CommandType == TEXT("delete_blueprint_variable") ||
+             CommandType == TEXT("get_available_blueprint_variable_types") ||
+             // Reflection-based variable property API (two-method)
+             CommandType == TEXT("get_variable_property") ||
+             CommandType == TEXT("set_variable_property") ||
+             // Comprehensive Blueprint information
+             CommandType == TEXT("get_blueprint_info"))
+    {
+        ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
+    }
+    // Blueprint Node Commands
+    else if (CommandType == TEXT("manage_blueprint_node") ||
+             CommandType == TEXT("manage_blueprint_function") ||
+             CommandType == TEXT("get_available_blueprint_nodes") ||
+             CommandType == TEXT("discover_nodes_with_descriptors"))
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
+        ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
+    }
+    // UMG Commands (Reflection-based system)
+    else if (CommandType == TEXT("create_umg_widget_blueprint") ||
+             CommandType == TEXT("delete_widget_blueprint") ||
+             // UMG Discovery Commands
+             CommandType == TEXT("search_items") ||
+             CommandType == TEXT("get_widget_blueprint_info") ||
+             CommandType == TEXT("list_widget_components") ||
+             CommandType == TEXT("get_widget_component_properties") ||
+             CommandType == TEXT("get_available_widget_types") ||
+             CommandType == TEXT("validate_widget_hierarchy") ||
+             CommandType == TEXT("remove_widget_component") ||
+             // UMG Child Management
+             CommandType == TEXT("add_child_to_panel") ||
+             CommandType == TEXT("remove_umg_component") ||  // Universal component removal
+             CommandType == TEXT("set_widget_slot_properties") ||
+             // UMG Styling Commands
+             CommandType == TEXT("set_widget_property") ||
+             CommandType == TEXT("get_widget_property") ||
+             CommandType == TEXT("list_widget_properties") ||
+             // UMG Event Commands
+             CommandType == TEXT("bind_input_events") ||
+             CommandType == TEXT("get_available_events"))
+    {
+        ResultJson = UMGCommands->HandleCommand(CommandType, Params);
+    }
+    // UMG Reflection Commands
+    else if (CommandType == TEXT("get_available_widgets") ||
+             CommandType == TEXT("add_widget_component"))
+    {
+        ResultJson = UMGReflectionCommands->HandleCommand(CommandType, Params);
+    }
+    // Asset Discovery and Procedural Generation Commands
+    else if (CommandType == TEXT("import_texture_asset") ||
+             CommandType == TEXT("export_texture_for_analysis") ||
+             CommandType == TEXT("delete_asset") ||
+             CommandType == TEXT("duplicate_asset") ||
+             CommandType == TEXT("OpenAssetInEditor"))
+    {
+        ResultJson = AssetCommands->HandleCommand(CommandType, Params);
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("VibeUEBridge: Unknown command received: %s"), *CommandType);
+        ResultJson = MakeShareable(new FJsonObject);
+        ResultJson->SetBoolField(TEXT("success"), false);
+        ResultJson->SetStringField(TEXT("error_code"), VibeUE::ErrorCodes::UNKNOWN_COMMAND);
+        ResultJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown command: %s"), *CommandType));
+    }
+    
+    return ResultJson;
 }
 
 // Execute a command received from a client
@@ -219,116 +384,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
         
         try
         {
-            TSharedPtr<FJsonObject> ResultJson;
-            
-            // Status and System Commands
-            if (CommandType == TEXT("get_system_info"))
-            {
-                ResultJson = MakeShareable(new FJsonObject);
-                ResultJson->SetBoolField(TEXT("success"), true);
-                ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.6"));
-                ResultJson->SetStringField(TEXT("plugin_version"), TEXT("1.0"));
-                ResultJson->SetStringField(TEXT("server_status"), TEXT("running"));
-                ResultJson->SetBoolField(TEXT("editor_connected"), true);
-                
-                TSharedPtr<FJsonObject> AvailableTools = MakeShareable(new FJsonObject);
-                AvailableTools->SetBoolField(TEXT("widget_tools"), true);
-                AvailableTools->SetBoolField(TEXT("blueprint_tools"), true);
-                AvailableTools->SetBoolField(TEXT("actor_tools"), true);
-                AvailableTools->SetBoolField(TEXT("editor_tools"), true);
-                ResultJson->SetObjectField(TEXT("available_tools"), AvailableTools);
-            }
-            // Blueprint Component Reflection Commands
-            else if (CommandType == TEXT("get_available_components") ||
-                     CommandType == TEXT("get_component_info") ||
-                     CommandType == TEXT("get_property_metadata") ||
-                     CommandType == TEXT("get_component_hierarchy") ||
-                     CommandType == TEXT("add_component") ||
-                     CommandType == TEXT("set_component_property") ||
-                     CommandType == TEXT("get_component_property") ||
-                     CommandType == TEXT("get_all_component_properties") ||
-                     CommandType == TEXT("compare_component_properties") ||
-                     CommandType == TEXT("reparent_component") ||
-                     CommandType == TEXT("remove_component") ||
-                     CommandType == TEXT("reorder_components"))
-            {
-                ResultJson = BlueprintComponentReflection->HandleCommand(CommandType, Params);
-            }
-            // Blueprint Commands
-            else if (CommandType == TEXT("create_blueprint") || 
-                     CommandType == TEXT("add_component_to_blueprint") || 
-                     CommandType == TEXT("set_component_property") || 
-                     CommandType == TEXT("compile_blueprint") || 
-                     CommandType == TEXT("get_blueprint_property") || 
-                     CommandType == TEXT("set_blueprint_property") || 
-                     CommandType == TEXT("reparent_blueprint") ||
-                     // Blueprint Variable Commands
-                     CommandType == TEXT("manage_blueprint_variable") ||
-                     CommandType == TEXT("add_blueprint_variable") ||
-                     CommandType == TEXT("get_blueprint_variable") ||
-                     CommandType == TEXT("delete_blueprint_variable") ||
-                     CommandType == TEXT("get_available_blueprint_variable_types") ||
-                     // Reflection-based variable property API (two-method)
-                     CommandType == TEXT("get_variable_property") ||
-                     CommandType == TEXT("set_variable_property") ||
-                     // Comprehensive Blueprint information
-                     CommandType == TEXT("get_blueprint_info"))
-            {
-                ResultJson = BlueprintCommands->HandleCommand(CommandType, Params);
-            }
-            // Blueprint Node Commands
-            else if (CommandType == TEXT("manage_blueprint_node") ||
-                     CommandType == TEXT("manage_blueprint_function") ||
-                     CommandType == TEXT("get_available_blueprint_nodes") ||
-                     CommandType == TEXT("discover_nodes_with_descriptors"))
-            {
-                UE_LOG(LogTemp, Warning, TEXT("MCP: Dispatching to BlueprintNodeCommands: %s"), *CommandType);
-                ResultJson = BlueprintNodeCommands->HandleCommand(CommandType, Params);
-            }
-            // UMG Commands (Reflection-based system)
-            else if (CommandType == TEXT("create_umg_widget_blueprint") ||
-                     CommandType == TEXT("delete_widget_blueprint") ||
-                     // UMG Discovery Commands
-                     CommandType == TEXT("search_items") ||
-                     CommandType == TEXT("get_widget_blueprint_info") ||
-                     CommandType == TEXT("list_widget_components") ||
-                     CommandType == TEXT("get_widget_component_properties") ||
-                     CommandType == TEXT("get_available_widget_types") ||
-                     CommandType == TEXT("validate_widget_hierarchy") ||
-                     CommandType == TEXT("remove_widget_component") ||
-                     // UMG Child Management
-                     CommandType == TEXT("add_child_to_panel") ||
-                     CommandType == TEXT("remove_umg_component") ||  // Universal component removal
-                     CommandType == TEXT("set_widget_slot_properties") ||
-                     // UMG Styling Commands
-                     CommandType == TEXT("set_widget_property") ||
-                     CommandType == TEXT("get_widget_property") ||
-                     CommandType == TEXT("list_widget_properties") ||
-                     // UMG Event Commands
-                     CommandType == TEXT("bind_input_events") ||
-                     CommandType == TEXT("get_available_events"))
-            {
-                ResultJson = UMGCommands->HandleCommand(CommandType, Params);
-            }
-            // UMG Reflection Commands
-            else if (CommandType == TEXT("get_available_widgets") ||
-                     CommandType == TEXT("add_widget_component"))
-            {
-                ResultJson = UMGReflectionCommands->HandleCommand(CommandType, Params);
-            }
-            // Asset Discovery and Procedural Generation Commands
-            else if (CommandType == TEXT("import_texture_asset") ||
-                     CommandType == TEXT("export_texture_for_analysis") ||
-                     CommandType == TEXT("OpenAssetInEditor"))
-            {
-                ResultJson = AssetCommands->HandleCommand(CommandType, Params);
-            }
-            else
-            {
-                ResultJson = MakeShareable(new FJsonObject);
-                ResultJson->SetBoolField(TEXT("success"), false);
-                ResultJson->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown command: %s"), *CommandType));
-            }
+            // Route command to appropriate handler
+            TSharedPtr<FJsonObject> ResultJson = RouteCommand(CommandType, Params);
             
             // Check if the result contains an error
             bool bSuccess = true;
@@ -377,12 +434,20 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
                 {
                     ResponseJson->SetField(TEXT("error_code"), ResultJson->TryGetField(TEXT("code")));
                 }
+                // Also check for error_code field directly
+                else if (ResultJson->HasField(TEXT("error_code")))
+                {
+                    ResponseJson->SetField(TEXT("error_code"), ResultJson->TryGetField(TEXT("error_code")));
+                }
             }
         }
         catch (const std::exception& e)
         {
+            FString ExceptionMessage = UTF8_TO_TCHAR(e.what());
+            UE_LOG(LogTemp, Error, TEXT("VibeUEBridge: C++ exception during command execution: %s"), *ExceptionMessage);
             ResponseJson->SetStringField(TEXT("status"), TEXT("error"));
-            ResponseJson->SetStringField(TEXT("error"), UTF8_TO_TCHAR(e.what()));
+            ResponseJson->SetStringField(TEXT("error_code"), VibeUE::ErrorCodes::CPP_EXCEPTION);
+            ResponseJson->SetStringField(TEXT("error"), ExceptionMessage);
         }
         
         FString ResultString;
@@ -392,4 +457,26 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
     });
     
     return Future.Get();
+}
+
+// Helper to create standardized error response
+FString UBridge::CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage)
+{
+    TSharedPtr<FJsonObject> ResponseJson = MakeShared<FJsonObject>();
+    ResponseJson->SetStringField(TEXT("status"), TEXT("error"));
+    ResponseJson->SetStringField(TEXT("error_code"), ErrorCode);
+    
+    if (!ErrorMessage.IsEmpty())
+    {
+        ResponseJson->SetStringField(TEXT("error"), ErrorMessage);
+    }
+    else
+    {
+        ResponseJson->SetStringField(TEXT("error"), ErrorCode);
+    }
+    
+    FString ResultString;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultString);
+    FJsonSerializer::Serialize(ResponseJson.ToSharedRef(), Writer);
+    return ResultString;
 }

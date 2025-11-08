@@ -208,7 +208,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
                     return {"success": False, "message": error_msg}
             
             # Build command parameters
-            params = {
+            params: Dict[str, Any] = {
                 "action": action,
                 "blueprint_name": blueprint_name
             }

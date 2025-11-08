@@ -2,9 +2,12 @@
 
 #include "CoreMinimal.h"
 #include "Json.h"
+#include "Core/Result.h"
 
-// Forward declare reflection commands
+// Forward declarations
 class FBlueprintReflectionCommands;
+struct FNodeSummary;
+struct FNodeDescriptor;
 
 /**
  * Handler class for Blueprint Node-related MCP commands
@@ -119,8 +122,53 @@ private:
         const FString& NodeIdentifier,
         const TArray<FString>& PinNames,
         bool bSplitPins) const;
+
+    // HandleConnectPins helper methods
+    struct FConnectionDefaults
+    {
+        bool bAllowConversion = true;
+        bool bAllowPromotion = true;
+        bool bBreakExisting = true;
+    };
+    
+    FConnectionDefaults ParseConnectionDefaults(const TSharedPtr<FJsonObject>& Params) const;
+    TArray<TSharedPtr<FJsonValue>> ConvertBrokenLinksToJson(const TArray<struct FPinLinkBreakInfo>& Links) const;
+    TArray<TSharedPtr<FJsonValue>> ConvertCreatedLinksToJson(const TArray<struct FPinLinkCreateInfo>& Links) const;
+    TSharedPtr<FJsonObject> BuildConnectionSuccessJson(const struct FPinConnectionResult& Result, 
+                                                        const TSharedPtr<FJsonObject>& RequestObject) const;
+    TSharedPtr<FJsonObject> BuildConnectionResponseJson(const FString& BlueprintName,
+                                                         int32 AttemptedCount,
+                                                         const TArray<TSharedPtr<FJsonValue>>& Successes,
+                                                         const TArray<TSharedPtr<FJsonValue>>& Failures,
+                                                         const TArray<UEdGraph*>& ModifiedGraphs) const;
+    
+    // HandleDisconnectPins helper methods
+    TArray<TSharedPtr<FJsonValue>> SummarizeLinksToJson(UEdGraphPin* Pin, const FString& Role) const;
+    TSharedPtr<FJsonObject> BuildDisconnectionSuccessJson(const struct FPinDisconnectionResult& Result,
+                                                            const TSharedPtr<FJsonObject>& RequestObject) const;
+    TSharedPtr<FJsonObject> BuildDisconnectionResponseJson(const FString& BlueprintName,
+                                                             int32 AttemptedCount,
+                                                             const TArray<TSharedPtr<FJsonValue>>& Successes,
+                                                             const TArray<TSharedPtr<FJsonValue>>& Failures,
+                                                             const TArray<UEdGraph*>& ModifiedGraphs) const;
     
 private:
+    // Helper methods to convert TResult to JSON
+    TSharedPtr<FJsonObject> CreateSuccessResponse() const;
+    TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage) const;
+    TSharedPtr<FJsonObject> ConvertTResultToJson(const TResult<TArray<FNodeSummary>>& Result) const;
+    TSharedPtr<FJsonObject> ConvertNodeDescriptorToJson(const FNodeDescriptor& Descriptor) const;
+    
     // Reflection system helper
     TSharedPtr<FBlueprintReflectionCommands> ReflectionCommands;
+    
+    // Phase 4: Blueprint Services (replacing inline logic)
+    TSharedPtr<class FBlueprintDiscoveryService> DiscoveryService;
+    TSharedPtr<class FBlueprintLifecycleService> LifecycleService;
+    TSharedPtr<class FBlueprintPropertyService> PropertyService;
+    TSharedPtr<class FBlueprintComponentService> ComponentService;
+    TSharedPtr<class FBlueprintFunctionService> FunctionService;
+    TSharedPtr<class FBlueprintNodeService> NodeService;
+    TSharedPtr<class FBlueprintGraphService> GraphService;
+    TSharedPtr<class FBlueprintReflectionService> ReflectionService;
 }; 

@@ -32,9 +32,9 @@ def _dispatch(tool_name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
-    """Merge non-None values from source into target."""
+    """Merge non-empty values from source into target."""
     for k, v in source.items():
-        if v is not None:
+        if v is not None and v != "":
             target[k] = v
 
 
@@ -43,16 +43,16 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
 
     @mcp_instance.tool()
     def manage_blueprint_function(
-        blueprint_name: str = None,
-        action: str = None,
-        function_name: str = None,
-        param_name: str = None,
-        direction: str = None,
-        type: str = None,
-        new_type: str = None,
-        new_name: str = None,
-        properties: Dict[str, Any] = None,
-        extra: Dict[str, Any] = None,
+        blueprint_name: str = "",
+        action: str = "",
+        function_name: str = "",
+        param_name: str = "",
+        direction: str = "",
+        type: str = "",
+        new_type: str = "",
+        new_name: str = "",
+        properties=None,
+        extra=None,
     ) -> Dict[str, Any]:
         """
         Blueprint Function Management Tool
@@ -369,20 +369,24 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
             "action": action,
         }
 
-        _merge(
-            payload,
-            {
-                "function_name": function_name,
-                "param_name": param_name,
-                "direction": direction,
-                "type": type,
-                "new_type": new_type,
-                "new_name": new_name,
-                "properties": properties,
-            },
-        )
+        # Build source dict with all optional parameters
+        source: Dict[str, Any] = {
+            "function_name": function_name,
+            "param_name": param_name,
+            "direction": direction,
+            "type": type,
+            "new_type": new_type,
+            "new_name": new_name,
+        }
+        
+        # Add properties if provided
+        if properties is not None:
+            source["properties"] = properties
+            
+        _merge(payload, source)
 
-        if extra:
+        # Merge extra parameters if provided
+        if extra is not None:
             _merge(payload, extra)
 
         return _dispatch("manage_blueprint_function", payload)

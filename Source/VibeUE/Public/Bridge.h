@@ -14,6 +14,7 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
+#include "Core/ServiceContext.h"
 #include "Bridge.generated.h"
 
 class FMCPServerRunnable;
@@ -46,6 +47,8 @@ public:
 	FString ExecuteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
 private:
+	// Route command to appropriate handler
+	TSharedPtr<FJsonObject> RouteCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 	// Server state
 	bool bIsRunning;
 	TSharedPtr<FSocket> ListenerSocket;
@@ -56,6 +59,9 @@ private:
 	FIPv4Address ServerAddress;
 	uint16 Port;
 
+	// Service context (shared across all services)
+	TSharedPtr<FServiceContext> ServiceContext;
+
 	// Command handler instances
 	TSharedPtr<FBlueprintCommands> BlueprintCommands;
 	TSharedPtr<FBlueprintNodeCommands> BlueprintNodeCommands;
@@ -63,4 +69,7 @@ private:
 	TSharedPtr<FUMGCommands> UMGCommands;
 	TSharedPtr<FUMGReflectionCommands> UMGReflectionCommands;
 	TSharedPtr<FAssetCommands> AssetCommands;
+
+	// Helper to create error response
+	FString CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage = FString());
 }; 

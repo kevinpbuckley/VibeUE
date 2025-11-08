@@ -10,6 +10,17 @@ from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
 
+# Valid actions for the manage_asset tool
+VALID_ACTIONS = [
+    "search",
+    "import_texture",
+    "export_texture",
+    "delete",
+    "open_in_editor",
+    "svg_to_png",
+    "duplicate"
+]
+
 
 def register_asset_tools(mcp: FastMCP):
     """Register unified asset manager tool with the MCP server."""
@@ -43,12 +54,17 @@ def register_asset_tools(mcp: FastMCP):
         temp_folder: str = "",
         # Open in editor parameters
         force_open: bool = False,
+        # Delete parameters
+        force_delete: bool = False,
+        show_confirmation: bool = True,
         # SVG conversion parameters
         svg_path: str = "",
         output_path: Optional[str] = None,
         size: Optional[List[int]] = None,
         scale: float = 1.0,
-        background: Optional[str] = None
+        background: Optional[str] = None,
+        # Duplicate parameters
+        new_name: str = ""
     ) -> Dict[str, Any]:
         """
         Single multi-action tool for all asset operations.
@@ -95,6 +111,36 @@ def register_asset_tools(mcp: FastMCP):
         )
         ```
         
+        **delete** - Delete asset from project with safety checks
+        ```python
+        # Safe deletion with user confirmation (default)
+        manage_asset(
+            action="delete",
+            asset_path="/Game/Textures/T_OldTexture",
+            force_delete=False,       # Will error if asset has references
+            show_confirmation=True    # Shows confirmation dialog
+        )
+        
+        # Automated deletion without user interaction
+        manage_asset(
+            action="delete",
+            asset_path="/Game/Textures/T_OldTexture",
+            force_delete=True,        # Delete even if asset has references
+            show_confirmation=False   # No confirmation dialog (instant deletion)
+        )
+        
+        # ⚠️ CRITICAL: force_delete and show_confirmation are DIRECT parameters
+        # DO NOT pass them in extra dict - they will be ignored!
+        
+        # Returns confirmation of deletion or error if asset in use
+        # Error codes:
+        # - ASSET_NOT_FOUND: Asset doesn't exist
+        # - ASSET_IN_USE: Asset has references (use force_delete=True to override)
+        # - ASSET_READ_ONLY: Asset is engine content (cannot delete)
+        # - OPERATION_CANCELLED: User cancelled confirmation dialog
+        # - ASSET_DELETE_FAILED: Deletion operation failed
+        ```
+        
         **svg_to_png** - Convert SVG to PNG
         ```python
         manage_asset(
@@ -106,8 +152,19 @@ def register_asset_tools(mcp: FastMCP):
         )
         ```
         
+        **duplicate** - Duplicate an existing asset to a new location
+        ```python
+        manage_asset(
+            action="duplicate",
+            asset_path="/Game/Blueprints/BP_Player",
+            destination_path="/Game/Blueprints/Characters",
+            new_name="BP_Player2"
+        )
+        # Returns new asset path and type
+        ```
+        
         Args:
-            action: Action to perform (search|import_texture|export_texture|open_in_editor|svg_to_png)
+            action: Action to perform (search|import_texture|export_texture|delete|open_in_editor|svg_to_png|duplicate)
             search_term: Text to search for in asset names (for search)
             asset_type: Filter by asset type (for search - examples: Widget, Texture2D, Material, Blueprint)
             path: Content browser path to search in (for search, default: /Game)
@@ -115,18 +172,26 @@ def register_asset_tools(mcp: FastMCP):
             include_engine_content: Whether to include engine content (for search)
             max_results: Maximum number of results to return (for search)
             file_path: Source file path (for import_texture)
-            asset_path: Asset path in project (for export_texture, open_in_editor)
+            asset_path: Asset path in project (for export_texture, delete, open_in_editor, duplicate)
             svg_path: SVG file path (for svg_to_png)
-            destination_path: Destination in content browser (for import_texture)
+            destination_path: Destination in content browser (for import_texture, duplicate)
             texture_name: Custom texture name (for import_texture)
             compression_settings: Texture compression (for import_texture)
             export_format: Export format (for export_texture)
             max_size: Maximum export size (for export_texture, svg_to_png)
             force_open: Force open if already open (for open_in_editor)
+            force_delete: Delete even if asset has references (for delete action, default: False)
+                         When False: returns error if asset is referenced by other assets
+                         When True: deletes asset and breaks references
+            show_confirmation: Show confirmation dialog before deletion (for delete action, default: True)
+                              When True: displays dialog requiring user click (may timeout MCP call)
+                              When False: instant deletion without user interaction (recommended for automation)
+                              ⚠️ Must be passed as direct parameter, NOT in extra dict
             output_path: Output file path (for svg_to_png)
             size: Output size (for svg_to_png)
             scale: Scale multiplier (for svg_to_png)
             background: Background color (for svg_to_png)
+            new_name: New asset name (for duplicate - optional, defaults to source name with suffix)
             
         Returns:
             Dict containing action results with success field
@@ -149,16 +214,24 @@ def register_asset_tools(mcp: FastMCP):
             return _handle_export_texture(
                 asset_path, export_format, max_size, temp_folder
             )
+        elif action == "delete":
+            return _handle_delete_asset(
+                asset_path, force_delete, show_confirmation
+            )
         elif action == "open_in_editor":
             return _handle_open_in_editor(asset_path, force_open)
         elif action == "svg_to_png":
             return _handle_convert_svg(
                 svg_path, output_path, size, scale, background
             )
+        elif action == "duplicate":
+            return _handle_duplicate_asset(
+                asset_path, destination_path, new_name
+            )
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: search, import_texture, export_texture, open_in_editor, svg_to_png"
+                "error": f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
             }
 
 
@@ -280,6 +353,39 @@ def _handle_export_texture(
         return {"success": False, "error": str(e)}
 
 
+def _handle_delete_asset(
+    asset_path: str,
+    force_delete: bool,
+    show_confirmation: bool
+) -> Dict[str, Any]:
+    """Handle asset deletion with safety checks."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not asset_path:
+        return {"success": False, "error": "'asset_path' is required for delete action"}
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Deleting asset: {asset_path} (force_delete={force_delete}, show_confirmation={show_confirmation})")
+        response = unreal.send_command("delete_asset", {
+            "asset_path": asset_path,
+            "force_delete": force_delete,
+            "show_confirmation": show_confirmation
+        })
+        
+        if not response:
+            return {"success": False, "error": "No response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error deleting asset: {e}")
+        return {"success": False, "error": str(e)}
+
+
 def _handle_open_in_editor(asset_path: str, force_open: bool) -> Dict[str, Any]:
     """Handle opening asset in editor."""
     from vibe_ue_server import get_unreal_connection
@@ -368,6 +474,9 @@ def _handle_convert_svg(
             background_color=background if background else None
         )
         
+        if png_bytes is None:
+            raise ValueError(f"Failed to convert SVG to PNG: {svg_path}")
+        
         # Load into PIL for post-processing
         img = Image.open(io.BytesIO(png_bytes))
         
@@ -417,3 +526,39 @@ def _handle_convert_svg(
     except Exception as e:
         logger.error(f"Error converting SVG: {e}")
         return {"success": False, "error": str(e), "png_path": None}
+
+
+def _handle_duplicate_asset(
+    asset_path: str,
+    destination_path: str,
+    new_name: str
+) -> Dict[str, Any]:
+    """Handle asset duplication."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not asset_path:
+        return {"success": False, "error": "'asset_path' is required for duplicate action"}
+    
+    if not destination_path:
+        return {"success": False, "error": "'destination_path' is required for duplicate action"}
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Duplicating asset from {asset_path} to {destination_path}")
+        response = unreal.send_command("duplicate_asset", {
+            "asset_path": asset_path,
+            "destination_path": destination_path,
+            "new_name": new_name
+        })
+        
+        if not response:
+            return {"success": False, "error": "No response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error duplicating asset: {e}")
+        return {"success": False, "error": str(e)}
