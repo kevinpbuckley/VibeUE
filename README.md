@@ -49,7 +49,22 @@ git clone https://github.com/kevinpbuckley/VibeUE.git
 
 This will create the plugin structure at `YourProject/Plugins/VibeUE/`
 
-### 2. Enable the Plugin in Unreal Engine
+### 2. Build the Plugin (Required for Manual Installation)
+
+**Why build?** VibeUE is a C++ plugin that needs to be compiled for your specific Unreal Engine version. If you skip this step and try to launch Unreal, you'll see a "Missing Modules" error.
+
+**Quick Build - Double-click this file:**
+```
+Plugins/VibeUE/BuildPlugin.bat
+```
+
+The script automatically finds your Unreal Engine installation and project file, then builds the plugin.
+
+**Having issues?** See the [detailed build guide](docs/BUILD_PLUGIN.md) for troubleshooting and advanced options.
+
+> **Note:** If you install VibeUE from the Unreal Marketplace in the future, this build step won't be necessary - Epic compiles plugins automatically.
+
+### 3. Enable the Plugin in Unreal Engine
 
 1. **Open your Unreal Engine project**
 2. **Go to Edit > Plugins**
@@ -57,9 +72,7 @@ This will create the plugin structure at `YourProject/Plugins/VibeUE/`
 4. **Check the box to enable it**
 5. **Restart the editor when prompted**
 
-The plugin will build automatically when enabled.
-
-### 3. Configure MCP Client
+### 4. Configure MCP Client
 
 #### VS Code (Recommended)
 1. **Install the "Model Context Protocol" extension** from the VS Code marketplace
@@ -100,7 +113,7 @@ Use this configuration for Claude Desktop, Cursor, or Windsurf:
 
 ```
 
-### 4. Test the Installation
+### 5. Test the Installation
 
 1. **Open Unreal Engine** with your project
 2. **Open your MCP client** (VS Code, Claude Desktop, etc.)
