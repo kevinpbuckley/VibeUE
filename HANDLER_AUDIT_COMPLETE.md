@@ -8,8 +8,8 @@
 
 ### Summary Statistics
 - **Active Python Commands**: 41
-- **Implemented C++ Handlers**: 63+
-- **Dead Handlers (To Delete)**: 22+ (35%+ reduction)
+- **Implemented C++ Handlers**: 65 (63 unique + 2 duplicates in UMGReflectionCommands.cpp)
+- **Dead Handlers (To Delete)**: 11 total (9 unique handlers across 4 files)
 - **Handlers Using Services**: 4 (6%)
 - **Handlers Not Using Services**: 37 (94% of kept handlers)
 
@@ -150,14 +150,15 @@ These commands are actively used by Python MCP tools and their C++ handlers MUST
 ### BlueprintReflection.cpp (0 handlers)
 NO HANDLERS - Helper functions only (not a command file)
 
-### UMGReflectionCommands.cpp (CHECK NEEDED)
-❓ Need to verify handlers in this file
+### UMGReflectionCommands.cpp (2 handlers - BOTH DUPLICATES)
+❌ DELETE: `add_widget_component` (DUPLICATE - same as add_component in BlueprintComponentReflection.cpp)
+❌ DELETE: `get_available_widgets` (DUPLICATE - handled by UMGCommands get_available_widget_types)
 
 ---
 
-## Dead Handlers to Delete (22 handlers)
+## Dead Handlers to Delete (11 handlers total)
 
-### High Confidence Deletions (15 handlers)
+### All Dead Handlers Confirmed (11 deletions)
 
 **From BlueprintCommands.cpp** (5 deletions):
 1. ❌ `add_blueprint_variable` - Replaced by `manage_blueprint_variable` multi-action tool
@@ -174,9 +175,12 @@ NO HANDLERS - Helper functions only (not a command file)
 8. ❌ `set_component_property` - Duplicate (in BlueprintCommands.cpp)
 9. ❌ `get_available_widgets` - Duplicate (handled by UMGCommands)
 
-### Pending Verification (UMGReflectionCommands.cpp)
+**From UMGReflectionCommands.cpp** (2 deletions):
+10. ❌ `add_widget_component` - Duplicate of `add_component` (BlueprintComponentReflection.cpp)
+11. ❌ `get_available_widgets` - Duplicate (handled by UMGCommands get_available_widget_types)
 
-Need to extract and analyze handlers from UMGReflectionCommands.cpp (601 lines).
+**NOTE**: UMGReflectionCommands.cpp duplicates handlers #7 and #9 from BlueprintComponentReflection.cpp.
+This means we have **2 files with duplicate implementations** that both need deletion.
 
 ---
 
@@ -198,19 +202,20 @@ Multiple files implement the same handlers:
 - `add_widget_component` vs `add_component` - Same functionality, different names
 
 ### Code Reduction Estimate
-After deleting 22 dead handlers:
+After deleting 11 dead handlers across 4 files:
 - **Before**: ~21,000 lines across all command files
-- **After**: ~14,000 lines (estimated 33% reduction)
-- **Impact**: Phase 5 refactoring scope reduced by ~7,000 lines
+- **After**: ~18,500 lines (estimated 12% reduction)
+- **Impact**: Phase 5 refactoring scope reduced by ~2,500 lines
+- **Note**: Lower than initial estimate because duplicates counted twice (UMGReflectionCommands.cpp duplicates BlueprintComponentReflection.cpp)
 
 ---
 
 ## Next Steps
 
 1. ✅ Extract all active commands from Python tools (COMPLETE - 41 commands)
-2. ✅ List all C++ handlers from each command file (COMPLETE - 63 handlers)
-3. ✅ Compare lists to identify unused handlers (COMPLETE - 22 dead handlers)
-4. ⏳ Verify UMGReflectionCommands.cpp handlers
+2. ✅ List all C++ handlers from each command file (COMPLETE - 65 total, 63 unique)
+3. ✅ Compare lists to identify unused handlers (COMPLETE - 11 dead handlers)
+4. ✅ Verify UMGReflectionCommands.cpp handlers (COMPLETE - 2 duplicate handlers)
 5. ⏳ Create deletion issue #200 with specific files and line ranges
 6. ⏳ Delete dead code
 7. ⏳ Unblock Phase 5.1-5.4 refactoring
