@@ -25,6 +25,12 @@ public:
 	TSharedPtr<FJsonObject> HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params);
 
 private:
+	// Command Handlers
+	/**
+	 * Handle add_widget_component command - Add a widget component to a UserWidget Blueprint
+	 */
+	TSharedPtr<FJsonObject> HandleAddWidgetComponent(const TSharedPtr<FJsonObject>& Params);
+
 	// Widget Discovery System
 	/**
 	 * Discover all available widget classes using UClass reflection

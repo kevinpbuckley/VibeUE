@@ -37,6 +37,11 @@ FUMGReflectionCommands::~FUMGReflectionCommands()
 
 TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
 {
+	if (CommandName == TEXT("add_widget_component"))
+	{
+		return HandleAddWidgetComponent(Params);
+	}
+
 	return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown UMG Reflection command: %s"), *CommandName));
 }
 
@@ -243,6 +248,72 @@ TArray<FString> FUMGReflectionCommands::GetSupportedChildTypes(UClass* ParentCla
 	}
 
 	return SupportedTypes;
+}
+
+TSharedPtr<FJsonObject> FUMGReflectionCommands::HandleAddWidgetComponent(const TSharedPtr<FJsonObject>& Params)
+{
+	// Get required parameters
+	FString WidgetBlueprintName;
+	FString ComponentType;
+	FString ComponentName;
+	FString ParentName;
+
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+	}
+
+	if (!Params->TryGetStringField(TEXT("component_type"), ComponentType))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_type parameter"));
+	}
+
+	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+	}
+
+	if (!Params->TryGetStringField(TEXT("parent_name"), ParentName))
+	{
+		ParentName = TEXT("root");
+	}
+
+	// Get optional parameters
+	bool bIsVariable = false;
+	Params->TryGetBoolField(TEXT("is_variable"), bIsVariable);
+
+	TSharedPtr<FJsonObject> Properties = Params->GetObjectField(TEXT("properties"));
+
+	// Find widget blueprint
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+
+	// Find component class
+	UClass* ComponentClass = FindFirstObject<UClass>(*ComponentType);
+	if (!ComponentClass)
+	{
+		// Try with U prefix for engine classes
+		FString ClassNameWithPrefix = FString::Printf(TEXT("U%s"), *ComponentType);
+		ComponentClass = FindFirstObject<UClass>(*ClassNameWithPrefix);
+	}
+
+	if (!ComponentClass || !ComponentClass->IsChildOf<UWidget>())
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget component type '%s' not found or not a valid widget class"), *ComponentType));
+	}
+
+	// Validate creation parameters
+	TSharedPtr<FJsonObject> ValidationResult = ValidateWidgetCreation(WidgetBlueprint, ComponentClass, ParentName);
+	if (ValidationResult && !ValidationResult->GetBoolField(TEXT("success")))
+	{
+		return ValidationResult;
+	}
+
+	// Create and add the widget component
+	return CreateAndAddWidgetComponent(WidgetBlueprint, ComponentClass, ComponentName, ParentName, bIsVariable, Properties);
 }
 
 TSharedPtr<FJsonObject> FUMGReflectionCommands::ValidateWidgetCreation(UWidgetBlueprint* WidgetBlueprint, UClass* ComponentClass, const FString& ParentName)
