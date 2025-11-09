@@ -8,7 +8,7 @@ class UWidget;
 class UWidgetBlueprint;
 class UUserWidget;
 class FWidgetPropertyService;
-class FWidgetComponentService;
+class FUMGWidgetService;
 class FWidgetHierarchyService;
 class FWidgetAssetService;
 
@@ -66,7 +66,7 @@ private:
     TSharedPtr<class FServiceContext> ServiceContext;
     TSharedPtr<class FWidgetLifecycleService> LifecycleService;
     TSharedPtr<FWidgetPropertyService> PropertyService;
-    TSharedPtr<FWidgetComponentService> ComponentService;
+    TSharedPtr<FUMGWidgetService> WidgetService;
     TSharedPtr<FWidgetHierarchyService> HierarchyService;
     TSharedPtr<class FWidgetBlueprintInfoService> BlueprintInfoService;
     TSharedPtr<class FWidgetDiscoveryService> DiscoveryService;

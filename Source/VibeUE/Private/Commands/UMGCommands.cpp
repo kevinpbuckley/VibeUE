@@ -2,7 +2,7 @@
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"
 #include "Services/UMG/WidgetPropertyService.h"
-#include "Services/UMG/WidgetComponentService.h"
+#include "Services/UMG/UMGWidgetService.h"
 #include "Services/UMG/WidgetHierarchyService.h"
 #include "Services/UMG/WidgetBlueprintInfoService.h"
 #include "Services/UMG/WidgetDiscoveryService.h"
@@ -112,7 +112,7 @@ FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 	// Initialize services using shared context
 	LifecycleService = MakeShared<FWidgetLifecycleService>(ServiceContext);
 	PropertyService = MakeShared<FWidgetPropertyService>(ServiceContext);
-	ComponentService = MakeShared<FWidgetComponentService>(ServiceContext);
+	WidgetService = MakeShared<FUMGWidgetService>(ServiceContext);
 	HierarchyService = MakeShared<FWidgetHierarchyService>(ServiceContext);
 	BlueprintInfoService = MakeShared<FWidgetBlueprintInfoService>(ServiceContext);
 	DiscoveryService = MakeShared<FWidgetDiscoveryService>(ServiceContext);
@@ -683,12 +683,12 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint not found for '%s'"), *WidgetName));
 	}
 
-	if (!ComponentService.IsValid())
+	if (!WidgetService.IsValid())
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetComponentService not available"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetWidgetService not available"));
 	}
 
-	const auto Result = ComponentService->GetWidgetComponentInfo(WidgetBlueprint, ComponentName, true);
+	const auto Result = WidgetService->GetWidgetComponentInfo(WidgetBlueprint, ComponentName, true);
 	if (Result.IsError())
 	{
 		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
@@ -859,9 +859,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params)
 {
-	if (!ComponentService.IsValid())
+	if (!WidgetService.IsValid())
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetComponentService not available"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetWidgetService not available"));
 	}
 
 	FString WidgetBlueprintName;
@@ -922,7 +922,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJs
 	}
 	Request.SlotProperties = SlotProperties;
 
-	const auto Result = ComponentService->AddChildToPanel(WidgetBlueprint, Request);
+	const auto Result = WidgetService->AddChildToPanel(WidgetBlueprint, Request);
 	if (Result.IsError())
 	{
 		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
@@ -949,9 +949,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJs
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params)
 {
-	if (!ComponentService.IsValid())
+	if (!WidgetService.IsValid())
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetComponentService not available"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetWidgetService not available"));
 	}
 
 	FString WidgetBlueprintName;
@@ -987,7 +987,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<
 	Request.bRemoveChildren = bRemoveChildren;
 	Request.bRemoveFromVariables = bRemoveFromVariables;
 
-	const auto Result = ComponentService->RemoveComponent(WidgetBlueprint, Request);
+	const auto Result = WidgetService->RemoveComponent(WidgetBlueprint, Request);
 	if (Result.IsError())
 	{
 		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
@@ -1134,9 +1134,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 }
 TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params)
 {
-	if (!ComponentService.IsValid())
+	if (!WidgetService.IsValid())
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("WidgetComponentService not available"));
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetWidgetService not available"));
 	}
 
 	FString WidgetBlueprintName;
@@ -1176,7 +1176,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 	Request.SlotTypeOverride = SlotType;
 	Request.SlotProperties = SlotProperties;
 
-	const auto Result = ComponentService->SetSlotProperties(WidgetBlueprint, Request);
+	const auto Result = WidgetService->SetSlotProperties(WidgetBlueprint, Request);
 	if (Result.IsError())
 	{
 		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());

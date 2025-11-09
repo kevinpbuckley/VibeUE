@@ -13,29 +13,38 @@ class UPanelWidget;
 class UPanelSlot;
 
 /**
- * @class FWidgetComponentService
- * @brief Service for adding and removing widget components
+ * @class FUMGWidgetService
+ * @brief Service for managing UMG widgets (Unreal Motion Graphics)
  * 
- * This service provides widget component management functionality extracted from
- * UMGCommands.cpp and UMGReflectionCommands.cpp. It handles adding widgets to
- * blueprints, removing widgets, and managing parent-child relationships.
+ * This service provides UMG widget management functionality for Widget Blueprints.
+ * It handles adding widgets to widget trees, removing widgets, and managing 
+ * parent-child relationships.
+ * 
+ * IMPORTANT TERMINOLOGY:
+ * - "UMG Widgets" (managed by this service): UButton, UTextBlock, UImage, etc.
+ *   These are UI elements in the Unreal Motion Graphics (UMG) system.
+ * - "Blueprint Components" (managed by BlueprintComponentService): UActorComponent,
+ *   UStaticMeshComponent, etc. These are 3D scene components.
+ * 
+ * Formerly known as FWidgetComponentService (renamed to avoid confusion with
+ * Blueprint components).
  * 
  * All methods return TResult<T> for type-safe error handling.
  * 
  * @see TResult
  * @see FServiceBase
  */
-class VIBEUE_API FWidgetComponentService : public FServiceBase
+class VIBEUE_API FUMGWidgetService : public FServiceBase
 {
 public:
     /**
      * @brief Constructor
      * @param Context Service context for shared state (can be nullptr)
      */
-    explicit FWidgetComponentService(TSharedPtr<FServiceContext> Context);
+    explicit FUMGWidgetService(TSharedPtr<FServiceContext> Context);
 
     // FServiceBase interface
-    virtual FString GetServiceName() const override { return TEXT("WidgetComponentService"); }
+    virtual FString GetServiceName() const override { return TEXT("UMGWidgetService"); }
 
     /**
      * @brief Add a widget component to a widget blueprint

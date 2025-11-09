@@ -1,9 +1,9 @@
 /**
- * @file WidgetComponentService.cpp
+ * @file UMGWidgetService.cpp
  * @brief Implementation of widget component management functionality
  */
 
-#include "Services/UMG/WidgetComponentService.h"
+#include "Services/UMG/UMGWidgetService.h"
 
 #include "Core/ErrorCodes.h"
 #include "WidgetBlueprint.h"
@@ -37,12 +37,12 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogWidgetComponent, Log, All);
 
-FWidgetComponentService::FWidgetComponentService(TSharedPtr<FServiceContext> Context)
+FUMGWidgetService::FUMGWidgetService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
 {
 }
 
-TResult<UWidget*> FWidgetComponentService::AddWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName, bool bIsVariable)
+TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName, bool bIsVariable)
 {
     auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (ValidationResult.IsError())
@@ -131,7 +131,7 @@ TResult<UWidget*> FWidgetComponentService::AddWidgetComponent(UWidgetBlueprint* 
     return TResult<UWidget*>::Success(NewWidget);
 }
 
-TResult<void> FWidgetComponentService::RemoveWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
+TResult<void> FUMGWidgetService::RemoveWidgetComponent(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
 {
     auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (ValidationResult.IsError())
@@ -169,7 +169,7 @@ TResult<void> FWidgetComponentService::RemoveWidgetComponent(UWidgetBlueprint* W
     return TResult<void>::Success();
 }
 
-TResult<FWidgetAddChildResult> FWidgetComponentService::AddChildToPanel(UWidgetBlueprint* WidgetBlueprint, const FWidgetAddChildRequest& Request)
+TResult<FWidgetAddChildResult> FUMGWidgetService::AddChildToPanel(UWidgetBlueprint* WidgetBlueprint, const FWidgetAddChildRequest& Request)
 {
     auto BlueprintValidation = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (BlueprintValidation.IsError())
@@ -290,7 +290,7 @@ TResult<FWidgetAddChildResult> FWidgetComponentService::AddChildToPanel(UWidgetB
     return TResult<FWidgetAddChildResult>::Success(Result);
 }
 
-TResult<UWidget*> FWidgetComponentService::CreateAndAddWidget(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName, bool bIsVariable, const TMap<FString, FString>& InitialProperties)
+TResult<UWidget*> FUMGWidgetService::CreateAndAddWidget(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName, bool bIsVariable, const TMap<FString, FString>& InitialProperties)
 {
     TResult<UWidget*> CreateResult = AddWidgetComponent(WidgetBlueprint, WidgetClassName, WidgetName, ParentName, bIsVariable);
     if (CreateResult.IsError())
@@ -306,7 +306,7 @@ TResult<UWidget*> FWidgetComponentService::CreateAndAddWidget(UWidgetBlueprint* 
     return CreateResult;
 }
 
-TResult<bool> FWidgetComponentService::ValidateWidgetCreation(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName)
+TResult<bool> FUMGWidgetService::ValidateWidgetCreation(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetClassName, const FString& WidgetName, const FString& ParentName)
 {
     auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (ValidationResult.IsError())
@@ -342,7 +342,7 @@ TResult<bool> FWidgetComponentService::ValidateWidgetCreation(UWidgetBlueprint* 
     return TResult<bool>::Success(true);
 }
 
-TResult<FWidgetRemoveComponentResult> FWidgetComponentService::RemoveComponent(UWidgetBlueprint* WidgetBlueprint, const FWidgetRemoveComponentRequest& Request)
+TResult<FWidgetRemoveComponentResult> FUMGWidgetService::RemoveComponent(UWidgetBlueprint* WidgetBlueprint, const FWidgetRemoveComponentRequest& Request)
 {
     auto BlueprintValidation = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (BlueprintValidation.IsError())
@@ -474,7 +474,7 @@ TResult<FWidgetRemoveComponentResult> FWidgetComponentService::RemoveComponent(U
     return TResult<FWidgetRemoveComponentResult>::Success(Result);
 }
 
-TResult<FWidgetSlotUpdateResult> FWidgetComponentService::SetSlotProperties(UWidgetBlueprint* WidgetBlueprint, const FWidgetSlotUpdateRequest& Request)
+TResult<FWidgetSlotUpdateResult> FUMGWidgetService::SetSlotProperties(UWidgetBlueprint* WidgetBlueprint, const FWidgetSlotUpdateRequest& Request)
 {
     auto BlueprintValidation = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (BlueprintValidation.IsError())
@@ -522,7 +522,7 @@ TResult<FWidgetSlotUpdateResult> FWidgetComponentService::SetSlotProperties(UWid
     return TResult<FWidgetSlotUpdateResult>::Success(Result);
 }
 
-TResult<UPanelWidget*> FWidgetComponentService::GetParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
+TResult<UPanelWidget*> FUMGWidgetService::GetParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
 {
     auto ValidationResult = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (ValidationResult.IsError())
@@ -555,7 +555,7 @@ TResult<UPanelWidget*> FWidgetComponentService::GetParentPanel(UWidgetBlueprint*
     return TResult<UPanelWidget*>::Error(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, TEXT("Parent widget is not a panel"));
 }
 
-TResult<FWidgetComponentInfo> FWidgetComponentService::GetWidgetComponentInfo(UWidgetBlueprint* WidgetBlueprint, const FString& ComponentName, bool bIncludeSlotInfo)
+TResult<FWidgetComponentInfo> FUMGWidgetService::GetWidgetComponentInfo(UWidgetBlueprint* WidgetBlueprint, const FString& ComponentName, bool bIncludeSlotInfo)
 {
     auto Validation = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (Validation.IsError())
@@ -625,7 +625,7 @@ TResult<FWidgetComponentInfo> FWidgetComponentService::GetWidgetComponentInfo(UW
     return TResult<FWidgetComponentInfo>::Success(Info);
 }
 
-UClass* FWidgetComponentService::GetWidgetClass(const FString& WidgetClassName)
+UClass* FUMGWidgetService::GetWidgetClass(const FString& WidgetClassName)
 {
     UClass* WidgetClass = FindFirstObjectSafe<UClass>(*WidgetClassName);
     if (!WidgetClass || !WidgetClass->IsChildOf(UWidget::StaticClass()))
@@ -635,7 +635,7 @@ UClass* FWidgetComponentService::GetWidgetClass(const FString& WidgetClassName)
     return WidgetClass;
 }
 
-bool FWidgetComponentService::IsWidgetNameUnique(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
+bool FUMGWidgetService::IsWidgetNameUnique(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetName)
 {
     if (!WidgetBlueprint->WidgetTree)
     {
@@ -645,7 +645,7 @@ bool FWidgetComponentService::IsWidgetNameUnique(UWidgetBlueprint* WidgetBluepri
     return WidgetBlueprint->WidgetTree->FindWidget(FName(*WidgetName)) == nullptr;
 }
 
-TResult<UPanelWidget*> FWidgetComponentService::ResolveParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& ParentName, const FString& ParentType)
+TResult<UPanelWidget*> FUMGWidgetService::ResolveParentPanel(UWidgetBlueprint* WidgetBlueprint, const FString& ParentName, const FString& ParentType)
 {
     auto BlueprintValidation = ValidateNotNull(WidgetBlueprint, TEXT("WidgetBlueprint"));
     if (BlueprintValidation.IsError())
@@ -723,7 +723,7 @@ TResult<UPanelWidget*> FWidgetComponentService::ResolveParentPanel(UWidgetBluepr
     return TResult<UPanelWidget*>::Error(VibeUE::ErrorCodes::COMPONENT_TYPE_INVALID, FString::Printf(TEXT("Unsupported parent panel type '%s'"), *ParentType));
 }
 
-bool FWidgetComponentService::ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, UWidget* Widget, UPanelSlot* PanelSlot, UPanelWidget* ParentPanel, const TSharedPtr<FJsonObject>& SlotProperties, FString& OutSlotType)
+bool FUMGWidgetService::ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, UWidget* Widget, UPanelSlot* PanelSlot, UPanelWidget* ParentPanel, const TSharedPtr<FJsonObject>& SlotProperties, FString& OutSlotType)
 {
     if (!SlotProperties.IsValid())
     {
@@ -955,7 +955,7 @@ bool FWidgetComponentService::ApplySlotProperties(UWidgetBlueprint* WidgetBluepr
     return true;
 }
 
-void FWidgetComponentService::CollectChildWidgets(UWidget* Widget, TArray<UWidget*>& OutChildren) const
+void FUMGWidgetService::CollectChildWidgets(UWidget* Widget, TArray<UWidget*>& OutChildren) const
 {
     if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
     {
