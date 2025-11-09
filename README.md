@@ -8,21 +8,12 @@ https://www.vibeue.com/
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.6%2B-orange)](https://www.unrealengine.com)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-yellow)](https://www.python.org)
-[![Status](https://img.shields.io/badge/Status-Experimental-red)](https://github.com/kevinpbuckley/VibeUE)
 
 </div>
 
 This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and Claude Desktop to control Unreal Engine through natural language using the Model Context Protocol (MCP). With seamless VS Code integration, you can manipulate Blueprints, UMG widgets, and Unreal Engine assets directly from your code editor.
 
 It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
-
-## ⚠️ Experimental Status
-
-This project is currently in an **EXPERIMENTAL** state. The API, functionality, and implementation details are subject to significant changes. While we encourage testing and feedback, please be aware that:
-
-- Breaking changes may occur without notice
-- Features may be incomplete or unstable
-- Documentation may be outdated or missing
 
 ## 🚀 Installation & Quick Start
 
@@ -322,6 +313,16 @@ MIT
 ## Questions and Contributions
 
 For questions and contributions, you can reach me on Discord: https://discord.gg/hZs73ST59a
+
+## Open to Opportunities
+
+I'm actively seeking game development opportunities, particularly roles involving:
+- Unreal Engine development
+- AI-assisted game development workflows
+- Blueprint and UMG systems
+- Technical tooling and automation
+
+If you're interested in collaborating or have opportunities available, feel free to reach out via Discord or GitHub.
 
 ## Thank You
 
