@@ -255,15 +255,21 @@ TResult<bool> FAssetLifecycleService::DeleteAsset(
     }
     
     // 3. Check for asset references using AssetRegistry
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return TResult<bool>::Error(
+            VibeUE::ErrorCodes::INTERNAL_ERROR,
+            TEXT("Failed to get Asset Registry")
+        );
+    }
     
     // Convert asset path to package name for reference checking
     FString PackageName = NormalizedPath;
     
     // Get all assets that reference this asset
     TArray<FName> Referencers;
-    AssetRegistry.GetReferencers(*PackageName, Referencers, UE::AssetRegistry::EDependencyCategory::Package);
+    AssetRegistry->GetReferencers(*PackageName, Referencers, UE::AssetRegistry::EDependencyCategory::Package);
     
     // Filter out self-references
     Referencers.Remove(*PackageName);

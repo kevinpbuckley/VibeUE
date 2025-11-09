@@ -151,6 +151,48 @@ bool FServiceContextGetEditorEngineTest::RunTest(const FString& Parameters)
 }
 
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FServiceContextGetAssetRegistryTest,
+	"VibeUE.Core.ServiceContext.GetAssetRegistry",
+	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter
+)
+
+bool FServiceContextGetAssetRegistryTest::RunTest(const FString& Parameters)
+{
+	// Arrange
+	TSharedPtr<FServiceContext> Context = MakeShared<FServiceContext>();
+
+	// Act
+	IAssetRegistry* AssetRegistry = Context->GetAssetRegistry();
+
+	// Assert - Should not crash and should return valid pointer
+	TestNotNull(TEXT("GetAssetRegistry should return valid pointer"), AssetRegistry);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
+	FServiceContextGetAssetRegistryCachingTest,
+	"VibeUE.Core.ServiceContext.GetAssetRegistry.Caching",
+	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter
+)
+
+bool FServiceContextGetAssetRegistryCachingTest::RunTest(const FString& Parameters)
+{
+	// Arrange
+	TSharedPtr<FServiceContext> Context = MakeShared<FServiceContext>();
+
+	// Act - Get AssetRegistry twice
+	IAssetRegistry* First = Context->GetAssetRegistry();
+	IAssetRegistry* Second = Context->GetAssetRegistry();
+
+	// Assert - Should return the same cached instance
+	TestEqual(TEXT("GetAssetRegistry should return cached instance"), First, Second);
+	TestNotNull(TEXT("Cached instance should be valid"), First);
+
+	return true;
+}
+
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(
 	FServiceContextRegisterServiceTest,
 	"VibeUE.Core.ServiceContext.RegisterService",
 	EAutomationTestFlags::ApplicationContextMask | EAutomationTestFlags::ProductFilter

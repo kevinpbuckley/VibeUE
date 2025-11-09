@@ -1,10 +1,13 @@
 #include "Core/ServiceContext.h"
 #include "Editor.h"
 #include "Engine/World.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "Modules/ModuleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
 
 FServiceContext::FServiceContext()
+	: CachedAssetRegistry(nullptr)
 {
 }
 
@@ -13,6 +16,7 @@ FServiceContext::~FServiceContext()
 	FScopeLock ScopeLock(&Lock);
 	Services.Empty();
 	ConfigValues.Empty();
+	CachedAssetRegistry = nullptr;
 }
 
 void FServiceContext::LogInfo(const FString& Message, const FString& ServiceName) const
@@ -56,6 +60,20 @@ UWorld* FServiceContext::GetWorld() const
 UEditorEngine* FServiceContext::GetEditorEngine() const
 {
 	return GEditor;
+}
+
+IAssetRegistry* FServiceContext::GetAssetRegistry() const
+{
+	FScopeLock ScopeLock(&Lock);
+	
+	if (!CachedAssetRegistry)
+	{
+		FAssetRegistryModule& AssetRegistryModule = 
+			FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+		CachedAssetRegistry = &AssetRegistryModule.Get();
+	}
+	
+	return CachedAssetRegistry;
 }
 
 void FServiceContext::RegisterService(const FString& ServiceName, TSharedPtr<FServiceBase> Service)
