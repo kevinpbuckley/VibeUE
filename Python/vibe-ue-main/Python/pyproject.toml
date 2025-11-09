@@ -1,9 +1,32 @@
 [project]
-name = "unreal-mcp"
+name = "vibeue"
 version = "0.1.0"
-description = "Unreal MCP Server: A server for Unreal Engine integration via the Model Context Protocol (MCP)."
+description = "VibeUE MCP Server: Control Unreal Engine 5.6+ through AI assistants using the Model Context Protocol. Features 60+ tools for Blueprint and UMG manipulation."
 readme = "README.md"
 requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Kevin Buckley", email = "kevin@vibeue.dev"}
+]
+keywords = ["unreal-engine", "mcp", "model-context-protocol", "ai-assistant", "blueprint", "umg", "gamedev"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: Games/Entertainment"
+]
+
+[project.urls]
+Homepage = "https://github.com/kevinpbuckley/VibeUE"
+Documentation = "https://github.com/kevinpbuckley/VibeUE/blob/master/README.md"
+Repository = "https://github.com/kevinpbuckley/VibeUE"
+Issues = "https://github.com/kevinpbuckley/VibeUE/issues"
+
 dependencies = [
   "mcp[cli]>=1.4.1",
   "fastmcp>=0.2.0",

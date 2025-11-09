@@ -1,5 +1,7 @@
 # VibeUE Python MCP Server
 
+<!-- mcp-name: io.github.kevinpbuckley/vibeue -->
+
 Python bridge for interacting with Unreal Engine 5.6+ using the Model Context Protocol (MCP). This is the backend server for the VibeUE plugin, providing 60+ tools for Blueprint and UMG manipulation through AI assistants.
 
 ## 🚀 Quick Start
@@ -173,7 +175,63 @@ python unreal_mcp_server.py --debug
 - **Memory**: 4GB+ RAM recommended
 - **Network**: Localhost HTTP communication required
 
-## 🔗 Related Documentation
+## � Publishing to PyPI and MCP Registry
+
+This package is automatically published to both PyPI and the MCP Registry when a new version tag is pushed.
+
+### Automated Publishing (Recommended)
+
+1. **Update version** in `pyproject.toml` and commit changes
+2. **Create and push a version tag**:
+   ```bash
+   git tag v0.1.0
+   git push origin v0.1.0
+   ```
+3. **GitHub Actions automatically**:
+   - Builds the Python package
+   - Publishes to PyPI (requires `PYPI_API_TOKEN` secret)
+   - Publishes to MCP Registry using GitHub OIDC
+   - Creates a GitHub Release
+
+### Setup Requirements
+
+**First-time setup** (maintainers only):
+1. **PyPI API Token**: Add `PYPI_API_TOKEN` to GitHub repository secrets
+   - Create token at https://pypi.org/manage/account/token/
+   - Add to Settings → Secrets and variables → Actions
+
+2. **GitHub OIDC**: Already configured in the workflow (no additional setup needed)
+
+### Manual Publishing
+
+If needed, you can publish manually:
+
+```bash
+# Install build tools
+pip install build twine
+
+# Build package
+python -m build
+
+# Publish to PyPI
+python -m twine upload dist/*
+
+# Install MCP Publisher
+curl -L "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_$(uname -s | tr '[:upper:]' '[:lower:]')_$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/').tar.gz" | tar xz mcp-publisher
+
+# Login and publish to MCP Registry
+./mcp-publisher login github-oidc
+./mcp-publisher publish
+```
+
+### Validation
+
+Validate `server.json` before publishing:
+```bash
+python validate_server.py
+```
+
+## �🔗 Related Documentation
 
 - [Main VibeUE README](../../README.md) - Complete plugin overview and 60+ tools reference
 - [UMG-Guide.md](../../UMG-Guide.md) - Widget styling best practices and patterns
