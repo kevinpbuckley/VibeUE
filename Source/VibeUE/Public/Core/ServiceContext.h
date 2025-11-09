@@ -7,6 +7,7 @@
 class UWorld;
 class UEditorEngine;
 class FServiceBase;
+class IAssetRegistry;
 
 /**
  * Shared context object that services use to access common resources.
@@ -79,6 +80,15 @@ public:
 	 */
 	UEditorEngine* GetEditorEngine() const;
 
+	/**
+	 * Gets the asset registry instance.
+	 * Caches the registry on first access for performance.
+	 * Thread-safe.
+	 *
+	 * @return Pointer to the IAssetRegistry, or nullptr if not available
+	 */
+	IAssetRegistry* GetAssetRegistry() const;
+
 	// ========================================
 	// Service Registration (for inter-service communication)
 	// ========================================
@@ -130,6 +140,9 @@ private:
 
 	/** Map of configuration key-value pairs */
 	TMap<FString, FString> ConfigValues;
+
+	/** Cached asset registry instance for performance */
+	mutable IAssetRegistry* CachedAssetRegistry;
 
 	/** Critical section for thread-safe access to shared resources */
 	mutable FCriticalSection Lock;
