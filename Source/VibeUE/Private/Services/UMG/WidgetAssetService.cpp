@@ -25,11 +25,17 @@ TResult<FWidgetDeleteResult> FWidgetAssetService::DeleteWidgetBlueprint(UWidgetB
 
     if (bCheckReferences)
     {
-        FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-        IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+        IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+        if (!AssetRegistry)
+        {
+            return TResult<FWidgetDependencyInfo>::Error(
+                VibeUE::ErrorCodes::INTERNAL_ERROR,
+                TEXT("Failed to get Asset Registry")
+            );
+        }
 
         TArray<FName> PackageNamesReferencingAsset;
-        AssetRegistry.GetReferencers(WidgetBlueprint->GetPackage()->GetFName(), PackageNamesReferencingAsset);
+        AssetRegistry->GetReferencers(WidgetBlueprint->GetPackage()->GetFName(), PackageNamesReferencingAsset);
 
         for (const FName& PackageName : PackageNamesReferencingAsset)
         {

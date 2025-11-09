@@ -10,8 +10,7 @@ FAssetDiscoveryService::FAssetDiscoveryService(TSharedPtr<FServiceContext> Conte
 
 IAssetRegistry* FAssetDiscoveryService::GetAssetRegistry() const
 {
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    return &AssetRegistryModule.Get();
+    return GetContext()->GetAssetRegistry();
 }
 
 FTopLevelAssetPath FAssetDiscoveryService::GetAssetClassPath(const FString& ClassName) const

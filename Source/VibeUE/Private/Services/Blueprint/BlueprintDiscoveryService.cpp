@@ -106,8 +106,14 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::FindBlueprint(const FString& Bl
     }
 
     // Use Asset Registry for recursive search by name
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return TResult<UBlueprint*>::Error(
+            VibeUE::ErrorCodes::INTERNAL_ERROR,
+            TEXT("Failed to get Asset Registry")
+        );
+    }
     
     FARFilter Filter;
     Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
@@ -116,7 +122,7 @@ TResult<UBlueprint*> FBlueprintDiscoveryService::FindBlueprint(const FString& Bl
     Filter.PackagePaths.Add("/Game");
     
     TArray<FAssetData> AssetDataList;
-    AssetRegistry.GetAssets(Filter, AssetDataList);
+    AssetRegistry->GetAssets(Filter, AssetDataList);
     
     for (const FAssetData& AssetData : AssetDataList)
     {
@@ -170,8 +176,14 @@ TResult<TArray<FBlueprintInfo>> FBlueprintDiscoveryService::SearchBlueprints(con
         );
     }
 
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return TResult<TArray<FBlueprintInfo>>::Error(
+            VibeUE::ErrorCodes::INTERNAL_ERROR,
+            TEXT("Failed to get Asset Registry")
+        );
+    }
     
     FARFilter Filter;
     Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
@@ -180,7 +192,7 @@ TResult<TArray<FBlueprintInfo>> FBlueprintDiscoveryService::SearchBlueprints(con
     Filter.PackagePaths.Add("/Game");
     
     TArray<FAssetData> AssetDataList;
-    AssetRegistry.GetAssets(Filter, AssetDataList);
+    AssetRegistry->GetAssets(Filter, AssetDataList);
     
     TArray<FBlueprintInfo> Results;
     FString LowerSearchTerm = SearchTerm.ToLower();
@@ -212,8 +224,14 @@ TResult<TArray<FBlueprintInfo>> FBlueprintDiscoveryService::SearchBlueprints(con
 
 TResult<TArray<FString>> FBlueprintDiscoveryService::ListAllBlueprints(const FString& BasePath)
 {
-    FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-    IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+    IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return TResult<TArray<FString>>::Error(
+            VibeUE::ErrorCodes::INTERNAL_ERROR,
+            TEXT("Failed to get Asset Registry")
+        );
+    }
     
     FARFilter Filter;
     Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
@@ -222,7 +240,7 @@ TResult<TArray<FString>> FBlueprintDiscoveryService::ListAllBlueprints(const FSt
     Filter.PackagePaths.Add(*BasePath);
     
     TArray<FAssetData> AssetDataList;
-    AssetRegistry.GetAssets(Filter, AssetDataList);
+    AssetRegistry->GetAssets(Filter, AssetDataList);
     
     TArray<FString> Results;
     for (const FAssetData& AssetData : AssetDataList)
