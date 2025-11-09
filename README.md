@@ -8,7 +8,7 @@ https://www.vibeue.com/
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.6%2B-orange)](https://www.unrealengine.com)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-yellow)](https://www.python.org)
-[![Status](https://img.shields.io/badge/Status-Experimental-red)](https://github.com/chongdashu/unreal-mcp)
+[![Status](https://img.shields.io/badge/Status-Experimental-red)](https://github.com/kevinpbuckley/VibeUE)
 
 </div>
 
@@ -323,13 +323,8 @@ MIT
 
 For questions and contributions, you can reach me on Discord: https://discord.gg/hZs73ST59a
 
-## Credits
+## Thank You
 
-This project has split off of https://github.com/chongdashu/unreal-mcp
-
-This implementation is focused on Blueprints, UMG Widgets, and seamless integration with VS Code for enhanced development workflows. The other project was focused on Assets and Level Design and appeared stale.  There's a limit to how many tools an LLM can handle so it seemed best to move in a different direction for my use cases.
-
-## Thank you
 Thank you to everyone who helped teach me coding, Unreal Engine and AI.
-Thank you to everyone who tries this product and contributes.
-Thank you to the team that started the original project I split this off of.
+Thank you to everyone who tries this project and contributes to making it better.
+
