@@ -295,7 +295,13 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 		}
 	}
 
-	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	// Use ServiceContext to get AssetRegistry instead of loading module directly
+	IAssetRegistry* AssetRegistry = ServiceContext->GetAssetRegistry();
+	if (!AssetRegistry)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Failed to get Asset Registry"));
+	}
+
 	// If discovery service is available and the requested asset type appears to be a widget
 	const bool bLooksLikeWidgetSearch = AssetType.IsEmpty() || AssetType.Contains(TEXT("Widget"), ESearchCase::IgnoreCase) || AssetType.Contains(TEXT("WidgetBlueprint"), ESearchCase::IgnoreCase);
 	if (DiscoveryService.IsValid() && bLooksLikeWidgetSearch)
@@ -337,7 +343,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 	}
 	
 	TArray<FAssetData> Assets;
-	AssetRegistryModule.Get().GetAssets(Filter, Assets);
+	AssetRegistry->GetAssets(Filter, Assets);
 
 	TArray<TSharedPtr<FJsonValue>> ItemArray;
 	const ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;

@@ -28,7 +28,7 @@ TResult<FWidgetDeleteResult> FWidgetAssetService::DeleteWidgetBlueprint(UWidgetB
         IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
         if (!AssetRegistry)
         {
-            return TResult<FWidgetDependencyInfo>::Error(
+            return TResult<FWidgetDeleteResult>::Error(
                 VibeUE::ErrorCodes::INTERNAL_ERROR,
                 TEXT("Failed to get Asset Registry")
             );

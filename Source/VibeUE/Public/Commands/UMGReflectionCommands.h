@@ -6,6 +6,7 @@
 // Forward declarations to avoid heavy includes in header
 class UWidgetBlueprint;
 class UWidget;
+class FServiceContext;
 
 /**
  * UMG Reflection Commands - Generic widget discovery and creation using reflection
@@ -17,6 +18,7 @@ class VIBEUE_API FUMGReflectionCommands
 {
 public:
 	FUMGReflectionCommands();
+	explicit FUMGReflectionCommands(TSharedPtr<FServiceContext> InServiceContext);
 	~FUMGReflectionCommands();
 
 	/**
@@ -25,6 +27,9 @@ public:
 	TSharedPtr<FJsonObject> HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params);
 
 private:
+	// Service Context for accessing shared utilities
+	TSharedPtr<FServiceContext> ServiceContext;
+
 	// Command Handlers
 	/**
 	 * Handle add_widget_component command - Add a widget component to a UserWidget Blueprint

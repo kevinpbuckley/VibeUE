@@ -25,9 +25,16 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "AssetRegistry/AssetRegistryModule.h"
+#include "Core/ServiceContext.h"
 #include "../../Public/Commands/CommonUtils.h"
 
 FUMGReflectionCommands::FUMGReflectionCommands()
+	: ServiceContext(MakeShared<FServiceContext>())
+{
+}
+
+FUMGReflectionCommands::FUMGReflectionCommands(TSharedPtr<FServiceContext> InServiceContext)
+	: ServiceContext(InServiceContext.IsValid() ? InServiceContext : MakeShared<FServiceContext>())
 {
 }
 
@@ -91,20 +98,26 @@ TArray<UClass*> FUMGReflectionCommands::DiscoverWidgetClasses(bool bIncludeEngin
 	// Also include custom widget blueprints if requested
 	if (bIncludeCustom)
 	{
-		// Query asset registry for widget blueprints
-		FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
-		IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
-
-		TArray<FAssetData> WidgetBlueprints;
-		AssetRegistry.GetAssetsByClass(UWidgetBlueprint::StaticClass()->GetClassPathName(), WidgetBlueprints);
-
-		for (const FAssetData& AssetData : WidgetBlueprints)
+		// Use ServiceContext to get AssetRegistry instead of loading module directly
+		IAssetRegistry* AssetRegistry = ServiceContext->GetAssetRegistry();
+		if (!AssetRegistry)
 		{
-			if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(AssetData.GetAsset()))
+			// If AssetRegistry is not available, log warning and continue with engine widgets only
+			UE_LOG(LogTemp, Warning, TEXT("Failed to get Asset Registry, custom widget blueprints will not be included"));
+		}
+		else
+		{
+			TArray<FAssetData> WidgetBlueprints;
+			AssetRegistry->GetAssetsByClass(UWidgetBlueprint::StaticClass()->GetClassPathName(), WidgetBlueprints);
+
+			for (const FAssetData& AssetData : WidgetBlueprints)
 			{
-				if (UClass* GeneratedClass = WidgetBlueprint->GeneratedClass)
+				if (UWidgetBlueprint* WidgetBlueprint = Cast<UWidgetBlueprint>(AssetData.GetAsset()))
 				{
-					WidgetClasses.Add(GeneratedClass);
+					if (UClass* GeneratedClass = WidgetBlueprint->GeneratedClass)
+					{
+						WidgetClasses.Add(GeneratedClass);
+					}
 				}
 			}
 		}

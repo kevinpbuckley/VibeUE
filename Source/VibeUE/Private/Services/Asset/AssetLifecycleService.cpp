@@ -258,7 +258,7 @@ TResult<bool> FAssetLifecycleService::DeleteAsset(
     IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
     if (!AssetRegistry)
     {
-        return TResult<void>::Error(
+        return TResult<bool>::Error(
             VibeUE::ErrorCodes::INTERNAL_ERROR,
             TEXT("Failed to get Asset Registry")
         );
