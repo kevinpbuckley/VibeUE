@@ -20,13 +20,6 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Games/Entertainment"
 ]
-
-[project.urls]
-Homepage = "https://github.com/kevinpbuckley/VibeUE"
-Documentation = "https://github.com/kevinpbuckley/VibeUE/blob/master/README.md"
-Repository = "https://github.com/kevinpbuckley/VibeUE"
-Issues = "https://github.com/kevinpbuckley/VibeUE/issues"
-
 dependencies = [
   "mcp[cli]>=1.4.1",
   "fastmcp>=0.2.0",
@@ -35,6 +28,12 @@ dependencies = [
   "pydantic>=2.6.1",
   "requests"
 ]
+
+[project.urls]
+Homepage = "https://github.com/kevinpbuckley/VibeUE"
+Documentation = "https://github.com/kevinpbuckley/VibeUE/blob/master/README.md"
+Repository = "https://github.com/kevinpbuckley/VibeUE"
+Issues = "https://github.com/kevinpbuckley/VibeUE/issues"
 
 [project.optional-dependencies]
 # SVG to PNG conversion support for manage_asset svg_to_png action
@@ -49,5 +48,13 @@ requires = ["setuptools>=42", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
-# The main server script is a single-file module
-py-modules = ["unreal_mcp_server"] 
+# Package the entire directory structure
+packages = ["tools", "scripts", "docs"]
+py-modules = ["vibe_ue_server"]
+
+[tool.setuptools.package-data]
+"*" = ["*.md", "*.json", "*.txt"]
+
+[project.scripts]
+vibeue = "vibe_ue_server:main"
+ 
