@@ -81,6 +81,21 @@ if %ERRORLEVEL% EQU 0 (
     echo ====================================
     echo.
     echo VibeUE plugin compiled successfully.
+    echo Copying binaries to plugin directory...
+    echo.
+    
+    REM Create Binaries directory if it doesn't exist
+    if not exist "%PLUGIN_DIR%\Binaries\Win64" (
+        mkdir "%PLUGIN_DIR%\Binaries\Win64"
+        echo Created: %PLUGIN_DIR%\Binaries\Win64
+    )
+    
+    REM Copy binaries from Packaged to main plugin directory
+    if exist "%OUTPUT_DIR%\Binaries\Win64\*" (
+        copy "%OUTPUT_DIR%\Binaries\Win64\*" "%PLUGIN_DIR%\Binaries\Win64\" >nul
+        echo Copied binaries to: %PLUGIN_DIR%\Binaries\Win64\
+    )
+    
     echo You can now launch Unreal Engine without the "Missing Modules" error.
     echo.
     
