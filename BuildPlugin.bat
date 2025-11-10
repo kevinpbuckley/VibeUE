@@ -1,6 +1,7 @@
 @echo off
 REM VibeUE Plugin Build Script
-REM Double-click this file to build the VibeUE plugin and resolve "Missing Modules" errors
+REM Double-click this file to build the VibeUE plugin for any Unreal Engine project
+REM Uses UAT BuildPlugin which doesn't require project-specific Editor targets
 
 setlocal enabledelayedexpansion
 
@@ -14,6 +15,23 @@ REM Get plugin directory (where this script is located)
 set "PLUGIN_DIR=%~dp0"
 set "PLUGIN_DIR=%PLUGIN_DIR:~0,-1%"
 
+REM Find .uplugin file
+set "UPLUGIN_PATH="
+for %%F in ("%PLUGIN_DIR%\*.uplugin") do (
+    set "UPLUGIN_PATH=%%F"
+    goto :uplugin_found
+)
+
+echo ERROR: Could not find .uplugin file in plugin directory.
+echo Please ensure this script is in the VibeUE plugin root folder.
+echo.
+pause
+exit /b 1
+
+:uplugin_found
+for %%F in ("%UPLUGIN_PATH%") do set "PLUGIN_NAME=%%~nF"
+echo Found plugin: %PLUGIN_NAME%
+
 REM Search for Unreal Engine installation
 echo Searching for Unreal Engine installation...
 set "UE_PATH="
@@ -26,7 +44,7 @@ for %%P in (
     "%ProgramFiles%\Epic Games\UE_5.6"
     "%ProgramFiles(x86)%\Epic Games\UE_5.6"
 ) do (
-    if exist "%%~P\Engine\Build\BatchFiles\Build.bat" (
+    if exist "%%~P\Engine\Build\BatchFiles\RunUAT.bat" (
         set "UE_PATH=%%~P"
         goto :ue_found
     )
@@ -41,42 +59,20 @@ exit /b 1
 :ue_found
 echo Found: %UE_PATH%
 
-REM Search for .uproject file
-echo Searching for .uproject file...
-set "PROJECT_PATH="
-
-REM Check current directory and parent directories
-set "SEARCH_DIR=%PLUGIN_DIR%"
-for /L %%i in (1,1,5) do (
-    for %%F in ("!SEARCH_DIR!\*.uproject") do (
-        set "PROJECT_PATH=%%F"
-        goto :project_found
-    )
-    for %%D in ("!SEARCH_DIR!") do set "SEARCH_DIR=%%~dpD"
-    set "SEARCH_DIR=!SEARCH_DIR:~0,-1!"
-)
-
-echo ERROR: Could not find .uproject file.
-echo Please ensure this plugin is in a Plugins folder of an Unreal project.
-echo.
-pause
-exit /b 1
-
-:project_found
-echo Found: %PROJECT_PATH%
-
-REM Extract project name
-for %%F in ("%PROJECT_PATH%") do set "PROJECT_NAME=%%~nF"
+REM Set output directory
+set "OUTPUT_DIR=%PLUGIN_DIR%\Packaged"
 
 echo.
 echo Building VibeUE plugin...
 echo   Engine: %UE_PATH%
-echo   Project: %PROJECT_NAME%
-echo   Configuration: Development
+echo   Plugin: %PLUGIN_NAME%
+echo   Output: %OUTPUT_DIR%
+echo   Platforms: Win64
 echo.
 
-REM Build the project
-"%UE_PATH%\Engine\Build\BatchFiles\Build.bat" %PROJECT_NAME%Editor Win64 Development "%PROJECT_PATH%" -waitmutex
+REM Build the plugin using UAT BuildPlugin
+REM This works for any project and doesn't require project-specific Editor targets
+"%UE_PATH%\Engine\Build\BatchFiles\RunUAT.bat" BuildPlugin -Plugin="%UPLUGIN_PATH%" -Package="%OUTPUT_DIR%" -CreateSubFolder -TargetPlatforms=Win64
 
 if %ERRORLEVEL% EQU 0 (
     echo.
