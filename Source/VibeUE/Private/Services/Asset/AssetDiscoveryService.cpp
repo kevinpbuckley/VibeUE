@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Asset/AssetDiscoveryService.h"
 #include "Core/ErrorCodes.h"
 #include "AssetRegistry/AssetRegistryModule.h"

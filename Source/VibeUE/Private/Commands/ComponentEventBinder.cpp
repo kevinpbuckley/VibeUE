@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/ComponentEventBinder.h"
 #include "K2Node_ComponentBoundEvent.h"
 #include "EdGraphSchema_K2.h"

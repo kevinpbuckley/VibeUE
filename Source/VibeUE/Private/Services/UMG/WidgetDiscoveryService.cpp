@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetDiscoveryService.cpp
  * @brief Implementation of widget blueprint discovery functionality

@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetReflectionService.cpp
  * @brief Implementation of widget reflection and discovery functionality

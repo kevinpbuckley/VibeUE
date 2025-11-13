@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * WidgetEventService.cpp
  * Clean implementation matching Public/Services/UMG/WidgetEventService.h

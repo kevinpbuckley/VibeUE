@@ -1,4 +1,6 @@
-﻿#pragma once
+// Copyright VibeUE 2025
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Core/Result.h"

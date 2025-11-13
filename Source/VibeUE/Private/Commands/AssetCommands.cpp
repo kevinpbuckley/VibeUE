@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/AssetCommands.h"
 #include "Services/Asset/AssetDiscoveryService.h"
 #include "Services/Asset/AssetLifecycleService.h"

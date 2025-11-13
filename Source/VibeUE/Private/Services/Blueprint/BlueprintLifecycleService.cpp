@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Services/Blueprint/BlueprintLifecycleService.h"

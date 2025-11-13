@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Asset/AssetImportService.h"
 #include "Core/ErrorCodes.h"
 #include "EditorAssetLibrary.h"

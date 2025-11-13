@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetHierarchyService.cpp
  * @brief Implementation of widget hierarchy navigation and validation

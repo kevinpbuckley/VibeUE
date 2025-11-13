@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Bridge.h"
 #include "MCPServerRunnable.h"
 #include "Sockets.h"

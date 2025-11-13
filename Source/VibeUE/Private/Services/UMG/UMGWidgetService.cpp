@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file UMGWidgetService.cpp
  * @brief Implementation of widget component management functionality

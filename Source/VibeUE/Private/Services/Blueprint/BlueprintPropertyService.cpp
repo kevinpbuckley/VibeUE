@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"

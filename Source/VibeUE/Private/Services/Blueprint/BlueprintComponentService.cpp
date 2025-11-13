@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Blueprint/BlueprintComponentService.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/SimpleConstructionScript.h"

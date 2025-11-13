@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/BlueprintVariableReflectionServices.h"
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"

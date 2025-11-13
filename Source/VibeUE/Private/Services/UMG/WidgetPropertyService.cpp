@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetPropertyService.cpp
  * @brief Implementation of widget property management functionality

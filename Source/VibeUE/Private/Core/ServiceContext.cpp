@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Core/ServiceContext.h"
 #include "Editor.h"
 #include "Engine/World.h"

@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/CommonUtils.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Blueprint.h"

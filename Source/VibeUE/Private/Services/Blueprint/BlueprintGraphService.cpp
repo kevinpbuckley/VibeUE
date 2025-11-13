@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Blueprint/BlueprintGraphService.h"
 #include "Core/ErrorCodes.h"
 #include "EdGraph/EdGraphNode.h"

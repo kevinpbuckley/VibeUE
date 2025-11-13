@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/UMG/WidgetAssetService.h"
 #include "Core/ErrorCodes.h"
 #include "WidgetBlueprint.h"

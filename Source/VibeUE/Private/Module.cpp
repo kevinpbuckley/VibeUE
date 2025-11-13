@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Module.h"
 #include "Bridge.h"
 #include "Modules/ModuleManager.h"

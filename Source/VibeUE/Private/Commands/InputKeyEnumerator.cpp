@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/InputKeyEnumerator.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_InputKey.h"

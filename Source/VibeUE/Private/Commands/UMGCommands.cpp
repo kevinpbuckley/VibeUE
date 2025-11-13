@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"

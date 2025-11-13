@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file BlueprintDiscoveryService.cpp
  * @brief Implementation of Blueprint discovery and loading functionality

@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Blueprint/BlueprintNodeService.h"
 #include "Core/ErrorCodes.h"
 #include "Commands/BlueprintReflection.h"

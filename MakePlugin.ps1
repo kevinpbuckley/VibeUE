@@ -45,10 +45,15 @@ $ExcludeDirectories = @(
     ".vs",               # Visual Studio
     ".vscode",           # VS Code
     "__pycache__",       # Python cache
-    "node_modules",      # Node.js modules
     ".pytest_cache",     # Python test cache
-    "build",             # Build directories
-    "dist"               # Distribution directories
+    ".venv",             # Python virtual environment (users should create their own)
+    "venv",              # Alternative virtual environment naming
+    "build",             # Python build directories
+    "dist",              # Python distribution directories
+    "*.egg-info",        # Python package metadata
+    "docs",              # Development documentation (user docs moved to Resources)
+    "test_prompts",      # Development test files
+    "node_modules"       # Node.js modules
 )
 
 $ExcludeFiles = @(
@@ -58,6 +63,8 @@ $ExcludeFiles = @(
     "*.lib",             # Library files (will be rebuilt)
     "*.exp",             # Export files
     "*.ilk",             # Incremental linking files
+    "*.exe",             # Executable files (not allowed in FAB)
+    "*.dll",             # Dynamic libraries (will be rebuilt)
     "*~",                # Backup files
     "*.pyc",             # Python compiled files
     "*.pyo",             # Python optimized files
@@ -76,6 +83,7 @@ $ExcludeDevFiles = @(
     "BuildPlugin.bat",
     "MCP-Inspector.bat",
     "MakePlugin.ps1",        # Build script not needed by end users
+    "AddCopyrights.ps1",     # Development script not needed by end users
     ".gitignore"             # Git-specific file not needed by end users
 )
 
@@ -108,11 +116,15 @@ Write-Host "Verifying package contents..." -ForegroundColor Green
 
 $RequiredFiles = @(
     "VibeUE.uplugin",
-    "README.md"
+    "README.md",
+    "FilterPlugin.ini"
 )
 
 $RequiredDirs = @(
     "Source",
+    "Config",
+    "Content", 
+    "Resources",
     "Python"
 )
 

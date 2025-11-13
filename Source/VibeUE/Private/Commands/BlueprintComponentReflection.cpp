@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/BlueprintComponentReflection.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"

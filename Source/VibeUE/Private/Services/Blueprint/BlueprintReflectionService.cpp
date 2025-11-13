@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Services/Blueprint/BlueprintReflectionService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
 #include "Services/Blueprint/BlueprintFunctionService.h"

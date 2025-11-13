@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetBlueprintInfoService.cpp
  * @brief Implementation for FWidgetBlueprintInfoService

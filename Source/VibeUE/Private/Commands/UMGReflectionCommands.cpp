@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/UMGReflectionCommands.h"
 #include "Engine/Engine.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"

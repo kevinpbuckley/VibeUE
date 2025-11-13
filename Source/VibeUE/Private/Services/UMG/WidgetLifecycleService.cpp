@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 /**
  * @file WidgetLifecycleService.cpp
  * @brief Implementation of widget blueprint lifecycle management

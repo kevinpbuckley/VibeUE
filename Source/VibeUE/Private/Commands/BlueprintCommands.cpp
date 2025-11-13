@@ -1,3 +1,5 @@
+// Copyright VibeUE 2025
+
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Engine/Blueprint.h"
