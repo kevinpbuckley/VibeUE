@@ -1,9 +1,8 @@
 # VibeUE Plugin Packaging Script for Fab Marketplace Submission
 # Creates a clean plugin package excluding build artifacts and development files
-# Usage: .\MakePlugin.ps1 [-Clean] [-Version <version>]
+# Usage: .\MakePlugin.ps1 [-Version <version>]
 
 param(
-    [switch]$Clean = $false,
     [string]$Version = "1.0.0",
     [string]$PackageName = "VibeUE-Fab-Package"
 )
@@ -21,17 +20,15 @@ Write-Host "Package Directory: $PackageDir" -ForegroundColor Gray
 Write-Host "Zip Output: $ZipPath" -ForegroundColor Gray
 Write-Host ""
 
-# Clean previous package if requested or if it exists
-if ($Clean -or (Test-Path $PackageDir)) {
-    Write-Host "Cleaning previous package..." -ForegroundColor Yellow
-    if (Test-Path $PackageDir) {
-        Remove-Item $PackageDir -Recurse -Force
-        Write-Host "  Removed existing package directory" -ForegroundColor Gray
-    }
-    if (Test-Path $ZipPath) {
-        Remove-Item $ZipPath -Force
-        Write-Host "  Removed existing zip file" -ForegroundColor Gray
-    }
+# Always clean previous package and zip file at startup
+Write-Host "Cleaning previous package and zip file..." -ForegroundColor Yellow
+if (Test-Path $PackageDir) {
+    Remove-Item $PackageDir -Recurse -Force
+    Write-Host "  Removed existing package directory" -ForegroundColor Gray
+}
+if (Test-Path $ZipPath) {
+    Remove-Item $ZipPath -Force
+    Write-Host "  Removed existing zip file" -ForegroundColor Gray
 }
 
 # Create package directory
@@ -44,6 +41,7 @@ $ExcludeDirectories = @(
     "Intermediate",       # Build artifacts  
     "Packaged",          # Packaged builds
     ".git",              # Git repository
+    ".github",           # GitHub workflows and config (development only)
     ".vs",               # Visual Studio
     ".vscode",           # VS Code
     "__pycache__",       # Python cache
@@ -76,7 +74,9 @@ $ExcludeDevFiles = @(
     "HANDLER_AUDIT_COMPLETE.md",
     "ISSUE_SUMMARY.md",
     "BuildPlugin.bat",
-    "MCP-Inspector.bat"
+    "MCP-Inspector.bat",
+    "MakePlugin.ps1",        # Build script not needed by end users
+    ".gitignore"             # Git-specific file not needed by end users
 )
 
 Write-Host "Copying plugin files (excluding build artifacts)..." -ForegroundColor Green
