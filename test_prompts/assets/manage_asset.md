@@ -1,7 +1,7 @@
 # manage_asset Test Prompts
 
 ## Prerequisites
-- ✅ Unreal Engine 5.6+ running
+- ✅ Unreal Engine 5.7+ running
 - ✅ VibeUE plugin loaded
 - ✅ MCP connection active
 - ✅ Test assets available in project

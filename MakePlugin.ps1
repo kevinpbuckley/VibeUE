@@ -52,7 +52,6 @@ $ExcludeDirectories = @(
     "dist",              # Python distribution directories
     "*.egg-info",        # Python package metadata
     "docs",              # Development documentation (user docs moved to Resources)
-    "test_prompts",      # Development test files
     "node_modules"       # Node.js modules
 )
 
@@ -84,8 +83,12 @@ $ExcludeDevFiles = @(
     "MCP-Inspector.bat",
     "MakePlugin.ps1",        # Build script not needed by end users
     "AddCopyrights.ps1",     # Development script not needed by end users
+    "FAB-DESCRIPTION.md",    # Development file not needed by end users
+    "FAB-Checklist.md",      # Internal checklist not needed by end users
     ".gitignore"             # Git-specific file not needed by end users
 )
+
+# Note: test_prompts folder is now included for user reference and examples
 
 Write-Host "Copying plugin files (excluding build artifacts)..." -ForegroundColor Green
 
@@ -122,10 +125,8 @@ $RequiredFiles = @(
 
 $RequiredDirs = @(
     "Source",
-    "Config",
     "Content", 
-    "Resources",
-    "Python"
+    "Resources"
 )
 
 $MissingItems = @()
@@ -212,18 +213,22 @@ catch {
     exit 1
 }
 
+# Delete the package directory to prevent build conflicts
+Write-Host "Cleaning up package directory..." -ForegroundColor Yellow
+try {
+    if (Test-Path $PackageDir) {
+        Remove-Item $PackageDir -Recurse -Force
+        Write-Host "  Package directory removed" -ForegroundColor Gray
+    }
+}
+catch {
+    Write-Host "WARNING: Failed to delete package directory: $($_.Exception.Message)" -ForegroundColor Yellow
+}
+
 # Final summary
 Write-Host ""
 Write-Host "=== Package Creation Complete ===" -ForegroundColor Green
-Write-Host "Package Directory: $PackageDir" -ForegroundColor White
 Write-Host "ZIP Archive: $ZipPath" -ForegroundColor White
-Write-Host "Package Size: $PackageSizeMB MB ($FileCount files)" -ForegroundColor White
 Write-Host "ZIP Size: $ZipSizeMB MB" -ForegroundColor White
 Write-Host ""
 Write-Host "Ready for Fab Marketplace submission!" -ForegroundColor Cyan
-
-# Optional: Open the package directory
-$OpenPackage = Read-Host "Open package directory? (y/N)"
-if ($OpenPackage -eq 'y' -or $OpenPackage -eq 'Y') {
-    Start-Process explorer.exe -ArgumentList $PackageDir
-}

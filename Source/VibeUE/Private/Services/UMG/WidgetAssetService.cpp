@@ -1,4 +1,4 @@
-// Copyright VibeUE 2025
+// Copyright Kevin Buckley 2025 All Rights Reserved.
 
 #include "Services/UMG/WidgetAssetService.h"
 #include "Core/ErrorCodes.h"

@@ -1,4 +1,4 @@
-// Copyright VibeUE 2025
+// Copyright Kevin Buckley 2025 All Rights Reserved.
 
 #include "Services/Asset/AssetDiscoveryService.h"
 #include "Core/ErrorCodes.h"

@@ -1,7 +1,7 @@
 # manage_blueprint_component Test Prompts
 
 ## Prerequisites
-- ✅ Unreal Engine 5.6+ running
+- ✅ Unreal Engine 5.7+ running
 - ✅ VibeUE plugin loaded
 - ✅ MCP connection active
 - ✅ Blueprint created (use BP_TestActor from manage_blueprint tests or create new)

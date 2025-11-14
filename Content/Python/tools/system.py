@@ -41,7 +41,7 @@ def register_system_tools(mcp: FastMCP):
                     "success": False,
                     "connection_status": "Failed to establish connection",
                     "troubleshooting": [
-                        "1. Verify Unreal Engine 5.6 is running",
+                        "1. Verify Unreal Engine 5.7 is running",
                         "2. Check that UnrealMCP plugin is loaded and enabled",
                         "3. Ensure port 55557 is available",
                         "4. Verify project has UnrealMCP plugin in Plugins folder"

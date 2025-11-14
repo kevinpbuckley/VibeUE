@@ -1,7 +1,7 @@
 """
 Unreal Engine MCP Server
 
-Advanced Model Context Protocol server for comprehensive Unreal Engine 5.6 integration.
+Advanced Model Context Protocol server for comprehensive Unreal Engine 5.7 integration.
 Provides complete UMG widget system, Blueprint management, actor manipulation, and 
 enhanced UI building capabilities with persistent style sets and complex property support.
 
@@ -22,7 +22,7 @@ Architecture:
 - Modular tool registration system
 
 Usage:
-1. Ensure Unreal Engine 5.6 is running with VibeUE plugin loaded
+1. Ensure Unreal Engine 5.7 is running with VibeUE plugin loaded
 2. Start this server via stdio transport
 3. Use MCP client to interact with registered tools
 4. All responses include 'success' field for error checking
@@ -485,7 +485,7 @@ if __name__ == "__main__":
     STARTUP CHECKLIST FOR AI ASSISTANTS:
     
     Before Using Tools:
-    1. Verify Unreal Engine 5.6 is running
+    1. Verify Unreal Engine 5.7 is running
     2. Confirm VibeUE plugin is loaded (check plugin manager)
     3. Ensure port 55557 is available (default plugin setting)
     4. Check vibe_ue.log for connection status
@@ -519,6 +519,6 @@ if __name__ == "__main__":
     
     logger.info("Starting Unreal MCP server with stdio transport")
     logger.info("AI Assistant Guide: Use get_help() for complete tool documentation and troubleshooting")
-    logger.info("Prerequisites: Unreal Engine 5.6 running with VibeUE plugin loaded")
+    logger.info("Prerequisites: Unreal Engine 5.7 running with VibeUE plugin loaded")
     
     mcp.run(transport='stdio') 

@@ -2,7 +2,7 @@
 
 ## What is VibeUE?
 
-VibeUE is a Model Context Protocol (MCP) server that enables AI assistants to control Unreal Engine 5.6+ through natural language commands.
+VibeUE is a Model Context Protocol (MCP) server that enables AI assistants to control Unreal Engine 5.7+ through natural language commands.
 
 ## Core Capabilities
 

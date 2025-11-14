@@ -19,7 +19,7 @@ This document combines test prompts for both utility tools: `check_unreal_connec
 
 1. **Start Unreal Engine**
    ```
-   Launch Unreal Engine 5.6+ with project that has VibeUE plugin
+   Launch Unreal Engine 5.7+ with project that has VibeUE plugin
    ```
 
 2. **Load VibeUE Plugin**
@@ -496,7 +496,7 @@ This document combines test prompts for both utility tools: `check_unreal_connec
   "success": true,
   "connection_status": "Connected",
   "plugin_status": "Active",
-  "unreal_version": "5.6",
+  "unreal_version": "5.7",
   "plugin_version": "1.0.0"
 }
 ```

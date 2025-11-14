@@ -1,7 +1,7 @@
 [project]
 name = "vibeue"
 version = "0.1.0"
-description = "VibeUE MCP Server: Control Unreal Engine 5.6+ through AI assistants using the Model Context Protocol. Features 60+ tools for Blueprint and UMG manipulation."
+description = "VibeUE MCP Server: Control Unreal Engine 5.7+ through AI assistants using the Model Context Protocol. Features 60+ tools for Blueprint and UMG manipulation."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -48,7 +48,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 # Package the entire directory structure
-packages = ["tools", "scripts", "docs"]
+packages = ["tools", "scripts"]
 py-modules = ["vibe_ue_server"]
 
 [tool.setuptools.package-data]

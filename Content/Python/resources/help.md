@@ -827,7 +827,7 @@ var_types = get_available_blueprint_variable_types()
 
 ### Connection Issues
 - `check_unreal_connection()` - First diagnostic step
-- Ensure Unreal Engine 5.6 is running
+- Ensure Unreal Engine 5.7 is running
 - Verify VibeUE plugin is loaded and enabled
 - Check port 55557 is available
 

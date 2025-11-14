@@ -11,7 +11,7 @@
 - Another application using the port
 
 **Solutions:**
-1. Verify Unreal Engine 5.6 is running
+1. Verify Unreal Engine 5.7 is running
 2. Check VibeUE plugin is enabled in Edit → Plugins
 3. Reload plugin: Disable → Enable → Restart Editor
 4. Check Windows Firewall settings for port 55557
