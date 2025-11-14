@@ -119,14 +119,14 @@ Write-Host "Verifying package contents..." -ForegroundColor Green
 
 $RequiredFiles = @(
     "VibeUE.uplugin",
-    "README.md",
-    "FilterPlugin.ini"
+    "README.md"
 )
 
 $RequiredDirs = @(
     "Source",
     "Content", 
-    "Resources"
+    "Resources",
+    "Config"
 )
 
 $MissingItems = @()
