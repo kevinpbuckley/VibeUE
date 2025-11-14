@@ -4,7 +4,7 @@
 
 param(
     [string]$Version = "1.0.0",
-    [string]$PackageName = "VibeUE-Fab-Package"
+    [string]$PackageName = "VibeUE-Package"
 )
 
 # Script configuration
@@ -12,7 +12,7 @@ $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $SourceDir = $ScriptDir
 $ParentDir = Split-Path -Parent $ScriptDir
 $PackageDir = Join-Path $ParentDir $PackageName
-$ZipPath = Join-Path $ParentDir "$PackageName.zip"
+$ZipPath = Join-Path $ParentDir "VibeUE.zip"
 
 Write-Host "=== VibeUE Plugin Packaging Script ===" -ForegroundColor Cyan
 Write-Host "Source Directory: $SourceDir" -ForegroundColor Gray
