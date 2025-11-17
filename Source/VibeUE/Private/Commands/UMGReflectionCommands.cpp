@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/UMGReflectionCommands.h"
 #include "Engine/Engine.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"

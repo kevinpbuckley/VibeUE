@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file WidgetDiscoveryService.cpp
  * @brief Implementation of widget blueprint discovery functionality

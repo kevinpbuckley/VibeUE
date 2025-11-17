@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file UMGWidgetService.cpp
  * @brief Implementation of widget component management functionality

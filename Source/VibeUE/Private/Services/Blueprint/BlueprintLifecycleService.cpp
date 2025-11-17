@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Services/Blueprint/BlueprintLifecycleService.h"

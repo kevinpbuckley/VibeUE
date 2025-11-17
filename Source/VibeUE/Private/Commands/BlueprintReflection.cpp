@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/BlueprintReflection.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
 #include "Services/Blueprint/BlueprintNodeService.h"

@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/CommonUtils.h"
 #include "GameFramework/Actor.h"
 #include "Engine/Blueprint.h"

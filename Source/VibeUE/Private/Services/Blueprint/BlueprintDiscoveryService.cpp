@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file BlueprintDiscoveryService.cpp
  * @brief Implementation of Blueprint discovery and loading functionality

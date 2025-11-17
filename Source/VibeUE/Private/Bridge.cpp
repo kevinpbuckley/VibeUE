@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Bridge.h"
 #include "MCPServerRunnable.h"
 #include "Sockets.h"
@@ -257,7 +259,7 @@ TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const 
     {
         ResultJson = MakeShareable(new FJsonObject);
         ResultJson->SetBoolField(TEXT("success"), true);
-        ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.6"));
+        ResultJson->SetStringField(TEXT("unreal_version"), TEXT("5.7"));
         ResultJson->SetStringField(TEXT("plugin_version"), TEXT("1.0"));
         ResultJson->SetStringField(TEXT("server_status"), TEXT("running"));
         ResultJson->SetBoolField(TEXT("editor_connected"), true);

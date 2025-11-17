@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file WidgetPropertyService.cpp
  * @brief Implementation of widget property management functionality

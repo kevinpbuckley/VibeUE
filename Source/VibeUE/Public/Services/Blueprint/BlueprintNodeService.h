@@ -1,4 +1,6 @@
-﻿#pragma once
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
+#pragma once
 
 #include "CoreMinimal.h"
 #include "Core/Result.h"

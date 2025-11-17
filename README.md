@@ -5,8 +5,7 @@ https://www.vibeue.com/
 
 <span style="color: #555555">Vibe UE</span>
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.6%2B-orange)](https://www.unrealengine.com)
+[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.7%2B-orange)](https://www.unrealengine.com)
 [![Python](https://img.shields.io/badge/Python-3.12%2B-yellow)](https://www.python.org)
 
 </div>
@@ -18,14 +17,16 @@ It's not perfect but it's a glimpse of a vision of how to better deal with No-Co
 ## 🚀 Installation & Quick Start
 
 ### Prerequisites
-- Unreal Engine 5.6+
+- Unreal Engine 5.7+
 - Python 3.12+
 - Git
 - MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf)
 
-### 1. Clone the Repository
+### 1. Clone the Repository (manual installs only)
 
-**Clone directly into your Unreal Engine project's Plugins folder:**
+> **Marketplace users:** If you already installed VibeUE from the Unreal Marketplace, Unreal copied the plugin into your project automatically. Skip to [Step 3](#3-enable-the-plugin-in-unreal-engine) to enable it in the editor.
+
+**Manual install:** Clone directly into your Unreal Engine project's `Plugins` folder.
 
 ```bash
 cd /path/to/your/unreal/project/Plugins
@@ -71,14 +72,19 @@ The script automatically finds your Unreal Engine installation and project file,
    ```json
    {
      "servers": {
-       "VibeUE": {
-         "type": "stdio",
-         "command": "python",
-         "args": ["Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"],
-         "env": {},
-         "cwd": "${workspaceFolder}"
-       }
-     },
+        "VibeUE": {
+
+      "type": "stdio",
+      "command": "uv",
+      "args": [
+        "--directory",
+        "Plugins\\VibeUE\\Content\\Python",
+        "run",
+        "vibe_ue_server.py"
+      ],
+      "env": {},
+      "cwd": "${workspaceFolder}",
+    },
      "inputs": []
    }
    ```
@@ -306,9 +312,6 @@ Use the following JSON for your MCP configuration:
 Each client uses the same JSON format as shown in the example above. 
 Simply place the configuration in the appropriate location for your MCP client.
 
-
-## License
-MIT
 
 ## Questions and Contributions
 

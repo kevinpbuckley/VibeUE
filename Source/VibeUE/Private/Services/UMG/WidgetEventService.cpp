@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * WidgetEventService.cpp
  * Clean implementation matching Public/Services/UMG/WidgetEventService.h

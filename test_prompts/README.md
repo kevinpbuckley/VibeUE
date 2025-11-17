@@ -11,7 +11,7 @@ Quick validation prompts to verify VibeUE MCP tools are working. Each file has m
 ## How to Use
 
 ### Prerequisites
-1. ✅ Unreal Engine 5.6+ running
+1. ✅ Unreal Engine 5.7+ running
 2. ✅ VibeUE plugin loaded
 3. ✅ MCP connection active
 

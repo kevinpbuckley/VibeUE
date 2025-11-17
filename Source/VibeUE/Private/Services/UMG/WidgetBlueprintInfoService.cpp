@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file WidgetBlueprintInfoService.cpp
  * @brief Implementation for FWidgetBlueprintInfoService

@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/InputKeyEnumerator.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "K2Node_InputKey.h"

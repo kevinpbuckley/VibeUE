@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Services/Blueprint/BlueprintComponentService.h"
 #include "Core/ErrorCodes.h"
 #include "Engine/SimpleConstructionScript.h"

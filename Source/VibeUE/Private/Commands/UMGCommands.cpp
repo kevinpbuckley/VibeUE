@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Services/UMG/WidgetLifecycleService.h"

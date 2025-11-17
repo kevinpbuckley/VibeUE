@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/BlueprintComponentReflection.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"

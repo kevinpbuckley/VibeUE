@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/BlueprintNodeCommands.h"
 #include "Commands/BlueprintReflection.h"
 #include "Commands/CommonUtils.h"

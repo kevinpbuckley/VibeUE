@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Services/Asset/AssetLifecycleService.h"
 #include "Core/ErrorCodes.h"
 #include "EditorAssetLibrary.h"

@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Engine/Blueprint.h"

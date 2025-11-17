@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "Core/ServiceContext.h"
 #include "Editor.h"
 #include "Engine/World.h"

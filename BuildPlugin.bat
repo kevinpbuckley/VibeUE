@@ -42,12 +42,25 @@ REM Search for Unreal Engine installation using registry (standard method)
 echo Searching for Unreal Engine installation...
 set "UE_PATH="
 
-REM Try to find UE versions from registry (prioritize latest versions)
-set "UE_PATH="
+REM First, check common UE 5.7 paths (prioritize before registry to find latest version)
+echo Checking for Unreal Engine 5.7 installations...
+for %%P in (
+    "%ProgramFiles%\Epic Games\UE_5.7"
+    "%ProgramFiles(x86)%\Epic Games\UE_5.7"
+    "E:\Program Files\Epic Games\UE_5.7"
+    "C:\Program Files\Epic Games\UE_5.7"
+    "D:\Program Files\Epic Games\UE_5.7"
+) do (
+    if exist "%%~P\Engine\Build\BatchFiles\RunUAT.bat" (
+        set "UE_PATH=%%~P"
+        echo Found UE 5.7 at: !UE_PATH!
+        goto :ue_found
+    )
+)
 
-REM Try to find UE versions from registry (prioritize latest versions)
+REM Try to find UE versions from registry
 echo Checking Windows Registry for Epic Games Unreal Engine installations...
-for %%V in (5.6 5.5 5.4 5.3 5.2) do (
+for %%V in (5.7 5.6 5.5 5.4 5.3) do (
     reg query "HKLM\SOFTWARE\EpicGames\Unreal Engine\%%V" /v InstalledDirectory >nul 2>&1
     if !ERRORLEVEL! EQU 0 (
         for /f "skip=2 tokens=3*" %%a in ('reg query "HKLM\SOFTWARE\EpicGames\Unreal Engine\%%V" /v InstalledDirectory') do (
@@ -63,15 +76,18 @@ for %%V in (5.6 5.5 5.4 5.3 5.2) do (
 
 REM Fallback: Try common installation paths (if registry method fails)
 echo Registry search completed, trying common installation paths...
+REM Note: If UE 5.7 is not found, ensure it's properly installed via Epic Games Launcher
+REM or check that the installation is registered in the Windows Registry
 for %%P in (
-    "%ProgramFiles%\Epic Games\UE_5.6"
-    "%ProgramFiles(x86)%\Epic Games\UE_5.6"
+    "%ProgramFiles%\Epic Games\UE_5.7"
+    "%ProgramFiles(x86)%\Epic Games\UE_5.7"
+    "E:\Program Files\Epic Games\UE_5.7"
+    "C:\Program Files\Epic Games\UE_5.7"
+    "D:\Program Files\Epic Games\UE_5.7"
     "E:\Program Files\Epic Games\UE_5.6"
-    "C:\Program Files\Epic Games\UE_5.6"
-    "D:\Program Files\Epic Games\UE_5.6"
+    "%ProgramFiles%\Epic Games\UE_5.6"
     "%ProgramFiles%\Epic Games\UE_5.5"
     "%ProgramFiles%\Epic Games\UE_5.4"
-    "%ProgramFiles%\Epic Games\UE_5.3"
 ) do (
     if exist "%%~P\Engine\Build\BatchFiles\RunUAT.bat" (
         set "UE_PATH=%%~P"
@@ -81,7 +97,7 @@ for %%P in (
 )
 
 echo ERROR: Could not find Unreal Engine installation.
-echo Please ensure Unreal Engine 5.3+ is installed via Epic Games Launcher.
+echo Please ensure Unreal Engine 5.4+ is installed via Epic Games Launcher.
 echo.
 echo Checked:
 echo   - Windows Registry (HKLM\SOFTWARE\EpicGames\Unreal Engine)

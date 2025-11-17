@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 /**
  * @file WidgetHierarchyService.cpp
  * @brief Implementation of widget hierarchy navigation and validation

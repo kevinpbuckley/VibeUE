@@ -1,3 +1,5 @@
+// Copyright Kevin Buckley 2025 All Rights Reserved.
+
 #include "MCPServerRunnable.h"
 #include "Bridge.h"
 #include "Sockets.h"

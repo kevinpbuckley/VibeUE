@@ -1,7 +1,7 @@
 # manage_blueprint Test Prompts
 
 ## Prerequisites
-- ✅ Unreal Engine 5.6+ running
+- ✅ Unreal Engine 5.7+ running
 - ✅ VibeUE plugin loaded and active
 - ✅ MCP server connection established
 - ✅ Working in test project (not production)
