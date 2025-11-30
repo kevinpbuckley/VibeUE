@@ -66,14 +66,16 @@ Tests for Phase 3 services providing advanced configuration and natural language
 **Actions Tested:**
 - action_create
 - action_list
-- action_delete
 - action_configure
 - action_get_properties
 - mapping_create_context
 - mapping_list_contexts
-- mapping_delete_context
 - mapping_add_key_mapping
 - mapping_get_mappings
+- mapping_get_properties
+- mapping_update_context
+
+**Note:** For delete/duplicate operations, use `manage_asset(action="delete"/"duplicate")` instead.
 
 **Prompt Count:** 45+ prompts
 **Scenarios:** Input action setup, context management, key binding, complex workflows, edge cases

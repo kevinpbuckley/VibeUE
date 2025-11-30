@@ -6,6 +6,8 @@
 #include "Core/ServiceContext.h"
 #include "Services/EnhancedInput/Types/EnhancedInputTypes.h"
 #include "InputMappingContext.h"
+#include "InputModifiers.h"
+#include "InputTriggers.h"
 
 class FEnhancedInputReflectionService;
 class FInputDiscoveryService;
@@ -48,8 +50,7 @@ public:
 	 * @param bForceDelete - Force delete even if context has references
 	 * @return Success or error
 	 */
-	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<bool> DeleteMappingContext(const FString& ContextPath, bool bForceDelete = false);
+	// NOTE: For deleting Mapping Contexts, use manage_asset(action="delete", asset_path="/Game/Input/IMC_Name")
 
 	/**
 	 * Get detailed information about a Mapping Context
@@ -125,16 +126,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
 	TResult<bool> ValidateContextConfiguration(const FString& ContextPath);
 
-	/**
-	 * Duplicate a Mapping Context with all its mappings
-	 * 
-	 * @param SourceContextPath - Path to source Mapping Context
-	 * @param DestinationPath - Content browser path for duplicate
-	 * @param NewName - Name for the duplicated context
-	 * @return Duplicated context or error
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<UInputMappingContext*> DuplicateMappingContext(const FString& SourceContextPath, const FString& DestinationPath, const FString& NewName);
+	// NOTE: For duplicating Mapping Contexts, use manage_asset(action="duplicate", asset_path="...", destination_path="...", new_name="...")
 
 	/**
 	 * Find all Mapping Contexts in the project
@@ -161,7 +153,7 @@ public:
 	 * @return Usage analysis or error
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<FEnhancedInputMappingInfo> AnalyzeContextUsage(const FString& ContextPath);
+	TResult<FEnhancedInputUsageInfo> AnalyzeContextUsage(const FString& ContextPath);
 
 	/**
 	 * Check for key conflicts between contexts
@@ -170,7 +162,113 @@ public:
 	 * @return Conflict analysis or error
 	 */
 	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<TArray<FString>> DetectKeyConflicts(const TArray<FString>& ContextPaths);
+	TResult<TArray<FEnhancedInputKeyConflict>> DetectKeyConflicts(const TArray<FString>& ContextPaths);
+
+	// ═══════════════════════════════════════════════════════════════════
+	// Modifier Management - Add/Remove modifiers on mappings
+	// ═══════════════════════════════════════════════════════════════════
+
+	/**
+	 * Add a modifier to a specific mapping in a context
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping (from GetContextMappings)
+	 * @param Modifier - The modifier object to add (create with CreateModifier)
+	 * @return Success or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<bool> AddModifierToMapping(const FString& ContextPath, int32 MappingIndex, UInputModifier* Modifier);
+
+	/**
+	 * Remove a modifier from a mapping
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping
+	 * @param ModifierIndex - Index of the modifier to remove
+	 * @return Success or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<bool> RemoveModifierFromMapping(const FString& ContextPath, int32 MappingIndex, int32 ModifierIndex);
+
+	/**
+	 * Get all modifiers on a mapping
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping
+	 * @return Array of modifier instance info or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<TArray<FEnhancedInputModifierInstanceInfo>> GetMappingModifiers(const FString& ContextPath, int32 MappingIndex);
+
+	/**
+	 * Get available modifier types
+	 * 
+	 * @return Array of available modifier type names
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<TArray<FString>> GetAvailableModifierTypes();
+
+	// ═══════════════════════════════════════════════════════════════════
+	// Trigger Management - Add/Remove triggers on mappings
+	// ═══════════════════════════════════════════════════════════════════
+
+	/**
+	 * Add a trigger to a specific mapping in a context
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping (from GetContextMappings)
+	 * @param Trigger - The trigger object to add (create with CreateTrigger)
+	 * @return Success or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<bool> AddTriggerToMapping(const FString& ContextPath, int32 MappingIndex, UInputTrigger* Trigger);
+
+	/**
+	 * Remove a trigger from a mapping
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping
+	 * @param TriggerIndex - Index of the trigger to remove
+	 * @return Success or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<bool> RemoveTriggerFromMapping(const FString& ContextPath, int32 MappingIndex, int32 TriggerIndex);
+
+	/**
+	 * Get all triggers on a mapping
+	 * 
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param MappingIndex - Index of the mapping
+	 * @return Array of trigger instance info or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<TArray<FEnhancedInputTriggerInstanceInfo>> GetMappingTriggers(const FString& ContextPath, int32 MappingIndex);
+
+	/**
+	 * Get available trigger types
+	 * 
+	 * @return Array of available trigger type names
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<TArray<FString>> GetAvailableTriggerTypes();
+
+	/**
+	 * Create a trigger instance of specified type
+	 * 
+	 * @param TriggerTypeName - Type name (e.g., "Down", "Pressed", "Hold")
+	 * @return Created trigger or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<UInputTrigger*> CreateTrigger(const FString& TriggerTypeName);
+
+	/**
+	 * Create a modifier instance of specified type
+	 * 
+	 * @param ModifierTypeName - Type name (e.g., "Negate", "Swizzle", "DeadZone")
+	 * @return Created modifier or error
+	 */
+	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
+	TResult<UInputModifier*> CreateModifier(const FString& ModifierTypeName);
 
 private:
 	// Service dependencies (injected via ServiceContext)
@@ -183,4 +281,8 @@ private:
 	bool SaveContextAsset(UInputMappingContext* Context);
 	FString GenerateAssetPath(const FString& BasePath, const FString& AssetName);
 	FKey FindKeyByName(const FString& KeyName);
+	
+	// Class finder helpers for modifier/trigger creation
+	UClass* FindModifierClassInternal(const FString& TypeName);
+	UClass* FindTriggerClassInternal(const FString& TypeName);
 };

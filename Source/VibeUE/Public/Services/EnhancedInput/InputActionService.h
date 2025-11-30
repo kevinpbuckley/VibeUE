@@ -42,15 +42,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
 	TResult<UInputAction*> CreateInputAction(const FString& AssetName, const FString& AssetPath, EInputActionValueType ValueType);
 
-	/**
-	 * Delete an Input Action asset
-	 * 
-	 * @param ActionPath - Full path to the Input Action (e.g., "/Game/Input/Actions/IA_Move")
-	 * @param bForceDelete - Force delete even if asset has references
-	 * @return Success or error
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<bool> DeleteInputAction(const FString& ActionPath, bool bForceDelete = false);
+	// NOTE: For deleting Input Actions, use manage_asset(action="delete", asset_path="/Game/Input/Actions/IA_Name")
 
 	/**
 	 * Get detailed information about an Input Action
@@ -100,16 +92,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
 	TResult<bool> ValidateActionConfiguration(const FString& ActionPath);
 
-	/**
-	 * Duplicate an existing Input Action
-	 * 
-	 * @param SourceActionPath - Path to source Input Action
-	 * @param DestinationPath - Content browser path for duplicate
-	 * @param NewName - Name for the duplicated action
-	 * @return Duplicated action or error
-	 */
-	UFUNCTION(BlueprintCallable, Category = "Enhanced Input")
-	TResult<UInputAction*> DuplicateInputAction(const FString& SourceActionPath, const FString& DestinationPath, const FString& NewName);
+	// NOTE: For duplicating Input Actions, use manage_asset(action="duplicate", asset_path="...", destination_path="...", new_name="...")
 
 	/**
 	 * Find all Input Actions in the project

@@ -2,7 +2,7 @@
 Enhanced Input System Management Tool
 
 Unified multi-action tool for complete Enhanced Input system control covering:
-- Phase 1: Reflection and discovery infrastructure
+- Phase 1: Reflection infrastructure
 - Phase 2: Input action and mapping management  
 - Phase 3: Advanced modifier, trigger, and AI configuration
 
@@ -11,8 +11,8 @@ action creation, mapping context management, modifier/trigger configuration, and
 natural language-based action description parsing.
 
 Architecture:
-- Consolidates 9 C++ services into 1 cohesive MCP tool
-- 40+ actions across reflection, discovery, validation, and management
+- Consolidates 7 C++ services into 1 cohesive MCP tool
+- 35+ actions across reflection and management
 - Full reflection-based operation (zero hardcoding of Enhanced Input types)
 - Natural language parsing for action configuration via AI
 """
@@ -56,12 +56,19 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         include_inherited: bool = False,
         # Action management parameters
         action_name: str = "",
+        action_path: str = "",
+        asset_path: str = "",
         action_value_type: str = "",
+        value_type: str = "",
         display_name: str = "",
         description: str = "",
         # Mapping context parameters
         context_name: str = "",
+        context_path: str = "",
         priority: int = 0,
+        key: str = "",
+        new_name: str = "",
+        mapping_index: int = 0,
         # Modifier parameters
         modifier_type: str = "",
         modifier_index: int = 0,
@@ -80,16 +87,17 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         # Performance parameters
         max_results: int = 100,
         include_details: bool = True,
+        force_delete: bool = False,
     ) -> Dict[str, Any]:
         """
         Enhanced Input System Management Tool
         
-        Unified interface for complete Enhanced Input system control with 40+ actions across
+        Unified interface for complete Enhanced Input system control with 35+ actions across
         all phases of development. Supports action creation, mapping management, advanced
         modifier/trigger configuration, and natural language-based AI integration.
         
         ============================================================================
-        PHASE 1: REFLECTION & DISCOVERY INFRASTRUCTURE
+        PHASE 1: REFLECTION INFRASTRUCTURE
         ============================================================================
         
         **Reflection Service - Type Discovery & Metadata**
@@ -118,76 +126,6 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         # Returns: Type hierarchy, properties, defaults, constraints
         ```
         
-        **Discovery Service - Type Enumeration & Analysis**
-        
-        **action**: "discovery_enumerate_modifiers"
-        List all available modifier types with categorization
-        ```python
-        manage_enhanced_input(
-            action="discovery_enumerate_modifiers",
-            service="discovery"
-        )
-        # Returns: Organized list of all modifier classes
-        ```
-        
-        **action**: "discovery_enumerate_triggers"
-        List all available trigger types with categorization
-        ```python
-        manage_enhanced_input(
-            action="discovery_enumerate_triggers",
-            service="discovery"
-        )
-        # Returns: Organized list of all trigger classes
-        ```
-        
-        **action**: "discovery_get_modifier_info"
-        Get comprehensive information about a specific modifier type
-        ```python
-        manage_enhanced_input(
-            action="discovery_get_modifier_info",
-            service="discovery",
-            modifier_type="SwizzleAxis"
-        )
-        # Returns: Properties, default values, valid configurations
-        ```
-        
-        **action**: "discovery_get_trigger_info"
-        Get comprehensive information about a specific trigger type
-        ```python
-        manage_enhanced_input(
-            action="discovery_get_trigger_info",
-            service="discovery",
-            trigger_type="Pressed"
-        )
-        # Returns: Properties, default values, valid configurations
-        ```
-        
-        **Validation Service - Configuration Integrity**
-        
-        **action**: "validation_check_action"
-        Validate action configuration before creation/modification
-        ```python
-        manage_enhanced_input(
-            action="validation_check_action",
-            service="validation",
-            action_name="TestAction",
-            action_value_type="Axis1D"
-        )
-        # Returns: Valid/invalid status with specific issues
-        ```
-        
-        **action**: "validation_check_mapping"
-        Validate mapping context configuration
-        ```python
-        manage_enhanced_input(
-            action="validation_check_mapping",
-            service="validation",
-            context_name="TestContext",
-            priority=0
-        )
-        # Returns: Configuration validity status
-        ```
-        
         ============================================================================
         PHASE 2: INPUT ACTION & MAPPING CONTEXT MANAGEMENT
         ============================================================================
@@ -201,7 +139,8 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
             action="action_create",
             service="action",
             action_name="IA_Move",
-            action_value_type="Value1D",
+            asset_path="/Game/Input/Actions/IA_Move",
+            value_type="Axis2D",
             display_name="Move",
             description="Movement input action"
         )
@@ -216,17 +155,6 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
             service="action"
         )
         # Returns: All actions with paths and value types
-        ```
-        
-        **action**: "action_delete"
-        Remove Input Action asset
-        ```python
-        manage_enhanced_input(
-            action="action_delete",
-            service="action",
-            action_name="IA_OldAction"
-        )
-        # Returns: Deletion status and cascading effects
         ```
         
         **action**: "action_configure"
@@ -263,10 +191,12 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
             action="mapping_create_context",
             service="mapping",
             context_name="IMC_Combat",
+            asset_path="/Game/Input/Mappings/IMC_Combat",  # REQUIRED: Use asset_path for creation
             priority=1,
             display_name="Combat Controls"
         )
         # Returns: Path to created context asset
+        # NOTE: Creation uses 'asset_path', other mapping actions use 'context_path'
         ```
         
         **action**: "mapping_list_contexts"
@@ -279,29 +209,42 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         # Returns: All contexts with paths and priority
         ```
         
-        **action**: "mapping_delete_context"
-        Remove Input Mapping Context
-        ```python
-        manage_enhanced_input(
-            action="mapping_delete_context",
-            service="mapping",
-            context_name="IMC_OldContext"
-        )
-        # Returns: Deletion status
-        ```
-        
         **action**: "mapping_add_key_mapping"
         Add key binding to mapping context
         ```python
         manage_enhanced_input(
             action="mapping_add_key_mapping",
             service="mapping",
-            context_name="IMC_Combat",
-            action_name="IA_Attack",
-            property_name="Key",
-            property_value="LeftMouseButton"
+            context_path="/Game/Input/Mappings/IMC_Combat",
+            action_path="/Game/Input/Actions/IA_Attack",
+            key="LeftMouseButton"
         )
         # Returns: Mapping result
+        # Returns: Mapping result
+        ```
+        
+        **action**: "mapping_update_context"
+        Update mapping context properties
+        ```python
+        manage_enhanced_input(
+            action="mapping_update_context",
+            service="mapping",
+            context_path="/Game/Input/Mappings/IMC_Combat",
+            property_name="ContextDescription",
+            property_value="Combat-specific input mappings"
+        )
+        # Returns: Update confirmation
+        ```
+        
+        **action**: "mapping_get_properties"
+        Get all properties and current values of a mapping context
+        ```python
+        manage_enhanced_input(
+            action="mapping_get_properties",
+            service="mapping",
+            context_path="/Game/Input/Mappings/IMC_Combat"
+        )
+        # Returns: List of properties with names, types, display names, and current values
         ```
         
         **action**: "mapping_get_mappings"
@@ -310,7 +253,7 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         manage_enhanced_input(
             action="mapping_get_mappings",
             service="mapping",
-            context_name="IMC_Combat"
+            context_path="/Game/Input/Mappings/IMC_Combat"
         )
         # Returns: List of key mappings and bindings
         ```
@@ -517,8 +460,6 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         
         **Service Selection:**
         - "reflection" - Type discovery and metadata reflection
-        - "discovery" - Enhanced type enumeration
-        - "validation" - Configuration validation
         - "action" - Input Action lifecycle
         - "mapping" - Mapping Context management
         - "modifier" - Advanced modifier configuration
@@ -532,6 +473,11 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         - max_results: Limit result count
         - include_details: Include detailed metadata
         
+        **Path Parameters (IMPORTANT):**
+        - asset_path: Used for CREATION actions (action_create, mapping_create_context)
+        - action_path: Used for referencing existing Input Actions
+        - context_path: Used for referencing existing Input Mapping Contexts
+        
         **Configuration Parameters:**
         - modifier_config: Dict with modifier properties
         - trigger_config: Dict with trigger properties
@@ -544,6 +490,10 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         
         action_lower = action.lower()
         
+        # Debug logging
+        logger.info(f"manage_enhanced_input called with action={action_lower}, service={service}")
+        logger.info(f"action_name={action_name}, asset_path={asset_path}, value_type={value_type}")
+        
         # Build command payload
         payload = {
             "action": action_lower,
@@ -553,10 +503,24 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         # Add optional parameters that are set
         if action_name:
             payload["action_name"] = action_name
+        if action_path:
+            payload["action_path"] = action_path
+        if asset_path:
+            payload["asset_path"] = asset_path
         if action_value_type:
             payload["action_value_type"] = action_value_type
+        if value_type:
+            payload["value_type"] = value_type
         if context_name:
             payload["context_name"] = context_name
+        if context_path:
+            payload["context_path"] = context_path
+        if key:
+            payload["key"] = key
+        if new_name:
+            payload["new_name"] = new_name
+        if mapping_index >= 0:
+            payload["mapping_index"] = mapping_index
         if modifier_type:
             payload["modifier_type"] = modifier_type
         if trigger_type:
@@ -591,6 +555,8 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
             payload["include_details"] = include_details
         if use_template:
             payload["use_template"] = use_template
+        if force_delete:
+            payload["force_delete"] = force_delete
         
         # Dispatch to Unreal
         result = _dispatch("manage_enhanced_input", payload)

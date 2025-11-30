@@ -82,6 +82,44 @@ struct FEnhancedInputPropertyInfo
 };
 
 /**
+ * @struct FEnhancedInputModifierInstanceInfo
+ * @brief Information about a specific modifier instance attached to a key mapping
+ */
+struct FEnhancedInputModifierInstanceInfo
+{
+	/** Index of this modifier in the mapping's modifier array */
+	int32 Index = 0;
+	
+	/** Type name (class name without prefix) */
+	FString TypeName;
+	
+	/** Display name of the modifier type */
+	FString DisplayName;
+	
+	/** Current property values (name -> value as string) */
+	TMap<FString, FString> Properties;
+};
+
+/**
+ * @struct FEnhancedInputTriggerInstanceInfo
+ * @brief Information about a specific trigger instance attached to a key mapping
+ */
+struct FEnhancedInputTriggerInstanceInfo
+{
+	/** Index of this trigger in the mapping's trigger array */
+	int32 Index = 0;
+	
+	/** Type name (class name without prefix) */
+	FString TypeName;
+	
+	/** Display name of the trigger type */
+	FString DisplayName;
+	
+	/** Current property values (name -> value as string) */
+	TMap<FString, FString> Properties;
+};
+
+/**
  * @struct FEnhancedInputModifierInfo
  * @brief Metadata about an Input Modifier type
  */
@@ -143,6 +181,15 @@ struct FEnhancedInputActionInfo
 	/** Whether this is a digital action */
 	bool bIsDigital = false;
 	
+	/** Number of modifiers attached */
+	int32 ModifierCount = 0;
+	
+	/** Number of triggers attached */
+	int32 TriggerCount = 0;
+	
+	/** Number of mapping contexts using this action */
+	int32 UsageCount = 0;
+	
 	/** Associated modifiers */
 	TArray<FEnhancedInputModifierInfo> Modifiers;
 	
@@ -167,6 +214,41 @@ struct FEnhancedInputMappingInfo
 	
 	/** Priority value */
 	int32 Priority = 0;
+	
+	/** Number of mappings in the context */
+	int32 MappingCount = 0;
+	
+	/** Number of unique actions */
+	int32 ActionCount = 0;
+};
+
+/**
+ * @struct FEnhancedInputUsageInfo
+ * @brief Statistics about mapping context usage
+ */
+struct FEnhancedInputUsageInfo
+{
+	/** Total number of mappings in the context */
+	int32 TotalMappings = 0;
+	
+	/** Number of unique actions used */
+	int32 UniqueActions = 0;
+	
+	/** Number of unique keys used */
+	int32 UniqueKeys = 0;
+};
+
+/**
+ * @struct FEnhancedInputKeyConflict
+ * @brief Information about a key conflict within a context
+ */
+struct FEnhancedInputKeyConflict
+{
+	/** The key that has conflicts */
+	FString Key;
+	
+	/** Actions that are bound to this key */
+	TArray<FString> ConflictingActions;
 };
 
 /**

@@ -110,3 +110,75 @@ Try to delete a mapping context that's currently active. What's the behavior?
 
 ### Test: Map to Non-Existent Action
 Attempt to create a key mapping to an input action that doesn't exist. What error occurs?
+
+## Property Management Tests
+
+### Test: Update Context Description
+Set the description for "IMC_Default" to explain what it's for: "Default input mappings for basic movement, looking, and jumping".
+
+### Test: Read Context Description  
+What is the current description set on the "IMC_Combat" context?
+
+### Test: Set Registration Tracking Mode
+Configure "IMC_Combat" to count registrations so we can track when it's active. Set RegistrationTrackingMode to "CountRegistrations".
+
+### Test: Set Input Mode Filter
+Configure "IMC_Default" to use a custom input mode query filter instead of the project default.
+
+### Test: Get All Context Properties
+Show me all available properties and their current values for "IMC_Default" so I know what can be configured.
+
+## Advanced Management Tests
+
+### Test: Validate Context Configuration
+Check if the "IMC_Default" mapping context has valid configuration - are all actions valid and all keys mapped correctly?
+
+### Test: Duplicate Mapping Context
+Create a copy of "IMC_Default" called "IMC_Default_Backup" in "/Game/Input/Backups/" to preserve the current configuration.
+
+### Test: Get Available Input Keys
+I'm building a key remapping UI. Show me all the valid key names that players can bind to actions (filter for keyboard keys).
+
+### Test: Analyze Context Usage
+Analyze the "IMC_Default" context and tell me statistics: how many mappings, how many unique actions, how many unique keys?
+
+### Test: Detect Key Conflicts
+Check if there are any key conflicts between "IMC_Default" and "IMC_Combat" contexts - are any keys mapped to different actions in both contexts?
+
+### Test: Find All Contexts
+Search for all Input Mapping Contexts in the entire project. I want to see everything that exists.
+
+### Test: Search Contexts by Name
+Find all mapping contexts that have "Combat" in their name.
+
+### Test: Get Gamepad Keys
+I need to build a gamepad configuration UI. Get all available input keys but filter to only show gamepad buttons and sticks.
+
+### Test: Remove Specific Mapping
+In "IMC_Default", I want to remove the third key mapping (index 2). Delete that specific mapping without affecting others.
+
+### Test: Update Multiple Properties
+Update both the description and registration tracking mode for "IMC_Combat" in one operation.
+
+## Integration & Workflow Tests
+
+### Test: Complete Property Configuration Workflow
+1. Create "IMC_Advanced"
+2. Set its description
+3. Enable registration tracking
+4. Add several key mappings
+5. Validate the configuration
+6. Get all properties to verify settings
+
+### Test: Conflict Resolution Workflow
+1. Create two contexts with overlapping key bindings
+2. Detect the conflicts
+3. Analyze usage of both contexts
+4. Show how to resolve by adjusting priorities
+
+### Test: Backup and Restore Workflow
+1. Duplicate an existing context as backup
+2. Make changes to the original
+3. Validate both configurations
+4. Compare properties between original and backup
+
