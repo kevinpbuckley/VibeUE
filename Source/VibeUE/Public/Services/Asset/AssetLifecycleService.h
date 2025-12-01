@@ -18,6 +18,44 @@ struct FAssetDuplicateResult
 };
 
 /**
+ * @struct FAssetReferenceInfo
+ * @brief Information about an asset reference
+ */
+struct FAssetReferenceInfo
+{
+    /** Path to the referencing asset */
+    FString AssetPath;
+    
+    /** Class type of the referencing asset */
+    FString AssetClass;
+    
+    /** Display name of the asset */
+    FString DisplayName;
+};
+
+/**
+ * @struct FAssetReferencesResult
+ * @brief Result data for asset reference queries
+ */
+struct FAssetReferencesResult
+{
+    /** The asset path that was queried */
+    FString AssetPath;
+    
+    /** Assets that reference this asset (referencers) */
+    TArray<FAssetReferenceInfo> Referencers;
+    
+    /** Assets that this asset references (dependencies) */
+    TArray<FAssetReferenceInfo> Dependencies;
+    
+    /** Number of referencers */
+    int32 ReferencerCount = 0;
+    
+    /** Number of dependencies */
+    int32 DependencyCount = 0;
+};
+
+/**
  * @class FAssetLifecycleService
  * @brief Service responsible for asset lifecycle operations
  * 
@@ -99,6 +137,17 @@ public:
     TResult<void> SaveAsset(const FString& AssetPath);
     
     /**
+     * @brief Save all dirty (modified) assets
+     * 
+     * Saves all currently modified assets in the project.
+     * This is equivalent to "Save All" in the Unreal Editor.
+     * 
+     * @param bPromptUserToSave If true, shows save dialog to user
+     * @return TResult containing the number of assets saved
+     */
+    TResult<int32> SaveAllDirtyAssets(bool bPromptUserToSave = false);
+    
+    /**
      * @brief Delete an asset from the project
      * 
      * Removes the specified asset from the project with safety checks.
@@ -152,6 +201,26 @@ public:
      * @return TResult containing true if asset exists, false otherwise
      */
     TResult<bool> DoesAssetExist(const FString& AssetPath);
+    
+    /**
+     * @brief Get all references for an asset
+     * 
+     * Returns both referencers (assets that reference this asset) and
+     * dependencies (assets that this asset references).
+     * 
+     * @param AssetPath The full path to the asset to query
+     * @param bIncludeReferencers If true, include assets that reference this asset
+     * @param bIncludeDependencies If true, include assets this asset depends on
+     * @return TResult containing reference information
+     *         Error codes:
+     *         - ASSET_NOT_FOUND: Asset doesn't exist at path
+     *         - INTERNAL_ERROR: Failed to access Asset Registry
+     */
+    TResult<FAssetReferencesResult> GetAssetReferences(
+        const FString& AssetPath,
+        bool bIncludeReferencers = true,
+        bool bIncludeDependencies = true
+    );
 
 protected:
     virtual FString GetServiceName() const override { return TEXT("AssetLifecycleService"); }

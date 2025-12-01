@@ -65,7 +65,9 @@ public class VibeUE : ModuleRules
 				"MessageLog",
 				"EditorStyle",
 				"AssetTools",
-				"PropertyEditor"         // For property reflection
+				"PropertyEditor",         // For property reflection
+				"EnhancedInput",          // For Enhanced Input System support
+				"InputCore"               // For input types
 			}
 		);
 		

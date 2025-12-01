@@ -273,6 +273,18 @@ namespace ErrorCodes
 	/** @brief Asset deletion failed */
 	constexpr const TCHAR* ASSET_DELETE_FAILED = TEXT("ASSET_DELETE_FAILED");
 
+	/** @brief Asset creation failed */
+	constexpr const TCHAR* ASSET_CREATE_FAILED = TEXT("ASSET_CREATE_FAILED");
+
+	/** @brief Asset save failed */
+	constexpr const TCHAR* ASSET_SAVE_FAILED = TEXT("ASSET_SAVE_FAILED");
+
+	/** @brief Type could not be found */
+	constexpr const TCHAR* TYPE_NOT_FOUND = TEXT("TYPE_NOT_FOUND");
+
+	/** @brief Object creation failed */
+	constexpr const TCHAR* CREATION_FAILED = TEXT("CREATION_FAILED");
+
 	// ============================================================================
 	// Event Errors (5000-5099)
 	// ============================================================================

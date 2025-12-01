@@ -60,6 +60,7 @@
 #include "Commands/UMGCommands.h"
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
+#include "Commands/EnhancedInputCommands.h"
 // Include service architecture
 #include "Core/ServiceContext.h"
 #include "Core/ErrorCodes.h"
@@ -82,6 +83,7 @@ UBridge::UBridge()
     UMGCommands = MakeShared<FUMGCommands>(ServiceContext);
     UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
+    EnhancedInputCommands = MakeShared<FEnhancedInputCommands>();
 }
 
 UBridge::~UBridge()
@@ -92,6 +94,7 @@ UBridge::~UBridge()
     UMGCommands.Reset();
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
+    EnhancedInputCommands.Reset();
     
     // Defensive cleanup - Deinitialize() should have been called by UEditorSubsystem,
     // but ensure ServiceContext is cleaned up even if lifecycle was abnormal
@@ -354,9 +357,18 @@ TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const 
              CommandType == TEXT("export_texture_for_analysis") ||
              CommandType == TEXT("delete_asset") ||
              CommandType == TEXT("duplicate_asset") ||
+             CommandType == TEXT("save_asset") ||
+             CommandType == TEXT("save_all_assets") ||
+             CommandType == TEXT("list_references") ||
              CommandType == TEXT("OpenAssetInEditor"))
     {
         ResultJson = AssetCommands->HandleCommand(CommandType, Params);
+    }
+    // Enhanced Input System Commands
+    else if (CommandType == TEXT("manage_enhanced_input"))
+    {
+        UE_LOG(LogTemp, Display, TEXT("MCP: Dispatching to EnhancedInputCommands: %s"), *CommandType);
+        ResultJson = EnhancedInputCommands->HandleCommand(CommandType, Params);
     }
     else
     {

@@ -66,12 +66,21 @@ Use `get_help(topic="topic_name")` to access specific help content.
 - Action-specific parameters and patterns
 - Complete workflow examples
 
+**enhanced-input** - Enhanced Input system guide (⭐ NEW!)
+- Input Action creation (Digital, Axis1D, Axis2D)
+- Input Mapping Context management
+- Key binding (keyboard, mouse, gamepad)
+- Modifiers (Negate, DeadZone, Scalar, Swizzle)
+- Triggers (Pressed, Hold, Tap, Chorded)
+- 24+ actions for complete input system control
+
 **asset-discovery** - Asset finding and management
 - Universal search_items() usage
 - Package path vs object path (CRITICAL difference)
 - Supported asset types
 - Texture import/export
-- Opening assets in editor
+- Save/save_all for persisting changes
+- list_references for dependency analysis
 - Performance tips and error recovery
 
 ### Problem Solving
@@ -91,7 +100,7 @@ Topics are organized by use case:
 
 1. **Getting Started**: overview
 2. **Development Workflows**: blueprint-workflow, umg-guide, node-positioning
-3. **Tool References**: node-tools, multi-action-tools, asset-discovery
+3. **Tool References**: node-tools, multi-action-tools, enhanced-input, asset-discovery
 4. **Problem Solving**: troubleshooting
 
 ## Usage Examples
@@ -111,6 +120,9 @@ get_help(topic="node-positioning")
 
 # Reference multi-action tools
 get_help(topic="multi-action-tools")
+
+# Enhanced Input system
+get_help(topic="enhanced-input")
 
 # Style UMG widgets
 get_help(topic="umg-guide")

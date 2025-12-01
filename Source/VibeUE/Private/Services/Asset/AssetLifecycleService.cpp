@@ -15,6 +15,7 @@
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
+#include "FileHelpers.h"
 
 FAssetLifecycleService::FAssetLifecycleService(TSharedPtr<FServiceContext> Context)
     : FServiceBase(Context)
@@ -230,6 +231,57 @@ TResult<void> FAssetLifecycleService::SaveAsset(const FString& AssetPath)
     return TResult<void>::Success();
 }
 
+TResult<int32> FAssetLifecycleService::SaveAllDirtyAssets(bool bPromptUserToSave)
+{
+    // Get all dirty packages
+    TArray<UPackage*> DirtyPackages;
+    FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
+    FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+    
+    if (DirtyPackages.Num() == 0)
+    {
+        // No dirty assets to save
+        return TResult<int32>::Success(0);
+    }
+    
+    // Save the packages
+    bool bSuccess = false;
+    if (bPromptUserToSave)
+    {
+        // Show save dialog to user
+        bSuccess = FEditorFileUtils::SaveDirtyPackages(
+            /*bPromptUserToSave=*/true,
+            /*bSaveMapPackages=*/true,
+            /*bSaveContentPackages=*/true,
+            /*bFastSave=*/false,
+            /*bNotifyNoPackagesSaved=*/true,
+            /*bCanBeDeclined=*/true
+        );
+    }
+    else
+    {
+        // Save without prompting
+        bSuccess = FEditorFileUtils::SaveDirtyPackages(
+            /*bPromptUserToSave=*/false,
+            /*bSaveMapPackages=*/true,
+            /*bSaveContentPackages=*/true,
+            /*bFastSave=*/false,
+            /*bNotifyNoPackagesSaved=*/false,
+            /*bCanBeDeclined=*/false
+        );
+    }
+    
+    if (!bSuccess)
+    {
+        return TResult<int32>::Error(
+            VibeUE::ErrorCodes::OPERATION_FAILED,
+            TEXT("Failed to save all dirty assets")
+        );
+    }
+    
+    return TResult<int32>::Success(DirtyPackages.Num());
+}
+
 TResult<bool> FAssetLifecycleService::DeleteAsset(
     const FString& AssetPath,
     bool bForceDelete,
@@ -425,4 +477,97 @@ TResult<FAssetDuplicateResult> FAssetLifecycleService::DuplicateAsset(
     Result.AssetType = DuplicatedAsset->GetClass()->GetName();
     
     return TResult<FAssetDuplicateResult>::Success(Result);
+}
+
+TResult<FAssetReferencesResult> FAssetLifecycleService::GetAssetReferences(
+    const FString& AssetPath,
+    bool bIncludeReferencers,
+    bool bIncludeDependencies)
+{
+    FString NormalizedPath = NormalizeAssetPath(AssetPath);
+    
+    // 1. Check if asset exists
+    if (!UEditorAssetLibrary::DoesAssetExist(NormalizedPath))
+    {
+        return TResult<FAssetReferencesResult>::Error(
+            VibeUE::ErrorCodes::ASSET_NOT_FOUND,
+            FString::Printf(TEXT("Asset not found: %s"), *NormalizedPath)
+        );
+    }
+    
+    // 2. Get AssetRegistry
+    IAssetRegistry* AssetRegistry = GetContext()->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return TResult<FAssetReferencesResult>::Error(
+            VibeUE::ErrorCodes::INTERNAL_ERROR,
+            TEXT("Failed to get Asset Registry")
+        );
+    }
+    
+    FAssetReferencesResult Result;
+    Result.AssetPath = NormalizedPath;
+    
+    // 3. Get referencers (assets that reference this asset)
+    if (bIncludeReferencers)
+    {
+        TArray<FName> ReferencerPackages;
+        AssetRegistry->GetReferencers(*NormalizedPath, ReferencerPackages, UE::AssetRegistry::EDependencyCategory::Package);
+        
+        // Filter out self-references
+        ReferencerPackages.Remove(*NormalizedPath);
+        
+        for (const FName& PackageName : ReferencerPackages)
+        {
+            FString PackagePath = PackageName.ToString();
+            
+            // Get asset data for this package
+            TArray<FAssetData> AssetsInPackage;
+            AssetRegistry->GetAssetsByPackageName(PackageName, AssetsInPackage);
+            
+            for (const FAssetData& AssetData : AssetsInPackage)
+            {
+                FAssetReferenceInfo RefInfo;
+                RefInfo.AssetPath = AssetData.GetObjectPathString();
+                RefInfo.AssetClass = AssetData.AssetClassPath.GetAssetName().ToString();
+                RefInfo.DisplayName = AssetData.AssetName.ToString();
+                Result.Referencers.Add(RefInfo);
+            }
+        }
+        Result.ReferencerCount = Result.Referencers.Num();
+    }
+    
+    // 4. Get dependencies (assets this asset references)
+    if (bIncludeDependencies)
+    {
+        TArray<FName> DependencyPackages;
+        AssetRegistry->GetDependencies(*NormalizedPath, DependencyPackages, UE::AssetRegistry::EDependencyCategory::Package);
+        
+        // Filter out self-references and engine/script packages
+        DependencyPackages.RemoveAll([&NormalizedPath](const FName& PackageName) {
+            FString PackagePath = PackageName.ToString();
+            return PackagePath == NormalizedPath || 
+                   PackagePath.StartsWith(TEXT("/Engine/")) ||
+                   PackagePath.StartsWith(TEXT("/Script/"));
+        });
+        
+        for (const FName& PackageName : DependencyPackages)
+        {
+            // Get asset data for this package
+            TArray<FAssetData> AssetsInPackage;
+            AssetRegistry->GetAssetsByPackageName(PackageName, AssetsInPackage);
+            
+            for (const FAssetData& AssetData : AssetsInPackage)
+            {
+                FAssetReferenceInfo RefInfo;
+                RefInfo.AssetPath = AssetData.GetObjectPathString();
+                RefInfo.AssetClass = AssetData.AssetClassPath.GetAssetName().ToString();
+                RefInfo.DisplayName = AssetData.AssetName.ToString();
+                Result.Dependencies.Add(RefInfo);
+            }
+        }
+        Result.DependencyCount = Result.Dependencies.Num();
+    }
+    
+    return TResult<FAssetReferencesResult>::Success(Result);
 }

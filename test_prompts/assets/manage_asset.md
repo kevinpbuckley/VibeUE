@@ -431,6 +431,114 @@ search(search_term="specific_name", max_results=50)
 
 ---
 
+## Test 10: Save Asset
+
+**Purpose**: Save a single dirty (modified) asset to disk
+
+### Steps
+
+1. **Make a Change to Asset**
+   ```
+   First modify an asset (e.g., add a component to a Blueprint)
+   ```
+
+2. **Save the Modified Asset**
+   ```
+   Save asset:
+   - asset_path: "/Game/Blueprints/BP_Player"
+   ```
+
+3. **Verify Save**
+   ```
+   Asset should no longer be marked as dirty
+   ```
+
+### Expected Outcomes
+- ✅ Asset saved to disk
+- ✅ Dirty flag cleared
+- ✅ Returns success confirmation
+
+---
+
+## Test 11: Save All Assets
+
+**Purpose**: Save all modified assets in the project
+
+### Steps
+
+1. **Modify Multiple Assets**
+   ```
+   Make changes to several assets
+   ```
+
+2. **Save All Without Prompt**
+   ```
+   Save all assets:
+   - prompt_user: false
+   ```
+
+3. **Save All With User Prompt**
+   ```
+   Save all assets:
+   - prompt_user: true
+   (User will see confirmation dialog)
+   ```
+
+### Expected Outcomes
+- ✅ All dirty assets saved
+- ✅ prompt_user=false saves instantly (recommended for automation)
+- ✅ prompt_user=true shows confirmation dialog
+- ✅ Returns count of saved assets
+
+### Use Cases
+- **Automation**: Use `prompt_user=false` for MCP-driven workflows
+- **Interactive**: Use `prompt_user=true` when user confirmation desired
+
+---
+
+## Test 12: List Asset References
+
+**Purpose**: Find all assets that reference a given asset
+
+### Steps
+
+1. **Find References to Input Action**
+   ```
+   List references:
+   - asset_path: "/Game/Input/Actions/IA_Move"
+   ```
+
+2. **Find References to Blueprint**
+   ```
+   List references:
+   - asset_path: "/Game/Blueprints/BP_Player"
+   ```
+
+3. **Find References to Texture**
+   ```
+   List references:
+   - asset_path: "/Game/Textures/T_Background"
+   ```
+
+4. **Check Unreferenced Asset**
+   ```
+   List references to an asset with no dependencies
+   (Should return 0 references)
+   ```
+
+### Expected Outcomes
+- ✅ Returns list of referencing assets
+- ✅ Shows reference count
+- ✅ Empty list for unreferenced assets
+- ✅ Useful for determining if asset is safe to delete
+
+### Use Cases
+- **Before Deletion**: Check if asset is used before deleting
+- **Impact Analysis**: Understand which assets depend on a change
+- **Cleanup**: Find orphaned/unused assets (0 references)
+
+---
+
 ## Reference: All Actions Summary
 
 | Action | Purpose | Key Parameters |
@@ -441,6 +549,10 @@ search(search_term="specific_name", max_results=50)
 | **open_in_editor** | Open asset | asset_path, force_open |
 | **svg_to_png** | Convert SVG | svg_path, output_path, size, scale, background |
 | **duplicate** | Duplicate asset | asset_path, destination_path, new_name |
+| **delete** | Delete asset | asset_path, force_delete, show_confirmation |
+| **save** | Save single asset | asset_path |
+| **save_all** | Save all dirty assets | prompt_user |
+| **list_references** | Find referencers | asset_path |
 
 ---
 
@@ -458,7 +570,7 @@ Delete all test assets:
 
 ---
 
-**Test Coverage**: 7/7 actions tested ✅  
-**Last Updated**: November 6, 2025  
+**Test Coverage**: 10/10 actions tested ✅  
+**Last Updated**: November 30, 2025  
 **Related Issues**: #69, #76, #91, #182
 
