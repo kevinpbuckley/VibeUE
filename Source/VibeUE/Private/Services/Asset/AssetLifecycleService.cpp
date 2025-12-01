@@ -12,6 +12,7 @@
 #include "Engine/StaticMesh.h"
 #include "Sound/SoundBase.h"
 #include "Engine/DataTable.h"
+#include "Engine/World.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Misc/MessageDialog.h"
 #include "Misc/Paths.h"
@@ -118,7 +119,31 @@ TResult<FString> FAssetLifecycleService::OpenAssetInEditor(const FString& AssetP
         }
     }
     
-    // Get the Asset Editor Subsystem
+    // Special handling for World/Level assets - use FEditorFileUtils instead of AssetEditorSubsystem
+    if (UWorld* World = Cast<UWorld>(Asset))
+    {
+        // Get the package name for the level
+        FString PackageName = Asset->GetOutermost()->GetName();
+        
+        // Use FEditorFileUtils to load the map properly
+        FString MapFilePath = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetMapPackageExtension());
+        
+        bool bSuccess = FEditorFileUtils::LoadMap(PackageName, false, true);
+        
+        if (bSuccess)
+        {
+            return TResult<FString>::Success(TEXT("Level Editor"));
+        }
+        else
+        {
+            return TResult<FString>::Error(
+                VibeUE::ErrorCodes::OPERATION_FAILED,
+                FString::Printf(TEXT("Failed to load level: %s"), *NormalizedPath)
+            );
+        }
+    }
+    
+    // Get the Asset Editor Subsystem for non-level assets
     UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
     if (!AssetEditorSubsystem)
     {

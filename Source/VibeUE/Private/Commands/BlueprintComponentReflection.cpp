@@ -25,6 +25,12 @@
 #include "Kismet2/ComponentEditorUtils.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Editor.h"
+#include "EditorSupportDelegates.h"
+#include "LevelEditorViewport.h"
+#include "ScopedTransaction.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "BlueprintEditor.h"
 #endif
 
 FBlueprintComponentReflection::FBlueprintComponentReflection()
@@ -73,6 +79,10 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCommand(const FStri
     else if (CommandType == TEXT("get_component_property"))
     {
         return HandleGetComponentProperty(Params);
+    }
+    else if (CommandType == TEXT("set_component_property"))
+    {
+        return HandleSetComponentProperty(Params);
     }
     else if (CommandType == TEXT("get_all_component_properties"))
     {
@@ -2124,6 +2134,107 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
     Response->SetStringField(TEXT("component_name"), ComponentName);
     Response->SetStringField(TEXT("type"), GetPropertyCPPType(Property));
     Response->SetField(TEXT("value"), PropertyValue);
+
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
+{
+    FString BlueprintName, ComponentName, PropertyName;
+    
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
+        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
+        !Params->TryGetStringField(TEXT("property_name"), PropertyName))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
+    }
+
+    // Get property_value - can be any JSON type
+    TSharedPtr<FJsonValue> PropertyValue = Params->TryGetField(TEXT("property_value"));
+    if (!PropertyValue.IsValid())
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameter: property_value"));
+    }
+
+    // Find Blueprint using DiscoveryService
+    auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+    if (FindResult.IsError())
+    {
+        return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+    }
+    
+    UBlueprint* Blueprint = FindResult.GetValue();
+
+    // Find the component template
+    UActorComponent* Component = FindComponentInBlueprint(Blueprint, ComponentName);
+    if (!Component)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND, FString::Printf(TEXT("Component '%s' not found in Blueprint '%s'"), *ComponentName, *BlueprintName));
+    }
+
+    // Find the property
+    UClass* ComponentClass = Component->GetClass();
+    FProperty* Property = ComponentClass->FindPropertyByName(*PropertyName);
+    if (!Property)
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, FString::Printf(TEXT("Property '%s' not found in component '%s'"), *PropertyName, *ComponentName));
+    }
+
+    // Get property value pointer
+    void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Component);
+
+    // Set property value using the existing helper
+    if (!SetPropertyFromJson(Property, ValuePtr, PropertyValue))
+    {
+        return CreateErrorResponse(VibeUE::ErrorCodes::PROPERTY_SET_FAILED, FString::Printf(TEXT("Failed to set property '%s' value"), *PropertyName));
+    }
+
+    // Mark the Blueprint as modified and recompile
+    Component->Modify();
+    Blueprint->Modify();
+    FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+    FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+    // Mark component render state dirty
+    if (UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component))
+    {
+        PrimComp->MarkRenderStateDirty();
+    }
+
+    // Refresh the Blueprint Editor's preview viewport
+    if (GEditor)
+    {
+        UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+        if (AssetEditorSubsystem)
+        {
+            IAssetEditorInstance* EditorInstance = AssetEditorSubsystem->FindEditorForAsset(Blueprint, false);
+            if (EditorInstance)
+            {
+                FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(EditorInstance);
+                if (BlueprintEditor)
+                {
+                    // Force full update of the preview actor to reflect property changes
+                    BlueprintEditor->UpdatePreviewActor(Blueprint, true);
+                    
+                    // Refresh editors to update all views
+                    BlueprintEditor->RefreshEditors();
+                }
+            }
+        }
+    }
+    
+    // Also broadcast viewport redraw for any level viewports
+    FEditorSupportDelegates::RedrawAllViewports.Broadcast();
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Property '%s' set successfully on component '%s'"), *PropertyName, *ComponentName));
+    Response->SetStringField(TEXT("property_name"), PropertyName);
+    Response->SetStringField(TEXT("component_name"), ComponentName);
+    Response->SetStringField(TEXT("type"), GetPropertyCPPType(Property));
+
+    UE_LOG(LogTemp, Log, TEXT("Set property '%s' on component '%s' in Blueprint '%s'"), *PropertyName, *ComponentName, *BlueprintName);
 
     return Response;
 }

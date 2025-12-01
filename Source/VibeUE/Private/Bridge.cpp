@@ -61,6 +61,7 @@
 #include "Commands/UMGReflectionCommands.h"
 #include "Commands/AssetCommands.h"
 #include "Commands/EnhancedInputCommands.h"
+#include "Commands/LevelActorCommands.h"
 // Include service architecture
 #include "Core/ServiceContext.h"
 #include "Core/ErrorCodes.h"
@@ -84,6 +85,7 @@ UBridge::UBridge()
     UMGReflectionCommands = MakeShared<FUMGReflectionCommands>();
     AssetCommands = MakeShared<FAssetCommands>();
     EnhancedInputCommands = MakeShared<FEnhancedInputCommands>();
+    LevelActorCommands = MakeShared<FLevelActorCommands>();
 }
 
 UBridge::~UBridge()
@@ -95,6 +97,7 @@ UBridge::~UBridge()
     UMGReflectionCommands.Reset();
     AssetCommands.Reset();
     EnhancedInputCommands.Reset();
+    LevelActorCommands.Reset();
     
     // Defensive cleanup - Deinitialize() should have been called by UEditorSubsystem,
     // but ensure ServiceContext is cleaned up even if lifecycle was abnormal
@@ -369,6 +372,12 @@ TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const 
     {
         UE_LOG(LogTemp, Display, TEXT("MCP: Dispatching to EnhancedInputCommands: %s"), *CommandType);
         ResultJson = EnhancedInputCommands->HandleCommand(CommandType, Params);
+    }
+    // Level Actor Commands
+    else if (CommandType == TEXT("manage_level_actors"))
+    {
+        UE_LOG(LogTemp, Display, TEXT("MCP: Dispatching to LevelActorCommands: %s"), *CommandType);
+        ResultJson = LevelActorCommands->HandleCommand(CommandType, Params);
     }
     else
     {
