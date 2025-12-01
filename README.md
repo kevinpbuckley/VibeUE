@@ -121,9 +121,9 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **10 multi-action tools** exposing **104 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **11 multi-action tools** exposing **128 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (10 tools, 104 actions)
+## 🛠️ Canonical Tools Reference (11 tools, 128 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
@@ -277,13 +277,37 @@ Complete Enhanced Input system control.
 | `mapping_get_triggers` | List triggers |
 | `mapping_get_available_trigger_types` | List trigger types |
 
-### 9. `check_unreal_connection` (1 action)
+### 9. `manage_level_actors` (18 actions)
+Complete level actor management for runtime level manipulation.
+
+| Action | Purpose |
+|--------|--------|
+| `list` | List all actors in current level |
+| `find` | Find actors by name pattern or class |
+| `get_info` | Get detailed actor information |
+| `add` | Spawn new actor in level |
+| `remove` | Delete actor from level |
+| `get_transform` | Get actor transform (location, rotation, scale) |
+| `set_transform` | Set complete actor transform |
+| `set_location` | Set actor world location |
+| `set_rotation` | Set actor world rotation |
+| `set_scale` | Set actor 3D scale |
+| `focus` | Focus viewport on actor |
+| `move_to_view` | Move actor to current camera view |
+| `refresh_viewport` | Force viewport refresh |
+| `get_property` | Get actor property value |
+| `set_property` | Set actor property value |
+| `get_all_properties` | List all actor properties |
+| `set_folder` | Set actor's folder path in World Outliner |
+| `rename` | Rename actor label |
+
+### 10. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
 
-### 10. `get_help` (1 action)
+### 11. `get_help` (1 action)
 Get comprehensive help documentation by topic.
 
-**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `asset-discovery`, `troubleshooting`, `topics`
+**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `asset-discovery`, `troubleshooting`, `topics`
 
 ---
 
