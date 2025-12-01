@@ -3,6 +3,17 @@
 ## Overview
 Quick validation prompts to verify VibeUE MCP tools are working. Each file has minimal tests for fast smoke testing.
 
+### Tool Summary
+| Category | Tools | Total Actions |
+|----------|-------|---------------|
+| Blueprint Tools | 5 | 55 |
+| Level Actor Tools | 1 | 18 |
+| Enhanced Input Tools | 1 | 24 |
+| UMG Widget Tools | 1 | 11 |
+| Asset Management Tools | 1 | 5 |
+| Utility Tools | 2 | 15 |
+| **Total** | **11 tools** | **128 actions** |
+
 ## Purpose
 - **Quick Validation**: Verify tools work after code changes
 - **Smoke Tests**: Basic functionality checks
@@ -66,6 +77,20 @@ Test prompts for Blueprint manipulation and introspection:
 | `manage_blueprint_variable` | [blueprint/manage_blueprint_variable.md](blueprint/manage_blueprint_variable.md) | search_types, get_info, create, get_property, set_property, list, delete (7 actions) |
 | `manage_blueprint_node` | [blueprint/manage_blueprint_node.md](blueprint/manage_blueprint_node.md) | discover, create, connect_pins, disconnect_pins, delete, move, list, describe, get_details, configure, split_pins, recombine_pins, refresh_node, refresh_nodes, reset_pin_defaults (15 actions) |
 
+### Level Actor Tools
+Test prompts for level actor management:
+
+| Tool | File | Actions Tested |
+|------|------|----------------|
+| `manage_level_actors` | [level_actors/level_actor_tests.md](level_actors/level_actor_tests.md) | list, find, get_info, add, remove, get_transform, set_transform, set_location, set_rotation, set_scale, focus, move_to_view, refresh_viewport, get_property, set_property, get_all_properties, set_folder, attach, detach, select, rename (18 actions) |
+
+### Enhanced Input Tools
+Test prompts for Enhanced Input system:
+
+| Tool | File | Actions Tested |
+|------|------|----------------|
+| `manage_enhanced_input` | [enhanced_input/enhanced_input_test.md](enhanced_input/enhanced_input_test.md) | reflection_discover_types, reflection_get_metadata, action_create, action_list, action_get_properties, action_configure, mapping_create_context, mapping_list_contexts, mapping_get_properties, mapping_get_mappings, mapping_add_key_mapping, mapping_update_context, modifier_discover_types, modifier_get_metadata, modifier_create_instance, trigger_discover_types, trigger_get_metadata, trigger_create_instance, ai_parse_action_description, ai_get_templates (24 actions) |
+
 ### UMG Widget Tools
 Test prompts for UMG widget development:
 
@@ -94,12 +119,16 @@ Test prompts for connection and help tools:
 To fully validate VibeUE tools:
 1. Start with utilities (connection + help)
 2. Test Blueprint tools in order (manage_blueprint → components → functions → variables → nodes)
-3. Test UMG widget tools
-4. Test asset management tools
+3. Test Level Actor tools (discovery → transforms → properties → hierarchy)
+4. Test Enhanced Input tools (actions → mapping contexts → key bindings)
+5. Test UMG widget tools
+6. Test asset management tools
 
 ### Integration Testing
 Some workflows test multiple tools together:
 - Blueprint + Components + Functions + Nodes = Complete Blueprint development
+- Level Actors + Properties = Runtime level manipulation
+- Enhanced Input + Blueprint = Input-driven gameplay
 - UMG Widgets + Assets (textures) = UI development with styling
 - get_help + any tool = Documentation-driven development
 
@@ -173,6 +202,6 @@ To improve test coverage:
 
 ---
 
-**Last Updated**: November 3, 2025  
-**Phase**: Phase 5 - Testing & Validation  
+**Last Updated**: November 30, 2025  
+**Tools**: 11 multi-action tools with 128 total actions  
 **Status**: Complete test prompt structure ready for validation
