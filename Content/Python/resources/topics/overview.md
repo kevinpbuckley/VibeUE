@@ -8,7 +8,8 @@ VibeUE is a Model Context Protocol (MCP) server that enables AI assistants to co
 
 - **Blueprint Development**: Create and modify Blueprint classes, functions, and event graphs
 - **UMG Widget System**: Build and style user interfaces with complete widget hierarchy control
-- **Asset Management**: Search, import, export, and analyze project assets
+- **Enhanced Input System**: Manage Input Actions, Mapping Contexts, key bindings, modifiers, and triggers
+- **Asset Management**: Search, import, export, save, and analyze project assets
 - **Node-Based Programming**: Manipulate Blueprint node graphs with precision
 - **Real-Time Property Editing**: Modify component and widget properties on-the-fly
 
@@ -33,6 +34,7 @@ VibeUE is a Model Context Protocol (MCP) server that enables AI assistants to co
 - **UMG styling?** → `get_help(topic="umg-guide")`
 - **Node connections?** → `get_help(topic="node-tools")`
 - **Node positioning?** → `get_help(topic="node-positioning")`
+- **Enhanced Input?** → `get_help(topic="enhanced-input")`
 - **Asset management?** → `get_help(topic="asset-discovery")`
 
 ## Common Tasks

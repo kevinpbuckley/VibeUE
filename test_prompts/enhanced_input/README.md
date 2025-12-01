@@ -1,6 +1,6 @@
 # Enhanced Input MCP Tool - Test Prompts Guide
 
-This folder contains comprehensive test prompts for the VibeUE Enhanced Input MCP tool. These prompts are designed to test all 40+ actions across the three phases of the Enhanced Input system implementation.
+This folder contains comprehensive test prompts for the VibeUE Enhanced Input MCP tool. These prompts are designed to test all 24 production-ready actions across reflection, action, and mapping services.
 
 ## File Organization
 

@@ -39,11 +39,58 @@ TResult<UInputMappingContext*> FInputMappingService::CreateMappingContext(const 
 		PackageName = TEXT("/Game/") + PackageName;
 	}
 	
+	// Check if asset already exists (including partially loaded assets)
+	FString ExistingAssetPath = PackageName + TEXT(".") + ContextName;
+	if (UInputMappingContext* ExistingContext = LoadObject<UInputMappingContext>(nullptr, *ExistingAssetPath))
+	{
+		// Check if fully loaded
+		UPackage* ExistingPackage = ExistingContext->GetOutermost();
+		if (ExistingPackage && ExistingPackage->HasAnyPackageFlags(PKG_ReloadingForCooker | PKG_NewlyCreated) == false)
+		{
+			LogInfo(FString::Printf(TEXT("Mapping context already exists, returning existing: %s"), *ExistingAssetPath));
+			return TResult<UInputMappingContext*>::Success(ExistingContext);
+		}
+	}
+	
+	// Check if package exists on disk but is partially loaded - need to fully load or delete first
+	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+	if (FPaths::FileExists(PackageFileName))
+	{
+		// Try to fully load the existing package
+		UPackage* ExistingPackage = LoadPackage(nullptr, *PackageName, LOAD_None);
+		if (ExistingPackage)
+		{
+			// Check if it has a valid mapping context
+			UInputMappingContext* ExistingContext = FindObject<UInputMappingContext>(ExistingPackage, *ContextName);
+			if (ExistingContext)
+			{
+				LogInfo(FString::Printf(TEXT("Loaded existing mapping context from disk: %s"), *PackageName));
+				return TResult<UInputMappingContext*>::Success(ExistingContext);
+			}
+			// Package exists but doesn't contain the expected asset - this is a problem
+			return TResult<UInputMappingContext*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+				FString::Printf(TEXT("Package exists but does not contain mapping context '%s'. Delete the asset first."), *ContextName));
+		}
+		else
+		{
+			// Package file exists but couldn't load - corrupted or partially saved
+			return TResult<UInputMappingContext*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+				FString::Printf(TEXT("Package file exists but could not be loaded: %s. Delete the file manually or use manage_asset(action='delete')."), *PackageFileName));
+		}
+	}
+	
 	UPackage* Package = CreatePackage(*PackageName);
 	if (!Package)
 	{
 		return TResult<UInputMappingContext*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
 			FString::Printf(TEXT("Failed to create package: %s"), *PackageName));
+	}
+	
+	// Ensure the package is fully loaded before creating objects in it
+	if (Package->HasAnyPackageFlags(PKG_ReloadingForCooker))
+	{
+		return TResult<UInputMappingContext*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+			FString::Printf(TEXT("Package is being reloaded, cannot create asset: %s"), *PackageName));
 	}
 	
 	// Create the Input Mapping Context
@@ -59,7 +106,6 @@ TResult<UInputMappingContext*> FInputMappingService::CreateMappingContext(const 
 	FAssetRegistryModule::AssetCreated(NewContext);
 	
 	// Save the package
-	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
 	FSavePackageArgs SaveArgs;
 	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 	if (!UPackage::SavePackage(Package, NewContext, *PackageFileName, SaveArgs))

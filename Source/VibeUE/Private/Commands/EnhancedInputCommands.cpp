@@ -588,7 +588,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 			{
 				TSharedPtr<FJsonObject> MappingObj = MakeShared<FJsonObject>();
 				MappingObj->SetStringField(TEXT("name"), MappingInfo.Name);
-				MappingObj->SetStringField(TEXT("type"), MappingInfo.TypeName);
+				MappingObj->SetStringField(TEXT("action"), MappingInfo.DisplayName);  // Action name
+				MappingObj->SetStringField(TEXT("key"), MappingInfo.TypePath);        // Key display name
+				MappingObj->SetStringField(TEXT("detail"), MappingInfo.DefaultValue); // Full "Key -> Action" string
 				MappingsArray.Add(MakeShared<FJsonValueObject>(MappingObj));
 			}
 			Response->SetArrayField(TEXT("mappings"), MappingsArray);

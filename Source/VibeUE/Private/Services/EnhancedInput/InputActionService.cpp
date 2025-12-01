@@ -50,12 +50,55 @@ TResult<UInputAction*> FInputActionService::CreateInputAction(const FString& Ass
 		PackageName = TEXT("/Game/") + PackageName;
 	}
 	
+	// Check if asset already exists (including partially loaded assets)
+	FString ExistingAssetPath = PackageName + TEXT(".") + AssetName;
+	if (UInputAction* ExistingAction = LoadObject<UInputAction>(nullptr, *ExistingAssetPath))
+	{
+		// Asset exists and is valid
+		LogInfo(FString::Printf(TEXT("Input action already exists, returning existing: %s"), *ExistingAssetPath));
+		return TResult<UInputAction*>::Success(ExistingAction);
+	}
+	
+	// Check if package exists on disk but is partially loaded - need to fully load or delete first
+	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
+	if (FPaths::FileExists(PackageFileName))
+	{
+		// Try to fully load the existing package
+		UPackage* ExistingPackage = LoadPackage(nullptr, *PackageName, LOAD_None);
+		if (ExistingPackage)
+		{
+			// Check if it has a valid input action
+			UInputAction* ExistingAction = FindObject<UInputAction>(ExistingPackage, *AssetName);
+			if (ExistingAction)
+			{
+				LogInfo(FString::Printf(TEXT("Loaded existing input action from disk: %s"), *PackageName));
+				return TResult<UInputAction*>::Success(ExistingAction);
+			}
+			// Package exists but doesn't contain the expected asset
+			return TResult<UInputAction*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+				FString::Printf(TEXT("Package exists but does not contain input action '%s'. Delete the asset first."), *AssetName));
+		}
+		else
+		{
+			// Package file exists but couldn't load - corrupted or partially saved
+			return TResult<UInputAction*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+				FString::Printf(TEXT("Package file exists but could not be loaded: %s. Delete the file manually or use manage_asset(action='delete')."), *PackageFileName));
+		}
+	}
+	
 	// Create package for the asset
 	UPackage* Package = CreatePackage(*PackageName);
 	if (!Package)
 	{
 		return TResult<UInputAction*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
 			FString::Printf(TEXT("Failed to create package: %s"), *PackageName));
+	}
+	
+	// Ensure the package is not in a problematic state
+	if (Package->HasAnyPackageFlags(PKG_ReloadingForCooker))
+	{
+		return TResult<UInputAction*>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED,
+			FString::Printf(TEXT("Package is being reloaded, cannot create asset: %s"), *PackageName));
 	}
 	
 	// Create the Input Action
@@ -74,7 +117,6 @@ TResult<UInputAction*> FInputActionService::CreateInputAction(const FString& Ass
 	FAssetRegistryModule::AssetCreated(NewAction);
 	
 	// Save the package
-	FString PackageFileName = FPackageName::LongPackageNameToFilename(PackageName, FPackageName::GetAssetPackageExtension());
 	FSavePackageArgs SaveArgs;
 	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
 	if (!UPackage::SavePackage(Package, NewAction, *PackageFileName, SaveArgs))

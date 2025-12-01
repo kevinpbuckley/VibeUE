@@ -158,6 +158,15 @@ Blueprint graph & variables
 - manage_blueprint_function
 - manage_blueprint_variable
 
+Enhanced Input System
+- manage_enhanced_input (24+ actions for complete input system control)
+  - action_create, action_list, action_configure, action_get_properties
+  - mapping_create_context, mapping_list_contexts, mapping_add_key_mapping
+  - mapping_get_mappings, mapping_remove_mapping, mapping_get_available_keys
+  - mapping_add_modifier, mapping_remove_modifier, mapping_get_modifiers
+  - mapping_add_trigger, mapping_remove_trigger, mapping_get_triggers
+  - reflection_discover_types, mapping_analyze_usage, mapping_detect_conflicts
+
 UMG discovery & inspection
 - search_items
 - get_widget_blueprint_info
