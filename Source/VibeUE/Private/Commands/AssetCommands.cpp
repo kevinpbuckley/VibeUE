@@ -38,6 +38,18 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
     {
         return HandleDuplicateAsset(Params);
     }
+    else if (CommandType == TEXT("save_asset"))
+    {
+        return HandleSaveAsset(Params);
+    }
+    else if (CommandType == TEXT("save_all_assets"))
+    {
+        return HandleSaveAllAssets(Params);
+    }
+    else if (CommandType == TEXT("list_references"))
+    {
+        return HandleListReferences(Params);
+    }
 
     return CreateErrorResponse(FString::Printf(TEXT("Unknown asset command: %s"), *CommandType));
 }
@@ -255,6 +267,126 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJ
         Response->SetStringField(TEXT("original_path"), DuplicateResult.OriginalPath);
         Response->SetStringField(TEXT("new_path"), DuplicateResult.NewPath);
         Response->SetStringField(TEXT("asset_type"), DuplicateResult.AssetType);
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAsset(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameter
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+    }
+    
+    // Delegate to LifecycleService
+    TResult<void> Result = LifecycleService->SaveAsset(AssetPath);
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
+    {
+        return CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully saved asset: %s"), *AssetPath)
+        );
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAllAssets(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract optional parameter
+    bool bPromptUserToSave = false;
+    Params->TryGetBoolField(TEXT("prompt_user"), bPromptUserToSave);
+    
+    // Delegate to LifecycleService
+    TResult<int32> Result = LifecycleService->SaveAllDirtyAssets(bPromptUserToSave);
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
+    {
+        int32 SavedCount = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Successfully saved %d dirty asset(s)"), SavedCount)
+        );
+        Response->SetNumberField(TEXT("saved_count"), SavedCount);
+        return Response;
+    }
+    else
+    {
+        return CreateErrorResponse(Result.GetErrorMessage());
+    }
+}
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleListReferences(const TSharedPtr<FJsonObject>& Params)
+{
+    // Extract required parameter
+    FString AssetPath;
+    if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
+    {
+        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+    }
+    
+    // Extract optional parameters
+    bool bIncludeReferencers = true;
+    bool bIncludeDependencies = true;
+    
+    Params->TryGetBoolField(TEXT("include_referencers"), bIncludeReferencers);
+    Params->TryGetBoolField(TEXT("include_dependencies"), bIncludeDependencies);
+    
+    // Delegate to LifecycleService
+    TResult<FAssetReferencesResult> Result = LifecycleService->GetAssetReferences(
+        AssetPath,
+        bIncludeReferencers,
+        bIncludeDependencies
+    );
+    
+    // Convert result to JSON response
+    if (Result.IsSuccess())
+    {
+        const FAssetReferencesResult& RefResult = Result.GetValue();
+        TSharedPtr<FJsonObject> Response = CreateSuccessResponse(
+            FString::Printf(TEXT("Found %d referencer(s) and %d dependenc(ies) for: %s"),
+                RefResult.ReferencerCount,
+                RefResult.DependencyCount,
+                *RefResult.AssetPath)
+        );
+        
+        Response->SetStringField(TEXT("asset_path"), RefResult.AssetPath);
+        Response->SetNumberField(TEXT("referencer_count"), RefResult.ReferencerCount);
+        Response->SetNumberField(TEXT("dependency_count"), RefResult.DependencyCount);
+        
+        // Build referencers array
+        TArray<TSharedPtr<FJsonValue>> ReferencersArray;
+        for (const FAssetReferenceInfo& RefInfo : RefResult.Referencers)
+        {
+            TSharedPtr<FJsonObject> RefObj = MakeShareable(new FJsonObject);
+            RefObj->SetStringField(TEXT("asset_path"), RefInfo.AssetPath);
+            RefObj->SetStringField(TEXT("asset_class"), RefInfo.AssetClass);
+            RefObj->SetStringField(TEXT("display_name"), RefInfo.DisplayName);
+            ReferencersArray.Add(MakeShareable(new FJsonValueObject(RefObj)));
+        }
+        Response->SetArrayField(TEXT("referencers"), ReferencersArray);
+        
+        // Build dependencies array
+        TArray<TSharedPtr<FJsonValue>> DependenciesArray;
+        for (const FAssetReferenceInfo& RefInfo : RefResult.Dependencies)
+        {
+            TSharedPtr<FJsonObject> RefObj = MakeShareable(new FJsonObject);
+            RefObj->SetStringField(TEXT("asset_path"), RefInfo.AssetPath);
+            RefObj->SetStringField(TEXT("asset_class"), RefInfo.AssetClass);
+            RefObj->SetStringField(TEXT("display_name"), RefInfo.DisplayName);
+            DependenciesArray.Add(MakeShareable(new FJsonValueObject(RefObj)));
+        }
+        Response->SetArrayField(TEXT("dependencies"), DependenciesArray);
+        
         return Response;
     }
     else

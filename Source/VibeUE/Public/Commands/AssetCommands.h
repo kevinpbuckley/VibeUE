@@ -39,6 +39,9 @@ private:
     TSharedPtr<FJsonObject> HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDuplicateAsset(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSaveAsset(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSaveAllAssets(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleListReferences(const TSharedPtr<FJsonObject>& Params);
     
     // Helper functions for converting TResult to JSON
     TSharedPtr<FJsonObject> CreateSuccessResponse(const FString& Message = TEXT(""));

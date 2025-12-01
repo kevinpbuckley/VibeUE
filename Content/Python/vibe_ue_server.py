@@ -438,6 +438,12 @@ from tools.manage_blueprint_component import register_blueprint_component_tools 
 from tools.manage_blueprint_node import register_node_tools  # Node operations
 from tools.manage_blueprint_function import register_blueprint_function_tools  # Function operations
 
+# ENHANCED INPUT SYSTEM (Input system management - Phases 1-3)
+from tools.manage_enhanced_input import register_enhanced_input_tools  # Enhanced Input (40+ actions across all phases)
+
+# LEVEL ACTOR SYSTEM (Level actor management)
+from tools.manage_level_actors import register_level_actor_tools  # Level actors (Phase 1: 5 actions)
+
 # UMG SYSTEM (Widget management)
 from tools.manage_umg_widget import register_umg_tools  # Unified UMG tool (11 actions)
 
@@ -464,6 +470,12 @@ register_blueprint_component_tools(mcp)  # manage_blueprint_component
 register_node_tools(mcp)  # manage_blueprint_node (with discover action)
 register_blueprint_function_tools(mcp)  # manage_blueprint_function (15+ actions)
 
+# Enhanced Input System (1 file → 1 tool) - Phases 1-3 services
+register_enhanced_input_tools(mcp)  # manage_enhanced_input: 40+ actions for complete Enhanced Input lifecycle
+
+# Level Actor System (1 file → 1 tool) - Phase 1
+register_level_actor_tools(mcp)  # manage_level_actors: add, remove, list, find, get_info (Phase 1)
+
 # UMG Unified Manager (1 file → 1 tool)
 register_umg_tools(mcp)  # manage_umg_widget: all UMG operations (11 actions)
 
@@ -473,7 +485,8 @@ register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 acti
 # System Tools (1 file → 2 tools)
 register_system_tools(mcp)  # check_unreal_connection + get_help
 
-# ✅ TOTAL: 8 Python files providing 9 MCP tools
+# ✅ TOTAL: 9 Python files providing 10 MCP tools
+# 🆕 ADDED: manage_enhanced_input tool for all Enhanced Input services
 # ❌ REMOVED: 13 deprecated tool files (blueprint_advanced, umg_discovery, umg_styling, etc.)
 
 # ============================================================================

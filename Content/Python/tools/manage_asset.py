@@ -18,7 +18,10 @@ VALID_ACTIONS = [
     "delete",
     "open_in_editor",
     "svg_to_png",
-    "duplicate"
+    "duplicate",
+    "save",
+    "save_all",
+    "list_references"
 ]
 
 
@@ -64,7 +67,11 @@ def register_asset_tools(mcp: FastMCP):
         scale: float = 1.0,
         background: Optional[str] = None,
         # Duplicate parameters
-        new_name: str = ""
+        new_name: str = "",
+        # Save parameters
+        prompt_user: bool = False,
+        # Reference parameters
+        include_dependencies: bool = False
     ) -> Dict[str, Any]:
         """
         Single multi-action tool for all asset operations.
@@ -163,8 +170,59 @@ def register_asset_tools(mcp: FastMCP):
         # Returns new asset path and type
         ```
         
+        **save** - Save a single asset to disk
+        ```python
+        manage_asset(
+            action="save",
+            asset_path="/Game/Blueprints/BP_Player"
+        )
+        # Saves the specified asset and marks package as saved
+        ```
+        
+        **save_all** - Save all dirty (modified) assets
+        ```python
+        # Save all without prompting user
+        manage_asset(
+            action="save_all",
+            prompt_user=False
+        )
+        
+        # Save all with user confirmation dialog
+        manage_asset(
+            action="save_all",
+            prompt_user=True
+        )
+        # Returns count of assets saved
+        ```
+        
+        **list_references** - Get all assets that reference this asset (and optionally dependencies)
+        ```python
+        # Get assets referencing this asset
+        manage_asset(
+            action="list_references",
+            asset_path="/Game/Input/Actions/IA_Move"
+        )
+        # Returns:
+        # {
+        #     "success": true,
+        #     "asset_path": "/Game/Input/Actions/IA_Move",
+        #     "referencers": ["/Game/Input/IMC_Default", "/Game/Blueprints/BP_Player"],
+        #     "referencer_count": 2,
+        #     "dependencies": [],
+        #     "dependency_count": 0
+        # }
+        
+        # Include what this asset depends on
+        manage_asset(
+            action="list_references",
+            asset_path="/Game/Input/IMC_Default",
+            include_dependencies=True
+        )
+        # Returns referencers AND dependencies lists
+        ```
+        
         Args:
-            action: Action to perform (search|import_texture|export_texture|delete|open_in_editor|svg_to_png|duplicate)
+            action: Action to perform (search|import_texture|export_texture|delete|open_in_editor|svg_to_png|duplicate|save|save_all|list_references)
             search_term: Text to search for in asset names (for search)
             asset_type: Filter by asset type (for search - examples: Widget, Texture2D, Material, Blueprint)
             path: Content browser path to search in (for search, default: /Game)
@@ -192,6 +250,12 @@ def register_asset_tools(mcp: FastMCP):
             scale: Scale multiplier (for svg_to_png)
             background: Background color (for svg_to_png)
             new_name: New asset name (for duplicate - optional, defaults to source name with suffix)
+            prompt_user: Show save confirmation dialog (for save_all action, default: False)
+                        When True: displays dialog requiring user confirmation
+                        When False: saves all automatically without user interaction
+            include_dependencies: Include outgoing dependencies (for list_references, default: False)
+                        When False: only returns assets that reference this asset
+                        When True: also returns assets this asset depends on
             
         Returns:
             Dict containing action results with success field
@@ -228,6 +292,12 @@ def register_asset_tools(mcp: FastMCP):
             return _handle_duplicate_asset(
                 asset_path, destination_path, new_name
             )
+        elif action == "save":
+            return _handle_save_asset(asset_path)
+        elif action == "save_all":
+            return _handle_save_all_assets(prompt_user)
+        elif action == "list_references":
+            return _handle_list_references(asset_path, include_dependencies)
         else:
             return {
                 "success": False,
@@ -555,10 +625,92 @@ def _handle_duplicate_asset(
         })
         
         if not response:
-            return {"success": False, "error": "No response from Unreal Engine"}
+            return {"success": False, "error": "Failed to receive response from Unreal Engine"}
         
         return response
         
     except Exception as e:
         logger.error(f"Error duplicating asset: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _handle_save_asset(asset_path: str) -> Dict[str, Any]:
+    """Handle saving a single asset."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not asset_path:
+        return {"success": False, "error": "'asset_path' is required for save action"}
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Saving asset: {asset_path}")
+        response = unreal.send_command("save_asset", {
+            "asset_path": asset_path
+        })
+        
+        if not response:
+            return {"success": False, "error": "Failed to receive response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error saving asset: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _handle_save_all_assets(prompt_user: bool = False) -> Dict[str, Any]:
+    """Handle saving all dirty assets."""
+    from vibe_ue_server import get_unreal_connection
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Saving all dirty assets (prompt_user={prompt_user})")
+        response = unreal.send_command("save_all_assets", {
+            "prompt_user": prompt_user
+        })
+        
+        if not response:
+            return {"success": False, "error": "Failed to receive response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error saving all assets: {e}")
+        return {"success": False, "error": str(e)}
+
+
+def _handle_list_references(
+    asset_path: str,
+    include_dependencies: bool = False
+) -> Dict[str, Any]:
+    """Handle listing asset references (what references this asset and optionally what it depends on)."""
+    from vibe_ue_server import get_unreal_connection
+    
+    if not asset_path:
+        return {"success": False, "error": "'asset_path' is required for list_references action"}
+    
+    try:
+        unreal = get_unreal_connection()
+        if not unreal:
+            return {"success": False, "error": "Failed to connect to Unreal Engine"}
+        
+        logger.info(f"Listing references for asset: {asset_path} (include_dependencies={include_dependencies})")
+        response = unreal.send_command("list_references", {
+            "asset_path": asset_path,
+            "include_dependencies": include_dependencies
+        })
+        
+        if not response:
+            return {"success": False, "error": "Failed to receive response from Unreal Engine"}
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Error listing references: {e}")
         return {"success": False, "error": str(e)}

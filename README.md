@@ -121,72 +121,171 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through 60+ specialized tools organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **10 multi-action tools** exposing **104 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (44 tools)
+## 🛠️ Canonical Tools Reference (10 tools, 104 actions)
 
-The running MCP server and the tool modules expose the following canonical tools. For full parameter documentation and examples, call the server's get_help() tool.
+The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
-Core / Editor
-- open_asset_in_editor
+### 1. `manage_asset` (10 actions)
+Asset import, export, search, and management operations.
 
-Asset & Image Tools
-- search_items
-- import_texture_asset
-- export_texture_for_analysis
-- convert_svg_to_png
+| Action | Purpose |
+|--------|---------|
+| `search` | Search for assets (widgets, textures, blueprints, materials) |
+| `import_texture` | Import texture from file system |
+| `export_texture` | Export texture for AI analysis |
+| `delete` | Delete asset with safety checks |
+| `open_in_editor` | Open asset in appropriate editor |
+| `svg_to_png` | Convert SVG to PNG |
+| `duplicate` | Duplicate asset to new location |
+| `save` | Save single asset to disk |
+| `save_all` | Save all modified assets |
+| `list_references` | List asset references/dependencies |
 
-Blueprint lifecycle & components
-- create_blueprint
-- compile_blueprint
-- reparent_blueprint
-- set_blueprint_property
-- get_blueprint_info
-- add_component
-- add_component_to_blueprint
-- remove_component
-- reorder_components
-- set_component_property
-- get_component_hierarchy
-- get_available_components
-- get_component_info
-- get_property_metadata
+### 2. `manage_blueprint` (8 actions)
+Blueprint lifecycle, compilation, and property management.
 
-Blueprint graph & variables
-- manage_blueprint_node
-- get_available_blueprint_nodes
-- manage_blueprint_function
-- manage_blueprint_variable
+| Action | Purpose |
+|--------|---------|
+| `create` | Create new Blueprint (Actor, Widget, Component, etc.) |
+| `compile` | Compile Blueprint |
+| `get_info` | Get comprehensive Blueprint information |
+| `get_property` | Get class default property value |
+| `set_property` | Set class default property value |
+| `reparent` | Change Blueprint parent class |
+| `list_custom_events` | List custom events in Blueprint |
+| `summarize_event_graph` | Get event graph summary |
 
-UMG discovery & inspection
-- search_items
-- get_widget_blueprint_info
-- list_widget_components
-- get_widget_component_properties
-- get_available_widget_types
-- validate_widget_hierarchy
+### 3. `manage_blueprint_component` (12 actions)
+Component discovery, creation, and property management.
 
-UMG creation & reflection
-- create_umg_widget_blueprint
-- add_widget_component
-- get_available_widgets
+| Action | Purpose |
+|--------|---------|
+| `search_types` | Discover available component types |
+| `get_info` | Get component type information |
+| `get_property_metadata` | Get detailed property metadata |
+| `list` | List all components in Blueprint |
+| `create` | Add new component to Blueprint |
+| `delete` | Remove component from Blueprint |
+| `get_property` | Get single property value |
+| `set_property` | Set component property value |
+| `get_all_properties` | Get all property values |
+| `compare_properties` | Compare properties between Blueprints |
+| `reorder` | Change component order |
+| `reparent` | Change component parent attachment |
 
-UMG property & styling
-- set_widget_property
-- get_widget_property
-- list_widget_properties
-- get_help (use topic="umg-guide" for UMG workflow guidance)
+### 4. `manage_blueprint_node` (17 actions)
+Node graph operations for Blueprint visual scripting.
 
-Events & graph analysis
-- bind_input_events
-- get_available_events
-- get_node_details
-- list_custom_events
-- summarize_event_graph
+| Action | Purpose |
+|--------|---------|
+| `discover` | Discover available node types with spawner_key |
+| `create` | Create new node using spawner_key |
+| `connect` | Connect pins between nodes |
+| `connect_pins` | Batch connect with validation |
+| `disconnect` | Disconnect specific pins |
+| `disconnect_pins` | Break links or clear pins |
+| `delete` | Remove node from graph |
+| `move` | Reposition node |
+| `list` | List all nodes in graph |
+| `describe` | Get rich node + pin metadata |
+| `reset_pin_defaults` | Restore pin default values |
+| `get_details` | Get detailed node information |
+| `configure` | Set pin defaults and node config |
+| `split` | Split struct pins into sub-pins |
+| `recombine` | Collapse split pins back |
+| `refresh_node` | Reconstruct single node |
+| `refresh_nodes` | Refresh all nodes in Blueprint |
 
-System & diagnostics
-- check_unreal_connection
-- get_help
+### 5. `manage_blueprint_function` (13 actions)
+Blueprint function lifecycle and parameter management.
+
+| Action | Purpose |
+|--------|---------|
+| `list` | List all functions in Blueprint |
+| `get` | Get detailed function information |
+| `list_params` | List function parameters (inputs/outputs) |
+| `create` | Create new custom function |
+| `delete` | Remove function from Blueprint |
+| `add_param` | Add input/output parameter |
+| `remove_param` | Remove parameter from function |
+| `update_param` | Update parameter type or name |
+| `list_locals` | List local variables in function |
+| `add_local` | Add local variable to function |
+| `remove_local` | Remove local variable |
+| `update_local` | Update local variable type |
+| `update_properties` | Update function metadata (pure, category) |
+
+### 6. `manage_blueprint_variable` (7 actions)
+Variable creation, inspection, and management.
+
+| Action | Purpose |
+|--------|---------|
+| `create` | Create new Blueprint variable |
+| `delete` | Remove variable with reference check |
+| `list` | List all variables in Blueprint |
+| `get_info` | Get detailed variable information |
+| `get_property` | Get nested property value |
+| `set_property` | Set nested property value |
+| `search_types` | Discover available variable types |
+
+### 7. `manage_umg_widget` (11 actions)
+UMG Widget Blueprint operations.
+
+| Action | Purpose |
+|--------|---------|
+| `list_components` | List components with hierarchy |
+| `add_component` | Add widget component |
+| `remove_component` | Remove widget component |
+| `validate` | Validate widget hierarchy |
+| `search_types` | Discover widget component types |
+| `get_component_properties` | Get all component properties |
+| `get_property` | Get single property value |
+| `set_property` | Set widget property |
+| `list_properties` | List available properties |
+| `get_available_events` | Get bindable events |
+| `bind_events` | Bind input events |
+
+### 8. `manage_enhanced_input` (24 actions)
+Complete Enhanced Input system control.
+
+| Action | Purpose |
+|--------|---------|
+| `reflection_discover_types` | Discover modifier/trigger types |
+| `reflection_get_metadata` | Get type metadata |
+| `action_create` | Create Input Action |
+| `action_list` | List all Input Actions |
+| `action_get_properties` | Get action properties |
+| `action_configure` | Modify action properties |
+| `mapping_create_context` | Create Mapping Context |
+| `mapping_list_contexts` | List all contexts |
+| `mapping_get_properties` | Get context properties |
+| `mapping_get_property` | Get single property |
+| `mapping_update_context` | Update context |
+| `mapping_validate_context` | Validate context |
+| `mapping_get_mappings` | List key mappings |
+| `mapping_add_key_mapping` | Add key binding |
+| `mapping_remove_mapping` | Remove key mapping |
+| `mapping_get_available_keys` | List bindable keys |
+| `mapping_add_modifier` | Add modifier |
+| `mapping_remove_modifier` | Remove modifier |
+| `mapping_get_modifiers` | List modifiers |
+| `mapping_get_available_modifier_types` | List modifier types |
+| `mapping_add_trigger` | Add trigger |
+| `mapping_remove_trigger` | Remove trigger |
+| `mapping_get_triggers` | List triggers |
+| `mapping_get_available_trigger_types` | List trigger types |
+
+### 9. `check_unreal_connection` (1 action)
+Test connection to Unreal Engine and verify plugin status.
+
+### 10. `get_help` (1 action)
+Get comprehensive help documentation by topic.
+
+**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `asset-discovery`, `troubleshooting`, `topics`
+
+---
 
 All capabilities are accessible through natural language commands via AI assistants, enabling rapid prototyping, automated UI generation, and intelligent asset management workflows.
 

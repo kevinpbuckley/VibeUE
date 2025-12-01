@@ -38,6 +38,7 @@ private:
     
     // Property Reading Methods (NEW for manage_blueprint_component)
     TSharedPtr<FJsonObject> HandleGetComponentProperty(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleGetAllComponentProperties(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleCompareComponentProperties(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleReparentComponent(const TSharedPtr<FJsonObject>& Params);
