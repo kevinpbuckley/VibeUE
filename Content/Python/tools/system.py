@@ -90,6 +90,7 @@ def register_system_tools(mcp: FastMCP):
         - **node-tools**: Node discovery, creation, connections, spawner_key patterns
         - **multi-action-tools**: manage_blueprint_function/variables/components/node reference
         - **umg-guide**: UMG widget development, styling, hierarchy, containers
+        - **material-management**: Material and Material Instance management (⭐ NEW!)
         - **asset-discovery**: Asset search, import/export, management, performance tips
         - **troubleshooting**: Connection/Blueprint/Node/UMG issues, diagnostics
         - **topics**: Complete topic listing with descriptions

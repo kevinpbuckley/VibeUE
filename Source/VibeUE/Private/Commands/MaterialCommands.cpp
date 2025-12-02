@@ -3,6 +3,9 @@
 #include "Commands/MaterialCommands.h"
 #include "Services/Material/MaterialService.h"
 #include "Core/ServiceContext.h"
+#include "Materials/MaterialInstanceConstant.h"
+#include "UObject/SavePackage.h"
+#include "Misc/PackageName.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMaterialCommands, Log, All);
 
@@ -62,6 +65,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	{
 		return HandleCreate(Params);
 	}
+	else if (Action == TEXT("create_instance"))
+	{
+		return HandleCreateInstance(Params);
+	}
 	else if (Action == TEXT("save"))
 	{
 		return HandleSave(Params);
@@ -112,6 +119,49 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	else if (Action == TEXT("set_parameter_default"))
 	{
 		return HandleSetParameterDefault(Params);
+	}
+	// Instance information actions
+	else if (Action == TEXT("get_instance_info"))
+	{
+		return HandleGetInstanceInfo(Params);
+	}
+	else if (Action == TEXT("list_instance_properties"))
+	{
+		return HandleListInstanceProperties(Params);
+	}
+	// Instance property actions
+	else if (Action == TEXT("get_instance_property"))
+	{
+		return HandleGetInstanceProperty(Params);
+	}
+	else if (Action == TEXT("set_instance_property"))
+	{
+		return HandleSetInstanceProperty(Params);
+	}
+	// Instance parameter actions
+	else if (Action == TEXT("list_instance_parameters"))
+	{
+		return HandleListInstanceParameters(Params);
+	}
+	else if (Action == TEXT("set_instance_scalar_parameter"))
+	{
+		return HandleSetInstanceScalarParameter(Params);
+	}
+	else if (Action == TEXT("set_instance_vector_parameter"))
+	{
+		return HandleSetInstanceVectorParameter(Params);
+	}
+	else if (Action == TEXT("set_instance_texture_parameter"))
+	{
+		return HandleSetInstanceTextureParameter(Params);
+	}
+	else if (Action == TEXT("clear_instance_parameter_override"))
+	{
+		return HandleClearInstanceParameterOverride(Params);
+	}
+	else if (Action == TEXT("save_instance"))
+	{
+		return HandleSaveInstance(Params);
 	}
 	else
 	{
@@ -165,6 +215,101 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCreate(const TSharedPtr<FJsonOb
 	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
 	Response->SetStringField(TEXT("material_path"), Result.GetValue());
 	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Created material: %s"), *Result.GetValue()));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleCreateInstance(const TSharedPtr<FJsonObject>& Params)
+{
+	FString ParentMaterialPath;
+	FString DestinationPath;
+	FString InstanceName;
+
+	if (!Params->TryGetStringField(TEXT("parent_material_path"), ParentMaterialPath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parent_material_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("destination_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("instance_name"), InstanceName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_name is required"));
+	}
+
+	FMaterialInstanceCreateParams CreateParams;
+	CreateParams.ParentMaterialPath = ParentMaterialPath;
+	CreateParams.DestinationPath = DestinationPath;
+	CreateParams.InstanceName = InstanceName;
+
+	// Optional scalar parameter overrides
+	const TSharedPtr<FJsonObject>* ScalarParamsObj;
+	if (Params->TryGetObjectField(TEXT("scalar_parameters"), ScalarParamsObj))
+	{
+		for (const auto& Pair : (*ScalarParamsObj)->Values)
+		{
+			double Value;
+			if (Pair.Value->TryGetNumber(Value))
+			{
+				CreateParams.ScalarParameters.Add(Pair.Key, static_cast<float>(Value));
+			}
+		}
+	}
+
+	// Optional vector parameter overrides
+	const TSharedPtr<FJsonObject>* VectorParamsObj;
+	if (Params->TryGetObjectField(TEXT("vector_parameters"), VectorParamsObj))
+	{
+		for (const auto& Pair : (*VectorParamsObj)->Values)
+		{
+			// Vector parameters can be arrays [R, G, B, A] or strings "(R=x,G=x,B=x,A=x)"
+			const TArray<TSharedPtr<FJsonValue>>* ArrayValue;
+			FString StringValue;
+			if (Pair.Value->TryGetArray(ArrayValue) && ArrayValue->Num() >= 3)
+			{
+				FLinearColor Color(
+					static_cast<float>((*ArrayValue)[0]->AsNumber()),
+					static_cast<float>((*ArrayValue)[1]->AsNumber()),
+					static_cast<float>((*ArrayValue)[2]->AsNumber()),
+					ArrayValue->Num() >= 4 ? static_cast<float>((*ArrayValue)[3]->AsNumber()) : 1.0f
+				);
+				CreateParams.VectorParameters.Add(Pair.Key, Color);
+			}
+			else if (Pair.Value->TryGetString(StringValue))
+			{
+				FLinearColor Color;
+				if (Color.InitFromString(StringValue))
+				{
+					CreateParams.VectorParameters.Add(Pair.Key, Color);
+				}
+			}
+		}
+	}
+
+	// Optional texture parameter overrides
+	const TSharedPtr<FJsonObject>* TextureParamsObj;
+	if (Params->TryGetObjectField(TEXT("texture_parameters"), TextureParamsObj))
+	{
+		for (const auto& Pair : (*TextureParamsObj)->Values)
+		{
+			FString Value;
+			if (Pair.Value->TryGetString(Value))
+			{
+				CreateParams.TextureParameters.Add(Pair.Key, Value);
+			}
+		}
+	}
+
+	auto Result = Service->CreateMaterialInstance(CreateParams);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("CREATE_INSTANCE_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), Result.GetValue());
+	Response->SetStringField(TEXT("parent_material_path"), ParentMaterialPath);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Created material instance: %s"), *Result.GetValue()));
 	return Response;
 }
 
@@ -707,5 +852,395 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetParameterDefault(const TShar
 	Response->SetStringField(TEXT("parameter_name"), ParameterName);
 	Response->SetStringField(TEXT("value"), Value);
 	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Set parameter %s = %s"), *ParameterName, *Value));
+	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Instance Information Actions
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleGetInstanceInfo(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+
+	auto Result = Service->GetInstanceInfo(InstancePath);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("GET_INFO_FAILED"), Result.GetErrorMessage());
+	}
+
+	const FMaterialInfo& Info = Result.GetValue();
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("asset_path"), Info.AssetPath);
+	Response->SetStringField(TEXT("name"), Info.Name);
+	Response->SetStringField(TEXT("material_domain"), Info.MaterialDomain);
+	Response->SetStringField(TEXT("blend_mode"), Info.BlendMode);
+	Response->SetBoolField(TEXT("two_sided"), Info.bTwoSided);
+	Response->SetNumberField(TEXT("parameter_count"), Info.ParameterCount);
+	
+	// Parameter names (includes parent info and override details)
+	TArray<TSharedPtr<FJsonValue>> ParamNamesJson;
+	for (const FString& ParamName : Info.ParameterNames)
+	{
+		ParamNamesJson.Add(MakeShareable(new FJsonValueString(ParamName)));
+	}
+	Response->SetArrayField(TEXT("parameter_info"), ParamNamesJson);
+
+	// Properties
+	TArray<TSharedPtr<FJsonValue>> PropsJson;
+	for (const FMaterialPropertyInfo& PropInfo : Info.Properties)
+	{
+		TSharedPtr<FJsonObject> PropObj = MakeShareable(new FJsonObject);
+		PropObj->SetStringField(TEXT("name"), PropInfo.Name);
+		PropObj->SetStringField(TEXT("display_name"), PropInfo.DisplayName);
+		PropObj->SetStringField(TEXT("type"), PropInfo.Type);
+		PropObj->SetStringField(TEXT("category"), PropInfo.Category);
+		PropObj->SetStringField(TEXT("current_value"), PropInfo.CurrentValue);
+		PropObj->SetBoolField(TEXT("is_editable"), PropInfo.bIsEditable);
+		PropObj->SetBoolField(TEXT("is_advanced"), PropInfo.bIsAdvanced);
+		PropsJson.Add(MakeShareable(new FJsonValueObject(PropObj)));
+	}
+	Response->SetArrayField(TEXT("properties"), PropsJson);
+
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleListInstanceProperties(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+
+	bool bIncludeAdvanced = true;
+	Params->TryGetBoolField(TEXT("include_advanced"), bIncludeAdvanced);
+
+	auto Result = Service->ListInstanceProperties(InstancePath, bIncludeAdvanced);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("LIST_PROPS_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	
+	TArray<TSharedPtr<FJsonValue>> PropsJson;
+	for (const FMaterialPropertyInfo& PropInfo : Result.GetValue())
+	{
+		TSharedPtr<FJsonObject> PropObj = MakeShareable(new FJsonObject);
+		PropObj->SetStringField(TEXT("name"), PropInfo.Name);
+		PropObj->SetStringField(TEXT("display_name"), PropInfo.DisplayName);
+		PropObj->SetStringField(TEXT("type"), PropInfo.Type);
+		PropObj->SetStringField(TEXT("category"), PropInfo.Category);
+		PropObj->SetStringField(TEXT("current_value"), PropInfo.CurrentValue);
+		PropObj->SetBoolField(TEXT("is_editable"), PropInfo.bIsEditable);
+		PropObj->SetBoolField(TEXT("is_advanced"), PropInfo.bIsAdvanced);
+		
+		if (!PropInfo.Tooltip.IsEmpty())
+		{
+			PropObj->SetStringField(TEXT("tooltip"), PropInfo.Tooltip);
+		}
+		
+		if (!PropInfo.ObjectClass.IsEmpty())
+		{
+			PropObj->SetStringField(TEXT("object_class"), PropInfo.ObjectClass);
+		}
+		
+		if (PropInfo.AllowedValues.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> AllowedJson;
+			for (const FString& Val : PropInfo.AllowedValues)
+			{
+				AllowedJson.Add(MakeShareable(new FJsonValueString(Val)));
+			}
+			PropObj->SetArrayField(TEXT("allowed_values"), AllowedJson);
+		}
+		
+		PropsJson.Add(MakeShareable(new FJsonValueObject(PropObj)));
+	}
+	
+	Response->SetArrayField(TEXT("properties"), PropsJson);
+	Response->SetNumberField(TEXT("count"), PropsJson.Num());
+	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Instance Property Actions
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleGetInstanceProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, PropertyName;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+	}
+
+	auto Result = Service->GetInstanceProperty(InstancePath, PropertyName);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("GET_PROP_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
+	Response->SetStringField(TEXT("value"), Result.GetValue());
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceProperty(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, PropertyName, Value;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("value"), Value))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+	}
+
+	auto Result = Service->SetInstanceProperty(InstancePath, PropertyName, Value);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("SET_PROP_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
+	Response->SetStringField(TEXT("value"), Value);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Set %s = %s"), *PropertyName, *Value));
+	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Instance Parameter Actions
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleListInstanceParameters(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+
+	auto Result = Service->ListInstanceParameters(InstancePath);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("LIST_PARAMS_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	
+	TArray<TSharedPtr<FJsonValue>> ParamsJson;
+	for (const FVibeMaterialParamInfo& ParamInfo : Result.GetValue())
+	{
+		TSharedPtr<FJsonObject> ParamObj = MakeShareable(new FJsonObject);
+		ParamObj->SetStringField(TEXT("name"), ParamInfo.Name);
+		ParamObj->SetStringField(TEXT("type"), ParamInfo.Type);
+		ParamObj->SetStringField(TEXT("current_value"), ParamInfo.CurrentValue);
+		ParamsJson.Add(MakeShareable(new FJsonValueObject(ParamObj)));
+	}
+	
+	Response->SetArrayField(TEXT("parameters"), ParamsJson);
+	Response->SetNumberField(TEXT("count"), ParamsJson.Num());
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceScalarParameter(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, ParameterName;
+	double Value;
+	
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+	}
+	if (!Params->TryGetNumberField(TEXT("value"), Value))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value (number) is required"));
+	}
+
+	auto Result = Service->SetInstanceScalarParameter(InstancePath, ParameterName, (float)Value);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("SET_PARAM_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("parameter_name"), ParameterName);
+	Response->SetNumberField(TEXT("value"), Value);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Set scalar parameter %s = %f"), *ParameterName, Value));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceVectorParameter(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, ParameterName;
+	
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+	}
+	
+	// Parse vector value from R, G, B, A fields or from value object
+	FLinearColor ColorValue = FLinearColor::Black;
+	
+	const TSharedPtr<FJsonObject>* ValueObj;
+	if (Params->TryGetObjectField(TEXT("value"), ValueObj))
+	{
+		double R, G, B, A;
+		(*ValueObj)->TryGetNumberField(TEXT("r"), R);
+		(*ValueObj)->TryGetNumberField(TEXT("g"), G);
+		(*ValueObj)->TryGetNumberField(TEXT("b"), B);
+		(*ValueObj)->TryGetNumberField(TEXT("a"), A);
+		ColorValue = FLinearColor(R, G, B, A);
+	}
+	else
+	{
+		// Try to get individual fields directly
+		double R, G, B, A = 1.0;
+		if (Params->TryGetNumberField(TEXT("r"), R) && Params->TryGetNumberField(TEXT("g"), G) && Params->TryGetNumberField(TEXT("b"), B))
+		{
+			Params->TryGetNumberField(TEXT("a"), A);
+			ColorValue = FLinearColor(R, G, B, A);
+		}
+		else
+		{
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value object with r,g,b,a fields is required"));
+		}
+	}
+
+	auto Result = Service->SetInstanceVectorParameter(InstancePath, ParameterName, ColorValue);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("SET_PARAM_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("parameter_name"), ParameterName);
+	Response->SetStringField(TEXT("value"), FString::Printf(TEXT("(%f,%f,%f,%f)"), ColorValue.R, ColorValue.G, ColorValue.B, ColorValue.A));
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Set vector parameter %s"), *ParameterName));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceTextureParameter(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, ParameterName, TexturePath;
+	
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("texture_path"), TexturePath))
+	{
+		TexturePath = TEXT(""); // Allow clearing to None
+	}
+
+	auto Result = Service->SetInstanceTextureParameter(InstancePath, ParameterName, TexturePath);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("SET_PARAM_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("parameter_name"), ParameterName);
+	Response->SetStringField(TEXT("texture_path"), TexturePath);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Set texture parameter %s = %s"), *ParameterName, *TexturePath));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleClearInstanceParameterOverride(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath, ParameterName;
+	
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+	}
+
+	auto Result = Service->ClearInstanceParameterOverride(InstancePath, ParameterName);
+	if (!Result.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("CLEAR_OVERRIDE_FAILED"), Result.GetErrorMessage());
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("parameter_name"), ParameterName);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Cleared parameter override: %s"), *ParameterName));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSaveInstance(const TSharedPtr<FJsonObject>& Params)
+{
+	FString InstancePath;
+	if (!Params->TryGetStringField(TEXT("instance_path"), InstancePath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_path is required"));
+	}
+
+	// Load instance and save its package
+	auto LoadResult = Service->LoadMaterialInstance(InstancePath);
+	if (!LoadResult.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("LOAD_FAILED"), LoadResult.GetErrorMessage());
+	}
+
+	UMaterialInstanceConstant* Instance = LoadResult.GetValue();
+	UPackage* Package = Instance->GetOutermost();
+
+	FString PackageFileName = FPackageName::LongPackageNameToFilename(Package->GetName(), FPackageName::GetAssetPackageExtension());
+
+	FSavePackageArgs SaveArgs;
+	SaveArgs.TopLevelFlags = RF_Public | RF_Standalone;
+	SaveArgs.Error = GWarn;
+	
+	FSavePackageResultStruct Result = UPackage::Save(Package, Instance, *PackageFileName, SaveArgs);
+	
+	if (Result.Result != ESavePackageResult::Success)
+	{
+		return CreateErrorResponse(TEXT("SAVE_FAILED"), FString::Printf(TEXT("Failed to save instance: %s"), *InstancePath));
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("instance_path"), InstancePath);
+	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Saved material instance: %s"), *InstancePath));
 	return Response;
 }

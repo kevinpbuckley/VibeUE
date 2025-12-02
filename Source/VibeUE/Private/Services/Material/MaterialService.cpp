@@ -32,6 +32,47 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogMaterialService, Log, All);
 
+// Local helper function for property type names
+static FString GetPropertyTypeName(FProperty* Property)
+{
+    if (Property->IsA<FBoolProperty>())
+    {
+        return TEXT("bool");
+    }
+    else if (Property->IsA<FFloatProperty>() || Property->IsA<FDoubleProperty>())
+    {
+        return TEXT("float");
+    }
+    else if (Property->IsA<FIntProperty>())
+    {
+        return TEXT("int");
+    }
+    else if (Property->IsA<FByteProperty>())
+    {
+        return TEXT("byte");
+    }
+    else if (CastField<FEnumProperty>(Property))
+    {
+        return TEXT("enum");
+    }
+    else if (CastField<FStructProperty>(Property))
+    {
+        return TEXT("struct");
+    }
+    else if (CastField<FObjectPropertyBase>(Property))
+    {
+        return TEXT("object");
+    }
+    else if (Property->IsA<FStrProperty>())
+    {
+        return TEXT("string");
+    }
+    else
+    {
+        return Property->GetCPPType();
+    }
+}
+
 FMaterialService::FMaterialService(TSharedPtr<FServiceContext> InContext)
     : FServiceBase(InContext)
 {
@@ -117,6 +158,118 @@ TResult<FString> FMaterialService::CreateMaterial(const FMaterialCreateParams& P
     return TResult<FString>::Success(PackageName);
 }
 
+TResult<FString> FMaterialService::CreateMaterialInstance(const FMaterialInstanceCreateParams& Params)
+{
+    // Validate parameters
+    if (Params.ParentMaterialPath.IsEmpty())
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("ParentMaterialPath cannot be empty"));
+    }
+    if (Params.DestinationPath.IsEmpty())
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("DestinationPath cannot be empty"));
+    }
+    if (Params.InstanceName.IsEmpty())
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("InstanceName cannot be empty"));
+    }
+
+    // Load the parent material
+    UMaterialInterface* ParentMaterial = LoadObject<UMaterialInterface>(nullptr, *Params.ParentMaterialPath);
+    if (!ParentMaterial)
+    {
+        // Try with suffix
+        FString PathWithSuffix = Params.ParentMaterialPath + TEXT(".") + FPackageName::GetShortName(Params.ParentMaterialPath);
+        ParentMaterial = LoadObject<UMaterialInterface>(nullptr, *PathWithSuffix);
+    }
+    
+    if (!ParentMaterial)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
+            FString::Printf(TEXT("Parent material not found: %s"), *Params.ParentMaterialPath));
+    }
+
+    // Construct full asset path
+    FString PackagePath = Params.DestinationPath / Params.InstanceName;
+    FString PackageName = PackagePath;
+    
+    // Ensure path starts with /Game/
+    if (!PackageName.StartsWith(TEXT("/Game/")))
+    {
+        if (PackageName.StartsWith(TEXT("/")))
+        {
+            PackageName = TEXT("/Game") + PackageName;
+        }
+        else
+        {
+            PackageName = TEXT("/Game/") + PackageName;
+        }
+    }
+
+    // Create the package
+    UPackage* Package = CreatePackage(*PackageName);
+    if (!Package)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create package: %s"), *PackageName));
+    }
+
+    // Create the Material Instance Constant
+    UMaterialInstanceConstant* NewInstance = NewObject<UMaterialInstanceConstant>(
+        Package,
+        *Params.InstanceName,
+        RF_Public | RF_Standalone
+    );
+
+    if (!NewInstance)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::ASSET_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create material instance: %s"), *Params.InstanceName));
+    }
+
+    // Set the parent material
+    NewInstance->SetParentEditorOnly(ParentMaterial);
+
+    // Apply scalar parameter overrides
+    for (const auto& Param : Params.ScalarParameters)
+    {
+        NewInstance->SetScalarParameterValueEditorOnly(FName(*Param.Key), Param.Value);
+        UE_LOG(LogMaterialService, Log, TEXT("Set scalar parameter %s = %f"), *Param.Key, Param.Value);
+    }
+
+    // Apply vector parameter overrides
+    for (const auto& Param : Params.VectorParameters)
+    {
+        NewInstance->SetVectorParameterValueEditorOnly(FName(*Param.Key), Param.Value);
+        UE_LOG(LogMaterialService, Log, TEXT("Set vector parameter %s"), *Param.Key);
+    }
+
+    // Apply texture parameter overrides
+    for (const auto& Param : Params.TextureParameters)
+    {
+        UTexture* Texture = LoadObject<UTexture>(nullptr, *Param.Value);
+        if (Texture)
+        {
+            NewInstance->SetTextureParameterValueEditorOnly(FName(*Param.Key), Texture);
+            UE_LOG(LogMaterialService, Log, TEXT("Set texture parameter %s = %s"), *Param.Key, *Param.Value);
+        }
+        else
+        {
+            UE_LOG(LogMaterialService, Warning, TEXT("Failed to load texture for parameter %s: %s"), *Param.Key, *Param.Value);
+        }
+    }
+
+    // Mark package dirty
+    Package->MarkPackageDirty();
+
+    // Notify asset registry
+    FAssetRegistryModule::AssetCreated(NewInstance);
+
+    UE_LOG(LogMaterialService, Log, TEXT("Created material instance: %s (parent: %s)"), *PackageName, *Params.ParentMaterialPath);
+    
+    return TResult<FString>::Success(PackageName);
+}
+
 TResult<UMaterial*> FMaterialService::LoadMaterial(const FString& MaterialPath)
 {
     if (MaterialPath.IsEmpty())
@@ -140,6 +293,56 @@ TResult<UMaterial*> FMaterialService::LoadMaterial(const FString& MaterialPath)
     }
 
     return TResult<UMaterial*>::Success(Material);
+}
+
+TResult<UMaterialInterface*> FMaterialService::LoadMaterialInterface(const FString& MaterialPath)
+{
+    if (MaterialPath.IsEmpty())
+    {
+        return TResult<UMaterialInterface*>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("MaterialPath cannot be empty"));
+    }
+
+    // Try to load as UMaterialInterface (base class for both UMaterial and UMaterialInstance)
+    UMaterialInterface* MaterialInterface = LoadObject<UMaterialInterface>(nullptr, *MaterialPath);
+    if (!MaterialInterface)
+    {
+        // Try with .AssetName suffix
+        FString PathWithSuffix = MaterialPath + TEXT(".") + FPackageName::GetShortName(MaterialPath);
+        MaterialInterface = LoadObject<UMaterialInterface>(nullptr, *PathWithSuffix);
+    }
+
+    if (!MaterialInterface)
+    {
+        return TResult<UMaterialInterface*>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
+            FString::Printf(TEXT("Material or Material Instance not found: %s"), *MaterialPath));
+    }
+
+    return TResult<UMaterialInterface*>::Success(MaterialInterface);
+}
+
+TResult<UMaterialInstanceConstant*> FMaterialService::LoadMaterialInstance(const FString& InstancePath)
+{
+    if (InstancePath.IsEmpty())
+    {
+        return TResult<UMaterialInstanceConstant*>::Error(VibeUE::ErrorCodes::PARAM_EMPTY, TEXT("InstancePath cannot be empty"));
+    }
+
+    // Try to load as UMaterialInstanceConstant
+    UMaterialInstanceConstant* MaterialInstance = LoadObject<UMaterialInstanceConstant>(nullptr, *InstancePath);
+    if (!MaterialInstance)
+    {
+        // Try with .AssetName suffix
+        FString PathWithSuffix = InstancePath + TEXT(".") + FPackageName::GetShortName(InstancePath);
+        MaterialInstance = LoadObject<UMaterialInstanceConstant>(nullptr, *PathWithSuffix);
+    }
+
+    if (!MaterialInstance)
+    {
+        return TResult<UMaterialInstanceConstant*>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
+            FString::Printf(TEXT("Material Instance not found: %s"), *InstancePath));
+    }
+
+    return TResult<UMaterialInstanceConstant*>::Success(MaterialInstance);
 }
 
 TResult<void> FMaterialService::SaveMaterial(const FString& MaterialPath)
@@ -335,6 +538,520 @@ TResult<FMaterialInfo> FMaterialService::GetMaterialInfo(const FString& Material
     }
 
     return TResult<FMaterialInfo>::Success(Info);
+}
+
+//-----------------------------------------------------------------------------
+// Material Instance Information
+//-----------------------------------------------------------------------------
+
+TResult<FMaterialInfo> FMaterialService::GetInstanceInfo(const FString& InstancePath)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<FMaterialInfo>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    FMaterialInfo Info;
+
+    Info.AssetPath = InstancePath;
+    Info.Name = MaterialInstance->GetName();
+    
+    // Get parent material info
+    if (UMaterialInterface* Parent = MaterialInstance->Parent)
+    {
+        Info.MaterialDomain = TEXT("Instance");  // Mark as instance
+        
+        // Get info from parent material
+        if (UMaterial* ParentMaterial = Parent->GetMaterial())
+        {
+            switch (ParentMaterial->MaterialDomain)
+            {
+                case MD_Surface: Info.MaterialDomain = TEXT("Surface (Instance)"); break;
+                case MD_DeferredDecal: Info.MaterialDomain = TEXT("DeferredDecal (Instance)"); break;
+                case MD_LightFunction: Info.MaterialDomain = TEXT("LightFunction (Instance)"); break;
+                case MD_Volume: Info.MaterialDomain = TEXT("Volume (Instance)"); break;
+                case MD_PostProcess: Info.MaterialDomain = TEXT("PostProcess (Instance)"); break;
+                case MD_UI: Info.MaterialDomain = TEXT("UI (Instance)"); break;
+                default: Info.MaterialDomain = TEXT("Unknown (Instance)"); break;
+            }
+            
+            switch (ParentMaterial->BlendMode)
+            {
+                case BLEND_Opaque: Info.BlendMode = TEXT("Opaque"); break;
+                case BLEND_Masked: Info.BlendMode = TEXT("Masked"); break;
+                case BLEND_Translucent: Info.BlendMode = TEXT("Translucent"); break;
+                case BLEND_Additive: Info.BlendMode = TEXT("Additive"); break;
+                case BLEND_Modulate: Info.BlendMode = TEXT("Modulate"); break;
+                case BLEND_AlphaComposite: Info.BlendMode = TEXT("AlphaComposite"); break;
+                case BLEND_AlphaHoldout: Info.BlendMode = TEXT("AlphaHoldout"); break;
+                default: Info.BlendMode = TEXT("Unknown"); break;
+            }
+            
+            Info.bTwoSided = ParentMaterial->TwoSided;
+        }
+    }
+    
+    // Store parent path
+    if (MaterialInstance->Parent)
+    {
+        // Store parent info in a parameter name (reusing the field)
+        Info.ParameterNames.Add(FString::Printf(TEXT("Parent: %s"), *MaterialInstance->Parent->GetPathName()));
+    }
+
+    // Count overridden parameters
+    Info.ParameterCount = 0;
+    
+    // Scalar parameters (iterate over current overrides)
+    for (const FScalarParameterValue& Param : MaterialInstance->ScalarParameterValues)
+    {
+        Info.ParameterCount++;
+        Info.ParameterNames.Add(FString::Printf(TEXT("Scalar: %s = %f"), *Param.ParameterInfo.Name.ToString(), Param.ParameterValue));
+    }
+    
+    // Vector parameters
+    for (const FVectorParameterValue& Param : MaterialInstance->VectorParameterValues)
+    {
+        Info.ParameterCount++;
+        Info.ParameterNames.Add(FString::Printf(TEXT("Vector: %s = (%f, %f, %f, %f)"), 
+            *Param.ParameterInfo.Name.ToString(),
+            Param.ParameterValue.R, Param.ParameterValue.G, Param.ParameterValue.B, Param.ParameterValue.A));
+    }
+    
+    // Texture parameters
+    for (const FTextureParameterValue& Param : MaterialInstance->TextureParameterValues)
+    {
+        Info.ParameterCount++;
+        FString TexturePath = Param.ParameterValue ? Param.ParameterValue->GetPathName() : TEXT("None");
+        Info.ParameterNames.Add(FString::Printf(TEXT("Texture: %s = %s"), *Param.ParameterInfo.Name.ToString(), *TexturePath));
+    }
+
+    // Get all properties
+    auto PropsResult = ListInstanceProperties(InstancePath, true);
+    if (PropsResult.IsSuccess())
+    {
+        Info.Properties = PropsResult.GetValue();
+    }
+
+    return TResult<FMaterialInfo>::Success(Info);
+}
+
+TResult<TArray<FMaterialPropertyInfo>> FMaterialService::ListInstanceProperties(const FString& InstancePath, bool bIncludeAdvanced)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<TArray<FMaterialPropertyInfo>>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    TArray<FMaterialPropertyInfo> Properties;
+
+    // Iterate over all properties using reflection
+    for (TFieldIterator<FProperty> PropIt(UMaterialInstanceConstant::StaticClass()); PropIt; ++PropIt)
+    {
+        FProperty* Property = *PropIt;
+        
+        // Skip if not editable
+        if (!Property->HasAnyPropertyFlags(CPF_Edit))
+        {
+            continue;
+        }
+
+        // Skip advanced properties if not requested
+        bool bIsAdvanced = Property->HasMetaData(TEXT("AdvancedDisplay"));
+        if (bIsAdvanced && !bIncludeAdvanced)
+        {
+            continue;
+        }
+
+        FMaterialPropertyInfo PropInfo;
+        PropInfo.Name = Property->GetName();
+        PropInfo.DisplayName = Property->GetDisplayNameText().ToString();
+        PropInfo.Type = GetPropertyTypeName(Property);
+        PropInfo.Category = Property->GetMetaData(TEXT("Category"));
+        PropInfo.bIsEditable = true;
+        PropInfo.bIsAdvanced = bIsAdvanced;
+        
+        // Get tooltip
+        PropInfo.Tooltip = Property->GetMetaData(TEXT("Tooltip"));
+
+        // Get current value as string
+        void* ValuePtr = Property->ContainerPtrToValuePtr<void>(MaterialInstance);
+        Property->ExportTextItem_Direct(PropInfo.CurrentValue, ValuePtr, nullptr, nullptr, PPF_None);
+
+        // Get allowed values for enums
+        if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+        {
+            if (UEnum* Enum = EnumProp->GetEnum())
+            {
+                for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+                {
+                    PropInfo.AllowedValues.Add(Enum->GetNameStringByIndex(i));
+                }
+            }
+        }
+        else if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+        {
+            if (UEnum* Enum = ByteProp->GetIntPropertyEnum())
+            {
+                for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+                {
+                    PropInfo.AllowedValues.Add(Enum->GetNameStringByIndex(i));
+                }
+            }
+        }
+
+        // Handle struct properties
+        if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+        {
+            PropInfo.ObjectClass = StructProp->Struct->GetName();
+            
+            // Get struct members
+            for (TFieldIterator<FProperty> MemberIt(StructProp->Struct); MemberIt; ++MemberIt)
+            {
+                FProperty* MemberProp = *MemberIt;
+                FStructMemberInfo MemberInfo;
+                MemberInfo.Name = MemberProp->GetName();
+                MemberInfo.Type = GetPropertyTypeName(MemberProp);
+                
+                void* MemberValuePtr = MemberProp->ContainerPtrToValuePtr<void>(ValuePtr);
+                MemberProp->ExportTextItem_Direct(MemberInfo.CurrentValue, MemberValuePtr, nullptr, nullptr, PPF_None);
+                
+                PropInfo.StructMembers.Add(MemberInfo);
+            }
+        }
+
+        // Handle object properties
+        if (FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(Property))
+        {
+            PropInfo.ObjectClass = ObjProp->PropertyClass->GetName();
+        }
+
+        Properties.Add(PropInfo);
+    }
+
+    return TResult<TArray<FMaterialPropertyInfo>>::Success(Properties);
+}
+
+TResult<FString> FMaterialService::GetInstanceProperty(const FString& InstancePath, const FString& PropertyName)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<FString>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Find the property
+    FProperty* Property = UMaterialInstanceConstant::StaticClass()->FindPropertyByName(FName(*PropertyName));
+    if (!Property)
+    {
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+    }
+
+    // Get value as string
+    FString Value;
+    void* ValuePtr = Property->ContainerPtrToValuePtr<void>(MaterialInstance);
+    Property->ExportTextItem_Direct(Value, ValuePtr, nullptr, nullptr, PPF_None);
+
+    return TResult<FString>::Success(Value);
+}
+
+TResult<void> FMaterialService::SetInstanceProperty(const FString& InstancePath, const FString& PropertyName, const FString& Value)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<void>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Find the property
+    FProperty* Property = UMaterialInstanceConstant::StaticClass()->FindPropertyByName(FName(*PropertyName));
+    if (!Property)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+    }
+
+    // Check if editable
+    if (!Property->HasAnyPropertyFlags(CPF_Edit))
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Property is not editable: %s"), *PropertyName));
+    }
+
+    // Notify pre-edit
+    MaterialInstance->PreEditChange(Property);
+
+    // Set value from string
+    void* ValuePtr = Property->ContainerPtrToValuePtr<void>(MaterialInstance);
+    Property->ImportText_Direct(*Value, ValuePtr, MaterialInstance, PPF_None);
+
+    // Notify post-edit
+    FPropertyChangedEvent ChangedEvent(Property);
+    MaterialInstance->PostEditChangeProperty(ChangedEvent);
+    
+    // Mark package dirty
+    MaterialInstance->MarkPackageDirty();
+
+    UE_LOG(LogMaterialService, Log, TEXT("Set instance property %s = %s on %s"), *PropertyName, *Value, *InstancePath);
+    return TResult<void>::Success();
+}
+
+//-----------------------------------------------------------------------------
+// Material Instance Parameters
+//-----------------------------------------------------------------------------
+
+TResult<TArray<FVibeMaterialParamInfo>> FMaterialService::ListInstanceParameters(const FString& InstancePath)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<TArray<FVibeMaterialParamInfo>>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    TArray<FVibeMaterialParamInfo> Parameters;
+
+    // Get all available parameters from the parent material
+    TArray<FMaterialParameterInfo> AllScalarParams;
+    TArray<FGuid> ScalarGuids;
+    MaterialInstance->GetAllScalarParameterInfo(AllScalarParams, ScalarGuids);
+    
+    for (const FMaterialParameterInfo& UEParamInfo : AllScalarParams)
+    {
+        FVibeMaterialParamInfo Info;
+        Info.Name = UEParamInfo.Name.ToString();
+        Info.Type = TEXT("Scalar");
+        
+        // Get current value
+        float ScalarValue = 0.0f;
+        if (MaterialInstance->GetScalarParameterValue(UEParamInfo.Name, ScalarValue))
+        {
+            Info.CurrentValue = FString::SanitizeFloat(ScalarValue);
+        }
+        
+        // Check if overridden in this instance
+        for (const FScalarParameterValue& Override : MaterialInstance->ScalarParameterValues)
+        {
+            if (Override.ParameterInfo.Name == UEParamInfo.Name)
+            {
+                Info.CurrentValue = FString::SanitizeFloat(Override.ParameterValue);
+                break;
+            }
+        }
+        
+        Parameters.Add(Info);
+    }
+
+    // Vector parameters
+    TArray<FMaterialParameterInfo> AllVectorParams;
+    TArray<FGuid> VectorGuids;
+    MaterialInstance->GetAllVectorParameterInfo(AllVectorParams, VectorGuids);
+    
+    for (const FMaterialParameterInfo& UEParamInfo : AllVectorParams)
+    {
+        FVibeMaterialParamInfo Info;
+        Info.Name = UEParamInfo.Name.ToString();
+        Info.Type = TEXT("Vector");
+        
+        // Get current value
+        FLinearColor VectorValue = FLinearColor::Black;
+        if (MaterialInstance->GetVectorParameterValue(UEParamInfo.Name, VectorValue))
+        {
+            Info.CurrentValue = FString::Printf(TEXT("(%f,%f,%f,%f)"), VectorValue.R, VectorValue.G, VectorValue.B, VectorValue.A);
+        }
+        
+        // Check if overridden in this instance
+        for (const FVectorParameterValue& Override : MaterialInstance->VectorParameterValues)
+        {
+            if (Override.ParameterInfo.Name == UEParamInfo.Name)
+            {
+                Info.CurrentValue = FString::Printf(TEXT("(%f,%f,%f,%f)"), 
+                    Override.ParameterValue.R, Override.ParameterValue.G, Override.ParameterValue.B, Override.ParameterValue.A);
+                break;
+            }
+        }
+        
+        Parameters.Add(Info);
+    }
+
+    // Texture parameters
+    TArray<FMaterialParameterInfo> AllTextureParams;
+    TArray<FGuid> TextureGuids;
+    MaterialInstance->GetAllTextureParameterInfo(AllTextureParams, TextureGuids);
+    
+    for (const FMaterialParameterInfo& UEParamInfo : AllTextureParams)
+    {
+        FVibeMaterialParamInfo Info;
+        Info.Name = UEParamInfo.Name.ToString();
+        Info.Type = TEXT("Texture");
+        
+        // Get current value
+        UTexture* TextureValue = nullptr;
+        if (MaterialInstance->GetTextureParameterValue(UEParamInfo.Name, TextureValue))
+        {
+            Info.CurrentValue = TextureValue ? TextureValue->GetPathName() : TEXT("None");
+        }
+        
+        // Check if overridden in this instance
+        for (const FTextureParameterValue& Override : MaterialInstance->TextureParameterValues)
+        {
+            if (Override.ParameterInfo.Name == UEParamInfo.Name)
+            {
+                Info.CurrentValue = Override.ParameterValue ? Override.ParameterValue->GetPathName() : TEXT("None");
+                break;
+            }
+        }
+        
+        Parameters.Add(Info);
+    }
+
+    return TResult<TArray<FVibeMaterialParamInfo>>::Success(Parameters);
+}
+
+TResult<void> FMaterialService::SetInstanceScalarParameter(const FString& InstancePath, const FString& ParameterName, float Value)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<void>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Set the parameter value
+    MaterialInstance->SetScalarParameterValueEditorOnly(FName(*ParameterName), Value);
+    
+    // Mark package dirty
+    MaterialInstance->MarkPackageDirty();
+
+    UE_LOG(LogMaterialService, Log, TEXT("Set scalar parameter %s = %f on %s"), *ParameterName, Value, *InstancePath);
+    return TResult<void>::Success();
+}
+
+TResult<void> FMaterialService::SetInstanceVectorParameter(const FString& InstancePath, const FString& ParameterName, const FLinearColor& Value)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<void>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Set the parameter value
+    MaterialInstance->SetVectorParameterValueEditorOnly(FName(*ParameterName), Value);
+    
+    // Mark package dirty
+    MaterialInstance->MarkPackageDirty();
+
+    UE_LOG(LogMaterialService, Log, TEXT("Set vector parameter %s = (%f,%f,%f,%f) on %s"), 
+        *ParameterName, Value.R, Value.G, Value.B, Value.A, *InstancePath);
+    return TResult<void>::Success();
+}
+
+TResult<void> FMaterialService::SetInstanceTextureParameter(const FString& InstancePath, const FString& ParameterName, const FString& TexturePath)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<void>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Load the texture
+    UTexture* Texture = nullptr;
+    if (!TexturePath.IsEmpty() && TexturePath != TEXT("None"))
+    {
+        Texture = LoadObject<UTexture>(nullptr, *TexturePath);
+        if (!Texture)
+        {
+            // Try with suffix
+            FString PathWithSuffix = TexturePath + TEXT(".") + FPackageName::GetShortName(TexturePath);
+            Texture = LoadObject<UTexture>(nullptr, *PathWithSuffix);
+        }
+        
+        if (!Texture)
+        {
+            return TResult<void>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
+                FString::Printf(TEXT("Texture not found: %s"), *TexturePath));
+        }
+    }
+    
+    // Set the parameter value
+    MaterialInstance->SetTextureParameterValueEditorOnly(FName(*ParameterName), Texture);
+    
+    // Mark package dirty
+    MaterialInstance->MarkPackageDirty();
+
+    UE_LOG(LogMaterialService, Log, TEXT("Set texture parameter %s = %s on %s"), *ParameterName, *TexturePath, *InstancePath);
+    return TResult<void>::Success();
+}
+
+TResult<void> FMaterialService::ClearInstanceParameterOverride(const FString& InstancePath, const FString& ParameterName)
+{
+    auto LoadResult = LoadMaterialInstance(InstancePath);
+    if (!LoadResult.IsSuccess())
+    {
+        return TResult<void>::Error(LoadResult.GetErrorCode(), LoadResult.GetErrorMessage());
+    }
+
+    UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    bool bFound = false;
+    
+    // Remove from scalar parameters
+    for (int32 i = MaterialInstance->ScalarParameterValues.Num() - 1; i >= 0; --i)
+    {
+        if (MaterialInstance->ScalarParameterValues[i].ParameterInfo.Name.ToString() == ParameterName)
+        {
+            MaterialInstance->ScalarParameterValues.RemoveAt(i);
+            bFound = true;
+        }
+    }
+    
+    // Remove from vector parameters
+    for (int32 i = MaterialInstance->VectorParameterValues.Num() - 1; i >= 0; --i)
+    {
+        if (MaterialInstance->VectorParameterValues[i].ParameterInfo.Name.ToString() == ParameterName)
+        {
+            MaterialInstance->VectorParameterValues.RemoveAt(i);
+            bFound = true;
+        }
+    }
+    
+    // Remove from texture parameters
+    for (int32 i = MaterialInstance->TextureParameterValues.Num() - 1; i >= 0; --i)
+    {
+        if (MaterialInstance->TextureParameterValues[i].ParameterInfo.Name.ToString() == ParameterName)
+        {
+            MaterialInstance->TextureParameterValues.RemoveAt(i);
+            bFound = true;
+        }
+    }
+    
+    if (!bFound)
+    {
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
+            FString::Printf(TEXT("Parameter override not found: %s"), *ParameterName));
+    }
+    
+    // Notify changes
+    MaterialInstance->PreEditChange(nullptr);
+    MaterialInstance->PostEditChange();
+    
+    // Mark package dirty
+    MaterialInstance->MarkPackageDirty();
+
+    UE_LOG(LogMaterialService, Log, TEXT("Cleared parameter override %s on %s"), *ParameterName, *InstancePath);
+    return TResult<void>::Success();
 }
 
 TResult<TArray<FMaterialPropertyInfo>> FMaterialService::ListProperties(const FString& MaterialPath, bool bIncludeAdvanced)
@@ -802,15 +1519,61 @@ TResult<void> FMaterialService::SetParameterDefault(const FString& MaterialPath,
             {
                 if (VectorParam->ParameterName.ToString().Equals(ParameterName, ESearchCase::IgnoreCase))
                 {
-                    VectorParam->PreEditChange(nullptr);
-                    // Parse vector value (R,G,B,A)
-                    FLinearColor Color;
+                    // Use transaction for undo support
+                    FScopedTransaction Transaction(NSLOCTEXT("MaterialService", "SetVectorParameter", "Set Vector Parameter"));
+                    VectorParam->Modify();
+                    
+                    // Parse vector value - support multiple formats:
+                    // (R=1.0,G=0.5,B=0.0,A=1.0) or (1.0,0.5,0.0,1.0) or R=1.0,G=0.5,B=0.0,A=1.0
+                    FLinearColor Color = FLinearColor::Black;
+                    bool bParsed = false;
+                    
+                    // Try FLinearColor::InitFromString first (handles R=,G=,B=,A= format)
                     if (Color.InitFromString(Value))
                     {
-                        VectorParam->DefaultValue = Color;
+                        bParsed = true;
                     }
-                    VectorParam->PostEditChange();
-                    MarkMaterialDirty(Material);
+                    else
+                    {
+                        // Try parsing as simple comma-separated values (R,G,B,A)
+                        FString CleanValue = Value;
+                        CleanValue.RemoveFromStart(TEXT("("));
+                        CleanValue.RemoveFromEnd(TEXT(")"));
+                        
+                        TArray<FString> Components;
+                        CleanValue.ParseIntoArray(Components, TEXT(","), true);
+                        
+                        if (Components.Num() >= 3)
+                        {
+                            Color.R = FCString::Atof(*Components[0]);
+                            Color.G = FCString::Atof(*Components[1]);
+                            Color.B = FCString::Atof(*Components[2]);
+                            Color.A = Components.Num() >= 4 ? FCString::Atof(*Components[3]) : 1.0f;
+                            bParsed = true;
+                        }
+                    }
+                    
+                    if (bParsed)
+                    {
+                        VectorParam->DefaultValue = Color;
+                        VectorParam->PostEditChange();
+                        
+                        // Mark material dirty and trigger recompile
+                        Material->PreEditChange(nullptr);
+                        Material->PostEditChange();
+                        MarkMaterialDirty(Material);
+                        
+                        // Save the material to persist the change
+                        SaveMaterial(MaterialPath);
+                        
+                        UE_LOG(LogMaterialService, Log, TEXT("Set vector parameter %s = (%f,%f,%f,%f)"), 
+                            *ParameterName, Color.R, Color.G, Color.B, Color.A);
+                    }
+                    else
+                    {
+                        UE_LOG(LogMaterialService, Warning, TEXT("Failed to parse color value: %s"), *Value);
+                    }
+                    
                     return TResult<void>::Success();
                 }
             }

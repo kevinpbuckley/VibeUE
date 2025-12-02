@@ -48,6 +48,7 @@ private:
 
 	// Lifecycle actions
 	TSharedPtr<FJsonObject> HandleCreate(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleCreateInstance(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSave(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleCompile(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleRefreshEditor(const TSharedPtr<FJsonObject>& Params);
@@ -66,6 +67,22 @@ private:
 	TSharedPtr<FJsonObject> HandleListParameters(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleGetParameter(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSetParameterDefault(const TSharedPtr<FJsonObject>& Params);
+
+	// Instance information actions
+	TSharedPtr<FJsonObject> HandleGetInstanceInfo(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleListInstanceProperties(const TSharedPtr<FJsonObject>& Params);
+
+	// Instance property actions
+	TSharedPtr<FJsonObject> HandleGetInstanceProperty(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetInstanceProperty(const TSharedPtr<FJsonObject>& Params);
+
+	// Instance parameter actions
+	TSharedPtr<FJsonObject> HandleListInstanceParameters(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetInstanceScalarParameter(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetInstanceVectorParameter(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSetInstanceTextureParameter(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleClearInstanceParameterOverride(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSaveInstance(const TSharedPtr<FJsonObject>& Params);
 
 	// Utility
 	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& Code, const FString& Message);

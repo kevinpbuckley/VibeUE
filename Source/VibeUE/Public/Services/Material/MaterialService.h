@@ -157,6 +157,31 @@ struct FMaterialCreateParams
 };
 
 /**
+ * @struct FMaterialInstanceCreateParams
+ * @brief Parameters for creating a new material instance
+ */
+struct FMaterialInstanceCreateParams
+{
+    /** Path to the parent material */
+    FString ParentMaterialPath;
+    
+    /** Destination path in content browser */
+    FString DestinationPath;
+    
+    /** Instance name */
+    FString InstanceName;
+    
+    /** Initial scalar parameter overrides (optional) */
+    TMap<FString, float> ScalarParameters;
+    
+    /** Initial vector parameter overrides (optional) */
+    TMap<FString, FLinearColor> VectorParameters;
+    
+    /** Initial texture parameter overrides (optional) */
+    TMap<FString, FString> TextureParameters;
+};
+
+/**
  * @class FMaterialService
  * @brief Service for material lifecycle and property management
  * 
@@ -202,11 +227,32 @@ public:
     TResult<FString> CreateMaterial(const FMaterialCreateParams& Params);
 
     /**
+     * @brief Create a new material instance constant (MIC) from a parent material
+     * @param Params Creation parameters including parent material and overrides
+     * @return Result containing the new material instance's asset path
+     */
+    TResult<FString> CreateMaterialInstance(const FMaterialInstanceCreateParams& Params);
+
+    /**
      * @brief Load a material by path
      * @param MaterialPath Full asset path to the material
      * @return Result containing the loaded material pointer
      */
     TResult<UMaterial*> LoadMaterial(const FString& MaterialPath);
+
+    /**
+     * @brief Load a material or material instance by path
+     * @param MaterialPath Full asset path to the material or instance
+     * @return Result containing the loaded material interface pointer
+     */
+    TResult<UMaterialInterface*> LoadMaterialInterface(const FString& MaterialPath);
+
+    /**
+     * @brief Load a material instance by path
+     * @param InstancePath Full asset path to the material instance
+     * @return Result containing the loaded material instance pointer
+     */
+    TResult<UMaterialInstanceConstant*> LoadMaterialInstance(const FString& InstancePath);
 
     /**
      * @brief Save a material to disk
@@ -314,6 +360,84 @@ public:
      * @return Success or error
      */
     TResult<void> SetParameterDefault(const FString& MaterialPath, const FString& ParameterName, const FString& Value);
+
+    //-------------------------------------------------------------------------
+    // Material Instance Operations
+    //-------------------------------------------------------------------------
+
+    /**
+     * @brief Get information about a material instance
+     * @param InstancePath Full asset path to the material instance
+     * @return Result containing instance information
+     */
+    TResult<FMaterialInfo> GetInstanceInfo(const FString& InstancePath);
+
+    /**
+     * @brief List all editable properties of a material instance via reflection
+     * @param InstancePath Full asset path to the material instance
+     * @param bIncludeAdvanced Whether to include advanced/hidden properties
+     * @return Result containing list of properties
+     */
+    TResult<TArray<FMaterialPropertyInfo>> ListInstanceProperties(const FString& InstancePath, bool bIncludeAdvanced = false);
+
+    /**
+     * @brief Get a material instance property value
+     * @param InstancePath Full asset path to the material instance
+     * @param PropertyName Name of the property to get
+     * @return Result containing the property value as string
+     */
+    TResult<FString> GetInstanceProperty(const FString& InstancePath, const FString& PropertyName);
+
+    /**
+     * @brief Set a material instance property value
+     * @param InstancePath Full asset path to the material instance
+     * @param PropertyName Name of the property to set
+     * @param Value New value as string
+     * @return Success or error
+     */
+    TResult<void> SetInstanceProperty(const FString& InstancePath, const FString& PropertyName, const FString& Value);
+
+    /**
+     * @brief List all parameter overrides in a material instance
+     * @param InstancePath Full asset path to the material instance
+     * @return Result containing list of parameters with override status
+     */
+    TResult<TArray<FVibeMaterialParamInfo>> ListInstanceParameters(const FString& InstancePath);
+
+    /**
+     * @brief Set a scalar parameter override on a material instance
+     * @param InstancePath Full asset path to the material instance
+     * @param ParameterName Name of the parameter
+     * @param Value New value
+     * @return Success or error
+     */
+    TResult<void> SetInstanceScalarParameter(const FString& InstancePath, const FString& ParameterName, float Value);
+
+    /**
+     * @brief Set a vector parameter override on a material instance
+     * @param InstancePath Full asset path to the material instance
+     * @param ParameterName Name of the parameter
+     * @param Value New value as FLinearColor
+     * @return Success or error
+     */
+    TResult<void> SetInstanceVectorParameter(const FString& InstancePath, const FString& ParameterName, const FLinearColor& Value);
+
+    /**
+     * @brief Set a texture parameter override on a material instance
+     * @param InstancePath Full asset path to the material instance
+     * @param ParameterName Name of the parameter
+     * @param TexturePath Path to the texture asset
+     * @return Success or error
+     */
+    TResult<void> SetInstanceTextureParameter(const FString& InstancePath, const FString& ParameterName, const FString& TexturePath);
+
+    /**
+     * @brief Clear a parameter override on a material instance (revert to parent value)
+     * @param InstancePath Full asset path to the material instance
+     * @param ParameterName Name of the parameter to clear
+     * @return Success or error
+     */
+    TResult<void> ClearInstanceParameterOverride(const FString& InstancePath, const FString& ParameterName);
 
 private:
     /**

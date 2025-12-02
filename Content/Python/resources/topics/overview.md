@@ -35,6 +35,7 @@ VibeUE is a Model Context Protocol (MCP) server that enables AI assistants to co
 - **Node connections?** → `get_help(topic="node-tools")`
 - **Node positioning?** → `get_help(topic="node-positioning")`
 - **Enhanced Input?** → `get_help(topic="enhanced-input")`
+- **Materials?** → `get_help(topic="material-management")`
 - **Asset management?** → `get_help(topic="asset-discovery")`
 
 ## Common Tasks

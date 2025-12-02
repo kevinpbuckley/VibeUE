@@ -121,9 +121,9 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **11 multi-action tools** exposing **128 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **12 multi-action tools** exposing **152 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (11 tools, 128 actions)
+## 🛠️ Canonical Tools Reference (12 tools, 152 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
@@ -301,13 +301,43 @@ Complete level actor management for runtime level manipulation.
 | `set_folder` | Set actor's folder path in World Outliner |
 | `rename` | Rename actor label |
 
-### 10. `check_unreal_connection` (1 action)
+### 10. `manage_material` (24 actions)
+Complete material and material instance management.
+
+| Action | Purpose |
+|--------|---------|
+| `create` | Create new material asset |
+| `create_instance` | Create Material Instance Constant (MIC) |
+| `get_info` | Get comprehensive material information |
+| `list_properties` | List all editable properties |
+| `get_property` | Get property value |
+| `get_property_info` | Get detailed property metadata |
+| `set_property` | Set property value |
+| `set_properties` | Set multiple properties at once |
+| `list_parameters` | List material parameters |
+| `get_parameter` | Get specific parameter info |
+| `set_parameter_default` | Set parameter default value |
+| `save` | Save material to disk |
+| `compile` | Recompile material shaders |
+| `refresh_editor` | Refresh open Material Editor |
+| `get_instance_info` | Get material instance information |
+| `list_instance_properties` | List instance editable properties |
+| `get_instance_property` | Get instance property value |
+| `set_instance_property` | Set instance property (e.g., PhysMaterial) |
+| `list_instance_parameters` | List instance parameter overrides |
+| `set_instance_scalar_parameter` | Set scalar parameter override |
+| `set_instance_vector_parameter` | Set vector/color parameter override |
+| `set_instance_texture_parameter` | Set texture parameter override |
+| `clear_instance_parameter_override` | Remove parameter override |
+| `save_instance` | Save material instance to disk |
+
+### 11. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
 
-### 11. `get_help` (1 action)
+### 12. `get_help` (1 action)
 Get comprehensive help documentation by topic.
 
-**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `asset-discovery`, `troubleshooting`, `topics`
+**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `material-management`, `asset-discovery`, `troubleshooting`, `topics`
 
 ---
 
