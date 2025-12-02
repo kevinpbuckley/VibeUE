@@ -30,12 +30,24 @@ Usage:
 For complete tool documentation, use the info() prompt.
 """
 
+import sys
+import os
+
+# Fix for Windows: MCP protocol expects LF (\n) only, not CRLF (\r\n)
+# See: https://github.com/laravel/boost/issues/362
+if sys.platform == "win32":
+    # Reconfigure stdout to use LF only
+    if hasattr(sys.stdout, 'reconfigure'):
+        sys.stdout.reconfigure(newline="\n")
+    # Also try to set environment variable for Python 3.7+
+    os.environ['PYTHONIOENCODING'] = 'utf-8'
+
 import logging
 import socket
-import sys
 import json
 from contextlib import asynccontextmanager
 from typing import AsyncIterator, Dict, Any, Optional
+
 from mcp.server.fastmcp import FastMCP
 
 # Configure logging with more detailed format
@@ -444,6 +456,9 @@ from tools.manage_enhanced_input import register_enhanced_input_tools  # Enhance
 # LEVEL ACTOR SYSTEM (Level actor management)
 from tools.manage_level_actors import register_level_actor_tools  # Level actors (Phase 1: 5 actions)
 
+# MATERIAL SYSTEM (Material management)
+from tools.manage_material import register_material_tools  # Material properties and parameters (12 actions)
+
 # UMG SYSTEM (Widget management)
 from tools.manage_umg_widget import register_umg_tools  # Unified UMG tool (11 actions)
 
@@ -473,8 +488,11 @@ register_blueprint_function_tools(mcp)  # manage_blueprint_function (15+ actions
 # Enhanced Input System (1 file → 1 tool) - Phases 1-3 services
 register_enhanced_input_tools(mcp)  # manage_enhanced_input: 40+ actions for complete Enhanced Input lifecycle
 
-# Level Actor System (1 file → 1 tool) - Phase 1
-register_level_actor_tools(mcp)  # manage_level_actors: add, remove, list, find, get_info (Phase 1)
+# Level Actor System (1 file → 1 tool) - Phases 1-4
+register_level_actor_tools(mcp)  # manage_level_actors: 18 actions (add, remove, list, find, get_info, transforms, properties, hierarchy)
+
+# Material System (1 file → 1 tool)
+register_material_tools(mcp)  # manage_material: 12 actions (create, properties, parameters)
 
 # UMG Unified Manager (1 file → 1 tool)
 register_umg_tools(mcp)  # manage_umg_widget: all UMG operations (11 actions)
@@ -485,9 +503,8 @@ register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 acti
 # System Tools (1 file → 2 tools)
 register_system_tools(mcp)  # check_unreal_connection + get_help
 
-# ✅ TOTAL: 9 Python files providing 10 MCP tools
-# 🆕 ADDED: manage_enhanced_input tool for all Enhanced Input services
-# ❌ REMOVED: 13 deprecated tool files (blueprint_advanced, umg_discovery, umg_styling, etc.)
+# ✅ TOTAL: 10 Python files providing 12 MCP tools (including 2 system tools)
+# 🆕 ADDED: manage_material tool for material properties and parameters
 
 # ============================================================================
 # SERVER STARTUP - AI ASSISTANT OPERATIONAL NOTES
@@ -530,8 +547,7 @@ if __name__ == "__main__":
     - Widget operations reflect in Unreal editor
     """
     
-    logger.info("Starting Unreal MCP server with stdio transport")
-    logger.info("AI Assistant Guide: Use get_help() for complete tool documentation and troubleshooting")
-    logger.info("Prerequisites: Unreal Engine 5.7 running with VibeUE plugin loaded")
-    
+    # NOTE: When using stdio transport, stdout is reserved for JSON-RPC messages only.
+    # Logging statements here would corrupt the protocol stream, causing "invalid trailing data" errors.
+    # All logging goes to vibe_ue.log file instead (see logging.basicConfig above).
     mcp.run(transport='stdio') 

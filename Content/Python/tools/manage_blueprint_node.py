@@ -309,7 +309,7 @@ def register_node_tools(mcp: FastMCP) -> None:
             blueprint_name="/Game/Blueprints/BP_Player",
             node_id=node_id
         )
-        print(f"Pin values: {[(p['name'], p.get('default_value')) for p in details['node']['pins']]}")
+        logger.debug(f"Pin values: {[(p['name'], p.get('default_value')) for p in details['node']['pins']]}")
         ```
 
         Pin Connection System (CRITICAL):
@@ -514,7 +514,7 @@ def register_node_tools(mcp: FastMCP) -> None:
         
         # 3. If pin_count < expected, node configuration failed
         if result.get("pin_count", 0) < expected_pins["variable_set"]:
-            print("Node missing pins - check node_params!")
+            logger.warning("Node missing pins - check node_params!")
         
         # 4. Use describe to inspect before connecting
         manage_blueprint_node(

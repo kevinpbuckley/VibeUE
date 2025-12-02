@@ -18,6 +18,7 @@
 #include "Commands/AssetCommands.h"
 #include "Commands/EnhancedInputCommands.h"
 #include "Commands/LevelActorCommands.h"
+#include "Commands/MaterialCommands.h"
 #include "Core/ServiceContext.h"
 #include "Bridge.generated.h"
 
@@ -75,6 +76,7 @@ private:
 	TSharedPtr<FAssetCommands> AssetCommands;
 	TSharedPtr<FEnhancedInputCommands> EnhancedInputCommands;
 	TSharedPtr<FLevelActorCommands> LevelActorCommands;
+	TSharedPtr<FMaterialCommands> MaterialCommands;
 
 	// Helper to create error response
 	FString CreateErrorResponse(const FString& ErrorCode, const FString& ErrorMessage = FString());

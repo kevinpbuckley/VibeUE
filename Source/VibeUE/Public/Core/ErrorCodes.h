@@ -418,5 +418,11 @@ namespace ErrorCodes
 	/** @brief Unknown command type */
 	constexpr const TCHAR* UNKNOWN_COMMAND = TEXT("UNKNOWN_COMMAND");
 
+	/** @brief GEditor is not available */
+	constexpr const TCHAR* EDITOR_NOT_AVAILABLE = TEXT("EDITOR_NOT_AVAILABLE");
+
+	/** @brief Required subsystem is not available */
+	constexpr const TCHAR* SUBSYSTEM_NOT_AVAILABLE = TEXT("SUBSYSTEM_NOT_AVAILABLE");
+
 } // namespace ErrorCodes
 } // namespace VibeUE
