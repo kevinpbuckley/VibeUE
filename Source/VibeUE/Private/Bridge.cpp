@@ -63,6 +63,7 @@
 #include "Commands/EnhancedInputCommands.h"
 #include "Commands/LevelActorCommands.h"
 #include "Commands/MaterialCommands.h"
+#include "Commands/MaterialNodeCommands.h"
 // Include service architecture
 #include "Core/ServiceContext.h"
 #include "Core/ErrorCodes.h"
@@ -88,6 +89,7 @@ UBridge::UBridge()
     EnhancedInputCommands = MakeShared<FEnhancedInputCommands>();
     LevelActorCommands = MakeShared<FLevelActorCommands>();
     MaterialCommands = MakeShared<FMaterialCommands>();
+    MaterialNodeCommands = MakeShared<FMaterialNodeCommands>();
 }
 
 UBridge::~UBridge()
@@ -101,6 +103,7 @@ UBridge::~UBridge()
     EnhancedInputCommands.Reset();
     LevelActorCommands.Reset();
     MaterialCommands.Reset();
+    MaterialNodeCommands.Reset();
     
     // Defensive cleanup - Deinitialize() should have been called by UEditorSubsystem,
     // but ensure ServiceContext is cleaned up even if lifecycle was abnormal
@@ -387,6 +390,12 @@ TSharedPtr<FJsonObject> UBridge::RouteCommand(const FString& CommandType, const 
     {
         UE_LOG(LogTemp, Display, TEXT("MCP: Dispatching to MaterialCommands: %s"), *CommandType);
         ResultJson = MaterialCommands->HandleCommand(CommandType, Params);
+    }
+    // Material Node Commands
+    else if (CommandType == TEXT("manage_material_node"))
+    {
+        UE_LOG(LogTemp, Display, TEXT("MCP: Dispatching to MaterialNodeCommands: %s"), *CommandType);
+        ResultJson = MaterialNodeCommands->HandleCommand(CommandType, Params);
     }
     else
     {

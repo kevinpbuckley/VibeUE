@@ -83,12 +83,20 @@ Use `get_help(topic="topic_name")` to access specific help content.
 - Triggers (Pressed, Hold, Tap, Chorded)
 - 24+ actions for complete input system control
 
-**material-management** - Material and Material Instance guide (⭐ NEW!)
+**material-management** - Material and Material Instance guide
 - Base material creation and property management
 - Material Instance Constant (MIC) support
 - Scalar, Vector, and Texture parameter overrides
 - PhysMaterial property setting
-- 20+ actions for complete material control
+- 24 actions for complete material control
+
+**material-node-tools** - Material graph node (expression) reference (⭐ NEW!)
+- Expression type discovery and creation
+- Node connection and property management
+- Parameter creation and promotion
+- Material output connections
+- Complete PBR material workflow example
+- 21 actions for material graph control
 
 **asset-discovery** - Asset finding and management
 - Universal search_items() usage
@@ -116,7 +124,7 @@ Topics are organized by use case:
 
 1. **Getting Started**: overview
 2. **Development Workflows**: blueprint-workflow, umg-guide, node-positioning
-3. **Tool References**: node-tools, multi-action-tools, level-actors, enhanced-input, material-management, asset-discovery
+3. **Tool References**: node-tools, multi-action-tools, level-actors, enhanced-input, material-management, material-node-tools, asset-discovery
 4. **Problem Solving**: troubleshooting
 
 ## Usage Examples
@@ -145,6 +153,9 @@ get_help(topic="enhanced-input")
 
 # Material management
 get_help(topic="material-management")
+
+# Material graph nodes
+get_help(topic="material-node-tools")
 
 # Style UMG widgets
 get_help(topic="umg-guide")

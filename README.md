@@ -121,9 +121,9 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **12 multi-action tools** exposing **152 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **13 multi-action tools** exposing **167 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (12 tools, 152 actions)
+## 🛠️ Canonical Tools Reference (13 tools, 167 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
@@ -331,13 +331,40 @@ Complete material and material instance management.
 | `clear_instance_parameter_override` | Remove parameter override |
 | `save_instance` | Save material instance to disk |
 
-### 11. `check_unreal_connection` (1 action)
+### 11. `manage_material_node` (21 actions)
+Material graph node (expression) operations.
+
+| Action | Purpose |
+|--------|--------|
+| `discover_types` | Discover available expression types |
+| `get_categories` | Get expression categories |
+| `create` | Create new expression node |
+| `delete` | Remove expression |
+| `move` | Reposition expression |
+| `list` | List all expressions in material |
+| `get_details` | Get detailed expression info |
+| `get_pins` | Get all pins for expression |
+| `connect` | Connect two expressions |
+| `disconnect` | Disconnect input |
+| `list_connections` | List all connections |
+| `connect_to_output` | Connect to material output |
+| `disconnect_output` | Disconnect material output |
+| `get_property` | Get expression property |
+| `set_property` | Set expression property |
+| `list_properties` | List editable properties |
+| `create_parameter` | Create parameter expression |
+| `promote_to_parameter` | Convert constant to parameter |
+| `set_parameter_metadata` | Set parameter group/priority |
+| `get_output_properties` | List material outputs |
+| `get_output_connections` | Get output connections |
+
+### 12. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
 
-### 12. `get_help` (1 action)
+### 13. `get_help` (1 action)
 Get comprehensive help documentation by topic.
 
-**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `material-management`, `asset-discovery`, `troubleshooting`, `topics`
+**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `material-management`, `material-node-tools`, `asset-discovery`, `troubleshooting`, `topics`
 
 ---
 

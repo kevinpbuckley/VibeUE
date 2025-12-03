@@ -244,3 +244,8 @@ manage_material(action="save_instance", instance_path="/Game/Materials/Instances
 2. **Check properties**: Use `list_*_properties` to discover available properties
 3. **Check parameters**: Use `list_*_parameters` before setting parameter values
 4. **Save after changes**: Use `save` or `save_instance` to persist modifications
+
+## Related Topics
+
+- `get_help(topic="material-node-tools")` - Material graph node (expression) operations
+- `get_help(topic="asset-discovery")` - Finding materials in project

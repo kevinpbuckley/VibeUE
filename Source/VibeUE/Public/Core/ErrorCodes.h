@@ -397,6 +397,34 @@ namespace ErrorCodes
 	constexpr const TCHAR* IMAGE_SERIALIZATION_ERROR = TEXT("IMAGE_SERIALIZATION_ERROR");
 
 	// ============================================================================
+	// Material Errors (7000-7099)
+	// ============================================================================
+
+	/** @brief Material could not be found at specified path */
+	constexpr const TCHAR* MATERIAL_NOT_FOUND = TEXT("MATERIAL_NOT_FOUND");
+
+	/** @brief Material expression could not be found */
+	constexpr const TCHAR* EXPRESSION_NOT_FOUND = TEXT("EXPRESSION_NOT_FOUND");
+
+	/** @brief Material expression input not found */
+	constexpr const TCHAR* EXPRESSION_INPUT_NOT_FOUND = TEXT("EXPRESSION_INPUT_NOT_FOUND");
+
+	/** @brief Material expression output not found */
+	constexpr const TCHAR* EXPRESSION_OUTPUT_NOT_FOUND = TEXT("EXPRESSION_OUTPUT_NOT_FOUND");
+
+	/** @brief Failed to create material expression */
+	constexpr const TCHAR* EXPRESSION_CREATE_FAILED = TEXT("EXPRESSION_CREATE_FAILED");
+
+	/** @brief Material expression class not found */
+	constexpr const TCHAR* EXPRESSION_CLASS_NOT_FOUND = TEXT("EXPRESSION_CLASS_NOT_FOUND");
+
+	/** @brief Failed to connect material expressions */
+	constexpr const TCHAR* EXPRESSION_CONNECT_FAILED = TEXT("EXPRESSION_CONNECT_FAILED");
+
+	/** @brief Expression cannot be promoted to parameter */
+	constexpr const TCHAR* EXPRESSION_CANNOT_PROMOTE = TEXT("EXPRESSION_CANNOT_PROMOTE");
+
+	// ============================================================================
 	// System/Connection Errors (9000-9099)
 	// ============================================================================
 

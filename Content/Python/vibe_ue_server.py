@@ -457,7 +457,8 @@ from tools.manage_enhanced_input import register_enhanced_input_tools  # Enhance
 from tools.manage_level_actors import register_level_actor_tools  # Level actors (Phase 1: 5 actions)
 
 # MATERIAL SYSTEM (Material management)
-from tools.manage_material import register_material_tools  # Material properties and parameters (12 actions)
+from tools.manage_material import register_material_tools  # Material properties and parameters (24 actions)
+from tools.manage_material_node import register_material_node_tools  # Material graph nodes (19 actions)
 
 # UMG SYSTEM (Widget management)
 from tools.manage_umg_widget import register_umg_tools  # Unified UMG tool (11 actions)
@@ -491,8 +492,9 @@ register_enhanced_input_tools(mcp)  # manage_enhanced_input: 40+ actions for com
 # Level Actor System (1 file → 1 tool) - Phases 1-4
 register_level_actor_tools(mcp)  # manage_level_actors: 18 actions (add, remove, list, find, get_info, transforms, properties, hierarchy)
 
-# Material System (1 file → 1 tool)
-register_material_tools(mcp)  # manage_material: 12 actions (create, properties, parameters)
+# Material System (2 files → 2 tools)
+register_material_tools(mcp)  # manage_material: 24 actions (create, properties, parameters, instances)
+register_material_node_tools(mcp)  # manage_material_node: 19 actions (graph expressions, connections, parameters)
 
 # UMG Unified Manager (1 file → 1 tool)
 register_umg_tools(mcp)  # manage_umg_widget: all UMG operations (11 actions)
@@ -503,8 +505,8 @@ register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 acti
 # System Tools (1 file → 2 tools)
 register_system_tools(mcp)  # check_unreal_connection + get_help
 
-# ✅ TOTAL: 10 Python files providing 12 MCP tools (including 2 system tools)
-# 🆕 ADDED: manage_material tool for material properties and parameters
+# ✅ TOTAL: 11 Python files providing 13 MCP tools (including 2 system tools)
+# 🆕 ADDED: manage_material_node tool for material graph operations
 
 # ============================================================================
 # SERVER STARTUP - AI ASSISTANT OPERATIONAL NOTES
