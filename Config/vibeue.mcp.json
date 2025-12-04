@@ -1,0 +1,18 @@
+{
+  "servers": {
+    "VibeUE": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "-u",
+        "-m",
+        "vibe_ue_server"
+      ],
+      "env": {
+        "PYTHONPATH": "${VibeUE_Instance}/VibeUE/Content/Python",
+        "PYTHONUNBUFFERED": "1"
+      },
+      "cwd": "${VibeUE_Instance}/VibeUE/Content/Python"
+    }
+  }
+}

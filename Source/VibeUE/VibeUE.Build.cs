@@ -44,7 +44,8 @@ public class VibeUE : ModuleRules
 				"HTTP",
 				"Json",
 				"JsonUtilities",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				"ApplicationCore"       // For FPlatformApplicationMisc (clipboard, etc.)
 			}
 		);
 		
@@ -80,7 +81,8 @@ public class VibeUE : ModuleRules
 					"ToolMenus",           // For editor UI
 					"BlueprintEditorLibrary", // For Blueprint utilities
 					"UMGEditor",           // For WidgetBlueprint.h and other UMG editor functionality
-					"MaterialEditor"       // For material editor integration
+					"MaterialEditor",      // For material editor integration
+					"LevelEditor"          // For global keyboard shortcuts
 				}
 			);
 		}

@@ -48,14 +48,12 @@ def register_system_tools(mcp: FastMCP):
                     ]
                 }
             
-            # Test with a simple command
-            test_response = unreal.send_command("check_connection", {})
-            
+            # Connection established - the socket connection itself is the test
+            # No need to send a test command that doesn't exist
             return {
                 "success": True,
                 "connection_status": "Connected successfully",
                 "plugin_status": "UnrealMCP plugin is responding",
-                "test_response": test_response,
                 "port": "55557",
                 "host": "127.0.0.1"
             }
