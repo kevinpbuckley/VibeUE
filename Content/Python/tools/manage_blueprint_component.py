@@ -13,7 +13,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_component_tools(mcp: FastMCP):
     """Register Blueprint component management tools with the MCP server."""
     
-    @mcp.tool()
+    @mcp.tool(description="Blueprint component operations: create, delete, get/set properties, hierarchy. Actions: search_types, list, create, delete, get_property, set_property, get_all_properties, reparent, reorder. CRITICAL: Use full package paths like /Game/Blueprints/BP_Player (not short names). Use get_help(topic='blueprint-workflow') for examples.")
     def manage_blueprint_component(
         ctx: Context,
         blueprint_name: str,
@@ -44,88 +44,7 @@ def register_blueprint_component_tools(mcp: FastMCP):
         # Additional options
         options: Dict[str, Any] = None
     ) -> Dict[str, Any]:
-        """
-        Blueprint Component Management Tool
-        
-        ️ **CRITICAL: blueprint_name MUST be a full package path!**
-        -  CORRECT: `/Game/Blueprints/BP_Player2` or `/Game/Blueprints/Characters/BP_Player`
-        -  WRONG: `BP_Player2` (will fail with "Blueprint 'BP_Player2' not found")
-        
-        **How to get the correct path:**
-        1. Use `search_items(search_term="BP_Player2", asset_type="Blueprint")` first
-        2. Use the `package_path` field from results (NOT the `path` field with duplicated name)
-        3. Pass that exact path to this tool
-        
-        Consolidates all Blueprint component operations into a single multi-action tool
-        following the successful patterns of manage_blueprint_function and manage_blueprint_variable.
-        
-        ** Available Actions:**
-        
-        ## Discovery & Inspection
-        
-        **search_types** - Discover available component types
-        **get_info** - Get comprehensive component type information
-        **get_property_metadata** - Get detailed property metadata
-        **list** - List all components in Blueprint
-        
-        ## Component Lifecycle
-        
-        **create** - Add new component to Blueprint
-        **delete** - Remove component from Blueprint
-        
-        ## Property Management
-        
-        **get_property** - Get single property value from component instance
-        **set_property** - Set component property value
-        **get_all_properties** - Get all property values from component
-        **compare_properties** - Compare component properties between Blueprints
-        
-        ## Hierarchy Operations
-        
-        **reorder** - Change component order
-        **reparent** - Change component's parent attachment
-        
-        ** CRITICAL PROPERTY NAMING DISCOVERIES:**
-        
-        **SkeletalMesh Component:**
-        -  Use `SkeletalMeshAsset` or `SkinnedAsset` for mesh asset (NOT `SkeletalMesh`)
-        -  Use `OverrideMaterials` for material array
-        - ️ UI may require Blueprint tab close/reopen to refresh after property changes
-        
-        **Common Property Names:**
-        - Lights: `Intensity`, `LightColor`, `AttenuationRadius`, `CastShadows`
-        - SpotLights: `InnerConeAngle`, `OuterConeAngle`
-        - Transforms: `RelativeLocation`, `RelativeRotation`, `RelativeScale`
-        - Niagara: `Asset` for NiagaraSystem reference
-        
-        Args:
-            blueprint_name: ️ **MUST be full package path** (e.g., "/Game/Blueprints/BP_Player2")
-                           Use search_items() to get the correct package_path first!
-                            Short names like "BP_Player2" will fail with "Blueprint not found"
-            action: Action to perform (see above for available actions)
-            component_type: Component class name (for get_info, create actions)
-            component_name: Component instance name (for property/delete/reparent actions)
-            property_name: Property name (for get_property, set_property actions)
-            property_value: Value to set (for set_property action)
-            parent_name: Parent component name (for create, reparent actions)
-            properties: Initial properties dict (for create action)
-            location: [X, Y, Z] transform (for create action)
-            rotation: [Pitch, Yaw, Roll] transform (for create action)
-            scale: [X, Y, Z] transform (for create action)
-            component_order: Ordered list of component names (for reorder action)
-            remove_children: Whether to remove children (for delete action)
-            category: Filter by category (for search_types action)
-            base_class: Filter by base class (for search_types action)
-            search_text: Text search filter (for search_types action)
-            include_abstract: Include abstract types (for search_types action)
-            include_deprecated: Include deprecated types (for search_types action)
-            include_property_values: Include actual values (for get_info action)
-            include_inherited: Include inherited properties (for get_all_properties action)
-            options: Additional action-specific options dict
-            
-        Returns:
-            Dict containing action results with success field and action-specific data
-        """
+        """Route to Blueprint component action handlers."""
         from vibe_ue_server import get_unreal_connection
         
         try:

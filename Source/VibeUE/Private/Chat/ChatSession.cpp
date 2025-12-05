@@ -234,6 +234,9 @@ void FChatSession::ResetChat()
     CancelRequest();
     Messages.Empty();
     
+    // Reset usage stats
+    UsageStats.Reset();
+    
     // Delete history file
     FString HistoryPath = GetHistoryFilePath();
     if (FPaths::FileExists(HistoryPath))

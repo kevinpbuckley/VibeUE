@@ -16,20 +16,9 @@ logger = logging.getLogger("UnrealMCP")
 def register_system_tools(mcp: FastMCP):
     """Register essential system diagnostic tools."""
     
-    @mcp.tool()
+    @mcp.tool(description="Test Unreal Engine connection and plugin status. Use as first diagnostic when tools fail.")
     def check_unreal_connection(ctx: Context) -> Dict[str, Any]:
-        """
-        Test connection to Unreal Engine and verify plugin status.
-        
-         **FIRST DIAGNOSTIC TOOL**: Use this when any MCP tools fail to verify basic connectivity.
-        
-        Returns:
-            Dict containing:
-            - success: boolean indicating if connection test passed
-            - connection_status: detailed connection information
-            - plugin_status: UnrealMCP plugin status
-            - troubleshooting: suggestions if connection fails
-        """
+        """Verify connection to Unreal Engine and UnrealMCP plugin."""
         from vibe_ue_server import get_unreal_connection
         
         try:
@@ -70,42 +59,9 @@ def register_system_tools(mcp: FastMCP):
                 ]
             }
 
-    @mcp.tool()
+    @mcp.tool(description="Get help docs by topic. Topics: overview, blueprint-workflow, node-tools, umg-guide, material-management, asset-discovery, troubleshooting, topics.")
     def get_help(ctx: Context, topic: str = "overview") -> Dict[str, Any]:
-        """
-        Get comprehensive help documentation for VibeUE MCP tools organized by topic.
-        
-         **AI CRITICAL**: ALWAYS use this tool when:
-        - You can't find a specific tool or don't know which tool to use
-        - You need parameter details for multi-action tools
-        - You're unsure about tool workflows or usage patterns
-        - You encounter errors and need troubleshooting guidance
-        - You need examples of how to use complex tools
-        
-         **AVAILABLE TOPICS**:
-        - **overview**: VibeUE MCP overview and quick reference (default)
-        - **blueprint-workflow**: Complete Blueprint development workflow with dependency order
-        - **node-tools**: Node discovery, creation, connections, spawner_key patterns
-        - **multi-action-tools**: manage_blueprint_function/variables/components/node reference
-        - **umg-guide**: UMG widget development, styling, hierarchy, containers
-        - **material-management**: Material and Material Instance management (⭐ NEW!)
-        - **asset-discovery**: Asset search, import/export, management, performance tips
-        - **troubleshooting**: Connection/Blueprint/Node/UMG issues, diagnostics
-        - **topics**: Complete topic listing with descriptions
-        
-         **USAGE EXAMPLES**:
-        - get_help() - Returns overview (default)
-        - get_help(topic="blueprint-workflow") - Blueprint development guide
-        - get_help(topic="node-tools") - Node creation reference
-        - get_help(topic="troubleshooting") - Problem solving guide
-        - get_help(topic="topics") - See all available topics
-        
-        Args:
-            topic: Topic name to retrieve (default: "overview")
-        
-        Returns:
-            Dict containing topic content and metadata
-        """
+        """Get VibeUE MCP help documentation for a specific topic."""
         import os
         
         try:

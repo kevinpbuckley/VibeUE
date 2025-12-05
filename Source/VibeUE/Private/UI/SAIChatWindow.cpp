@@ -935,7 +935,7 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
         if (Stats.RequestCount > 0)
         {
             SetStatusText(FString::Printf(TEXT("Requests: %d | Tokens: %d prompt, %d completion | Session: %d total"),
-                Stats.RequestCount, Stats.PromptTokens, Stats.CompletionTokens,
+                Stats.RequestCount, Stats.TotalPromptTokens, Stats.TotalCompletionTokens,
                 Stats.TotalPromptTokens + Stats.TotalCompletionTokens));
         }
     }

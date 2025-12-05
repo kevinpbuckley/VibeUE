@@ -16,7 +16,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_tools(mcp: FastMCP):
     """Register unified Blueprint manager tool with the MCP server."""
 
-    @mcp.tool()
+    @mcp.tool(description="Blueprint lifecycle: create, compile, inspect, configure. Actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph. Common parents: Actor, Pawn, Character, UserWidget, ActorComponent. Use get_help(topic='blueprint-workflow') for examples.")
     def manage_blueprint(
         ctx: Context,
         action: str,
@@ -29,135 +29,7 @@ def register_blueprint_tools(mcp: FastMCP):
         max_nodes: int = 200,
         include_class_defaults: bool = True
     ) -> Dict[str, Any]:
-        """
-         Blueprint Manager Tool
-        
-        Single multi-action tool for all Blueprint lifecycle operations.
-        Replaces: create_blueprint, compile_blueprint, get_blueprint_info, 
-                 set_blueprint_property, reparent_blueprint, list_custom_events,
-                 summarize_event_graph
-        
-         **Available Actions:**
-        
-        **create** - Create new Blueprint of ANY type (Actor, Widget, Component, etc.)
-        ```python
-        # Create Actor Blueprint
-        manage_blueprint(
-            action="create",
-            name="BP_MyActor",
-            parent_class="Actor"
-        )
-        
-        # Create Widget Blueprint (UMG)
-        manage_blueprint(
-            action="create",
-            name="WBP_MyWidget",
-            parent_class="UserWidget"  # Base class for UMG widgets
-        )
-        
-        # Create ActorComponent Blueprint
-        manage_blueprint(
-            action="create",
-            name="BP_MyComponent",
-            parent_class="ActorComponent"
-        )
-        
-        # Create any Blueprint type by specifying the parent class
-        # Common parent classes:
-        # - Actor, Pawn, Character (gameplay objects)
-        # - UserWidget (UMG widgets)
-        # - ActorComponent, SceneComponent (components)
-        # - GameMode, GameState, PlayerController (framework)
-        # - AnimInstance (animation blueprints)
-        
-        ️ CRITICAL DEPENDENCY ORDER after creation:
-        1) Variables FIRST - Create all Blueprint variables
-        2) Components SECOND - Add all components  
-        3) Functions THIRD - Implement custom functions
-        4) Event Graph nodes LAST - Create logic
-        ```
-        
-        **compile** - Compile Blueprint
-        ```python
-        manage_blueprint(
-            action="compile",
-            blueprint_name="/Game/Blueprints/BP_Player"
-        )
-        ```
-        
-        **get_info** - Get comprehensive Blueprint information
-        ```python
-        manage_blueprint(
-            action="get_info",
-            blueprint_name="/Game/Blueprints/BP_Player",
-            include_class_defaults=True
-        )
-        # Returns: variables, components, functions, event graphs, class_defaults
-        ```
-        
-        **get_property** - Get Blueprint class default property value and metadata
-        ```python
-        manage_blueprint(
-            action="get_property",
-            blueprint_name="/Game/Blueprints/BP_Player",
-            property_name="NoiseRadius"
-        )
-        # Returns: current_value, type, category, tooltip, min/max values, etc.
-        ```
-        
-        **set_property** - Set Blueprint class default property
-        ```python
-        manage_blueprint(
-            action="set_property",
-            blueprint_name="/Game/Blueprints/BP_Player",
-            property_name="MaxHealth",
-            property_value="100.0"
-        )
-        ```
-        
-        **reparent** - Change Blueprint parent class
-        ```python
-        manage_blueprint(
-            action="reparent",
-            blueprint_name="/Game/Blueprints/BP_Player",
-            new_parent_class="ProteusCharacter"
-        )
-        # Often fixes component hierarchy issues automatically
-        ```
-        
-        **list_custom_events** - List all custom events in Blueprint
-        ```python
-        manage_blueprint(
-            action="list_custom_events",
-            blueprint_name="/Game/Blueprints/BP_Player"
-        )
-        # Returns: {"events": ["OnPlayerDeath", "OnHealthChanged", ...]}
-        ```
-        
-        **summarize_event_graph** - Get readable outline of Event Graph
-        ```python
-        manage_blueprint(
-            action="summarize_event_graph",
-            blueprint_name="/Game/Blueprints/BP_Player",
-            max_nodes=200
-        )
-        # Returns: {"summary": "... formatted graph outline ..."}
-        ```
-        
-        Args:
-            action: Action to perform (create|compile|get_info|get_property|set_property|reparent|list_custom_events|summarize_event_graph)
-            blueprint_name: Target Blueprint name/path (required for most actions)
-            name: Blueprint name for create action
-            parent_class: Parent class for create action
-            property_name: Property name for set_property/get_property actions
-            property_value: Property value for set_property action (will be converted to string internally)
-            new_parent_class: New parent class for reparent action
-            max_nodes: Maximum nodes to include in summary (for summarize_event_graph)
-            include_class_defaults: Include class default properties in get_info (default: True)
-            
-        Returns:
-            Dict containing action results with success field
-        """
+        """Route to Blueprint action handlers."""
         from vibe_ue_server import get_unreal_connection
         
         action = action.lower()
