@@ -526,6 +526,22 @@ void FChatSession::InitializeMCP(bool bEngineMode)
     }));
 }
 
+void FChatSession::ReinitializeMCP(bool bEngineMode)
+{
+    // Shutdown existing MCP if initialized
+    if (MCPClient.IsValid())
+    {
+        MCPClient->Shutdown();
+        MCPClient.Reset();
+    }
+    bMCPInitialized = false;
+    
+    UE_LOG(LogChatSession, Log, TEXT("Reinitializing MCP in %s mode"), bEngineMode ? TEXT("Engine") : TEXT("Local"));
+    
+    // Now initialize fresh
+    InitializeMCP(bEngineMode);
+}
+
 const TArray<FMCPTool>& FChatSession::GetAvailableTools() const
 {
     static TArray<FMCPTool> EmptyTools;

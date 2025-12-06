@@ -118,6 +118,20 @@ public:
     /** Get current mode (Engine or Local) */
     bool IsEngineMode() const { return bEngineMode; }
     
+    /**
+     * Find the VibeUE plugin folder in the Engine Marketplace directory
+     * FAB installs use random folder names, so we scan for the vibe_ue_server.py file
+     * @param OutFolderName Returns the folder name if found
+     * @return True if VibeUE was found in the Marketplace
+     */
+    static bool FindVibeUEInMarketplace(FString& OutFolderName);
+    
+    /**
+     * Get the full path to the VibeUE Python content folder for Engine mode
+     * @return Full path if found, empty string if not found
+     */
+    static FString GetEngineVibeUEPythonPath();
+    
 private:
     /** MCP configuration loaded from mcp.json */
     FMCPConfiguration Configuration;

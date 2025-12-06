@@ -123,6 +123,9 @@ public:
     /** Initialize MCP client and discover tools */
     void InitializeMCP(bool bEngineMode);
     
+    /** Reinitialize MCP client (shutdown and restart with new mode) */
+    void ReinitializeMCP(bool bEngineMode);
+    
     /** Get MCP client */
     TSharedPtr<FMCPClient> GetMCPClient() const { return MCPClient; }
     

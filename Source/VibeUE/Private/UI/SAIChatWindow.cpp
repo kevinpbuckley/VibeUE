@@ -2,8 +2,10 @@
 
 #include "UI/SAIChatWindow.h"
 #include "Chat/AIChatCommands.h"
+#include "Chat/MCPClient.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
+#include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SCheckBox.h"
@@ -177,31 +179,18 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
             [
                 SNew(SBorder)
                 .BorderBackgroundColor(VibeUEColors::Border)
-                .Padding(2)
+                .Padding(4)
                 [
-                    SNew(SHorizontalBox)
-                    
-                    // Text input
-                    + SHorizontalBox::Slot()
-                    .FillWidth(1.0f)
-                    .Padding(4, 0, 4, 0)
-                    .VAlign(VAlign_Center)
+                    // Text input (multi-line, 3 lines visible)
+                    // Press Enter to send, Shift+Enter for new line
+                    SNew(SBox)
+                    .MinDesiredHeight(54.0f)  // ~3 lines at default font size
+                    .MaxDesiredHeight(54.0f)
                     [
-                        SAssignNew(InputTextBox, SEditableTextBox)
-                        .HintText(FText::FromString(TEXT("Type a message...")))
-                        .OnTextCommitted(this, &SAIChatWindow::OnInputTextCommitted)
-                    ]
-                    
-                    // Send button
-                    + SHorizontalBox::Slot()
-                    .AutoWidth()
-                    .Padding(0, 0, 2, 0)
-                    [
-                        SAssignNew(SendButton, SButton)
-                        .Text(FText::FromString(TEXT("Send")))
-                        .IsEnabled(this, &SAIChatWindow::IsSendEnabled)
-                        .ToolTipText(this, &SAIChatWindow::GetSendButtonTooltip)
-                        .OnClicked(this, &SAIChatWindow::OnSendClicked)
+                        SAssignNew(InputTextBox, SMultiLineEditableTextBox)
+                        .HintText(FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)")))
+                        .AutoWrapText(true)
+                        .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
                     ]
                 ]
             ]
@@ -764,6 +753,27 @@ FReply SAIChatWindow::OnSettingsClicked()
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
+        .Padding(8, 4, 8, 0)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SNew(SButton)
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([]() -> FReply {
+                    FPlatformProcess::LaunchURL(TEXT("https://openrouter.ai/keys"), nullptr, nullptr);
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Get your API key at openrouter.ai")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
+                ]
+            ]
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
         .Padding(8, 16, 8, 4)
         [
             SNew(STextBlock)
@@ -786,7 +796,7 @@ FReply SAIChatWindow::OnSettingsClicked()
             [
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Engine Mode (FAB install)")))
-                .ToolTipText(FText::FromString(TEXT("Enable for FAB/Marketplace installs. Disable for local/open source development.")))
+                .ToolTipText(FText::FromString(TEXT("OFF = Use Project/Plugins/VibeUE (development)\nON = Use Engine/Plugins/Marketplace/VibeUE (testing FAB install)")))
             ]
         ]
         + SVerticalBox::Slot()
@@ -814,9 +824,15 @@ FReply SAIChatWindow::OnSettingsClicked()
         .Padding(8, 8, 8, 0)
         [
             SNew(STextBlock)
-            .Text(FText::FromString(FString::Printf(TEXT("Local: %s\nEngine: %s"),
-                *FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("Python")),
-                *FPaths::ConvertRelativePathToFull(FPaths::EnginePluginsDir() / TEXT("Marketplace") / TEXT("VibeUE") / TEXT("Content") / TEXT("Python")))))
+            .Text_Lambda([]() -> FText {
+                FString LocalPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("Python"));
+                FString EnginePath = FMCPClient::GetEngineVibeUEPythonPath();
+                if (EnginePath.IsEmpty())
+                {
+                    EnginePath = TEXT("(VibeUE not found in Engine Marketplace)");
+                }
+                return FText::FromString(FString::Printf(TEXT("Local: %s\nEngine: %s"), *LocalPath, *EnginePath));
+            })
             .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
             .AutoWrapText(true)
             .ColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f)))
@@ -844,12 +860,8 @@ FReply SAIChatWindow::OnSettingsClicked()
                 
                 GConfig->Flush(false, GEditorPerProjectIni);
                 
-                // Reinitialize MCP with new mode
-                if (ChatSession->GetMCPClient().IsValid())
-                {
-                    ChatSession->GetMCPClient()->Shutdown();
-                }
-                ChatSession->InitializeMCP(bNewEngineMode);
+                // Reinitialize MCP with new mode (this properly shuts down, clears state, and rediscovers tools)
+                ChatSession->ReinitializeMCP(bNewEngineMode);
                 
                 SetStatusText(TEXT("Settings saved"));
                 SettingsWindow->RequestDestroyWindow();
@@ -869,6 +881,19 @@ void SAIChatWindow::OnInputTextCommitted(const FText& Text, ETextCommit::Type Co
     {
         OnSendClicked();
     }
+}
+
+FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
+{
+    // Enter without Shift sends the message
+    // Shift+Enter inserts a new line (default behavior)
+    if (InKeyEvent.GetKey() == EKeys::Enter && !InKeyEvent.IsShiftDown())
+    {
+        OnSendClicked();
+        return FReply::Handled();
+    }
+    
+    return FReply::Unhandled();
 }
 
 void SAIChatWindow::OnModelSelectionChanged(TSharedPtr<FOpenRouterModel> NewSelection, ESelectInfo::Type SelectInfo)
@@ -1072,23 +1097,6 @@ bool SAIChatWindow::IsSendEnabled() const
     return ChatSession.IsValid() && 
            ChatSession->HasApiKey() && 
            !ChatSession->IsRequestInProgress();
-}
-
-FText SAIChatWindow::GetSendButtonTooltip() const
-{
-    if (!ChatSession.IsValid())
-    {
-        return FText::FromString(TEXT("Chat not initialized"));
-    }
-    if (!ChatSession->HasApiKey())
-    {
-        return FText::FromString(TEXT("Please set your OpenRouter API key in Settings"));
-    }
-    if (ChatSession->IsRequestInProgress())
-    {
-        return FText::FromString(TEXT("Waiting for response..."));
-    }
-    return FText::FromString(TEXT("Send message"));
 }
 
 void SAIChatWindow::CopyMessageToClipboard(int32 MessageIndex)

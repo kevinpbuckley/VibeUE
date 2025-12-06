@@ -12,6 +12,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogAIChatWindow, Log, All);
 
 class SScrollBox;
 class SEditableTextBox;
+class SMultiLineEditableTextBox;
 class STextBlock;
 class SButton;
 
@@ -50,10 +51,7 @@ private:
     TSharedPtr<SScrollBox> MessageScrollBox;
     
     /** Input text box for typing messages */
-    TSharedPtr<SEditableTextBox> InputTextBox;
-    
-    /** Send button */
-    TSharedPtr<SButton> SendButton;
+    TSharedPtr<SMultiLineEditableTextBox> InputTextBox;
     
     /** Model selection combo box */
     TSharedPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> ModelComboBox;
@@ -101,6 +99,9 @@ private:
     /** Handle input text committed (Enter pressed) */
     void OnInputTextCommitted(const FText& Text, ETextCommit::Type CommitType);
     
+    /** Handle key down in input box (Enter to send, Shift+Enter for new line) */
+    FReply OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent);
+    
     /** Handle model selection changed */
     void OnModelSelectionChanged(TSharedPtr<FOpenRouterModel> NewSelection, ESelectInfo::Type SelectInfo);
     
@@ -136,9 +137,6 @@ private:
     
     /** Check if send is enabled */
     bool IsSendEnabled() const;
-    
-    /** Get send button tooltip */
-    FText GetSendButtonTooltip() const;
     
     /** Copy message content to clipboard */
     void CopyMessageToClipboard(int32 MessageIndex);

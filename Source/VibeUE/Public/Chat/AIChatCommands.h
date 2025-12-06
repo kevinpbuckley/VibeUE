@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 #include "Framework/Commands/Commands.h"
 #include "Framework/Commands/UICommandList.h"
+#include "StatusBarSubsystem.h"
+
+class SDockTab;
 
 /**
  * Commands for the AI Chat feature
@@ -29,6 +32,9 @@ public:
     /** Shutdown and unregister */
     static void Shutdown();
     
+    /** Tab name for the AI Chat */
+    static const FName AIChatTabName;
+    
 private:
     /** Register menu extensions */
     static void RegisterMenus();
@@ -36,7 +42,25 @@ private:
     /** Unregister menu extensions */
     static void UnregisterMenus();
     
-    /** Handle open AI chat command */
+    /** Register the nomad tab spawner */
+    static void RegisterTabSpawner();
+    
+    /** Unregister the nomad tab spawner */
+    static void UnregisterTabSpawner();
+    
+    /** Register the status bar panel drawer summon */
+    static void RegisterStatusBarPanelDrawer();
+    
+    /** Unregister the status bar panel drawer summon */
+    static void UnregisterStatusBarPanelDrawer();
+    
+    /** Spawn the AI Chat tab */
+    static TSharedRef<SDockTab> SpawnAIChatTab(const FSpawnTabArgs& Args);
+    
+    /** Generate the panel drawer summon button */
+    static void GeneratePanelDrawerSummon(TArray<UStatusBarSubsystem::FTabIdAndButtonLabel>& OutTabIdsAndLabels, const TSharedRef<SDockTab>& InParentTab);
+    
+    /** Handle open AI chat command - toggles panel drawer */
     static void HandleOpenAIChat();
     
     /** Check if open AI chat command can execute */
@@ -47,4 +71,7 @@ private:
     
     /** Menu extension handle */
     static FDelegateHandle MenuExtensionHandle;
+    
+    /** Panel drawer summon handle */
+    static FDelegateHandle PanelDrawerSummonHandle;
 };

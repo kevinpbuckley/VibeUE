@@ -3,14 +3,21 @@
 #include "Chat/AIChatCommands.h"
 #include "UI/SAIChatWindow.h"
 #include "Framework/Docking/TabManager.h"
+#include "Framework/Application/SlateApplication.h"
 #include "ToolMenus.h"
 #include "Styling/AppStyle.h"
 #include "LevelEditor.h"
+#include "Editor.h"
+#include "Widgets/Docking/SDockTab.h"
+#include "StatusBarSubsystem.h"
 
 #define LOCTEXT_NAMESPACE "AIChatCommands"
 
+// Static members
 TSharedPtr<FUICommandList> FAIChatCommands::CommandList;
 FDelegateHandle FAIChatCommands::MenuExtensionHandle;
+FDelegateHandle FAIChatCommands::PanelDrawerSummonHandle;
+const FName FAIChatCommands::AIChatTabName("VibeUEAIChat");
 
 FAIChatCommands::FAIChatCommands()
     : TCommands<FAIChatCommands>(
@@ -26,7 +33,7 @@ void FAIChatCommands::RegisterCommands()
     UI_COMMAND(
         OpenAIChat,
         "Open AI Chat",
-        "Open the VibeUE AI Chat window",
+        "Open the VibeUE AI Chat panel",
         EUserInterfaceActionType::Button,
         FInputChord(EModifierKey::Control | EModifierKey::Shift, EKeys::V)
     );
@@ -51,14 +58,29 @@ void FAIChatCommands::Initialize()
     FLevelEditorModule& LevelEditorModule = FModuleManager::LoadModuleChecked<FLevelEditorModule>("LevelEditor");
     LevelEditorModule.GetGlobalLevelEditorActions()->Append(CommandList.ToSharedRef());
     
+    // Register tab spawner
+    RegisterTabSpawner();
+    
     // Register menus
     RegisterMenus();
     
-    UE_LOG(LogTemp, Log, TEXT("AI Chat commands initialized"));
+    // Register status bar panel drawer (after editor is ready)
+    if (GEditor)
+    {
+        RegisterStatusBarPanelDrawer();
+    }
+    else
+    {
+        FCoreDelegates::OnPostEngineInit.AddStatic(&FAIChatCommands::RegisterStatusBarPanelDrawer);
+    }
+    
+    UE_LOG(LogTemp, Log, TEXT("AI Chat commands initialized with panel drawer support"));
 }
 
 void FAIChatCommands::Shutdown()
 {
+    UnregisterStatusBarPanelDrawer();
+    UnregisterTabSpawner();
     UnregisterMenus();
     
     CommandList.Reset();
@@ -66,6 +88,73 @@ void FAIChatCommands::Shutdown()
     FAIChatCommands::Unregister();
     
     UE_LOG(LogTemp, Log, TEXT("AI Chat commands shutdown"));
+}
+
+void FAIChatCommands::RegisterTabSpawner()
+{
+    FGlobalTabmanager::Get()->RegisterNomadTabSpawner(
+        AIChatTabName,
+        FOnSpawnTab::CreateStatic(&FAIChatCommands::SpawnAIChatTab))
+        .SetDisplayName(LOCTEXT("AIChatTabTitle", "VibeUE AI Chat"))
+        .SetMenuType(ETabSpawnerMenuType::Hidden)
+        .SetIcon(FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Comment"))
+        .SetCanSidebarTab(false);  // Panel drawer tabs don't work well as sidebar tabs
+    
+    UE_LOG(LogTemp, Log, TEXT("AI Chat tab spawner registered"));
+}
+
+void FAIChatCommands::UnregisterTabSpawner()
+{
+    FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(AIChatTabName);
+}
+
+void FAIChatCommands::RegisterStatusBarPanelDrawer()
+{
+    if (GEditor)
+    {
+        // Make sure StatusBar module is loaded
+        FModuleManager::Get().LoadModuleChecked(TEXT("StatusBar"));
+        
+        if (UStatusBarSubsystem* StatusBarSubsystem = GEditor->GetEditorSubsystem<UStatusBarSubsystem>())
+        {
+            PanelDrawerSummonHandle = StatusBarSubsystem->RegisterPanelDrawerSummon(
+                UStatusBarSubsystem::FRegisterPanelDrawerSummonDelegate::FDelegate::CreateStatic(
+                    &FAIChatCommands::GeneratePanelDrawerSummon)
+            );
+            
+            UE_LOG(LogTemp, Log, TEXT("AI Chat panel drawer registered in status bar"));
+        }
+    }
+}
+
+void FAIChatCommands::UnregisterStatusBarPanelDrawer()
+{
+    if (GEditor && PanelDrawerSummonHandle.IsValid())
+    {
+        if (UStatusBarSubsystem* StatusBarSubsystem = GEditor->GetEditorSubsystem<UStatusBarSubsystem>())
+        {
+            StatusBarSubsystem->UnregisterPanelDrawerSummon(PanelDrawerSummonHandle);
+        }
+        PanelDrawerSummonHandle.Reset();
+    }
+}
+
+TSharedRef<SDockTab> FAIChatCommands::SpawnAIChatTab(const FSpawnTabArgs& Args)
+{
+    return SNew(SDockTab)
+        .TabRole(ETabRole::NomadTab)
+        .Label(LOCTEXT("AIChatTabLabel", "VibeUE AI Chat"))
+        [
+            SNew(SAIChatWindow)
+        ];
+}
+
+void FAIChatCommands::GeneratePanelDrawerSummon(
+    TArray<UStatusBarSubsystem::FTabIdAndButtonLabel>& OutTabIdsAndLabels,
+    const TSharedRef<SDockTab>& InParentTab)
+{
+    // Add the "VibeUE" button to the status bar
+    OutTabIdsAndLabels.Emplace(AIChatTabName, LOCTEXT("StatusBarVibeUE", "VibeUE"));
 }
 
 void FAIChatCommands::RegisterMenus()
@@ -87,7 +176,7 @@ void FAIChatCommands::RegisterMenus()
             Get().OpenAIChat,
             CommandList,
             LOCTEXT("OpenAIChatLabel", "AI Chat"),
-            LOCTEXT("OpenAIChatTooltip", "Open the VibeUE AI Chat window (Ctrl+Shift+V)"),
+            LOCTEXT("OpenAIChatTooltip", "Open the VibeUE AI Chat panel (Ctrl+Shift+V)"),
             FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Comment")
         );
     }
@@ -106,7 +195,30 @@ void FAIChatCommands::UnregisterMenus()
 
 void FAIChatCommands::HandleOpenAIChat()
 {
-    SAIChatWindow::ToggleWindow();
+    // Try to toggle the tab in the panel drawer (right-side slide-in panel)
+    // This matches how Unreal's AI Assistant behaves
+    
+    // Get the widget path under the cursor to find the appropriate window
+    FWidgetPath WidgetPath = FSlateApplication::Get().LocateWindowUnderMouse(
+        FSlateApplication::Get().GetCursorPos(),
+        FSlateApplication::Get().GetInteractiveTopLevelWindows());
+    
+    TSharedPtr<FTabManager> TabManager;
+    if (WidgetPath.IsValid())
+    {
+        TabManager = FGlobalTabmanager::Get()->GetSubTabManagerForWindow(WidgetPath.GetWindow());
+    }
+    
+    if (TabManager)
+    {
+        // Toggle the tab in the panel drawer
+        TabManager->TryToggleTabInPanelDrawer(AIChatTabName, {});
+    }
+    else
+    {
+        // Fallback: just invoke the tab normally
+        FGlobalTabmanager::Get()->TryInvokeTab(AIChatTabName);
+    }
 }
 
 bool FAIChatCommands::CanOpenAIChat()
