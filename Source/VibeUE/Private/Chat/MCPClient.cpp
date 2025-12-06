@@ -140,6 +140,65 @@ FString FMCPClient::GetEngineVibeUEPythonPath()
     return FString();
 }
 
+bool FMCPClient::IsLocalModeAvailable()
+{
+    FString LocalPath = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("Python") / TEXT("vibe_ue_server.py");
+    return FPaths::FileExists(LocalPath);
+}
+
+bool FMCPClient::IsEngineModeAvailable()
+{
+    FString FolderName;
+    return FindVibeUEInMarketplace(FolderName);
+}
+
+bool FMCPClient::DetermineDefaultMode(bool& bHasSavedPreference, bool& bSavedEngineMode)
+{
+    // Check for saved preference
+    bHasSavedPreference = GConfig->GetBool(TEXT("VibeUE"), TEXT("MCPEngineMode"), bSavedEngineMode, GEditorPerProjectIni);
+    
+    bool bLocalAvailable = IsLocalModeAvailable();
+    bool bEngineAvailable = IsEngineModeAvailable();
+    
+    UE_LOG(LogMCPClient, Log, TEXT("Mode detection - Local available: %s, Engine available: %s, Has saved preference: %s"),
+        bLocalAvailable ? TEXT("Yes") : TEXT("No"),
+        bEngineAvailable ? TEXT("Yes") : TEXT("No"),
+        bHasSavedPreference ? TEXT("Yes") : TEXT("No"));
+    
+    // If user has a saved preference and that mode is available, use it
+    if (bHasSavedPreference)
+    {
+        if (bSavedEngineMode && bEngineAvailable)
+        {
+            UE_LOG(LogMCPClient, Log, TEXT("Using saved preference: Engine mode"));
+            return true; // Engine mode
+        }
+        else if (!bSavedEngineMode && bLocalAvailable)
+        {
+            UE_LOG(LogMCPClient, Log, TEXT("Using saved preference: Local mode"));
+            return false; // Local mode
+        }
+        // Saved preference mode not available, fall through to auto-detect
+        UE_LOG(LogMCPClient, Warning, TEXT("Saved preference mode not available, auto-detecting..."));
+    }
+    
+    // Auto-detect: prefer Local mode if available, otherwise Engine mode
+    if (bLocalAvailable)
+    {
+        UE_LOG(LogMCPClient, Log, TEXT("Auto-selected: Local mode"));
+        return false; // Local mode
+    }
+    else if (bEngineAvailable)
+    {
+        UE_LOG(LogMCPClient, Log, TEXT("Auto-selected: Engine mode"));
+        return true; // Engine mode
+    }
+    
+    // Neither available - default to Local mode (will show error later)
+    UE_LOG(LogMCPClient, Warning, TEXT("No VibeUE installation found! Defaulting to Local mode."));
+    return false;
+}
+
 FString FMCPClient::ResolveConfigVariables(const FString& Input) const
 {
     FString Result = Input;

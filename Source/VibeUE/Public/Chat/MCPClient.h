@@ -132,6 +132,27 @@ public:
      */
     static FString GetEngineVibeUEPythonPath();
     
+    /**
+     * Check if VibeUE is installed in Local mode (Project/Plugins)
+     * @return True if VibeUE is found in project plugins
+     */
+    static bool IsLocalModeAvailable();
+    
+    /**
+     * Check if VibeUE is installed in Engine mode (Engine/Plugins/Marketplace)
+     * @return True if VibeUE is found in engine marketplace
+     */
+    static bool IsEngineModeAvailable();
+    
+    /**
+     * Determine the default mode based on what's installed
+     * Priority: Saved preference > Local mode (if available) > Engine mode
+     * @param bHasSavedPreference Output: true if a saved preference exists
+     * @param bSavedEngineMode Output: the saved preference value (if exists)
+     * @return The recommended default mode
+     */
+    static bool DetermineDefaultMode(bool& bHasSavedPreference, bool& bSavedEngineMode);
+    
 private:
     /** MCP configuration loaded from mcp.json */
     FMCPConfiguration Configuration;

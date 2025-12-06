@@ -203,9 +203,11 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     // Fetch models
     ChatSession->FetchAvailableModels(FOnModelsFetched::CreateSP(this, &SAIChatWindow::HandleModelsFetched));
     
-    // Initialize MCP - read mode from config (default to Local mode)
-    bool bEngineMode = false;
-    GConfig->GetBool(TEXT("VibeUE"), TEXT("MCPEngineMode"), bEngineMode, GEditorPerProjectIni);
+    // Initialize MCP - auto-detect mode based on what's installed
+    // Priority: Saved preference (if that mode is available) > Local mode > Engine mode
+    bool bHasSavedPreference = false;
+    bool bSavedEngineMode = false;
+    bool bEngineMode = FMCPClient::DetermineDefaultMode(bHasSavedPreference, bSavedEngineMode);
     ChatSession->InitializeMCP(bEngineMode);
     
     // Check API key
@@ -728,9 +730,10 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SCheckBox> EngineModeCheckBox;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
     
-    // Read current mode from config (default to Local mode)
-    bool bCurrentEngineMode = false;
-    GConfig->GetBool(TEXT("VibeUE"), TEXT("MCPEngineMode"), bCurrentEngineMode, GEditorPerProjectIni);
+    // Determine current mode using the same logic as initialization
+    bool bHasSavedPreference = false;
+    bool bSavedEngineMode = false;
+    bool bCurrentEngineMode = FMCPClient::DetermineDefaultMode(bHasSavedPreference, bSavedEngineMode);
     
     bool bCurrentDebugMode = FChatSession::IsDebugModeEnabled();
     
