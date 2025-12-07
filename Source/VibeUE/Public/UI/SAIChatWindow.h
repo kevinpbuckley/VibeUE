@@ -90,6 +90,12 @@ private:
     /** Handle send button clicked */
     FReply OnSendClicked();
     
+    /** Handle stop button clicked */
+    FReply OnStopClicked();
+    
+    /** Get stop button visibility */
+    EVisibility GetStopButtonVisibility() const;
+    
     /** Handle reset button clicked */
     FReply OnResetClicked();
     
@@ -110,6 +116,9 @@ private:
     
     /** Get the currently selected model text */
     FText GetSelectedModelText() const;
+    
+    /** Update the model dropdown based on the current LLM provider */
+    void UpdateModelDropdownForProvider();
     
     /** Handle message added callback */
     void HandleMessageAdded(const FChatMessage& Message);

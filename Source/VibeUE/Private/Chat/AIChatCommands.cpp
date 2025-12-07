@@ -108,6 +108,7 @@ void FAIChatCommands::UnregisterTabSpawner()
     FGlobalTabmanager::Get()->UnregisterNomadTabSpawner(AIChatTabName);
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FAIChatCommands::RegisterStatusBarPanelDrawer()
 {
     if (GEditor)
@@ -138,6 +139,7 @@ void FAIChatCommands::UnregisterStatusBarPanelDrawer()
         PanelDrawerSummonHandle.Reset();
     }
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 TSharedRef<SDockTab> FAIChatCommands::SpawnAIChatTab(const FSpawnTabArgs& Args)
 {
@@ -149,6 +151,7 @@ TSharedRef<SDockTab> FAIChatCommands::SpawnAIChatTab(const FSpawnTabArgs& Args)
         ];
 }
 
+PRAGMA_DISABLE_DEPRECATION_WARNINGS
 void FAIChatCommands::GeneratePanelDrawerSummon(
     TArray<UStatusBarSubsystem::FTabIdAndButtonLabel>& OutTabIdsAndLabels,
     const TSharedRef<SDockTab>& InParentTab)
@@ -156,6 +159,7 @@ void FAIChatCommands::GeneratePanelDrawerSummon(
     // Add the "VibeUE" button to the status bar
     OutTabIdsAndLabels.Emplace(AIChatTabName, LOCTEXT("StatusBarVibeUE", "VibeUE"));
 }
+PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 void FAIChatCommands::RegisterMenus()
 {
@@ -212,7 +216,9 @@ void FAIChatCommands::HandleOpenAIChat()
     if (TabManager)
     {
         // Toggle the tab in the panel drawer
+        PRAGMA_DISABLE_DEPRECATION_WARNINGS
         TabManager->TryToggleTabInPanelDrawer(AIChatTabName, {});
+        PRAGMA_ENABLE_DEPRECATION_WARNINGS
     }
     else
     {

@@ -1,6 +1,8 @@
 // Copyright 2025 Vibe AI. All Rights Reserved.
 
 #include "Chat/ChatSession.h"
+#include "Chat/VibeUEAPIClient.h"
+#include "Chat/ILLMClient.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
@@ -9,12 +11,14 @@
 DEFINE_LOG_CATEGORY(LogChatSession);
 
 FChatSession::FChatSession()
-    : CurrentModelId(TEXT("x-ai/grok-4.1-fast:free"))  // Default to fast free model
+    : CurrentProvider(ELLMProvider::VibeUE)  // Default to VibeUE API
+    , CurrentModelId(TEXT("x-ai/grok-4.1-fast:free"))  // Default to fast free model
     , MaxContextMessages(50)
     , MaxContextTokens(128000)  // Default to 128K, will be updated based on model
     , ReservedResponseTokens(4000)
 {
-    Client = MakeShared<FOpenRouterClient>();
+    OpenRouterClient = MakeShared<FOpenRouterClient>();
+    VibeUEClient = MakeShared<FVibeUEAPIClient>();
     SystemPrompt = FOpenRouterClient::GetDefaultSystemPrompt();
 }
 
@@ -25,17 +29,34 @@ FChatSession::~FChatSession()
 
 void FChatSession::Initialize()
 {
-    // Load API key from config
-    FString ApiKey = GetApiKeyFromConfig();
-    if (!ApiKey.IsEmpty())
+    // Load provider setting
+    CurrentProvider = GetProviderFromConfig();
+    
+    // Load API keys from config
+    FString OpenRouterApiKey = GetApiKeyFromConfig();
+    if (!OpenRouterApiKey.IsEmpty())
     {
-        Client->SetApiKey(ApiKey);
+        OpenRouterClient->SetApiKey(OpenRouterApiKey);
+    }
+    
+    FString VibeUEApiKey = GetVibeUEApiKeyFromConfig();
+    if (!VibeUEApiKey.IsEmpty())
+    {
+        VibeUEClient->SetApiKey(VibeUEApiKey);
+    }
+    
+    // Load VibeUE endpoint
+    FString VibeUEEndpoint = GetVibeUEEndpointFromConfig();
+    if (!VibeUEEndpoint.IsEmpty())
+    {
+        VibeUEClient->SetEndpointUrl(VibeUEEndpoint);
     }
     
     // Load chat history
     LoadHistory();
     
-    UE_LOG(LogChatSession, Log, TEXT("Chat session initialized with %d messages"), Messages.Num());
+    UE_LOG(LogChatSession, Log, TEXT("Chat session initialized with %d messages, provider: %s"), 
+        Messages.Num(), CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"));
 }
 
 void FChatSession::Shutdown()
@@ -54,7 +75,8 @@ void FChatSession::SendMessage(const FString& UserMessage)
     
     if (!HasApiKey())
     {
-        OnChatError.ExecuteIfBound(TEXT("Please set your OpenRouter API key in Editor Preferences → Plugins → VibeUE"));
+        FLLMProviderInfo ProviderInfo = GetCurrentProviderInfo();
+        OnChatError.ExecuteIfBound(FString::Printf(TEXT("Please set your %s API key in the settings"), *ProviderInfo.DisplayName));
         return;
     }
     
@@ -81,20 +103,39 @@ void FChatSession::SendMessage(const FString& UserMessage)
     // Get available tools
     TArray<FMCPTool> Tools = GetAvailableTools();
     
-    // Send request with tools
-    Client->SendChatRequest(
-        ApiMessages,
-        CurrentModelId,
-        Tools,
-        FOnStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-        FOnStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-        FOnStreamError::CreateSP(this, &FChatSession::OnStreamError),
-        FOnToolCall::CreateSP(this, &FChatSession::OnToolCall),
-        FOnUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
-        {
-            UpdateUsageStats(PromptTokens, CompletionTokens);
-        })
-    );
+    // Send request using the appropriate client based on provider
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        VibeUEClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,  // Ignored by VibeUE client
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
+    else
+    {
+        OpenRouterClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
     
     // Increment request count
     UsageStats.RequestCount++;
@@ -210,20 +251,39 @@ void FChatSession::SendFollowUpAfterToolCall()
     // Get available tools
     TArray<FMCPTool> Tools = GetAvailableTools();
     
-    // Send follow-up request
-    Client->SendChatRequest(
-        ApiMessages,
-        CurrentModelId,
-        Tools,
-        FOnStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-        FOnStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-        FOnStreamError::CreateSP(this, &FChatSession::OnStreamError),
-        FOnToolCall::CreateSP(this, &FChatSession::OnToolCall),
-        FOnUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
-        {
-            UpdateUsageStats(PromptTokens, CompletionTokens);
-        })
-    );
+    // Send follow-up request using the appropriate client based on provider
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        VibeUEClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,  // Ignored by VibeUE client
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
+    else
+    {
+        OpenRouterClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
     
     // Increment request count
     UsageStats.RequestCount++;
@@ -256,7 +316,8 @@ void FChatSession::SetCurrentModel(const FString& ModelId)
 
 void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 {
-    Client->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+    // Models are only relevant for OpenRouter
+    OpenRouterClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
     {
         if (bSuccess)
         {
@@ -268,14 +329,22 @@ void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 
 bool FChatSession::IsRequestInProgress() const
 {
-    return Client.IsValid() && Client->IsRequestInProgress();
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        return VibeUEClient.IsValid() && VibeUEClient->IsRequestInProgress();
+    }
+    return OpenRouterClient.IsValid() && OpenRouterClient->IsRequestInProgress();
 }
 
 void FChatSession::CancelRequest()
 {
-    if (Client.IsValid())
+    if (OpenRouterClient.IsValid())
     {
-        Client->CancelRequest();
+        OpenRouterClient->CancelRequest();
+    }
+    if (VibeUEClient.IsValid())
+    {
+        VibeUEClient->CancelRequest();
     }
     
     // Mark streaming message as incomplete
@@ -293,13 +362,23 @@ void FChatSession::CancelRequest()
 
 void FChatSession::SetApiKey(const FString& ApiKey)
 {
-    Client->SetApiKey(ApiKey);
+    OpenRouterClient->SetApiKey(ApiKey);
     SaveApiKeyToConfig(ApiKey);
+}
+
+void FChatSession::SetVibeUEApiKey(const FString& ApiKey)
+{
+    VibeUEClient->SetApiKey(ApiKey);
+    SaveVibeUEApiKeyToConfig(ApiKey);
 }
 
 bool FChatSession::HasApiKey() const
 {
-    return Client.IsValid() && Client->HasApiKey();
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        return VibeUEClient.IsValid() && VibeUEClient->HasApiKey();
+    }
+    return OpenRouterClient.IsValid() && OpenRouterClient->HasApiKey();
 }
 
 FString FChatSession::GetApiKeyFromConfig()
@@ -590,4 +669,109 @@ void FChatSession::SetDebugModeEnabled(bool bEnabled)
 {
     GConfig->SetBool(TEXT("VibeUE"), TEXT("DebugMode"), bEnabled, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+FString FChatSession::GetVibeUEApiKeyFromConfig()
+{
+    FString ApiKey;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("VibeUEApiKey"), ApiKey, GEditorPerProjectIni);
+    return ApiKey;
+}
+
+void FChatSession::SaveVibeUEApiKeyToConfig(const FString& ApiKey)
+{
+    GConfig->SetString(TEXT("VibeUE"), TEXT("VibeUEApiKey"), *ApiKey, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+FString FChatSession::GetVibeUEEndpointFromConfig()
+{
+    FString Endpoint;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("VibeUEEndpoint"), Endpoint, GEditorPerProjectIni);
+    if (Endpoint.IsEmpty())
+    {
+        // Return default endpoint if not configured
+        return FVibeUEAPIClient::GetDefaultEndpoint();
+    }
+    return Endpoint;
+}
+
+void FChatSession::SaveVibeUEEndpointToConfig(const FString& Endpoint)
+{
+    GConfig->SetString(TEXT("VibeUE"), TEXT("VibeUEEndpoint"), *Endpoint, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+ELLMProvider FChatSession::GetProviderFromConfig()
+{
+    FString ProviderStr;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("Provider"), ProviderStr, GEditorPerProjectIni);
+    
+    if (ProviderStr == TEXT("OpenRouter"))
+    {
+        return ELLMProvider::OpenRouter;
+    }
+    
+    // Default to VibeUE
+    return ELLMProvider::VibeUE;
+}
+
+void FChatSession::SaveProviderToConfig(ELLMProvider Provider)
+{
+    FString ProviderStr = (Provider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : TEXT("VibeUE");
+    GConfig->SetString(TEXT("VibeUE"), TEXT("Provider"), *ProviderStr, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+void FChatSession::SetCurrentProvider(ELLMProvider Provider)
+{
+    CurrentProvider = Provider;
+    SaveProviderToConfig(Provider);
+    UE_LOG(LogChatSession, Log, TEXT("Provider changed to: %s"), 
+        Provider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"));
+}
+
+TArray<FLLMProviderInfo> FChatSession::GetAvailableProviders()
+{
+    TArray<FLLMProviderInfo> Providers;
+    
+    // VibeUE provider
+    Providers.Add(FLLMProviderInfo(
+        TEXT("VibeUE"),
+        TEXT("VibeUE"),
+        false,
+        TEXT(""),
+        TEXT("VibeUE's own LLM API service")
+    ));
+    
+    // OpenRouter provider
+    Providers.Add(FLLMProviderInfo(
+        TEXT("OpenRouter"),
+        TEXT("OpenRouter"),
+        true,
+        TEXT("x-ai/grok-4.1-fast:free"),
+        TEXT("Access multiple LLM providers through OpenRouter API")
+    ));
+    
+    return Providers;
+}
+
+FLLMProviderInfo FChatSession::GetCurrentProviderInfo() const
+{
+    if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+    {
+        return VibeUEClient->GetProviderInfo();
+    }
+    else if (OpenRouterClient.IsValid())
+    {
+        return OpenRouterClient->GetProviderInfo();
+    }
+    
+    // Fallback
+    return FLLMProviderInfo(TEXT("Unknown"), TEXT("Unknown"), false, TEXT(""), TEXT(""));
+}
+
+bool FChatSession::SupportsModelSelection() const
+{
+    return GetCurrentProviderInfo().bSupportsModelSelection;
 }

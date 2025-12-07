@@ -2,7 +2,9 @@
 
 #include "UI/SAIChatWindow.h"
 #include "Chat/AIChatCommands.h"
+#include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
+#include "Chat/ILLMClient.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -177,21 +179,41 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
             .AutoHeight()
             .Padding(8, 4, 8, 8)
             [
-                SNew(SBorder)
-                .BorderBackgroundColor(VibeUEColors::Border)
-                .Padding(4)
+                SNew(SHorizontalBox)
+                
+                // Text input (multi-line, 3 lines visible)
+                + SHorizontalBox::Slot()
+                .FillWidth(1.0f)
                 [
-                    // Text input (multi-line, 3 lines visible)
-                    // Press Enter to send, Shift+Enter for new line
-                    SNew(SBox)
-                    .MinDesiredHeight(54.0f)  // ~3 lines at default font size
-                    .MaxDesiredHeight(54.0f)
+                    SNew(SBorder)
+                    .BorderBackgroundColor(VibeUEColors::Border)
+                    .Padding(4)
                     [
-                        SAssignNew(InputTextBox, SMultiLineEditableTextBox)
-                        .HintText(FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)")))
-                        .AutoWrapText(true)
-                        .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
+                        // Press Enter to send, Shift+Enter for new line
+                        SNew(SBox)
+                        .MinDesiredHeight(54.0f)  // ~3 lines at default font size
+                        .MaxDesiredHeight(54.0f)
+                        [
+                            SAssignNew(InputTextBox, SMultiLineEditableTextBox)
+                            .HintText(FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)")))
+                            .AutoWrapText(true)
+                            .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
+                        ]
                     ]
+                ]
+                
+                // Stop button (only visible when request in progress)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(4, 0, 0, 0)
+                .VAlign(VAlign_Center)
+                [
+                    SNew(SButton)
+                    .Text(FText::FromString(TEXT("Stop")))
+                    .ToolTipText(FText::FromString(TEXT("Stop the current AI response")))
+                    .Visibility(this, &SAIChatWindow::GetStopButtonVisibility)
+                    .OnClicked(this, &SAIChatWindow::OnStopClicked)
+                    .ButtonColorAndOpacity(FLinearColor(0.8f, 0.2f, 0.2f, 1.0f))
                 ]
             ]
         ]
@@ -200,8 +222,8 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     // Rebuild message list from history
     RebuildMessageList();
     
-    // Fetch models
-    ChatSession->FetchAvailableModels(FOnModelsFetched::CreateSP(this, &SAIChatWindow::HandleModelsFetched));
+    // Update model dropdown based on current provider
+    UpdateModelDropdownForProvider();
     
     // Initialize MCP - auto-detect mode based on what's installed
     // Priority: Saved preference (if that mode is available) > Local mode > Engine mode
@@ -213,7 +235,8 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     // Check API key
     if (!ChatSession->HasApiKey())
     {
-        SetStatusText(TEXT("Please set your OpenRouter API key in Settings"));
+        FLLMProviderInfo ProviderInfo = ChatSession->GetCurrentProviderInfo();
+        SetStatusText(FString::Printf(TEXT("Please set your %s API key in Settings"), *ProviderInfo.DisplayName));
     }
 }
 
@@ -710,6 +733,25 @@ FReply SAIChatWindow::OnSendClicked()
     return FReply::Handled();
 }
 
+FReply SAIChatWindow::OnStopClicked()
+{
+    if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
+    {
+        ChatSession->CancelRequest();
+        SetStatusText(TEXT("Request cancelled"));
+    }
+    return FReply::Handled();
+}
+
+EVisibility SAIChatWindow::GetStopButtonVisibility() const
+{
+    if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
+    {
+        return EVisibility::Visible;
+    }
+    return EVisibility::Collapsed;
+}
+
 FReply SAIChatWindow::OnResetClicked()
 {
     ChatSession->ResetChat();
@@ -722,13 +764,28 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Show API key input dialog
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(450, 320))
+        .ClientSize(FVector2D(500, 450))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
     
-    TSharedPtr<SEditableTextBox> ApiKeyInput;
+    TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
+    TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> EngineModeCheckBox;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
+    
+    // Get available providers for the dropdown
+    TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
+    TSharedPtr<TArray<TSharedPtr<FString>>> ProviderOptions = MakeShared<TArray<TSharedPtr<FString>>>();
+    for (const FLLMProviderInfo& ProviderInfo : AvailableProvidersList)
+    {
+        ProviderOptions->Add(MakeShared<FString>(ProviderInfo.DisplayName));
+    }
+    
+    // Current selection
+    ELLMProvider CurrentProvider = FChatSession::GetProviderFromConfig();
+    TSharedPtr<FString> SelectedProvider = MakeShared<FString>(
+        CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"));
+    TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
     
     // Determine current mode using the same logic as initialization
     bool bHasSavedPreference = false;
@@ -739,9 +796,63 @@ FReply SAIChatWindow::OnSettingsClicked()
     
     SettingsWindow->SetContent(
         SNew(SVerticalBox)
+        // Provider Selection (Dropdown)
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("LLM Provider:")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SComboBox<TSharedPtr<FString>>)
+            .OptionsSource(ProviderOptions.Get())
+            .InitiallySelectedItem(*SelectedProviderPtr)
+            .OnSelectionChanged_Lambda([SelectedProviderPtr](TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+            {
+                if (NewSelection.IsValid())
+                {
+                    *SelectedProviderPtr = NewSelection;
+                }
+            })
+            .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
+            {
+                return SNew(STextBlock)
+                    .Text(FText::FromString(*Item));
+            })
+            .Content()
+            [
+                SNew(STextBlock)
+                .Text_Lambda([SelectedProviderPtr]() -> FText
+                {
+                    return SelectedProviderPtr->IsValid() ? FText::FromString(**SelectedProviderPtr) : FText::FromString(TEXT("Select Provider"));
+                })
+            ]
+        ]
+        // VibeUE API Key
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 12, 8, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("VibeUE API Key:")))
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 0)
+        [
+            SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
+            .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
+            .IsPassword(true)
+        ]
+        // OpenRouter API Key
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 12, 8, 0)
         [
             SNew(STextBlock)
             .Text(FText::FromString(TEXT("OpenRouter API Key:")))
@@ -750,7 +861,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         .AutoHeight()
         .Padding(8, 0)
         [
-            SAssignNew(ApiKeyInput, SEditableTextBox)
+            SAssignNew(OpenRouterApiKeyInput, SEditableTextBox)
             .Text(FText::FromString(FChatSession::GetApiKeyFromConfig()))
             .IsPassword(true)
         ]
@@ -770,7 +881,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 })
                 [
                     SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("Get your API key at openrouter.ai")))
+                    .Text(FText::FromString(TEXT("Get OpenRouter API key at openrouter.ai")))
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
                 ]
             ]
@@ -847,11 +958,23 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, ApiKeyInput, EngineModeCheckBox, DebugModeCheckBox, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, SettingsWindow]() -> FReply
             {
-                // Save API key
-                FString NewApiKey = ApiKeyInput->GetText().ToString();
-                ChatSession->SetApiKey(NewApiKey);
+                // Save VibeUE API key
+                FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
+                ChatSession->SetVibeUEApiKey(NewVibeUEApiKey);
+                
+                // Save OpenRouter API key
+                FString NewOpenRouterApiKey = OpenRouterApiKeyInput->GetText().ToString();
+                ChatSession->SetApiKey(NewOpenRouterApiKey);
+                
+                // Save provider selection from dropdown
+                ELLMProvider NewProvider = ELLMProvider::VibeUE;  // Default
+                if (SelectedProviderPtr->IsValid() && **SelectedProviderPtr == TEXT("OpenRouter"))
+                {
+                    NewProvider = ELLMProvider::OpenRouter;
+                }
+                ChatSession->SetCurrentProvider(NewProvider);
                 
                 // Save and apply MCP mode
                 bool bNewEngineMode = EngineModeCheckBox->IsChecked();
@@ -866,7 +989,11 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Reinitialize MCP with new mode (this properly shuts down, clears state, and rediscovers tools)
                 ChatSession->ReinitializeMCP(bNewEngineMode);
                 
-                SetStatusText(TEXT("Settings saved"));
+                // Update the model dropdown based on new provider
+                UpdateModelDropdownForProvider();
+                
+                SetStatusText(FString::Printf(TEXT("Settings saved - Using %s"), 
+                    NewProvider == ELLMProvider::VibeUE ? TEXT("VibeUE API") : TEXT("OpenRouter")));
                 SettingsWindow->RequestDestroyWindow();
                 return FReply::Handled();
             })
@@ -1060,6 +1187,44 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
     else
     {
         SetStatusText(TEXT("Failed to fetch models"));
+    }
+}
+
+void SAIChatWindow::UpdateModelDropdownForProvider()
+{
+    if (!ChatSession.IsValid())
+    {
+        return;
+    }
+    
+    // Check if provider supports model selection
+    if (ChatSession->SupportsModelSelection())
+    {
+        // OpenRouter - fetch models
+        ChatSession->FetchAvailableModels(FOnModelsFetched::CreateSP(this, &SAIChatWindow::HandleModelsFetched));
+    }
+    else
+    {
+        // VibeUE - show single "VibeUE" option
+        AvailableModels.Empty();
+        SelectedModel.Reset();
+        
+        // Create a single "VibeUE" model entry
+        TSharedPtr<FOpenRouterModel> VibeUEModelPtr = MakeShared<FOpenRouterModel>();
+        VibeUEModelPtr->Id = TEXT("vibeue");
+        VibeUEModelPtr->Name = TEXT("VibeUE");
+        VibeUEModelPtr->bSupportsTools = true;
+        
+        AvailableModels.Add(VibeUEModelPtr);
+        SelectedModel = VibeUEModelPtr;
+        
+        if (ModelComboBox.IsValid())
+        {
+            ModelComboBox->RefreshOptions();
+            ModelComboBox->SetSelectedItem(SelectedModel);
+        }
+        
+        UE_LOG(LogAIChatWindow, Log, TEXT("Provider changed to VibeUE - model dropdown shows single option"));
     }
 }
 

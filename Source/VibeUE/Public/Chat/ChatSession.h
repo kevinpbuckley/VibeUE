@@ -4,10 +4,22 @@
 
 #include "CoreMinimal.h"
 #include "Chat/ChatTypes.h"
+#include "Chat/ILLMClient.h"
 #include "Chat/OpenRouterClient.h"
+#include "Chat/VibeUEAPIClient.h"
 #include "Chat/MCPClient.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogChatSession, Log, All);
+
+/**
+ * Available LLM providers
+ */
+UENUM()
+enum class ELLMProvider : uint8
+{
+    VibeUE,      // VibeUE API (default)
+    OpenRouter   // OpenRouter API
+};
 
 /**
  * Usage statistics from LLM response
@@ -102,14 +114,50 @@ public:
     /** Set API key */
     void SetApiKey(const FString& ApiKey);
     
-    /** Check if API key is configured */
+    /** Set VibeUE API key */
+    void SetVibeUEApiKey(const FString& ApiKey);
+    
+    /** Check if API key is configured (for current provider) */
     bool HasApiKey() const;
     
-    /** Get API key from config */
+    /** Get OpenRouter API key from config */
     static FString GetApiKeyFromConfig();
     
-    /** Save API key to config */
+    /** Save OpenRouter API key to config */
     static void SaveApiKeyToConfig(const FString& ApiKey);
+    
+    /** Get VibeUE API key from config */
+    static FString GetVibeUEApiKeyFromConfig();
+    
+    /** Save VibeUE API key to config */
+    static void SaveVibeUEApiKeyToConfig(const FString& ApiKey);
+    
+    /** Get VibeUE API endpoint from config */
+    static FString GetVibeUEEndpointFromConfig();
+    
+    /** Save VibeUE API endpoint to config */
+    static void SaveVibeUEEndpointToConfig(const FString& Endpoint);
+    
+    /** Get current LLM provider */
+    ELLMProvider GetCurrentProvider() const { return CurrentProvider; }
+    
+    /** Set current LLM provider */
+    void SetCurrentProvider(ELLMProvider Provider);
+    
+    /** Get provider from config */
+    static ELLMProvider GetProviderFromConfig();
+    
+    /** Save provider to config */
+    static void SaveProviderToConfig(ELLMProvider Provider);
+    
+    /** Get all available LLM providers */
+    static TArray<FLLMProviderInfo> GetAvailableProviders();
+    
+    /** Get provider info for current provider */
+    FLLMProviderInfo GetCurrentProviderInfo() const;
+    
+    /** Check if current provider supports model selection */
+    bool SupportsModelSelection() const;
     
     /** Get estimated token count for current conversation */
     int32 GetEstimatedTokenCount() const;
@@ -155,9 +203,17 @@ public:
     FOnMessageUpdated OnMessageUpdated;
     FOnChatReset OnChatReset;
     FOnChatError OnChatError;
-    FOnMCPToolsReady OnMCPToolsReady;private:
+    FOnMCPToolsReady OnMCPToolsReady;
+
+private:
     /** OpenRouter HTTP client */
-    TSharedPtr<FOpenRouterClient> Client;
+    TSharedPtr<FOpenRouterClient> OpenRouterClient;
+    
+    /** VibeUE API HTTP client */
+    TSharedPtr<FVibeUEAPIClient> VibeUEClient;
+    
+    /** Current LLM provider */
+    ELLMProvider CurrentProvider = ELLMProvider::VibeUE;
     
     /** Conversation messages */
     TArray<FChatMessage> Messages;

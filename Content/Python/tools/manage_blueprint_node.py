@@ -5,8 +5,6 @@ This module provides a unified interface for performing various operations on Bl
 such as adding, removing, and connecting nodes, as well as managing Blueprint functions and variables.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Dict, List, Optional
 
@@ -44,9 +42,9 @@ def register_node_tools(mcp: FastMCP) -> None:
 
     @mcp.tool(description="Blueprint node operations: discover, create, connect, delete, move, configure. Use spawner_key from discover for exact node creation. Actions: discover, create, connect_pins, disconnect_pins, delete, move, list, describe, configure, get_details, split, recombine, refresh_node, refresh_nodes. Use get_help(topic='node-tools') for examples.")
     def manage_blueprint_node(
-        ctx: Context = None,  #  Made optional - framework should inject, but AI doesn't need to pass it
-        blueprint_name: str = None,
-        action: str = None,
+        ctx: Context,
+        action: str,
+        blueprint_name: str = "",
         graph_scope: str = "event",
         function_name: Optional[str] = None,
         node_id: Optional[str] = None,

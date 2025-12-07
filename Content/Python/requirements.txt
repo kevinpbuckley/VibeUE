@@ -2,8 +2,10 @@
 # Install with: pip install -r requirements.txt
 
 # Core MCP dependencies
-mcp[cli]>=1.4.1
-fastmcp>=0.2.0
+# Note: fastmcp 2.x has breaking changes with type annotations
+# If using from __future__ import annotations, ensure compatibility
+mcp>=1.4.1,<2.0.0
+fastmcp>=2.0.0,<3.0.0
 
 # Web server dependencies
 uvicorn

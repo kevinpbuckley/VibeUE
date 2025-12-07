@@ -9,32 +9,31 @@
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 
-DECLARE_LOG_CATEGORY_EXTERN(LogOpenRouterClient, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogVibeUEAPIClient, Log, All);
 
-// Type aliases for delegate compatibility
-using FOnStreamChunk = FOnLLMStreamChunk;
-using FOnStreamComplete = FOnLLMStreamComplete;
-using FOnStreamError = FOnLLMStreamError;
-using FOnToolCall = FOnLLMToolCall;
-using FOnUsageReceived = FOnLLMUsageReceived;
-using FOnModelsFetched = FOnLLMModelsFetched;
+// Type aliases for delegate compatibility (Vibe-prefixed for potential legacy code)
+using FOnVibeStreamChunk = FOnLLMStreamChunk;
+using FOnVibeStreamComplete = FOnLLMStreamComplete;
+using FOnVibeStreamError = FOnLLMStreamError;
+using FOnVibeToolCall = FOnLLMToolCall;
+using FOnVibeUsageReceived = FOnLLMUsageReceived;
 
 /**
- * HTTP client for OpenRouter API with SSE streaming support
+ * HTTP client for VibeUE API with SSE streaming support
+ * Connects to the VibeUE-API service (OpenAI-compatible API with tool calling)
  * Implements ILLMClient interface for strategy pattern
  */
-class VIBEUE_API FOpenRouterClient : public ILLMClient, public TSharedFromThis<FOpenRouterClient>
+class VIBEUE_API FVibeUEAPIClient : public ILLMClient, public TSharedFromThis<FVibeUEAPIClient>
 {
 public:
-    FOpenRouterClient();
-    virtual ~FOpenRouterClient();
-    
+    FVibeUEAPIClient();
+    virtual ~FVibeUEAPIClient();
+
     //~ Begin ILLMClient Interface
     virtual FLLMProviderInfo GetProviderInfo() const override;
     virtual void SetApiKey(const FString& InApiKey) override;
     virtual bool HasApiKey() const override;
-    virtual bool SupportsModelFetching() const override { return true; }
-    virtual void FetchModels(FOnLLMModelsFetched OnComplete) override;
+    virtual bool SupportsModelFetching() const override { return false; }
     virtual void SendChatRequest(
         const TArray<FChatMessage>& Messages,
         const FString& ModelId,
@@ -48,50 +47,55 @@ public:
     virtual void CancelRequest() override;
     virtual bool IsRequestInProgress() const override;
     //~ End ILLMClient Interface
-    
-    /** Get the default system prompt */
+
+    /** Set the API endpoint URL */
+    void SetEndpointUrl(const FString& InUrl);
+
+    /** Get the current endpoint URL */
+    const FString& GetEndpointUrl() const { return EndpointUrl; }
+
+    /** Get the default VibeUE API endpoint */
+    static FString GetDefaultEndpoint();
+
+    /** Get the default system prompt (same as OpenRouter) */
     static FString GetDefaultSystemPrompt();
-    
+
 private:
-    /** API key for OpenRouter */
+    /** API key for VibeUE API (X-API-Key header) */
     FString ApiKey;
-    
+
+    /** API endpoint URL */
+    FString EndpointUrl;
+
     /** Current streaming request (if any) */
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> CurrentRequest;
-    
+
     /** Buffer for incomplete SSE data */
     FString StreamBuffer;
-    
+
     /** Delegates for current request */
-    FOnStreamChunk CurrentOnChunk;
-    FOnStreamComplete CurrentOnComplete;
-    FOnStreamError CurrentOnError;
-    FOnToolCall CurrentOnToolCall;
-    FOnUsageReceived CurrentOnUsage;
-    
+    FOnVibeStreamChunk CurrentOnChunk;
+    FOnVibeStreamComplete CurrentOnComplete;
+    FOnVibeStreamError CurrentOnError;
+    FOnVibeToolCall CurrentOnToolCall;
+    FOnVibeUsageReceived CurrentOnUsage;
+
     /** Accumulated tool calls from streaming response */
     TMap<int32, FMCPToolCall> PendingToolCalls;
-    
+
     /** Flag to suppress content chunks once tool calls are detected in stream */
     bool bToolCallsDetectedInStream;
-    
+
     /** Process SSE data from HTTP response */
     void ProcessSSEData(const FString& Data);
-    
+
     /** Handle HTTP request progress (for streaming) */
     void HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived);
-    
+
     /** Handle HTTP request completion */
     void HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully);
-    
-    /** Handle models fetch completion */
-    void HandleModelsFetchComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully, FOnModelsFetched OnComplete);
-    
-    /** OpenRouter API endpoints */
-    static const FString ModelsEndpoint;
-    static const FString ChatEndpoint;
-    
+
     /** HTTP headers */
     static const FString ContentTypeHeader;
-    static const FString AuthorizationHeader;
+    static const FString ApiKeyHeader;
 };

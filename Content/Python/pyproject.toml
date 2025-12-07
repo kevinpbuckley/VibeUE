@@ -20,8 +20,8 @@ classifiers = [
   "Topic :: Games/Entertainment"
 ]
 dependencies = [
-  "mcp[cli]>=1.4.1",
-  "fastmcp>=0.2.0",
+  "mcp>=1.4.1,<2.0.0",
+  "fastmcp>=2.0.0,<3.0.0",
   "uvicorn",
   "fastapi",
   "pydantic>=2.6.1",
