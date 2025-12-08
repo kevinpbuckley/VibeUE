@@ -1,0 +1,513 @@
+// Copyright 2025 Vibe AI. All Rights Reserved.
+
+#include "Chat/LLMClientBase.h"
+#include "Chat/ChatSession.h"
+#include "HttpModule.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
+DEFINE_LOG_CATEGORY(LogLLMClientBase);
+
+// Helper to check debug mode
+static bool IsDebugLoggingEnabled()
+{
+    return FChatSession::IsDebugModeEnabled();
+}
+
+FLLMClientBase::FLLMClientBase()
+    : bToolCallsDetectedInStream(false)
+    , bInThinkingBlock(false)
+{
+}
+
+FLLMClientBase::~FLLMClientBase()
+{
+    CancelRequest();
+}
+
+void FLLMClientBase::ResetStreamingState()
+{
+    StreamBuffer.Empty();
+    PendingToolCalls.Empty();
+    bToolCallsDetectedInStream = false;
+    bInThinkingBlock = false;
+}
+
+void FLLMClientBase::CancelRequest()
+{
+    if (CurrentRequest.IsValid())
+    {
+        CurrentRequest->CancelRequest();
+        CurrentRequest.Reset();
+    }
+    ResetStreamingState();
+}
+
+bool FLLMClientBase::IsRequestInProgress() const
+{
+    return CurrentRequest.IsValid() && 
+           CurrentRequest->GetStatus() == EHttpRequestStatus::Processing;
+}
+
+void FLLMClientBase::OnPreRequestError(const FString& ErrorMessage)
+{
+    UE_LOG(LogLLMClientBase, Error, TEXT("%s"), *ErrorMessage);
+    if (CurrentOnError.IsBound())
+    {
+        CurrentOnError.Execute(ErrorMessage);
+    }
+    if (CurrentOnComplete.IsBound())
+    {
+        CurrentOnComplete.Execute(false);
+    }
+}
+
+FString FLLMClientBase::ProcessErrorResponse(int32 ResponseCode, const FString& ResponseBody)
+{
+    // Default implementation - try to extract error from JSON
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+    if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+    {
+        // Try common error formats
+        FString ErrorMessage;
+        if (JsonObject->TryGetStringField(TEXT("detail"), ErrorMessage) ||
+            JsonObject->TryGetStringField(TEXT("message"), ErrorMessage) ||
+            JsonObject->TryGetStringField(TEXT("error"), ErrorMessage))
+        {
+            return ErrorMessage;
+        }
+        
+        // Nested error object
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            if ((*ErrorObj)->TryGetStringField(TEXT("message"), ErrorMessage))
+            {
+                return ErrorMessage;
+            }
+        }
+    }
+    
+    return FString::Printf(TEXT("Request failed (HTTP %d)"), ResponseCode);
+}
+
+void FLLMClientBase::SendChatRequest(
+    const TArray<FChatMessage>& Messages,
+    const FString& ModelId,
+    const TArray<FMCPTool>& Tools,
+    FOnLLMStreamChunk OnChunk,
+    FOnLLMStreamComplete OnComplete,
+    FOnLLMStreamError OnError,
+    FOnLLMToolCall OnToolCall,
+    FOnLLMUsageReceived OnUsage)
+{
+    // Cancel any existing request
+    CancelRequest();
+
+    // Store delegates
+    CurrentOnChunk = OnChunk;
+    CurrentOnComplete = OnComplete;
+    CurrentOnError = OnError;
+    CurrentOnToolCall = OnToolCall;
+    CurrentOnUsage = OnUsage;
+
+    // Let subclass build the request
+    CurrentRequest = BuildHttpRequest(Messages, ModelId, Tools);
+    if (!CurrentRequest.IsValid())
+    {
+        // Subclass should have called OnPreRequestError already
+        return;
+    }
+
+    // Debug log outgoing request
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== LLM REQUEST =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("URL: %s"), *CurrentRequest->GetURL());
+        UE_LOG(LogLLMClientBase, Log, TEXT("Messages: %d, Tools: %d"), Messages.Num(), Tools.Num());
+        for (int32 i = 0; i < Messages.Num(); i++)
+        {
+            const FChatMessage& Msg = Messages[i];
+            FString ContentPreview = Msg.Content.Left(200);
+            if (Msg.Content.Len() > 200) ContentPreview += TEXT("...");
+            UE_LOG(LogLLMClientBase, Log, TEXT("  [%d] %s: %s"), i, *Msg.Role, *ContentPreview);
+            if (Msg.ToolCalls.Num() > 0)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("       ToolCalls: %d"), Msg.ToolCalls.Num());
+            }
+            if (!Msg.ToolCallId.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("       ToolCallId: %s"), *Msg.ToolCallId);
+            }
+        }
+        UE_LOG(LogLLMClientBase, Log, TEXT("=================================="));
+    }
+
+    // Bind streaming handlers
+    CurrentRequest->OnRequestProgress64().BindRaw(this, &FLLMClientBase::HandleRequestProgress);
+    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
+
+    // Send the request
+    CurrentRequest->ProcessRequest();
+}
+
+void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
+{
+    if (!Request.IsValid() || !Request->GetResponse().IsValid())
+    {
+        return;
+    }
+
+    FString ResponseContent = Request->GetResponse()->GetContentAsString();
+    
+    // Only process new content
+    if (ResponseContent.Len() > StreamBuffer.Len())
+    {
+        FString NewContent = ResponseContent.RightChop(StreamBuffer.Len());
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("New SSE content (%d chars)"), NewContent.Len());
+        StreamBuffer = ResponseContent;
+        ProcessSSEData(NewContent);
+    }
+}
+
+void FLLMClientBase::ProcessSSEData(const FString& Data)
+{
+    // Debug log raw SSE data
+    if (IsDebugLoggingEnabled() && !Data.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] Raw data (%d chars): %s"), Data.Len(), *Data.Left(500));
+    }
+
+    // Split by newlines and process each SSE event
+    TArray<FString> Lines;
+    Data.ParseIntoArray(Lines, TEXT("\n"), true);
+
+    for (const FString& Line : Lines)
+    {
+        FString TrimmedLine = Line.TrimStartAndEnd();
+        
+        // Skip empty lines and comments
+        if (TrimmedLine.IsEmpty() || TrimmedLine.StartsWith(TEXT(":")))
+        {
+            continue;
+        }
+
+        // Handle SSE data lines
+        if (TrimmedLine.StartsWith(TEXT("data: ")))
+        {
+            FString JsonData = TrimmedLine.RightChop(6); // Remove "data: " prefix
+            
+            // Check for stream end
+            if (JsonData == TEXT("[DONE]"))
+            {
+                FirePendingToolCalls();
+                continue;
+            }
+
+            ProcessSSEChunk(JsonData);
+        }
+    }
+}
+
+void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
+{
+    // Parse JSON
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonData);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    {
+        return;
+    }
+
+    // Check for error
+    if (JsonObject->HasField(TEXT("error")))
+    {
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
+            UE_LOG(LogLLMClientBase, Error, TEXT("Stream error: %s"), *ErrorMessage);
+            CurrentOnError.ExecuteIfBound(ErrorMessage);
+        }
+        return;
+    }
+
+    // Check for usage stats
+    const TSharedPtr<FJsonObject>* UsageObj;
+    if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj))
+    {
+        int32 PromptTokens = 0;
+        int32 CompletionTokens = 0;
+        (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
+        (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
+        
+        if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
+        {
+            CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
+        }
+    }
+
+    // Process choices array
+    const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+    if (!JsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) || ChoicesArray->Num() == 0)
+    {
+        return;
+    }
+
+    const TSharedPtr<FJsonObject>* ChoiceObj;
+    if (!(*ChoicesArray)[0]->TryGetObject(ChoiceObj))
+    {
+        return;
+    }
+
+    // Get delta object (streaming format)
+    const TSharedPtr<FJsonObject>* DeltaObj;
+    if (!(*ChoiceObj)->TryGetObjectField(TEXT("delta"), DeltaObj))
+    {
+        return;
+    }
+
+    // Check for tool calls in delta
+    const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
+    if ((*DeltaObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray))
+    {
+        bToolCallsDetectedInStream = true;
+        
+        for (const TSharedPtr<FJsonValue>& ToolCallValue : *ToolCallsArray)
+        {
+            const TSharedPtr<FJsonObject>* ToolCallObj;
+            if (!ToolCallValue->TryGetObject(ToolCallObj))
+            {
+                continue;
+            }
+
+            int32 ToolIndex = 0;
+            (*ToolCallObj)->TryGetNumberField(TEXT("index"), ToolIndex);
+            
+            // Initialize tool call if not exists
+            if (!PendingToolCalls.Contains(ToolIndex))
+            {
+                PendingToolCalls.Add(ToolIndex, FMCPToolCall());
+            }
+
+            FMCPToolCall& ToolCall = PendingToolCalls[ToolIndex];
+
+            // Get ID if present
+            FString ToolCallId;
+            if ((*ToolCallObj)->TryGetStringField(TEXT("id"), ToolCallId))
+            {
+                ToolCall.Id = ToolCallId;
+            }
+
+            // Get function details
+            const TSharedPtr<FJsonObject>* FunctionObj;
+            if ((*ToolCallObj)->TryGetObjectField(TEXT("function"), FunctionObj))
+            {
+                FString FunctionName;
+                if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
+                {
+                    ToolCall.ToolName = FunctionName;
+                }
+
+                FString FunctionArgs;
+                if ((*FunctionObj)->TryGetStringField(TEXT("arguments"), FunctionArgs))
+                {
+                    ToolCall.ArgumentsJson += FunctionArgs; // Accumulate arguments
+                }
+            }
+        }
+    }
+
+    // Get content if present (skip if we have tool calls)
+    FString DeltaContent;
+    if ((*DeltaObj)->TryGetStringField(TEXT("content"), DeltaContent))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("Delta content: '%s' (len=%d, bToolCalls=%d, bThinking=%d)"), 
+            *DeltaContent.Left(100), DeltaContent.Len(), bToolCallsDetectedInStream, bInThinkingBlock);
+        
+        if (!bToolCallsDetectedInStream && !DeltaContent.IsEmpty())
+        {
+            FString CleanContent = FilterThinkingTags(DeltaContent);
+            
+            if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("Sending chunk: '%s'"), *CleanContent.Left(100));
+                CurrentOnChunk.Execute(CleanContent);
+            }
+        }
+    }
+}
+
+FString FLLMClientBase::FilterThinkingTags(const FString& Content)
+{
+    // Handle both <thinking>...</thinking> (Claude) and <think>...</think> (Qwen)
+    FString CleanContent;
+    
+    // Check for thinking tags
+    int32 ThinkStart = Content.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
+    int32 ThinkStartLen = 10;
+    if (ThinkStart == INDEX_NONE)
+    {
+        ThinkStart = Content.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
+        ThinkStartLen = 7;
+    }
+    
+    int32 ThinkEnd = Content.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase);
+    int32 ThinkEndLen = 11;
+    if (ThinkEnd == INDEX_NONE)
+    {
+        ThinkEnd = Content.Find(TEXT("</think>"), ESearchCase::IgnoreCase);
+        ThinkEndLen = 8;
+    }
+    
+    if (ThinkStart != INDEX_NONE || bInThinkingBlock)
+    {
+        if (ThinkStart != INDEX_NONE && ThinkEnd != INDEX_NONE && ThinkEnd > ThinkStart)
+        {
+            // Complete think block in this chunk
+            CleanContent = Content.Left(ThinkStart) + Content.Mid(ThinkEnd + ThinkEndLen);
+            bInThinkingBlock = false;
+        }
+        else if (ThinkStart != INDEX_NONE)
+        {
+            // Think block starts but doesn't end
+            CleanContent = Content.Left(ThinkStart);
+            bInThinkingBlock = true;
+        }
+        else if (ThinkEnd != INDEX_NONE)
+        {
+            // Think block ends
+            CleanContent = Content.Mid(ThinkEnd + ThinkEndLen);
+            bInThinkingBlock = false;
+        }
+        else
+        {
+            // Still inside think block - skip content
+            CleanContent = TEXT("");
+        }
+    }
+    else
+    {
+        CleanContent = Content;
+    }
+    
+    return CleanContent;
+}
+
+void FLLMClientBase::FirePendingToolCalls()
+{
+    if (PendingToolCalls.Num() == 0 || !CurrentOnToolCall.IsBound())
+    {
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - no pending tool calls"));
+        }
+        return;
+    }
+
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== TOOL CALLS =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Firing %d pending tool calls"), PendingToolCalls.Num());
+    }
+
+    // Sort by index and execute
+    TArray<int32> Indices;
+    PendingToolCalls.GetKeys(Indices);
+    Indices.Sort();
+
+    for (int32 Index : Indices)
+    {
+        FMCPToolCall& ToolCall = PendingToolCalls[Index];
+        
+        // Parse accumulated arguments JSON into the Arguments object
+        if (!ToolCall.ArgumentsJson.IsEmpty())
+        {
+            TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+            FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+        }
+        
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("  [%d] %s (id=%s)"), Index, *ToolCall.ToolName, *ToolCall.Id);
+            UE_LOG(LogLLMClientBase, Log, TEXT("       Args: %s"), *ToolCall.ArgumentsJson.Left(300));
+        }
+        UE_LOG(LogLLMClientBase, Log, TEXT("Firing tool call: %s"), *ToolCall.ToolName);
+        CurrentOnToolCall.Execute(ToolCall);
+    }
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("=================================="));
+    }
+}
+
+void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+{
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== LLM RESPONSE COMPLETE =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Connected: %s"), bConnectedSuccessfully ? TEXT("Yes") : TEXT("No"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Stream buffer size: %d chars"), StreamBuffer.Len());
+    }
+
+    // For SSE streaming, bConnectedSuccessfully can be false even when we received data
+    // This happens because SSE streams typically end with server closing the connection
+    // If we have streaming data, consider it a success
+    bool bHasStreamingData = !StreamBuffer.IsEmpty();
+    
+    if (!bConnectedSuccessfully && !bHasStreamingData)
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("Request failed - connection error (no streaming data received)"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to connect. Please check your network connection."));
+        CurrentOnComplete.ExecuteIfBound(false);
+        CurrentRequest.Reset();
+        ResetStreamingState();
+        return;
+    }
+
+    int32 ResponseCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+    
+    // If we have streaming data but no response code, assume success (SSE completed)
+    if (ResponseCode == 0 && bHasStreamingData)
+    {
+        ResponseCode = 200;
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("No response code but have streaming data - treating as success"));
+        }
+    }
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("Response Code: %d"), ResponseCode);
+        UE_LOG(LogLLMClientBase, Log, TEXT("Total response length: %d chars"), StreamBuffer.Len());
+        UE_LOG(LogLLMClientBase, Log, TEXT("Tool calls detected: %s"), bToolCallsDetectedInStream ? TEXT("Yes") : TEXT("No"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("==========================================="));
+    }
+    
+    if (ResponseCode == 200)
+    {
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("Request completed successfully"));
+        CurrentOnComplete.ExecuteIfBound(true);
+    }
+    else
+    {
+        FString ResponseBody = Response.IsValid() ? Response->GetContentAsString() : TEXT("");
+        FString ErrorMessage = ProcessErrorResponse(ResponseCode, ResponseBody);
+        
+        UE_LOG(LogLLMClientBase, Error, TEXT("Request failed: %s"), *ErrorMessage);
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("Response body: %s"), *ResponseBody.Left(1000));
+        }
+        CurrentOnError.ExecuteIfBound(ErrorMessage);
+        CurrentOnComplete.ExecuteIfBound(false);
+    }
+
+    // Clean up
+    CurrentRequest.Reset();
+    ResetStreamingState();
+}

@@ -3,11 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "Chat/ChatTypes.h"
-#include "Chat/MCPTypes.h"
-#include "Chat/ILLMClient.h"
-#include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
+#include "Chat/LLMClientBase.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogOpenRouterClient, Log, All);
 
@@ -21,13 +17,14 @@ using FOnModelsFetched = FOnLLMModelsFetched;
 
 /**
  * HTTP client for OpenRouter API with SSE streaming support
- * Implements ILLMClient interface for strategy pattern
+ * 
+ * Inherits streaming/SSE parsing from FLLMClientBase
  */
-class VIBEUE_API FOpenRouterClient : public ILLMClient, public TSharedFromThis<FOpenRouterClient>
+class VIBEUE_API FOpenRouterClient : public FLLMClientBase, public TSharedFromThis<FOpenRouterClient>
 {
 public:
     FOpenRouterClient();
-    virtual ~FOpenRouterClient();
+    virtual ~FOpenRouterClient() = default;
     
     //~ Begin ILLMClient Interface
     virtual FLLMProviderInfo GetProviderInfo() const override;
@@ -35,54 +32,25 @@ public:
     virtual bool HasApiKey() const override;
     virtual bool SupportsModelFetching() const override { return true; }
     virtual void FetchModels(FOnLLMModelsFetched OnComplete) override;
-    virtual void SendChatRequest(
-        const TArray<FChatMessage>& Messages,
-        const FString& ModelId,
-        const TArray<FMCPTool>& Tools,
-        FOnLLMStreamChunk OnChunk,
-        FOnLLMStreamComplete OnComplete,
-        FOnLLMStreamError OnError,
-        FOnLLMToolCall OnToolCall,
-        FOnLLMUsageReceived OnUsage
-    ) override;
-    virtual void CancelRequest() override;
-    virtual bool IsRequestInProgress() const override;
     //~ End ILLMClient Interface
     
     /** Get the default system prompt */
     static FString GetDefaultSystemPrompt();
     
+protected:
+    //~ Begin FLLMClientBase Interface
+    virtual TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> BuildHttpRequest(
+        const TArray<FChatMessage>& Messages,
+        const FString& ModelId,
+        const TArray<FMCPTool>& Tools
+    ) override;
+    
+    virtual FString ProcessErrorResponse(int32 ResponseCode, const FString& ResponseBody) override;
+    //~ End FLLMClientBase Interface
+    
 private:
     /** API key for OpenRouter */
     FString ApiKey;
-    
-    /** Current streaming request (if any) */
-    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> CurrentRequest;
-    
-    /** Buffer for incomplete SSE data */
-    FString StreamBuffer;
-    
-    /** Delegates for current request */
-    FOnStreamChunk CurrentOnChunk;
-    FOnStreamComplete CurrentOnComplete;
-    FOnStreamError CurrentOnError;
-    FOnToolCall CurrentOnToolCall;
-    FOnUsageReceived CurrentOnUsage;
-    
-    /** Accumulated tool calls from streaming response */
-    TMap<int32, FMCPToolCall> PendingToolCalls;
-    
-    /** Flag to suppress content chunks once tool calls are detected in stream */
-    bool bToolCallsDetectedInStream;
-    
-    /** Process SSE data from HTTP response */
-    void ProcessSSEData(const FString& Data);
-    
-    /** Handle HTTP request progress (for streaming) */
-    void HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived);
-    
-    /** Handle HTTP request completion */
-    void HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully);
     
     /** Handle models fetch completion */
     void HandleModelsFetchComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully, FOnModelsFetched OnComplete);

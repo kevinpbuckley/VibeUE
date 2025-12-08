@@ -3,12 +3,10 @@
 #include "Chat/VibeUEAPIClient.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
-#include "Interfaces/IHttpResponse.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
-#include "Misc/ConfigCacheIni.h"
 
 DEFINE_LOG_CATEGORY(LogVibeUEAPIClient);
 
@@ -17,8 +15,8 @@ const FString FVibeUEAPIClient::ApiKeyHeader = TEXT("X-API-Key");
 
 FString FVibeUEAPIClient::GetDefaultEndpoint()
 {
-    // Direct RunPod endpoint (fallback while llm.vibeue.com DNS is being fixed)
-    return TEXT("https://hy6vuonocdjtwu-8000.proxy.runpod.net/v1/chat/completions");
+    // VibeUE LLM API endpoint
+    return TEXT("https://llm.vibeue.com/v1/chat/completions");
 }
 
 FString FVibeUEAPIClient::GetDefaultSystemPrompt()
@@ -33,13 +31,7 @@ FString FVibeUEAPIClient::GetDefaultSystemPrompt()
 
 FVibeUEAPIClient::FVibeUEAPIClient()
     : EndpointUrl(GetDefaultEndpoint())
-    , bToolCallsDetectedInStream(false)
 {
-}
-
-FVibeUEAPIClient::~FVibeUEAPIClient()
-{
-    CancelRequest();
 }
 
 FLLMProviderInfo FVibeUEAPIClient::GetProviderInfo() const
@@ -68,57 +60,27 @@ void FVibeUEAPIClient::SetEndpointUrl(const FString& InUrl)
     EndpointUrl = InUrl;
 }
 
-void FVibeUEAPIClient::CancelRequest()
+FString FVibeUEAPIClient::ProcessErrorResponse(int32 ResponseCode, const FString& ResponseBody)
 {
-    if (CurrentRequest.IsValid())
+    if (ResponseCode == 401)
     {
-        CurrentRequest->CancelRequest();
-        CurrentRequest.Reset();
+        return TEXT("Invalid VibeUE API key. Please check your API key in settings.");
     }
-    StreamBuffer.Empty();
-    PendingToolCalls.Empty();
-    bToolCallsDetectedInStream = false;
+    
+    // Use base class implementation for other errors
+    return FLLMClientBase::ProcessErrorResponse(ResponseCode, ResponseBody);
 }
 
-bool FVibeUEAPIClient::IsRequestInProgress() const
-{
-    return CurrentRequest.IsValid() && 
-           CurrentRequest->GetStatus() == EHttpRequestStatus::Processing;
-}
-
-void FVibeUEAPIClient::SendChatRequest(
+TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest(
     const TArray<FChatMessage>& Messages,
-    const FString& ModelId,  // Ignored - VibeUE uses a single model
-    const TArray<FMCPTool>& Tools,
-    FOnLLMStreamChunk OnChunk,
-    FOnLLMStreamComplete OnComplete,
-    FOnLLMStreamError OnError,
-    FOnLLMToolCall OnToolCall,
-    FOnLLMUsageReceived OnUsage)
+    const FString& ModelId,
+    const TArray<FMCPTool>& Tools)
 {
-    // Cancel any existing request
-    CancelRequest();
-
-    // Store delegates
-    CurrentOnChunk = OnChunk;
-    CurrentOnComplete = OnComplete;
-    CurrentOnError = OnError;
-    CurrentOnToolCall = OnToolCall;
-    CurrentOnUsage = OnUsage;
-
     // Check for API key
     if (!HasApiKey())
     {
-        UE_LOG(LogVibeUEAPIClient, Error, TEXT("No VibeUE API key configured"));
-        if (OnError.IsBound())
-        {
-            OnError.Execute(TEXT("VibeUE API key not configured. Please set your API key in the settings."));
-        }
-        if (OnComplete.IsBound())
-        {
-            OnComplete.Execute(false);
-        }
-        return;
+        OnPreRequestError(TEXT("VibeUE API key not configured. Please set your API key in the settings."));
+        return nullptr;
     }
 
     // Build messages array
@@ -183,38 +145,17 @@ void FVibeUEAPIClient::SendChatRequest(
     StreamOptions->SetBoolField(TEXT("include_usage"), true);
     RequestBody->SetObjectField(TEXT("stream_options"), StreamOptions);
 
-    // Add tools if provided
+    // Add tools if provided (use same format as OpenRouter)
     if (Tools.Num() > 0)
     {
         TArray<TSharedPtr<FJsonValue>> ToolsArray;
         for (const FMCPTool& Tool : Tools)
         {
-            TSharedPtr<FJsonObject> ToolObj = MakeShareable(new FJsonObject());
-            ToolObj->SetStringField(TEXT("type"), TEXT("function"));
-
-            TSharedPtr<FJsonObject> FunctionObj = MakeShareable(new FJsonObject());
-            FunctionObj->SetStringField(TEXT("name"), Tool.Name);
-            FunctionObj->SetStringField(TEXT("description"), Tool.Description);
-
-            // InputSchema is already a TSharedPtr<FJsonObject>
-            if (Tool.InputSchema.IsValid())
-            {
-                FunctionObj->SetObjectField(TEXT("parameters"), Tool.InputSchema);
-            }
-            else
-            {
-                // Empty parameters object if no schema
-                TSharedPtr<FJsonObject> EmptyParams = MakeShareable(new FJsonObject());
-                EmptyParams->SetStringField(TEXT("type"), TEXT("object"));
-                EmptyParams->SetObjectField(TEXT("properties"), MakeShareable(new FJsonObject()));
-                FunctionObj->SetObjectField(TEXT("parameters"), EmptyParams);
-            }
-
-            ToolObj->SetObjectField(TEXT("function"), FunctionObj);
-            ToolsArray.Add(MakeShareable(new FJsonValueObject(ToolObj)));
+            ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
-        RequestBody->SetStringField(TEXT("tool_choice"), TEXT("auto"));
+        
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Including %d tools in request"), Tools.Num());
     }
 
     // Serialize to JSON string
@@ -225,309 +166,12 @@ void FVibeUEAPIClient::SendChatRequest(
     UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Sending chat request to VibeUE API: %s"), *EndpointUrl);
 
     // Create HTTP request
-    CurrentRequest = FHttpModule::Get().CreateRequest();
-    CurrentRequest->SetURL(EndpointUrl);
-    CurrentRequest->SetVerb(TEXT("POST"));
-    CurrentRequest->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
-    CurrentRequest->SetHeader(ApiKeyHeader, ApiKey);
-    CurrentRequest->SetContentAsString(RequestBodyString);
+    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(EndpointUrl);
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
+    Request->SetHeader(ApiKeyHeader, ApiKey);
+    Request->SetContentAsString(RequestBodyString);
 
-    // Bind streaming callbacks
-    CurrentRequest->OnRequestProgress64().BindRaw(this, &FVibeUEAPIClient::HandleRequestProgress);
-    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FVibeUEAPIClient::HandleRequestComplete);
-
-    // Send the request
-    CurrentRequest->ProcessRequest();
-}
-
-void FVibeUEAPIClient::HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
-{
-    if (!Request.IsValid() || !Request->GetResponse().IsValid())
-    {
-        return;
-    }
-
-    FString ResponseContent = Request->GetResponse()->GetContentAsString();
-    
-    // Only process new content
-    if (ResponseContent.Len() > StreamBuffer.Len())
-    {
-        FString NewContent = ResponseContent.RightChop(StreamBuffer.Len());
-        StreamBuffer = ResponseContent;
-        ProcessSSEData(NewContent);
-    }
-}
-
-void FVibeUEAPIClient::ProcessSSEData(const FString& Data)
-{
-    // Split by newlines and process each SSE event
-    TArray<FString> Lines;
-    Data.ParseIntoArray(Lines, TEXT("\n"), true);
-
-    for (const FString& Line : Lines)
-    {
-        // Skip empty lines and comments
-        FString TrimmedLine = Line.TrimStartAndEnd();
-        if (TrimmedLine.IsEmpty() || TrimmedLine.StartsWith(TEXT(":")))
-        {
-            continue;
-        }
-
-        // Handle SSE data lines
-        if (TrimmedLine.StartsWith(TEXT("data: ")))
-        {
-            FString JsonData = TrimmedLine.RightChop(6); // Remove "data: " prefix
-            
-            // Check for stream end
-            if (JsonData == TEXT("[DONE]"))
-            {
-                // Process any pending tool calls
-                if (PendingToolCalls.Num() > 0 && CurrentOnToolCall.IsBound())
-                {
-                    // Sort by index and execute
-                    TArray<int32> Indices;
-                    PendingToolCalls.GetKeys(Indices);
-                    Indices.Sort();
-
-                    for (int32 Index : Indices)
-                    {
-                        CurrentOnToolCall.Execute(PendingToolCalls[Index]);
-                    }
-                }
-                continue;
-            }
-
-            // Parse JSON
-            TSharedPtr<FJsonObject> JsonObject;
-            TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonData);
-            if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
-            {
-                continue;
-            }
-
-            // Check for error
-            if (JsonObject->HasField(TEXT("error")))
-            {
-                const TSharedPtr<FJsonObject>* ErrorObj;
-                if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
-                {
-                    FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
-                    UE_LOG(LogVibeUEAPIClient, Error, TEXT("VibeUE API error: %s"), *ErrorMessage);
-                    if (CurrentOnError.IsBound())
-                    {
-                        CurrentOnError.Execute(ErrorMessage);
-                    }
-                }
-                continue;
-            }
-
-            // Check for usage stats
-            const TSharedPtr<FJsonObject>* UsageObj;
-            if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj) && CurrentOnUsage.IsBound())
-            {
-                int32 PromptTokens = (*UsageObj)->GetIntegerField(TEXT("prompt_tokens"));
-                int32 CompletionTokens = (*UsageObj)->GetIntegerField(TEXT("completion_tokens"));
-                CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
-            }
-
-            // Process choices
-            const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
-            if (JsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray))
-            {
-                for (const TSharedPtr<FJsonValue>& ChoiceValue : *ChoicesArray)
-                {
-                    const TSharedPtr<FJsonObject>* ChoiceObj;
-                    if (!ChoiceValue->TryGetObject(ChoiceObj))
-                    {
-                        continue;
-                    }
-
-                    // Get delta object (for streaming)
-                    const TSharedPtr<FJsonObject>* DeltaObj;
-                    if ((*ChoiceObj)->TryGetObjectField(TEXT("delta"), DeltaObj))
-                    {
-                        // Check for tool calls in delta
-                        const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
-                        if ((*DeltaObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray))
-                        {
-                            bToolCallsDetectedInStream = true;
-                            
-                            for (const TSharedPtr<FJsonValue>& ToolCallValue : *ToolCallsArray)
-                            {
-                                const TSharedPtr<FJsonObject>* ToolCallObj;
-                                if (!ToolCallValue->TryGetObject(ToolCallObj))
-                                {
-                                    continue;
-                                }
-
-                                int32 ToolIndex = (*ToolCallObj)->GetIntegerField(TEXT("index"));
-                                
-                                // Initialize tool call if not exists
-                                if (!PendingToolCalls.Contains(ToolIndex))
-                                {
-                                    FMCPToolCall NewToolCall;
-                                    PendingToolCalls.Add(ToolIndex, NewToolCall);
-                                }
-
-                                FMCPToolCall& ToolCall = PendingToolCalls[ToolIndex];
-
-                                // Get ID if present
-                                FString ToolCallId;
-                                if ((*ToolCallObj)->TryGetStringField(TEXT("id"), ToolCallId))
-                                {
-                                    ToolCall.Id = ToolCallId;
-                                }
-
-                                // Get function details
-                                const TSharedPtr<FJsonObject>* FunctionObj;
-                                if ((*ToolCallObj)->TryGetObjectField(TEXT("function"), FunctionObj))
-                                {
-                                    FString FunctionName;
-                                    if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
-                                    {
-                                        ToolCall.ToolName = FunctionName;
-                                    }
-
-                                    FString FunctionArgs;
-                                    if ((*FunctionObj)->TryGetStringField(TEXT("arguments"), FunctionArgs))
-                                    {
-                                        ToolCall.ArgumentsJson += FunctionArgs; // Accumulate arguments
-                                    }
-                                }
-                            }
-                        }
-
-                        // Get content if present (skip if we have tool calls)
-                        FString DeltaContent;
-                        if ((*DeltaObj)->TryGetStringField(TEXT("content"), DeltaContent) && 
-                            !bToolCallsDetectedInStream && 
-                            !DeltaContent.IsEmpty())
-                        {
-                            // Strip <think>...</think> tags from Qwen3 responses
-                            // The thinking content is between <think> and </think> tags
-                            static bool bInThinkBlock = false;
-                            FString CleanContent;
-                            
-                            int32 ThinkStart = DeltaContent.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
-                            int32 ThinkEnd = DeltaContent.Find(TEXT("</think>"), ESearchCase::IgnoreCase);
-                            
-                            if (ThinkStart != INDEX_NONE || bInThinkBlock)
-                            {
-                                if (ThinkStart != INDEX_NONE && ThinkEnd != INDEX_NONE && ThinkEnd > ThinkStart)
-                                {
-                                    // Complete think block in this chunk
-                                    CleanContent = DeltaContent.Left(ThinkStart) + DeltaContent.Mid(ThinkEnd + 8);
-                                    bInThinkBlock = false;
-                                }
-                                else if (ThinkStart != INDEX_NONE)
-                                {
-                                    // Think block starts but doesn't end
-                                    CleanContent = DeltaContent.Left(ThinkStart);
-                                    bInThinkBlock = true;
-                                }
-                                else if (ThinkEnd != INDEX_NONE)
-                                {
-                                    // Think block ends
-                                    CleanContent = DeltaContent.Mid(ThinkEnd + 8);
-                                    bInThinkBlock = false;
-                                }
-                                else
-                                {
-                                    // Still inside think block
-                                    CleanContent = TEXT("");
-                                }
-                            }
-                            else
-                            {
-                                CleanContent = DeltaContent;
-                            }
-
-                            if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
-                            {
-                                CurrentOnChunk.Execute(CleanContent);
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-void FVibeUEAPIClient::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
-{
-    if (!bConnectedSuccessfully)
-    {
-        UE_LOG(LogVibeUEAPIClient, Error, TEXT("VibeUE API request failed - connection error"));
-        if (CurrentOnError.IsBound())
-        {
-            CurrentOnError.Execute(TEXT("Failed to connect to VibeUE API. Please check your network connection."));
-        }
-        if (CurrentOnComplete.IsBound())
-        {
-            CurrentOnComplete.Execute(false);
-        }
-        CurrentRequest.Reset();
-        return;
-    }
-
-    int32 ResponseCode = Response.IsValid() ? Response->GetResponseCode() : 0;
-    
-    if (ResponseCode == 200)
-    {
-        UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("VibeUE API request completed successfully"));
-        if (CurrentOnComplete.IsBound())
-        {
-            CurrentOnComplete.Execute(true);
-        }
-    }
-    else if (ResponseCode == 401)
-    {
-        UE_LOG(LogVibeUEAPIClient, Error, TEXT("VibeUE API authentication failed - invalid API key"));
-        if (CurrentOnError.IsBound())
-        {
-            CurrentOnError.Execute(TEXT("Invalid VibeUE API key. Please check your API key in settings."));
-        }
-        if (CurrentOnComplete.IsBound())
-        {
-            CurrentOnComplete.Execute(false);
-        }
-    }
-    else
-    {
-        FString ErrorMessage = FString::Printf(TEXT("VibeUE API error (HTTP %d)"), ResponseCode);
-        if (Response.IsValid())
-        {
-            FString ResponseBody = Response->GetContentAsString();
-            if (!ResponseBody.IsEmpty())
-            {
-                // Try to parse error message from JSON
-                TSharedPtr<FJsonObject> JsonObject;
-                TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
-                if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
-                {
-                    FString Detail;
-                    if (JsonObject->TryGetStringField(TEXT("detail"), Detail))
-                    {
-                        ErrorMessage = Detail;
-                    }
-                }
-            }
-        }
-        UE_LOG(LogVibeUEAPIClient, Error, TEXT("VibeUE API error: %s"), *ErrorMessage);
-        if (CurrentOnError.IsBound())
-        {
-            CurrentOnError.Execute(ErrorMessage);
-        }
-        if (CurrentOnComplete.IsBound())
-        {
-            CurrentOnComplete.Execute(false);
-        }
-    }
-
-    // Clean up
-    CurrentRequest.Reset();
-    StreamBuffer.Empty();
-    PendingToolCalls.Empty();
-    bToolCallsDetectedInStream = false;
+    return Request;
 }

@@ -290,6 +290,12 @@ private:
     /** Number of tool calls pending completion */
     int32 PendingToolCallCount = 0;
     
+    /** Number of tool call iterations (follow-up rounds) */
+    int32 ToolCallIterationCount = 0;
+    
+    /** Maximum allowed tool call iterations before forcing a text response */
+    static constexpr int32 MaxToolCallIterations = 10;
+    
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;
 };

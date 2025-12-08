@@ -781,10 +781,23 @@ FReply SAIChatWindow::OnSettingsClicked()
         ProviderOptions->Add(MakeShared<FString>(ProviderInfo.DisplayName));
     }
     
-    // Current selection
+    // Current selection - find the matching item from the options array
     ELLMProvider CurrentProvider = FChatSession::GetProviderFromConfig();
-    TSharedPtr<FString> SelectedProvider = MakeShared<FString>(
-        CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"));
+    FString CurrentProviderName = CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter");
+    TSharedPtr<FString> SelectedProvider;
+    for (const TSharedPtr<FString>& Option : *ProviderOptions)
+    {
+        if (Option.IsValid() && *Option == CurrentProviderName)
+        {
+            SelectedProvider = Option;
+            break;
+        }
+    }
+    // Fallback to first option if not found
+    if (!SelectedProvider.IsValid() && ProviderOptions->Num() > 0)
+    {
+        SelectedProvider = (*ProviderOptions)[0];
+    }
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
     
     // Determine current mode using the same logic as initialization
@@ -811,23 +824,23 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SComboBox<TSharedPtr<FString>>)
             .OptionsSource(ProviderOptions.Get())
-            .InitiallySelectedItem(*SelectedProviderPtr)
-            .OnSelectionChanged_Lambda([SelectedProviderPtr](TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
+            .InitiallySelectedItem(SelectedProvider)
+            .OnSelectionChanged_Lambda([SelectedProviderPtr, ProviderOptions](TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
             {
                 if (NewSelection.IsValid())
                 {
                     *SelectedProviderPtr = NewSelection;
                 }
             })
-            .OnGenerateWidget_Lambda([](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
+            .OnGenerateWidget_Lambda([ProviderOptions](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
             {
                 return SNew(STextBlock)
-                    .Text(FText::FromString(*Item));
+                    .Text(Item.IsValid() ? FText::FromString(*Item) : FText::FromString(TEXT("Invalid")));
             })
             .Content()
             [
                 SNew(STextBlock)
-                .Text_Lambda([SelectedProviderPtr]() -> FText
+                .Text_Lambda([SelectedProviderPtr, ProviderOptions]() -> FText
                 {
                     return SelectedProviderPtr->IsValid() ? FText::FromString(**SelectedProviderPtr) : FText::FromString(TEXT("Select Provider"));
                 })
@@ -848,6 +861,27 @@ FReply SAIChatWindow::OnSettingsClicked()
             SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
             .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
             .IsPassword(true)
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4, 8, 0)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SNew(SButton)
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([]() -> FReply {
+                    FPlatformProcess::LaunchURL(TEXT("https://www.vibeue.com/login"), nullptr, nullptr);
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Get VibeUE API key at vibeue.com")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
+                ]
+            ]
         ]
         // OpenRouter API Key
         + SVerticalBox::Slot()
@@ -1083,15 +1117,24 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
         UpdateMessageWidget(Index, Message);
     }
     
-    // When streaming finishes and debug mode is enabled, show usage stats
-    if (!Message.bIsStreaming && Message.Role == TEXT("assistant") && FChatSession::IsDebugModeEnabled())
+    // When streaming finishes for assistant message, update status
+    if (!Message.bIsStreaming && Message.Role == TEXT("assistant"))
     {
-        const FLLMUsageStats& Stats = ChatSession->GetUsageStats();
-        if (Stats.RequestCount > 0)
+        if (FChatSession::IsDebugModeEnabled())
         {
-            SetStatusText(FString::Printf(TEXT("Requests: %d | Tokens: %d prompt, %d completion | Session: %d total"),
-                Stats.RequestCount, Stats.TotalPromptTokens, Stats.TotalCompletionTokens,
-                Stats.TotalPromptTokens + Stats.TotalCompletionTokens));
+            // Show usage stats in debug mode
+            const FLLMUsageStats& Stats = ChatSession->GetUsageStats();
+            if (Stats.RequestCount > 0)
+            {
+                SetStatusText(FString::Printf(TEXT("Requests: %d | Tokens: %d prompt, %d completion | Session: %d total"),
+                    Stats.RequestCount, Stats.TotalPromptTokens, Stats.TotalCompletionTokens,
+                    Stats.TotalPromptTokens + Stats.TotalCompletionTokens));
+            }
+        }
+        else
+        {
+            // Clear any error message on successful response completion
+            SetStatusText(TEXT(""));
         }
     }
     
@@ -1116,6 +1159,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
     if (bSuccess)
     {
         AvailableModels.Empty();
+        SelectedModel.Reset();  // Clear old selection when fetching new models
         
         // Filter to only models that support tools, then sort
         TArray<FOpenRouterModel> FilteredModels;
@@ -1214,6 +1258,7 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
         VibeUEModelPtr->Id = TEXT("vibeue");
         VibeUEModelPtr->Name = TEXT("VibeUE");
         VibeUEModelPtr->bSupportsTools = true;
+        VibeUEModelPtr->ContextLength = 262144; // Qwen3-30B-A3B-Instruct has 256K native context
         
         AvailableModels.Add(VibeUEModelPtr);
         SelectedModel = VibeUEModelPtr;

@@ -86,6 +86,9 @@ void FChatSession::SendMessage(const FString& UserMessage)
         return;
     }
     
+    // Reset tool call iteration counter for new user message
+    ToolCallIterationCount = 0;
+    
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
     Messages.Add(UserMsg);
@@ -217,6 +220,18 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
             
+            // Debug log tool result content
+            if (IsDebugModeEnabled())
+            {
+                UE_LOG(LogChatSession, Log, TEXT("========== TOOL RESULT =========="));
+                UE_LOG(LogChatSession, Log, TEXT("Tool: %s (id=%s)"), *ToolCallCopy.ToolName, *ToolCallCopy.Id);
+                UE_LOG(LogChatSession, Log, TEXT("Success: %s"), bSuccess ? TEXT("Yes") : TEXT("No"));
+                FString ContentPreview = bSuccess ? Result.Content : Result.ErrorMessage;
+                if (ContentPreview.Len() > 500) ContentPreview = ContentPreview.Left(500) + TEXT("...");
+                UE_LOG(LogChatSession, Log, TEXT("Content: %s"), *ContentPreview);
+                UE_LOG(LogChatSession, Log, TEXT("================================="));
+            }
+            
             // Add tool result as a separate "tool" message
             FChatMessage ToolResultMsg(TEXT("tool"), bSuccess ? Result.Content : Result.ErrorMessage);
             ToolResultMsg.ToolCallId = ToolCallCopy.Id;
@@ -239,6 +254,16 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
 
 void FChatSession::SendFollowUpAfterToolCall()
 {
+    // Increment tool call iteration counter
+    ToolCallIterationCount++;
+    
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("========== FOLLOW-UP REQUEST =========="));
+        UE_LOG(LogChatSession, Log, TEXT("Sending follow-up request after tool call completion (iteration %d/%d)"), 
+            ToolCallIterationCount, MaxToolCallIterations);
+    }
+    
     // Create a new assistant message for the follow-up response
     FChatMessage AssistantMsg(TEXT("assistant"), TEXT(""));
     AssistantMsg.bIsStreaming = true;
@@ -248,8 +273,21 @@ void FChatSession::SendFollowUpAfterToolCall()
     // Build messages for API (includes the tool result)
     TArray<FChatMessage> ApiMessages = BuildApiMessages();
     
-    // Get available tools
-    TArray<FMCPTool> Tools = GetAvailableTools();
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Built %d API messages for follow-up"), ApiMessages.Num());
+    }
+    
+    // Get available tools - but if we've hit the iteration limit, send empty tools to force text response
+    TArray<FMCPTool> Tools;
+    if (ToolCallIterationCount < MaxToolCallIterations)
+    {
+        Tools = GetAvailableTools();
+    }
+    else
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("Max tool call iterations (%d) reached - forcing text response (no tools)"), MaxToolCallIterations);
+    }
     
     // Send follow-up request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
@@ -472,7 +510,11 @@ int32 FChatSession::GetCurrentModelContextLength() const
     }
     
     // Default context lengths for common models
-    if (CurrentModelId.Contains(TEXT("grok")))
+    if (CurrentModelId.Contains(TEXT("vibeue")) || CurrentModelId.Contains(TEXT("qwen")))
+    {
+        return 262144; // 256K for Qwen3-30B-A3B-Instruct
+    }
+    else if (CurrentModelId.Contains(TEXT("grok")))
     {
         return 131072; // 128K for Grok
     }
