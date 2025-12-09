@@ -22,13 +22,16 @@ logger = logging.getLogger("UnrealMCP")
 def register_level_actor_tools(mcp: FastMCP):
     """Register level actor management tool with MCP server."""
 
-    @mcp.tool(description="Level actor operations: add/remove, transform, properties, hierarchy. Actions: add, remove, list, find, get_info, set_transform, get_property, set_property, attach, detach, select, rename. Pass extra dict for action-specific params. Use get_help(topic='troubleshooting') for examples.")
+    @mcp.tool(description="Level actor operations: add/remove, transform, properties, hierarchy. Actions: add, remove, list, find, get_info, set_transform, get_transform, set_location, set_rotation, set_scale, focus, move_to_view, refresh_viewport, get_property, set_property, get_all_properties, set_folder, attach, detach, select, rename. For 'add' action, actor_class is REQUIRED (e.g. '/Script/Engine.SpotLight'). Use action='help' for detailed parameter info.")
     def manage_level_actors(
         ctx: Context,
         action: str,
+        help_action: str = "",
         # Core actor identification (most common)
         actor_label: str = "",
         actor_path: str = "",
+        # Actor class for 'add' action (e.g. '/Script/Engine.SpotLight', '/Script/Engine.PointLight')
+        actor_class: str = "",
         # Core transform (used by many actions)
         location: Optional[List[float]] = None,
         rotation: Optional[List[float]] = None,
@@ -40,6 +43,11 @@ def register_level_actor_tools(mcp: FastMCP):
         extra: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Route to level actor action handlers."""
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_level_actors", help_action if help_action else None)
+        
         from vibe_ue_server import get_unreal_connection
         
         unreal = get_unreal_connection()
@@ -52,23 +60,42 @@ def register_level_actor_tools(mcp: FastMCP):
         
         # Validate action
         valid_actions = [
-            # Phase 1
+            # Phase 1: Basic operations
             "add", "remove", "list", "find", "get_info",
-            # Phase 2
+            # Phase 2: Transform operations
             "set_transform", "get_transform", "set_location", "set_rotation", "set_scale",
-            # Editor view
+            # Editor view operations
             "focus", "move_to_view", "refresh_viewport",
-            # Phase 3
+            # Phase 3: Property operations
             "get_property", "set_property", "get_all_properties",
-            # Phase 4
+            # Phase 4: Hierarchy and organization
             "set_folder", "attach", "detach", "select", "rename"
         ]
         action_lower = action.lower()
         if action_lower not in valid_actions:
             return {
                 "success": False,
-                "error": f"Unknown action: {action}. Supported: {', '.join(valid_actions)}"
+                "error": f"Unknown action: {action}. Supported: {', '.join(valid_actions)}",
+                "help_tip": "Use manage_level_actors(action='help') to see all available actions and their parameters."
             }
+        
+        # Validate actor identification for actions that require it
+        actions_requiring_actor = [
+            "remove", "get_info", "set_transform", "get_transform", 
+            "set_location", "set_rotation", "set_scale",
+            "focus", "move_to_view", "get_property", "set_property", 
+            "get_all_properties", "set_folder", "attach", "detach", "select", "rename"
+        ]
+        if action_lower in actions_requiring_actor:
+            has_actor_id = actor_label or actor_path or extra.get("actor_guid") or extra.get("actor_tag")
+            if not has_actor_id:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_level_actors",
+                    action=action_lower,
+                    error_message=f"Actor identification required for '{action_lower}' action. Provide actor_label, actor_path, or extra.actor_guid",
+                    missing_params=["actor_label or actor_path"]
+                )
         
         # Build parameters - start with identification
         params = {
@@ -81,7 +108,17 @@ def register_level_actor_tools(mcp: FastMCP):
         
         # Add action params
         if action_lower == "add":
-            params["actor_class"] = extra.get("actor_class", "")
+            # Use top-level actor_class parameter, fall back to extra dict for backwards compatibility
+            effective_actor_class = actor_class or extra.get("actor_class", "")
+            if not effective_actor_class:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_level_actors",
+                    action="add",
+                    error_message="actor_class parameter is required for 'add' action",
+                    missing_params=["actor_class"]
+                )
+            params["actor_class"] = effective_actor_class
             params["actor_name"] = extra.get("actor_name", "")
             if location:
                 params["spawn_location"] = location
@@ -134,7 +171,13 @@ def register_level_actor_tools(mcp: FastMCP):
             if location:
                 params["location"] = location
             else:
-                return {"success": False, "error": "location parameter is required for set_location"}
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_level_actors",
+                    action="set_location",
+                    error_message="location parameter is required for 'set_location' action",
+                    missing_params=["location"]
+                )
             params["world_space"] = extra.get("world_space", True)
             params["sweep"] = extra.get("sweep", False)
         
@@ -142,14 +185,26 @@ def register_level_actor_tools(mcp: FastMCP):
             if rotation:
                 params["rotation"] = rotation
             else:
-                return {"success": False, "error": "rotation parameter is required for set_rotation"}
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_level_actors",
+                    action="set_rotation",
+                    error_message="rotation parameter is required for 'set_rotation' action",
+                    missing_params=["rotation"]
+                )
             params["world_space"] = extra.get("world_space", True)
         
         if action_lower == "set_scale":
             if scale:
                 params["scale"] = scale
             else:
-                return {"success": False, "error": "scale parameter is required for set_scale"}
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_level_actors",
+                    action="set_scale",
+                    error_message="scale parameter is required for 'set_scale' action",
+                    missing_params=["scale"]
+                )
         
         # Editor view operations
         if action_lower == "focus":

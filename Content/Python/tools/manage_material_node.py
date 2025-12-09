@@ -53,10 +53,11 @@ def register_material_node_tools(mcp: FastMCP):
     """Register material node management tool with MCP server."""
     logger.info("Registering material node management tools...")
 
-    @mcp.tool(description="Material graph node operations: discover types, create expressions, connect pins, configure properties. Actions: discover_types, create, delete, move, list, connect, disconnect, connect_to_output, get_property, set_property, promote_to_parameter. Use get_help(topic='material-management') for examples.")
+    @mcp.tool(description="Material graph node operations: discover types, create expressions, connect pins, configure properties. Actions: discover_types, get_categories, create, delete, move, list, get_details, get_pins, connect, disconnect, connect_to_output, disconnect_output, list_connections, get_property, set_property, list_properties, promote_to_parameter, create_parameter, set_parameter_metadata, get_output_properties, get_output_connections. Use action='help' for all actions and detailed parameter info.")
     def manage_material_node(
         ctx: Context,
         action: str,
+        help_action: str = "",
         # Material identification
         material_path: str = "",
         # Expression identification
@@ -88,9 +89,154 @@ def register_material_node_tools(mcp: FastMCP):
         max_results: int = 100,
     ) -> Dict[str, Any]:
         """Route to material node action handlers."""
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_material_node", help_action if help_action else None)
+        
+        # Import error response helper
+        from help_system import generate_error_response
+        
         from vibe_ue_server import get_unreal_connection
         
+        # Validate action is provided
+        if not action:
+            return generate_error_response(
+                "manage_material_node", "",
+                "action is required. Use action='help' to see all available actions."
+            )
+        
         action_lower = action.lower()
+        
+        # Valid actions
+        valid_actions = [
+            "discover_types", "get_categories",
+            "create", "delete", "move", "list", "get_details", "get_pins",
+            "connect", "disconnect", "connect_to_output", "disconnect_output", "list_connections",
+            "get_property", "set_property", "list_properties",
+            "promote_to_parameter", "create_parameter", "set_parameter_metadata",
+            "get_output_properties", "get_output_connections"
+        ]
+        
+        if action_lower not in valid_actions:
+            return generate_error_response(
+                "manage_material_node", action,
+                f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
+            )
+        
+        # Action-specific validation
+        missing = []
+        
+        # Most actions require material_path
+        material_required_actions = [
+            "create", "delete", "move", "list", "get_details", "get_pins",
+            "connect", "disconnect", "connect_to_output", "disconnect_output", "list_connections",
+            "get_property", "set_property", "list_properties",
+            "promote_to_parameter", "create_parameter", "set_parameter_metadata",
+            "get_output_properties", "get_output_connections"
+        ]
+        
+        if action_lower in material_required_actions and not material_path:
+            return generate_error_response(
+                "manage_material_node", action,
+                f"{action} requires 'material_path'",
+                missing_params=["material_path"]
+            )
+        
+        # Expression-based actions need expression_id
+        expression_required_actions = ["delete", "move", "get_details", "get_pins", "promote_to_parameter", "set_parameter_metadata"]
+        if action_lower in expression_required_actions and not expression_id:
+            return generate_error_response(
+                "manage_material_node", action,
+                f"{action} requires 'expression_id'",
+                missing_params=["expression_id"]
+            )
+        
+        # Create action validation
+        if action_lower == "create":
+            if not expression_class:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    "create requires 'expression_class'. Use discover_types to find available expression types.",
+                    missing_params=["expression_class"]
+                )
+        
+        # Connect action validation
+        if action_lower == "connect":
+            if not source_expression_id:
+                missing.append("source_expression_id")
+            if not target_expression_id:
+                missing.append("target_expression_id")
+            if not target_input and not input_name:
+                missing.append("target_input (or input_name)")
+            if missing:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    f"connect requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        # Disconnect action validation
+        if action_lower == "disconnect":
+            if not expression_id:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    "disconnect requires 'expression_id' and optionally 'input_name'",
+                    missing_params=["expression_id"]
+                )
+        
+        # Connect to output validation
+        if action_lower == "connect_to_output":
+            if not expression_id:
+                missing.append("expression_id")
+            if not material_property:
+                missing.append("material_property")
+            if missing:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    f"connect_to_output requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        # Property operations validation
+        if action_lower == "get_property":
+            if not expression_id:
+                missing.append("expression_id")
+            if not property_name:
+                missing.append("property_name")
+            if missing:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    f"get_property requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        if action_lower == "set_property":
+            if not expression_id:
+                missing.append("expression_id")
+            if not property_name:
+                missing.append("property_name")
+            if not value:
+                missing.append("value")
+            if missing:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    f"set_property requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        # Create parameter validation
+        if action_lower == "create_parameter":
+            if not parameter_type:
+                missing.append("parameter_type")
+            if not parameter_name:
+                missing.append("parameter_name")
+            if missing:
+                return generate_error_response(
+                    "manage_material_node", action,
+                    f"create_parameter requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
         
         # Build params
         params = {

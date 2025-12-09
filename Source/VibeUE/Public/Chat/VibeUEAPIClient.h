@@ -45,6 +45,23 @@ public:
     /** Get the default system prompt */
     static FString GetDefaultSystemPrompt();
 
+    /** Set LLM generation parameters */
+    void SetTemperature(float InTemperature) { Temperature = FMath::Clamp(InTemperature, 0.0f, 2.0f); }
+    void SetTopP(float InTopP) { TopP = FMath::Clamp(InTopP, 0.0f, 1.0f); }
+    void SetMaxTokens(int32 InMaxTokens) { MaxTokens = FMath::Clamp(InMaxTokens, 256, 16384); }
+    
+    /** Get LLM generation parameters */
+    float GetTemperature() const { return Temperature; }
+    float GetTopP() const { return TopP; }
+    int32 GetMaxTokens() const { return MaxTokens; }
+    
+    /** Default values (optimized for coding assistants) */
+    static constexpr float DefaultTemperature = 0.2f;
+    static constexpr float DefaultTopP = 0.95f;
+    static constexpr int32 DefaultMaxTokens = 8192;
+    static constexpr int32 MinMaxTokens = 256;
+    static constexpr int32 MaxMaxTokens = 16384;
+
 protected:
     //~ Begin FLLMClientBase Interface
     virtual TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> BuildHttpRequest(
@@ -62,6 +79,11 @@ private:
 
     /** API endpoint URL */
     FString EndpointUrl;
+    
+    /** LLM generation parameters */
+    float Temperature = DefaultTemperature;
+    float TopP = DefaultTopP;
+    int32 MaxTokens = DefaultMaxTokens;
 
     /** HTTP headers */
     static const FString ContentTypeHeader;

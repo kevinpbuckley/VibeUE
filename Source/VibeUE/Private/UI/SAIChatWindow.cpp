@@ -5,12 +5,14 @@
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
 #include "Chat/ILLMClient.h"
+#include "Chat/VibeUEAPIClient.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
 #include "Widgets/Input/SButton.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Input/SCheckBox.h"
+#include "Widgets/Input/SSpinBox.h"
 #include "Widgets/Text/STextBlock.h"
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
@@ -195,8 +197,9 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         .MaxDesiredHeight(54.0f)
                         [
                             SAssignNew(InputTextBox, SMultiLineEditableTextBox)
-                            .HintText(FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)")))
+                            .HintText(this, &SAIChatWindow::GetInputHintText)
                             .AutoWrapText(true)
+                            .IsReadOnly(this, &SAIChatWindow::IsInputReadOnly)
                             .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
                         ]
                     ]
@@ -764,7 +767,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Show API key input dialog
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(500, 450))
+        .ClientSize(FVector2D(500, 620))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
     
@@ -772,6 +775,14 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> EngineModeCheckBox;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
+    TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
+    TSharedPtr<SSpinBox<float>> TopPSpinBox;
+    TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
+    
+    // Load current LLM parameter values
+    float CurrentTemperature = FChatSession::GetTemperatureFromConfig();
+    float CurrentTopP = FChatSession::GetTopPFromConfig();
+    int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -967,6 +978,90 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
             ]
         ]
+        // ============ LLM Generation Parameters (VibeUE only) ============
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 16, 8, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("LLM Generation Parameters (VibeUE only):")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+        // Temperature
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(0.4f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Temperature:")))
+                .ToolTipText(FText::FromString(TEXT("Lower = more deterministic (better for code). Range: 0.0-2.0. Default: 0.2")))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(0.6f)
+            [
+                SAssignNew(TemperatureSpinBox, SSpinBox<float>)
+                .MinValue(0.0f)
+                .MaxValue(2.0f)
+                .Delta(0.05f)
+                .Value(CurrentTemperature)
+                .MinDesiredWidth(100)
+            ]
+        ]
+        // Top P
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(0.4f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Top P:")))
+                .ToolTipText(FText::FromString(TEXT("Nucleus sampling. Range: 0.0-1.0. Default: 0.95")))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(0.6f)
+            [
+                SAssignNew(TopPSpinBox, SSpinBox<float>)
+                .MinValue(0.0f)
+                .MaxValue(1.0f)
+                .Delta(0.05f)
+                .Value(CurrentTopP)
+                .MinDesiredWidth(100)
+            ]
+        ]
+        // Max Tokens
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(0.4f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Max Tokens:")))
+                .ToolTipText(FText::FromString(TEXT("Maximum response length. Range: 256-16384. Default: 8192")))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(0.6f)
+            [
+                SAssignNew(MaxTokensSpinBox, SSpinBox<int32>)
+                .MinValue(256)
+                .MaxValue(16384)
+                .Delta(256)
+                .Value(CurrentMaxTokens)
+                .MinDesiredWidth(100)
+            ]
+        ]
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8, 8, 8, 0)
@@ -992,7 +1087,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -1018,6 +1113,14 @@ FReply SAIChatWindow::OnSettingsClicked()
                 bool bNewDebugMode = DebugModeCheckBox->IsChecked();
                 FChatSession::SetDebugModeEnabled(bNewDebugMode);
                 
+                // Save LLM generation parameters
+                FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
+                FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
+                FChatSession::SaveMaxTokensToConfig(MaxTokensSpinBox->GetValue());
+                
+                // Apply the new LLM parameters to the client
+                ChatSession->ApplyLLMParametersToClient();
+                
                 GConfig->Flush(false, GEditorPerProjectIni);
                 
                 // Reinitialize MCP with new mode (this properly shuts down, clears state, and rediscovers tools)
@@ -1041,14 +1144,24 @@ FReply SAIChatWindow::OnSettingsClicked()
 
 void SAIChatWindow::OnInputTextCommitted(const FText& Text, ETextCommit::Type CommitType)
 {
-    if (CommitType == ETextCommit::OnEnter)
+    // NOTE: We intentionally do NOT handle OnEnter here.
+    // The OnInputKeyDown handler already handles Enter key presses.
+    // Handling it here too would cause duplicate message sends.
+    // OnUserInteraction is handled there instead.
+    if (CommitType == ETextCommit::OnUserMovedFocus)
     {
-        OnSendClicked();
+        // Optional: could send on focus loss if desired
     }
 }
 
 FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEvent& InKeyEvent)
 {
+    // Block input while a request is in progress
+    if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
+    {
+        return FReply::Handled(); // Consume the key press but don't do anything
+    }
+    
     // Enter without Shift sends the message
     // Shift+Enter inserts a new line (default behavior)
     if (InKeyEvent.GetKey() == EKeys::Enter && !InKeyEvent.IsShiftDown())
@@ -1310,6 +1423,21 @@ bool SAIChatWindow::IsSendEnabled() const
     return ChatSession.IsValid() && 
            ChatSession->HasApiKey() && 
            !ChatSession->IsRequestInProgress();
+}
+
+bool SAIChatWindow::IsInputReadOnly() const
+{
+    // Make input read-only while a request is in progress
+    return ChatSession.IsValid() && ChatSession->IsRequestInProgress();
+}
+
+FText SAIChatWindow::GetInputHintText() const
+{
+    if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
+    {
+        return FText::FromString(TEXT("Waiting for AI response..."));
+    }
+    return FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)"));
 }
 
 void SAIChatWindow::CopyMessageToClipboard(int32 MessageIndex)

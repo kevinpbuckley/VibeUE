@@ -147,6 +147,12 @@ private:
     /** Check if send is enabled */
     bool IsSendEnabled() const;
     
+    /** Check if input should be read-only (during request) */
+    bool IsInputReadOnly() const;
+    
+    /** Get dynamic hint text for input box */
+    FText GetInputHintText() const;
+    
     /** Copy message content to clipboard */
     void CopyMessageToClipboard(int32 MessageIndex);
     

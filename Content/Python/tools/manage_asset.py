@@ -12,6 +12,7 @@ logger = logging.getLogger("UnrealMCP")
 
 # Valid actions for the manage_asset tool
 VALID_ACTIONS = [
+    "help",
     "search",
     "import_texture",
     "export_texture",
@@ -28,10 +29,12 @@ VALID_ACTIONS = [
 def register_asset_tools(mcp: FastMCP):
     """Register unified asset manager tool with the MCP server."""
 
-    @mcp.tool(description="Manage project assets: search, import/export textures, duplicate, delete, save. Actions: search, import_texture, export_texture, delete, open_in_editor, svg_to_png, duplicate, save, save_all, list_references. Use get_help(topic='asset-discovery') for examples.")
+    @mcp.tool(description="Manage project assets: search, import/export textures, duplicate, delete, save. Actions: search, import_texture, export_texture, delete, open_in_editor, svg_to_png, duplicate, save, save_all, list_references. Use action='help' for all actions and detailed parameter info.")
     def manage_asset(
         ctx: Context,
         action: str,
+        # Help parameters
+        help_action: str = "",
         # Search parameters
         search_term: str = "",
         asset_type: str = "",
@@ -76,6 +79,92 @@ def register_asset_tools(mcp: FastMCP):
         """Route to action handlers based on action parameter."""
         action = action.lower()
         
+        # Handle help action
+        if action == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_asset", help_action if help_action else None)
+        
+        # Import error response helper
+        from help_system import generate_error_response
+        
+        # Validate action
+        if action not in VALID_ACTIONS:
+            return generate_error_response(
+                "manage_asset", action,
+                f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
+            )
+        
+        # Action-specific validation
+        missing = []
+        
+        if action == "import_texture":
+            if not file_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "import_texture requires 'file_path' (path to the image file)",
+                    missing_params=["file_path"]
+                )
+        
+        elif action == "export_texture":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "export_texture requires 'asset_path' (path to texture asset)",
+                    missing_params=["asset_path"]
+                )
+        
+        elif action == "delete":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "delete requires 'asset_path' (path to asset to delete)",
+                    missing_params=["asset_path"]
+                )
+        
+        elif action == "open_in_editor":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "open_in_editor requires 'asset_path' (path to asset to open)",
+                    missing_params=["asset_path"]
+                )
+        
+        elif action == "svg_to_png":
+            if not svg_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "svg_to_png requires 'svg_path' (path to SVG file)",
+                    missing_params=["svg_path"]
+                )
+        
+        elif action == "duplicate":
+            if not asset_path:
+                missing.append("asset_path")
+            if not new_name:
+                missing.append("new_name")
+            if missing:
+                return generate_error_response(
+                    "manage_asset", action,
+                    f"duplicate requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action == "save":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "save requires 'asset_path' (path to asset to save)",
+                    missing_params=["asset_path"]
+                )
+        
+        elif action == "list_references":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_asset", action,
+                    "list_references requires 'asset_path'",
+                    missing_params=["asset_path"]
+                )
+        
         # Route to appropriate handler
         if action == "search":
             return _handle_search(
@@ -113,10 +202,11 @@ def register_asset_tools(mcp: FastMCP):
         elif action == "list_references":
             return _handle_list_references(asset_path, include_dependencies)
         else:
-            return {
-                "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
-            }
+            # This should not be reached due to validation above, but kept for safety
+            return generate_error_response(
+                "manage_asset", action,
+                f"Unknown action '{action}'. Valid actions: {', '.join(VALID_ACTIONS)}"
+            )
 
 
 def _handle_search(

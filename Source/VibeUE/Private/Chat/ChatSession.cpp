@@ -52,6 +52,9 @@ void FChatSession::Initialize()
         VibeUEClient->SetEndpointUrl(VibeUEEndpoint);
     }
     
+    // Apply LLM generation parameters to VibeUE client
+    ApplyLLMParametersToClient();
+    
     // Load chat history
     LoadHistory();
     
@@ -157,8 +160,25 @@ void FChatSession::OnStreamComplete(bool bSuccess)
 {
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
     {
-        Messages[CurrentStreamingMessageIndex].bIsStreaming = false;
-        OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Messages[CurrentStreamingMessageIndex]);
+        FChatMessage& Message = Messages[CurrentStreamingMessageIndex];
+        
+        // If the message is empty and has no tool calls, remove it (failed/empty response)
+        if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
+        {
+            UE_LOG(LogChatSession, Warning, TEXT("Removing empty assistant message at index %d"), CurrentStreamingMessageIndex);
+            Messages.RemoveAt(CurrentStreamingMessageIndex);
+            // Trigger a rebuild to remove the empty message from UI
+            OnChatReset.ExecuteIfBound();
+            for (int32 i = 0; i < Messages.Num(); i++)
+            {
+                OnMessageAdded.ExecuteIfBound(Messages[i]);
+            }
+        }
+        else
+        {
+            Message.bIsStreaming = false;
+            OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
+        }
     }
     
     CurrentStreamingMessageIndex = INDEX_NONE;
@@ -367,6 +387,13 @@ void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 
 bool FChatSession::IsRequestInProgress() const
 {
+    // Check if we have pending tool calls being processed
+    if (PendingToolCallCount > 0)
+    {
+        return true;
+    }
+    
+    // Check if an HTTP request is in progress
     if (CurrentProvider == ELLMProvider::VibeUE)
     {
         return VibeUEClient.IsValid() && VibeUEClient->IsRequestInProgress();
@@ -816,4 +843,61 @@ FLLMProviderInfo FChatSession::GetCurrentProviderInfo() const
 bool FChatSession::SupportsModelSelection() const
 {
     return GetCurrentProviderInfo().bSupportsModelSelection;
+}
+
+// ============ LLM Generation Parameters ============
+
+float FChatSession::GetTemperatureFromConfig()
+{
+    float Temperature = FVibeUEAPIClient::DefaultTemperature;
+    GConfig->GetFloat(TEXT("VibeUE"), TEXT("Temperature"), Temperature, GEditorPerProjectIni);
+    return FMath::Clamp(Temperature, 0.0f, 2.0f);
+}
+
+void FChatSession::SaveTemperatureToConfig(float Temperature)
+{
+    Temperature = FMath::Clamp(Temperature, 0.0f, 2.0f);
+    GConfig->SetFloat(TEXT("VibeUE"), TEXT("Temperature"), Temperature, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+float FChatSession::GetTopPFromConfig()
+{
+    float TopP = FVibeUEAPIClient::DefaultTopP;
+    GConfig->GetFloat(TEXT("VibeUE"), TEXT("TopP"), TopP, GEditorPerProjectIni);
+    return FMath::Clamp(TopP, 0.0f, 1.0f);
+}
+
+void FChatSession::SaveTopPToConfig(float TopP)
+{
+    TopP = FMath::Clamp(TopP, 0.0f, 1.0f);
+    GConfig->SetFloat(TEXT("VibeUE"), TEXT("TopP"), TopP, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FChatSession::GetMaxTokensFromConfig()
+{
+    int32 MaxTokens = FVibeUEAPIClient::DefaultMaxTokens;
+    GConfig->GetInt(TEXT("VibeUE"), TEXT("MaxTokens"), MaxTokens, GEditorPerProjectIni);
+    return FMath::Clamp(MaxTokens, FVibeUEAPIClient::MinMaxTokens, FVibeUEAPIClient::MaxMaxTokens);
+}
+
+void FChatSession::SaveMaxTokensToConfig(int32 MaxTokens)
+{
+    MaxTokens = FMath::Clamp(MaxTokens, FVibeUEAPIClient::MinMaxTokens, FVibeUEAPIClient::MaxMaxTokens);
+    GConfig->SetInt(TEXT("VibeUE"), TEXT("MaxTokens"), MaxTokens, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+void FChatSession::ApplyLLMParametersToClient()
+{
+    if (VibeUEClient.IsValid())
+    {
+        VibeUEClient->SetTemperature(GetTemperatureFromConfig());
+        VibeUEClient->SetTopP(GetTopPFromConfig());
+        VibeUEClient->SetMaxTokens(GetMaxTokensFromConfig());
+        
+        UE_LOG(LogChatSession, Log, TEXT("Applied LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d"),
+            VibeUEClient->GetTemperature(), VibeUEClient->GetTopP(), VibeUEClient->GetMaxTokens());
+    }
 }

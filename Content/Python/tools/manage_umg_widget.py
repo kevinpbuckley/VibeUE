@@ -38,10 +38,11 @@ logger = logging.getLogger("UnrealMCP")
 def register_umg_tools(mcp: FastMCP):
     """Register unified UMG management tool with the MCP server."""
 
-    @mcp.tool(description="UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_component, remove_component, get_property, set_property, list_properties, search_types, bind_events, validate. Use get_help(topic='umg-guide') for styling examples.")
+    @mcp.tool(description="UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_component, remove_component, get_property, set_property, list_properties, search_types, bind_events, validate. Use action='help' for all actions and detailed parameter info.")
     def manage_umg_widget(
         ctx: Context,
         action: str,
+        help_action: str = "",
         widget_name: str = "",
         
         # Component operations
@@ -80,6 +81,11 @@ def register_umg_tools(mcp: FastMCP):
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Route to UMG widget action handlers."""
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_umg_widget", help_action if help_action else None)
+        
         from vibe_ue_server import get_unreal_connection
         
         try:
@@ -94,11 +100,96 @@ def register_umg_tools(mcp: FastMCP):
                 "get_available_events", "bind_events"
             ]
             
+            # Import error response helper
+            from help_system import generate_error_response
+            
             if action not in valid_actions:
-                return {
-                    "success": False,
-                    "error": f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
-                }
+                return generate_error_response(
+                    "manage_umg_widget", action,
+                    f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
+                )
+            
+            # Action-specific validation before routing
+            missing = []
+            
+            # Most actions require widget_name
+            widget_required_actions = ["list_components", "add_component", "remove_component", "validate",
+                                       "get_component_properties", "get_property", "set_property",
+                                       "list_properties", "get_available_events", "bind_events"]
+            
+            if action in widget_required_actions and not widget_name:
+                return generate_error_response(
+                    "manage_umg_widget", action,
+                    f"{action} requires 'widget_name' (full path like /Game/UI/WBP_MainMenu)",
+                    missing_params=["widget_name"]
+                )
+            
+            # Component operations validation
+            if action == "add_component":
+                if not component_type:
+                    missing.append("component_type")
+                if not component_name:
+                    missing.append("component_name")
+                if missing:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        f"add_component requires: {', '.join(missing)}. Use search_types to find available component types.",
+                        missing_params=missing
+                    )
+            
+            elif action == "remove_component":
+                if not component_name:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        "remove_component requires 'component_name'",
+                        missing_params=["component_name"]
+                    )
+            
+            elif action in ["get_component_properties", "list_properties", "get_available_events"]:
+                if not component_name:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        f"{action} requires 'component_name'",
+                        missing_params=["component_name"]
+                    )
+            
+            elif action == "get_property":
+                if not component_name:
+                    missing.append("component_name")
+                if not property_name:
+                    missing.append("property_name")
+                if missing:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        f"get_property requires: {', '.join(missing)}",
+                        missing_params=missing
+                    )
+            
+            elif action == "set_property":
+                if not component_name:
+                    missing.append("component_name")
+                if not property_name:
+                    missing.append("property_name")
+                if property_value is None:
+                    missing.append("property_value")
+                if missing:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        f"set_property requires: {', '.join(missing)}",
+                        missing_params=missing
+                    )
+            
+            elif action == "bind_events":
+                if not component_name:
+                    missing.append("component_name")
+                if not input_events:
+                    missing.append("input_events")
+                if missing:
+                    return generate_error_response(
+                        "manage_umg_widget", action,
+                        f"bind_events requires: {', '.join(missing)}",
+                        missing_params=missing
+                    )
             
             # Route to appropriate handler
             if action == "list_components":
@@ -146,10 +237,11 @@ def register_umg_tools(mcp: FastMCP):
                 return _handle_bind_events(widget_name, component_name, input_events)
             
             else:
-                return {
-                    "success": False,
-                    "error": f"Action '{action}' not implemented yet"
-                }
+                # Should not be reached due to validation, but kept for safety
+                return generate_error_response(
+                    "manage_umg_widget", action,
+                    f"Action '{action}' not implemented yet"
+                )
                 
         except Exception as e:
             error_msg = f"Error in manage_umg_widget (action={action}): {e}"
@@ -166,7 +258,13 @@ def _handle_list_components(widget_name: str) -> Dict[str, Any]:
     from vibe_ue_server import get_unreal_connection
     
     if not widget_name:
-        return {"success": False, "error": "widget_name is required for list_components action"}
+        from help_system import generate_error_response
+        return generate_error_response(
+            tool_name="manage_umg_widget",
+            action="list_components",
+            error_message="widget_name is required for list_components action",
+            missing_params=["widget_name"]
+        )
     
     try:
         unreal = get_unreal_connection()

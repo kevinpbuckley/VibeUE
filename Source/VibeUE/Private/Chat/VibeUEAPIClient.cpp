@@ -140,6 +140,14 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
     RequestBody->SetBoolField(TEXT("stream"), true);
     
+    // LLM generation parameters
+    RequestBody->SetNumberField(TEXT("temperature"), Temperature);
+    RequestBody->SetNumberField(TEXT("top_p"), TopP);
+    RequestBody->SetNumberField(TEXT("max_tokens"), MaxTokens);
+    
+    UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d"), 
+        Temperature, TopP, MaxTokens);
+    
     // Stream options for usage stats
     TSharedPtr<FJsonObject> StreamOptions = MakeShareable(new FJsonObject());
     StreamOptions->SetBoolField(TEXT("include_usage"), true);

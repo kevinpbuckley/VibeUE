@@ -197,6 +197,23 @@ public:
     
     /** Set debug mode */
     static void SetDebugModeEnabled(bool bEnabled);
+    
+    // ============ LLM Generation Parameters ============
+    
+    /** Get/Set temperature (0.0-2.0, lower = more deterministic) */
+    static float GetTemperatureFromConfig();
+    static void SaveTemperatureToConfig(float Temperature);
+    
+    /** Get/Set top_p (0.0-1.0, nucleus sampling) */
+    static float GetTopPFromConfig();
+    static void SaveTopPToConfig(float TopP);
+    
+    /** Get/Set max_tokens (256-16384) */
+    static int32 GetMaxTokensFromConfig();
+    static void SaveMaxTokensToConfig(int32 MaxTokens);
+    
+    /** Apply LLM parameters to the VibeUE client */
+    void ApplyLLMParametersToClient();
 
     // Delegates
     FOnMessageAdded OnMessageAdded;

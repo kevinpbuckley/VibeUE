@@ -46,10 +46,11 @@ def _dispatch(command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 def register_enhanced_input_tools(mcp: FastMCP) -> None:
     """Register unified Enhanced Input management tool with MCP server."""
     
-    @mcp.tool(description="Enhanced Input System management: Input Actions, Mapping Contexts, Modifiers, Triggers. Services: reflection, action, mapping, modifier, trigger, ai. Actions: action_create, action_list, mapping_create_context, mapping_add_key_mapping, etc. Use get_help(topic='enhanced-input') for examples.")
+    @mcp.tool(description="Enhanced Input System management: Input Actions, Mapping Contexts, Modifiers, Triggers. Services: reflection, action, mapping, modifier, trigger, ai. Actions: action_create, action_list, mapping_create_context, mapping_add_key_mapping, etc. Use action='help' for all actions and detailed parameter info.")
     def manage_enhanced_input(
         ctx: Context,
         action: str,
+        help_action: str = "",
         service: str = "reflection",
         # Reflection & Discovery parameters
         input_type: str = "",
@@ -117,7 +118,114 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         VALUE TYPES: Digital, Axis1D, Axis2D, Axis3D
         """
         
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_enhanced_input", help_action if help_action else None)
+        
+        # Import error response helper
+        from help_system import generate_error_response
+        
+        # Validate action is provided
+        if not action:
+            return generate_error_response(
+                "manage_enhanced_input", "",
+                "action is required. Use action='help' to see all available actions."
+            )
+        
         action_lower = action.lower()
+        
+        # Valid actions by service
+        valid_actions = [
+            # Reflection service
+            "reflection_get_types", "reflection_get_properties", "reflection_get_enums",
+            # Action service
+            "action_create", "action_delete", "action_list", "action_get_properties", "action_set_property", "action_rename",
+            # Mapping service
+            "mapping_create_context", "mapping_delete_context", "mapping_list_contexts",
+            "mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
+            "mapping_get_properties", "mapping_add_modifier", "mapping_remove_modifier",
+            "mapping_add_trigger", "mapping_remove_trigger",
+            # Modifier service
+            "modifier_discover_types", "modifier_create_instance", "modifier_get_properties",
+            # Trigger service
+            "trigger_discover_types", "trigger_create_instance", "trigger_get_properties",
+            # AI service
+            "ai_parse_description", "ai_get_templates", "ai_apply_template"
+        ]
+        
+        if action_lower not in valid_actions:
+            return generate_error_response(
+                "manage_enhanced_input", action,
+                f"Invalid action '{action}'. Use action='help' to see valid actions."
+            )
+        
+        # Action-specific validation
+        missing = []
+        
+        # Action creation requires asset_path and value_type
+        if action_lower == "action_create":
+            if not asset_path:
+                missing.append("asset_path")
+            if not value_type and not action_value_type:
+                missing.append("value_type")
+            if missing:
+                return generate_error_response(
+                    "manage_enhanced_input", action,
+                    f"action_create requires: {', '.join(missing)}. Value types: Digital, Axis1D, Axis2D, Axis3D",
+                    missing_params=missing
+                )
+        
+        # Action operations require action_path
+        if action_lower in ["action_delete", "action_get_properties", "action_set_property", "action_rename"]:
+            if not action_path:
+                return generate_error_response(
+                    "manage_enhanced_input", action,
+                    f"{action} requires 'action_path' (full path to existing Input Action)",
+                    missing_params=["action_path"]
+                )
+        
+        # Mapping context creation requires asset_path
+        if action_lower == "mapping_create_context":
+            if not asset_path:
+                return generate_error_response(
+                    "manage_enhanced_input", action,
+                    "mapping_create_context requires 'asset_path'",
+                    missing_params=["asset_path"]
+                )
+        
+        # Mapping operations require context_path
+        mapping_actions = ["mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
+                          "mapping_get_properties", "mapping_add_modifier", "mapping_remove_modifier",
+                          "mapping_add_trigger", "mapping_remove_trigger", "mapping_delete_context"]
+        if action_lower in mapping_actions and not context_path:
+            return generate_error_response(
+                "manage_enhanced_input", action,
+                f"{action} requires 'context_path' (full path to existing Input Mapping Context)",
+                missing_params=["context_path"]
+            )
+        
+        # Key mapping requires action_path and key
+        if action_lower == "mapping_add_key_mapping":
+            if not action_path:
+                missing.append("action_path")
+            if not key:
+                missing.append("key")
+            if missing:
+                return generate_error_response(
+                    "manage_enhanced_input", action,
+                    f"mapping_add_key_mapping requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        # Template application
+        if action_lower == "ai_apply_template":
+            if not template_name:
+                return generate_error_response(
+                    "manage_enhanced_input", action,
+                    "ai_apply_template requires 'template_name'. Use ai_get_templates to see available templates.",
+                    missing_params=["template_name"]
+                )
         
         # Debug logging
         logger.info(f"manage_enhanced_input called with action={action_lower}, service={service}")
@@ -195,6 +303,10 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
             logger.info(f"Enhanced Input operation successful: {action}")
         else:
             logger.warning(f"Enhanced Input operation failed: {result.get('error', 'Unknown error')}")
+            # Add help tips to failed responses
+            if not result.get("help_tip"):
+                result["help_tip"] = f"Use manage_enhanced_input(action='help', help_action='{action}') to see correct parameters for this action."
+                result["general_help"] = "Use manage_enhanced_input(action='help') to see all available actions."
         
         return result
     

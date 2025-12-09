@@ -27,7 +27,9 @@ Usage:
 3. Use MCP client to interact with registered tools
 4. All responses include 'success' field for error checking
 
-For complete tool documentation, use the info() prompt.
+For complete tool documentation, use any tool's help action:
+- Tool overview: manage_asset(action="help")
+- Action details: manage_asset(action="help", help_action="search")
 """
 
 import sys
@@ -475,9 +477,9 @@ from tools.system import register_system_tools  # Connection testing, get_help
 # 3. Enhanced UMG tools (advanced capabilities)
 # This order ensures basic tools are available before enhanced features
 
-# ⚠️ CRITICAL AI REQUIREMENT: UMG tools require get_help(topic="umg-guide") to be called FIRST
-# before styling, adding components, or implementing backgrounds. The guide contains
-# essential container-specific patterns and widget hierarchy requirements.
+# ⚠️ CRITICAL AI REQUIREMENT: Each tool now has action='help' for inline documentation
+# Call tool(action='help') for tool overview, or tool(action='help', help_action='action_name')
+# for specific action details. No separate get_help tool needed anymore.
 
 # Core Blueprint Tools (9 files → 6 tools)
 register_blueprint_tools(mcp)  # manage_blueprint: create, compile, get_info, set_property, reparent, etc. (7 actions)
@@ -490,7 +492,7 @@ register_blueprint_function_tools(mcp)  # manage_blueprint_function (15+ actions
 register_enhanced_input_tools(mcp)  # manage_enhanced_input: 40+ actions for complete Enhanced Input lifecycle
 
 # Level Actor System (1 file → 1 tool) - Phases 1-4
-register_level_actor_tools(mcp)  # manage_level_actors: 18 actions (add, remove, list, find, get_info, transforms, properties, hierarchy)
+register_level_actor_tools(mcp)  # manage_level_actors: 21 actions (add, remove, list, find, get_info, transforms, get_transform, set_location, set_rotation, set_scale, focus, move_to_view, refresh_viewport, properties, hierarchy)
 
 # Material System (2 files → 2 tools)
 register_material_tools(mcp)  # manage_material: 24 actions (create, properties, parameters, instances)
@@ -502,10 +504,11 @@ register_umg_tools(mcp)  # manage_umg_widget: all UMG operations (11 actions)
 # Asset Management (1 file → 1 tool)
 register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 actions)
 
-# System Tools (1 file → 2 tools)
-register_system_tools(mcp)  # check_unreal_connection + get_help
+# System Tools (1 file → 1 tool)
+register_system_tools(mcp)  # check_unreal_connection
 
-# ✅ TOTAL: 11 Python files providing 13 MCP tools (including 2 system tools)
+# ✅ TOTAL: 11 Python files providing 12 MCP tools (including 1 system tool)
+# 🆕 REMOVED: get_help tool - now each tool has action='help' for inline help
 # 🆕 ADDED: manage_material_node tool for material graph operations
 
 # ============================================================================
@@ -527,21 +530,26 @@ if __name__ == "__main__":
     - Use search/inspect tools before making modifications
     - Compile Blueprints after graph changes
     - Handle connection failures gracefully (retry or guide user)
-    - **CRITICAL: Call get_help() when stuck or need tool guidance**
+    - **CRITICAL: Use action='help' on any tool when stuck or need guidance**
+    
+    Getting Help:
+    - Tool overview: tool_name(action='help')
+    - Specific action: tool_name(action='help', help_action='action_name')
+    - Example: manage_asset(action='help', help_action='search')
     
     When You Need Help:
-    - Can't find the right tool? → Call get_help()
-    - Don't know tool parameters? → Call get_help()
-    - Getting errors? → Call get_help() for troubleshooting
-    - Need multi-action tool examples? → Call get_help()
-    - Want workflow guidance? → Call get_help()
+    - Can't find the right tool? → Use action='help' on similar tools
+    - Don't know tool parameters? → Use action='help'
+    - Getting errors? → Check action='help' for troubleshooting
+    - Need examples? → action='help' shows parameter examples
+    - Want to see all actions? → Call action='help' without help_action
     
     Common Issues:
     - "Failed to connect" = Start Unreal Engine with plugin
     - Tools return None = Check log for specific error
     - Partial responses = Network timeout, retry operation
     - JSON errors = Plugin communication issue, restart Unreal
-    - **Tool confusion = Call get_help() for complete documentation**
+    - **Tool confusion = Use action='help' for inline documentation**
     
     Success Indicators:
     - Log shows "Connected to Unreal Engine on startup"

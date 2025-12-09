@@ -41,8 +41,9 @@ def _merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
     """Register Blueprint function management tool."""
 
-    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Use get_help('multi-action-tools') for action reference.")
+    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Use action='help' for all actions and detailed parameter info.")
     def manage_blueprint_function(
+        help_action: str = "",
         blueprint_name: str = "",
         action: str = "",
         function_name: str = "",
@@ -94,6 +95,158 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         5. Object types require `"object:"` prefix: `"object:ABP_Enemy_C"`
         6. Use full Blueprint paths: `"/Game/Blueprints/BP_Player"` not `"BP_Player"`
         """
+        
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_blueprint_function", help_action if help_action else None)
+        
+        # Import error response helper
+        from help_system import generate_error_response
+        
+        # Validate action is provided
+        if not action:
+            return generate_error_response(
+                "manage_blueprint_function", "",
+                "action is required. Available actions: create, delete, list, list_params, add_param, remove_param, modify_param, add_local_var, remove_local_var, list_local_vars"
+            )
+        
+        action_lower = action.lower()
+        
+        # Define valid actions
+        valid_actions = [
+            "create", "delete", "list", "list_params",
+            "add_param", "remove_param", "modify_param",
+            "add_local_var", "remove_local_var", "list_local_vars"
+        ]
+        
+        if action_lower not in valid_actions:
+            return generate_error_response(
+                "manage_blueprint_function", action,
+                f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
+            )
+        
+        # Action-specific validation
+        missing = []
+        
+        if action_lower == "create":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"create requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "delete":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"delete requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "list":
+            if not blueprint_name:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    "list requires 'blueprint_name'",
+                    missing_params=["blueprint_name"]
+                )
+        
+        elif action_lower == "list_params":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"list_params requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "add_param":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if not param_name:
+                missing.append("param_name")
+            if not type:
+                missing.append("type")
+            if not direction:
+                missing.append("direction")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"add_param requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+            if direction not in ["input", "out"]:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"direction must be 'input' or 'out' (not 'output'). Got: '{direction}'"
+                )
+        
+        elif action_lower == "remove_param":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if not param_name:
+                missing.append("param_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"remove_param requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "modify_param":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if not param_name:
+                missing.append("param_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"modify_param requires: {', '.join(missing)} plus new_type or new_name",
+                    missing_params=missing
+                )
+        
+        elif action_lower in ["add_local_var", "remove_local_var"]:
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"{action} requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "list_local_vars":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"list_local_vars requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
 
         payload: Dict[str, Any] = {
             "blueprint_name": blueprint_name,

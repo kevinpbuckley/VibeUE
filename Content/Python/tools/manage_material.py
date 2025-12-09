@@ -46,10 +46,11 @@ def register_material_tools(mcp: FastMCP):
     """Register material management tool with MCP server."""
     logger.info("Registering material management tools...")
 
-    @mcp.tool(description="Material and material instance management: create, configure properties, manage parameters. Base actions: create, get_info, list_properties, set_property, save, compile. Instance actions: create_instance, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter. Use get_help(topic='material-management') for examples.")
+    @mcp.tool(description="Material and material instance management: create, configure properties, manage parameters. Base actions: create, save, compile, refresh_editor, get_info, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default. Instance actions: create_instance, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance. Use action='help' for all actions and detailed parameter info.")
     def manage_material(
         ctx: Context,
         action: str,
+        help_action: str = "",
         # Material identification
         material_path: str = "",
         destination_path: str = "",
@@ -81,10 +82,83 @@ def register_material_tools(mcp: FastMCP):
         initial_properties: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Route to material action handlers."""
+        # Handle help action
+        if action and action.lower() == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_material", help_action if help_action else None)
+        
         # Import connection handler inside function to avoid module-level import issues
         from vibe_ue_server import get_unreal_connection
         
         action_lower = action.lower()
+        
+        # Validate required parameters for specific actions
+        if action_lower == "create":
+            if not material_name:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_material",
+                    action="create",
+                    error_message="material_name is required for 'create' action",
+                    missing_params=["material_name"]
+                )
+            if not destination_path:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_material",
+                    action="create",
+                    error_message="destination_path is required for 'create' action",
+                    missing_params=["destination_path"]
+                )
+        
+        if action_lower == "create_instance":
+            if not parent_material_path:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_material",
+                    action="create_instance",
+                    error_message="parent_material_path is required for 'create_instance' action",
+                    missing_params=["parent_material_path"]
+                )
+            if not instance_name:
+                from help_system import generate_error_response
+                return generate_error_response(
+                    tool_name="manage_material",
+                    action="create_instance",
+                    error_message="instance_name is required for 'create_instance' action",
+                    missing_params=["instance_name"]
+                )
+        
+        # Actions that require material_path
+        material_path_actions = [
+            "get_info", "list_properties", "get_property", "get_property_info",
+            "set_property", "set_properties", "list_parameters", "get_parameter",
+            "set_parameter_default", "save", "compile", "refresh_editor"
+        ]
+        if action_lower in material_path_actions and not material_path:
+            from help_system import generate_error_response
+            return generate_error_response(
+                tool_name="manage_material",
+                action=action_lower,
+                error_message=f"material_path is required for '{action_lower}' action",
+                missing_params=["material_path"]
+            )
+        
+        # Actions that require instance_path
+        instance_path_actions = [
+            "get_instance_info", "list_instance_properties", "get_instance_property",
+            "set_instance_property", "list_instance_parameters", "set_instance_scalar_parameter",
+            "set_instance_vector_parameter", "set_instance_texture_parameter",
+            "clear_instance_parameter_override", "save_instance"
+        ]
+        if action_lower in instance_path_actions and not instance_path:
+            from help_system import generate_error_response
+            return generate_error_response(
+                tool_name="manage_material",
+                action=action_lower,
+                error_message=f"instance_path is required for '{action_lower}' action",
+                missing_params=["instance_path"]
+            )
         
         # Build parameters dict
         params = {

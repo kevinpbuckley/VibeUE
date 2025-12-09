@@ -16,10 +16,11 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_tools(mcp: FastMCP):
     """Register unified Blueprint manager tool with the MCP server."""
 
-    @mcp.tool(description="Blueprint lifecycle: create, compile, inspect, configure. Actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph. Common parents: Actor, Pawn, Character, UserWidget, ActorComponent. Use get_help(topic='blueprint-workflow') for examples.")
+    @mcp.tool(description="Blueprint lifecycle: create, compile, inspect, configure. Use action='help' for all actions and detailed parameter info. Common parents: Actor, Pawn, Character, UserWidget, ActorComponent.")
     def manage_blueprint(
         ctx: Context,
         action: str,
+        help_action: str = "",
         blueprint_name: str = "",
         name: str = "",
         parent_class: str = "",
@@ -33,6 +34,11 @@ def register_blueprint_tools(mcp: FastMCP):
         from vibe_ue_server import get_unreal_connection
         
         action = action.lower()
+        
+        # Handle help action
+        if action == "help":
+            from help_system import generate_help_response
+            return generate_help_response("manage_blueprint", help_action if help_action else None)
         
         # Route to appropriate handler
         if action == "create":
@@ -54,7 +60,9 @@ def register_blueprint_tools(mcp: FastMCP):
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph"
+                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph",
+                "help_tip": "Use manage_blueprint(action='help') to see all available actions and their parameters.",
+                "general_help": "Use manage_blueprint(action='help', help_action='create') for specific action help."
             }
 
 
@@ -62,11 +70,22 @@ def _handle_create(name: str, parent_class: str) -> Dict[str, Any]:
     """Handle Blueprint creation."""
     from vibe_ue_server import get_unreal_connection
     
-    if not name or not parent_class:
-        return {
-            "success": False,
-            "error": "Both 'name' and 'parent_class' are required for create action"
-        }
+    if not name:
+        from help_system import generate_error_response
+        return generate_error_response(
+            tool_name="manage_blueprint",
+            action="create",
+            error_message="'name' is required for create action",
+            missing_params=["name"]
+        )
+    if not parent_class:
+        from help_system import generate_error_response
+        return generate_error_response(
+            tool_name="manage_blueprint",
+            action="create",
+            error_message="'parent_class' is required for create action (e.g., 'Actor', 'Pawn', 'Character', 'UserWidget')",
+            missing_params=["parent_class"]
+        )
     
     try:
         unreal = get_unreal_connection()
@@ -102,10 +121,13 @@ def _handle_compile(blueprint_name: str) -> Dict[str, Any]:
     from vibe_ue_server import get_unreal_connection
     
     if not blueprint_name:
-        return {
-            "success": False,
-            "error": "'blueprint_name' is required for compile action"
-        }
+        from help_system import generate_error_response
+        return generate_error_response(
+            tool_name="manage_blueprint",
+            action="compile",
+            error_message="'blueprint_name' is required for compile action (full path like /Game/Blueprints/BP_Player)",
+            missing_params=["blueprint_name"]
+        )
     
     try:
         unreal = get_unreal_connection()
