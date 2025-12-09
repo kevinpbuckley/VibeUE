@@ -35,6 +35,13 @@ For complete tool documentation, use any tool's help action:
 import sys
 import os
 
+# Add the tools directory to sys.path so tools can import from each other
+# (e.g., 'from help_system import ...' works inside tool modules)
+_script_dir = os.path.dirname(os.path.abspath(__file__))
+_tools_dir = os.path.join(_script_dir, 'tools')
+if _tools_dir not in sys.path:
+    sys.path.insert(0, _tools_dir)
+
 # Fix for Windows: MCP protocol expects LF (\n) only, not CRLF (\r\n)
 # See: https://github.com/laravel/boost/issues/362
 if sys.platform == "win32":
