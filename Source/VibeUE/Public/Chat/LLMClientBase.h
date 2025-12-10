@@ -102,11 +102,17 @@ private:
     /** Fire accumulated tool calls */
     void FirePendingToolCalls();
 
+    /** Process a non-streaming JSON response */
+    void ProcessNonStreamingResponse(const FString& ResponseContent);
+
     /** Current HTTP request */
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> CurrentRequest;
 
     /** Buffer for accumulating streaming response */
     FString StreamBuffer;
+
+    /** Accumulated content from response (for non-streaming or final content) */
+    FString AccumulatedContent;
 
     /** Accumulated tool calls during streaming */
     TMap<int32, FMCPToolCall> PendingToolCalls;
@@ -116,4 +122,8 @@ private:
 
     /** Flag: currently inside a <thinking> block */
     bool bInThinkingBlock;
+
+public:
+    /** Get the accumulated response content (for non-streaming summarization) */
+    const FString& GetLastAccumulatedResponse() const { return AccumulatedContent; }
 };

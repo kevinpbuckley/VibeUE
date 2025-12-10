@@ -68,6 +68,9 @@ private:
     /** MCP Tools count text block */
     TSharedPtr<STextBlock> MCPToolsText;
     
+    /** Token budget text block */
+    TSharedPtr<STextBlock> TokenBudgetText;
+    
     /** Map of message index to text block for streaming updates */
     TMap<int32, TSharedPtr<STextBlock>> MessageTextBlocks;
     
@@ -137,6 +140,18 @@ private:
     
     /** Handle MCP tools ready callback */
     void HandleMCPToolsReady(bool bSuccess, int32 ToolCount);
+    
+    /** Handle summarization started callback */
+    void HandleSummarizationStarted(const FString& Reason);
+    
+    /** Handle summarization complete callback */
+    void HandleSummarizationComplete(bool bSuccess, const FString& Summary);
+    
+    /** Handle token budget updated callback */
+    void HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxTokens, float UtilizationPercent);
+    
+    /** Update the token budget display */
+    void UpdateTokenBudgetDisplay();
     
     /** Update UI enabled state based on session state */
     void UpdateUIState();

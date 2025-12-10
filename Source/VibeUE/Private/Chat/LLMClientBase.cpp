@@ -29,6 +29,7 @@ FLLMClientBase::~FLLMClientBase()
 void FLLMClientBase::ResetStreamingState()
 {
     StreamBuffer.Empty();
+    AccumulatedContent.Empty();
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInThinkingBlock = false;
@@ -150,13 +151,35 @@ void FLLMClientBase::SendChatRequest(
     CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
 
     // Send the request
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[REQUEST] Sending HTTP request..."));
+        UE_LOG(LogLLMClientBase, Log, TEXT("[REQUEST] URL: %s"), *CurrentRequest->GetURL());
+    }
     CurrentRequest->ProcessRequest();
 }
 
 void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
 {
+    // Only process when we've actually received data
+    if (BytesReceived == 0)
+    {
+        // This is just the upload progress, not download - ignore
+        return;
+    }
+    
+    // Always log when progress is called (helps debug streaming issues)
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] HandleRequestProgress: sent=%llu, received=%llu"), BytesSent, BytesReceived);
+    }
+    
     if (!Request.IsValid() || !Request->GetResponse().IsValid())
     {
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Warning, TEXT("[STREAM] Invalid request or response in progress callback"));
+        }
         return;
     }
 
@@ -166,9 +189,33 @@ void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 Bytes
     if (ResponseContent.Len() > StreamBuffer.Len())
     {
         FString NewContent = ResponseContent.RightChop(StreamBuffer.Len());
-        UE_LOG(LogLLMClientBase, Verbose, TEXT("New SSE content (%d chars)"), NewContent.Len());
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] New content: %d chars (total buffer: %d)"), NewContent.Len(), ResponseContent.Len());
+        }
+        else
+        {
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("New SSE content (%d chars)"), NewContent.Len());
+        }
         StreamBuffer = ResponseContent;
-        ProcessSSEData(NewContent);
+        
+        // Check if this is SSE data or plain JSON (non-streaming response)
+        // SSE data starts with "data: " prefix
+        FString TrimmedContent = NewContent.TrimStart();
+        if (TrimmedContent.StartsWith(TEXT("data: ")))
+        {
+            // SSE streaming response
+            ProcessSSEData(NewContent);
+        }
+        else
+        {
+            // Non-streaming response - will be processed in HandleRequestComplete
+            // Just store it in the buffer, don't process here
+            if (IsDebugLoggingEnabled())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] Non-SSE content detected, deferring to HandleRequestComplete"));
+            }
+        }
     }
 }
 
@@ -444,8 +491,181 @@ void FLLMClientBase::FirePendingToolCalls()
     }
 }
 
+void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
+{
+    UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Processing non-streaming response"));
+    
+    // Parse the JSON response
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseContent);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("[NON-STREAM] Failed to parse JSON response"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to parse LLM response"));
+        return;
+    }
+    
+    // Check for error
+    if (JsonObject->HasField(TEXT("error")))
+    {
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
+            UE_LOG(LogLLMClientBase, Error, TEXT("[NON-STREAM] API error: %s"), *ErrorMessage);
+            CurrentOnError.ExecuteIfBound(ErrorMessage);
+        }
+        return;
+    }
+    
+    // Get usage stats if present
+    const TSharedPtr<FJsonObject>* UsageObj;
+    if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj))
+    {
+        int32 PromptTokens = 0;
+        int32 CompletionTokens = 0;
+        (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
+        (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
+        
+        if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Usage: prompt=%d, completion=%d"), PromptTokens, CompletionTokens);
+            CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
+        }
+    }
+    
+    // Get choices array
+    const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+    if (!JsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) || ChoicesArray->Num() == 0)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] No choices in response"));
+        return;
+    }
+    
+    // Get first choice
+    const TSharedPtr<FJsonObject>* ChoiceObj;
+    if (!(*ChoicesArray)[0]->TryGetObject(ChoiceObj))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Invalid choice object"));
+        return;
+    }
+    
+    // Get the message object (non-streaming uses "message", streaming uses "delta")
+    const TSharedPtr<FJsonObject>* MessageObj;
+    if (!(*ChoiceObj)->TryGetObjectField(TEXT("message"), MessageObj))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] No message in choice"));
+        return;
+    }
+    
+    // Check for tool calls
+    const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
+    if ((*MessageObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray) && ToolCallsArray->Num() > 0)
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found %d tool calls"), ToolCallsArray->Num());
+        bToolCallsDetectedInStream = true;
+        
+        for (int32 i = 0; i < ToolCallsArray->Num(); i++)
+        {
+            const TSharedPtr<FJsonObject>* ToolCallObj;
+            if (!(*ToolCallsArray)[i]->TryGetObject(ToolCallObj))
+            {
+                continue;
+            }
+            
+            FMCPToolCall ToolCall;
+            ToolCall.Id = (*ToolCallObj)->GetStringField(TEXT("id"));
+            
+            const TSharedPtr<FJsonObject>* FunctionObj;
+            if ((*ToolCallObj)->TryGetObjectField(TEXT("function"), FunctionObj))
+            {
+                ToolCall.ToolName = (*FunctionObj)->GetStringField(TEXT("name"));
+                ToolCall.ArgumentsJson = (*FunctionObj)->GetStringField(TEXT("arguments"));
+                
+                // Parse arguments JSON
+                TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+                FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+            }
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Tool call %d: %s (id=%s)"), i, *ToolCall.ToolName, *ToolCall.Id);
+            
+            if (CurrentOnToolCall.IsBound())
+            {
+                CurrentOnToolCall.Execute(ToolCall);
+            }
+        }
+    }
+    else
+    {
+        // Get content
+        FString Content;
+        if ((*MessageObj)->TryGetStringField(TEXT("content"), Content) && !Content.IsEmpty())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Content: %s"), *Content.Left(200));
+            
+            // Filter thinking tags
+            FString CleanContent = FilterThinkingTags(Content);
+            
+            // Store accumulated content for retrieval (used by summarization)
+            AccumulatedContent = CleanContent;
+            
+            if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
+            {
+                CurrentOnChunk.Execute(CleanContent);
+            }
+        }
+    }
+}
 void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 {
+    // ALWAYS log response validity for debugging
+    UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response valid=%s, Connected=%s"), 
+        Response.IsValid() ? TEXT("Yes") : TEXT("No"),
+        bConnectedSuccessfully ? TEXT("Yes") : TEXT("No"));
+    
+    if (Response.IsValid())
+    {
+        // Log response headers for debugging
+        int32 ResponseCode = Response->GetResponseCode();
+        FString ContentType = Response->GetHeader(TEXT("Content-Type"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: ResponseCode=%d, ContentType=%s"), 
+            ResponseCode, *ContentType);
+        
+        FString ResponseContent = Response->GetContentAsString();
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response content length=%d, StreamBuffer length=%d"), 
+            ResponseContent.Len(), StreamBuffer.Len());
+        
+        // Check if we have content that needs processing
+        if (ResponseContent.Len() > 0)
+        {
+            // Check if this is non-SSE (JSON) content that wasn't processed in progress callback
+            FString TrimmedContent = ResponseContent.TrimStart();
+            bool bIsSSEContent = TrimmedContent.StartsWith(TEXT("data: "));
+            
+            // For non-SSE content, we need to process it here since progress callback deferred it
+            if (!bIsSSEContent && !bToolCallsDetectedInStream)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("Processing non-streaming JSON response"));
+                UE_LOG(LogLLMClientBase, Log, TEXT("Response preview: %s"), *ResponseContent.Left(1000));
+                ProcessNonStreamingResponse(ResponseContent);
+            }
+            else if (StreamBuffer.Len() == 0)
+            {
+                // SSE content that wasn't captured by progress callback
+                UE_LOG(LogLLMClientBase, Log, TEXT("Processing SSE content that wasn't captured by progress callback"));
+                StreamBuffer = ResponseContent;
+                ProcessSSEData(ResponseContent);
+            }
+        }
+    }
+    
+    // Also log the request URL and verb for context
+    if (Request.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Request URL=%s, Verb=%s"), 
+            *Request->GetURL(), *Request->GetVerb());
+    }
+    
     if (IsDebugLoggingEnabled())
     {
         UE_LOG(LogLLMClientBase, Log, TEXT("========== LLM RESPONSE COMPLETE =========="));
@@ -490,7 +710,16 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
     
     if (ResponseCode == 200)
     {
-        UE_LOG(LogLLMClientBase, Verbose, TEXT("Request completed successfully"));
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Request completed successfully"));
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Total stream buffer: %d chars"), StreamBuffer.Len());
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Tool calls fired: %s"), bToolCallsDetectedInStream ? TEXT("Yes") : TEXT("No"));
+        }
+        else
+        {
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("Request completed successfully"));
+        }
         CurrentOnComplete.ExecuteIfBound(true);
     }
     else

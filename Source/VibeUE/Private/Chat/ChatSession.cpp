@@ -89,18 +89,29 @@ void FChatSession::SendMessage(const FString& UserMessage)
         return;
     }
     
+    // Check if summarization is needed BEFORE adding new message
+    TriggerSummarizationIfNeeded();
+    
     // Reset tool call iteration counter for new user message
     ToolCallIterationCount = 0;
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
     Messages.Add(UserMsg);
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageAdded (user): %s"), *UserMessage.Left(100));
+    }
     OnMessageAdded.ExecuteIfBound(UserMsg);
     
     // Create assistant message placeholder
     FChatMessage AssistantMsg(TEXT("assistant"), TEXT(""));
     AssistantMsg.bIsStreaming = true;
     CurrentStreamingMessageIndex = Messages.Add(AssistantMsg);
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageAdded (assistant placeholder) at index %d"), CurrentStreamingMessageIndex);
+    }
     OnMessageAdded.ExecuteIfBound(AssistantMsg);
     
     // Build messages for API (includes context management)
@@ -151,7 +162,15 @@ void FChatSession::OnStreamChunk(const FString& Chunk)
 {
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
     {
+        if (IsDebugModeEnabled() && !Chunk.IsEmpty())
+        {
+            UE_LOG(LogChatSession, Verbose, TEXT("[EVENT] OnStreamChunk: %d chars"), Chunk.Len());
+        }
         Messages[CurrentStreamingMessageIndex].Content += Chunk;
+        if (IsDebugModeEnabled())
+        {
+            UE_LOG(LogChatSession, Verbose, TEXT("[EVENT] OnMessageUpdated index=%d, total_len=%d"), CurrentStreamingMessageIndex, Messages[CurrentStreamingMessageIndex].Content.Len());
+        }
         OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Messages[CurrentStreamingMessageIndex]);
     }
 }
@@ -186,6 +205,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     if (bSuccess)
     {
         SaveHistory();
+        BroadcastTokenBudgetUpdate();
     }
 }
 
@@ -203,7 +223,14 @@ void FChatSession::OnStreamError(const FString& ErrorMessage)
 
 void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
 {
-    UE_LOG(LogChatSession, Log, TEXT("Tool call received: %s"), *ToolCall.ToolName);
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnToolCall: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+    }
+    else
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Tool call received: %s"), *ToolCall.ToolName);
+    }
     
     if (!MCPClient.IsValid())
     {
@@ -230,6 +257,10 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
         AssistantMsg.bIsStreaming = false;  // Mark streaming complete for this message
         
         // Notify UI - it will detect ToolCalls and render as collapsible widget
+        if (IsDebugModeEnabled())
+        {
+            UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageUpdated (tool call) index=%d, tool=%s"), CurrentStreamingMessageIndex, *ToolCall.ToolName);
+        }
         OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, AssistantMsg);
     }
     
@@ -266,6 +297,10 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
             if (PendingToolCallCount <= 0)
             {
                 PendingToolCallCount = 0; // Safety reset
+                
+                // Check if summarization is needed after tool results (they can be large)
+                TriggerSummarizationIfNeeded();
+                
                 UE_LOG(LogChatSession, Log, TEXT("All tool calls completed, sending follow-up request"));
                 SendFollowUpAfterToolCall();
             }
@@ -539,7 +574,7 @@ int32 FChatSession::GetCurrentModelContextLength() const
     // Default context lengths for common models
     if (CurrentModelId.Contains(TEXT("vibeue")) || CurrentModelId.Contains(TEXT("qwen")))
     {
-        return 262144; // 256K for Qwen3-30B-A3B-Instruct
+        return 131072; // 128K - server configured limit (model supports 256K native)
     }
     else if (CurrentModelId.Contains(TEXT("grok")))
     {
@@ -573,6 +608,374 @@ int32 FChatSession::GetEstimatedTokenCount() const
 int32 FChatSession::GetModelContextLength() const
 {
     return GetCurrentModelContextLength();
+}
+
+int32 FChatSession::GetTokenBudget() const
+{
+    // Use 90% of context length to leave room for response
+    return FMath::FloorToInt(GetCurrentModelContextLength() * 0.9f);
+}
+
+bool FChatSession::IsNearContextLimit(float ThresholdPercent) const
+{
+    float Utilization = GetContextUtilization();
+    return Utilization >= ThresholdPercent;
+}
+
+void FChatSession::TriggerSummarizationIfNeeded()
+{
+    // Don't trigger if already summarizing or if auto-summarize is disabled
+    if (bIsSummarizing || !IsAutoSummarizeEnabled())
+    {
+        return;
+    }
+    
+    float Threshold = GetSummarizationThresholdFromConfig();
+    if (IsNearContextLimit(Threshold))
+    {
+        float Utilization = GetContextUtilization();
+        UE_LOG(LogChatSession, Log, TEXT("[SUMMARIZE] Context at %.1f%% (threshold: %.1f%%), triggering summarization"),
+            Utilization * 100.f, Threshold * 100.f);
+        RequestSummarization();
+    }
+}
+
+void FChatSession::ForceSummarize()
+{
+    if (bIsSummarizing)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("[SUMMARIZE] Summarization already in progress"));
+        return;
+    }
+    
+    if (Messages.Num() < 4) // Need at least a few messages to summarize
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("[SUMMARIZE] Not enough messages to summarize"));
+        return;
+    }
+    
+    UE_LOG(LogChatSession, Log, TEXT("[SUMMARIZE] Force summarization requested"));
+    RequestSummarization();
+}
+
+void FChatSession::RequestSummarization()
+{
+    bIsSummarizing = true;
+    OnSummarizationStarted.ExecuteIfBound(TEXT("Context limit approaching"));
+    
+    UE_LOG(LogChatSession, Log, TEXT("========== SUMMARIZATION REQUEST =========="));
+    
+    // Build summarization request
+    TArray<FChatMessage> SummarizationMessages;
+    
+    // System message with summarization instructions
+    FChatMessage SystemMsg(TEXT("system"), BuildSummarizationPrompt());
+    SummarizationMessages.Add(SystemMsg);
+    
+    // Get messages to summarize (excluding recent ones we want to keep)
+    TArray<FChatMessage> MessagesToSummarize = BuildMessagesToSummarize();
+    
+    // Build the conversation text to summarize
+    FString ConversationText = TEXT("Please summarize the following conversation:\n\n");
+    for (const FChatMessage& Msg : MessagesToSummarize)
+    {
+        if (Msg.Role == TEXT("tool"))
+        {
+            // Truncate long tool results
+            FString Content = Msg.Content;
+            if (Content.Len() > 2000)
+            {
+                Content = Content.Left(2000) + TEXT("\n... [truncated]");
+            }
+            ConversationText += FString::Printf(TEXT("[Tool Result]: %s\n\n"), *Content);
+        }
+        else if (Msg.Role == TEXT("assistant") && Msg.ToolCalls.Num() > 0)
+        {
+            // Show tool calls
+            for (const FChatToolCall& TC : Msg.ToolCalls)
+            {
+                ConversationText += FString::Printf(TEXT("[Tool Call: %s]\nArguments: %s\n\n"), 
+                    *TC.Name, *TC.Arguments.Left(500));
+            }
+            if (!Msg.Content.IsEmpty())
+            {
+                ConversationText += FString::Printf(TEXT("[Assistant]: %s\n\n"), *Msg.Content);
+            }
+        }
+        else
+        {
+            ConversationText += FString::Printf(TEXT("[%s]: %s\n\n"), 
+                *Msg.Role, *Msg.Content);
+        }
+    }
+    
+    FChatMessage UserMsg(TEXT("user"), ConversationText);
+    SummarizationMessages.Add(UserMsg);
+    
+    UE_LOG(LogChatSession, Log, TEXT("Summarizing %d messages (%d chars)"), 
+        MessagesToSummarize.Num(), ConversationText.Len());
+    
+    // Empty tools - don't want the LLM to call tools during summarization
+    TArray<FMCPTool> NoTools;
+    
+    // Send summarization request (non-streaming, no tools)
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        VibeUEClient->SendChatRequest(
+            SummarizationMessages,
+            CurrentModelId,
+            NoTools,
+            FOnLLMStreamChunk::CreateLambda([](const FString& Chunk) {}), // Ignore streaming chunks
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnSummarizationStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnSummarizationStreamError),
+            FOnLLMToolCall::CreateLambda([](const FMCPToolCall& TC) {}), // Ignore tool calls
+            FOnLLMUsageReceived::CreateLambda([](int32, int32) {}) // Ignore usage for summarization
+        );
+    }
+    else
+    {
+        OpenRouterClient->SendChatRequest(
+            SummarizationMessages,
+            CurrentModelId,
+            NoTools,
+            FOnLLMStreamChunk::CreateLambda([](const FString& Chunk) {}),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnSummarizationStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnSummarizationStreamError),
+            FOnLLMToolCall::CreateLambda([](const FMCPToolCall& TC) {}),
+            FOnLLMUsageReceived::CreateLambda([](int32, int32) {})
+        );
+    }
+}
+
+void FChatSession::OnSummarizationStreamComplete(bool bSuccess)
+{
+    // For non-streaming, we need to get the accumulated response
+    // The response will be in a temporary accumulator in the client
+    // For now, let's handle via the messages approach
+    
+    // This is called when summarization request completes
+    // The actual summary text needs to be retrieved from the client's last response
+    
+    if (!bSuccess)
+    {
+        UE_LOG(LogChatSession, Error, TEXT("[SUMMARIZE] Summarization request failed"));
+        bIsSummarizing = false;
+        OnSummarizationComplete.ExecuteIfBound(false, TEXT(""));
+        return;
+    }
+    
+    // Get the summary from accumulated response
+    FString Summary;
+    if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+    {
+        Summary = VibeUEClient->GetLastAccumulatedResponse();
+    }
+    else if (OpenRouterClient.IsValid())
+    {
+        Summary = OpenRouterClient->GetLastAccumulatedResponse();
+    }
+    
+    HandleSummarizationResponse(Summary);
+}
+
+void FChatSession::OnSummarizationStreamError(const FString& ErrorMessage)
+{
+    UE_LOG(LogChatSession, Error, TEXT("[SUMMARIZE] Summarization error: %s"), *ErrorMessage);
+    bIsSummarizing = false;
+    OnSummarizationComplete.ExecuteIfBound(false, TEXT(""));
+}
+
+void FChatSession::HandleSummarizationResponse(const FString& Summary)
+{
+    bIsSummarizing = false;
+    
+    if (Summary.IsEmpty())
+    {
+        UE_LOG(LogChatSession, Error, TEXT("[SUMMARIZE] Received empty summary"));
+        OnSummarizationComplete.ExecuteIfBound(false, TEXT(""));
+        return;
+    }
+    
+    UE_LOG(LogChatSession, Log, TEXT("[SUMMARIZE] Received summary (%d chars)"), Summary.Len());
+    
+    // Extract just the summary portion if it contains tags
+    FString CleanSummary = Summary;
+    
+    // Look for <conversation-summary> tags and extract content
+    int32 StartIdx = Summary.Find(TEXT("<conversation-summary>"));
+    int32 EndIdx = Summary.Find(TEXT("</conversation-summary>"));
+    if (StartIdx != INDEX_NONE && EndIdx != INDEX_NONE && EndIdx > StartIdx)
+    {
+        CleanSummary = Summary.Mid(StartIdx, EndIdx - StartIdx + 23); // Include closing tag
+    }
+    else if (StartIdx != INDEX_NONE)
+    {
+        // Has start tag but no end tag - take everything after start tag
+        CleanSummary = Summary.Mid(StartIdx);
+    }
+    
+    ApplySummaryToHistory(CleanSummary);
+    
+    OnSummarizationComplete.ExecuteIfBound(true, CleanSummary);
+    BroadcastTokenBudgetUpdate();
+}
+
+void FChatSession::ApplySummaryToHistory(const FString& Summary)
+{
+    // Determine how many recent messages to keep
+    int32 RecentToKeep = GetRecentMessagesToKeepFromConfig();
+    
+    // Build new message array
+    TArray<FChatMessage> NewMessages;
+    
+    // Store the summary
+    ConversationSummary = Summary;
+    SummarizedUpToMessageIndex = FMath::Max(0, Messages.Num() - RecentToKeep - 1);
+    
+    // Keep recent messages (preserve immediate context including pending/streaming)
+    int32 StartKeepIndex = FMath::Max(0, Messages.Num() - RecentToKeep);
+    for (int32 i = StartKeepIndex; i < Messages.Num(); i++)
+    {
+        NewMessages.Add(Messages[i]);
+    }
+    
+    int32 OldCount = Messages.Num();
+    Messages = NewMessages;
+    
+    UE_LOG(LogChatSession, Log, TEXT("[SUMMARIZE] Applied summary: reduced from %d to %d messages (kept last %d)"),
+        OldCount, Messages.Num(), RecentToKeep);
+    
+    // Save the updated history
+    SaveHistory();
+}
+
+FString FChatSession::BuildSummarizationPrompt() const
+{
+    return TEXT(R"(Your task is to create a comprehensive summary of the conversation that captures all essential information needed to continue the work without loss of context.
+
+## Summary Structure
+
+Provide your summary wrapped in <conversation-summary> tags using this format:
+
+<conversation-summary>
+1. **Conversation Overview**:
+   - Primary Objectives: [Main user goals and requests]
+   - Session Context: [High-level narrative of conversation flow]
+   - User Intent Evolution: [How user's needs changed throughout]
+
+2. **Technical Foundation**:
+   - Technologies/frameworks discussed
+   - Key architectural decisions made
+   - Environment and configuration details
+
+3. **Codebase Status**:
+   - Files modified or discussed with their purposes
+   - Key code changes and their purpose
+   - Dependencies and relationships between components
+
+4. **Problem Resolution**:
+   - Issues encountered and how they were resolved
+   - Ongoing debugging context
+   - Lessons learned and patterns discovered
+
+5. **Progress Tracking**:
+   - ✅ Completed tasks (with status indicators)
+   - ⏳ In-progress work (with current completion status)
+   - ❌ Pending tasks
+
+6. **Active Work State**:
+   - Current focus (what was being worked on most recently)
+   - Recent tool calls and their key results (summarized)
+   - Working code snippets being modified
+
+7. **Recent Operations**:
+   - Last agent commands executed
+   - Tool results summary (key outcomes, truncated if long)
+   - Immediate pre-summarization state
+
+8. **Continuation Plan**:
+   - Immediate next steps with specific details
+   - Priority information
+   - Any blocking issues or dependencies
+</conversation-summary>
+
+## Guidelines
+- Be precise with filenames, function names, and technical terms
+- Preserve exact quotes for task specifications where important
+- Include enough detail to continue without re-reading full history
+- Truncate very long tool outputs but preserve essential information
+- Focus on actionable context that enables continuation
+
+Do NOT call any tools. Your only task is to generate a text summary of the conversation.)");
+}
+
+TArray<FChatMessage> FChatSession::BuildMessagesToSummarize() const
+{
+    TArray<FChatMessage> Result;
+    
+    // Determine how many recent messages to keep (don't summarize these)
+    int32 RecentToKeep = GetRecentMessagesToKeepFromConfig();
+    int32 EndIndex = FMath::Max(0, Messages.Num() - RecentToKeep);
+    
+    // Add messages up to the cutoff point
+    for (int32 i = 0; i < EndIndex; i++)
+    {
+        Result.Add(Messages[i]);
+    }
+    
+    return Result;
+}
+
+void FChatSession::BroadcastTokenBudgetUpdate()
+{
+    int32 CurrentTokens = GetEstimatedTokenCount();
+    int32 MaxTokens = GetTokenBudget();
+    float Utilization = GetContextUtilization();
+    
+    OnTokenBudgetUpdated.ExecuteIfBound(CurrentTokens, MaxTokens, Utilization);
+}
+
+// ============ Summarization Config Settings ============
+
+float FChatSession::GetSummarizationThresholdFromConfig()
+{
+    float Threshold = 0.8f; // Default 80%
+    GConfig->GetFloat(TEXT("VibeUE"), TEXT("SummarizationThreshold"), Threshold, GEditorPerProjectIni);
+    return FMath::Clamp(Threshold, 0.5f, 0.95f);
+}
+
+void FChatSession::SaveSummarizationThresholdToConfig(float Threshold)
+{
+    Threshold = FMath::Clamp(Threshold, 0.5f, 0.95f);
+    GConfig->SetFloat(TEXT("VibeUE"), TEXT("SummarizationThreshold"), Threshold, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FChatSession::GetRecentMessagesToKeepFromConfig()
+{
+    int32 Count = 10; // Default: keep last 10 messages
+    GConfig->GetInt(TEXT("VibeUE"), TEXT("RecentMessagesToKeep"), Count, GEditorPerProjectIni);
+    return FMath::Clamp(Count, 4, 50);
+}
+
+void FChatSession::SaveRecentMessagesToKeepToConfig(int32 Count)
+{
+    Count = FMath::Clamp(Count, 4, 50);
+    GConfig->SetInt(TEXT("VibeUE"), TEXT("RecentMessagesToKeep"), Count, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+bool FChatSession::IsAutoSummarizeEnabled()
+{
+    bool bEnabled = true; // Default: enabled
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("AutoSummarize"), bEnabled, GEditorPerProjectIni);
+    return bEnabled;
+}
+
+void FChatSession::SetAutoSummarizeEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("AutoSummarize"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
 }
 
 float FChatSession::GetContextUtilization() const

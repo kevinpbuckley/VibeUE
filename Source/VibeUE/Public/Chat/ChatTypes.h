@@ -256,12 +256,12 @@ struct VIBEUE_API FOpenRouterModel
     {
         if (IsFree())
         {
-            return FString::Printf(TEXT("[FREE] %s (%dK)"), *Name, ContextLength / 1000);
+            return FString::Printf(TEXT("[FREE] %s (%dK)"), *Name, ContextLength / 1024);
         }
         else
         {
             // Show price per 1M tokens
-            return FString::Printf(TEXT("%s (%dK) $%.2f/1M"), *Name, ContextLength / 1000, PricingPrompt);
+            return FString::Printf(TEXT("%s (%dK) $%.2f/1M"), *Name, ContextLength / 1024, PricingPrompt);
         }
     }
 };

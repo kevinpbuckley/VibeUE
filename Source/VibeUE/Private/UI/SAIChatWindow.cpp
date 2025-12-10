@@ -80,6 +80,9 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnChatReset.BindSP(this, &SAIChatWindow::HandleChatReset);
     ChatSession->OnChatError.BindSP(this, &SAIChatWindow::HandleChatError);
     ChatSession->OnMCPToolsReady.BindSP(this, &SAIChatWindow::HandleMCPToolsReady);
+    ChatSession->OnSummarizationStarted.BindSP(this, &SAIChatWindow::HandleSummarizationStarted);
+    ChatSession->OnSummarizationComplete.BindSP(this, &SAIChatWindow::HandleSummarizationComplete);
+    ChatSession->OnTokenBudgetUpdated.BindSP(this, &SAIChatWindow::HandleTokenBudgetUpdated);
     
     // Build UI with VibeUE branding
     ChildSlot
@@ -128,6 +131,19 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         .ToolTipText(FText::FromString(TEXT("Available MCP tools")))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::Cyan))
                         .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                    ]
+                    
+                    // Token budget indicator
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(0, 0, 12, 0)
+                    [
+                        SAssignNew(TokenBudgetText, STextBlock)
+                        .Text(FText::FromString(TEXT("Tokens: --")))
+                        .ToolTipText(FText::FromString(TEXT("Context token usage (current / budget)")))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::Green))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
                     ]
                     
                     // Reset button
@@ -727,6 +743,11 @@ FReply SAIChatWindow::OnSendClicked()
     FString Message = InputTextBox->GetText().ToString();
     if (!Message.IsEmpty())
     {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Send button clicked - Message: %s"), *Message.Left(100));
+        }
+        
         // Clear any previous error message before sending new request
         SetStatusText(TEXT(""));
         
@@ -740,6 +761,10 @@ FReply SAIChatWindow::OnStopClicked()
 {
     if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
     {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Stop button clicked - Cancelling request"));
+        }
         ChatSession->CancelRequest();
         SetStatusText(TEXT("Request cancelled"));
     }
@@ -1159,6 +1184,10 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
     // Block input while a request is in progress
     if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
     {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            UE_LOG(LogAIChatWindow, Verbose, TEXT("[UI EVENT] Key press blocked - Request in progress"));
+        }
         return FReply::Handled(); // Consume the key press but don't do anything
     }
     
@@ -1166,6 +1195,10 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
     // Shift+Enter inserts a new line (default behavior)
     if (InKeyEvent.GetKey() == EKeys::Enter && !InKeyEvent.IsShiftDown())
     {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Enter key pressed - Sending message"));
+        }
         OnSendClicked();
         return FReply::Handled();
     }
@@ -1211,7 +1244,19 @@ void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
         return;
     }
     
-    AddMessageWidget(Message, ChatSession->GetMessages().Num() - 1);
+    int32 MessageIndex = ChatSession->GetMessages().Num() - 1;
+    
+    // Check if widget already exists for this index (prevents duplicates)
+    if (MessageTextBlocks.Contains(MessageIndex))
+    {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            UE_LOG(LogAIChatWindow, Warning, TEXT("[UI] HandleMessageAdded: Widget already exists for index %d, skipping"), MessageIndex);
+        }
+        return;
+    }
+    
+    AddMessageWidget(Message, MessageIndex);
     ScrollToBottom();
     UpdateUIState();
 }
@@ -1249,6 +1294,9 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
             // Clear any error message on successful response completion
             SetStatusText(TEXT(""));
         }
+        
+        // Update token budget display after assistant response completes
+        UpdateTokenBudgetDisplay();
     }
     
     ScrollToBottom();
@@ -1259,6 +1307,7 @@ void SAIChatWindow::HandleChatReset()
 {
     RebuildMessageList();
     UpdateUIState();
+    UpdateTokenBudgetDisplay();
 }
 
 void SAIChatWindow::HandleChatError(const FString& ErrorMessage)
@@ -1371,7 +1420,7 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
         VibeUEModelPtr->Id = TEXT("vibeue");
         VibeUEModelPtr->Name = TEXT("VibeUE");
         VibeUEModelPtr->bSupportsTools = true;
-        VibeUEModelPtr->ContextLength = 262144; // Qwen3-30B-A3B-Instruct has 256K native context
+        VibeUEModelPtr->ContextLength = 131072; // Server configured for 128K context (model supports 256K native)
         
         AvailableModels.Add(VibeUEModelPtr);
         SelectedModel = VibeUEModelPtr;
@@ -1403,6 +1452,94 @@ void SAIChatWindow::HandleMCPToolsReady(bool bSuccess, int32 ToolCount)
             UE_LOG(LogAIChatWindow, Log, TEXT("MCP tools: none available"));
         }
     }
+    
+    // Update token budget display initially
+    UpdateTokenBudgetDisplay();
+}
+
+void SAIChatWindow::HandleSummarizationStarted(const FString& Reason)
+{
+    UE_LOG(LogAIChatWindow, Log, TEXT("Summarization started: %s"), *Reason);
+    SetStatusText(FString::Printf(TEXT("📋 Summarizing conversation... (%s)"), *Reason));
+    
+    // Update token budget display color to indicate summarization
+    if (TokenBudgetText.IsValid())
+    {
+        TokenBudgetText->SetColorAndOpacity(FSlateColor(VibeUEColors::Orange));
+    }
+}
+
+void SAIChatWindow::HandleSummarizationComplete(bool bSuccess, const FString& Summary)
+{
+    if (bSuccess)
+    {
+        UE_LOG(LogAIChatWindow, Log, TEXT("Summarization complete: %d chars"), Summary.Len());
+        SetStatusText(TEXT("✅ Conversation summarized to save context space."));
+        
+        // Show summary preview in a system message
+        FString PreviewText = Summary.Left(200);
+        if (Summary.Len() > 200) PreviewText += TEXT("...");
+        UE_LOG(LogAIChatWindow, Log, TEXT("Summary preview: %s"), *PreviewText);
+    }
+    else
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Summarization failed"));
+        SetStatusText(TEXT("⚠️ Failed to summarize conversation."));
+    }
+    
+    // Update token budget display
+    UpdateTokenBudgetDisplay();
+    
+    // Clear status after a delay (would need timer, for now just leave it)
+}
+
+void SAIChatWindow::HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxTokens, float UtilizationPercent)
+{
+    if (!TokenBudgetText.IsValid()) return;
+    
+    // Format the display: "Tokens: 12.5K / 117K (10%)"
+    auto FormatTokens = [](int32 Tokens) -> FString
+    {
+        if (Tokens >= 1000)
+        {
+            return FString::Printf(TEXT("%.1fK"), Tokens / 1000.0f);
+        }
+        return FString::Printf(TEXT("%d"), Tokens);
+    };
+    
+    FString TokenText = FString::Printf(TEXT("Tokens: %s / %s (%.0f%%)"),
+        *FormatTokens(CurrentTokens), 
+        *FormatTokens(MaxTokens), 
+        UtilizationPercent * 100.f);
+    
+    TokenBudgetText->SetText(FText::FromString(TokenText));
+    
+    // Color based on utilization
+    FLinearColor Color;
+    if (UtilizationPercent < 0.6f)
+    {
+        Color = VibeUEColors::Green; // Plenty of room
+    }
+    else if (UtilizationPercent < 0.8f)
+    {
+        Color = FLinearColor(1.0f, 0.8f, 0.0f, 1.0f); // Yellow - getting full
+    }
+    else
+    {
+        Color = VibeUEColors::Red; // Near limit
+    }
+    TokenBudgetText->SetColorAndOpacity(FSlateColor(Color));
+}
+
+void SAIChatWindow::UpdateTokenBudgetDisplay()
+{
+    if (!ChatSession.IsValid()) return;
+    
+    int32 CurrentTokens = ChatSession->GetEstimatedTokenCount();
+    int32 MaxTokens = ChatSession->GetTokenBudget();
+    float Utilization = ChatSession->GetContextUtilization();
+    
+    HandleTokenBudgetUpdated(CurrentTokens, MaxTokens, Utilization);
 }
 
 void SAIChatWindow::UpdateUIState()
