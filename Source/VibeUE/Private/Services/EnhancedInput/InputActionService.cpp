@@ -43,12 +43,22 @@ TResult<UInputAction*> FInputActionService::CreateInputAction(const FString& Ass
 		return TResult<UInputAction*>::Error(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("AssetPath cannot be empty"));
 	}
 	
-	// Ensure path starts with /Game
-	FString PackageName = AssetPath;
-	if (!PackageName.StartsWith(TEXT("/Game")))
+	// Create package for the asset - each asset gets its own package folder
+	// Standard UE convention: /Game/Input/Actions/IA_Jump.IA_Jump (package path includes asset name)
+	FString BasePackagePath = AssetPath;
+	if (!BasePackagePath.StartsWith(TEXT("/Game")))
 	{
-		PackageName = TEXT("/Game/") + PackageName;
+		BasePackagePath = TEXT("/Game/") + BasePackagePath;
 	}
+	
+	// Ensure trailing slash is removed
+	if (BasePackagePath.EndsWith(TEXT("/")))
+	{
+		BasePackagePath = BasePackagePath.LeftChop(1);
+	}
+	
+	// Full package name includes asset name: /Game/Input/Actions/IA_Jump
+	FString PackageName = BasePackagePath / AssetName;
 	
 	// Check if asset already exists (including partially loaded assets)
 	FString ExistingAssetPath = PackageName + TEXT(".") + AssetName;

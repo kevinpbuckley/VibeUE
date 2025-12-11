@@ -516,9 +516,117 @@ TOOL_HELP = {
                     "help_action": "Optional: specific action to get help for"
                 },
                 "example": 'manage_enhanced_input(action="help") or manage_enhanced_input(action="help", help_action="action_create")'
+            },
+            # Reflection service
+            "reflection_discover_types": {
+                "description": "Discover all Enhanced Input types (actions, modifiers, triggers)",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="reflection_discover_types")'
+            },
+            "reflection_get_metadata": {
+                "description": "Get metadata for a specific Enhanced Input type",
+                "parameters": {
+                    "input_type": "REQUIRED: Type name to get metadata for"
+                },
+                "example": 'manage_enhanced_input(action="reflection_get_metadata", input_type="Negate")'
+            },
+            # Action service
+            "action_create": {
+                "description": "Create a new Input Action asset",
+                "parameters": {
+                    "action_name": "REQUIRED: Name for the action (e.g., 'IA_Jump')",
+                    "asset_path": "REQUIRED: Content path (e.g., '/Game/Input/Actions')",
+                    "value_type": "REQUIRED: Digital, Axis1D, Axis2D, or Axis3D"
+                },
+                "example": 'manage_enhanced_input(action="action_create", action_name="IA_Interact", asset_path="/Game/Input/Actions", value_type="Digital")'
+            },
+            "action_list": {
+                "description": "List all Input Actions in the project",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="action_list")'
+            },
+            "action_get_properties": {
+                "description": "Get properties of an Input Action",
+                "parameters": {
+                    "action_path": "REQUIRED: Full path to the Input Action"
+                },
+                "example": 'manage_enhanced_input(action="action_get_properties", action_path="/Game/Input/Actions/IA_Jump.IA_Jump")'
+            },
+            "action_configure": {
+                "description": "Configure a property on an Input Action",
+                "parameters": {
+                    "action_path": "REQUIRED: Full path to the Input Action",
+                    "property_name": "REQUIRED: Property to configure",
+                    "property_value": "REQUIRED: New value for the property"
+                },
+                "example": 'manage_enhanced_input(action="action_configure", action_path="/Game/Input/Actions/IA_Jump.IA_Jump", property_name="bConsumeInput", property_value="true")'
+            },
+            # Mapping service
+            "mapping_create_context": {
+                "description": "Create a new Input Mapping Context",
+                "parameters": {
+                    "context_name": "REQUIRED: Name for the context (e.g., 'IMC_Default')",
+                    "asset_path": "REQUIRED: Content path (e.g., '/Game/Input')",
+                    "priority": "Optional: Priority level (default: 0)"
+                },
+                "example": 'manage_enhanced_input(action="mapping_create_context", context_name="IMC_Combat", asset_path="/Game/Input")'
+            },
+            "mapping_list_contexts": {
+                "description": "List all Input Mapping Contexts",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="mapping_list_contexts")'
+            },
+            "mapping_add_key_mapping": {
+                "description": "Add a key binding to a mapping context",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "action_path": "REQUIRED: Full path to the Input Action",
+                    "key": "REQUIRED: Key name (e.g., 'E', 'SpaceBar', 'LeftMouseButton')"
+                },
+                "example": 'manage_enhanced_input(action="mapping_add_key_mapping", context_path="/Game/Input/IMC_Default.IMC_Default", action_path="/Game/Input/Actions/IA_Jump.IA_Jump", key="SpaceBar")'
+            },
+            "mapping_get_mappings": {
+                "description": "Get all key mappings in a context",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context"
+                },
+                "example": 'manage_enhanced_input(action="mapping_get_mappings", context_path="/Game/Input/IMC_Default.IMC_Default")'
+            },
+            "mapping_add_modifier": {
+                "description": "Add a modifier to a key mapping",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)",
+                    "modifier_type": "REQUIRED: Modifier type (e.g., 'Negate', 'Swizzle', 'DeadZone', 'Scalar')"
+                },
+                "example": 'manage_enhanced_input(action="mapping_add_modifier", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, modifier_type="Negate")'
+            },
+            "mapping_add_trigger": {
+                "description": "Add a trigger to a key mapping",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)",
+                    "trigger_type": "REQUIRED: Trigger type (e.g., 'Pressed', 'Released', 'Hold', 'Tap')"
+                },
+                "example": 'manage_enhanced_input(action="mapping_add_trigger", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, trigger_type="Pressed")'
+            },
+            "mapping_get_available_keys": {
+                "description": "List all available input keys",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="mapping_get_available_keys")'
+            },
+            "mapping_get_available_modifier_types": {
+                "description": "List all available modifier types",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="mapping_get_available_modifier_types")'
+            },
+            "mapping_get_available_trigger_types": {
+                "description": "List all available trigger types",
+                "parameters": {},
+                "example": 'manage_enhanced_input(action="mapping_get_available_trigger_types")'
             }
         },
-        "note": "This tool supports 35+ actions across 6 services. Use action='help' for complete action list organized by service."
+        "note": "For deleting Input Actions or Mapping Contexts, use manage_asset(action='delete', asset_path='...'). This tool supports 25+ actions across 6 services."
     },
     
     "manage_level_actors": {

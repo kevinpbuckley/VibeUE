@@ -55,11 +55,14 @@ void FChatSession::Initialize()
     // Apply LLM generation parameters to VibeUE client
     ApplyLLMParametersToClient();
     
+    // Load max tool call iterations setting
+    MaxToolCallIterations = GetMaxToolCallIterationsFromConfig();
+    
     // Load chat history
     LoadHistory();
     
-    UE_LOG(LogChatSession, Log, TEXT("Chat session initialized with %d messages, provider: %s"), 
-        Messages.Num(), CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"));
+    UE_LOG(LogChatSession, Log, TEXT("Chat session initialized with %d messages, provider: %s, max tool iterations: %d"), 
+        Messages.Num(), CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter"), MaxToolCallIterations);
 }
 
 void FChatSession::Shutdown()
@@ -1289,6 +1292,20 @@ void FChatSession::SaveMaxTokensToConfig(int32 MaxTokens)
 {
     MaxTokens = FMath::Clamp(MaxTokens, FVibeUEAPIClient::MinMaxTokens, FVibeUEAPIClient::MaxMaxTokens);
     GConfig->SetInt(TEXT("VibeUE"), TEXT("MaxTokens"), MaxTokens, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FChatSession::GetMaxToolCallIterationsFromConfig()
+{
+    int32 MaxIterations = DefaultMaxToolCallIterations; // Default 25
+    GConfig->GetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
+    return FMath::Clamp(MaxIterations, 5, 100);
+}
+
+void FChatSession::SaveMaxToolCallIterationsToConfig(int32 MaxIterations)
+{
+    MaxIterations = FMath::Clamp(MaxIterations, 5, 100);
+    GConfig->SetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 

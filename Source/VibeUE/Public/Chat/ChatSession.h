@@ -263,6 +263,10 @@ public:
     static int32 GetMaxTokensFromConfig();
     static void SaveMaxTokensToConfig(int32 MaxTokens);
     
+    /** Get/Set max tool call iterations (5-100, default 25) */
+    static int32 GetMaxToolCallIterationsFromConfig();
+    static void SaveMaxToolCallIterationsToConfig(int32 MaxIterations);
+    
     /** Apply LLM parameters to the VibeUE client */
     void ApplyLLMParametersToClient();
 
@@ -394,8 +398,11 @@ private:
     /** Number of tool call iterations (follow-up rounds) */
     int32 ToolCallIterationCount = 0;
     
-    /** Maximum allowed tool call iterations before forcing a text response */
-    static constexpr int32 MaxToolCallIterations = 10;
+    /** Maximum allowed tool call iterations before forcing a text response (loaded from config) */
+    int32 MaxToolCallIterations = 25;
+    
+    /** Default value for MaxToolCallIterations */
+    static constexpr int32 DefaultMaxToolCallIterations = 25;
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;

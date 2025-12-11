@@ -477,6 +477,19 @@ TResult<FAssetDuplicateResult> FAssetLifecycleService::DuplicateAsset(
     }
     DestinationAssetPath += FinalNewName;
     
+    // 4.5. Check if destination asset already exists
+    if (UEditorAssetLibrary::DoesAssetExist(DestinationAssetPath))
+    {
+        return TResult<FAssetDuplicateResult>::Error(
+            VibeUE::ErrorCodes::OPERATION_FAILED,
+            FString::Printf(
+                TEXT("Asset already exists at destination: %s. Cannot duplicate '%s' because an asset with that name already exists."),
+                *DestinationAssetPath,
+                *FinalNewName
+            )
+        );
+    }
+    
     // 5. Duplicate the asset using UEditorAssetLibrary
     UObject* DuplicatedAsset = UEditorAssetLibrary::DuplicateAsset(
         NormalizedSourcePath,
@@ -488,7 +501,7 @@ TResult<FAssetDuplicateResult> FAssetLifecycleService::DuplicateAsset(
         return TResult<FAssetDuplicateResult>::Error(
             VibeUE::ErrorCodes::OPERATION_FAILED,
             FString::Printf(
-                TEXT("Failed to duplicate asset from '%s' to '%s'"),
+                TEXT("Failed to duplicate asset from '%s' to '%s'. The duplication operation failed."),
                 *NormalizedSourcePath,
                 *DestinationAssetPath
             )

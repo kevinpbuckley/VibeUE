@@ -46,7 +46,18 @@ def _dispatch(command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 def register_enhanced_input_tools(mcp: FastMCP) -> None:
     """Register unified Enhanced Input management tool with MCP server."""
     
-    @mcp.tool(description="Enhanced Input System management: Input Actions, Mapping Contexts, Modifiers, Triggers. Services: reflection, action, mapping, modifier, trigger, ai. Actions: action_create, action_list, mapping_create_context, mapping_add_key_mapping, etc. Use action='help' for all actions and detailed parameter info.")
+    @mcp.tool(description="""Enhanced Input System management for Input Actions, Mapping Contexts, Modifiers, and Triggers.
+
+COMMON ACTIONS (call directly, don't use help first):
+- action_list: List all Input Actions
+- action_create: Create Input Action (needs: action_name, asset_path, value_type=Digital|Axis1D|Axis2D|Axis3D)
+- mapping_list_contexts: List all Mapping Contexts  
+- mapping_create_context: Create Mapping Context (needs: context_name, asset_path)
+- mapping_add_key_mapping: Bind key (needs: context_path, action_path, key)
+- mapping_add_modifier: Add modifier (needs: context_path, mapping_index, modifier_type=Negate|Swizzle|DeadZone|Scalar)
+- mapping_add_trigger: Add trigger (needs: context_path, mapping_index, trigger_type=Pressed|Released|Hold|Tap)
+
+For delete operations, use manage_asset(action='delete', asset_path='...').""")
     def manage_enhanced_input(
         ctx: Context,
         action: str,
@@ -136,19 +147,21 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
         action_lower = action.lower()
         
         # Valid actions by service
+        # NOTE: For delete operations, use manage_asset(action="delete", asset_path="...")
         valid_actions = [
             # Reflection service
-            "reflection_get_types", "reflection_get_properties", "reflection_get_enums",
-            # Action service
-            "action_create", "action_delete", "action_list", "action_get_properties", "action_set_property", "action_rename",
-            # Mapping service
-            "mapping_create_context", "mapping_delete_context", "mapping_list_contexts",
+            "reflection_discover_types", "reflection_get_metadata",
+            # Action service (delete via manage_asset)
+            "action_create", "action_list", "action_get_properties", "action_configure",
+            # Mapping service - includes modifiers and triggers
+            "mapping_create_context", "mapping_list_contexts",
             "mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
-            "mapping_get_properties", "mapping_add_modifier", "mapping_remove_modifier",
-            "mapping_add_trigger", "mapping_remove_trigger",
-            # Modifier service
+            "mapping_get_properties", "mapping_get_property", "mapping_get_available_keys",
+            "mapping_add_modifier", "mapping_remove_modifier", "mapping_get_modifiers", "mapping_get_available_modifier_types",
+            "mapping_add_trigger", "mapping_remove_trigger", "mapping_get_triggers", "mapping_get_available_trigger_types",
+            "mapping_update_context",
+            # Deprecated services - redirect users to proper actions
             "modifier_discover_types", "modifier_create_instance", "modifier_get_properties",
-            # Trigger service
             "trigger_discover_types", "trigger_create_instance", "trigger_get_properties",
             # AI service
             "ai_parse_description", "ai_get_templates", "ai_apply_template"
@@ -195,9 +208,11 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
                 )
         
         # Mapping operations require context_path
+        # NOTE: For delete, use manage_asset(action="delete", asset_path="...")
         mapping_actions = ["mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
-                          "mapping_get_properties", "mapping_add_modifier", "mapping_remove_modifier",
-                          "mapping_add_trigger", "mapping_remove_trigger", "mapping_delete_context"]
+                          "mapping_get_properties", "mapping_get_property", "mapping_add_modifier", "mapping_remove_modifier",
+                          "mapping_get_modifiers", "mapping_add_trigger", "mapping_remove_trigger", "mapping_get_triggers",
+                          "mapping_update_context"]
         if action_lower in mapping_actions and not context_path:
             return generate_error_response(
                 "manage_enhanced_input", action,
@@ -227,14 +242,30 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
                     missing_params=["template_name"]
                 )
         
+        # Auto-determine service from action prefix if not explicitly provided
+        effective_service = service
+        if service == "reflection":  # Only auto-determine if using default
+            if action_lower.startswith("action_"):
+                effective_service = "action"
+            elif action_lower.startswith("mapping_"):
+                effective_service = "mapping"
+            elif action_lower.startswith("modifier_"):
+                effective_service = "modifier"
+            elif action_lower.startswith("trigger_"):
+                effective_service = "trigger"
+            elif action_lower.startswith("ai_"):
+                effective_service = "ai"
+            elif action_lower.startswith("reflection_"):
+                effective_service = "reflection"
+        
         # Debug logging
-        logger.info(f"manage_enhanced_input called with action={action_lower}, service={service}")
+        logger.info(f"manage_enhanced_input called with action={action_lower}, service={effective_service} (original: {service})")
         logger.info(f"action_name={action_name}, asset_path={asset_path}, value_type={value_type}")
         
         # Build command payload
         payload = {
             "action": action_lower,
-            "service": service,
+            "service": effective_service,
         }
         
         # Add optional parameters that are set

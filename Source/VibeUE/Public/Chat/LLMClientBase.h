@@ -96,8 +96,11 @@ private:
     /** Process a single SSE JSON chunk */
     void ProcessSSEChunk(const FString& JsonData);
 
-    /** Filter thinking tags from content */
+    /** Filter thinking tags and tool_call tags from content */
     FString FilterThinkingTags(const FString& Content);
+
+    /** Helper to filter a specific tag block from content */
+    FString FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock);
 
     /** Fire accumulated tool calls */
     void FirePendingToolCalls();
@@ -122,6 +125,9 @@ private:
 
     /** Flag: currently inside a <thinking> block */
     bool bInThinkingBlock;
+
+    /** Flag: currently inside a <tool_call> block (Qwen models output these in text) */
+    bool bInToolCallBlock;
 
 public:
     /** Get the accumulated response content (for non-streaming summarization) */

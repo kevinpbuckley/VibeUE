@@ -33,6 +33,7 @@ void FLLMClientBase::ResetStreamingState()
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInThinkingBlock = false;
+    bInToolCallBlock = false;
 }
 
 void FLLMClientBase::CancelRequest()
@@ -389,49 +390,52 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
 
 FString FLLMClientBase::FilterThinkingTags(const FString& Content)
 {
-    // Handle both <thinking>...</thinking> (Claude) and <think>...</think> (Qwen)
+    // Handle <thinking>...</thinking> (Claude), <think>...</think> (Qwen), and <tool_call>...</tool_call> (Qwen text-based tool calls)
+    FString CleanContent = Content;
+    
+    // First filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
+    
+    // Then filter thinking tags
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<thinking>"), TEXT("</thinking>"), bInThinkingBlock);
+    if (CleanContent == Content) // No <thinking> found, try <think>
+    {
+        CleanContent = FilterTagBlock(CleanContent, TEXT("<think>"), TEXT("</think>"), bInThinkingBlock);
+    }
+    
+    return CleanContent;
+}
+
+FString FLLMClientBase::FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock)
+{
     FString CleanContent;
+    int32 TagStart = Content.Find(OpenTag, ESearchCase::IgnoreCase);
+    int32 TagEnd = Content.Find(CloseTag, ESearchCase::IgnoreCase);
+    int32 CloseTagLen = CloseTag.Len();
     
-    // Check for thinking tags
-    int32 ThinkStart = Content.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
-    int32 ThinkStartLen = 10;
-    if (ThinkStart == INDEX_NONE)
+    if (TagStart != INDEX_NONE || bInBlock)
     {
-        ThinkStart = Content.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
-        ThinkStartLen = 7;
-    }
-    
-    int32 ThinkEnd = Content.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase);
-    int32 ThinkEndLen = 11;
-    if (ThinkEnd == INDEX_NONE)
-    {
-        ThinkEnd = Content.Find(TEXT("</think>"), ESearchCase::IgnoreCase);
-        ThinkEndLen = 8;
-    }
-    
-    if (ThinkStart != INDEX_NONE || bInThinkingBlock)
-    {
-        if (ThinkStart != INDEX_NONE && ThinkEnd != INDEX_NONE && ThinkEnd > ThinkStart)
+        if (TagStart != INDEX_NONE && TagEnd != INDEX_NONE && TagEnd > TagStart)
         {
-            // Complete think block in this chunk
-            CleanContent = Content.Left(ThinkStart) + Content.Mid(ThinkEnd + ThinkEndLen);
-            bInThinkingBlock = false;
+            // Complete block in this chunk - remove it
+            CleanContent = Content.Left(TagStart) + Content.Mid(TagEnd + CloseTagLen);
+            bInBlock = false;
         }
-        else if (ThinkStart != INDEX_NONE)
+        else if (TagStart != INDEX_NONE)
         {
-            // Think block starts but doesn't end
-            CleanContent = Content.Left(ThinkStart);
-            bInThinkingBlock = true;
+            // Block starts but doesn't end
+            CleanContent = Content.Left(TagStart);
+            bInBlock = true;
         }
-        else if (ThinkEnd != INDEX_NONE)
+        else if (TagEnd != INDEX_NONE)
         {
-            // Think block ends
-            CleanContent = Content.Mid(ThinkEnd + ThinkEndLen);
-            bInThinkingBlock = false;
+            // Block ends
+            CleanContent = Content.Mid(TagEnd + CloseTagLen);
+            bInBlock = false;
         }
         else
         {
-            // Still inside think block - skip content
+            // Still inside block - skip content
             CleanContent = TEXT("");
         }
     }
