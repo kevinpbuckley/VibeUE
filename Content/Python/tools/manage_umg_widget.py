@@ -38,7 +38,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_umg_tools(mcp: FastMCP):
     """Register unified UMG management tool with the MCP server."""
 
-    @mcp.tool(description="UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_component, remove_component, get_property, set_property, list_properties, search_types, bind_events, validate. Use action='help' for all actions and detailed parameter info.")
+    @mcp.tool(description="UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_component, remove_component, validate, search_types, get_component_properties, get_property, set_property, list_properties, get_available_events, bind_events. Use action='help' for all actions and detailed parameter info.")
     def manage_umg_widget(
         ctx: Context,
         action: str,
@@ -104,10 +104,13 @@ def register_umg_tools(mcp: FastMCP):
             from help_system import generate_error_response
             
             if action not in valid_actions:
-                return generate_error_response(
+                error_response = generate_error_response(
                     "manage_umg_widget", action,
                     f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
                 )
+                # Override available_actions with actual valid actions list
+                error_response["available_actions"] = valid_actions
+                return error_response
             
             # Action-specific validation before routing
             missing = []

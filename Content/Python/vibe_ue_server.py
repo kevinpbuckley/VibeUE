@@ -301,25 +301,36 @@ class UnrealConnection:
                     if not error_message:
                         error_message = f"Command failed - Full result: {result}"
                     logger.error(f"Unreal error (nested result success=false): {error_message}")
-                    return {
+                    # Preserve additional error fields (available_commands, help_tip, etc.)
+                    error_response = {
                         "success": False,
                         "error": error_message,
                         "components": [],
                         "widget_info": {},
                         "widgets": []
                     }
+                    # Copy over any additional fields from result
+                    for key in result:
+                        if key not in error_response:
+                            error_response[key] = result[key]
+                    return error_response
                 elif result.get("status") == "error":
                     error_message = result.get("error") or result.get("message")
                     if not error_message:
                         error_message = f"Command failed - Full result: {result}"
                     logger.error(f"Unreal error (nested result status=error): {error_message}")
-                    return {
+                    # Preserve additional error fields
+                    error_response = {
                         "success": False,
                         "error": error_message,
                         "components": [],
                         "widget_info": {},
                         "widgets": []
                     }
+                    for key in result:
+                        if key not in error_response:
+                            error_response[key] = result[key]
+                    return error_response
             
             # Check for direct error formats: {"status": "error", ...} and {"success": false, ...}
             if response.get("status") == "error":
@@ -327,26 +338,36 @@ class UnrealConnection:
                 if not error_message:
                     error_message = f"Command failed - Full response: {response}"
                 logger.error(f"Unreal error (status=error): {error_message}")
-                return {
+                # Preserve additional error fields
+                error_response = {
                     "success": False,
                     "error": error_message,
                     "components": [],
                     "widget_info": {},
                     "widgets": []
                 }
+                for key in response:
+                    if key not in error_response and key != "status":
+                        error_response[key] = response[key]
+                return error_response
             elif response.get("success") is False:
                 # This format uses {"success": false, "error": "message"} or {"success": false, "message": "message"}
                 error_message = response.get("error") or response.get("message")
                 if not error_message:
                     error_message = f"Command failed - Full response: {response}"
                 logger.error(f"Unreal error (success=false): {error_message}")
-                return {
+                # Preserve additional error fields
+                error_response = {
                     "success": False,
                     "error": error_message,
                     "components": [],
                     "widget_info": {},
                     "widgets": []
                 }
+                for key in response:
+                    if key not in error_response:
+                        error_response[key] = response[key]
+                return error_response
             
             # Handle successful responses - if we get here and no error conditions were met,
             # check if we have a successful result to return

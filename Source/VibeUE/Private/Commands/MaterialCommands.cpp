@@ -165,8 +165,43 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	}
 	else
 	{
-		return CreateErrorResponse(TEXT("UNKNOWN_ACTION"), 
+		// Enhanced error response with available commands
+		TSharedPtr<FJsonObject> Response = CreateErrorResponse(TEXT("UNKNOWN_ACTION"), 
 			FString::Printf(TEXT("Unknown action: %s"), *Action));
+		
+		// Add array of available commands
+		TArray<TSharedPtr<FJsonValue>> AvailableCommands;
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create_instance")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("save")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("compile")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("refresh_editor")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_info")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_properties")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_property")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_property_info")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_property")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_properties")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_parameters")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_parameter")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_parameter_default")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_instance_info")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_instance_properties")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_instance_property")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_instance_property")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_instance_parameters")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_instance_scalar_parameter")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_instance_vector_parameter")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_instance_texture_parameter")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("clear_instance_parameter_override")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("save_instance")));
+		Response->SetArrayField(TEXT("available_commands"), AvailableCommands);
+		
+		Response->SetStringField(TEXT("action"), Action);
+		Response->SetStringField(TEXT("tool"), TEXT("manage_material"));
+		Response->SetStringField(TEXT("help_tip"), TEXT("Use manage_material(action='help') to see all available actions and their parameters."));
+		
+		return Response;
 	}
 }
 

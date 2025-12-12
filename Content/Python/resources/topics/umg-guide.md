@@ -79,6 +79,32 @@ set_widget_property(widget_name, component_name, "Slot.VerticalAlignment", "VAli
 set_widget_property(widget_name, component_name, "Slot.Size.SizeRule", "Fill")  # CRITICAL for ScrollBox!
 ```
 
+## MCP Tool Invocation Updates (Dec 2025)
+
+All widget automation now routes through `manage_umg_widget`. Earlier revisions of this guide referenced helper aliases such as `set_widget_property` or `add_overlay`; treat those as shorthand for the `action`-based API shown below.
+
+```python
+# General pattern
+manage_umg_widget(
+    action="set_property",  # or list_components, add_component, etc.
+    widget_name="/Game/Blueprints/WBP_MyWidget",
+    component_name="TitleText",
+    property_name="ColorAndOpacity",
+    property_value={"R": 0.1, "G": 1.0, "B": 1.0, "A": 1.0}
+)
+```
+
+| Legacy helper | Updated call | Notes |
+|---|---|---|
+| `set_widget_property` | `manage_umg_widget(action="set_property", ...)` | Supports nested names like `Slot.LayoutData.Anchors.Minimum`. |
+| `add_overlay`, `add_image`, `add_button`, etc. | `manage_umg_widget(action="add_component", component_type="Overlay"/"Image"/"Button", parent_name=...)` | Provide `component_name` when you need deterministic names. |
+| `list_widget_components` | `manage_umg_widget(action="list_components", widget_name=...)` | Returns the hierarchy plus slot info. |
+| `get_widget_properties`, `get_widget_property` | `manage_umg_widget(action="get_component_properties"|"get_property", ...)` | Pass `include_inherited=True` to see defaults. |
+| `bind_widget_events` | `manage_umg_widget(action="bind_events", component_name=..., input_events={...}, input_mappings={...})` | Backend currently insists on `input_mappings`; see *Known MCP Limitations*. |
+| `search_widget_types` | `manage_umg_widget(action="search_types", ...)` | Currently errors with `get_available_widgets`; see limitations. |
+
+When you see helper-style snippets later in this file, translate them using the table above before calling the MCP tool.
+
 ## Widget Structure Best Practices
 
 ### DO's ✅
@@ -324,23 +350,39 @@ set_widget_transform(
 )
 ```
 
-**Step 6**: **CRITICAL** - Set slot properties for proper Fill behavior
+**Step 6**: **CRITICAL** - Configure Canvas slot `LayoutData` so the image actually fills the panel
 ```python
-# Use set_widget_property with "Slot." prefix to configure slot properties
-# CRITICAL: Use exact enum values for Unreal Engine
-set_widget_property(
+# CanvasPanelSlot exposes LayoutData.* fields instead of Horizontal/Vertical enums
+manage_umg_widget(
+    action="set_property",
     widget_name="MyWidget",
     component_name="MainBackground",
-    property_name="Slot.HorizontalAlignment",
-    property_value="HAlign_Fill"  # NOT "Fill" - use UE enum format!
+    property_name="Slot.LayoutData.Anchors.Minimum",
+    property_value={"x": 0.0, "y": 0.0}
 )
-set_widget_property(
+manage_umg_widget(
+    action="set_property",
     widget_name="MyWidget",
     component_name="MainBackground",
-    property_name="Slot.VerticalAlignment",
-    property_value="VAlign_Fill"  # NOT "Fill" - use UE enum format!
+    property_name="Slot.LayoutData.Anchors.Maximum",
+    property_value={"x": 1.0, "y": 1.0}
+)
+manage_umg_widget(
+    action="set_property",
+    widget_name="MyWidget",
+    component_name="MainBackground",
+    property_name="Slot.LayoutData.Alignment",
+    property_value={"x": 0.0, "y": 0.0}
+)
+manage_umg_widget(
+    action="set_property",
+    widget_name="MyWidget",
+    component_name="MainBackground",
+    property_name="Slot.LayoutData.Offsets",
+    property_value={"left": 0, "top": 0, "right": 0, "bottom": 0}
 )
 ```
+These settings mirror the old `HAlign_Fill` / `VAlign_Fill` workflow. For Overlay/ScrollBox/VBox slots you can still set `Slot.HorizontalAlignment` / `Slot.VerticalAlignment` directly, but Canvas children require the `LayoutData` field names shown above.
 
 **Step 7**: Set background image Z-order
 ```python
@@ -1258,6 +1300,14 @@ set_widget_property(widget_name, component_name, "Slot.VerticalAlignment", "VAli
   - Font properties
   - Brush properties
   - Size and transform properties
+
+## Known MCP Limitations (Dec 2025)
+
+These issues are tracked in `Plugins/VibeUE/test_prompts/umg/issues.md` and reflected in current MCP builds. Plan for the workarounds below until the backend is updated.
+
+- **`search_types` uses the old reflection bridge.** Calling `manage_umg_widget(action="search_types", ...)` returns `Unknown UMG Reflection command: get_available_widgets`. Use the Content Browser, Blueprint Editor class picker, or known widget class names during tests until the endpoint is migrated.
+- **`bind_events` demands `input_mappings` but still rejects the request.** Even when both `input_events={"OnClicked": "MyBP_C::HandleClick"}` and `input_mappings={}` are supplied, the tool returns `Missing input_mappings parameter`. For now, bind button delegates manually inside the Blueprint Editor after MCP creates the handler functions.
+- **Canvas children expose `Slot.LayoutData.*` instead of `Slot.HorizontalAlignment`.** Attempting to set `Slot.HorizontalAlignment` on a Canvas child raises `Property 'HorizontalAlignment' not found`. Use the LayoutData-based calls outlined in the Canvas Panel workflow earlier in this guide (anchors min/max to 0/1, zero offsets, explicit alignment vector) to achieve Fill behavior.
 
 ## 🔍 MANDATORY PRE-IMPLEMENTATION VALIDATION
 

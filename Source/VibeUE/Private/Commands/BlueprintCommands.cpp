@@ -128,7 +128,29 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
         return HandleGetAvailableBlueprintVariableTypes(Params);
     }
     
-    return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType));
+    // Enhanced error response with help information
+    TSharedPtr<FJsonObject> ErrorResponse = CreateErrorResponse(
+        VibeUE::ErrorCodes::OPERATION_FAILED, 
+        FString::Printf(TEXT("Unknown blueprint command: %s"), *CommandType)
+    );
+    
+    // Add available commands list
+    TArray<TSharedPtr<FJsonValue>> AvailableCommands;
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create_blueprint")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("compile_blueprint")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_blueprint_info")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_blueprint_property")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_blueprint_property")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("reparent_blueprint")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("add_component_to_blueprint")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("set_component_property")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("manage_blueprint_variable")));
+    AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_available_blueprint_variable_types")));
+    ErrorResponse->SetArrayField(TEXT("available_commands"), AvailableCommands);
+    
+    ErrorResponse->SetStringField(TEXT("help_tip"), TEXT("Use manage_blueprint(action='help') to see available actions in the Python layer"));
+    
+    return ErrorResponse;
 }
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)

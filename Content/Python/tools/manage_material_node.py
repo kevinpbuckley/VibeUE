@@ -119,10 +119,13 @@ def register_material_node_tools(mcp: FastMCP):
         ]
         
         if action_lower not in valid_actions:
-            return generate_error_response(
+            error_response = generate_error_response(
                 "manage_material_node", action,
                 f"Invalid action '{action}'. Valid actions: {', '.join(valid_actions)}"
             )
+            # Override available_actions with actual valid actions list
+            error_response["available_actions"] = valid_actions
+            return error_response
         
         # Action-specific validation
         missing = []

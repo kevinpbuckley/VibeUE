@@ -16,7 +16,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_tools(mcp: FastMCP):
     """Register unified Blueprint manager tool with the MCP server."""
 
-    @mcp.tool(description="Blueprint lifecycle: create, compile, inspect, configure. Use action='help' for all actions and detailed parameter info. Common parents: Actor, Pawn, Character, UserWidget, ActorComponent.")
+    @mcp.tool(description="Blueprint lifecycle: create, compile, inspect, configure. Actions: create, compile, get_info, get_property, set_property, reparent, summarize_event_graph. Use action='help' for all actions and detailed parameter info. Common parents: Actor, Pawn, Character, UserWidget, ActorComponent.")
     def manage_blueprint(
         ctx: Context,
         action: str,
@@ -53,14 +53,12 @@ def register_blueprint_tools(mcp: FastMCP):
             return _handle_set_property(blueprint_name, property_name, property_value)
         elif action == "reparent":
             return _handle_reparent(blueprint_name, new_parent_class)
-        elif action == "list_custom_events":
-            return _handle_list_custom_events(blueprint_name)
         elif action == "summarize_event_graph":
             return _handle_summarize_event_graph(blueprint_name, max_nodes, ctx)
         else:
             return {
                 "success": False,
-                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, get_property, set_property, reparent, list_custom_events, summarize_event_graph",
+                "error": f"Unknown action '{action}'. Valid actions: create, compile, get_info, get_property, set_property, reparent, summarize_event_graph",
                 "help_tip": "Use manage_blueprint(action='help') to see all available actions and their parameters.",
                 "general_help": "Use manage_blueprint(action='help', help_action='create') for specific action help."
             }

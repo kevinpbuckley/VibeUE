@@ -6,6 +6,7 @@ Each tool can use this to provide consistent help information via the 'help' act
 """
 
 from typing import Dict, Any, List, Optional
+from pathlib import Path
 
 # Tool help metadata - maps tool names to their documentation
 TOOL_HELP = {
@@ -791,9 +792,202 @@ TOOL_HELP = {
                     "help_action": "Optional: specific action to get help for"
                 },
                 "example": 'manage_material(action="help") or manage_material(action="help", help_action="create")'
+            },
+            "create": {
+                "description": "Create a new material asset",
+                "parameters": {
+                    "material_name": "Name for the new material",
+                    "destination_path": "Package path (e.g., /Game/Materials)"
+                },
+                "example": 'manage_material(action="create", material_name="M_MyMaterial", destination_path="/Game/Materials")'
+            },
+            "get_info": {
+                "description": "Get comprehensive material information",
+                "parameters": {
+                    "material_path": "Full path to the material"
+                },
+                "example": 'manage_material(action="get_info", material_path="/Game/Materials/M_Base")'
+            },
+            "list_properties": {
+                "description": "List all editable properties",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "include_advanced": "Optional: Include advanced properties (default false)"
+                },
+                "example": 'manage_material(action="list_properties", material_path="/Game/Materials/M_Base", include_advanced=True)'
+            },
+            "get_property": {
+                "description": "Get a property value",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "property_name": "Name of the property"
+                },
+                "example": 'manage_material(action="get_property", material_path="/Game/Materials/M_Base", property_name="TwoSided")'
+            },
+            "set_property": {
+                "description": "Set a property value",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "property_name": "Name of the property",
+                    "property_value": "New value for the property"
+                },
+                "example": 'manage_material(action="set_property", material_path="/Game/Materials/M_Base", property_name="TwoSided", property_value=True)'
+            },
+            "set_properties": {
+                "description": "Set multiple properties at once",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "properties": "Dict of property_name: value pairs"
+                },
+                "example": 'manage_material(action="set_properties", material_path="/Game/Materials/M_Base", properties={"TwoSided": True, "BlendMode": "BLEND_Masked"})'
+            },
+            "get_property_info": {
+                "description": "Get detailed property metadata",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "property_name": "Name of the property"
+                },
+                "example": 'manage_material(action="get_property_info", material_path="/Game/Materials/M_Base", property_name="BlendMode")'
+            },
+            "list_parameters": {
+                "description": "List all material parameters",
+                "parameters": {
+                    "material_path": "Full path to the material"
+                },
+                "example": 'manage_material(action="list_parameters", material_path="/Game/Materials/M_Base")'
+            },
+            "get_parameter": {
+                "description": "Get a specific parameter",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "parameter_name": "Name of the parameter"
+                },
+                "example": 'manage_material(action="get_parameter", material_path="/Game/Materials/M_Base", parameter_name="Roughness")'
+            },
+            "set_parameter_default": {
+                "description": "Set a parameter's default value",
+                "parameters": {
+                    "material_path": "Full path to the material",
+                    "parameter_name": "Name of the parameter",
+                    "value": "New default value"
+                },
+                "example": 'manage_material(action="set_parameter_default", material_path="/Game/Materials/M_Base", parameter_name="Roughness", value=0.75)'
+            },
+            "compile": {
+                "description": "Recompile material shaders",
+                "parameters": {
+                    "material_path": "Full path to the material"
+                },
+                "example": 'manage_material(action="compile", material_path="/Game/Materials/M_Base")'
+            },
+            "save": {
+                "description": "Save material to disk",
+                "parameters": {
+                    "material_path": "Full path to the material"
+                },
+                "example": 'manage_material(action="save", material_path="/Game/Materials/M_Base")'
+            },
+            "refresh_editor": {
+                "description": "Refresh open Material Editor",
+                "parameters": {
+                    "material_path": "Full path to the material"
+                },
+                "example": 'manage_material(action="refresh_editor", material_path="/Game/Materials/M_Base")'
+            },
+            "create_instance": {
+                "description": "Create a material instance from a parent material",
+                "parameters": {
+                    "parent_material_path": "Full path to parent material",
+                    "instance_name": "Name for the new instance",
+                    "destination_path": "Package path (e.g., /Game/Materials)"
+                },
+                "example": 'manage_material(action="create_instance", parent_material_path="/Game/Materials/M_Base", instance_name="MI_Red", destination_path="/Game/Materials")'
+            },
+            "get_instance_info": {
+                "description": "Get comprehensive info about a material instance",
+                "parameters": {
+                    "instance_path": "Full path to the material instance"
+                },
+                "example": 'manage_material(action="get_instance_info", instance_path="/Game/Materials/MI_Red")'
+            },
+            "list_instance_properties": {
+                "description": "List all editable properties on a material instance",
+                "parameters": {
+                    "instance_path": "Full path to the material instance"
+                },
+                "example": 'manage_material(action="list_instance_properties", instance_path="/Game/Materials/MI_Red")'
+            },
+            "get_instance_property": {
+                "description": "Get a single property value from instance",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "property_name": "Name of the property"
+                },
+                "example": 'manage_material(action="get_instance_property", instance_path="/Game/Materials/MI_Red", property_name="PhysMaterial")'
+            },
+            "set_instance_property": {
+                "description": "Set a property on material instance",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "property_name": "Name of the property",
+                    "property_value": "New value"
+                },
+                "example": 'manage_material(action="set_instance_property", instance_path="/Game/Materials/MI_Red", property_name="PhysMaterial", property_value="/Game/Physics/PM_Metal")'
+            },
+            "list_instance_parameters": {
+                "description": "List all parameters with current/default values",
+                "parameters": {
+                    "instance_path": "Full path to the material instance"
+                },
+                "example": 'manage_material(action="list_instance_parameters", instance_path="/Game/Materials/MI_Red")'
+            },
+            "set_instance_scalar_parameter": {
+                "description": "Set a scalar parameter override",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "parameter_name": "Name of the parameter",
+                    "value": "Scalar value"
+                },
+                "example": 'manage_material(action="set_instance_scalar_parameter", instance_path="/Game/Materials/MI_Red", parameter_name="Roughness", value=0.8)'
+            },
+            "set_instance_vector_parameter": {
+                "description": "Set a vector/color parameter override",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "parameter_name": "Name of the parameter",
+                    "r": "Red component (0-1)",
+                    "g": "Green component (0-1)",
+                    "b": "Blue component (0-1)",
+                    "a": "Optional: Alpha component (0-1, default 1.0)"
+                },
+                "example": 'manage_material(action="set_instance_vector_parameter", instance_path="/Game/Materials/MI_Red", parameter_name="BaseColor", r=1.0, g=0.0, b=0.0, a=1.0)'
+            },
+            "set_instance_texture_parameter": {
+                "description": "Set a texture parameter override",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "parameter_name": "Name of the parameter",
+                    "texture_path": "Full path to texture asset"
+                },
+                "example": 'manage_material(action="set_instance_texture_parameter", instance_path="/Game/Materials/MI_Red", parameter_name="BaseColorTexture", texture_path="/Game/Textures/T_Red")'
+            },
+            "clear_instance_parameter_override": {
+                "description": "Remove parameter override, revert to parent",
+                "parameters": {
+                    "instance_path": "Full path to the material instance",
+                    "parameter_name": "Name of the parameter"
+                },
+                "example": 'manage_material(action="clear_instance_parameter_override", instance_path="/Game/Materials/MI_Red", parameter_name="Roughness")'
+            },
+            "save_instance": {
+                "description": "Save material instance to disk",
+                "parameters": {
+                    "instance_path": "Full path to the material instance"
+                },
+                "example": 'manage_material(action="save_instance", instance_path="/Game/Materials/MI_Red")'
             }
         },
-        "note": "This tool supports 24 actions (11 base material + 13 instance). Use action='help' for complete action list."
+        "note": "This tool supports 24 actions (11 base material + 13 instance). Base actions work with materials, instance actions work with material instances (MIC)."
     },
     
     "manage_material_node": {
@@ -821,11 +1015,160 @@ TOOL_HELP = {
                     "help_action": "Optional: specific action to get help for"
                 },
                 "example": 'manage_umg_widget(action="help") or manage_umg_widget(action="help", help_action="add_component")'
+            },
+            "list_components": {
+                "description": "List all components in a widget blueprint hierarchy",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path (e.g., /Game/UI/WBP_MainMenu)",
+                    "options": "Optional dictionary for future filters"
+                },
+                "example": 'manage_umg_widget(action="list_components", widget_name="/Game/UI/WBP_MainMenu")'
+            },
+            "add_component": {
+                "description": "Add a widget component to the hierarchy",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_type": "REQUIRED: Widget class (Button, TextBlock, Image, etc.)",
+                    "component_name": "REQUIRED: Unique name for the new component",
+                    "parent_name": "Parent component name (default root)",
+                    "is_variable": "Whether to expose as variable (default True)",
+                    "properties": "Optional property dict applied on creation"
+                },
+                "example": 'manage_umg_widget(action="add_component", widget_name="/Game/UI/WBP_MainMenu", component_type="Button", component_name="PlayButton", parent_name="root")'
+            },
+            "remove_component": {
+                "description": "Remove a component from the widget hierarchy",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Name of component to remove",
+                    "remove_children": "Also remove child components (default True)",
+                    "remove_from_variables": "Remove backing variable (default True)"
+                },
+                "example": 'manage_umg_widget(action="remove_component", widget_name="/Game/UI/WBP_MainMenu", component_name="TitleText")'
+            },
+            "validate": {
+                "description": "Run consistency checks on a widget hierarchy",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path"
+                },
+                "example": 'manage_umg_widget(action="validate", widget_name="/Game/UI/WBP_MainMenu")'
+            },
+            "search_types": {
+                "description": "Discover available widget types for creation",
+                "parameters": {
+                    "category": "Optional category filter (Common, Panels, etc.)",
+                    "search_text": "Optional substring match against type/display name",
+                    "include_custom": "Include project widgets (default True)",
+                    "include_engine": "Include engine widgets (default True)",
+                    "parent_compatibility": "Filter by compatible parent class"
+                },
+                "example": 'manage_umg_widget(action="search_types", category="Common", search_text="Button")'
+            },
+            "get_component_properties": {
+                "description": "Get editable property metadata for a component",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component to inspect"
+                },
+                "example": 'manage_umg_widget(action="get_component_properties", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton")'
+            },
+            "get_property": {
+                "description": "Read a specific property from a component",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component name",
+                    "property_name": "REQUIRED: Property path (e.g., ColorAndOpacity)"
+                },
+                "example": 'manage_umg_widget(action="get_property", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", property_name="ColorAndOpacity")'
+            },
+            "set_property": {
+                "description": "Set a component property or slot property",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component name",
+                    "property_name": "REQUIRED: Property path (Slot.HorizontalAlignment, ColorAndOpacity, etc.)",
+                    "property_value": "REQUIRED: Value to assign (numbers, bools, dicts, strings)",
+                    "property_type": "Optional override for value coercion (auto by default)"
+                },
+                "example": 'manage_umg_widget(action="set_property", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", property_name="ColorAndOpacity", property_value={"R":1,"G":0.5,"B":0.1,"A":1})'
+            },
+            "list_properties": {
+                "description": "List properties for a component including categories",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component name",
+                    "include_inherited": "Include inherited properties (default True)",
+                    "category_filter": "Optional category filter"
+                },
+                "example": 'manage_umg_widget(action="list_properties", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", include_inherited=False)'
+            },
+            "get_available_events": {
+                "description": "List bindable input events for a component",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component name"
+                },
+                "example": 'manage_umg_widget(action="get_available_events", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton")'
+            },
+            "bind_events": {
+                "description": "Bind widget delegate events to blueprint functions",
+                "parameters": {
+                    "widget_name": "REQUIRED: Full widget path",
+                    "component_name": "REQUIRED: Component generating events",
+                    "input_events": "REQUIRED: Dict mapping event names to handler function paths"
+                },
+                "example": 'manage_umg_widget(action="bind_events", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", input_events={"OnClicked": "BP_MainMenu_C::HandlePlay"})'
             }
         },
         "note": "This tool supports 11 actions for UMG widget operations. Use action='help' for complete action list."
     }
 }
+
+
+TOOL_ACTION_OVERRIDES = {
+    "manage_material_node": [
+        "help",
+        "discover_types", "get_categories",
+        "create", "delete", "move", "list", "get_details", "get_pins",
+        "connect", "disconnect", "connect_to_output", "disconnect_output", "list_connections",
+        "get_property", "set_property", "list_properties",
+        "promote_to_parameter", "create_parameter", "set_parameter_metadata",
+        "get_output_properties", "get_output_connections"
+    ]
+}
+
+
+_TOOLS_DIR = Path(__file__).resolve().parent
+_RESOURCES_DIR = _TOOLS_DIR.parent / "resources"
+_TOPICS_DIR = _RESOURCES_DIR / "topics"
+_TOPIC_CACHE: Dict[str, Dict[str, Any]] = {}
+
+
+def _load_topic_content(topic: str) -> Dict[str, Any]:
+    """Load markdown content for a help topic from resources/topics."""
+    if topic in _TOPIC_CACHE:
+        return _TOPIC_CACHE[topic]
+    topic_path = _TOPICS_DIR / f"{topic}.md"
+    if topic_path.exists():
+        try:
+            content = topic_path.read_text(encoding="utf-8")
+            data = {"success": True, "content": content, "path": str(topic_path)}
+        except Exception as exc:
+            data = {"success": False, "error": f"Failed to read topic '{topic}': {exc}"}
+    else:
+        data = {"success": False, "error": f"Topic file not found for '{topic}'"}
+    _TOPIC_CACHE[topic] = data
+    return data
+
+
+def _get_available_actions(tool_name: str) -> List[str]:
+    """Return complete action list for a tool, honoring overrides when needed."""
+    if tool_name in TOOL_ACTION_OVERRIDES:
+        return TOOL_ACTION_OVERRIDES[tool_name]
+    if tool_name in TOOL_HELP:
+        actions = list(TOOL_HELP[tool_name].get("actions", {}).keys())
+        return actions
+    return []
 
 
 def generate_help_response(tool_name: str, help_action: Optional[str] = None) -> Dict[str, Any]:
@@ -850,7 +1193,7 @@ def generate_help_response(tool_name: str, help_action: Optional[str] = None) ->
     # If specific action requested, return detailed action help
     if help_action:
         if help_action not in tool_help["actions"]:
-            available_actions = list(tool_help["actions"].keys())
+            available_actions = _get_available_actions(tool_name)
             return {
                 "success": False,
                 "error": f"Action '{help_action}' not found",
@@ -877,18 +1220,29 @@ def generate_help_response(tool_name: str, help_action: Optional[str] = None) ->
             "description": action_info["description"]
         })
     
-    return {
+    response = {
         "success": True,
         "tool": tool_name,
         "summary": tool_help["summary"],
         "topic": tool_help.get("topic", ""),
-        "topic_help": f"For detailed examples and workflows, use get_help(topic='{tool_help.get('topic', '')}'))" if tool_help.get("topic") else "",
         "actions": action_list,
         "total_actions": len(action_list),
         "usage": f"For detailed help on a specific action: {tool_name}(action='help', help_action='action_name')",
         "note": tool_help.get("note", ""),
         "help_type": "tool_overview"
     }
+    topic_name = tool_help.get("topic")
+    if topic_name:
+        topic_result = _load_topic_content(topic_name)
+        if topic_result.get("success"):
+            response["topic_help"] = f"Topic '{topic_name}' guide loaded from documentation."
+            response["topic_content"] = topic_result.get("content", "")
+            response["topic_source"] = topic_result.get("path", "")
+        else:
+            response["topic_help"] = topic_result.get("error", "")
+    else:
+        response["topic_help"] = ""
+    return response
 
 
 def generate_error_response(tool_name: str, action: str, error_message: str, missing_params: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -921,6 +1275,19 @@ def generate_error_response(tool_name: str, action: str, error_message: str, mis
     # Always add the help reminder
     response["help_tip"] = f"Use {tool_name}(action='help', help_action='{action}') to see all parameters and examples for this action."
     response["general_help"] = f"Use {tool_name}(action='help') to see all available actions."
+
+    # Topic-specific guidance (e.g., UMG styling guide)
+    topic_name = TOOL_HELP.get(tool_name, {}).get("topic") if tool_name in TOOL_HELP else None
+    if topic_name:
+        if topic_name == "umg-guide":
+            response["topic_help"] = "UMG styling guide available. Run manage_umg_widget(action='help') to load the complete guide." 
+            topic_result = _load_topic_content(topic_name)
+            if topic_result.get("success"):
+                response["topic_content_preview"] = topic_result.get("content", "")[:600]
+            else:
+                response["topic_content_error"] = topic_result.get("error", "")
+        else:
+            response["topic_help"] = f"Additional guidance available under topic '{topic_name}'."
     
     return response
 

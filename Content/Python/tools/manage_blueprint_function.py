@@ -41,7 +41,7 @@ def _merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
     """Register Blueprint function management tool."""
 
-    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Use action='help' for all actions and detailed parameter info.")
+    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Actions: create, delete, list, list_params, add_param, remove_param, modify_param, add_local_var, remove_local_var, list_local_vars. Use action='help' for all actions and detailed parameter info.")
     def manage_blueprint_function(
         help_action: str = "",
         blueprint_name: str = "",

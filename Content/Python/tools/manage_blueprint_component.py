@@ -13,7 +13,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_component_tools(mcp: FastMCP):
     """Register Blueprint component management tools with the MCP server."""
     
-    @mcp.tool(description="Blueprint component operations: create, delete, get/set properties, hierarchy. Use action='help' for all actions and detailed parameter info. CRITICAL: Use full package paths like /Game/Blueprints/BP_Player (not short names).")
+    @mcp.tool(description="Blueprint component operations: create, delete, get/set properties, hierarchy. Actions: search_types, get_info, get_property_metadata, list, create, delete, get_property, set_property, get_all_properties, compare_properties, reorder, reparent. Use action='help' for all actions and detailed parameter info. CRITICAL: Use full package paths like /Game/Blueprints/BP_Player (not short names).")
     def manage_blueprint_component(
         ctx: Context,
         blueprint_name: str,
