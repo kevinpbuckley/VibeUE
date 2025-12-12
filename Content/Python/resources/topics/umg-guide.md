@@ -101,7 +101,7 @@ manage_umg_widget(
 | `list_widget_components` | `manage_umg_widget(action="list_components", widget_name=...)` | Returns the hierarchy plus slot info. |
 | `get_widget_properties`, `get_widget_property` | `manage_umg_widget(action="get_component_properties"|"get_property", ...)` | Pass `include_inherited=True` to see defaults. |
 | `bind_widget_events` | `manage_umg_widget(action="bind_events", component_name=..., input_events={...}, input_mappings={...})` | Backend currently insists on `input_mappings`; see *Known MCP Limitations*. |
-| `search_widget_types` | `manage_umg_widget(action="search_types", ...)` | Currently errors with `get_available_widgets`; see limitations. |
+| `search_widget_types` | `manage_umg_widget(action="search_types", ...)` | Returns the MCP-backed palette via `get_available_widget_types`. |
 
 When you see helper-style snippets later in this file, translate them using the table above before calling the MCP tool.
 
@@ -1305,7 +1305,6 @@ set_widget_property(widget_name, component_name, "Slot.VerticalAlignment", "VAli
 
 These issues are tracked in `Plugins/VibeUE/test_prompts/umg/issues.md` and reflected in current MCP builds. Plan for the workarounds below until the backend is updated.
 
-- **`search_types` uses the old reflection bridge.** Calling `manage_umg_widget(action="search_types", ...)` returns `Unknown UMG Reflection command: get_available_widgets`. Use the Content Browser, Blueprint Editor class picker, or known widget class names during tests until the endpoint is migrated.
 - **`bind_events` demands `input_mappings` but still rejects the request.** Even when both `input_events={"OnClicked": "MyBP_C::HandleClick"}` and `input_mappings={}` are supplied, the tool returns `Missing input_mappings parameter`. For now, bind button delegates manually inside the Blueprint Editor after MCP creates the handler functions.
 - **Canvas children expose `Slot.LayoutData.*` instead of `Slot.HorizontalAlignment`.** Attempting to set `Slot.HorizontalAlignment` on a Canvas child raises `Property 'HorizontalAlignment' not found`. Use the LayoutData-based calls outlined in the Canvas Panel workflow earlier in this guide (anchors min/max to 0/1, zero offsets, explicit alignment vector) to achieve Fill behavior.
 

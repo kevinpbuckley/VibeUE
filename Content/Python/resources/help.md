@@ -243,8 +243,7 @@ manage_blueprint_variable(
 - `validate_widget_hierarchy` - Validate widget structure
 
 ### UMG Widget Components
-- `get_available_widgets` - Discover all widget types via reflection
-- `get_available_widget_types` - Get widget types with categories
+- `get_available_widget_types` - Discover the supported widget palette (reflection-backed)
 - `list_widget_components` - List all widget components with hierarchy
 - `add_widget_component` - **UNIVERSAL** widget component creation
 - `remove_umg_component` - Universal widget component removal

@@ -440,23 +440,31 @@ def _handle_search_types(
         }
         
         logger.info(f"Searching widget types with params: {params}")
-        response = unreal.send_command("get_available_widgets", params)
+        response = unreal.send_command("get_available_widget_types", params)
         
         if not response:
             logger.error("No response from Unreal Engine")
             return {"success": False, "error": "No response from Unreal Engine"}
         
-        # Filter by search_text if provided (client-side filter)
-        if search_text and response.get("success") and response.get("widgets"):
-            search_lower = search_text.lower()
-            filtered_widgets = [
-                w for w in response["widgets"]
-                if search_lower in w.get("name", "").lower() or
-                   search_lower in w.get("display_name", "").lower()
-            ]
-            response["widgets"] = filtered_widgets
-            response["count"] = len(filtered_widgets)
-            response["filtered_by"] = search_text
+        # Normalize widget list so callers always see `widgets` entries
+        widget_types = response.get("widget_types", []) if response.get("success") else []
+        search_lower = search_text.lower() if search_text else None
+        normalized_widgets: List[Dict[str, Any]] = []
+        for widget_type in widget_types:
+            if search_lower and search_lower not in widget_type.lower():
+                continue
+            normalized_widgets.append({
+                "name": widget_type,
+                "display_name": widget_type,
+                "category": category or "General",
+                "source": "get_available_widget_types"
+            })
+        
+        response["widgets"] = normalized_widgets
+        response["count"] = len(normalized_widgets)
+        response["category"] = category
+        response["filtered_by"] = search_text if search_text else ""
+        response["note"] = "Results provided by get_available_widget_types"
         
         logger.info(f"Search types response: {response}")
         return response
