@@ -46,23 +46,7 @@ def _dispatch(command: str, payload: Dict[str, Any]) -> Dict[str, Any]:
 def register_enhanced_input_tools(mcp: FastMCP) -> None:
     """Register unified Enhanced Input management tool with MCP server."""
     
-    @mcp.tool(description="""Enhanced Input System management for Input Actions, Mapping Contexts, Modifiers, and Triggers.
-
-ACTIONS:
-- action_create, action_list, action_get_properties, action_configure
-- mapping_create_context, mapping_list_contexts, mapping_add_key_mapping, mapping_get_mappings, mapping_remove_mapping
-- mapping_add_modifier, mapping_remove_modifier, mapping_get_modifiers
-- mapping_add_trigger, mapping_remove_trigger, mapping_get_triggers
-- mapping_get_available_keys, mapping_get_available_modifier_types, mapping_get_available_trigger_types
-- reflection_discover_types, reflection_get_metadata
-
-COMMON USAGE:
-- action_create: Create Input Action (needs: action_name, asset_path, value_type=Digital|Axis1D|Axis2D|Axis3D)
-- mapping_create_context: Create Mapping Context (needs: context_name, context_path)
-- mapping_add_key_mapping: Bind key (needs: context_path, action_path, key)
-- mapping_remove_mapping: Remove binding by index (needs: context_path, mapping_index)
-
-For delete assets, use manage_asset(action='delete', asset_path='...').""")
+    @mcp.tool(description="Enhanced Input System management for Input Actions, Mapping Contexts, Modifiers, and Triggers. Actions: action_create, action_list, action_get_properties, action_configure, mapping_create_context, mapping_list_contexts, mapping_add_key_mapping, mapping_get_mappings, mapping_remove_mapping, mapping_add_modifier, mapping_remove_modifier, mapping_get_modifiers, mapping_add_trigger, mapping_remove_trigger, mapping_get_triggers, mapping_get_available_keys, mapping_get_available_modifier_types, mapping_get_available_trigger_types, reflection_discover_types, reflection_get_metadata. Use action='help' for all actions and detailed parameter info.")
     def manage_enhanced_input(
         ctx: Context,
         action: str,
