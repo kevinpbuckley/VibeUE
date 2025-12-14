@@ -26,8 +26,51 @@
 #include "Misc/ConfigCacheIni.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformTime.h"
 
 DEFINE_LOG_CATEGORY(LogAIChatWindow);
+
+// Helper to sanitize strings for logging (remove NUL and control characters)
+static FString SanitizeForLog(const FString& Input)
+{
+    FString Output;
+    Output.Reserve(Input.Len());
+    for (TCHAR Char : Input)
+    {
+        // Skip NUL and other problematic control characters, keep tab/newline/CR
+        if (Char == 0 || (Char < 32 && Char != 9 && Char != 10 && Char != 13))
+        {
+            continue;
+        }
+        Output.AppendChar(Char);
+    }
+    return Output;
+}
+
+// Helper to write logs to dedicated file
+void FChatWindowLogger::LogToFile(const FString& Level, const FString& Message)
+{
+    FString LogFilePath = GetLogFilePath();
+    FString Timestamp = FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S"));
+    FString SanitizedMessage = SanitizeForLog(Message);
+    FString LogLine = FString::Printf(TEXT("[%s] [%s] %s\n"), *Timestamp, *Level, *SanitizedMessage);
+    // Use ForceAnsi to avoid UTF-16 null bytes when appending
+    FFileHelper::SaveStringToFile(LogLine, *LogFilePath, FFileHelper::EEncodingOptions::ForceAnsi, &IFileManager::Get(), FILEWRITE_Append);
+}
+
+FString FChatWindowLogger::GetLogFilePath()
+{
+    return FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_Chat.log");
+}
+
+// Macro to log to both UE output and dedicated file
+#define CHAT_LOG(Level, Format, ...) \
+    do { \
+        UE_LOG(LogAIChatWindow, Level, Format, ##__VA_ARGS__); \
+        FChatWindowLogger::LogToFile(TEXT(#Level), FString::Printf(Format, ##__VA_ARGS__)); \
+    } while(0)
 
 TWeakPtr<SWindow> SAIChatWindow::WindowInstance;
 TSharedPtr<SAIChatWindow> SAIChatWindow::WidgetInstance;
@@ -52,10 +95,11 @@ namespace VibeUEColors
     const FLinearColor Magenta(0.85f, 0.2f, 0.65f, 1.0f);          // Magenta/pink accent
     const FLinearColor MagentaDark(0.7f, 0.5f, 1.0f, 1.0f);        // Bright purple for JSON text
     
-    // Text colors
-    const FLinearColor TextPrimary(0.9f, 0.9f, 0.95f, 1.0f);       // Main text
-    const FLinearColor TextSecondary(0.6f, 0.6f, 0.65f, 1.0f);     // Secondary/muted text
-    const FLinearColor TextMuted(0.4f, 0.4f, 0.45f, 1.0f);         // Very muted
+    // Text colors - softer grays for readability
+    const FLinearColor TextPrimary(0.78f, 0.78f, 0.82f, 1.0f);     // Main text - soft gray (not pure white)
+    const FLinearColor TextSecondary(0.55f, 0.55f, 0.60f, 1.0f);   // Secondary/muted text
+    const FLinearColor TextMuted(0.38f, 0.38f, 0.42f, 1.0f);       // Very muted
+    const FLinearColor TextCode(0.72f, 0.82f, 0.72f, 1.0f);        // Code/JSON text - slight green tint
     
     // Message background colors  
     const FLinearColor UserMessage(0.14f, 0.14f, 0.16f, 1.0f);     // User messages - neutral dark gray
@@ -83,6 +127,9 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnSummarizationStarted.BindSP(this, &SAIChatWindow::HandleSummarizationStarted);
     ChatSession->OnSummarizationComplete.BindSP(this, &SAIChatWindow::HandleSummarizationComplete);
     ChatSession->OnTokenBudgetUpdated.BindSP(this, &SAIChatWindow::HandleTokenBudgetUpdated);
+    ChatSession->OnToolIterationLimitReached.BindSP(this, &SAIChatWindow::HandleToolIterationLimitReached);
+    ChatSession->OnThinkingStatusChanged.BindSP(this, &SAIChatWindow::HandleThinkingStatusChanged);
+    ChatSession->OnToolPreparing.BindSP(this, &SAIChatWindow::HandleToolPreparing);
     
     // Build UI with VibeUE branding
     ChildSlot
@@ -130,7 +177,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         .Text(FText::FromString(TEXT("Tools: --")))
                         .ToolTipText(FText::FromString(TEXT("Available MCP tools")))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::Cyan))
-                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
                     ]
                     
                     // Token budget indicator
@@ -143,7 +190,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         .Text(FText::FromString(TEXT("Tokens: --")))
                         .ToolTipText(FText::FromString(TEXT("Context token usage (current / budget)")))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::Green))
-                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
                     ]
                     
                     // Reset button
@@ -297,7 +344,7 @@ void SAIChatWindow::OpenWindow()
     
     FSlateApplication::Get().AddWindow(Window);
     
-    UE_LOG(LogAIChatWindow, Log, TEXT("AI Chat window opened"));
+    CHAT_LOG(Log, TEXT("AI Chat window opened"));
 }
 
 void SAIChatWindow::CloseWindow()
@@ -313,7 +360,7 @@ void SAIChatWindow::CloseWindow()
     WindowInstance.Reset();
     WidgetInstance.Reset();
     
-    UE_LOG(LogAIChatWindow, Log, TEXT("AI Chat window closed"));
+    CHAT_LOG(Log, TEXT("AI Chat window closed"));
 }
 
 void SAIChatWindow::ToggleWindow()
@@ -337,6 +384,7 @@ void SAIChatWindow::RebuildMessageList()
 {
     MessageScrollBox->ClearChildren();
     MessageTextBlocks.Empty();
+    ToolCallWidgets.Empty();  // Clear tool call widget references
     
     const TArray<FChatMessage>& Messages = ChatSession->GetMessages();
     for (int32 i = 0; i < Messages.Num(); ++i)
@@ -357,41 +405,45 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     // Check if this is a tool call (assistant message with tool calls) or tool response
     bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
     bool bIsToolResponse = Message.Role == TEXT("tool");
-    bool bIsToolRelated = bIsToolCall || bIsToolResponse;
     
-    // For tool responses, check if success or failure
-    bool bToolSuccess = true;
+    // For tool calls, create paired widgets for each tool call
+    if (bIsToolCall)
+    {
+        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+        {
+            AddToolCallWidget(Message.ToolCalls[ToolIdx], Index, ToolIdx);
+        }
+        return;
+    }
+    
+    // For tool responses, update the corresponding tool call widget
     if (bIsToolResponse)
     {
-        // Check if the content indicates an error
+        // Parse the response to check success/failure
+        bool bSuccess = true;
         if (Message.Content.Contains(TEXT("\"error\"")) || 
             Message.Content.Contains(TEXT("\"status\": \"error\"")) ||
             Message.Content.Contains(TEXT("\"success\": false")) ||
             Message.Content.Contains(TEXT("\"success\":false")))
         {
-            bToolSuccess = false;
+            bSuccess = false;
         }
+        
+        // Update the existing tool call widget with this response
+        UpdateToolCallWithResponse(Message.ToolCallId, Message.Content, bSuccess);
+        return;
     }
     
+    // Regular message styling
     if (Message.Role == TEXT("user"))
     {
         BackgroundColor = VibeUEColors::UserMessage;
-        BorderColor = VibeUEColors::Gray;  // Gray border for user
-    }
-    else if (bIsToolCall)
-    {
-        BackgroundColor = VibeUEColors::UserMessage;  // Gray background like other messages
-        BorderColor = VibeUEColors::Orange;  // Orange left border for tool calls
-    }
-    else if (bIsToolResponse)
-    {
-        BackgroundColor = VibeUEColors::UserMessage;  // Gray background like other messages
-        BorderColor = bToolSuccess ? VibeUEColors::Green : VibeUEColors::Red;  // Green/Red left border
+        BorderColor = VibeUEColors::Gray;
     }
     else if (Message.Role == TEXT("assistant"))
     {
         BackgroundColor = VibeUEColors::AssistantMessage;
-        BorderColor = VibeUEColors::Blue;  // Blue border for assistant
+        BorderColor = VibeUEColors::Blue;
     }
     else
     {
@@ -403,13 +455,6 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     static FSlateBrush SolidBrush;
     SolidBrush.DrawAs = ESlateBrushDrawType::Box;
     SolidBrush.TintColor = FSlateColor(FLinearColor::White);
-    
-    // For tool-related messages, create collapsible widget
-    if (bIsToolRelated)
-    {
-        AddToolMessageWidget(Message, Index, BackgroundColor, BorderColor, bIsToolCall);
-        return;
-    }
     
     FString DisplayText = Message.Content;
     if (Message.bIsStreaming && DisplayText.IsEmpty())
@@ -431,7 +476,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
             SNew(SBorder)
             .BorderImage(&SolidBrush)
             .BorderBackgroundColor(BorderColor)
-            .Padding(FMargin(3, 0, 0, 0))  // 3px wide colored strip
+            .Padding(FMargin(3, 0, 0, 0))
             [
                 SNew(SSpacer)
                 .Size(FVector2D(0, 0))
@@ -456,6 +501,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
                     SAssignNew(ContentTextBlock, STextBlock)
                     .Text(FText::FromString(DisplayText))
                     .AutoWrapText(true)
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
                     .ColorAndOpacity(FSlateColor(TextColor))
                 ]
                 
@@ -506,212 +552,292 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     MessageTextBlocks.Add(Index, ContentTextBlock);
 }
 
-void SAIChatWindow::AddToolMessageWidget(const FChatMessage& Message, int32 Index, 
-    const FLinearColor& BackgroundColor, const FLinearColor& BorderColor, bool bIsToolCall)
+void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 MessageIndex, int32 ToolIndex)
 {
+    // Update status to show tool execution
+    SetStatusText(FString::Printf(TEXT("Executing: %s"), *ToolCall.Name));
+    
     // Create a solid color brush for borders
     static FSlateBrush SolidBrush;
     SolidBrush.DrawAs = ESlateBrushDrawType::Box;
     SolidBrush.TintColor = FSlateColor(FLinearColor::White);
     
-    // Extract tool name and action from message
-    FString ToolName;
+    // Extract action name from arguments if available
     FString ActionName;
-    FString FullJson = Message.Content;
-    FString ToolStatusText;
-    
-    if (bIsToolCall && Message.ToolCalls.Num() > 0)
+    TSharedPtr<FJsonObject> ArgsJson;
+    TSharedRef<TJsonReader<>> ArgsReader = TJsonReaderFactory<>::Create(ToolCall.Arguments);
+    if (FJsonSerializer::Deserialize(ArgsReader, ArgsJson) && ArgsJson.IsValid())
     {
-        // Tool call - get name from ToolCalls array
-        ToolName = Message.ToolCalls[0].Name;
-        FullJson = Message.ToolCalls[0].Arguments;
-        ToolStatusText = TEXT("CALL");
-        
-        // Try to extract action from arguments JSON
-        TSharedPtr<FJsonObject> JsonObject;
-        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FullJson);
-        if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
-        {
-            JsonObject->TryGetStringField(TEXT("action"), ActionName);
-        }
-    }
-    else
-    {
-        // Tool response - try to parse and find success status
-        ToolStatusText = TEXT("RESULT");
-        
-        TSharedPtr<FJsonObject> JsonObject;
-        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Message.Content);
-        if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
-        {
-            bool bSuccess = false;
-            if (JsonObject->TryGetBoolField(TEXT("success"), bSuccess))
-            {
-                ToolStatusText = bSuccess ? TEXT("SUCCESS") : TEXT("FAILED");
-            }
-        }
-        
-        // Tool name comes from the ToolCallId if available
-        ToolName = Message.ToolCallId.IsEmpty() ? TEXT("Tool") : TEXT("Response");
+        ArgsJson->TryGetStringField(TEXT("action"), ActionName);
     }
     
-    // Build summary text
-    FString SummaryText;
-    if (!ToolName.IsEmpty())
+    // Build compact summary text (like Copilot: "tool_name → action")
+    FString CallSummary = ToolCall.Name;
+    if (!ActionName.IsEmpty())
     {
-        SummaryText = FString::Printf(TEXT("[%s] %s"), *ToolStatusText, *ToolName);
-        if (!ActionName.IsEmpty())
-        {
-            SummaryText += FString::Printf(TEXT(" → %s"), *ActionName);
-        }
-    }
-    else
-    {
-        SummaryText = FString::Printf(TEXT("[%s]"), *ToolStatusText);
+        CallSummary += FString::Printf(TEXT(" → %s"), *ActionName);
     }
     
-    // Create expand/collapse state - use shared ptr to track state
-    TSharedPtr<bool> bIsExpanded = MakeShared<bool>(false);
-    TSharedPtr<STextBlock> JsonTextBlock;
+    // Create widget data struct
+    FToolCallWidgetData WidgetData;
+    WidgetData.bExpanded = MakeShared<bool>(false);
+    WidgetData.CallJson = ToolCall.Arguments;
+    WidgetData.bResponseReceived = false;
     
-    // Pre-create the JSON container so we can reference it in the button click handler
-    TSharedRef<SBox> JsonContainer = SNew(SBox)
+    // Truncate JSON for display
+    FString TruncatedCallJson = WidgetData.CallJson.Len() > 1000 ? WidgetData.CallJson.Left(1000) + TEXT("\n...") : WidgetData.CallJson;
+    
+    // Capture for copy lambdas
+    FString CapturedCallJson = ToolCall.Arguments;
+    TSharedPtr<FString> CapturedResponseJson = MakeShared<FString>();
+    WidgetData.ResponseJsonPtr = CapturedResponseJson;
+    
+    // Create expandable details container (hidden by default)
+    TSharedRef<SBox> DetailsContainer = SNew(SBox)
         .Visibility(EVisibility::Collapsed)
+        .Padding(FMargin(12, 4, 0, 0))
         [
             SNew(SVerticalBox)
+            // Call arguments section
             + SVerticalBox::Slot()
             .AutoHeight()
-            [
-                SAssignNew(JsonTextBlock, STextBlock)
-                .Text(FText::FromString(FullJson.Len() > 2000 ? FullJson.Left(2000) + TEXT("\n... (truncated)") : FullJson))
-                .AutoWrapText(true)
-                .Font(FCoreStyle::GetDefaultFontStyle("Mono", 9))
-                .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))  // Standard text color on gray background
-            ]
-            
-            // Copy button
-            + SVerticalBox::Slot()
-            .AutoHeight()
-            .HAlign(HAlign_Right)
-            .Padding(0, 4, 0, 0)
-            [
-                SNew(SButton)
-                .Text(FText::FromString(TEXT("Copy")))
-                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                .OnClicked_Lambda([this, Index]() -> FReply
-                {
-                    CopyMessageToClipboard(Index);
-                    return FReply::Handled();
-                })
-            ]
-        ];
-    
-    // Capture the container as TSharedRef for the lambda
-    TWeakPtr<SBox> WeakJsonContainer = JsonContainer;
-    
-    // Create the collapsible tool message widget
-    TSharedRef<SWidget> ToolWidget = 
-        SNew(SHorizontalBox)
-        
-        // Colored left border strip
-        + SHorizontalBox::Slot()
-        .AutoWidth()
-        [
-            SNew(SBorder)
-            .BorderImage(&SolidBrush)
-            .BorderBackgroundColor(BorderColor)
-            .Padding(FMargin(3, 0, 0, 0))
-            [
-                SNew(SSpacer)
-                .Size(FVector2D(0, 0))
-            ]
-        ]
-        
-        // Tool message content area
-        + SHorizontalBox::Slot()
-        .FillWidth(1.0f)
-        [
-            SNew(SBorder)
-            .BorderImage(&SolidBrush)
-            .BorderBackgroundColor(BackgroundColor)
-            .Padding(8)
             [
                 SNew(SVerticalBox)
-                
-                // Header row with expand button and summary
                 + SVerticalBox::Slot()
                 .AutoHeight()
                 [
                     SNew(SHorizontalBox)
-                    
-                    // Expand/Collapse button
-                    + SHorizontalBox::Slot()
-                    .AutoWidth()
-                    .VAlign(VAlign_Center)
-                    .Padding(0, 0, 6, 0)
-                    [
-                        SNew(SButton)
-                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                        .OnClicked_Lambda([bIsExpanded, WeakJsonContainer]() -> FReply
-                        {
-                            *bIsExpanded = !(*bIsExpanded);
-                            if (TSharedPtr<SBox> Container = WeakJsonContainer.Pin())
-                            {
-                                Container->SetVisibility(*bIsExpanded ? EVisibility::Visible : EVisibility::Collapsed);
-                            }
-                            return FReply::Handled();
-                        })
-                        [
-                            SNew(STextBlock)
-                            .Text_Lambda([bIsExpanded]() { return FText::FromString(*bIsExpanded ? TEXT("-") : TEXT("+")); })
-                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
-                            .ColorAndOpacity(FSlateColor(BorderColor))  // Match border color for +/- button
-                        ]
-                    ]
-                    
-                    // Summary text
                     + SHorizontalBox::Slot()
                     .FillWidth(1.0f)
                     .VAlign(VAlign_Center)
                     [
                         SNew(STextBlock)
-                        .Text(FText::FromString(SummaryText))
-                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
-                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))  // Standard text color on gray background
+                        .Text(FText::FromString(TEXT("Arguments:")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Copy")))
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .OnClicked_Lambda([CapturedCallJson]() -> FReply
+                        {
+                            FPlatformApplicationMisc::ClipboardCopy(*CapturedCallJson);
+                            return FReply::Handled();
+                        })
                     ]
                 ]
-                
-                // JSON content (collapsed by default) - use pre-created container
                 + SVerticalBox::Slot()
                 .AutoHeight()
-                .Padding(0, 6, 0, 0)
+                .Padding(0, 2, 0, 0)
                 [
-                    JsonContainer
+                    SNew(SBorder)
+                    .BorderImage(&SolidBrush)
+                    .BorderBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 1.0f))
+                    .Padding(4)
+                    [
+                        SAssignNew(WidgetData.CallJsonText, STextBlock)
+                        .Text(FText::FromString(TruncatedCallJson))
+                        .AutoWrapText(true)
+                        .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextCode))
+                    ]
+                ]
+            ]
+            // Response section (will be populated when response arrives)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(0, 8, 0, 0)
+            [
+                SNew(SVerticalBox)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Response:")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                    ]
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Copy")))
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .OnClicked_Lambda([CapturedResponseJson]() -> FReply
+                        {
+                            FPlatformApplicationMisc::ClipboardCopy(**CapturedResponseJson);
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 2, 0, 0)
+                [
+                    SNew(SBorder)
+                    .BorderImage(&SolidBrush)
+                    .BorderBackgroundColor(FLinearColor(0.05f, 0.05f, 0.05f, 1.0f))
+                    .Padding(4)
+                    [
+                        SAssignNew(WidgetData.ResponseJsonText, STextBlock)
+                        .Text(FText::FromString(TEXT("Executing...")))
+                        .AutoWrapText(true)
+                        .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextCode))
+                    ]
                 ]
             ]
         ];
     
+    WidgetData.DetailsContainer = DetailsContainer;
+    TWeakPtr<SBox> WeakDetailsContainer = DetailsContainer;
+    
+    // Create compact single-line widget (Copilot style)
+    TSharedRef<SWidget> CompactWidget = 
+        SNew(SVerticalBox)
+        // Main header row
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(2, 1)
+        [
+            SNew(SHorizontalBox)
+            
+            // Chevron expand button
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(0, 0, 4, 0)
+            [
+                SNew(SButton)
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .ContentPadding(FMargin(0))
+                .OnClicked_Lambda([bExpanded = WidgetData.bExpanded, WeakDetailsContainer]() -> FReply
+                {
+                    *bExpanded = !(*bExpanded);
+                    if (TSharedPtr<SBox> Container = WeakDetailsContainer.Pin())
+                    {
+                        Container->SetVisibility(*bExpanded ? EVisibility::Visible : EVisibility::Collapsed);
+                    }
+                    return FReply::Handled();
+                })
+                [
+                    SAssignNew(WidgetData.ChevronText, STextBlock)
+                    .Text_Lambda([bExpanded = WidgetData.bExpanded]() { return FText::FromString(*bExpanded ? TEXT("▼") : TEXT("▶")); })
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                ]
+            ]
+            
+            // Status indicator (spinner while pending, then ✓ or ✗)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(0, 0, 6, 0)
+            [
+                SAssignNew(WidgetData.StatusText, STextBlock)
+                .Text(FText::FromString(TEXT("●")))  // Filled circle = running
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::Orange))
+            ]
+            
+            // Tool call summary
+            + SHorizontalBox::Slot()
+            .FillWidth(1.0f)
+            .VAlign(VAlign_Center)
+            [
+                SAssignNew(WidgetData.SummaryText, STextBlock)
+                .Text(FText::FromString(CallSummary))
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))
+            ]
+        ]
+        
+        // Expandable details (collapsed by default)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        [
+            DetailsContainer
+        ];
+    
+    // Store widget data keyed by tool call ID for later update
+    ToolCallWidgets.Add(ToolCall.Id, WidgetData);
+    
     // Add to scroll box
     MessageScrollBox->AddSlot()
-    .Padding(2)
+    .Padding(FMargin(4, 0, 4, 0))
     [
-        ToolWidget
+        CompactWidget
     ];
     
-    // Store reference for potential updates
-    MessageTextBlocks.Add(Index, JsonTextBlock);
+    ScrollToBottom();
+}
+
+void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const FString& ResponseJson, bool bSuccess)
+{
+    // Update status to show tool completed
+    SetStatusText(bSuccess ? TEXT("Tool completed successfully") : TEXT("Tool execution failed"));
+    
+    // Find the widget for this tool call
+    FToolCallWidgetData* WidgetData = ToolCallWidgets.Find(ToolCallId);
+    if (!WidgetData)
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Could not find tool call widget for ID: %s"), *ToolCallId);
+        return;
+    }
+    
+    // Mark response received and store JSON for copy button
+    WidgetData->bResponseReceived = true;
+    WidgetData->ResponseJson = ResponseJson;
+    if (WidgetData->ResponseJsonPtr.IsValid())
+    {
+        *WidgetData->ResponseJsonPtr = ResponseJson;
+    }
+    
+    // Update status indicator to checkmark or X
+    if (WidgetData->StatusText.IsValid())
+    {
+        FString StatusIcon = bSuccess ? TEXT("✓") : TEXT("✗");
+        FLinearColor StatusColor = bSuccess ? VibeUEColors::Green : VibeUEColors::Red;
+        
+        WidgetData->StatusText->SetText(FText::FromString(StatusIcon));
+        WidgetData->StatusText->SetColorAndOpacity(FSlateColor(StatusColor));
+    }
+    
+    // Update response JSON text in the details section
+    if (WidgetData->ResponseJsonText.IsValid())
+    {
+        FString TruncatedJson = ResponseJson.Len() > 1000 ? ResponseJson.Left(1000) + TEXT("\n...") : ResponseJson;
+        FLinearColor TextColor = bSuccess ? VibeUEColors::Green : VibeUEColors::Red;
+        
+        WidgetData->ResponseJsonText->SetText(FText::FromString(TruncatedJson));
+        WidgetData->ResponseJsonText->SetColorAndOpacity(FSlateColor(TextColor));
+    }
+    
+    ScrollToBottom();
 }
 
 void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message)
 {
-    // Check if this message now has tool calls or is a tool response - these need special rendering
+    // Tool calls are handled by AddToolCallWidget which creates widgets immediately
+    // Tool responses are handled by UpdateToolCallWithResponse which updates in place
+    // Neither need rebuilding the whole list
+    
     bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
     bool bIsToolResponse = Message.Role == TEXT("tool");
     
-    // If message has tool calls or is a tool response, we need to rebuild to show collapsible widget
+    // Tool messages are handled by their dedicated functions, skip here
     if (bIsToolCall || bIsToolResponse)
     {
-        RebuildMessageList();
         return;
     }
     
@@ -745,14 +871,23 @@ FReply SAIChatWindow::OnSendClicked()
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Send button clicked - Message: %s"), *Message.Left(100));
+            CHAT_LOG(Log, TEXT("[UI EVENT] Send button clicked - Message: %s"), *Message.Left(100));
         }
         
         // Clear any previous error message before sending new request
-        SetStatusText(TEXT(""));
+        SetStatusText(TEXT("Sending request..."));
         
         InputTextBox->SetText(FText::GetEmpty());
-        ChatSession->SendMessage(Message);
+        
+        // Check if user typed "continue" to resume after iteration limit
+        if (Message.TrimStartAndEnd().ToLower() == TEXT("continue"))
+        {
+            ChatSession->ContinueAfterIterationLimit();
+        }
+        else
+        {
+            ChatSession->SendMessage(Message);
+        }
     }
     return FReply::Handled();
 }
@@ -763,7 +898,7 @@ FReply SAIChatWindow::OnStopClicked()
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Stop button clicked - Cancelling request"));
+            CHAT_LOG(Log, TEXT("[UI EVENT] Stop button clicked - Cancelling request"));
         }
         ChatSession->CancelRequest();
         SetStatusText(TEXT("Request cancelled"));
@@ -792,7 +927,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Show API key input dialog
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(500, 620))
+        .ClientSize(FVector2D(500, 720))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
     
@@ -800,14 +935,18 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> EngineModeCheckBox;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
+    TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
     TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
     TSharedPtr<SSpinBox<float>> TopPSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
+    TSharedPtr<SSpinBox<int32>> MaxToolIterationsSpinBox;
     
     // Load current LLM parameter values
     float CurrentTemperature = FChatSession::GetTemperatureFromConfig();
     float CurrentTopP = FChatSession::GetTopPFromConfig();
     int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
+    bool bCurrentParallelToolCalls = FChatSession::GetParallelToolCallsFromConfig();
+    int32 CurrentMaxToolIterations = FChatSession::GetMaxToolCallIterationsFromConfig();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -852,7 +991,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(STextBlock)
             .Text(FText::FromString(TEXT("LLM Provider:")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
@@ -1010,7 +1149,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(STextBlock)
             .Text(FText::FromString(TEXT("LLM Generation Parameters (VibeUE only):")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
         ]
         // Temperature
         + SVerticalBox::Slot()
@@ -1087,6 +1226,52 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .MinDesiredWidth(100)
             ]
         ]
+        // Max Tool Iterations (like Copilot's maxRequests)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(0.4f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Max Tool Iterations:")))
+                .ToolTipText(FText::FromString(TEXT("Max tool call rounds before confirmation prompt. Range: 10-500. Default: 200 (like Copilot)")))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(0.6f)
+            [
+                SAssignNew(MaxToolIterationsSpinBox, SSpinBox<int32>)
+                .MinValue(10)
+                .MaxValue(500)
+                .Delta(10)
+                .Value(CurrentMaxToolIterations)
+                .MinDesiredWidth(100)
+            ]
+        ]
+        // Parallel Tool Calls
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 12, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(ParallelToolCallsCheckBox, SCheckBox)
+                .IsChecked(bCurrentParallelToolCalls ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Parallel Tool Calls")))
+                .ToolTipText(FText::FromString(TEXT("ON = LLM can make multiple tool calls at once (faster)\nOFF = One tool call at a time (shows progress between calls)")))
+            ]
+        ]
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8, 8, 8, 0)
@@ -1101,9 +1286,9 @@ FReply SAIChatWindow::OnSettingsClicked()
                 }
                 return FText::FromString(FString::Printf(TEXT("Local: %s\nEngine: %s"), *LocalPath, *EnginePath));
             })
-            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
+            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
             .AutoWrapText(true)
-            .ColorAndOpacity(FSlateColor(FLinearColor(0.5f, 0.5f, 0.5f)))
+            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
@@ -1112,7 +1297,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -1142,6 +1327,11 @@ FReply SAIChatWindow::OnSettingsClicked()
                 FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
                 FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
                 FChatSession::SaveMaxTokensToConfig(MaxTokensSpinBox->GetValue());
+                FChatSession::SaveMaxToolCallIterationsToConfig(MaxToolIterationsSpinBox->GetValue());
+                FChatSession::SaveParallelToolCallsToConfig(ParallelToolCallsCheckBox->IsChecked());
+                
+                // Apply max tool iterations to current session
+                ChatSession->SetMaxToolCallIterations(MaxToolIterationsSpinBox->GetValue());
                 
                 // Apply the new LLM parameters to the client
                 ChatSession->ApplyLLMParametersToClient();
@@ -1186,7 +1376,7 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            UE_LOG(LogAIChatWindow, Verbose, TEXT("[UI EVENT] Key press blocked - Request in progress"));
+            CHAT_LOG(Verbose, TEXT("[UI EVENT] Key press blocked - Request in progress"));
         }
         return FReply::Handled(); // Consume the key press but don't do anything
     }
@@ -1197,7 +1387,7 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            UE_LOG(LogAIChatWindow, Log, TEXT("[UI EVENT] Enter key pressed - Sending message"));
+            CHAT_LOG(Log, TEXT("[UI EVENT] Enter key pressed - Sending message"));
         }
         OnSendClicked();
         return FReply::Handled();
@@ -1212,7 +1402,7 @@ void SAIChatWindow::OnModelSelectionChanged(TSharedPtr<FOpenRouterModel> NewSele
     {
         SelectedModel = NewSelection;
         ChatSession->SetCurrentModel(NewSelection->Id);
-        UE_LOG(LogAIChatWindow, Log, TEXT("Selected model: %s"), *NewSelection->Id);
+        CHAT_LOG(Log, TEXT("Selected model: %s"), *NewSelection->Id);
     }
 }
 
@@ -1251,7 +1441,7 @@ void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            UE_LOG(LogAIChatWindow, Warning, TEXT("[UI] HandleMessageAdded: Widget already exists for index %d, skipping"), MessageIndex);
+            CHAT_LOG(Warning, TEXT("[UI] HandleMessageAdded: Widget already exists for index %d, skipping"), MessageIndex);
         }
         return;
     }
@@ -1345,7 +1535,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
             return A.Name < B.Name;
         });
         
-        UE_LOG(LogAIChatWindow, Log, TEXT("Filtered to %d models with tool support (from %d total)"), 
+        CHAT_LOG(Log, TEXT("Filtered to %d models with tool support (from %d total)"), 
             FilteredModels.Num(), Models.Num());
         
         for (const FOpenRouterModel& Model : FilteredModels)
@@ -1387,7 +1577,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
             ModelComboBox->SetSelectedItem(SelectedModel);
         }
         
-        UE_LOG(LogAIChatWindow, Log, TEXT("Loaded %d models with tool support (from %d total)"), 
+        CHAT_LOG(Log, TEXT("Loaded %d models with tool support (from %d total)"), 
             AvailableModels.Num(), Models.Num());
     }
     else
@@ -1431,7 +1621,7 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
             ModelComboBox->SetSelectedItem(SelectedModel);
         }
         
-        UE_LOG(LogAIChatWindow, Log, TEXT("Provider changed to VibeUE - model dropdown shows single option"));
+        CHAT_LOG(Log, TEXT("Provider changed to VibeUE - model dropdown shows single option"));
     }
 }
 
@@ -1443,13 +1633,13 @@ void SAIChatWindow::HandleMCPToolsReady(bool bSuccess, int32 ToolCount)
         {
             MCPToolsText->SetText(FText::FromString(FString::Printf(TEXT("Tools: %d"), ToolCount)));
             MCPToolsText->SetColorAndOpacity(FSlateColor(VibeUEColors::Green)); // Green for connected
-            UE_LOG(LogAIChatWindow, Log, TEXT("MCP tools ready: %d tools available"), ToolCount);
+            CHAT_LOG(Log, TEXT("MCP tools ready: %d tools available"), ToolCount);
         }
         else
         {
             MCPToolsText->SetText(FText::FromString(TEXT("Tools: 0")));
             MCPToolsText->SetColorAndOpacity(FSlateColor(VibeUEColors::TextMuted)); // Muted for no tools
-            UE_LOG(LogAIChatWindow, Log, TEXT("MCP tools: none available"));
+            CHAT_LOG(Log, TEXT("MCP tools: none available"));
         }
     }
     
@@ -1459,7 +1649,7 @@ void SAIChatWindow::HandleMCPToolsReady(bool bSuccess, int32 ToolCount)
 
 void SAIChatWindow::HandleSummarizationStarted(const FString& Reason)
 {
-    UE_LOG(LogAIChatWindow, Log, TEXT("Summarization started: %s"), *Reason);
+    CHAT_LOG(Log, TEXT("Summarization started: %s"), *Reason);
     SetStatusText(FString::Printf(TEXT("📋 Summarizing conversation... (%s)"), *Reason));
     
     // Update token budget display color to indicate summarization
@@ -1473,17 +1663,17 @@ void SAIChatWindow::HandleSummarizationComplete(bool bSuccess, const FString& Su
 {
     if (bSuccess)
     {
-        UE_LOG(LogAIChatWindow, Log, TEXT("Summarization complete: %d chars"), Summary.Len());
+        CHAT_LOG(Log, TEXT("Summarization complete: %d chars"), Summary.Len());
         SetStatusText(TEXT("✅ Conversation summarized to save context space."));
         
         // Show summary preview in a system message
         FString PreviewText = Summary.Left(200);
         if (Summary.Len() > 200) PreviewText += TEXT("...");
-        UE_LOG(LogAIChatWindow, Log, TEXT("Summary preview: %s"), *PreviewText);
+        CHAT_LOG(Log, TEXT("Summary preview: %s"), *PreviewText);
     }
     else
     {
-        UE_LOG(LogAIChatWindow, Warning, TEXT("Summarization failed"));
+        CHAT_LOG(Warning, TEXT("Summarization failed"));
         SetStatusText(TEXT("⚠️ Failed to summarize conversation."));
     }
     
@@ -1529,6 +1719,49 @@ void SAIChatWindow::HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxToken
         Color = VibeUEColors::Red; // Near limit
     }
     TokenBudgetText->SetColorAndOpacity(FSlateColor(Color));
+}
+
+void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int32 MaxIterations)
+{
+    CHAT_LOG(Warning, TEXT("Tool iteration limit reached: %d/%d"), CurrentIteration, MaxIterations);
+    
+    // Calculate what the new limit will be (50% increase, like Copilot)
+    int32 NewLimit = FMath::RoundToInt(MaxIterations * 1.5f);
+    NewLimit = FMath::Clamp(NewLimit, 10, 500);
+    
+    // Show a system message asking if user wants to continue
+    FString Message = FString::Printf(
+        TEXT("⚠️ Tool iteration limit reached (%d/%d). The AI has been working and may need more iterations.\n\nType 'continue' to increase the limit to %d, or send a new message to start fresh."),
+        CurrentIteration, MaxIterations, NewLimit);
+    
+    SetStatusText(FString::Printf(TEXT("Tool limit reached (%d/%d) - type 'continue' (new limit: %d) or new message"), CurrentIteration, MaxIterations, NewLimit));
+    
+    // Add a system message to the chat
+    FChatMessage SystemMsg(TEXT("system"), Message);
+    SystemMsg.Role = TEXT("system");
+    if (ChatSession.IsValid())
+    {
+        // We need to add this as a visual-only message, not to the actual conversation
+        // For now, just show it in the status and let user type 'continue'
+    }
+}
+
+void SAIChatWindow::HandleThinkingStatusChanged(bool bIsThinking)
+{
+    if (bIsThinking)
+    {
+        SetStatusText(TEXT("AI is thinking..."));
+    }
+    else
+    {
+        // Transitioning from thinking to generating
+        SetStatusText(TEXT("Generating response..."));
+    }
+}
+
+void SAIChatWindow::HandleToolPreparing(const FString& ToolName)
+{
+    SetStatusText(FString::Printf(TEXT("Preparing tool: %s"), *ToolName));
 }
 
 void SAIChatWindow::UpdateTokenBudgetDisplay()

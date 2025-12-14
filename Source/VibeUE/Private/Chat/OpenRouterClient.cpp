@@ -198,7 +198,14 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Message : Messages)
     {
-        MessagesArray.Add(MakeShared<FJsonValueObject>(Message.ToJson()));
+        // Create a sanitized copy to remove NUL characters and other problematic bytes
+        FChatMessage SanitizedMessage = Message;
+        SanitizedMessage.Content = SanitizeForLLM(Message.Content);
+        for (FChatToolCall& TC : SanitizedMessage.ToolCalls)
+        {
+            TC.Arguments = SanitizeForLLM(TC.Arguments);
+        }
+        MessagesArray.Add(MakeShared<FJsonValueObject>(SanitizedMessage.ToJson()));
     }
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
     
@@ -212,7 +219,12 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
         }
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
         
-        UE_LOG(LogOpenRouterClient, Log, TEXT("Including %d tools in request"), Tools.Num());
+        // Control parallel tool calls - when false, model makes one tool call at a time
+        // This allows showing progress and results between tool calls
+        RequestBody->SetBoolField(TEXT("parallel_tool_calls"), bParallelToolCalls);
+        
+        UE_LOG(LogOpenRouterClient, Log, TEXT("Including %d tools in request (parallel_tool_calls=%s)"), 
+            Tools.Num(), bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
     
     FString RequestBodyString;

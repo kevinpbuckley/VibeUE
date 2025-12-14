@@ -135,20 +135,28 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
             FString::Printf(TEXT("Component '%s' not found in Blueprint"), *ComponentName));
     }
 
-    // Handle children based on remove_children parameter
-    TArray<USCS_Node*> ChildNodes = ComponentNode->GetChildNodes();
-    if (!bRemoveChildren && ChildNodes.Num() > 0)
-    {
-        // Reparent children to root
-        for (USCS_Node* ChildNode : ChildNodes)
-        {
-            ComponentNode->RemoveChildNode(ChildNode);
-            SCS->AddNode(ChildNode);
-        }
-    }
+    const TArray<USCS_Node*>& ChildNodeRefs = ComponentNode->GetChildNodes();
+    TArray<USCS_Node*> ChildNodes(ChildNodeRefs);
 
-    // Remove the component node
-    SCS->RemoveNode(ComponentNode);
+    if (bRemoveChildren)
+    {
+        // Remove the entire subtree so no orphaned attachments remain
+        RemoveNodeRecursive(SCS, ComponentNode);
+    }
+    else
+    {
+        if (ChildNodes.Num() > 0)
+        {
+            // Reparent children to root when preserving them
+            for (USCS_Node* ChildNode : ChildNodes)
+            {
+                ComponentNode->RemoveChildNode(ChildNode);
+                SCS->AddNode(ChildNode);
+            }
+        }
+
+        SCS->RemoveNode(ComponentNode);
+    }
 
 #if WITH_EDITOR
     // Mark Blueprint as modified
@@ -160,6 +168,24 @@ TResult<void> FBlueprintComponentService::RemoveComponent(
         *ComponentName, *Blueprint->GetName());
 
     return TResult<void>::Success();
+}
+
+void FBlueprintComponentService::RemoveNodeRecursive(USimpleConstructionScript* SCS, USCS_Node* Node)
+{
+    if (!SCS || !Node)
+    {
+        return;
+    }
+
+    const TArray<USCS_Node*>& ChildRefs = Node->GetChildNodes();
+    TArray<USCS_Node*> ChildNodes(ChildRefs);
+
+    for (USCS_Node* ChildNode : ChildNodes)
+    {
+        RemoveNodeRecursive(SCS, ChildNode);
+    }
+
+    SCS->RemoveNode(Node);
 }
 
 TResult<TArray<FComponentInfo>> FBlueprintComponentService::ListComponents(UBlueprint* Blueprint)

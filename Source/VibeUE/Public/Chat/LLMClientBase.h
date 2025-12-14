@@ -82,6 +82,15 @@ protected:
     FOnLLMStreamError CurrentOnError;
     FOnLLMToolCall CurrentOnToolCall;
     FOnLLMUsageReceived CurrentOnUsage;
+    FOnLLMThinkingStatus CurrentOnThinkingStatus;
+    FOnLLMToolPreparing CurrentOnToolPreparing;
+    
+public:
+    /** Set optional thinking status callback (called when <thinking> blocks start/end) */
+    void SetThinkingStatusCallback(FOnLLMThinkingStatus InCallback) { CurrentOnThinkingStatus = InCallback; }
+    
+    /** Set optional tool preparing callback (called when tool name detected before full args) */
+    void SetToolPreparingCallback(FOnLLMToolPreparing InCallback) { CurrentOnToolPreparing = InCallback; }
 
 private:
     /** Handle HTTP request progress (streaming data) */
@@ -132,4 +141,10 @@ private:
 public:
     /** Get the accumulated response content (for non-streaming summarization) */
     const FString& GetLastAccumulatedResponse() const { return AccumulatedContent; }
+
+    /** 
+     * Sanitize a string for LLM communication - removes NUL characters and other problematic bytes
+     * Call this on any content that might contain binary data or encoding artifacts
+     */
+    static FString SanitizeForLLM(const FString& Input);
 };

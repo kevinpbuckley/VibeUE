@@ -7,8 +7,16 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/ConfigCacheIni.h"
+#include "UI/SAIChatWindow.h"
 
 DEFINE_LOG_CATEGORY(LogChatSession);
+
+// Macro to log to both UE output and dedicated chat log file
+#define CHAT_SESSION_LOG(Level, Format, ...) \
+    do { \
+        UE_LOG(LogChatSession, Level, Format, ##__VA_ARGS__); \
+        FChatWindowLogger::LogToFile(TEXT(#Level), FString::Printf(Format, ##__VA_ARGS__)); \
+    } while(0)
 
 FChatSession::FChatSession()
     : CurrentProvider(ELLMProvider::VibeUE)  // Default to VibeUE API
@@ -51,6 +59,42 @@ void FChatSession::Initialize()
     {
         VibeUEClient->SetEndpointUrl(VibeUEEndpoint);
     }
+    
+    // Set up thinking and tool preparing callbacks for both clients
+    // These forward status changes to the UI
+    TWeakPtr<FChatSession> WeakSelf = AsShared();
+    
+    VibeUEClient->SetThinkingStatusCallback(FOnLLMThinkingStatus::CreateLambda([WeakSelf](bool bIsThinking)
+    {
+        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
+        {
+            Session->OnThinkingStatusChanged.ExecuteIfBound(bIsThinking);
+        }
+    }));
+    
+    VibeUEClient->SetToolPreparingCallback(FOnLLMToolPreparing::CreateLambda([WeakSelf](const FString& ToolName)
+    {
+        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
+        {
+            Session->OnToolPreparing.ExecuteIfBound(ToolName);
+        }
+    }));
+    
+    OpenRouterClient->SetThinkingStatusCallback(FOnLLMThinkingStatus::CreateLambda([WeakSelf](bool bIsThinking)
+    {
+        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
+        {
+            Session->OnThinkingStatusChanged.ExecuteIfBound(bIsThinking);
+        }
+    }));
+    
+    OpenRouterClient->SetToolPreparingCallback(FOnLLMToolPreparing::CreateLambda([WeakSelf](const FString& ToolName)
+    {
+        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
+        {
+            Session->OnToolPreparing.ExecuteIfBound(ToolName);
+        }
+    }));
     
     // Apply LLM generation parameters to VibeUE client
     ApplyLLMParametersToClient();
@@ -97,10 +141,15 @@ void FChatSession::SendMessage(const FString& UserMessage)
     
     // Reset tool call iteration counter for new user message
     ToolCallIterationCount = 0;
+    bWaitingForUserToContinue = false;
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
     Messages.Add(UserMsg);
+    
+    // Log user message content
+    CHAT_SESSION_LOG(Log, TEXT("[USER MESSAGE] %s"), *UserMessage);
+    
     if (IsDebugModeEnabled())
     {
         UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageAdded (user): %s"), *UserMessage.Left(100));
@@ -122,6 +171,11 @@ void FChatSession::SendMessage(const FString& UserMessage)
     
     // Get available tools
     TArray<FMCPTool> Tools = GetAvailableTools();
+    
+    // Log what we're sending to the LLM
+    FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
+    CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"), 
+        *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
     
     // Send request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
@@ -169,6 +223,13 @@ void FChatSession::OnStreamChunk(const FString& Chunk)
         {
             UE_LOG(LogChatSession, Verbose, TEXT("[EVENT] OnStreamChunk: %d chars"), Chunk.Len());
         }
+        
+        // Log first chunk to capture assistant response start
+        if (Messages[CurrentStreamingMessageIndex].Content.IsEmpty() && !Chunk.IsEmpty())
+        {
+            CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Starting to receive content..."));
+        }
+        
         Messages[CurrentStreamingMessageIndex].Content += Chunk;
         if (IsDebugModeEnabled())
         {
@@ -198,6 +259,13 @@ void FChatSession::OnStreamComplete(bool bSuccess)
         }
         else
         {
+            // Log complete assistant response
+            if (!Message.Content.IsEmpty())
+            {
+                CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
+                    Message.Content.Len(), *Message.Content);
+            }
+            
             Message.bIsStreaming = false;
             OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
         }
@@ -226,6 +294,10 @@ void FChatSession::OnStreamError(const FString& ErrorMessage)
 
 void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
 {
+    // Log tool call with full details
+    CHAT_SESSION_LOG(Log, TEXT("[TOOL CALL] Tool: %s, ID: %s, Arguments: %s"), 
+        *ToolCall.ToolName, *ToolCall.Id, *ToolCall.ArgumentsJson);
+    
     if (IsDebugModeEnabled())
     {
         UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnToolCall: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
@@ -243,7 +315,7 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
     
     // Increment pending tool call count
     PendingToolCallCount++;
-    UE_LOG(LogChatSession, Log, TEXT("Pending tool calls: %d"), PendingToolCallCount);
+    UE_LOG(LogChatSession, Log, TEXT("Pending tool calls: %d (queue size: %d)"), PendingToolCallCount, ToolCallQueue.Num() + 1);
     
     // Update the current assistant message to include tool call info
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
@@ -267,10 +339,55 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
         OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, AssistantMsg);
     }
     
+    // Queue the tool call for sequential execution
+    ToolCallQueue.Add(ToolCall);
+    
+    // Start executing if not already executing
+    if (!bIsExecutingTool)
+    {
+        ExecuteNextToolInQueue();
+    }
+}
+
+void FChatSession::ExecuteNextToolInQueue()
+{
+    // Check if there are tools to execute
+    if (ToolCallQueue.Num() == 0)
+    {
+        bIsExecutingTool = false;
+        
+        // All tools executed - check if we should send follow-up
+        if (PendingToolCallCount <= 0)
+        {
+            PendingToolCallCount = 0; // Safety reset
+            
+            // Check if summarization is needed after tool results (they can be large)
+            TriggerSummarizationIfNeeded();
+            
+            UE_LOG(LogChatSession, Log, TEXT("All tool calls completed, sending follow-up request"));
+            SendFollowUpAfterToolCall();
+        }
+        return;
+    }
+    
+    bIsExecutingTool = true;
+    
+    // Get and remove the first tool from the queue
+    FMCPToolCall ToolCall = ToolCallQueue[0];
+    ToolCallQueue.RemoveAt(0);
+    
+    UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
+    
     // Execute the tool via MCP
     MCPClient->ExecuteTool(ToolCall, FOnToolExecuted::CreateLambda(
         [this, ToolCallCopy = ToolCall](bool bSuccess, const FMCPToolResult& Result)
         {
+            // Log tool result with full content
+            FString ResultContent = bSuccess ? Result.Content : Result.ErrorMessage;
+            CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: %s, Result: %s"), 
+                *ToolCallCopy.ToolName, *ToolCallCopy.Id, 
+                bSuccess ? TEXT("true") : TEXT("false"), *ResultContent);
+            
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
             
@@ -294,19 +411,10 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
             
             // Decrement pending tool call count
             PendingToolCallCount--;
-            UE_LOG(LogChatSession, Log, TEXT("Tool completed. Pending tool calls remaining: %d"), PendingToolCallCount);
+            UE_LOG(LogChatSession, Log, TEXT("Tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
             
-            // Only send follow-up when ALL tool calls have completed
-            if (PendingToolCallCount <= 0)
-            {
-                PendingToolCallCount = 0; // Safety reset
-                
-                // Check if summarization is needed after tool results (they can be large)
-                TriggerSummarizationIfNeeded();
-                
-                UE_LOG(LogChatSession, Log, TEXT("All tool calls completed, sending follow-up request"));
-                SendFollowUpAfterToolCall();
-            }
+            // Execute next tool in queue (sequential execution)
+            ExecuteNextToolInQueue();
         }));
 }
 
@@ -320,6 +428,15 @@ void FChatSession::SendFollowUpAfterToolCall()
         UE_LOG(LogChatSession, Log, TEXT("========== FOLLOW-UP REQUEST =========="));
         UE_LOG(LogChatSession, Log, TEXT("Sending follow-up request after tool call completion (iteration %d/%d)"), 
             ToolCallIterationCount, MaxToolCallIterations);
+    }
+    
+    // Check if we've hit the iteration limit - notify UI and wait for user decision
+    if (ToolCallIterationCount >= MaxToolCallIterations)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("Max tool call iterations (%d) reached - asking user if they want to continue"), MaxToolCallIterations);
+        bWaitingForUserToContinue = true;
+        OnToolIterationLimitReached.ExecuteIfBound(ToolCallIterationCount, MaxToolCallIterations);
+        return; // Wait for user to call ContinueAfterIterationLimit() or send new message
     }
     
     // Create a new assistant message for the follow-up response
@@ -336,16 +453,13 @@ void FChatSession::SendFollowUpAfterToolCall()
         UE_LOG(LogChatSession, Log, TEXT("Built %d API messages for follow-up"), ApiMessages.Num());
     }
     
-    // Get available tools - but if we've hit the iteration limit, send empty tools to force text response
-    TArray<FMCPTool> Tools;
-    if (ToolCallIterationCount < MaxToolCallIterations)
-    {
-        Tools = GetAvailableTools();
-    }
-    else
-    {
-        UE_LOG(LogChatSession, Warning, TEXT("Max tool call iterations (%d) reached - forcing text response (no tools)"), MaxToolCallIterations);
-    }
+    // Get available tools
+    TArray<FMCPTool> Tools = GetAvailableTools();
+    
+    // Log follow-up request to LLM
+    FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
+    CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] (Follow-up after tool) Provider: %s, Model: %s, Messages count: %d, Tools count: %d, Iteration: %d/%d"), 
+        *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num(), ToolCallIterationCount, MaxToolCallIterations);
     
     // Send follow-up request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
@@ -393,6 +507,10 @@ void FChatSession::ResetChat()
     // Reset usage stats
     UsageStats.Reset();
     
+    // Reset iteration tracking
+    ToolCallIterationCount = 0;
+    bWaitingForUserToContinue = false;
+    
     // Delete history file
     FString HistoryPath = GetHistoryFilePath();
     if (FPaths::FileExists(HistoryPath))
@@ -402,6 +520,27 @@ void FChatSession::ResetChat()
     
     OnChatReset.ExecuteIfBound();
     UE_LOG(LogChatSession, Log, TEXT("Chat reset"));
+}
+
+void FChatSession::ContinueAfterIterationLimit()
+{
+    if (!bWaitingForUserToContinue)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("ContinueAfterIterationLimit called but not waiting for user"));
+        return;
+    }
+    
+    // Copilot-style: increase limit by 50% when user continues
+    int32 OldLimit = MaxToolCallIterations;
+    MaxToolCallIterations = FMath::RoundToInt(MaxToolCallIterations * 1.5f);
+    MaxToolCallIterations = FMath::Clamp(MaxToolCallIterations, 10, 500);
+    
+    UE_LOG(LogChatSession, Log, TEXT("User chose to continue after iteration limit - increased limit from %d to %d"), OldLimit, MaxToolCallIterations);
+    bWaitingForUserToContinue = false;
+    // Don't reset counter - continue from where we left off (Copilot behavior)
+    
+    // Resume the follow-up request that was paused
+    SendFollowUpAfterToolCall();
 }
 
 void FChatSession::SetCurrentModel(const FString& ModelId)
@@ -449,6 +588,11 @@ void FChatSession::CancelRequest()
     {
         VibeUEClient->CancelRequest();
     }
+    
+    // Clear tool call queue and reset execution state
+    ToolCallQueue.Empty();
+    bIsExecutingTool = false;
+    PendingToolCallCount = 0;
     
     // Mark streaming message as incomplete
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
@@ -1297,27 +1441,58 @@ void FChatSession::SaveMaxTokensToConfig(int32 MaxTokens)
 
 int32 FChatSession::GetMaxToolCallIterationsFromConfig()
 {
-    int32 MaxIterations = DefaultMaxToolCallIterations; // Default 25
+    int32 MaxIterations = DefaultMaxToolCallIterations; // Default 200 (like Copilot)
     GConfig->GetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
-    return FMath::Clamp(MaxIterations, 5, 100);
+    return FMath::Clamp(MaxIterations, 10, 500);
 }
 
 void FChatSession::SaveMaxToolCallIterationsToConfig(int32 MaxIterations)
 {
-    MaxIterations = FMath::Clamp(MaxIterations, 5, 100);
+    MaxIterations = FMath::Clamp(MaxIterations, 10, 500);
     GConfig->SetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+void FChatSession::SetMaxToolCallIterations(int32 NewMax)
+{
+    MaxToolCallIterations = FMath::Clamp(NewMax, 10, 500);
+    UE_LOG(LogChatSession, Log, TEXT("Max tool call iterations set to %d for current session"), MaxToolCallIterations);
+}
+
+bool FChatSession::GetParallelToolCallsFromConfig()
+{
+    bool bParallelToolCalls = true; // Default to true (parallel)
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("ParallelToolCalls"), bParallelToolCalls, GEditorPerProjectIni);
+    return bParallelToolCalls;
+}
+
+void FChatSession::SaveParallelToolCallsToConfig(bool bParallelToolCalls)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("ParallelToolCalls"), bParallelToolCalls, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
 void FChatSession::ApplyLLMParametersToClient()
 {
+    bool bParallelToolCalls = GetParallelToolCallsFromConfig();
+    
     if (VibeUEClient.IsValid())
     {
         VibeUEClient->SetTemperature(GetTemperatureFromConfig());
         VibeUEClient->SetTopP(GetTopPFromConfig());
         VibeUEClient->SetMaxTokens(GetMaxTokensFromConfig());
+        VibeUEClient->SetParallelToolCalls(bParallelToolCalls);
         
-        UE_LOG(LogChatSession, Log, TEXT("Applied LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d"),
-            VibeUEClient->GetTemperature(), VibeUEClient->GetTopP(), VibeUEClient->GetMaxTokens());
+        UE_LOG(LogChatSession, Log, TEXT("Applied LLM params to VibeUE: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
+            VibeUEClient->GetTemperature(), VibeUEClient->GetTopP(), VibeUEClient->GetMaxTokens(),
+            VibeUEClient->GetParallelToolCalls() ? TEXT("true") : TEXT("false"));
+    }
+    
+    if (OpenRouterClient.IsValid())
+    {
+        OpenRouterClient->SetParallelToolCalls(bParallelToolCalls);
+        
+        UE_LOG(LogChatSession, Log, TEXT("Applied parallel_tool_calls=%s to OpenRouter"),
+            bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 }

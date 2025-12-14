@@ -162,13 +162,6 @@ TOOL_HELP = {
                 },
                 "example": 'manage_blueprint(action="reparent", blueprint_name="/Game/Blueprints/BP_Enemy", new_parent_class="Character")'
             },
-            "list_custom_events": {
-                "description": "List all custom events in a Blueprint's Event Graph",
-                "parameters": {
-                    "blueprint_name": "Full path to the Blueprint"
-                },
-                "example": 'manage_blueprint(action="list_custom_events", blueprint_name="/Game/Blueprints/BP_Player")'
-            },
             "summarize_event_graph": {
                 "description": "Get a summary of the Event Graph structure",
                 "parameters": {
@@ -357,6 +350,43 @@ TOOL_HELP = {
                     "property_value": "New value"
                 },
                 "example": 'manage_blueprint_variable(action="set_property", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", property_name="Category", property_value="Player Stats")'
+            },
+            "modify": {
+                "description": "Modify a variable's type or properties",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "variable_name": "Name of the variable to modify",
+                    "new_type_path": "New type path if changing type",
+                    "new_name": "New name if renaming"
+                },
+                "example": 'manage_blueprint_variable(action="modify", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", new_name="PlayerHealth")'
+            },
+            "diagnostics": {
+                "description": "Get diagnostic information about variable issues",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "variable_name": "Optional: specific variable to diagnose"
+                },
+                "example": 'manage_blueprint_variable(action="diagnostics", blueprint_name="/Game/Blueprints/BP_Player")'
+            },
+            "get_property_metadata": {
+                "description": "Get metadata about a variable property",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "variable_name": "Name of the variable",
+                    "property_path": "Path to the property metadata"
+                },
+                "example": 'manage_blueprint_variable(action="get_property_metadata", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", property_path="Category")'
+            },
+            "set_property_metadata": {
+                "description": "Set metadata on a variable property",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "variable_name": "Name of the variable",
+                    "property_path": "Path to the property metadata",
+                    "value": "Value to set"
+                },
+                "example": 'manage_blueprint_variable(action="set_property_metadata", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", property_path="ReplicationCondition", value="Always")'
             }
         }
     },
@@ -384,26 +414,6 @@ TOOL_HELP = {
                     "node_params": "Optional dict of node-specific parameters (required for Variable Get/Set, Cast, etc.)"
                 },
                 "example": 'manage_blueprint_node(action="create", blueprint_name="/Game/Blueprints/BP_Player", spawner_key="K2_CallFunction_PrintString", position_x=100, position_y=200)'
-            },
-            "connect_pins": {
-                "description": "Connect two node pins together",
-                "parameters": {
-                    "blueprint_name": "Full path to the Blueprint",
-                    "source_node_guid": "GUID of the source node",
-                    "source_pin_name": "Name of the source pin",
-                    "target_node_guid": "GUID of the target node",
-                    "target_pin_name": "Name of the target pin"
-                },
-                "example": 'manage_blueprint_node(action="connect_pins", blueprint_name="/Game/Blueprints/BP_Player", source_node_guid="ABC123", source_pin_name="execute", target_node_guid="DEF456", target_pin_name="execute")'
-            },
-            "disconnect_pins": {
-                "description": "Disconnect two node pins",
-                "parameters": {
-                    "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node",
-                    "pin_name": "Name of the pin to disconnect"
-                },
-                "example": 'manage_blueprint_node(action="disconnect_pins", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123", pin_name="execute")'
             },
             "delete": {
                 "description": "Delete a node from the Event Graph",
@@ -488,6 +498,74 @@ TOOL_HELP = {
                     "blueprint_name": "Full path to the Blueprint"
                 },
                 "example": 'manage_blueprint_node(action="refresh_nodes", blueprint_name="/Game/Blueprints/BP_Player")'
+            },
+            "connect": {
+                "description": "Connect two node pins together (alias for connect_pins)",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "source_node_id": "GUID of the source node",
+                    "source_pin": "Name of the source pin",
+                    "target_node_id": "GUID of the target node",
+                    "target_pin": "Name of the target pin"
+                },
+                "example": 'manage_blueprint_node(action="connect", blueprint_name="/Game/Blueprints/BP_Player", source_node_id="ABC123", source_pin="execute", target_node_id="DEF456", target_pin="execute")'
+            },
+            "disconnect": {
+                "description": "Disconnect a node pin (alias for disconnect_pins)",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "node_id": "GUID of the node",
+                    "source_pin": "Name of the pin to disconnect"
+                },
+                "example": 'manage_blueprint_node(action="disconnect", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", source_pin="execute")'
+            },
+            "set_property": {
+                "description": "Set a property value on a node",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "node_id": "GUID of the node",
+                    "property_name": "Name of the property",
+                    "property_value": "Value to set"
+                },
+                "example": 'manage_blueprint_node(action="set_property", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", property_name="DefaultValue", property_value="100")'
+            },
+            "list_custom_events": {
+                "description": "List all custom events in the Blueprint",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint"
+                },
+                "example": 'manage_blueprint_node(action="list_custom_events", blueprint_name="/Game/Blueprints/BP_Player")'
+            },
+            "create_component_event": {
+                "description": "Create an event node for a component event",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "extra.component_name": "Name of the component",
+                    "extra.event_name": "Name of the event to create"
+                },
+                "example": 'manage_blueprint_node(action="create_component_event", blueprint_name="/Game/Blueprints/BP_Player", extra={"component_name": "Collision", "event_name": "OnComponentBeginOverlap"})'
+            },
+            "discover_component_events": {
+                "description": "Discover available events for a component",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "extra.component_name": "Name of the component"
+                },
+                "example": 'manage_blueprint_node(action="discover_component_events", blueprint_name="/Game/Blueprints/BP_Player", extra={"component_name": "Collision"})'
+            },
+            "discover_input_keys": {
+                "description": "Discover available input keys for input actions",
+                "parameters": {},
+                "example": 'manage_blueprint_node(action="discover_input_keys")'
+            },
+            "create_input_key": {
+                "description": "Create an input action/axis event node",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "extra.input_key": "Input key name (e.g., 'SpaceBar')",
+                    "extra.input_event": "Event type (Pressed, Released, etc.)"
+                },
+                "example": 'manage_blueprint_node(action="create_input_key", blueprint_name="/Game/Blueprints/BP_Player", extra={"input_key": "SpaceBar", "input_event": "Pressed"})'
             }
         }
     },
@@ -502,9 +580,98 @@ TOOL_HELP = {
                     "help_action": "Optional: specific action to get help for"
                 },
                 "example": 'manage_blueprint_function(action="help") or manage_blueprint_function(action="help", help_action="create")'
+            },
+            "create": {
+                "description": "Create a new function in a Blueprint",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name for the new function"
+                },
+                "example": 'manage_blueprint_function(action="create", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage")'
+            },
+            "delete": {
+                "description": "Delete a function from a Blueprint",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function to delete"
+                },
+                "example": 'manage_blueprint_function(action="delete", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage")'
+            },
+            "list": {
+                "description": "List all functions in a Blueprint",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint"
+                },
+                "example": 'manage_blueprint_function(action="list", blueprint_name="/Game/Blueprints/BP_Player")'
+            },
+            "list_params": {
+                "description": "List all parameters of a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function"
+                },
+                "example": 'manage_blueprint_function(action="list_params", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage")'
+            },
+            "add_param": {
+                "description": "Add a parameter to a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "param_name": "Name for the new parameter",
+                    "type": "Type path (e.g., 'float', 'int32', '/Script/CoreUObject.FloatProperty')",
+                    "direction": "Parameter direction: 'input' or 'output'"
+                },
+                "example": 'manage_blueprint_function(action="add_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage", type="float", direction="input")'
+            },
+            "remove_param": {
+                "description": "Remove a parameter from a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "param_name": "Name of the parameter to remove"
+                },
+                "example": 'manage_blueprint_function(action="remove_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage")'
+            },
+            "modify_param": {
+                "description": "Modify a function parameter (rename or change type)",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "param_name": "Current name of the parameter",
+                    "new_name": "New name for the parameter",
+                    "new_type": "New type path"
+                },
+                "example": 'manage_blueprint_function(action="modify_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage", new_name="DamageAmount")'
+            },
+            "add_local_var": {
+                "description": "Add a local variable to a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "param_name": "Name for the local variable",
+                    "type": "Type path for the variable"
+                },
+                "example": 'manage_blueprint_function(action="add_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="TempDamage", type="float")'
+            },
+            "remove_local_var": {
+                "description": "Remove a local variable from a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "param_name": "Name of the local variable to remove"
+                },
+                "example": 'manage_blueprint_function(action="remove_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="TempDamage")'
+            },
+            "list_local_vars": {
+                "description": "List all local variables in a function",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function"
+                },
+                "example": 'manage_blueprint_function(action="list_local_vars", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage")'
             }
         },
-        "note": "This tool supports 15+ actions for function lifecycle management. Use action='help' for complete action list."
+        "note": "This tool supports 10 actions for function lifecycle management. Use action='help' for complete action list."
     },
     
     "manage_enhanced_input": {
@@ -567,10 +734,10 @@ TOOL_HELP = {
                 "description": "Create a new Input Mapping Context",
                 "parameters": {
                     "context_name": "REQUIRED: Name for the context (e.g., 'IMC_Default')",
-                    "asset_path": "REQUIRED: Content path (e.g., '/Game/Input')",
+                    "context_path": "REQUIRED: Destination folder (e.g., '/Game/Input')",
                     "priority": "Optional: Priority level (default: 0)"
                 },
-                "example": 'manage_enhanced_input(action="mapping_create_context", context_name="IMC_Combat", asset_path="/Game/Input")'
+                "example": 'manage_enhanced_input(action="mapping_create_context", context_name="IMC_Combat", context_path="/Game/Input")'
             },
             "mapping_list_contexts": {
                 "description": "List all Input Mapping Contexts",
@@ -593,6 +760,14 @@ TOOL_HELP = {
                 },
                 "example": 'manage_enhanced_input(action="mapping_get_mappings", context_path="/Game/Input/IMC_Default.IMC_Default")'
             },
+            "mapping_remove_mapping": {
+                "description": "Remove a key mapping from a context by index",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "REQUIRED: Index of the mapping to remove (use mapping_get_mappings to find the index)"
+                },
+                "example": 'manage_enhanced_input(action="mapping_remove_mapping", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=4)'
+            },
             "mapping_add_modifier": {
                 "description": "Add a modifier to a key mapping",
                 "parameters": {
@@ -602,6 +777,23 @@ TOOL_HELP = {
                 },
                 "example": 'manage_enhanced_input(action="mapping_add_modifier", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, modifier_type="Negate")'
             },
+            "mapping_remove_modifier": {
+                "description": "Remove a modifier from a key mapping by index",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)",
+                    "modifier_index": "REQUIRED: Index of the modifier to remove"
+                },
+                "example": 'manage_enhanced_input(action="mapping_remove_modifier", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, modifier_index=0)'
+            },
+            "mapping_get_modifiers": {
+                "description": "Get all modifiers for a key mapping",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)"
+                },
+                "example": 'manage_enhanced_input(action="mapping_get_modifiers", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0)'
+            },
             "mapping_add_trigger": {
                 "description": "Add a trigger to a key mapping",
                 "parameters": {
@@ -610,6 +802,23 @@ TOOL_HELP = {
                     "trigger_type": "REQUIRED: Trigger type (e.g., 'Pressed', 'Released', 'Hold', 'Tap')"
                 },
                 "example": 'manage_enhanced_input(action="mapping_add_trigger", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, trigger_type="Pressed")'
+            },
+            "mapping_remove_trigger": {
+                "description": "Remove a trigger from a key mapping by index",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)",
+                    "trigger_index": "REQUIRED: Index of the trigger to remove"
+                },
+                "example": 'manage_enhanced_input(action="mapping_remove_trigger", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0, trigger_index=0)'
+            },
+            "mapping_get_triggers": {
+                "description": "Get all triggers for a key mapping",
+                "parameters": {
+                    "context_path": "REQUIRED: Full path to the Mapping Context",
+                    "mapping_index": "Index of the mapping (default: 0)"
+                },
+                "example": 'manage_enhanced_input(action="mapping_get_triggers", context_path="/Game/Input/IMC_Default.IMC_Default", mapping_index=0)'
             },
             "mapping_get_available_keys": {
                 "description": "List all available input keys",
@@ -696,6 +905,14 @@ TOOL_HELP = {
                 },
                 "example": 'manage_level_actors(action="set_transform", actor_label="Cube1", location=[100, 200, 0], rotation=[0, 45, 0])'
             },
+            "get_transform": {
+                "description": "Get the current transform (location, rotation, scale) of an actor",
+                "parameters": {
+                    "actor_label": "Label of the actor",
+                    "actor_path": "Or full path to the actor"
+                },
+                "example": 'manage_level_actors(action="get_transform", actor_label="Cube1")'
+            },
             "set_location": {
                 "description": "Set only the location of an actor",
                 "parameters": {
@@ -736,6 +953,11 @@ TOOL_HELP = {
                 },
                 "example": 'manage_level_actors(action="move_to_view", actor_label="PointLight1")'
             },
+            "refresh_viewport": {
+                "description": "Refresh the viewport to update visual changes",
+                "parameters": {},
+                "example": 'manage_level_actors(action="refresh_viewport")'
+            },
             "get_property": {
                 "description": "Get a property value from an actor",
                 "parameters": {
@@ -752,6 +974,38 @@ TOOL_HELP = {
                     "property_value": "Value to set"
                 },
                 "example": 'manage_level_actors(action="set_property", actor_label="PointLight1", property_path="Intensity", property_value="5000")'
+            },
+            "get_all_properties": {
+                "description": "Get all properties of an actor",
+                "parameters": {
+                    "actor_label": "Label of the actor",
+                    "actor_path": "Or full path to the actor"
+                },
+                "example": 'manage_level_actors(action="get_all_properties", actor_label="PointLight1")'
+            },
+            "set_folder": {
+                "description": "Set the folder path for an actor in the World Outliner",
+                "parameters": {
+                    "actor_label": "Label of the actor",
+                    "extra.folder_path": "Folder path (e.g., 'Lighting/Main')"
+                },
+                "example": 'manage_level_actors(action="set_folder", actor_label="PointLight1", extra={"folder_path": "Lighting/Main"})'
+            },
+            "attach": {
+                "description": "Attach an actor to a parent actor",
+                "parameters": {
+                    "actor_label": "Label of the actor to attach",
+                    "extra.parent_label": "Label of the parent actor",
+                    "extra.socket_name": "Optional: Socket name to attach to"
+                },
+                "example": 'manage_level_actors(action="attach", actor_label="Light1", extra={"parent_label": "Lamp"})'
+            },
+            "detach": {
+                "description": "Detach an actor from its parent",
+                "parameters": {
+                    "actor_label": "Label of the actor to detach"
+                },
+                "example": 'manage_level_actors(action="detach", actor_label="Light1")'
             },
             "select": {
                 "description": "Select an actor in the editor",

@@ -268,34 +268,62 @@ TResult<UClass*> FBlueprintReflectionService::ResolveClass(const FString& ClassN
 	{
 		return TResult<UClass*>::Error(VibeUE::ErrorCodes::PARAM_INVALID, TEXT("Class name is empty"));
 	}
-	
-	UClass* ResolvedClass = nullptr;
-	
-	// Try direct load
-	ResolvedClass = FindObject<UClass>(nullptr, *ClassName);
-	
-	// Try with /Script/ prefix
-	if (!ResolvedClass && !ClassName.StartsWith(TEXT("/Script/")))
+
+	// Normalize incoming identifiers so we can handle values like
+	// "Class /Script/Engine.SpotLightComponent" from reflection payloads.
+	FString NormalizedName = ClassName;
+	NormalizedName.TrimStartAndEndInline();
+
+	int32 SpaceIndex = INDEX_NONE;
+	if (NormalizedName.FindChar(TEXT(' '), SpaceIndex))
 	{
-		FString ScriptPath = FString::Printf(TEXT("/Script/Engine.%s"), *ClassName);
+		const FString Prefix = NormalizedName.Left(SpaceIndex);
+		if (Prefix.Equals(TEXT("Class"), ESearchCase::IgnoreCase) ||
+			Prefix.Equals(TEXT("BlueprintGeneratedClass"), ESearchCase::IgnoreCase) ||
+			Prefix.Equals(TEXT("Blueprint"), ESearchCase::IgnoreCase))
+		{
+			NormalizedName = NormalizedName.Mid(SpaceIndex + 1).TrimStart();
+		}
+	}
+
+	// Strip surrounding quotes if present (e.g., Class'/Script/Game.MyActor_C')
+	if (NormalizedName.StartsWith(TEXT("'")) && NormalizedName.EndsWith(TEXT("'")))
+	{
+		NormalizedName = NormalizedName.Mid(1, NormalizedName.Len() - 2);
+	}
+	else if (NormalizedName.StartsWith(TEXT("\"")) && NormalizedName.EndsWith(TEXT("\"")))
+	{
+		NormalizedName = NormalizedName.Mid(1, NormalizedName.Len() - 2);
+	}
+
+	UClass* ResolvedClass = nullptr;
+	const bool bHasExplicitPath = NormalizedName.Contains(TEXT("/"));
+
+	// Try direct load with the normalized identifier
+	ResolvedClass = FindObject<UClass>(nullptr, *NormalizedName);
+
+	// Try with /Script/ prefix only when we don't already have an explicit path
+	if (!ResolvedClass && !bHasExplicitPath)
+	{
+		FString ScriptPath = FString::Printf(TEXT("/Script/Engine.%s"), *NormalizedName);
 		ResolvedClass = FindObject<UClass>(nullptr, *ScriptPath);
 	}
-	
+
 	// Try loading as soft object path
 	if (!ResolvedClass)
 	{
-		FSoftClassPath SoftClassPath(ClassName);
+		FSoftClassPath SoftClassPath(NormalizedName);
 		if (SoftClassPath.IsValid())
 		{
 			ResolvedClass = SoftClassPath.TryLoadClass<UObject>();
 		}
 	}
-	
+
 	if (ResolvedClass)
 	{
 		return TResult<UClass*>::Success(ResolvedClass);
 	}
-	
+
 	return TResult<UClass*>::Error(VibeUE::ErrorCodes::ASSET_NOT_FOUND, 
 		FString::Printf(TEXT("Could not resolve class: %s"), *ClassName));
 }

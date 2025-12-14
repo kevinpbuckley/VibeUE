@@ -49,11 +49,13 @@ public:
     void SetTemperature(float InTemperature) { Temperature = FMath::Clamp(InTemperature, 0.0f, 2.0f); }
     void SetTopP(float InTopP) { TopP = FMath::Clamp(InTopP, 0.0f, 1.0f); }
     void SetMaxTokens(int32 InMaxTokens) { MaxTokens = FMath::Clamp(InMaxTokens, 256, 16384); }
+    void SetParallelToolCalls(bool bInParallelToolCalls) { bParallelToolCalls = bInParallelToolCalls; }
     
     /** Get LLM generation parameters */
     float GetTemperature() const { return Temperature; }
     float GetTopP() const { return TopP; }
     int32 GetMaxTokens() const { return MaxTokens; }
+    bool GetParallelToolCalls() const { return bParallelToolCalls; }
     
     /** Default values (optimized for coding assistants) */
     static constexpr float DefaultTemperature = 0.2f;
@@ -61,6 +63,7 @@ public:
     static constexpr int32 DefaultMaxTokens = 8192;
     static constexpr int32 MinMaxTokens = 256;
     static constexpr int32 MaxMaxTokens = 16384;
+    static constexpr bool DefaultParallelToolCalls = true;
 
 protected:
     //~ Begin FLLMClientBase Interface
@@ -84,6 +87,7 @@ private:
     float Temperature = DefaultTemperature;
     float TopP = DefaultTopP;
     int32 MaxTokens = DefaultMaxTokens;
+    bool bParallelToolCalls = DefaultParallelToolCalls;
 
     /** HTTP headers */
     static const FString ContentTypeHeader;

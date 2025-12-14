@@ -37,6 +37,15 @@ public:
     /** Get the default system prompt */
     static FString GetDefaultSystemPrompt();
     
+    /** Set parallel tool calls setting */
+    void SetParallelToolCalls(bool bInParallelToolCalls) { bParallelToolCalls = bInParallelToolCalls; }
+    
+    /** Get parallel tool calls setting */
+    bool GetParallelToolCalls() const { return bParallelToolCalls; }
+    
+    /** Default value for parallel tool calls */
+    static constexpr bool DefaultParallelToolCalls = true;
+    
 protected:
     //~ Begin FLLMClientBase Interface
     virtual TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> BuildHttpRequest(
@@ -51,6 +60,9 @@ protected:
 private:
     /** API key for OpenRouter */
     FString ApiKey;
+    
+    /** Whether to allow parallel tool calls (multiple tool calls in single response) */
+    bool bParallelToolCalls = DefaultParallelToolCalls;
     
     /** Handle models fetch completion */
     void HandleModelsFetchComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully, FOnModelsFetched OnComplete);

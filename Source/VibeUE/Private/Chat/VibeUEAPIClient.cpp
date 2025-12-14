@@ -90,10 +90,13 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         TSharedPtr<FJsonObject> MsgObj = MakeShareable(new FJsonObject());
         MsgObj->SetStringField(TEXT("role"), Msg.Role);
 
+        // Sanitize content to remove NUL characters and other problematic bytes
+        FString SanitizedContent = SanitizeForLLM(Msg.Content);
+
         // Handle content - could be string or array for tool results
         if (Msg.Role == TEXT("tool"))
         {
-            MsgObj->SetStringField(TEXT("content"), Msg.Content);
+            MsgObj->SetStringField(TEXT("content"), SanitizedContent);
             if (!Msg.ToolCallId.IsEmpty())
             {
                 MsgObj->SetStringField(TEXT("tool_call_id"), Msg.ToolCallId);
@@ -102,9 +105,9 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         else if (Msg.Role == TEXT("assistant") && Msg.ToolCalls.Num() > 0)
         {
             // Assistant message with tool calls
-            if (!Msg.Content.IsEmpty())
+            if (!SanitizedContent.IsEmpty())
             {
-                MsgObj->SetStringField(TEXT("content"), Msg.Content);
+                MsgObj->SetStringField(TEXT("content"), SanitizedContent);
             }
             else
             {
@@ -120,7 +123,7 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
 
                 TSharedPtr<FJsonObject> FunctionObj = MakeShareable(new FJsonObject());
                 FunctionObj->SetStringField(TEXT("name"), ToolCall.Name);
-                FunctionObj->SetStringField(TEXT("arguments"), ToolCall.Arguments);
+                FunctionObj->SetStringField(TEXT("arguments"), SanitizeForLLM(ToolCall.Arguments));
                 ToolCallObj->SetObjectField(TEXT("function"), FunctionObj);
 
                 ToolCallsArray.Add(MakeShareable(new FJsonValueObject(ToolCallObj)));
@@ -129,7 +132,7 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         }
         else
         {
-            MsgObj->SetStringField(TEXT("content"), Msg.Content);
+            MsgObj->SetStringField(TEXT("content"), SanitizedContent);
         }
 
         MessagesArray.Add(MakeShareable(new FJsonValueObject(MsgObj)));
@@ -166,7 +169,11 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         }
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
         
-        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Including %d tools in request"), Tools.Num());
+        // Control parallel tool calls - when false, LLM returns one tool call at a time
+        RequestBody->SetBoolField(TEXT("parallel_tool_calls"), bParallelToolCalls);
+        
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Including %d tools in request (parallel_tool_calls=%s)"), 
+            Tools.Num(), bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 
     // Serialize to JSON string

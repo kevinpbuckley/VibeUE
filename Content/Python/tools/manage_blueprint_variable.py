@@ -13,7 +13,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_variable_tools(mcp: FastMCP):
     """Register Blueprint variable management tools with the MCP server."""
     
-    @mcp.tool(description="Blueprint variable operations: create, delete, get/set properties. Actions: create, delete, list, get_info, modify, search_types, diagnostics, get_property, set_property, get_property_metadata, set_property_metadata. Use action='help' for all actions and detailed parameter info. CRITICAL: Use type_path not type (e.g., '/Script/CoreUObject.FloatProperty').")
+    @mcp.tool(description="Blueprint variable operations: create, delete, get/set properties, diagnostics. Actions: create, delete, list, get_info, modify, search_types, diagnostics, get_property, set_property, get_property_metadata, set_property_metadata. Use action='help' for all actions and detailed parameter info. CRITICAL: Use type_path not type (e.g., '/Script/CoreUObject.FloatProperty').")
     def manage_blueprint_variable(
         ctx: Context,
         blueprint_name: str,

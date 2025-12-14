@@ -10,6 +10,16 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAIChatWindow, Log, All);
 
+/**
+ * Helper class for logging chat window events to dedicated file
+ */
+class FChatWindowLogger
+{
+public:
+    static void LogToFile(const FString& Level, const FString& Message);
+    static FString GetLogFilePath();
+};
+
 class SScrollBox;
 class SEditableTextBox;
 class SMultiLineEditableTextBox;
@@ -74,15 +84,36 @@ private:
     /** Map of message index to text block for streaming updates */
     TMap<int32, TSharedPtr<STextBlock>> MessageTextBlocks;
     
+    /** Widget components for compact Copilot-style tool call display */
+    struct FToolCallWidgetData
+    {
+        TSharedPtr<STextBlock> SummaryText;         // Shows "tool_name → action"
+        TSharedPtr<STextBlock> StatusText;          // Shows spinner, ✓, or ✗
+        TSharedPtr<STextBlock> ChevronText;         // Shows ▶ or ▼
+        TSharedPtr<SBox> DetailsContainer;          // Container for expandable details
+        TSharedPtr<STextBlock> CallJsonText;        // Full JSON arguments
+        TSharedPtr<STextBlock> ResponseJsonText;    // Full JSON response
+        TSharedPtr<bool> bExpanded;                 // Expand state
+        FString CallJson;                           // Cached call JSON for copy
+        FString ResponseJson;                       // Cached response JSON for copy
+        TSharedPtr<FString> ResponseJsonPtr;        // Shared pointer for copy lambda
+        bool bResponseReceived = false;             // Track if response arrived
+    };
+    
+    /** Map of ToolCallId to widget data for updating when response arrives */
+    TMap<FString, FToolCallWidgetData> ToolCallWidgets;
+    
     /** Build the message list UI */
     void RebuildMessageList();
     
     /** Add a message widget to the scroll box */
     void AddMessageWidget(const FChatMessage& Message, int32 Index);
     
-    /** Add a collapsible tool message widget (for tool calls and results) */
-    void AddToolMessageWidget(const FChatMessage& Message, int32 Index, 
-        const FLinearColor& BackgroundColor, const FLinearColor& BorderColor, bool bIsToolCall);
+    /** Add a paired tool call widget (shows call immediately, updates with response later) */
+    void AddToolCallWidget(const FChatToolCall& ToolCall, int32 MessageIndex, int32 ToolIndex);
+    
+    /** Update an existing tool widget with its response */
+    void UpdateToolCallWithResponse(const FString& ToolCallId, const FString& ResponseJson, bool bSuccess);
     
     /** Update a message widget (for streaming) */
     void UpdateMessageWidget(int32 Index, const FChatMessage& Message);
@@ -149,6 +180,15 @@ private:
     
     /** Handle token budget updated callback */
     void HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxTokens, float UtilizationPercent);
+    
+    /** Handle tool iteration limit reached callback */
+    void HandleToolIterationLimitReached(int32 CurrentIteration, int32 MaxIterations);
+    
+    /** Handle thinking status changed (model is reasoning) */
+    void HandleThinkingStatusChanged(bool bIsThinking);
+    
+    /** Handle tool preparing (tool name detected before full args) */
+    void HandleToolPreparing(const FString& ToolName);
     
     /** Update the token budget display */
     void UpdateTokenBudgetDisplay();

@@ -85,6 +85,22 @@ DECLARE_DELEGATE_TwoParams(FOnSummarizationComplete, bool /* bSuccess */, const 
 DECLARE_DELEGATE_ThreeParams(FOnTokenBudgetUpdated, int32 /* CurrentTokens */, int32 /* MaxTokens */, float /* UtilizationPercent */);
 
 /**
+ * Delegate called when tool call iteration limit is reached
+ * UI should prompt user if they want to continue
+ */
+DECLARE_DELEGATE_TwoParams(FOnToolIterationLimitReached, int32 /* CurrentIteration */, int32 /* MaxIterations */);
+
+/**
+ * Delegate called when thinking state changes (model is reasoning)
+ */
+DECLARE_DELEGATE_OneParam(FOnThinkingStatusChanged, bool /* bIsThinking */);
+
+/**
+ * Delegate called when a tool is being prepared (name detected, args still streaming)
+ */
+DECLARE_DELEGATE_OneParam(FOnToolPreparing, const FString& /* ToolName */);
+
+/**
  * Manages conversation state, message history, and persistence
  */
 class VIBEUE_API FChatSession : public TSharedFromThis<FChatSession>
@@ -263,12 +279,22 @@ public:
     static int32 GetMaxTokensFromConfig();
     static void SaveMaxTokensToConfig(int32 MaxTokens);
     
-    /** Get/Set max tool call iterations (5-100, default 25) */
+    /** Get/Set max tool call iterations (10-500, default 200 like Copilot) */
     static int32 GetMaxToolCallIterationsFromConfig();
     static void SaveMaxToolCallIterationsToConfig(int32 MaxIterations);
     
+    /** Set max tool iterations for current session (doesn't persist to config) */
+    void SetMaxToolCallIterations(int32 NewMax);
+    
+    /** Get/Set parallel tool calls (true = LLM can return multiple tool calls at once) */
+    static bool GetParallelToolCallsFromConfig();
+    static void SaveParallelToolCallsToConfig(bool bParallelToolCalls);
+    
     /** Apply LLM parameters to the VibeUE client */
     void ApplyLLMParametersToClient();
+
+    /** Continue tool calls after iteration limit was reached (user chose to continue) */
+    void ContinueAfterIterationLimit();
 
     // Delegates
     FOnMessageAdded OnMessageAdded;
@@ -279,6 +305,9 @@ public:
     FOnSummarizationStarted OnSummarizationStarted;
     FOnSummarizationComplete OnSummarizationComplete;
     FOnTokenBudgetUpdated OnTokenBudgetUpdated;
+    FOnToolIterationLimitReached OnToolIterationLimitReached;
+    FOnThinkingStatusChanged OnThinkingStatusChanged;
+    FOnToolPreparing OnToolPreparing;
 
 private:
     /** OpenRouter HTTP client */
@@ -395,14 +424,26 @@ private:
     /** Number of tool calls pending completion */
     int32 PendingToolCallCount = 0;
     
+    /** Queue for sequential tool execution */
+    TArray<FMCPToolCall> ToolCallQueue;
+    
+    /** Whether a tool call is currently being executed */
+    bool bIsExecutingTool = false;
+    
+    /** Execute the next tool in the queue (sequential execution) */
+    void ExecuteNextToolInQueue();
+    
     /** Number of tool call iterations (follow-up rounds) */
     int32 ToolCallIterationCount = 0;
     
-    /** Maximum allowed tool call iterations before forcing a text response (loaded from config) */
-    int32 MaxToolCallIterations = 25;
+    /** Maximum allowed tool call iterations (soft limit - shows warning but continues) */
+    int32 MaxToolCallIterations = 200;
     
-    /** Default value for MaxToolCallIterations */
-    static constexpr int32 DefaultMaxToolCallIterations = 25;
+    /** Whether we're waiting for user to decide if they want to continue after hitting iteration limit */
+    bool bWaitingForUserToContinue = false;
+    
+    /** Default value for MaxToolCallIterations - same as Copilot (200) */
+    static constexpr int32 DefaultMaxToolCallIterations = 200;
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;

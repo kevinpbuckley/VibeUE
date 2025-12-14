@@ -48,16 +48,21 @@ def register_enhanced_input_tools(mcp: FastMCP) -> None:
     
     @mcp.tool(description="""Enhanced Input System management for Input Actions, Mapping Contexts, Modifiers, and Triggers.
 
-COMMON ACTIONS (call directly, don't use help first):
-- action_list: List all Input Actions
-- action_create: Create Input Action (needs: action_name, asset_path, value_type=Digital|Axis1D|Axis2D|Axis3D)
-- mapping_list_contexts: List all Mapping Contexts  
-- mapping_create_context: Create Mapping Context (needs: context_name, asset_path)
-- mapping_add_key_mapping: Bind key (needs: context_path, action_path, key)
-- mapping_add_modifier: Add modifier (needs: context_path, mapping_index, modifier_type=Negate|Swizzle|DeadZone|Scalar)
-- mapping_add_trigger: Add trigger (needs: context_path, mapping_index, trigger_type=Pressed|Released|Hold|Tap)
+ACTIONS:
+- action_create, action_list, action_get_properties, action_configure
+- mapping_create_context, mapping_list_contexts, mapping_add_key_mapping, mapping_get_mappings, mapping_remove_mapping
+- mapping_add_modifier, mapping_remove_modifier, mapping_get_modifiers
+- mapping_add_trigger, mapping_remove_trigger, mapping_get_triggers
+- mapping_get_available_keys, mapping_get_available_modifier_types, mapping_get_available_trigger_types
+- reflection_discover_types, reflection_get_metadata
 
-For delete operations, use manage_asset(action='delete', asset_path='...').""")
+COMMON USAGE:
+- action_create: Create Input Action (needs: action_name, asset_path, value_type=Digital|Axis1D|Axis2D|Axis3D)
+- mapping_create_context: Create Mapping Context (needs: context_name, context_path)
+- mapping_add_key_mapping: Bind key (needs: context_path, action_path, key)
+- mapping_remove_mapping: Remove binding by index (needs: context_path, mapping_index)
+
+For delete assets, use manage_asset(action='delete', asset_path='...').""")
     def manage_enhanced_input(
         ctx: Context,
         action: str,
@@ -122,9 +127,9 @@ For delete operations, use manage_asset(action='delete', asset_path='...').""")
         | ai_apply_template | template_name | Apply input template |
         
         PATH PARAMETERS:
-        - asset_path: For CREATION (action_create, mapping_create_context)
+        - asset_path: For Input Action creation (action_create)
         - action_path: Reference existing Input Action
-        - context_path: Reference existing Input Mapping Context
+        - context_path: For Mapping Context creation AND all mapping_* operations
         
         VALUE TYPES: Digital, Axis1D, Axis2D, Axis3D
         """
@@ -155,7 +160,7 @@ For delete operations, use manage_asset(action='delete', asset_path='...').""")
             "action_create", "action_list", "action_get_properties", "action_configure",
             # Mapping service - includes modifiers and triggers
             "mapping_create_context", "mapping_list_contexts",
-            "mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
+            "mapping_add_key_mapping", "mapping_remove_mapping", "mapping_get_mappings",
             "mapping_get_properties", "mapping_get_property", "mapping_get_available_keys",
             "mapping_add_modifier", "mapping_remove_modifier", "mapping_get_modifiers", "mapping_get_available_modifier_types",
             "mapping_add_trigger", "mapping_remove_trigger", "mapping_get_triggers", "mapping_get_available_trigger_types",
@@ -198,18 +203,22 @@ For delete operations, use manage_asset(action='delete', asset_path='...').""")
                     missing_params=["action_path"]
                 )
         
-        # Mapping context creation requires asset_path
+        # Mapping context creation requires context_path (destination folder)
+        # This is consistent with all other mapping_* operations using context_path
         if action_lower == "mapping_create_context":
-            if not asset_path:
+            # Accept asset_path as fallback for backward compatibility
+            if not context_path and asset_path:
+                context_path = asset_path
+            if not context_path:
                 return generate_error_response(
                     "manage_enhanced_input", action,
-                    "mapping_create_context requires 'asset_path'",
-                    missing_params=["asset_path"]
+                    "mapping_create_context requires 'context_path' (destination folder like '/Game/Input')",
+                    missing_params=["context_path"]
                 )
         
         # Mapping operations require context_path
         # NOTE: For delete, use manage_asset(action="delete", asset_path="...")
-        mapping_actions = ["mapping_add_key_mapping", "mapping_remove_key_mapping", "mapping_get_mappings",
+        mapping_actions = ["mapping_add_key_mapping", "mapping_remove_mapping", "mapping_get_mappings",
                           "mapping_get_properties", "mapping_get_property", "mapping_add_modifier", "mapping_remove_modifier",
                           "mapping_get_modifiers", "mapping_add_trigger", "mapping_remove_trigger", "mapping_get_triggers",
                           "mapping_update_context"]
@@ -323,6 +332,8 @@ For delete operations, use manage_asset(action='delete', asset_path='...').""")
             payload["include_details"] = include_details
         if use_template:
             payload["use_template"] = use_template
+        if input_type:
+            payload["input_type"] = input_type
         if force_delete:
             payload["force_delete"] = force_delete
         

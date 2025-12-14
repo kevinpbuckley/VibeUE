@@ -15,6 +15,26 @@ static bool IsDebugLoggingEnabled()
     return FChatSession::IsDebugModeEnabled();
 }
 
+FString FLLMClientBase::SanitizeForLLM(const FString& Input)
+{
+    // Remove NUL characters and other problematic control characters
+    FString Output;
+    Output.Reserve(Input.Len());
+    
+    for (TCHAR Char : Input)
+    {
+        // Skip NUL (0x00) and other problematic control characters
+        // Keep tab (0x09), newline (0x0A), carriage return (0x0D)
+        if (Char == 0 || (Char < 32 && Char != 9 && Char != 10 && Char != 13))
+        {
+            continue;
+        }
+        Output.AppendChar(Char);
+    }
+    
+    return Output;
+}
+
 FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
     , bInThinkingBlock(false)
@@ -334,8 +354,11 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
             int32 ToolIndex = 0;
             (*ToolCallObj)->TryGetNumberField(TEXT("index"), ToolIndex);
             
+            // Check if this is a new tool call (not yet in pending)
+            bool bIsNewToolCall = !PendingToolCalls.Contains(ToolIndex);
+            
             // Initialize tool call if not exists
-            if (!PendingToolCalls.Contains(ToolIndex))
+            if (bIsNewToolCall)
             {
                 PendingToolCalls.Add(ToolIndex, FMCPToolCall());
             }
@@ -356,6 +379,11 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
                 FString FunctionName;
                 if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
                 {
+                    // Fire preparing callback when we first get the tool name
+                    if (bIsNewToolCall && !FunctionName.IsEmpty() && CurrentOnToolPreparing.IsBound())
+                    {
+                        CurrentOnToolPreparing.Execute(FunctionName);
+                    }
                     ToolCall.ToolName = FunctionName;
                 }
 
@@ -390,6 +418,9 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
 
 FString FLLMClientBase::FilterThinkingTags(const FString& Content)
 {
+    // Track previous thinking state to detect transitions
+    bool bWasThinking = bInThinkingBlock;
+    
     // Handle <thinking>...</thinking> (Claude), <think>...</think> (Qwen), and <tool_call>...</tool_call> (Qwen text-based tool calls)
     FString CleanContent = Content;
     
@@ -401,6 +432,12 @@ FString FLLMClientBase::FilterThinkingTags(const FString& Content)
     if (CleanContent == Content) // No <thinking> found, try <think>
     {
         CleanContent = FilterTagBlock(CleanContent, TEXT("<think>"), TEXT("</think>"), bInThinkingBlock);
+    }
+    
+    // Fire thinking status callback on state transitions
+    if (bInThinkingBlock != bWasThinking && CurrentOnThinkingStatus.IsBound())
+    {
+        CurrentOnThinkingStatus.Execute(bInThinkingBlock);
     }
     
     return CleanContent;

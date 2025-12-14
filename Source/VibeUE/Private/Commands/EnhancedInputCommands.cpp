@@ -170,21 +170,21 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleReflectionService(const FS
 	}
 	else if (Action == TEXT("reflection_get_metadata"))
 	{
-		FString TypeName = Params->GetStringField(TEXT("type_name"));
-		if (TypeName.IsEmpty())
+		FString InputType = Params->GetStringField(TEXT("input_type"));
+		if (InputType.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("type_name parameter required"));
+			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("input_type parameter required"));
 		}
 
 		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 		Response->SetBoolField(TEXT("success"), true);
 		Response->SetStringField(TEXT("action"), Action);
 		Response->SetStringField(TEXT("service"), TEXT("reflection"));
-		Response->SetStringField(TEXT("type_name"), TypeName);
+		Response->SetStringField(TEXT("input_type"), InputType);
 		
 		// Get metadata would be implemented here by reflection service
 		TSharedPtr<FJsonObject> MetadataObj = MakeShared<FJsonObject>();
-		MetadataObj->SetStringField(TEXT("name"), TypeName);
+		MetadataObj->SetStringField(TEXT("name"), InputType);
 		MetadataObj->SetStringField(TEXT("category"), TEXT("enhanced_input"));
 		Response->SetObjectField(TEXT("metadata"), MetadataObj);
 		
@@ -222,11 +222,25 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 		if (Result.IsSuccess())
 		{
+			// Build the actual asset path that can be used in subsequent operations
+			// Format: /Game/Path/ActionName.ActionName (package path with asset name)
+			FString BasePackagePath = AssetPath;
+			if (!BasePackagePath.StartsWith(TEXT("/Game")))
+			{
+				BasePackagePath = TEXT("/Game/") + BasePackagePath;
+			}
+			if (BasePackagePath.EndsWith(TEXT("/")))
+			{
+				BasePackagePath = BasePackagePath.LeftChop(1);
+			}
+			FString FullAssetPath = BasePackagePath / ActionName + TEXT(".") + ActionName;
+			
 			Response->SetBoolField(TEXT("success"), true);
 			Response->SetStringField(TEXT("action"), Action);
 			Response->SetStringField(TEXT("service"), TEXT("action"));
 			Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Input action '%s' created successfully"), *ActionName));
-			Response->SetStringField(TEXT("asset_path"), AssetPath);
+			Response->SetStringField(TEXT("asset_path"), FullAssetPath);
+			Response->SetStringField(TEXT("usage_hint"), TEXT("Use this asset_path for mapping_add_key_mapping action_path parameter"));
 		}
 		else
 		{
@@ -342,12 +356,17 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 	if (Action == TEXT("mapping_create_context"))
 	{
 		FString ContextName = Params->GetStringField(TEXT("context_name"));
-		FString AssetPath = Params->GetStringField(TEXT("asset_path"));
+		// Accept both context_path (primary, consistent with other mapping_* ops) and asset_path (legacy)
+		FString AssetPath = Params->GetStringField(TEXT("context_path"));
+		if (AssetPath.IsEmpty())
+		{
+			AssetPath = Params->GetStringField(TEXT("asset_path"));
+		}
 		int32 Priority = static_cast<int32>(Params->GetNumberField(TEXT("priority")));
 
 		if (ContextName.IsEmpty() || AssetPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_name and asset_path required"));
+			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_name and context_path required"));
 		}
 
 		auto Result = MappingService->CreateMappingContext(ContextName, AssetPath, Priority);
@@ -355,11 +374,25 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 		if (Result.IsSuccess())
 		{
+			// Build the actual asset path that can be used in subsequent operations
+			FString BasePackagePath = AssetPath;
+			if (!BasePackagePath.StartsWith(TEXT("/Game")))
+			{
+				BasePackagePath = TEXT("/Game/") + BasePackagePath;
+			}
+			if (BasePackagePath.EndsWith(TEXT("/")))
+			{
+				BasePackagePath = BasePackagePath.LeftChop(1);
+			}
+			FString FullAssetPath = BasePackagePath / ContextName + TEXT(".") + ContextName;
+			
 			Response->SetBoolField(TEXT("success"), true);
 			Response->SetStringField(TEXT("action"), Action);
 			Response->SetStringField(TEXT("service"), TEXT("mapping"));
 			Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Mapping context '%s' created"), *ContextName));
+			Response->SetStringField(TEXT("context_path"), FullAssetPath);
 			Response->SetNumberField(TEXT("priority"), Priority);
+			Response->SetStringField(TEXT("usage_hint"), TEXT("Use this context_path for mapping operations like mapping_add_key_mapping"));
 		}
 		else
 		{

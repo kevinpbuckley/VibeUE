@@ -136,4 +136,11 @@ private:
      * @param OutComponents Output array for component information
      */
     void ProcessComponentNode(class USCS_Node* Node, TArray<FComponentInfo>& OutComponents);
+
+    /**
+     * Recursively remove an SCS node and all of its children
+     * @param SCS Construction script owning the node hierarchy
+     * @param Node Root node to remove
+     */
+    void RemoveNodeRecursive(class USimpleConstructionScript* SCS, class USCS_Node* Node);
 };
