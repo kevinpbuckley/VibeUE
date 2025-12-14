@@ -385,6 +385,7 @@ void SAIChatWindow::RebuildMessageList()
     MessageScrollBox->ClearChildren();
     MessageTextBlocks.Empty();
     ToolCallWidgets.Empty();  // Clear tool call widget references
+    PendingToolCallKeys.Empty();  // Clear pending tool call queue
     
     const TArray<FChatMessage>& Messages = ChatSession->GetMessages();
     for (int32 i = 0; i < Messages.Num(); ++i)
@@ -554,6 +555,20 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
 
 void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 MessageIndex, int32 ToolIndex)
 {
+    // Generate a unique key that includes message index and tool index
+    // This handles the case where vLLM/Qwen returns the same ID (call_0) for all tool calls
+    FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), MessageIndex, ToolIndex, *ToolCall.Id);
+    
+    // Check if widget already exists for this tool call (prevents duplicates)
+    if (ToolCallWidgets.Contains(UniqueKey))
+    {
+        if (FChatSession::IsDebugModeEnabled())
+        {
+            CHAT_LOG(Warning, TEXT("[UI] AddToolCallWidget: Widget already exists for key %s, skipping"), *UniqueKey);
+        }
+        return;
+    }
+    
     // Update status to show tool execution
     SetStatusText(FString::Printf(TEXT("Executing: %s"), *ToolCall.Name));
     
@@ -690,7 +705,7 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
                     .Padding(4)
                     [
                         SAssignNew(WidgetData.ResponseJsonText, STextBlock)
-                        .Text(FText::FromString(TEXT("Executing...")))
+                        .Text(FText::GetEmpty())
                         .AutoWrapText(true)
                         .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::TextCode))
@@ -738,14 +753,14 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
                 ]
             ]
             
-            // Status indicator (spinner while pending, then ✓ or ✗)
+            // Status indicator (arrow while pending, then ✓ or ✗)
             + SHorizontalBox::Slot()
             .AutoWidth()
             .VAlign(VAlign_Center)
             .Padding(0, 0, 6, 0)
             [
                 SAssignNew(WidgetData.StatusText, STextBlock)
-                .Text(FText::FromString(TEXT("●")))  // Filled circle = running
+                .Text(FText::FromString(TEXT("→")))  // Right arrow = running
                 .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
                 .ColorAndOpacity(FSlateColor(VibeUEColors::Orange))
             ]
@@ -769,8 +784,11 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
             DetailsContainer
         ];
     
-    // Store widget data keyed by tool call ID for later update
-    ToolCallWidgets.Add(ToolCall.Id, WidgetData);
+    // Store widget data keyed by unique key for later update
+    ToolCallWidgets.Add(UniqueKey, WidgetData);
+    
+    // Add to pending queue (FIFO - responses come in same order as calls)
+    PendingToolCallKeys.Add(UniqueKey);
     
     // Add to scroll box
     MessageScrollBox->AddSlot()
@@ -787,11 +805,28 @@ void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const 
     // Update status to show tool completed
     SetStatusText(bSuccess ? TEXT("Tool completed successfully") : TEXT("Tool execution failed"));
     
-    // Find the widget for this tool call
-    FToolCallWidgetData* WidgetData = ToolCallWidgets.Find(ToolCallId);
+    // Find the first pending widget that hasn't received a response yet
+    // We use a queue because vLLM/Qwen may return the same ID (call_0) for all tool calls
+    FString UniqueKey;
+    for (const FString& Key : PendingToolCallKeys)
+    {
+        FToolCallWidgetData* Widget = ToolCallWidgets.Find(Key);
+        if (Widget && !Widget->bResponseReceived)
+        {
+            UniqueKey = Key;
+            break;
+        }
+    }
+    
+    if (UniqueKey.IsEmpty())
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Could not find pending tool call widget for ID: %s"), *ToolCallId);
+        return;
+    }
+    
+    FToolCallWidgetData* WidgetData = ToolCallWidgets.Find(UniqueKey);
     if (!WidgetData)
     {
-        UE_LOG(LogAIChatWindow, Warning, TEXT("Could not find tool call widget for ID: %s"), *ToolCallId);
         return;
     }
     
@@ -1453,11 +1488,55 @@ void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
 
 void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Message)
 {
+    // For tool calls, check if widgets already exist via ToolCallWidgets map
+    bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
+    if (bIsToolCall)
+    {
+        // Check if any of the tool calls already have widgets (using unique key)
+        bool bAllToolsHaveWidgets = true;
+        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+        {
+            const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
+            FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
+            if (!ToolCallWidgets.Contains(UniqueKey))
+            {
+                bAllToolsHaveWidgets = false;
+                break;
+            }
+        }
+        
+        if (bAllToolsHaveWidgets)
+        {
+            // All tools already have widgets, nothing to do
+            return;
+        }
+        
+        // Some tools don't have widgets yet - add them
+        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+        {
+            const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
+            FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
+            if (!ToolCallWidgets.Contains(UniqueKey))
+            {
+                AddToolCallWidget(ToolCall, Index, ToolIdx);
+            }
+        }
+        return;
+    }
+    
+    // For tool responses, just update - AddMessageWidget handles this correctly
+    bool bIsToolResponse = Message.Role == TEXT("tool");
+    if (bIsToolResponse)
+    {
+        AddMessageWidget(Message, Index);  // This calls UpdateToolCallWithResponse internally
+        return;
+    }
+    
     // Check if this message has a widget yet (it may have been skipped as empty streaming)
     TSharedPtr<STextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
     if (!TextBlockPtr)
     {
-        // Widget doesn't exist - add it now that we have content or tool calls
+        // Widget doesn't exist - add it now that we have content
         AddMessageWidget(Message, Index);
     }
     else

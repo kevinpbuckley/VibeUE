@@ -100,8 +100,11 @@ private:
         bool bResponseReceived = false;             // Track if response arrived
     };
     
-    /** Map of ToolCallId to widget data for updating when response arrives */
+    /** Map of unique key (MessageIndex_ToolIndex_ToolCallId) to widget data */
     TMap<FString, FToolCallWidgetData> ToolCallWidgets;
+    
+    /** Queue of pending tool call unique keys that haven't received responses yet (FIFO order) */
+    TArray<FString> PendingToolCallKeys;
     
     /** Build the message list UI */
     void RebuildMessageList();
