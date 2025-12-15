@@ -42,6 +42,9 @@ def register_blueprint_component_tools(mcp: FastMCP):
         include_deprecated: bool = False,
         include_property_values: bool = False,
         include_inherited: bool = True,
+        # Compare parameters - for compare_properties action
+        other_blueprint: str = "",  # Blueprint containing the second component (defaults to blueprint_name)
+        other_component: str = "",  # Second component to compare with
         # Additional options
         options: Dict[str, Any] = None
     ) -> Dict[str, Any]:
@@ -248,12 +251,27 @@ def register_blueprint_component_tools(mcp: FastMCP):
                     missing.append("blueprint_name")
                 if not component_name:
                     missing.append("component_name")
-                if not options or "compare_to_blueprint" not in options or "compare_to_component" not in options:
-                    return generate_error_response(
-                        "manage_blueprint_component", action,
-                        "compare_properties requires 'blueprint_name', 'component_name', and options with 'compare_to_blueprint' and 'compare_to_component'",
-                        missing_params=["options.compare_to_blueprint", "options.compare_to_component"] if not missing else missing
-                    )
+                
+                # Support explicit parameters (preferred) or options dict (legacy)
+                # other_component: second component to compare
+                # other_blueprint: blueprint containing second component (defaults to same blueprint)
+                compare_component = other_component
+                compare_blueprint = other_blueprint if other_blueprint else blueprint_name
+                
+                # Fallback to options dict for backwards compatibility
+                if not compare_component and options:
+                    if "other_component" in options:
+                        compare_component = options["other_component"]
+                    elif "compare_to_component" in options:
+                        compare_component = options["compare_to_component"]
+                    if "compare_to_blueprint" in options:
+                        compare_blueprint = options["compare_to_blueprint"]
+                    elif "other_blueprint" in options:
+                        compare_blueprint = options["other_blueprint"]
+                
+                if not compare_component:
+                    missing.append("other_component")
+                    
                 if missing:
                     return generate_error_response(
                         "manage_blueprint_component", action,
@@ -263,8 +281,8 @@ def register_blueprint_component_tools(mcp: FastMCP):
                 params = {
                     "blueprint_name": blueprint_name,
                     "component_name": component_name,
-                    "compare_to_blueprint": options["compare_to_blueprint"],
-                    "compare_to_component": options["compare_to_component"]
+                    "compare_to_blueprint": compare_blueprint,
+                    "compare_to_component": compare_component
                 }
                 response = unreal.send_command("compare_component_properties", params)
                 

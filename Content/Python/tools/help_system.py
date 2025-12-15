@@ -273,13 +273,15 @@ TOOL_HELP = {
                 "example": 'manage_blueprint_component(action="get_property_metadata", blueprint_name="/Game/Blueprints/BP_Lamp", component_name="MainLight")'
             },
             "compare_properties": {
-                "description": "Compare properties between two components",
+                "description": "Compare properties between two components (same or different blueprints)",
                 "parameters": {
-                    "blueprint_name": "Full path to the Blueprint",
-                    "component_name": "First component name",
-                    "other_component": "Second component name to compare with"
+                    "blueprint_name": "Full path to the Blueprint containing the first component",
+                    "component_name": "First component name to compare",
+                    "other_component": "Second component name to compare with",
+                    "other_blueprint": "Optional: Blueprint path for second component (defaults to same blueprint)"
                 },
-                "example": 'manage_blueprint_component(action="compare_properties", blueprint_name="/Game/Blueprints/BP_Lamp", component_name="Light1", other_component="Light2")'
+                "example": 'manage_blueprint_component(action="compare_properties", blueprint_name="/Game/Blueprints/BP_Lamp", component_name="MainLight", other_component="FillLight")',
+                "cross_blueprint_example": 'manage_blueprint_component(action="compare_properties", blueprint_name="/Game/Blueprints/BP_Lamp1", component_name="Light", other_blueprint="/Game/Blueprints/BP_Lamp2", other_component="Light")'
             }
         }
     },

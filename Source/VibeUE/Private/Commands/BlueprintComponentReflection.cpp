@@ -228,9 +228,47 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentInfo(co
 {
     // Extract parameters
     FString ComponentTypeName;
-    if (!Params->TryGetStringField(TEXT("component_type"), ComponentTypeName))
+    Params->TryGetStringField(TEXT("component_type"), ComponentTypeName);
+    
+    FString BlueprintName;
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
+    
+    FString ComponentName;
+    Params->TryGetStringField(TEXT("component_name"), ComponentName);
+
+    // If component_type is empty but blueprint_name and component_name are provided,
+    // look up the component type from the blueprint
+    if (ComponentTypeName.IsEmpty())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
+        if (BlueprintName.IsEmpty() || ComponentName.IsEmpty())
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
+                TEXT("Requires either 'component_type' OR both 'blueprint_name' and 'component_name'"));
+        }
+        
+        // Find the blueprint using DiscoveryService
+        auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
+        if (FindResult.IsError())
+        {
+            return CreateErrorResponse(FindResult.GetErrorCode(), FindResult.GetErrorMessage());
+        }
+        
+        UBlueprint* Blueprint = FindResult.GetValue();
+        
+        if (Blueprint->SimpleConstructionScript)
+        {
+            USCS_Node* Node = Blueprint->SimpleConstructionScript->FindSCSNode(*ComponentName);
+            if (Node && Node->ComponentClass)
+            {
+                ComponentTypeName = Node->ComponentClass->GetName();
+            }
+        }
+        
+        if (ComponentTypeName.IsEmpty())
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::COMPONENT_NOT_FOUND,
+                FString::Printf(TEXT("Component '%s' not found in blueprint '%s'"), *ComponentName, *BlueprintName));
+        }
     }
 
     // Validate component type using ReflectionService
@@ -1496,13 +1534,22 @@ bool FBlueprintComponentReflection::ValidateComponentType(const FString& Compone
 {
     OutComponentClass = nullptr;
 
+    // Strip script path prefix if present (e.g., "/Script/Engine.SpotLightComponent" -> "SpotLightComponent")
+    FString CleanTypeName = ComponentTypeName;
+    int32 DotIndex;
+    if (CleanTypeName.FindLastChar('.', DotIndex))
+    {
+        CleanTypeName = CleanTypeName.Mid(DotIndex + 1);
+    }
+
     // Try to find the class by name
     for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
     {
         UClass* Class = *ClassIterator;
         if (Class->IsChildOf<UActorComponent>() && 
-            (Class->GetName() == ComponentTypeName || 
-             Class->GetDisplayNameText().ToString() == ComponentTypeName))
+            (Class->GetName() == CleanTypeName || 
+             Class->GetDisplayNameText().ToString() == CleanTypeName ||
+             Class->GetName() == ComponentTypeName))  // Also try original name
         {
             OutComponentClass = Class;
             return true;

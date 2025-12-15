@@ -328,13 +328,22 @@ bool FBlueprintComponentService::ValidateComponentType(const FString& ComponentT
 {
     OutComponentClass = nullptr;
 
+    // Strip script path prefix if present (e.g., "/Script/Engine.SpotLightComponent" -> "SpotLightComponent")
+    FString CleanTypeName = ComponentTypeName;
+    int32 DotIndex;
+    if (CleanTypeName.FindLastChar('.', DotIndex))
+    {
+        CleanTypeName = CleanTypeName.Mid(DotIndex + 1);
+    }
+
     // Try to find the class by name
     for (TObjectIterator<UClass> ClassIterator; ClassIterator; ++ClassIterator)
     {
         UClass* Class = *ClassIterator;
         if (Class->IsChildOf<UActorComponent>() && 
-            (Class->GetName() == ComponentTypeName || 
-             Class->GetDisplayNameText().ToString() == ComponentTypeName))
+            (Class->GetName() == CleanTypeName || 
+             Class->GetDisplayNameText().ToString() == CleanTypeName ||
+             Class->GetName() == ComponentTypeName))  // Also try original name
         {
             OutComponentClass = Class;
             return true;

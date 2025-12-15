@@ -6,75 +6,75 @@ Tests for adding, configuring, and organizing components in blueprints. Run sequ
 
 ## Setup
 
-Create an actor blueprint called ComponentTest in the Blueprints folder.
+Create an actor blueprint called ComponentTest in the Blueprints folder. If it already exists delete it and create a new one.
 
 ---
 
 ## Finding Component Types
 
-What spotlight components are available? I want to see the options.
+What spotlight component types are available in Unreal? I want to see my options before adding one.
 
 ---
 
-Tell me more about the spotlight component. What properties can I set?
+What properties does the SpotLightComponent class have? I want to know what I can configure.
 
 ---
 
-What settings are available for the Intensity property specifically?
+Tell me about the Intensity property on SpotLightComponent. What are its constraints and metadata?
 
 ---
 
 ## Adding Lights
 
-Make a new actor blueprint called LightTest.
+Make a new actor blueprint called LightTest. If it already exists delete it and create a new one.
 
 ---
 
-What components does it have right now?
+What components does LightTest have right now?
 
 ---
 
-Add a spotlight called MainLight.
+Add a spotlight component to LightTest and call it MainLight.
 
 ---
 
-Add another spotlight called FillLight.
+Add another spotlight to LightTest called FillLight.
 
 ---
 
-Show me the component list now.
+Show me what components LightTest has now.
 
 ---
 
 ## Configuring Lights
 
-What's the current intensity on MainLight?
+What's the current intensity on MainLight in LightTest?
 
 ---
 
-Crank it up to 5000.
+Set MainLight's intensity to 5000.
 
 ---
 
-Change the light color to something warm.
+Change MainLight's light color to something warm like orange.
 
 ---
 
-Show me all the properties on MainLight.
+Show me all the properties on MainLight in LightTest.
 
 ---
 
-Adjust the cone angle settings.
+Adjust MainLight's cone angle to be narrower.
 
 ---
 
 ## Organizing Component Hierarchy
 
-Add a scene component called LightRig to organize the lights.
+Add a scene component called LightRig to LightTest to organize the lights.
 
 ---
 
-Put MainLight under the LightRig.
+Put MainLight under the LightRig in LightTest.
 
 ---
 
@@ -82,25 +82,25 @@ Move FillLight under LightRig too.
 
 ---
 
-Reorder the components so LightRig is at the top.
+Reorder the components in LightTest so LightRig is at the top.
 
 ---
 
-Show me the hierarchy now.
+Show me the LightTest hierarchy now.
 
 ---
 
-## Comparing Blueprints
+## Comparing Components
 
-Create another actor called LightTest2.
-
----
-
-Add a spotlight with a different intensity setting.
+Compare the MainLight and FillLight properties in LightTest to see the differences.
 
 ---
 
-Compare the light properties between the two blueprints.
+Create another actor blueprint called LightTest2. Add a spotlight called TestLight with intensity 8000.
+
+---
+
+Compare MainLight in LightTest with TestLight in LightTest2 to see cross-blueprint differences.
 
 ---
 
@@ -110,33 +110,33 @@ Remove the FillLight from LightTest.
 
 ---
 
-Show me what's left.
+Show me what's left in LightTest.
 
 ---
 
-Delete the LightRig and take all its children with it.
+Delete the LightRig from LightTest and take all its children with it.
 
 ---
 
-Verify everything got deleted properly.
+List LightTest components to verify everything got deleted properly.
 
 ---
 
 ## Other Component Types
 
-Add a sound effect component to ComponentTest.
+Add an audio component to ComponentTest for sound effects.
 
 ---
 
-Add a legacy particle system.
+Add a particle system component to ComponentTest.
 
 ---
 
-Add a Niagara effect too.
+Add a Niagara particle system component to ComponentTest.
 
 ---
 
-List everything on ComponentTest now.
+List all components on ComponentTest now.
 
 ---
 
