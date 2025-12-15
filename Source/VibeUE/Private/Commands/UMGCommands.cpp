@@ -304,8 +304,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 		return FCommonUtils::CreateErrorResponse(TEXT("Failed to get Asset Registry"));
 	}
 
-	// If discovery service is available and the requested asset type appears to be a widget
-	const bool bLooksLikeWidgetSearch = AssetType.IsEmpty() || AssetType.Contains(TEXT("Widget"), ESearchCase::IgnoreCase) || AssetType.Contains(TEXT("WidgetBlueprint"), ESearchCase::IgnoreCase);
+	// Only use widget discovery when explicitly searching for Widget/WidgetBlueprint types
+	// Empty AssetType should search ALL assets, not just widgets
+	const bool bLooksLikeWidgetSearch = AssetType.Contains(TEXT("Widget"), ESearchCase::IgnoreCase) || AssetType.Contains(TEXT("WidgetBlueprint"), ESearchCase::IgnoreCase);
 	if (DiscoveryService.IsValid() && bLooksLikeWidgetSearch)
 	{
 		// Delegate to WidgetDiscoveryService which provides richer widget blueprint metadata
@@ -349,6 +350,8 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 
 	TArray<TSharedPtr<FJsonValue>> ItemArray;
 	const ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;
+	FString ActualSearchPath = Path;
+	bool bUsedFallback = false;
 
 	for (const FAssetData& Asset : Assets)
 	{
@@ -372,6 +375,66 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 		}
 	}
 
+	// If no results found and we weren't already searching from /Game root, retry with full tree
+	if (ItemArray.Num() == 0 && Path != TEXT("/Game"))
+	{
+		bUsedFallback = true;
+		ActualSearchPath = TEXT("/Game");
+		
+		// Rebuild filter with /Game root
+		FARFilter FallbackFilter;
+		FallbackFilter.bRecursivePaths = true;
+		FallbackFilter.PackagePaths.Add(TEXT("/Game"));
+		if (bIncludeEngineContent)
+		{
+			FallbackFilter.PackagePaths.Add(TEXT("/Engine"));
+		}
+		if (!AssetType.IsEmpty())
+		{
+			FTopLevelAssetPath AssetClassPath = UClass::TryConvertShortTypeNameToPathName<UClass>(AssetType, ELogVerbosity::NoLogging);
+			if (AssetClassPath.IsNull())
+			{
+				if (AssetType.Contains(TEXT("/")))
+				{
+					AssetClassPath = FTopLevelAssetPath(*AssetType);
+				}
+				else if (UClass* AssetClass = FindFirstObjectSafe<UClass>(*AssetType))
+				{
+					AssetClassPath = AssetClass->GetClassPathName();
+				}
+			}
+			if (!AssetClassPath.IsNull())
+			{
+				FallbackFilter.ClassPaths.Add(AssetClassPath);
+			}
+		}
+
+		TArray<FAssetData> FallbackAssets;
+		AssetRegistry->GetAssets(FallbackFilter, FallbackAssets);
+
+		for (const FAssetData& Asset : FallbackAssets)
+		{
+			const FString AssetName = Asset.AssetName.ToString();
+			if (!SearchTerm.IsEmpty() && !AssetName.Contains(SearchTerm, SearchCase))
+			{
+				continue;
+			}
+
+			TSharedPtr<FJsonObject> ItemObj = MakeShared<FJsonObject>();
+			ItemObj->SetStringField(TEXT("asset_name"), AssetName);
+			ItemObj->SetStringField(TEXT("object_path"), Asset.GetObjectPathString());
+			ItemObj->SetStringField(TEXT("package_name"), Asset.PackageName.ToString());
+			ItemObj->SetStringField(TEXT("class_name"), Asset.AssetClassPath.ToString());
+
+			ItemArray.Add(MakeShared<FJsonValueObject>(ItemObj));
+
+			if (MaxResults > 0 && ItemArray.Num() >= MaxResults)
+			{
+				break;
+			}
+		}
+	}
+
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetArrayField(TEXT("items"), ItemArray);
@@ -380,7 +443,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 	TSharedPtr<FJsonObject> SearchInfo = MakeShared<FJsonObject>();
 	SearchInfo->SetStringField(TEXT("search_term"), SearchTerm);
 	SearchInfo->SetStringField(TEXT("asset_type"), AssetType);
-	SearchInfo->SetStringField(TEXT("path"), Path);
+	SearchInfo->SetStringField(TEXT("path"), ActualSearchPath);
+	SearchInfo->SetStringField(TEXT("original_path"), Path);
+	SearchInfo->SetBoolField(TEXT("used_fallback"), bUsedFallback);
 	SearchInfo->SetBoolField(TEXT("case_sensitive"), bCaseSensitive);
 	SearchInfo->SetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
 	SearchInfo->SetNumberField(TEXT("max_results"), MaxResults);
