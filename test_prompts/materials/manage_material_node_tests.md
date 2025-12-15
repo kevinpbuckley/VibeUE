@@ -1,66 +1,129 @@
-# manage_material_node Test Prompts
+# Material Node Tests
+
+Tests for creating and connecting nodes in material graphs. Run sequentially.
+
+---
 
 ## Setup
-Search for "M_NodeTest"
-If not found, create at /Game/Materials/test
-Open in editor
 
-## Test 1: Discover Types
-Discover with search_term="Add"
+Check if there's a NodeTest material in the materials test folder.
 
-## Test 2: Discover by Category
-Discover category="Math"
+---
 
-## Test 3: Get Categories
-Get all categories
+If not, create it.
 
-## Test 4: Create Constant
-Create Constant at [-400, 0]
+---
 
-## Test 5: Create Vector Constant
-Create Constant3Vector at [-400, 100]
+Open the material editor.
 
-## Test 6: Create Add
-Create Add at [-200, 0]
+---
 
-## Test 7: Create Multiply
-Create Multiply at [-200, 200]
+## Finding Node Types
 
-## Test 8: List
-List all expressions
+What nodes are available with "Add" in the name?
 
-## Test 9: Get Details
-Get details for expression
+---
 
-## Test 10: Get Pins
-Get pins for Add
+Show me all the math category nodes.
 
-## Test 11: Move
-Move Constant to [-500, 50]
+---
 
-## Test 12: List Properties
-List properties of Constant
+What categories exist for material nodes?
 
-## Test 13: Get Property
-Get "R" value
+---
 
-## Test 14: Set Property
-Set "R" to 0.5
+## Creating Basic Nodes
 
-## Test 15: Connect
-Connect Constant to Add A
-Connect Vector to Multiply
-Verify
+Add a constant node at position -400, 0.
 
-## Test 16: Create Parameter
-Create scalar parameter "Roughness"
-Set default
-Promote to parameter
+---
 
-## Test 17: Connect to Output
-Connect to Base Color
-Connect to Roughness
-Compile
+Add a 3-component color constant at -400, 100.
+
+---
+
+Put an add node at -200, 0.
+
+---
+
+Add a multiply node at -200, 200.
+
+---
+
+## Managing Nodes
+
+List all the nodes in the material graph.
+
+---
+
+Tell me about the add node we created.
+
+---
+
+What pins does the add node have?
+
+---
+
+Move the constant node to -500, 50.
+
+---
+
+## Node Properties
+
+What properties can I set on the constant node?
+
+---
+
+What's the R value?
+
+---
+
+Set R to 0.5.
+
+---
+
+## Connecting Nodes
+
+Connect the constant to the A input on the add node.
+
+---
+
+Connect the color vector to the multiply node.
+
+---
+
+Verify those connections.
+
+---
+
+## Creating Parameters
+
+Add a scalar parameter called Roughness so artists can tweak it.
+
+---
+
+Set a reasonable default value.
+
+---
+
+Promote one of the constants to an editable parameter.
+
+---
+
+## Connecting to Material Outputs
+
+Hook something up to the base color output.
+
+---
+
+Connect to the roughness output.
+
+---
+
+Compile the material to see if it works.
+
+---
 
 ## Cleanup
-Delete /Game/Materials/test/M_NodeTest with force_delete=True and show_confirmation=False
+
+Delete the NodeTest material. Force delete without asking.

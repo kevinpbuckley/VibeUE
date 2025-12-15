@@ -1,39 +1,93 @@
-# manage_blueprint Test Prompts
+# Blueprint Lifecycle Tests
 
-## Setup
-Create Blueprint "BP_TestActor" with parent "Actor"
-Create Blueprint "BP_TestCharacter" with parent "Character"
+Tests for creating, configuring, compiling, and reparenting blueprints. Run sequentially.
 
-## Test 1: Blueprint Lifecycle
-Create Blueprint named BP_TestActor
-Get info about /Game/Blueprints/BP_TestActor
-Get property bReplicates
-Set bReplicates to true
-Compile
-Get info to verify
+---
 
-## Test 2: Reparenting
-Create Blueprint BP_TestCharacter with Character parent
-Get info to confirm parent
-Reparent to Pawn class
-Compile
-Get info to confirm new parent
+## Creating Blueprints
 
-## Test 3: Event Graph
-List custom events
-Summarize event graph with max 200 nodes
-Summarize with max_nodes=50
+I need a basic actor blueprint. Put it in the Blueprints folder and call it TestActor.
 
-## Test 4: Properties
-Set bReplicates on BP_TestActor
-Set InitialLifeSpan property
-Get properties to verify
+---
 
-## Test 5: Compilation
-Compile BP_TestActor
-Get info to check state
-Recompile
+Also make a character blueprint called TestCharacter.
 
-## Cleanup
-Delete /Game/Blueprints/BP_TestActor with force_delete=True and show_confirmation=False
-Delete /Game/Blueprints/BP_TestCharacter with force_delete=True and show_confirmation=False
+---
+
+## Blueprint Information
+
+Show me everything about the TestActor blueprint.
+
+---
+
+Is replication enabled on TestActor?
+
+---
+
+## Configuring Properties
+
+Turn on replication for TestActor.
+
+---
+
+Compile it.
+
+---
+
+Now show me the info again to verify replication is on.
+
+---
+
+## Reparenting
+
+What class does TestCharacter inherit from?
+
+---
+
+Change it to inherit from Pawn instead of Character.
+
+---
+
+Compile after the reparent.
+
+---
+
+Show me TestCharacter's info to confirm the parent changed.
+
+---
+
+## Event Graph Analysis
+
+What custom events are in TestActor?
+
+---
+
+Give me a summary of the event graph. Keep it under 200 nodes.
+
+---
+
+Try a shorter summary with just 50 nodes max.
+
+---
+
+## More Configuration
+
+Set the initial lifespan on TestActor.
+
+---
+
+Read back the properties to verify.
+
+---
+
+## Compilation
+
+Recompile TestActor.
+
+---
+
+Check the state to make sure it compiled cleanly.
+
+---
+
+

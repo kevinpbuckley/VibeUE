@@ -1,53 +1,143 @@
-# manage_blueprint_component Test Prompts
+# Blueprint Component Tests
+
+Tests for adding, configuring, and organizing components in blueprints. Run sequentially.
+
+---
 
 ## Setup
-Create Blueprint "BP_ComponentTest" with parent "Actor"
 
-## Test 1: Discovery
-Search for component types containing "SpotLight"
-Get info about SpotLightComponent
-Get metadata for Intensity property
+Create an actor blueprint called ComponentTest in the Blueprints folder.
 
-## Test 2: Creation
-Create BP_LightTest with Actor parent
-List components
-Create SpotLightComponent "MainLight"
-Create SpotLightComponent "FillLight"
-List to verify
+---
 
-## Test 3: Properties
-Get Intensity from MainLight
-Set Intensity to 5000.0
-Set LightColor
-Get all properties
-Set cone angles
+## Finding Component Types
 
-## Test 4: Hierarchy
-Create SceneComponent "LightRig"
-Reparent MainLight to LightRig
-Reparent FillLight to LightRig
-Reorder components
-List to verify
+What spotlight components are available? I want to see the options.
 
-## Test 5: Comparison
-Create BP_LightTest2
-Set different Intensity values
-Compare properties between blueprints
+---
 
-## Test 6: Deletion
-Delete FillLight
-List to verify
-Delete LightRig with remove_children=true
-Verify cascade delete
+Tell me more about the spotlight component. What properties can I set?
 
-## Test 7: Component Types
-Create AudioComponent "SoundEffect"
-Create ParticleSystemComponent "VFX"
-Create NiagaraComponent "ModernVFX"
-List all
+---
 
-## Cleanup
-Delete /Game/Blueprints/BP_ComponentTest with force_delete=True and show_confirmation=False
-Delete /Game/Blueprints/BP_LightTest with force_delete=True and show_confirmation=False
-Delete /Game/Blueprints/BP_LightTest2 with force_delete=True and show_confirmation=False
+What settings are available for the Intensity property specifically?
+
+---
+
+## Adding Lights
+
+Make a new actor blueprint called LightTest.
+
+---
+
+What components does it have right now?
+
+---
+
+Add a spotlight called MainLight.
+
+---
+
+Add another spotlight called FillLight.
+
+---
+
+Show me the component list now.
+
+---
+
+## Configuring Lights
+
+What's the current intensity on MainLight?
+
+---
+
+Crank it up to 5000.
+
+---
+
+Change the light color to something warm.
+
+---
+
+Show me all the properties on MainLight.
+
+---
+
+Adjust the cone angle settings.
+
+---
+
+## Organizing Component Hierarchy
+
+Add a scene component called LightRig to organize the lights.
+
+---
+
+Put MainLight under the LightRig.
+
+---
+
+Move FillLight under LightRig too.
+
+---
+
+Reorder the components so LightRig is at the top.
+
+---
+
+Show me the hierarchy now.
+
+---
+
+## Comparing Blueprints
+
+Create another actor called LightTest2.
+
+---
+
+Add a spotlight with a different intensity setting.
+
+---
+
+Compare the light properties between the two blueprints.
+
+---
+
+## Removing Components
+
+Remove the FillLight from LightTest.
+
+---
+
+Show me what's left.
+
+---
+
+Delete the LightRig and take all its children with it.
+
+---
+
+Verify everything got deleted properly.
+
+---
+
+## Other Component Types
+
+Add a sound effect component to ComponentTest.
+
+---
+
+Add a legacy particle system.
+
+---
+
+Add a Niagara effect too.
+
+---
+
+List everything on ComponentTest now.
+
+---
+
 

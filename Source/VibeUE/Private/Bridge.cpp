@@ -414,6 +414,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
 {
     UE_LOG(LogTemp, Display, TEXT("MCP: VibeUEBridge: Executing command: %s"), *CommandType);
     
+    double StartTime = FPlatformTime::Seconds();
+    
     // Create a promise to wait for the result
     TPromise<FString> Promise;
     TFuture<FString> Future = Promise.GetFuture();
@@ -496,6 +498,23 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
         FJsonSerializer::Serialize(ResponseJson.ToSharedRef(), Writer);
         Promise.SetValue(ResultString);
     });
+    
+    // Wait for the result with a timeout to prevent infinite hangs
+    // The Python side has a 30-second timeout, so we use 25 seconds here
+    bool bReady = Future.WaitFor(FTimespan::FromSeconds(25));
+    
+    double ElapsedTime = FPlatformTime::Seconds() - StartTime;
+    
+    if (!bReady)
+    {
+        UE_LOG(LogTemp, Error, TEXT("MCP: VibeUEBridge: Command '%s' timed out after %.1f seconds - game thread may be blocked"), *CommandType, ElapsedTime);
+        return CreateErrorResponse(TEXT("TIMEOUT"), FString::Printf(TEXT("Command '%s' timed out after %.1f seconds. The game thread may be busy with level loading or asset compilation."), *CommandType, ElapsedTime));
+    }
+    
+    if (ElapsedTime > 5.0)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("MCP: VibeUEBridge: Command '%s' took %.1f seconds to complete"), *CommandType, ElapsedTime);
+    }
     
     return Future.Get();
 }

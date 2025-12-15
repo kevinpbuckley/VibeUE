@@ -154,7 +154,7 @@ class UnrealConnection:
     def receive_full_response(self, sock, buffer_size=4096) -> bytes:
         """Receive a complete response from Unreal, handling chunked data."""
         chunks = []
-        sock.settimeout(15)  # 15 second timeout for MCP calls
+        sock.settimeout(30)  # 30 second timeout for MCP calls (some operations like asset creation can be slow)
         try:
             while True:
                 chunk = sock.recv(buffer_size)
@@ -418,11 +418,14 @@ def get_unreal_connection() -> Optional[UnrealConnection]:
         else:
             # Verify connection is still valid with a ping-like test
             try:
+                # Check if socket exists before testing
+                if _unreal_connection.socket is None:
+                    raise Exception("Socket is None")
                 # Simple test by sending an empty buffer to check if socket is still connected
                 _unreal_connection.socket.sendall(b'\x00')
                 logger.debug("Connection verified with ping test")
             except Exception as e:
-                logger.warning(f"Existing connection failed: {e}")
+                logger.debug(f"Existing connection needs refresh: {e}")
                 _unreal_connection.disconnect()
                 _unreal_connection = None
                 # Try to reconnect

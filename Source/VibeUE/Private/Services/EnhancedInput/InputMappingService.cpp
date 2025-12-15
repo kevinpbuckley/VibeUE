@@ -170,7 +170,7 @@ TResult<int32> FInputMappingService::AddInputMapping(const FString& ContextPath,
 	if (!Key.IsValid())
 	{
 		return TResult<int32>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
-			FString::Printf(TEXT("Invalid key name: %s"), *KeyName));
+			FString::Printf(TEXT("Invalid key name: %s. Use mapping_get_available_keys to see valid key names."), *KeyName));
 	}
 	
 	// Create the mapping
@@ -680,7 +680,7 @@ TResult<UInputModifier*> FInputMappingService::CreateModifier(const FString& Mod
 	if (!ModifierClass)
 	{
 		return TResult<UInputModifier*>::Error(VibeUE::ErrorCodes::TYPE_NOT_FOUND, 
-			FString::Printf(TEXT("Modifier type not found: %s"), *ModifierTypeName));
+			FString::Printf(TEXT("Modifier type not found: %s. Use mapping_get_available_modifier_types to see valid modifier names."), *ModifierTypeName));
 	}
 
 	UInputModifier* NewModifier = NewObject<UInputModifier>(GetTransientPackage(), ModifierClass);
@@ -867,7 +867,7 @@ TResult<UInputTrigger*> FInputMappingService::CreateTrigger(const FString& Trigg
 	if (!TriggerClass)
 	{
 		return TResult<UInputTrigger*>::Error(VibeUE::ErrorCodes::TYPE_NOT_FOUND, 
-			FString::Printf(TEXT("Trigger type not found: %s"), *TriggerTypeName));
+			FString::Printf(TEXT("Trigger type not found: %s. Use mapping_get_available_trigger_types to see valid trigger names."), *TriggerTypeName));
 	}
 
 	UInputTrigger* NewTrigger = NewObject<UInputTrigger>(GetTransientPackage(), TriggerClass);

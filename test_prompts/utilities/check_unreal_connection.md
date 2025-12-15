@@ -1,33 +1,47 @@
-# Utility Tools Test Prompts
+# Connection and Utility Tests
 
-## Test 1: Normal Connection
-Launch Unreal with VibeUE
-Check connection
+Tests for checking connectivity and getting help. Run sequentially.
 
-## Test 2: Plugin Status
-Check connection
-Examine plugin_status
-Verify MCP server info
+---
 
-## Test 3: Connection Failure
-Close Unreal
-Check connection
-Examine errors and troubleshooting
+## Connection Check
 
-## Test 4: Integration
-Check connection first
-If connected, proceed
-If not, troubleshoot
-Retry
+Is Unreal running and connected?
 
-## Test 5: Default Help
-Call get_help without parameters
-Examine overview
+---
 
-## Test 6: Blueprint Workflow Help
-Get help for "blueprint-workflow"
-Review workflow steps
+What's the status of the plugin? Is everything working?
 
-## Test 7: Tool Help
-Get help for specific tools
-Review examples
+---
+
+Check the MCP server info.
+
+---
+
+## Connection Troubleshooting
+
+Close Unreal and check the connection again. What errors come up?
+
+---
+
+What troubleshooting steps should I try?
+
+---
+
+## Integrated Workflow
+
+First check if we're connected. If so, continue with work. If not, help me figure out why.
+
+---
+
+## Getting Help
+
+Show me an overview of what I can do.
+
+---
+
+How do I work with blueprints? Walk me through the workflow.
+
+---
+
+Tell me about specific features and give me some examples.

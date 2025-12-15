@@ -1,54 +1,133 @@
-# manage_blueprint_variable Test Prompts
+# Blueprint Variable Tests
+
+Tests for creating and configuring variables with various types. Run sequentially.
+
+---
 
 ## Setup
-Create Blueprint "BP_VariableTest" with parent "Actor"
 
-## Test 1: Type Discovery
-Search for "UserWidget" types
-Note type_path
-Create BP_VariableTest
-Create variable "AttributeWidget" using type_path
-List to confirm
+Create an actor blueprint called VariableTest in the Blueprints folder.
 
-## Test 2: Primitive Types
-Create "Health" type_path "/Script/CoreUObject.FloatProperty"
-Create "MaxHealth" type_path "/Script/CoreUObject.IntProperty"
-Create "IsAlive" type_path "/Script/CoreUObject.BoolProperty"
-Create "PlayerName" type_path "/Script/CoreUObject.StrProperty"
-List all
+---
 
-## Test 3: Complex Types
-Search for NiagaraSystem
-Create "DeathEffect" with NiagaraSystem type
-Search for SoundCue
-Create "JumpSound" with SoundCue type
-List and get info
+## Finding Types
 
-## Test 4: Metadata
-Create "Health" with category "Combat", tooltip, is_editable=true
-Get info
-Update category to "Stats|Combat"
-Set is_blueprint_readonly to true
-Verify
+What widget types are available? I want to store a reference to a UI element.
 
-## Test 5: Default Values
-Set Health default to 100.0
-Set IsAlive to true
-Get values
-Set PlayerName to "TestPlayer"
+---
 
-## Test 6: Listing
-List all variables
-List by category="Combat"
-List with name_contains="Health"
-List with include_metadata=true
+Note down the full type path for user widgets.
 
-## Test 7: Deletion
-Delete JumpSound
-List to verify
-Delete Health, MaxHealth, IsAlive
-List to confirm
+---
 
-## Cleanup
-Delete /Game/Blueprints/BP_VariableTest with force_delete=True and show_confirmation=False
+Add a variable called AttributeWidget using that widget type.
+
+---
+
+Verify it was created.
+
+---
+
+## Basic Types
+
+Add a float variable called Health.
+
+---
+
+Add an integer called MaxHealth.
+
+---
+
+Add a boolean called IsAlive.
+
+---
+
+Add a string called PlayerName.
+
+---
+
+Show me all the variables.
+
+---
+
+## Complex Types
+
+What Niagara system types exist?
+
+---
+
+Add a variable called DeathEffect using the Niagara type.
+
+---
+
+What about sound cue types?
+
+---
+
+Add a JumpSound variable with that type.
+
+---
+
+Show me the variable info for those.
+
+---
+
+## Variable Metadata
+
+Create another Health variable with a Combat category and a helpful tooltip. Make it editable in the details panel.
+
+---
+
+Show me the info on that.
+
+---
+
+Actually, move it to the Stats Combat subcategory.
+
+---
+
+Make it read-only in blueprints so nothing can accidentally change it.
+
+---
+
+Verify those metadata changes.
+
+---
+
+## Default Values
+
+Set Health to default to 100.
+
+---
+
+IsAlive should default to true.
+
+---
+
+Check what values got set.
+
+---
+
+PlayerName should default to "TestPlayer".
+
+---
+
+## Filtering Variables
+
+List all variables in this blueprint.
+
+---
+
+Just show me ones in the Combat category.
+
+---
+
+Find variables with "Health" in the name.
+
+---
+
+Show the list with full metadata included.
+
+---
+
 

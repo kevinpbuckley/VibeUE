@@ -1,53 +1,105 @@
-# manage_material Test Prompts
+# Material Tests
+
+Tests for creating and configuring materials and material instances. Run sequentially.
+
+---
 
 ## Setup
-Search for "M_MaterialTest"
-If not found, create at /Game/Materials/test
-Open in editor
 
-## Test 1: Create
-Create "M_TestCreate" at /Game/Materials/test
-Open
+Is there already a MaterialTest material somewhere? Search for it.
 
-## Test 2: Get Info
-Get info for M_MaterialTest
+---
 
-## Test 3: List Properties
-List with include_advanced=true
+If not, create one in /Game/Materials/test.
 
-## Test 4: Get Property
-Get "TwoSided"
+---
 
-## Test 5: Set Property
-Set "TwoSided" to true
+Open it in the editor.
 
-## Test 6: Set Multiple
-Set TwoSided=true, BlendMode=Masked, OpacityMaskClipValue=0.33
+---
 
-## Test 7: Property Info
-Get info for "BlendMode"
+## Creating Materials
 
-## Test 8: List Parameters
-List all parameters
+Make a new material called TestCreate in the materials test folder.
 
-## Test 9: Get Parameter
-Get "Roughness"
+---
 
-## Test 10: Set Parameter
-Set "Roughness" to 0.75
+Open that one too.
 
-## Test 11: Compile
-Compile material
+---
 
-## Test 12: Save
-Save material
+## Material Information
 
-## Test 13: Create Instance
-Create "MI_MaterialTest_Red" from M_MaterialTest
-Set scalar and vector parameters
-Open
+Tell me about the MaterialTest material.
+
+---
+
+## Material Properties
+
+Show me all the properties, including the advanced ones.
+
+---
+
+Is two-sided rendering enabled?
+
+---
+
+Turn on two-sided rendering.
+
+---
+
+## Setting Multiple Properties
+
+Configure the material for masked transparency - enable two-sided, set the blend mode to masked, and set the opacity mask clip to 0.33.
+
+---
+
+## Property Details
+
+Tell me more about the blend mode property - what are my options?
+
+---
+
+## Material Parameters
+
+What parameters does this material have?
+
+---
+
+What's the roughness value?
+
+---
+
+Set roughness to 0.75.
+
+---
+
+## Compiling
+
+Compile the material.
+
+---
+
+## Saving
+
+Save the material.
+
+---
+
+## Material Instances
+
+Create an instance of MaterialTest called RedVariant.
+
+---
+
+Set some scalar and color parameters to make it red.
+
+---
+
+Open the instance in the editor.
+
+---
 
 ## Cleanup
-Delete /Game/Materials/test/M_MaterialTest with force_delete=True and show_confirmation=False
-Delete /Game/Materials/test/M_TestCreate with force_delete=True and show_confirmation=False
-Delete /Game/Materials/test/MI_MaterialTest_Red with force_delete=True and show_confirmation=False
+
+Delete the test materials - MaterialTest, TestCreate, and the RedVariant instance. Force delete without asking.
