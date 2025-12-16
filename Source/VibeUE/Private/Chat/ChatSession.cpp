@@ -420,6 +420,15 @@ void FChatSession::ExecuteNextToolInQueue()
 
 void FChatSession::SendFollowUpAfterToolCall()
 {
+    // If summarization is in progress, wait for it to complete before continuing
+    // This prevents the context from overflowing while we're trying to reduce it
+    if (bIsSummarizing)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Summarization in progress - deferring follow-up request"));
+        bPendingFollowUpAfterSummarization = true;
+        return;
+    }
+    
     // Increment tool call iteration counter
     ToolCallIterationCount++;
     
@@ -965,6 +974,14 @@ void FChatSession::HandleSummarizationResponse(const FString& Summary)
     
     OnSummarizationComplete.ExecuteIfBound(true, CleanSummary);
     BroadcastTokenBudgetUpdate();
+    
+    // Resume pending follow-up request if tool chain was waiting for summarization
+    if (bPendingFollowUpAfterSummarization)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[SUMMARIZE] Resuming pending follow-up request after summarization"));
+        bPendingFollowUpAfterSummarization = false;
+        SendFollowUpAfterToolCall();
+    }
 }
 
 void FChatSession::ApplySummaryToHistory(const FString& Summary)

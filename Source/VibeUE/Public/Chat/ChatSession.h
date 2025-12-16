@@ -346,6 +346,9 @@ private:
     /** Whether summarization is currently in progress */
     bool bIsSummarizing = false;
     
+    /** Whether a follow-up request is pending after summarization completes */
+    bool bPendingFollowUpAfterSummarization = false;
+    
     /** Message index where summary was generated (summarized up to this point) */
     int32 SummarizedUpToMessageIndex = -1;
     
