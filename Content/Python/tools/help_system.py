@@ -336,23 +336,21 @@ TOOL_HELP = {
                 "example": 'manage_blueprint_variable(action="list", blueprint_name="/Game/Blueprints/BP_Player")'
             },
             "get_property": {
-                "description": "Get a variable's metadata property (e.g., category, tooltip)",
+                "description": "Get a variable's current default value. The property_path is the variable name itself.",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "variable_name": "Name of the variable",
-                    "property_name": "Property to get (Category, Tooltip, etc.)"
+                    "property_path": "The variable name to read (e.g., 'Health', 'MaxHealth', 'IsAlive')"
                 },
-                "example": 'manage_blueprint_variable(action="get_property", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", property_name="Category")'
+                "example": 'manage_blueprint_variable(action="get_property", blueprint_name="/Game/Blueprints/BP_Player", property_path="Health")'
             },
             "set_property": {
-                "description": "Set a variable's metadata property",
+                "description": "Set a variable's default value. The property_path is the variable name, value is the new default.",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "variable_name": "Name of the variable",
-                    "property_name": "Property to set",
-                    "property_value": "New value"
+                    "property_path": "The variable name to set (e.g., 'Health', 'MaxHealth', 'IsAlive')",
+                    "value": "The new default value (number, string, boolean, etc.)"
                 },
-                "example": 'manage_blueprint_variable(action="set_property", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", property_name="Category", property_value="Player Stats")'
+                "example": 'manage_blueprint_variable(action="set_property", blueprint_name="/Game/Blueprints/BP_Player", property_path="Health", value=100)'
             },
             "modify": {
                 "description": "Modify a variable's type or properties",

@@ -128,8 +128,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
                 missing = []
                 if not blueprint_name:
                     missing.append("blueprint_name")
-                if not variable_name:
-                    missing.append("variable_name")
+                # property_path is the variable name itself (e.g., "Health" to set Health's default value)
                 if not property_path:
                     missing.append("property_path")
                 if action == "set_property" and value is None:
