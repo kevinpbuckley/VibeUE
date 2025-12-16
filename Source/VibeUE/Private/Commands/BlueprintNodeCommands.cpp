@@ -1025,9 +1025,13 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const 
     }
     UBlueprint* Blueprint = FindResult.GetValue();
 
-    // 3. Extract optional graph name
+    // 3. Extract optional graph name (supports both graph_name and function_name for convenience)
     FString GraphName;
-    Params->TryGetStringField(TEXT("graph_name"), GraphName);
+    if (!Params->TryGetStringField(TEXT("graph_name"), GraphName))
+    {
+        // Also check function_name as an alias - if provided, it should resolve to that function's graph
+        Params->TryGetStringField(TEXT("function_name"), GraphName);
+    }
 
     // 4. Call service method to list nodes
     auto Result = NodeService->ListNodes(Blueprint, GraphName);
@@ -1264,9 +1268,9 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         FString LocalName;
         if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
         {
-            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("param_name"), LocalName) && !Params->TryGetStringField(TEXT("name"), LocalName))
             {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' or 'param_name' parameter"));
             }
         }
         FString TypeDesc;
@@ -1293,9 +1297,9 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         FString LocalName;
         if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
         {
-            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("param_name"), LocalName))
             {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' or 'param_name' parameter"));
             }
         }
         UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
@@ -1314,9 +1318,9 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         FString LocalName;
         if (!Params->TryGetStringField(TEXT("local_name"), LocalName))
         {
-            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName))
+            if (!Params->TryGetStringField(TEXT("variable_name"), LocalName) && !Params->TryGetStringField(TEXT("param_name"), LocalName))
             {
-                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' parameter"));
+                return FCommonUtils::CreateErrorResponse(TEXT("Missing 'local_name' or 'param_name' parameter"));
             }
         }
         UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))

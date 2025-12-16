@@ -6,6 +6,7 @@
 #include "Json.h"
 #include "EdGraph/EdGraphNode.h"
 #include "EdGraph/EdGraphPin.h"
+#include "EdGraph/EdGraphSchema.h"  // For FEdGraphSchemaAction
 #include "Engine/Blueprint.h"
 #include "UObject/WeakObjectPtrTemplates.h"
 
@@ -196,6 +197,9 @@ public:
         // Special node flags
         bool bIsSynthetic = false;              // True for nodes without real spawners (e.g., reroute)
         
+        // Search relevance (for sorting results)
+        int32 RelevanceScore = 50;              // Higher = better match. 100=exact, 80=prefix, 60=contains
+        
         // Pin information
         TArray<FPinDescriptor> Pins;
         int32 ExpectedPinCount;
@@ -205,6 +209,7 @@ public:
         
         // Serialization
         TSharedPtr<FJsonObject> ToJson() const;
+        TSharedPtr<FJsonObject> ToJsonCompact() const;  // Minimal output: spawner_key, display_name, category only
         static FNodeSpawnerDescriptor FromJson(const TSharedPtr<FJsonObject>& Json);
     };
     
@@ -235,6 +240,29 @@ public:
     static FNodeSpawnerDescriptor ExtractDescriptorFromSpawner(
         UBlueprintNodeSpawner* Spawner,
         UBlueprint* Blueprint = nullptr
+    );
+    
+    /**
+     * Extract descriptor from schema action (used by context-sensitive discovery)
+     * Schema actions come from FBlueprintActionMenuUtils::MakeContextMenu() which is
+     * the same API Unreal's editor uses for "Context Sensitive" filtering
+     */
+    static FNodeSpawnerDescriptor ExtractDescriptorFromSchemaAction(
+        TSharedPtr<FEdGraphSchemaAction> SchemaAction,
+        UBlueprint* Blueprint = nullptr
+    );
+    
+    /**
+     * Non-context-sensitive node discovery (fallback)
+     * Only used when Blueprint has no graphs to source context from
+     * Uses GetAllActions() which returns ALL actions without filtering
+     */
+    static TArray<FNodeSpawnerDescriptor> DiscoverNodesWithDescriptorsNonContextSensitive(
+        UBlueprint* Blueprint,
+        const FString& SearchTerm = TEXT(""),
+        const FString& CategoryFilter = TEXT(""),
+        const FString& ClassFilter = TEXT(""),
+        int32 MaxResults = 100
     );
     
     /**

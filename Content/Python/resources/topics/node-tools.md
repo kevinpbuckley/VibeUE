@@ -35,15 +35,13 @@ manage_blueprint_node(
 
 # 5. CONNECT pins between nodes
 manage_blueprint_node(
-    action="connect_pins",
-    extra={
-        "connections": [{
-            "source_node_id": node_id,
-            "source_pin_name": "ReturnValue",
-            "target_node_id": target_id,
-            "target_pin_name": "InputPin"
-        }]
-    }
+    action="connect",
+    blueprint_name="/Game/Blueprints/BP_Player",
+    source_node_id=node_id,
+    source_pin="ReturnValue",
+    target_node_id=target_id,
+    target_pin="InputPin",
+    function_name="MyFunction"  # Optional: for function graphs
 )
 
 # 6. COMPILE Blueprint
@@ -130,9 +128,25 @@ manage_blueprint_node(
 
 ## Pin Connections
 
-### manage_blueprint_node (action="connect_pins")
+### Simple Connection: action="connect"
 
-**✅ CORRECT Format:**
+For single connections, use direct parameters (RECOMMENDED):
+
+```python
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="connect",
+    source_node_id="{F937A594-1C52-3D1A-B353-2C8C4125C0B7}",
+    source_pin="ReturnValue",
+    target_node_id="{64DE8C1B-47F7-EEDA-2B71-3B8604257954}",
+    target_pin="self",
+    function_name="MyFunction"  # Optional: for function graphs
+)
+```
+
+### Batch Connections: action="connect_pins"
+
+For multiple connections, use the extra parameter with connections array:
 
 ```python
 manage_blueprint_node(

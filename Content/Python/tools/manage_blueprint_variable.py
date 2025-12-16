@@ -13,7 +13,7 @@ logger = logging.getLogger("UnrealMCP")
 def register_blueprint_variable_tools(mcp: FastMCP):
     """Register Blueprint variable management tools with the MCP server."""
     
-    @mcp.tool(description="Blueprint variable operations: create, delete, get/set properties, diagnostics. Actions: create, delete, list, get_info, modify, search_types, diagnostics, get_property, set_property, get_property_metadata, set_property_metadata. Use action='help' for all actions and detailed parameter info. CRITICAL: Use type_path not type (e.g., '/Script/CoreUObject.FloatProperty').")
+    @mcp.tool(description="""Blueprint variable operations: create, delete, get/set properties, diagnostics. Actions: create, delete, list, get_info, modify, search_types, diagnostics, get_property, set_property, get_property_metadata, set_property_metadata. Use action='help' for all actions and detailed parameter info. For create: use search_types to discover type_path, or use aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'.""")
     def manage_blueprint_variable(
         ctx: Context,
         blueprint_name: str,
@@ -27,6 +27,7 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         list_criteria: Optional[Dict[str, Any]] = None,
         info_options: Optional[Dict[str, Any]] = None,
         search_criteria: Optional[Dict[str, Any]] = None,
+        search_text: Optional[str] = None,
         options: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         """Route to Blueprint variable action handlers."""
@@ -78,14 +79,14 @@ def register_blueprint_variable_tools(mcp: FastMCP):
                 if "type" in variable_config and "type_path" not in variable_config:
                     return generate_error_response(
                         "manage_blueprint_variable", action,
-                        "CRITICAL: variable_config uses 'type' but MUST use 'type_path'. Use search_types to find correct type_path.",
+                        "variable_config uses 'type' but MUST use 'type_path'. Use aliases like 'float', 'int', 'bool', 'string', 'vector' or search_types to find type paths.",
                         missing_params=["variable_config.type_path"]
                     )
                 
                 if "type_path" not in variable_config:
                     return generate_error_response(
                         "manage_blueprint_variable", action,
-                        "CRITICAL: variable_config missing required 'type_path'. Use search_types to find correct type_path.",
+                        "variable_config missing 'type_path'. Use aliases like 'float', 'int', 'bool', 'string', 'vector' or search_types to find type paths.",
                         missing_params=["variable_config.type_path"]
                     )
             
@@ -164,6 +165,8 @@ def register_blueprint_variable_tools(mcp: FastMCP):
                 params["info_options"] = info_options
             if search_criteria:
                 params["search_criteria"] = search_criteria
+            if search_text:
+                params["search_text"] = search_text
             if options:
                 params["options"] = options
                 

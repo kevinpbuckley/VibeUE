@@ -645,7 +645,21 @@ manage_blueprint_node(
 
 #### Connecting Pins
 
-`connect_pins` now always expects an array of connection dictionaries under the `extra` payload:
+**Simple Connect** (for single connections):
+
+```python
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="connect",
+    source_node_id="F937A5914C523D1AB3532C8C4125C0B7",
+    source_pin="ReturnValue",
+    target_node_id="64DE8C1B47F7EEDA2B713B8604257954",
+    target_pin="self",
+    function_name="MyFunction"  # Optional: for function graphs
+)
+```
+
+**Batch Connect** (`connect_pins` with `extra` payload for multiple connections):
 
 ```python
 manage_blueprint_node(
@@ -668,7 +682,7 @@ manage_blueprint_node(
 
 Key fields per connection object:
 - `source_node_id`, `target_node_id` (required GUIDs)
-- `source_pin_name`, `target_pin_name` (required pin names)
+- `source_pin_name`, `target_pin_name` (required pin names) - or `source_pin`, `target_pin`
 - Optional flags: `allow_conversion_node`, `allow_promotion`, `break_existing_links`
 
 Use `action="describe"` to harvest the GUIDs/pin names before connecting.

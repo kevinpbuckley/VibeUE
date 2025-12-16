@@ -499,9 +499,8 @@ FString UBridge::ExecuteCommand(const FString& CommandType, const TSharedPtr<FJs
         Promise.SetValue(ResultString);
     });
     
-    // Wait for the result with a timeout to prevent infinite hangs
-    // The Python side has a 30-second timeout, so we use 25 seconds here
-    bool bReady = Future.WaitFor(FTimespan::FromSeconds(25));
+    // Wait for result - returns immediately when ready, timeout is just the max wait
+    bool bReady = Future.WaitFor(FTimespan::FromSeconds(15));
     
     double ElapsedTime = FPlatformTime::Seconds() - StartTime;
     

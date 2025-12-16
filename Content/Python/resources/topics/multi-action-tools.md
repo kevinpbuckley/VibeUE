@@ -582,9 +582,21 @@ manage_blueprint_node(
 
 #### Connection Actions
 
-**connect_pins** - Connect pins between nodes
+**connect** - Simple direct connection (RECOMMENDED for single connections)
 
-✅ **CORRECT**: Use extra parameter with connections array
+```python
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="connect",
+    source_node_id="{SOURCE_GUID}",
+    source_pin="ReturnValue",
+    target_node_id="{TARGET_GUID}",
+    target_pin="self",
+    function_name="MyFunction"  # Optional: for function graphs
+)
+```
+
+**connect_pins** - Batch connections using extra parameter
 
 ```python
 manage_blueprint_node(
@@ -603,7 +615,18 @@ manage_blueprint_node(
 )
 ```
 
-**disconnect_pins** - Break pin connections
+**disconnect** - Disconnect a specific pin
+```python
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player",
+    action="disconnect",
+    node_id="{GUID}",
+    source_pin="ReturnValue",
+    function_name="MyFunction"  # Optional: for function graphs
+)
+```
+
+**disconnect_pins** - Break specific connections
 ```python
 manage_blueprint_node(
     blueprint_name="/Game/Blueprints/BP_Player",

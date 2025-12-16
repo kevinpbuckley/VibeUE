@@ -291,25 +291,26 @@ TOOL_HELP = {
         "topic": "multi-action-tools",
         "actions": {
             "search_types": {
-                "description": "Search for available variable types",
+                "description": "Search for available variable types using reflection. ALWAYS use this before create to find correct type_path.",
                 "parameters": {
-                    "search_term": "Text to search for in type names",
+                    "search_text": "Text to search for in type names (e.g., 'Float', 'Int', 'Vector')",
                     "max_results": "Maximum number of results"
                 },
-                "example": 'manage_blueprint_variable(action="search_types", search_term="Float")'
+                "example": 'manage_blueprint_variable(action="search_types", blueprint_name="any", search_text="Float")'
             },
             "create": {
                 "description": "Create a new variable in a Blueprint",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "variable_name": "Name for the new variable",
-                    "type_path": "Full type path (e.g., '/Script/CoreUObject.FloatProperty')",
+                    "variable_config": "Config object with type_path and options",
+                    "type_path": "Type path - use search_types to discover, or aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'",
                     "default_value": "Optional default value",
                     "category": "Optional category name",
                     "is_replicated": "Whether variable replicates over network",
                     "tooltip": "Optional tooltip description"
                 },
-                "example": 'manage_blueprint_variable(action="create", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", type_path="/Script/CoreUObject.FloatProperty", default_value=100.0)'
+                "example": 'manage_blueprint_variable(action="create", blueprint_name="/Game/Blueprints/BP_Player", variable_name="Health", variable_config={"type_path": "float", "default_value": 100.0})'
             },
             "delete": {
                 "description": "Delete a variable from a Blueprint",
@@ -398,48 +399,57 @@ TOOL_HELP = {
         "topic": "node-tools",
         "actions": {
             "discover": {
-                "description": "Discover available Blueprint nodes with spawner keys for exact creation",
+                "description": "Discover available Blueprint nodes with spawner keys for exact creation. IMPORTANT: Basic math operators (+, -, *, /) are NOT available through discovery - they use special internal nodes that cannot be created programmatically.",
                 "parameters": {
-                    "search_term": "Text to search for in node names/descriptions",
-                    "max_results": "Maximum number of results",
-                    "category": "Optional category filter"
+                    "blueprint_name": "Full path to the Blueprint (REQUIRED)",
+                    "search_term": "Simple keywords like 'print', 'branch', 'FTrunc' (REQUIRED). DO NOT use function signatures like 'KismetMathLibrary::Multiply'",
+                    "max_results": "Maximum number of results (default: 10)",
+                    "category": "Optional category filter - use simple names like 'Math', 'Math|Float', 'Utilities', 'Flow Control'. DO NOT pass function names as category"
                 },
-                "example": 'manage_blueprint_node(action="discover", search_term="Print String")'
+                "example": 'manage_blueprint_node(action="discover", blueprint_name="/Game/Blueprints/MyBP", search_term="print")',
+                "important_notes": [
+                    "Basic math operators (multiply, add, subtract, divide floats) DO NOT EXIST in Blueprint discovery",
+                    "If search returns 0 results with a hint, STOP searching - do not loop with variations",
+                    "Valid categories: Math, Math|Float, Math|Integer, Flow Control, Utilities, Development, Game",
+                    "Use spawner_key from results to create nodes with action='create'"
+                ]
             },
             "create": {
-                "description": "Create a new node in the Event Graph",
+                "description": "Create a new node in the Event Graph or function graph",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "spawner_key": "Exact spawner key from discover action",
-                    "position_x": "X position in graph",
-                    "position_y": "Y position in graph",
-                    "node_params": "Optional dict of node-specific parameters (required for Variable Get/Set, Cast, etc.)"
+                    "position": "[x, y] position in graph as array",
+                    "function_name": "Optional: function name to create node in function graph",
+                    "graph_scope": "Optional: 'event' (default) or 'function'"
                 },
-                "example": 'manage_blueprint_node(action="create", blueprint_name="/Game/Blueprints/BP_Player", spawner_key="K2_CallFunction_PrintString", position_x=100, position_y=200)'
+                "example": 'manage_blueprint_node(action="create", blueprint_name="/Game/Blueprints/BP_Player", spawner_key="K2_CallFunction_PrintString", position=[100, 200])'
             },
             "delete": {
-                "description": "Delete a node from the Event Graph",
+                "description": "Delete a node from the Event Graph or function graph",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node to delete"
+                    "node_id": "GUID of the node to delete",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
-                "example": 'manage_blueprint_node(action="delete", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123")'
+                "example": 'manage_blueprint_node(action="delete", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123")'
             },
             "move": {
                 "description": "Move a node to a new position",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node",
-                    "position_x": "New X position",
-                    "position_y": "New Y position"
+                    "node_id": "GUID of the node",
+                    "position": "[x, y] new position as array",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
-                "example": 'manage_blueprint_node(action="move", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123", position_x=500, position_y=300)'
+                "example": 'manage_blueprint_node(action="move", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", position=[500, 300])'
             },
             "list": {
-                "description": "List all nodes in the Event Graph",
+                "description": "List all nodes in the Event Graph or function graph",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "include_details": "Include full node details (slower)"
+                    "function_name": "Optional: function name to list nodes in function graph",
+                    "graph_scope": "Optional: 'event' (default) or 'function'"
                 },
                 "example": 'manage_blueprint_node(action="list", blueprint_name="/Game/Blueprints/BP_Player")'
             },
@@ -451,48 +461,50 @@ TOOL_HELP = {
                 "example": 'manage_blueprint_node(action="describe", spawner_key="K2_CallFunction_PrintString")'
             },
             "configure": {
-                "description": "Configure node properties or pin default values",
+                "description": "Configure node properties or pin default values (alias for set_property)",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node",
-                    "pin_name": "Name of the pin to set default value",
-                    "pin_value": "Default value to set"
+                    "node_id": "GUID of the node",
+                    "property_name": "Name of the property or pin to set",
+                    "property_value": "Value to set",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
-                "example": 'manage_blueprint_node(action="configure", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123", pin_name="InString", pin_value="Hello World")'
+                "example": 'manage_blueprint_node(action="configure", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", property_name="InString", property_value="Hello World")'
             },
             "get_details": {
-                "description": "Get detailed information about a specific node instance",
+                "description": "Get detailed information about a specific node instance (alias: details)",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node"
+                    "node_id": "GUID of the node",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
-                "example": 'manage_blueprint_node(action="get_details", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123")'
+                "example": 'manage_blueprint_node(action="get_details", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123")'
             },
             "split": {
                 "description": "Split a struct pin into its individual components",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node",
-                    "pin_name": "Name of the struct pin to split"
+                    "node_id": "GUID of the node",
+                    "property_name": "Name of the struct pin to split"
                 },
-                "example": 'manage_blueprint_node(action="split", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123", pin_name="Location")'
+                "example": 'manage_blueprint_node(action="split", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", property_name="Location")'
             },
             "recombine": {
                 "description": "Recombine a split struct pin",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node",
-                    "pin_name": "Name of the struct pin to recombine"
+                    "node_id": "GUID of the node",
+                    "property_name": "Name of the struct pin to recombine"
                 },
-                "example": 'manage_blueprint_node(action="recombine", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123", pin_name="Location")'
+                "example": 'manage_blueprint_node(action="recombine", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", property_name="Location")'
             },
             "refresh_node": {
                 "description": "Refresh a single node to update its structure",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
-                    "node_guid": "GUID of the node"
+                    "node_id": "GUID of the node"
                 },
-                "example": 'manage_blueprint_node(action="refresh_node", blueprint_name="/Game/Blueprints/BP_Player", node_guid="ABC123")'
+                "example": 'manage_blueprint_node(action="refresh_node", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123")'
             },
             "refresh_nodes": {
                 "description": "Refresh all nodes in the Event Graph",
@@ -502,32 +514,35 @@ TOOL_HELP = {
                 "example": 'manage_blueprint_node(action="refresh_nodes", blueprint_name="/Game/Blueprints/BP_Player")'
             },
             "connect": {
-                "description": "Connect two node pins together (alias for connect_pins)",
+                "description": "Connect two node pins together",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "source_node_id": "GUID of the source node",
-                    "source_pin": "Name of the source pin",
+                    "source_pin": "Name of the source pin (e.g., 'ReturnValue', 'then', 'execute')",
                     "target_node_id": "GUID of the target node",
-                    "target_pin": "Name of the target pin"
+                    "target_pin": "Name of the target pin (e.g., 'self', 'execute', input pin name)",
+                    "function_name": "Optional: function name if nodes are in function graph"
                 },
-                "example": 'manage_blueprint_node(action="connect", blueprint_name="/Game/Blueprints/BP_Player", source_node_id="ABC123", source_pin="execute", target_node_id="DEF456", target_pin="execute")'
+                "example": 'manage_blueprint_node(action="connect", blueprint_name="/Game/Blueprints/BP_Player", source_node_id="ABC123", source_pin="then", target_node_id="DEF456", target_pin="execute")'
             },
             "disconnect": {
-                "description": "Disconnect a node pin (alias for disconnect_pins)",
+                "description": "Disconnect a node pin from all its connections",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "node_id": "GUID of the node",
-                    "source_pin": "Name of the pin to disconnect"
+                    "source_pin": "Optional: Name of specific pin to disconnect (disconnects all if omitted)",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
                 "example": 'manage_blueprint_node(action="disconnect", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", source_pin="execute")'
             },
             "set_property": {
-                "description": "Set a property value on a node",
+                "description": "Set a property value on a node (alias: configure)",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "node_id": "GUID of the node",
-                    "property_name": "Name of the property",
-                    "property_value": "Value to set"
+                    "property_name": "Name of the property or pin default to set",
+                    "property_value": "Value to set",
+                    "function_name": "Optional: function name if node is in function graph"
                 },
                 "example": 'manage_blueprint_node(action="set_property", blueprint_name="/Game/Blueprints/BP_Player", node_id="ABC123", property_name="DefaultValue", property_value="100")'
             },
@@ -621,7 +636,7 @@ TOOL_HELP = {
                     "function_name": "Name of the function",
                     "param_name": "Name for the new parameter",
                     "type": "Type path (e.g., 'float', 'int32', '/Script/CoreUObject.FloatProperty')",
-                    "direction": "Parameter direction: 'input' or 'output'"
+                    "direction": "Parameter direction: 'input'/'in' or 'output'/'out'"
                 },
                 "example": 'manage_blueprint_function(action="add_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage", type="float", direction="input")'
             },
@@ -634,35 +649,47 @@ TOOL_HELP = {
                 },
                 "example": 'manage_blueprint_function(action="remove_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage")'
             },
-            "modify_param": {
-                "description": "Modify a function parameter (rename or change type)",
+            "update_param": {
+                "description": "Update a function parameter (rename or change type)",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "function_name": "Name of the function",
                     "param_name": "Current name of the parameter",
-                    "new_name": "New name for the parameter",
-                    "new_type": "New type path"
+                    "new_name": "New name for the parameter (optional)",
+                    "new_type": "New type path (optional)"
                 },
-                "example": 'manage_blueprint_function(action="modify_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage", new_name="DamageAmount")'
+                "example": 'manage_blueprint_function(action="update_param", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="BaseDamage", new_type="int")'
             },
             "add_local_var": {
                 "description": "Add a local variable to a function",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "function_name": "Name of the function",
-                    "param_name": "Name for the local variable",
-                    "type": "Type path for the variable"
+                    "local_name": "Name for the local variable",
+                    "type": "Type path for the variable (e.g., 'float', 'int', 'bool')"
                 },
-                "example": 'manage_blueprint_function(action="add_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="TempDamage", type="float")'
+                "example": 'manage_blueprint_function(action="add_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", local_name="TempDamage", type="float")'
             },
             "remove_local_var": {
                 "description": "Remove a local variable from a function",
                 "parameters": {
                     "blueprint_name": "Full path to the Blueprint",
                     "function_name": "Name of the function",
-                    "param_name": "Name of the local variable to remove"
+                    "local_name": "Name of the local variable to remove"
                 },
-                "example": 'manage_blueprint_function(action="remove_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", param_name="TempDamage")'
+                "example": 'manage_blueprint_function(action="remove_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", local_name="TempDamage")'
+            },
+            "update_local_var": {
+                "description": "Update a local variable in a function (change type, rename, or modify properties)",
+                "parameters": {
+                    "blueprint_name": "Full path to the Blueprint",
+                    "function_name": "Name of the function",
+                    "local_name": "Current name of the local variable (or use param_name)",
+                    "new_type": "New type path (e.g., 'float', 'int', 'bool')",
+                    "new_name": "New name for the variable (optional)",
+                    "default_value": "Default value for the variable (optional)"
+                },
+                "example": 'manage_blueprint_function(action="update_local_var", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage", local_name="TempDamage", new_type="int")'
             },
             "list_local_vars": {
                 "description": "List all local variables in a function",
@@ -673,7 +700,7 @@ TOOL_HELP = {
                 "example": 'manage_blueprint_function(action="list_local_vars", blueprint_name="/Game/Blueprints/BP_Player", function_name="CalculateDamage")'
             }
         },
-        "note": "This tool supports 10 actions for function lifecycle management. Use action='help' for complete action list."
+        "note": "This tool supports 11 actions for function lifecycle management. Use action='help' for complete action list."
     },
     
     "manage_enhanced_input": {

@@ -925,7 +925,7 @@ void FMCPClient::ExecuteTool(const FMCPToolCall& ToolCall, FOnToolExecuted OnCom
                 }
             }
             
-            FPlatformProcess::Sleep(0.05f);
+            FPlatformProcess::Sleep(0.02f);  // 20ms polling interval
         }
         
         // Timeout - call callback with error if not already called

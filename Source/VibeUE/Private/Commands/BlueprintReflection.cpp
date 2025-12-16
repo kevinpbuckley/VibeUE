@@ -2885,11 +2885,19 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
         NodeParamsShared->SetStringField(TEXT("node_type_name"), NodeIdentifier);
     }
 
-    // Extract the required spawner key (top-level or nested)
+    // Extract the required spawner key (top-level, nested, or fallback to node_type)
     FString SpawnerKey;
     if (!Params->TryGetStringField(TEXT("spawner_key"), SpawnerKey))
     {
         NodeParamsShared->TryGetStringField(TEXT("spawner_key"), SpawnerKey);
+    }
+    
+    // FALLBACK: If spawner_key is still empty, use node_type/node_identifier as spawner_key
+    // This handles the common case where AI passes the spawner_key as node_type
+    if (SpawnerKey.IsEmpty() && !NodeIdentifier.IsEmpty())
+    {
+        SpawnerKey = NodeIdentifier;
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("Using node_type '%s' as spawner_key (fallback)"), *SpawnerKey);
     }
 
     if (SpawnerKey.IsEmpty())
@@ -3371,6 +3379,17 @@ TSharedPtr<FJsonObject> FBlueprintReflection::FPinDescriptor::ToJson() const
     return Json;
 }
 
+TSharedPtr<FJsonObject> FBlueprintReflection::FNodeSpawnerDescriptor::ToJsonCompact() const
+{
+    // Compact mode: only essential fields for node selection and creation
+    TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
+    Json->SetStringField(TEXT("spawner_key"), SpawnerKey);
+    Json->SetStringField(TEXT("display_name"), DisplayName);
+    Json->SetStringField(TEXT("category"), Category);
+    Json->SetStringField(TEXT("node_type"), NodeType);
+    return Json;
+}
+
 TSharedPtr<FJsonObject> FBlueprintReflection::FNodeSpawnerDescriptor::ToJson() const
 {
     TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
@@ -3725,10 +3744,238 @@ FBlueprintReflection::FNodeSpawnerDescriptor FBlueprintReflection::ExtractDescri
     else
     {
         Descriptor.NodeType = TEXT("generic");
-        Descriptor.SpawnerKey = Descriptor.DisplayName;
+        
+        // Generate unique spawner key for generic nodes to avoid collisions
+        // Multiple nodes may have the same DisplayName (e.g., "Multiply" for float, int, vector)
+        // We differentiate by combining NodeClassName + Category + DisplayName
+        FString UniqueKeySuffix;
+        
+        // Try to use NodeClassName to differentiate (e.g., K2Node_CommutativeAssociativeBinaryOperator)
+        if (!Descriptor.NodeClassName.IsEmpty() && !Descriptor.NodeClassName.Equals(TEXT("K2Node")))
+        {
+            // Extract the meaningful part of the class name (strip K2Node_ prefix)
+            FString ShortClassName = Descriptor.NodeClassName;
+            if (ShortClassName.StartsWith(TEXT("K2Node_")))
+            {
+                ShortClassName = ShortClassName.RightChop(7);
+            }
+            UniqueKeySuffix = ShortClassName;
+        }
+        
+        // If category is available and specific, add it
+        if (!Descriptor.Category.IsEmpty())
+        {
+            // Extract just the leaf category for conciseness (e.g., "Math|Float" -> "Float")
+            FString LeafCategory = Descriptor.Category;
+            int32 LastPipeIdx;
+            if (LeafCategory.FindLastChar('|', LastPipeIdx))
+            {
+                LeafCategory = LeafCategory.RightChop(LastPipeIdx + 1);
+            }
+            
+            if (!UniqueKeySuffix.IsEmpty())
+            {
+                UniqueKeySuffix = FString::Printf(TEXT("%s_%s"), *LeafCategory, *UniqueKeySuffix);
+            }
+            else
+            {
+                UniqueKeySuffix = LeafCategory;
+            }
+        }
+        
+        // Build the final spawner key
+        if (!UniqueKeySuffix.IsEmpty())
+        {
+            Descriptor.SpawnerKey = FString::Printf(TEXT("%s_%s"), *Descriptor.DisplayName, *UniqueKeySuffix);
+        }
+        else
+        {
+            // Fallback: use DisplayName only (may have collisions, but better than nothing)
+            Descriptor.SpawnerKey = Descriptor.DisplayName;
+        }
+        
+        // Check if this is a RigVM/ControlRig node - these are NOT regular Blueprint nodes
+        // and cannot be invoked in standard Blueprint graphs
+        if (Descriptor.NodeClassName.Contains(TEXT("RigVM")) || 
+            Descriptor.NodeClassPath.Contains(TEXT("RigVM")) ||
+            Descriptor.NodeClassName.Contains(TEXT("ControlRig")))
+        {
+            // Mark as non-invokable - we'll filter these out of discovery results
+            Descriptor.NodeType = TEXT("rigvm_node");
+            UE_LOG(LogVibeUEReflection, Verbose, TEXT("  RigVM node (not Blueprint-invokable): %s"), *Descriptor.DisplayName);
+        }
+        else
+        {
+            UE_LOG(LogVibeUEReflection, Verbose, TEXT("  Generic node: %s (Key: %s, Category: %s)"),
+                *Descriptor.DisplayName, *Descriptor.SpawnerKey, *Descriptor.Category);
+        }
     }
     
     return Descriptor;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// ExtractDescriptorFromSchemaAction - extracts descriptor from context-sensitive actions
+// These come from FBlueprintActionMenuUtils::MakeContextMenu() which is what Unreal's
+// editor uses when "Context Sensitive" is checked in the right-click menu
+// ═══════════════════════════════════════════════════════════════════════════════
+FBlueprintReflection::FNodeSpawnerDescriptor FBlueprintReflection::ExtractDescriptorFromSchemaAction(
+    TSharedPtr<FEdGraphSchemaAction> SchemaAction,
+    UBlueprint* Blueprint)
+{
+    FNodeSpawnerDescriptor Descriptor;
+    
+    if (!SchemaAction.IsValid())
+        return Descriptor;
+    
+    // Extract basic info from schema action
+    Descriptor.DisplayName = SchemaAction->GetMenuDescription().ToString();
+    Descriptor.Category = SchemaAction->GetCategory().ToString();
+    Descriptor.Tooltip = SchemaAction->GetTooltipDescription().ToString();
+    Descriptor.Spawner = nullptr; // Schema actions don't directly expose spawner
+    
+    // Determine node type from action characteristics
+    if (Descriptor.DisplayName.Contains(TEXT("(")))
+    {
+        Descriptor.NodeType = TEXT("function_call");
+    }
+    else if (Descriptor.DisplayName.StartsWith(TEXT("Get ")) || Descriptor.DisplayName.StartsWith(TEXT("Set ")))
+    {
+        Descriptor.NodeType = TEXT("variable");
+    }
+    else if (Descriptor.DisplayName.Contains(TEXT("Event")) || Descriptor.Category.Contains(TEXT("Event")))
+    {
+        Descriptor.NodeType = TEXT("event");
+    }
+    else
+    {
+        Descriptor.NodeType = TEXT("generic");
+    }
+    
+    // Build a unique spawner key
+    // Use DisplayName + Category leaf to create a reasonable key
+    FString UniqueKeySuffix;
+    if (!Descriptor.Category.IsEmpty())
+    {
+        FString LeafCategory = Descriptor.Category;
+        int32 LastPipeIdx;
+        if (LeafCategory.FindLastChar('|', LastPipeIdx))
+        {
+            LeafCategory = LeafCategory.RightChop(LastPipeIdx + 1);
+        }
+        UniqueKeySuffix = LeafCategory;
+    }
+    
+    if (!UniqueKeySuffix.IsEmpty())
+    {
+        Descriptor.SpawnerKey = FString::Printf(TEXT("%s_%s"), *Descriptor.DisplayName, *UniqueKeySuffix);
+    }
+    else
+    {
+        Descriptor.SpawnerKey = Descriptor.DisplayName;
+    }
+    
+    // Clean up the spawner key for consistency
+    Descriptor.SpawnerKey.ReplaceInline(TEXT(" "), TEXT("_"));
+    Descriptor.SpawnerKey.ReplaceInline(TEXT("::"), TEXT("_"));
+    
+    UE_LOG(LogVibeUEReflection, Verbose, TEXT("ExtractDescriptorFromSchemaAction: %s (Key: %s, Category: %s)"),
+        *Descriptor.DisplayName, *Descriptor.SpawnerKey, *Descriptor.Category);
+    
+    return Descriptor;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// DiscoverNodesWithDescriptorsNonContextSensitive - fallback method
+// Only used when the Blueprint has no graphs to source context from
+// Uses GetAllActions() which returns ALL actions without context filtering
+// ═══════════════════════════════════════════════════════════════════════════════
+TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::DiscoverNodesWithDescriptorsNonContextSensitive(
+    UBlueprint* Blueprint,
+    const FString& SearchTerm,
+    const FString& CategoryFilter,
+    const FString& ClassFilter,
+    int32 MaxResults)
+{
+    TArray<FNodeSpawnerDescriptor> Descriptors;
+    
+    if (!Blueprint)
+        return Descriptors;
+    
+    UE_LOG(LogVibeUEReflection, Warning, TEXT("DiscoverNodesWithDescriptorsNonContextSensitive: Using non-context-sensitive fallback for '%s'"), *Blueprint->GetName());
+    
+    FBlueprintActionDatabase& ActionDB = FBlueprintActionDatabase::Get();
+    const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDB.GetAllActions();
+    
+    int32 Count = 0;
+    const FString SearchTermLower = SearchTerm.ToLower();
+    const bool bHasSearchTerm = !SearchTerm.IsEmpty();
+    const bool bHasCategoryFilter = !CategoryFilter.IsEmpty();
+    const bool bHasClassFilter = !ClassFilter.IsEmpty();
+    
+    for (auto& ActionEntry : AllActions)
+    {
+        if (Count >= MaxResults)
+            break;
+        
+        const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
+        
+        for (UBlueprintNodeSpawner* Spawner : ActionList)
+        {
+            if (Count >= MaxResults)
+                break;
+            
+            if (!Spawner)
+                continue;
+            
+            // Quick pre-filter
+            if (bHasSearchTerm)
+            {
+                FString QuickMenuName = Spawner->DefaultMenuSignature.MenuName.ToString().ToLower();
+                if (!QuickMenuName.Contains(SearchTermLower))
+                    continue;
+            }
+            
+            FNodeSpawnerDescriptor Descriptor = ExtractDescriptorFromSpawner(Spawner, Blueprint);
+            
+            bool bPassesFilters = true;
+            
+            if (bHasSearchTerm)
+            {
+                bPassesFilters = Descriptor.DisplayName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                                Descriptor.FunctionName.Contains(SearchTerm, ESearchCase::IgnoreCase);
+            }
+            
+            if (bPassesFilters && bHasCategoryFilter)
+            {
+                bPassesFilters = Descriptor.Category.Contains(CategoryFilter, ESearchCase::IgnoreCase);
+            }
+            
+            if (bPassesFilters && bHasClassFilter)
+            {
+                bPassesFilters = Descriptor.FunctionClassName.Contains(ClassFilter, ESearchCase::IgnoreCase);
+            }
+            
+            // Skip RigVM nodes even in non-context-sensitive mode
+            if (bPassesFilters && Descriptor.NodeType.Equals(TEXT("rigvm_node")))
+            {
+                bPassesFilters = false;
+            }
+            
+            if (bPassesFilters)
+            {
+                if (!Descriptor.SpawnerKey.IsEmpty())
+                {
+                    CacheSpawner(Descriptor.SpawnerKey, Spawner);
+                }
+                
+                Descriptors.Add(Descriptor);
+                Count++;
+            }
+        }
+    }
+    
+    return Descriptors;
 }
 
 TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::DiscoverNodesWithDescriptors(
@@ -3749,69 +3996,193 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
     UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Search='%s', Category='%s', Class='%s', Max=%d"),
            *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CONTEXT-SENSITIVE NODE DISCOVERY
+    // This uses the same mechanism as Unreal's "Context Sensitive" checkbox in the
+    // Blueprint editor's right-click menu. This automatically filters out nodes that
+    // don't apply to the current Blueprint type (e.g., Anim Graph nodes for non-Animation
+    // Blueprints, RigVM nodes, etc.)
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // Get a graph to provide context - prefer EventGraph, fallback to FunctionGraphs
+    UEdGraph* TargetGraph = nullptr;
+    if (Blueprint->UbergraphPages.Num() > 0)
+    {
+        TargetGraph = Blueprint->UbergraphPages[0];
+    }
+    else if (Blueprint->FunctionGraphs.Num() > 0)
+    {
+        TargetGraph = Blueprint->FunctionGraphs[0];
+    }
+    
+    if (!TargetGraph)
+    {
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("DiscoverNodesWithDescriptors: Blueprint '%s' has no graphs - falling back to non-context-sensitive discovery"), *Blueprint->GetName());
+        // Fall back to old method if no graph available
+        return DiscoverNodesWithDescriptorsNonContextSensitive(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
+    }
+    
+    // Build context for context-sensitive action menu
+    FBlueprintActionContext Context;
+    Context.Blueprints.Add(Blueprint);
+    Context.Graphs.Add(TargetGraph);
+    
+    // Enable context sensitivity - this is the key! Same as the UI checkbox
+    const bool bIsContextSensitive = true;
+    const uint32 ContextTargetMask = BuildDefaultContextTargetMask();
+    
+    // Build the context-sensitive menu
+    FBlueprintActionMenuBuilder MenuBuilder(FBlueprintActionMenuBuilder::DefaultConfig);
+    FBlueprintActionMenuUtils::MakeContextMenu(Context, bIsContextSensitive, ContextTargetMask, MenuBuilder);
+    
+    const int32 NumContextActions = MenuBuilder.GetNumActions();
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Context-sensitive menu returned %d actions"), NumContextActions);
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // IMPORTANT: Collect ALL matching results first, then sort by relevance, then truncate
+    // This ensures that "Print String" appears when searching for "print" even if there
+    // are hundreds of other nodes that also contain "print" in their names/keywords
+    // ═══════════════════════════════════════════════════════════════════════════
+    
+    // Pre-convert search terms to lowercase for performance
+    const FString SearchTermLower = SearchTerm.ToLower();
+    const FString CategoryFilterLower = CategoryFilter.ToLower();
+    const FString ClassFilterLower = ClassFilter.ToLower();
+    const bool bHasSearchTerm = !SearchTerm.IsEmpty();
+    const bool bHasCategoryFilter = !CategoryFilter.IsEmpty();
+    const bool bHasClassFilter = !ClassFilter.IsEmpty();
+    
+    // Also get the action database for spawner lookups
+    // Context-sensitive filtering tells us WHICH actions are valid,
+    // but we need the actual spawners for node creation
     FBlueprintActionDatabase& ActionDB = FBlueprintActionDatabase::Get();
     const FBlueprintActionDatabase::FActionRegistry& AllActions = ActionDB.GetAllActions();
     
-    int32 Count = 0;
-    
-    for (auto& ActionEntry : AllActions)
+    // Process context-sensitive actions - NO early truncation here!
+    for (int32 Index = 0; Index < NumContextActions; ++Index)
     {
-        if (Count >= MaxResults)
-            break;
+        TSharedPtr<FEdGraphSchemaAction> SchemaAction = MenuBuilder.GetSchemaAction(Index);
+        if (!SchemaAction.IsValid())
+            continue;
         
-        const FBlueprintActionDatabase::FActionList& ActionList = ActionEntry.Value;
+        // Skip utility/dummy actions
+        if (IsUtilityMenuAction(SchemaAction))
+            continue;
         
-        for (UBlueprintNodeSpawner* Spawner : ActionList)
+        // Extract descriptor from schema action
+        FNodeSpawnerDescriptor Descriptor = ExtractDescriptorFromSchemaAction(SchemaAction, Blueprint);
+        
+        // Apply search/category/class filters
+        bool bPassesFilters = true;
+        
+        // Search term filter
+        if (bHasSearchTerm)
         {
-            if (Count >= MaxResults)
-                break;
-            
-            if (!Spawner)
-                continue;
-            
-            // Extract complete descriptor
-            FNodeSpawnerDescriptor Descriptor = ExtractDescriptorFromSpawner(Spawner, Blueprint);
-            
-            // Apply filters
-            bool bPassesFilters = true;
-            
-            // Search term filter
-            if (!SearchTerm.IsEmpty())
+            FString Keywords = SchemaAction->GetKeywords().ToString();
+            bPassesFilters = Descriptor.DisplayName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                            Descriptor.FunctionName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                            Descriptor.SpawnerKey.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
+                            Keywords.Contains(SearchTerm, ESearchCase::IgnoreCase);
+        }
+        
+        // Category filter
+        if (bPassesFilters && bHasCategoryFilter)
+        {
+            bPassesFilters = Descriptor.Category.Contains(CategoryFilter, ESearchCase::IgnoreCase);
+        }
+        
+        // Class filter
+        if (bPassesFilters && bHasClassFilter)
+        {
+            bPassesFilters = Descriptor.FunctionClassName.Contains(ClassFilter, ESearchCase::IgnoreCase) ||
+                            Descriptor.FunctionClassPath.Contains(ClassFilter, ESearchCase::IgnoreCase);
+        }
+        
+        if (bPassesFilters)
+        {
+            // Try to find and cache the actual spawner from the action database
+            // This bridges context-sensitive discovery with spawner-based node creation
+            if (!Descriptor.Spawner)
             {
-                bPassesFilters = Descriptor.DisplayName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
-                                Descriptor.FunctionName.Contains(SearchTerm, ESearchCase::IgnoreCase) ||
-                                Descriptor.SpawnerKey.Contains(SearchTerm, ESearchCase::IgnoreCase);
-            }
-            
-            // Category filter
-            if (bPassesFilters && !CategoryFilter.IsEmpty())
-            {
-                bPassesFilters = Descriptor.Category.Contains(CategoryFilter, ESearchCase::IgnoreCase);
-            }
-            
-            // Class filter (function class name)
-            if (bPassesFilters && !ClassFilter.IsEmpty())
-            {
-                bPassesFilters = Descriptor.FunctionClassName.Contains(ClassFilter, ESearchCase::IgnoreCase) ||
-                                Descriptor.FunctionClassPath.Contains(ClassFilter, ESearchCase::IgnoreCase);
-            }
-            
-            if (bPassesFilters)
-            {
-                // Cache the spawner
-                if (!Descriptor.SpawnerKey.IsEmpty())
+                // Normalize category for matching (strip leading pipe if present)
+                FString NormalizedCategory = Descriptor.Category;
+                if (NormalizedCategory.StartsWith(TEXT("|")))
                 {
-                    CacheSpawner(Descriptor.SpawnerKey, Spawner);
+                    NormalizedCategory = NormalizedCategory.RightChop(1);
                 }
                 
-                Descriptors.Add(Descriptor);
-                Count++;
+                for (auto& ActionEntry : AllActions)
+                {
+                    bool bFoundSpawner = false;
+                    for (UBlueprintNodeSpawner* Spawner : ActionEntry.Value)
+                    {
+                        if (!Spawner)
+                            continue;
+                        
+                        // Match by display name (required) and category (flexible)
+                        FString SpawnerDisplayName = Spawner->DefaultMenuSignature.MenuName.ToString();
+                        FString SpawnerCategory = Spawner->DefaultMenuSignature.Category.ToString();
+                        
+                        // Categories must contain the normalized category (handles |Development vs Development)
+                        bool bCategoryMatch = SpawnerCategory.Equals(NormalizedCategory, ESearchCase::IgnoreCase) ||
+                                              SpawnerCategory.EndsWith(NormalizedCategory, ESearchCase::IgnoreCase) ||
+                                              NormalizedCategory.EndsWith(SpawnerCategory, ESearchCase::IgnoreCase);
+                        
+                        if (SpawnerDisplayName.Equals(Descriptor.DisplayName, ESearchCase::IgnoreCase) && bCategoryMatch)
+                        {
+                            Descriptor.Spawner = Spawner;
+                            CacheSpawner(Descriptor.SpawnerKey, Spawner);
+                            bFoundSpawner = true;
+                            UE_LOG(LogVibeUEReflection, Log, TEXT("  ✓ Cached spawner for: %s (matched '%s' in category '%s')"), 
+                                *Descriptor.SpawnerKey, *SpawnerDisplayName, *SpawnerCategory);
+                            break;
+                        }
+                    }
+                    if (bFoundSpawner)
+                        break;
+                }
                 
-                UE_LOG(LogVibeUEReflection, Verbose, TEXT("  ✓ Added descriptor: %s (Key: %s)"),
-                       *Descriptor.DisplayName, *Descriptor.SpawnerKey);
+                // If still not found, log for debugging
+                if (!Descriptor.Spawner)
+                {
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("  ⚠ Could not find spawner for: %s (DisplayName='%s', Category='%s')"),
+                        *Descriptor.SpawnerKey, *Descriptor.DisplayName, *Descriptor.Category);
+                }
             }
+            
+            // Calculate relevance score for sorting
+            if (bHasSearchTerm)
+            {
+                Descriptor.RelevanceScore = CalculateSearchRelevance(
+                    Descriptor.DisplayName, 
+                    SchemaAction->GetKeywords().ToString(), 
+                    Descriptor.Tooltip, 
+                    SearchTerm
+                );
+            }
+            else
+            {
+                Descriptor.RelevanceScore = 50; // Default score
+            }
+            
+            Descriptors.Add(Descriptor);
+            
+            UE_LOG(LogVibeUEReflection, Verbose, TEXT("  ✓ Added descriptor: %s (Key: %s, Relevance: %d)"),
+                   *Descriptor.DisplayName, *Descriptor.SpawnerKey, Descriptor.RelevanceScore);
         }
     }
+    
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SORT BY RELEVANCE before truncating
+    // This ensures that exact/prefix matches appear before substring matches
+    // e.g., "Print String" ranks higher than "Cast To SharedImageConstRefBlueprintFns"
+    // when searching for "print"
+    // ═══════════════════════════════════════════════════════════════════════════
+    Descriptors.Sort([](const FNodeSpawnerDescriptor& A, const FNodeSpawnerDescriptor& B) {
+        return A.RelevanceScore > B.RelevanceScore; // Higher score first
+    });
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Found %d total matching descriptors"), Descriptors.Num());
     
     // ═════════════════════════════════════════════════════════════════════
     // NEW (Oct 6, 2025): Add synthetic descriptors for special node types
@@ -3819,9 +4190,9 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
     
     // Add reroute node (K2Node_Knot) as a synthetic descriptor
     // Reroute nodes don't have spawners but are essential for clean Blueprint wiring
-    if (Count < MaxResults && (SearchTerm.IsEmpty() || 
+    if (SearchTerm.IsEmpty() || 
         FString(TEXT("Reroute")).Contains(SearchTerm, ESearchCase::IgnoreCase) ||
-        FString(TEXT("Knot")).Contains(SearchTerm, ESearchCase::IgnoreCase)))
+        FString(TEXT("Knot")).Contains(SearchTerm, ESearchCase::IgnoreCase))
     {
         FNodeSpawnerDescriptor RerouteDescriptor;
         RerouteDescriptor.NodeType = TEXT("reroute");
@@ -3834,14 +4205,24 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
         RerouteDescriptor.bIsSynthetic = true; // No real spawner
         RerouteDescriptor.ExpectedPinCount = 2; // InputPin + OutputPin
         RerouteDescriptor.Spawner = nullptr; // Handled specially
+        RerouteDescriptor.RelevanceScore = bHasSearchTerm ? 70 : 30; // Lower priority if no search
         
         Descriptors.Add(RerouteDescriptor);
-        Count++;
         
         UE_LOG(LogVibeUEReflection, Verbose, TEXT("  ✓ Added synthetic descriptor: Reroute Node (K2Node_Knot)"));
     }
     
-    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Found %d descriptors (including %d synthetic)"), 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TRUNCATE to MaxResults after sorting
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (Descriptors.Num() > MaxResults)
+    {
+        UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Truncating from %d to %d results"), 
+            Descriptors.Num(), MaxResults);
+        Descriptors.SetNum(MaxResults);
+    }
+    
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Returning %d descriptors (including %d synthetic)"), 
         Descriptors.Num(), Descriptors.FilterByPredicate([](const FNodeSpawnerDescriptor& D) { return D.bIsSynthetic; }).Num());
     
     return Descriptors;
@@ -3923,16 +4304,78 @@ UK2Node* FBlueprintReflection::CreateNodeFromSpawnerKey(
         UBlueprint* Blueprint = FBlueprintEditorUtils::FindBlueprintForGraph(Graph);
         if (Blueprint)
         {
-            TArray<FNodeSpawnerDescriptor> Descriptors = DiscoverNodesWithDescriptors(Blueprint, TEXT(""), TEXT(""), TEXT(""), 1000);
+            // Extract the display name from the spawner key for searching
+            // SpawnerKey format is usually "DisplayName_Category_NodeClass" for generic nodes
+            // or "ClassName::FunctionName" for function nodes
+            FString SearchName = SpawnerKey;
+            int32 UnderscoreIdx;
+            if (SearchName.FindChar('_', UnderscoreIdx))
+            {
+                SearchName = SearchName.Left(UnderscoreIdx);
+            }
+            else if (SearchName.Contains(TEXT("::")))
+            {
+                // For function nodes like "KismetMathLibrary::FTrunc", use the function name
+                int32 ColonIdx;
+                if (SearchName.FindLastChar(':', ColonIdx))
+                {
+                    SearchName = SearchName.RightChop(ColonIdx + 1);
+                }
+            }
             
+            UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Searching with term '%s'"), *SearchName);
+            TArray<FNodeSpawnerDescriptor> Descriptors = DiscoverNodesWithDescriptors(Blueprint, SearchName, TEXT(""), TEXT(""), 500);
+            
+            // First pass: exact match
             for (const FNodeSpawnerDescriptor& Desc : Descriptors)
             {
                 if (Desc.SpawnerKey.Equals(SpawnerKey, ESearchCase::IgnoreCase))
                 {
                     Spawner = Desc.Spawner;
                     CacheSpawner(SpawnerKey, Spawner);
-                    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Found and cached spawner"));
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Found exact match and cached spawner"));
                     break;
+                }
+            }
+            
+            // Second pass: if no exact match, try matching by display name prefix
+            // This handles cases where AI passes "Multiply" but we have "Multiply_Math_CommutativeAssociativeBinaryOperator"
+            if (!Spawner)
+            {
+                FString BestMatch;
+                UBlueprintNodeSpawner* BestSpawner = nullptr;
+                
+                for (const FNodeSpawnerDescriptor& Desc : Descriptors)
+                {
+                    // Check if the spawner key starts with the requested key (e.g., "Multiply" matches "Multiply_Float_...")
+                    if (Desc.SpawnerKey.StartsWith(SpawnerKey, ESearchCase::IgnoreCase))
+                    {
+                        // Prefer shorter matches (more specific)
+                        if (!BestSpawner || Desc.SpawnerKey.Len() < BestMatch.Len())
+                        {
+                            BestMatch = Desc.SpawnerKey;
+                            BestSpawner = Desc.Spawner;
+                        }
+                    }
+                    // Also try matching by display name
+                    else if (Desc.DisplayName.Equals(SpawnerKey, ESearchCase::IgnoreCase))
+                    {
+                        if (!BestSpawner)
+                        {
+                            BestMatch = Desc.SpawnerKey;
+                            BestSpawner = Desc.Spawner;
+                        }
+                    }
+                }
+                
+                if (BestSpawner)
+                {
+                    Spawner = BestSpawner;
+                    CacheSpawner(BestMatch, Spawner);
+                    // Also cache under the originally requested key for future lookups
+                    CacheSpawner(SpawnerKey, Spawner);
+                    UE_LOG(LogVibeUEReflection, Warning, TEXT("CreateNodeFromSpawnerKey: Fuzzy match found '%s' for requested '%s'"),
+                           *BestMatch, *SpawnerKey);
                 }
             }
         }

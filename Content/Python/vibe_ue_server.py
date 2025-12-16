@@ -154,7 +154,7 @@ class UnrealConnection:
     def receive_full_response(self, sock, buffer_size=4096) -> bytes:
         """Receive a complete response from Unreal, handling chunked data."""
         chunks = []
-        sock.settimeout(30)  # 30 second timeout for MCP calls (some operations like asset creation can be slow)
+        sock.settimeout(30)  # 30 second max timeout
         try:
             while True:
                 chunk = sock.recv(buffer_size)
@@ -167,19 +167,17 @@ class UnrealConnection:
                 # Process the data received so far
                 data = b''.join(chunks)
                 try:
-                    decoded_data = data.decode('utf-8')
+                    decoded_data = data.decode('utf-8').strip()
                 except UnicodeDecodeError as e:
                     logger.debug(f"Unicode decode error, continuing to receive: {e}")
                     continue
                 
                 # Try to parse as JSON to check if complete
                 try:
-                    parsed_json = json.loads(decoded_data)
+                    json.loads(decoded_data)
                     logger.info(f"Received complete response ({len(data)} bytes)")
-                    return data
+                    return decoded_data.encode('utf-8')
                 except json.JSONDecodeError:
-                    # Not complete JSON yet, continue reading
-                    logger.debug(f"Received partial response ({len(data)} bytes), waiting for more data...")
                     continue
                 except Exception as e:
                     logger.warning(f"Error processing response chunk: {str(e)}")

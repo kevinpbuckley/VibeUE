@@ -101,6 +101,22 @@ Example:
 
 ### Step 4: Connect the Pins
 
+**Option A: Simple Connect** (recommended for single connections):
+
+```python
+manage_blueprint_node(
+    blueprint_name="/Game/Blueprints/BP_Player2",
+    action="connect",
+    source_node_id="F937A5914C523D1AB3532C8C4125C0B7",
+    source_pin="ReturnValue",
+    target_node_id="64DE8C1B47F7EEDA2B713B8604257954",
+    target_pin="self",
+    function_name="CastToMicrosubHUD"
+)
+```
+
+**Option B: Batch Connect** (for multiple connections):
+
 ```python
 manage_blueprint_node(
     blueprint_name="/Game/Blueprints/BP_Player2",

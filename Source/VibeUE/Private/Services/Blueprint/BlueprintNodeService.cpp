@@ -24,6 +24,127 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 
+// Helper to suggest alternative search terms when common searches fail
+static FString GetSearchSuggestion(const FString& SearchTerm)
+{
+	FString LowerSearch = SearchTerm.ToLower();
+	
+	// IMPORTANT: Basic math operators (*, +, -, /) use special K2Node_CommutativeAssociativeBinaryOperator
+	// which are NOT available through standard Blueprint action discovery. These are created via
+	// the right-click context menu in the Blueprint editor, not programmatically.
+	
+	// Multiply/times searches - basic float*float is NOT available as a discoverable node!
+	if (LowerSearch.Contains(TEXT("multipl")) || LowerSearch.Contains(TEXT("times")) || 
+	    LowerSearch.Contains(TEXT("*")) || LowerSearch.Contains(TEXT("float*float")) ||
+	    LowerSearch.Contains(TEXT("multiply_float")))
+	{
+		return TEXT("STOP: Basic multiplication (float * float) is NOT available through node discovery. "
+		            "In Unreal Engine, basic math operators (+, -, *, /) use special internal nodes (K2Node_CommutativeAssociativeBinaryOperator) "
+		            "that cannot be created programmatically. "
+		            "ALTERNATIVES: 1) Use 'MultiplyByPi' (spawner_key: 'KismetMathLibrary::MultiplyByPi') to multiply by Pi, "
+		            "2) Use function parameters directly and calculate in C++, "
+		            "3) For power/exponent use 'Power' (spawner_key: 'KismetMathLibrary::MultiplyMultiply_FloatFloat'). "
+		            "DO NOT keep searching for 'multiply float' - it does not exist as a discoverable node.");
+	}
+	
+	// Add/plus searches
+	if (LowerSearch.Contains(TEXT("add")) && LowerSearch.Contains(TEXT("float")) ||
+	    LowerSearch.Contains(TEXT("+")) || LowerSearch.Contains(TEXT("plus")))
+	{
+		return TEXT("STOP: Basic addition (float + float) is NOT available through node discovery. "
+		            "Basic math operators use special internal nodes that cannot be created programmatically. "
+		            "DO NOT keep searching for 'add float' - it does not exist as a discoverable node.");
+	}
+	
+	// Subtract/minus searches
+	if (LowerSearch.Contains(TEXT("subtract")) || LowerSearch.Contains(TEXT("minus")) ||
+	    LowerSearch.Contains(TEXT("-")) && LowerSearch.Contains(TEXT("float")))
+	{
+		return TEXT("STOP: Basic subtraction (float - float) is NOT available through node discovery. "
+		            "Basic math operators use special internal nodes that cannot be created programmatically. "
+		            "DO NOT keep searching for 'subtract float' - it does not exist as a discoverable node.");
+	}
+	
+	// Divide searches
+	if (LowerSearch.Contains(TEXT("divid")) || LowerSearch.Contains(TEXT("/")) ||
+	    LowerSearch.Contains(TEXT("divide_float")))
+	{
+		return TEXT("STOP: Basic division (float / float) is NOT available through node discovery. "
+		            "Basic math operators use special internal nodes that cannot be created programmatically. "
+		            "DO NOT keep searching for 'divide float' - it does not exist as a discoverable node.");
+	}
+	
+	// Common float/int conversion searches - in UE these are FTrunc, FFloor, FCeil, Round
+	if (LowerSearch.Contains(TEXT("float")) && (LowerSearch.Contains(TEXT("int")) || LowerSearch.Contains(TEXT("integer"))))
+	{
+		return TEXT("For float-to-integer conversion, search for: 'FTrunc' (truncate), 'FFloor' (round down), 'FCeil' (round up), or 'Round'. The spawner_key is 'KismetMathLibrary::FTrunc'.");
+	}
+	
+	// Int to float conversion
+	if (LowerSearch.Contains(TEXT("int")) && LowerSearch.Contains(TEXT("float")) && !LowerSearch.Contains(TEXT("toint")))
+	{
+		return TEXT("For integer-to-float conversion, search for: 'Conv_IntToDouble'. The spawner_key is 'KismetMathLibrary::Conv_IntToDouble'.");
+	}
+	
+	// Print/debug searches
+	if (LowerSearch.Contains(TEXT("print")) && LowerSearch.Contains(TEXT("string")))
+	{
+		return TEXT("For debugging output, search for: 'PrintString' or 'Print String'. The spawner_key is 'KismetSystemLibrary::PrintString'.");
+	}
+	
+	// Branch/if searches
+	if (LowerSearch.Contains(TEXT("if")) || LowerSearch.Contains(TEXT("branch")))
+	{
+		return TEXT("For conditional branching, search for: 'Branch'. The spawner_key is 'Branch'.");
+	}
+	
+	// For loop searches
+	if (LowerSearch.Contains(TEXT("for")) && LowerSearch.Contains(TEXT("loop")))
+	{
+		return TEXT("For loops, search for: 'ForLoop', 'ForLoopWithBreak', or 'ForEachLoop'.");
+	}
+	
+	return FString();  // No suggestion available
+}
+
+// Helper to get common valid Blueprint node category names for error messages
+static FString GetCommonCategoryNames()
+{
+	return TEXT("Math, Math|Float, Math|Integer, Math|Vector, Math|Rotator, Math|Transform, "
+	            "Flow Control, Utilities, Utilities|String, Utilities|Text, Utilities|Array, "
+	            "Development, Development|Editor, Game, Game|Actor, Game|Components, "
+	            "Collision, Physics, Rendering, Animation, Audio, Input, AI, "
+	            "Variables, Class|Default, Default");
+}
+
+// Helper to validate if a category looks valid (contains letters, optional pipes)
+static bool IsValidCategoryFormat(const FString& Category)
+{
+	// Empty is valid (no filter)
+	if (Category.IsEmpty())
+	{
+		return true;
+	}
+	
+	// Categories should contain letters and optionally | for hierarchy
+	// Invalid examples: "Math|Float" for multiply, numbers, special chars
+	FString Trimmed = Category.TrimStartAndEnd();
+	
+	// Check for common invalid patterns that indicate AI confusion
+	if (Trimmed.Contains(TEXT("KismetMathLibrary")) ||
+	    Trimmed.Contains(TEXT("::")) ||
+	    Trimmed.Contains(TEXT("Multiply_")) ||
+	    Trimmed.Contains(TEXT("_Float")) ||
+	    Trimmed.Contains(TEXT("Add_")) ||
+	    Trimmed.Contains(TEXT("Subtract_")) ||
+	    Trimmed.Contains(TEXT("Divide_")))
+	{
+		return false;  // This looks like a function name, not a category
+	}
+	
+	return true;
+}
+
 FBlueprintNodeService::FBlueprintNodeService(TSharedPtr<FServiceContext> Context)
 	: FServiceBase(Context)
 {
@@ -930,6 +1051,36 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 	{
 		// Create single default connection from top-level parameters
 		TSharedPtr<FJsonObject> DefaultConnection = MakeShared<FJsonObject>();
+		
+		// Copy connection parameters from top-level Params to DefaultConnection
+		// Source info - support multiple field name variants
+		FString SourceNodeId, SourcePinName;
+		if (Params->TryGetStringField(TEXT("source_node_id"), SourceNodeId))
+		{
+			DefaultConnection->SetStringField(TEXT("source_node_id"), SourceNodeId);
+		}
+		// Support source_pin, source_pin_name, and source_pin_id as aliases
+		if (Params->TryGetStringField(TEXT("source_pin"), SourcePinName) ||
+			Params->TryGetStringField(TEXT("source_pin_name"), SourcePinName) ||
+			Params->TryGetStringField(TEXT("source_pin_id"), SourcePinName))
+		{
+			DefaultConnection->SetStringField(TEXT("source_pin_name"), SourcePinName);
+		}
+		
+		// Target info - support multiple field name variants
+		FString TargetNodeId, TargetPinName;
+		if (Params->TryGetStringField(TEXT("target_node_id"), TargetNodeId))
+		{
+			DefaultConnection->SetStringField(TEXT("target_node_id"), TargetNodeId);
+		}
+		// Support target_pin, target_pin_name, and target_pin_id as aliases
+		if (Params->TryGetStringField(TEXT("target_pin"), TargetPinName) ||
+			Params->TryGetStringField(TEXT("target_pin_name"), TargetPinName) ||
+			Params->TryGetStringField(TEXT("target_pin_id"), TargetPinName))
+		{
+			DefaultConnection->SetStringField(TEXT("target_pin_name"), TargetPinName);
+		}
+		
 		LocalConnections.Add(MakeShared<FJsonValueObject>(DefaultConnection));
 		ConnectionArrayPtr = &LocalConnections;
 	}
@@ -1143,7 +1294,17 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 			TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 			Failure->SetBoolField(TEXT("success"), false);
 			Failure->SetStringField(TEXT("code"), TEXT("CONNECTION_BLOCKED"));
-			Failure->SetStringField(TEXT("message"), ResponseMessage.IsEmpty() ? TEXT("Schema disallowed this connection") : ResponseMessage);
+			
+			// Enhance error message for float/double type mismatch (common in UE5)
+			FString EnhancedMessage = ResponseMessage;
+			if (ResponseMessage.Contains(TEXT("single-precision")) && ResponseMessage.Contains(TEXT("double-precision")))
+			{
+				EnhancedMessage = FString::Printf(TEXT("%s HINT: In UE5, Blueprint 'float' variables are single-precision, but math function pins use 'real' (double-precision). "
+				                                       "This is an Unreal type system limitation. Options: 1) Change the variable type in the Blueprint to 'Double', "
+				                                       "2) Use a conversion node, or 3) Redesign the function to avoid this mismatch."), *ResponseMessage);
+			}
+			
+			Failure->SetStringField(TEXT("message"), EnhancedMessage.IsEmpty() ? TEXT("Schema disallowed this connection") : EnhancedMessage);
 			Failure->SetNumberField(TEXT("index"), Index);
 			Failure->SetObjectField(TEXT("request"), ConnectionObj);
 			Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -1922,13 +2083,16 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 		);
 	}
 
-	// Extract parameters
+	// Extract parameters - accept multiple parameter name variations
 	FString SearchTerm;
 	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
 	{
 		if (!Params->TryGetStringField(TEXT("searchTerm"), SearchTerm))
 		{
-			Params->TryGetStringField(TEXT("searchterm"), SearchTerm);
+			if (!Params->TryGetStringField(TEXT("search_text"), SearchTerm))
+			{
+				Params->TryGetStringField(TEXT("searchterm"), SearchTerm);
+			}
 		}
 	}
 	SearchTerm.TrimStartAndEndInline();
@@ -1936,6 +2100,20 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 	FString Category;
 	Params->TryGetStringField(TEXT("category"), Category);
 	Category.TrimStartAndEndInline();
+	
+	// Validate category format - catch when AI passes function names as categories
+	if (!IsValidCategoryFormat(Category))
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			FString::Printf(TEXT("INVALID CATEGORY: '%s' appears to be a function name, not a category. "
+			                     "Categories are high-level groupings like 'Math', 'Math|Float', 'Flow Control', 'Utilities'. "
+			                     "DO NOT pass function names (like 'KismetMathLibrary::Multiply_FloatFloat') as category. "
+			                     "Valid categories include: %s. "
+			                     "To find a specific function, use search_term parameter instead."), 
+			                *Category, *GetCommonCategoryNames())
+		);
+	}
 
 	// Extract filter options
 	bool bIncludeFunctions = true;
@@ -1943,18 +2121,23 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 	bool bIncludeEvents = true;
 	Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
 	Params->TryGetBoolField(TEXT("includeFunctions"), bIncludeFunctions);
-	Params->TryGetBoolField(TEXT("include_variables"), bIncludeVariables);
+	Params->TryGetBoolField(TEXT("include_variables"), bIncludeVariables);;
 	Params->TryGetBoolField(TEXT("includeVariables"), bIncludeVariables);
 	Params->TryGetBoolField(TEXT("include_events"), bIncludeEvents);
 	Params->TryGetBoolField(TEXT("includeEvents"), bIncludeEvents);
 
-	int32 MaxResults = 100;
+	// Default max_results reduced to 10 to avoid token blowout
+	int32 MaxResults = 10;
 	double ParsedMaxResults = 0.0;
 	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults) ||
 		Params->TryGetNumberField(TEXT("maxResults"), ParsedMaxResults))
 	{
 		MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
 	}
+	
+	// Compact mode (default: true) returns minimal fields to reduce token usage
+	bool bCompact = true;
+	Params->TryGetBoolField(TEXT("compact"), bCompact);
 
 	// Use descriptor-based discovery (modern approach)
 	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
@@ -1966,6 +2149,12 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 
 	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
 	{
+		// Skip invalid descriptors (empty spawner_key or display_name)
+		if (Desc.SpawnerKey.IsEmpty() || Desc.DisplayName.IsEmpty())
+		{
+			continue;
+		}
+		
 		// Apply type filters
 		if (!bIncludeFunctions && Desc.NodeType == TEXT("function_call"))
 		{
@@ -1980,8 +2169,8 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 			continue;
 		}
 
-		// Convert descriptor to JSON (includes spawner_key, pins, metadata, etc.)
-		TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+		// Convert descriptor to JSON (compact or full)
+		TSharedPtr<FJsonObject> DescriptorJson = bCompact ? Desc.ToJsonCompact() : Desc.ToJson();
 
 		// Organize by category
 		FString DescCategory = Desc.Category;
@@ -2013,6 +2202,26 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::GetAvailableNodes(UBluep
 	Result->SetBoolField(TEXT("truncated"), false);
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetBoolField(TEXT("with_descriptors"), true);  // Descriptor mode
+	
+	// Add hints to guide AI - ALWAYS check for suggestions even when results are found
+	// This is important because searches like "multiply" return Power/MultiplyByPi but NOT basic multiplication
+	FString Suggestion = GetSearchSuggestion(SearchTerm);
+	if (!Suggestion.IsEmpty())
+	{
+		Result->SetStringField(TEXT("hint"), Suggestion);
+	}
+	else if (TotalNodes == 0 && !SearchTerm.IsEmpty())
+	{
+		Result->SetStringField(TEXT("hint"), TEXT("No nodes found. Try broader search terms or remove category filter."));
+	}
+	else if (SearchTerm.IsEmpty() && Category.IsEmpty())
+	{
+		// Return ERROR for empty search to stop AI loops
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			TEXT("REQUIRED: search_term parameter must not be empty. Use specific terms like 'multiply', 'print', 'add', 'get health', 'set variable'. Without search_term, results are random and useless. DO NOT retry with empty search_term.")
+		);
+	}
 
 	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
 }
@@ -2033,32 +2242,59 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DiscoverNodesWithDescrip
 		);
 	}
 
-	// Extract parameters
+	// Extract parameters - accept multiple parameter name variations
 	FString SearchTerm;
-	Params->TryGetStringField(TEXT("search_term"), SearchTerm);
+	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+	{
+		Params->TryGetStringField(TEXT("search_text"), SearchTerm);
+	}
 
 	FString CategoryFilter;
 	Params->TryGetStringField(TEXT("category_filter"), CategoryFilter);
+	
+	// Validate category format - catch when AI passes function names as categories
+	if (!IsValidCategoryFormat(CategoryFilter))
+	{
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			FString::Printf(TEXT("INVALID CATEGORY FILTER: '%s' appears to be a function name, not a category. "
+			                     "Categories are high-level groupings like 'Math', 'Math|Float', 'Flow Control', 'Utilities'. "
+			                     "DO NOT pass function names (like 'KismetMathLibrary::Multiply_FloatFloat') as category_filter. "
+			                     "Valid categories include: %s. "
+			                     "To find a specific function, use search_term parameter instead."), 
+			                *CategoryFilter, *GetCommonCategoryNames())
+		);
+	}
 
 	FString ClassFilter;
 	Params->TryGetStringField(TEXT("class_filter"), ClassFilter);
 
-	int32 MaxResults = 100;
+	// Default max_results reduced to 10 to avoid token blowout
+	int32 MaxResults = 10;
 	double ParsedMaxResults = 0.0;
 	if (Params->TryGetNumberField(TEXT("max_results"), ParsedMaxResults))
 	{
 		MaxResults = FMath::Max(1, static_cast<int32>(ParsedMaxResults));
 	}
+	
+	// Compact mode (default: true) returns minimal fields to reduce token usage
+	bool bCompact = true;
+	Params->TryGetBoolField(TEXT("compact"), bCompact);
 
 	// Call descriptor-based discovery system
 	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
 		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
 
-	// Convert descriptors to JSON
+	// Convert descriptors to JSON (compact or full), filtering out invalid entries
 	TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
 	for (const FBlueprintReflection::FNodeSpawnerDescriptor& Desc : Descriptors)
 	{
-		TSharedPtr<FJsonObject> DescriptorJson = Desc.ToJson();
+		// Skip invalid descriptors (empty spawner_key or display_name)
+		if (Desc.SpawnerKey.IsEmpty() || Desc.DisplayName.IsEmpty())
+		{
+			continue;
+		}
+		TSharedPtr<FJsonObject> DescriptorJson = bCompact ? Desc.ToJsonCompact() : Desc.ToJson();
 		DescriptorJsonArray.Add(MakeShared<FJsonValueObject>(DescriptorJson));
 	}
 
@@ -2068,6 +2304,26 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DiscoverNodesWithDescrip
 	Result->SetArrayField(TEXT("descriptors"), DescriptorJsonArray);
 	Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
 	Result->SetStringField(TEXT("blueprint_name"), Blueprint->GetName());
+	
+	// Add hints to guide AI - ALWAYS check for suggestions even when results are found
+	// This is important because searches like "multiply" return Power/MultiplyByPi but NOT basic multiplication
+	FString Suggestion = GetSearchSuggestion(SearchTerm);
+	if (!Suggestion.IsEmpty())
+	{
+		Result->SetStringField(TEXT("hint"), Suggestion);
+	}
+	else if (DescriptorJsonArray.Num() == 0 && !SearchTerm.IsEmpty())
+	{
+		Result->SetStringField(TEXT("hint"), TEXT("No nodes found. Try broader search terms or check category_filter."));
+	}
+	else if (SearchTerm.IsEmpty() && CategoryFilter.IsEmpty())
+	{
+		// Return ERROR for empty search to stop AI loops
+		return TResult<TSharedPtr<FJsonObject>>::Error(
+			VibeUE::ErrorCodes::PARAM_INVALID,
+			TEXT("REQUIRED: search_term parameter must not be empty. Use specific terms like 'multiply', 'print', 'add', 'get health', 'set variable'. Without search_term, results are random and useless. DO NOT retry with empty search_term.")
+		);
+	}
 
 	return TResult<TSharedPtr<FJsonObject>>::Success(Result);
 }

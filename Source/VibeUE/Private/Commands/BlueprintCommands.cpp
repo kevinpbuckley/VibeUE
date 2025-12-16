@@ -3138,6 +3138,14 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSh
 
     bool bIncludeEngine = true;
     Params->TryGetBoolField(TEXT("include_engine_types"), bIncludeEngine);
+    
+    // Compact mode returns minimal data to reduce token usage (default: true)
+    bool bCompact = true;
+    Params->TryGetBoolField(TEXT("compact"), bCompact);
+    
+    // Max results limit (default: 10)
+    int32 MaxResults = 10;
+    Params->TryGetNumberField(TEXT("max_results"), MaxResults);
 
     auto IsTransientTypeName = [](const FString& InName) -> bool
     {
@@ -3427,24 +3435,43 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSh
                 continue;
             }
         }
-
-        TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
-        TypeInfo->SetStringField(TEXT("name"), Record.Name);
-        TypeInfo->SetStringField(TEXT("display_name"), Record.DisplayName);
-        TypeInfo->SetStringField(TEXT("category"), Record.Category);
-        TypeInfo->SetStringField(TEXT("description"), Record.Description);
-        TypeInfo->SetBoolField(TEXT("is_blueprint_class"), Record.bIsBlueprintType);
-        TypeInfo->SetBoolField(TEXT("is_asset_type"), Record.bIsAssetType);
-        TypeInfo->SetBoolField(TEXT("supports_variables"), Record.bSupportsVariables);
-        TypeInfo->SetBoolField(TEXT("is_engine_type"), Record.bIsEngineType);
-        TypeInfo->SetStringField(TEXT("type_kind"), Record.TypeKind);
-
-        if (!Record.Path.IsEmpty())
+        
+        // Check max results limit
+        if (MaxResults > 0 && TypesArray.Num() >= MaxResults)
         {
-            TypeInfo->SetStringField(TEXT("type_path"), Record.Path);
+            break;
         }
 
-        TypesArray.Add(MakeShared<FJsonValueObject>(TypeInfo));
+        if (bCompact)
+        {
+            // Compact mode: just name and path (essential for variable creation)
+            TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+            TypeInfo->SetStringField(TEXT("name"), Record.Name);
+            if (!Record.Path.IsEmpty())
+            {
+                TypeInfo->SetStringField(TEXT("type_path"), Record.Path);
+            }
+            TypesArray.Add(MakeShared<FJsonValueObject>(TypeInfo));
+        }
+        else
+        {
+            TSharedPtr<FJsonObject> TypeInfo = MakeShared<FJsonObject>();
+            TypeInfo->SetStringField(TEXT("name"), Record.Name);
+            TypeInfo->SetStringField(TEXT("display_name"), Record.DisplayName);
+            TypeInfo->SetStringField(TEXT("category"), Record.Category);
+            TypeInfo->SetStringField(TEXT("description"), Record.Description);
+            TypeInfo->SetBoolField(TEXT("is_blueprint_class"), Record.bIsBlueprintType);
+            TypeInfo->SetBoolField(TEXT("is_asset_type"), Record.bIsAssetType);
+            TypeInfo->SetBoolField(TEXT("supports_variables"), Record.bSupportsVariables);
+            TypeInfo->SetBoolField(TEXT("is_engine_type"), Record.bIsEngineType);
+            TypeInfo->SetStringField(TEXT("type_kind"), Record.TypeKind);
+
+            if (!Record.Path.IsEmpty())
+            {
+                TypeInfo->SetStringField(TEXT("type_path"), Record.Path);
+            }
+            TypesArray.Add(MakeShared<FJsonValueObject>(TypeInfo));
+        }
         Categories.Add(Record.Category);
     }
 
@@ -3468,12 +3495,32 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSh
     {
         CategoriesArray.Add(MakeShared<FJsonValueString>(Category));
     }
+    
+    // Calculate total matching count (before max_results limit)
+    int32 TotalMatchingCount = 0;
+    for (const FVariableTypeRecord& Record : SortedRecords)
+    {
+        if (!Record.bSupportsVariables) continue;
+        if (bHasCategoryFilter && !Record.Category.Equals(CategoryFilter, ESearchCase::IgnoreCase)) continue;
+        if (bHasSearchFilter)
+        {
+            const bool bMatches =
+                Record.Name.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.DisplayName.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.Description.Contains(SearchText, ESearchCase::IgnoreCase) ||
+                Record.Path.Contains(SearchText, ESearchCase::IgnoreCase);
+            if (!bMatches) continue;
+        }
+        TotalMatchingCount++;
+    }
 
     Response->SetBoolField(TEXT("success"), true);
     Response->SetStringField(TEXT("action"), TEXT("search_types"));
     Response->SetArrayField(TEXT("types"), TypesArray);
     Response->SetArrayField(TEXT("categories"), CategoriesArray);
-    Response->SetNumberField(TEXT("total_count"), TypesArray.Num());
+    Response->SetNumberField(TEXT("returned_count"), TypesArray.Num());
+    Response->SetNumberField(TEXT("total_matching"), TotalMatchingCount);
+    Response->SetNumberField(TEXT("total_count"), SortedRecords.Num());
 
     return Response;
 }

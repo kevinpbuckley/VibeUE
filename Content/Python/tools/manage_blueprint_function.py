@@ -41,13 +41,14 @@ def _merge(target: Dict[str, Any], source: Dict[str, Any]) -> None:
 def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
     """Register Blueprint function management tool."""
 
-    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Actions: create, delete, list, list_params, add_param, remove_param, modify_param, add_local_var, remove_local_var, list_local_vars. Use action='help' for all actions and detailed parameter info.")
+    @mcp_instance.tool(description="Blueprint function management: create, delete, params, locals. Actions: create, delete, list, list_params, add_param, remove_param, update_param, add_local_var, remove_local_var, update_local_var, list_local_vars. Use action='help' for all actions and detailed parameter info. For add_param: use param_name, direction, type. For add_local_var: use local_name and type. For update_local_var: use local_name and new_type.")
     def manage_blueprint_function(
         help_action: str = "",
         blueprint_name: str = "",
         action: str = "",
         function_name: str = "",
         param_name: str = "",
+        local_name: str = "",
         direction: str = "",
         type: str = "",
         new_type: str = "",
@@ -56,6 +57,11 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         extra=None,
     ) -> Dict[str, Any]:
         """Blueprint function lifecycle and parameter management.
+        
+        **Available Actions:**
+        - create, delete, list - Function CRUD
+        - list_params, add_param, remove_param, update_param - Parameter management
+        - list_local_vars, add_local_var, remove_local_var, update_local_var - Local variable management
         
         **list_params action:**
         ```json
@@ -71,6 +77,11 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
             "count": 4
         }
         ```
+        
+        **update_local_var action:**
+        Use to change the type of a local variable without removing/recreating it.
+        Example: `manage_blueprint_function(action="update_local_var", blueprint_name="...", 
+                  function_name="MyFunc", local_name="TempVar", new_type="int")`
         
         ##  Integration with Node Management:
         
@@ -90,10 +101,11 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         
         1. Always use `list_params` to discover original function signatures before recreation
         2. The `execute` output pin is auto-created when you add your first output parameter
-        3. Direction must be exactly `"input"` or `"out"` (not "output"!)
+        3. Direction can be `"input"`/`"in"` or `"output"`/`"out"` (all forms accepted)
         4. Type `"real"` from list_params should be `"float"` when adding params
         5. Object types require `"object:"` prefix: `"object:ABP_Enemy_C"`
         6. Use full Blueprint paths: `"/Game/Blueprints/BP_Player"` not `"BP_Player"`
+        7. Use `update_local_var` to change local variable types instead of remove+add
         """
         
         # Handle help action
@@ -108,7 +120,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         if not action:
             return generate_error_response(
                 "manage_blueprint_function", "",
-                "action is required. Available actions: create, delete, list, list_params, add_param, remove_param, modify_param, add_local_var, remove_local_var, list_local_vars"
+                "action is required. Available actions: create, delete, list, list_params, add_param, remove_param, update_param, add_local_var, remove_local_var, update_local_var, list_local_vars"
             )
         
         action_lower = action.lower()
@@ -116,8 +128,8 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         # Define valid actions
         valid_actions = [
             "create", "delete", "list", "list_params",
-            "add_param", "remove_param", "modify_param",
-            "add_local_var", "remove_local_var", "list_local_vars"
+            "add_param", "remove_param", "update_param",
+            "add_local_var", "remove_local_var", "update_local_var", "list_local_vars"
         ]
         
         if action_lower not in valid_actions:
@@ -190,10 +202,16 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
                     f"add_param requires: {', '.join(missing)}",
                     missing_params=missing
                 )
-            if direction not in ["input", "out"]:
+            # Normalize direction: accept input/in and output/out
+            direction_lower = direction.lower() if direction else ""
+            if direction_lower in ["output", "out"]:
+                direction = "out"
+            elif direction_lower in ["input", "in"]:
+                direction = "input"
+            else:
                 return generate_error_response(
                     "manage_blueprint_function", action,
-                    f"direction must be 'input' or 'out' (not 'output'). Got: '{direction}'"
+                    f"direction must be 'input'/'in' or 'output'/'out'. Got: '{direction}'"
                 )
         
         elif action_lower == "remove_param":
@@ -210,7 +228,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
                     missing_params=missing
                 )
         
-        elif action_lower == "modify_param":
+        elif action_lower == "update_param":
             if not blueprint_name:
                 missing.append("blueprint_name")
             if not function_name:
@@ -220,7 +238,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
             if missing:
                 return generate_error_response(
                     "manage_blueprint_function", action,
-                    f"modify_param requires: {', '.join(missing)} plus new_type or new_name",
+                    f"update_param requires: {', '.join(missing)} plus new_type or new_name",
                     missing_params=missing
                 )
         
@@ -229,10 +247,34 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
                 missing.append("blueprint_name")
             if not function_name:
                 missing.append("function_name")
+            # Accept either local_name or param_name for the variable name
+            effective_local_name = local_name or param_name
+            if not effective_local_name:
+                missing.append("local_name")
+            if action_lower == "add_local_var" and not type:
+                missing.append("type")
             if missing:
                 return generate_error_response(
                     "manage_blueprint_function", action,
                     f"{action} requires: {', '.join(missing)}",
+                    missing_params=missing
+                )
+        
+        elif action_lower == "update_local_var":
+            if not blueprint_name:
+                missing.append("blueprint_name")
+            if not function_name:
+                missing.append("function_name")
+            # Accept either local_name or param_name for the variable name
+            effective_local_name = local_name or param_name
+            if not effective_local_name:
+                missing.append("local_name")
+            if not new_type:
+                missing.append("new_type")
+            if missing:
+                return generate_error_response(
+                    "manage_blueprint_function", action,
+                    f"update_local_var requires: {', '.join(missing)}",
                     missing_params=missing
                 )
         
@@ -257,6 +299,7 @@ def register_blueprint_function_tools(mcp_instance: FastMCP) -> None:
         source: Dict[str, Any] = {
             "function_name": function_name,
             "param_name": param_name,
+            "local_name": local_name,
             "direction": direction,
             "type": type,
             "new_type": new_type,

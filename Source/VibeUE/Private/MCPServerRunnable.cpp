@@ -265,7 +265,7 @@ void FMCPServerRunnable::HandleClientConnection(TSharedPtr<FSocket> InClientSock
         }
         
         // Small sleep to prevent tight loop
-        FPlatformProcess::Sleep(0.01f);
+        FPlatformProcess::Sleep(0.005f);  // 5ms
     }
     
     UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Exited message receive loop"));

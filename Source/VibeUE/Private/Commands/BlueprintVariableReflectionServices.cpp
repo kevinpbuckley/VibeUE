@@ -1982,26 +1982,140 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleSearchTypes(cons
         CatalogService.ForceRefresh();
     }
 
+    // Get search criteria - can be at top level or nested in search_criteria object
+    TSharedPtr<FJsonObject> SearchParams = Params;
+    if (const TSharedPtr<FJsonObject>* NestedCriteria = nullptr; Params->TryGetObjectField(TEXT("search_criteria"), NestedCriteria))
+    {
+        SearchParams = *NestedCriteria;
+    }
+
     FTypeQuery Query;
-    Params->TryGetStringField(TEXT("category"), Query.Category);
-    Params->TryGetStringField(TEXT("search_text"), Query.SearchText);
-    Params->TryGetBoolField(TEXT("include_blueprints"), Query.bIncludeBlueprints);
-    Params->TryGetBoolField(TEXT("include_engine_types"), Query.bIncludeEngine);
-    int32 PageOffset = 0; Params->TryGetNumberField(TEXT("page_offset"), PageOffset); Query.PageOffset = PageOffset;
-    int32 MaxResults = 100; Params->TryGetNumberField(TEXT("max_results"), MaxResults); Query.MaxResults = MaxResults;
+    SearchParams->TryGetStringField(TEXT("category"), Query.Category);
+    SearchParams->TryGetStringField(TEXT("search_text"), Query.SearchText);
+    SearchParams->TryGetBoolField(TEXT("include_blueprints"), Query.bIncludeBlueprints);
+    SearchParams->TryGetBoolField(TEXT("include_engine_types"), Query.bIncludeEngine);
+    int32 PageOffset = 0; SearchParams->TryGetNumberField(TEXT("page_offset"), PageOffset); Query.PageOffset = PageOffset;
+    int32 MaxResults = 10; SearchParams->TryGetNumberField(TEXT("max_results"), MaxResults); Query.MaxResults = MaxResults;
+    
+    // Compact mode returns only class_path to reduce token usage
+    bool bCompact = true;
+    SearchParams->TryGetBoolField(TEXT("compact"), bCompact);
+    
+    // Also check top-level params for search_text in case it was passed directly
+    if (Query.SearchText.IsEmpty())
+    {
+        Params->TryGetStringField(TEXT("search_text"), Query.SearchText);
+    }
+    
+    // VALIDATION: Check for invalid category to prevent AI loops
+    if (!Query.Category.IsEmpty())
+    {
+        FString CategoryLower = Query.Category.ToLower();
+        // Valid categories are: Structure, Enum, Object Types, Interface
+        if (!CategoryLower.Equals(TEXT("structure")) && 
+            !CategoryLower.Equals(TEXT("enum")) && 
+            !CategoryLower.Equals(TEXT("object types")) &&
+            !CategoryLower.Equals(TEXT("interface")))
+        {
+            return FResponseSerializer::CreateErrorResponse(
+                TEXT("INVALID_CATEGORY"),
+                FString::Printf(TEXT("Invalid category '%s'. Valid categories: 'Structure', 'Enum', 'Object Types', 'Interface'. For primitive types (float, int, bool, string), do NOT use search_types - use the alias directly with action='create'."), *Query.Category)
+            );
+        }
+    }
+    
+    // VALIDATION: Check if searching for primitive type names - return error with direct solution
+    if (!Query.SearchText.IsEmpty())
+    {
+        FString SearchLower = Query.SearchText.ToLower();
+        if (SearchLower == TEXT("float") || SearchLower == TEXT("int") || SearchLower == TEXT("bool") ||
+            SearchLower == TEXT("string") || SearchLower == TEXT("double") || SearchLower == TEXT("byte") ||
+            SearchLower == TEXT("int64") || SearchLower == TEXT("name") || SearchLower == TEXT("text") ||
+            SearchLower == TEXT("integer") || SearchLower == TEXT("boolean") || SearchLower == TEXT("real"))
+        {
+            return FResponseSerializer::CreateErrorResponse(
+                TEXT("USE_ALIAS_DIRECTLY"),
+                FString::Printf(TEXT("For primitive type '%s', do NOT use search_types. Instead, use action='create' with type_path='%s'. Supported aliases: float, int, bool, string, double, int64, byte, name, text."), *Query.SearchText, *Query.SearchText)
+            );
+        }
+    }
     
     const TArray<FReflectedTypeDescriptor> Results = CatalogService.Query(Query);
     TArray<TSharedPtr<FJsonValue>> JsonArray;
     JsonArray.Reserve(Results.Num());
     for (const FReflectedTypeDescriptor& D : Results)
     {
-        JsonArray.Add(MakeShared<FJsonValueObject>(FResponseSerializer::SerializeTypeDescriptor(D)));
+        if (bCompact)
+        {
+            // Compact: return only the essential class_path for creating variables
+            JsonArray.Add(MakeShared<FJsonValueString>(D.Path.ToString()));
+        }
+        else
+        {
+            JsonArray.Add(MakeShared<FJsonValueObject>(FResponseSerializer::SerializeTypeDescriptor(D)));
+        }
     }
 
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetArrayField(TEXT("types"), JsonArray);
     Data->SetNumberField(TEXT("total_count"), CatalogService.GetCachedTypeCount());
+    Data->SetNumberField(TEXT("returned_count"), Results.Num());
+    
+    // Add hint when no results found
+    if (Results.Num() == 0)
+    {
+        Data->SetStringField(TEXT("hint"), TEXT("No results found. Try broader search_text or different category."));
+    }
+    
     return FResponseSerializer::CreateSuccessResponse(Data);
+}
+
+// Common type name aliases - allows "float" instead of "/Script/CoreUObject.FloatProperty"
+// Only supports primitive property types, not struct types (Vector, Rotator, etc.)
+static FString ExpandTypeAlias(const FString& TypePath)
+{
+    FString Lower = TypePath.TrimStartAndEnd().ToLower();
+    
+    // Direct alias mappings for common primitive types
+    if (Lower == TEXT("float") || Lower == TEXT("real"))
+    {
+        return TEXT("/Script/CoreUObject.FloatProperty");
+    }
+    if (Lower == TEXT("double"))
+    {
+        return TEXT("/Script/CoreUObject.DoubleProperty");
+    }
+    if (Lower == TEXT("int") || Lower == TEXT("int32") || Lower == TEXT("integer"))
+    {
+        return TEXT("/Script/CoreUObject.IntProperty");
+    }
+    if (Lower == TEXT("int64"))
+    {
+        return TEXT("/Script/CoreUObject.Int64Property");
+    }
+    if (Lower == TEXT("bool") || Lower == TEXT("boolean"))
+    {
+        return TEXT("/Script/CoreUObject.BoolProperty");
+    }
+    if (Lower == TEXT("string") || Lower == TEXT("str"))
+    {
+        return TEXT("/Script/CoreUObject.StrProperty");
+    }
+    if (Lower == TEXT("name") || Lower == TEXT("fname"))
+    {
+        return TEXT("/Script/CoreUObject.NameProperty");
+    }
+    if (Lower == TEXT("text") || Lower == TEXT("ftext"))
+    {
+        return TEXT("/Script/CoreUObject.TextProperty");
+    }
+    if (Lower == TEXT("byte") || Lower == TEXT("uint8"))
+    {
+        return TEXT("/Script/CoreUObject.ByteProperty");
+    }
+    
+    // No alias match - return original
+    return TypePath;
 }
 
 // Helper to parse canonical type path string into FTopLevelAssetPath
@@ -2053,16 +2167,18 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSh
     }
     Def.VariableName = FName(*VarNameStr);
 
-    // Require canonical 'type_path'
+    // Require canonical 'type_path' - supports common aliases like "float" for convenience
     FString TypePathStr;
     FTopLevelAssetPath TypePath;
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("type_path"), TypePathStr) || TypePathStr.TrimStartAndEnd().IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_REQUIRED"), TEXT("'variable_config.type_path' must be provided and canonical"));
+        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_REQUIRED"), TEXT("'variable_config.type_path' must be provided. Use search_types action to discover valid type paths, or use aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'."));
     }
+    // Expand common type aliases (e.g., "float" -> "/Script/CoreUObject.FloatProperty")
+    TypePathStr = ExpandTypeAlias(TypePathStr);
     if (!ParseTopLevelAssetPathString(TypePathStr, TypePath))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
+        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'. Use search_types action to discover valid type paths."), *TypePathStr));
     }
     Def.TypePath = TypePath;
 

@@ -127,7 +127,12 @@ TResult<void> FBlueprintLifecycleService::CompileBlueprint(UBlueprint* Blueprint
     // Check for compilation errors
     if (Blueprint->Status == BS_Error)
     {
-        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_NOT_FOUND, TEXT("Blueprint compilation failed with errors"));
+        FString DetailedError = FString::Printf(
+            TEXT("Blueprint '%s' compilation failed with errors. Check the Blueprint editor for details."),
+            *Blueprint->GetName()
+        );
+        
+        return TResult<void>::Error(VibeUE::ErrorCodes::BLUEPRINT_COMPILATION_FAILED, DetailedError);
     }
 
     return TResult<void>::Success();

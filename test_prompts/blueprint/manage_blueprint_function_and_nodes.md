@@ -6,157 +6,157 @@ Tests the full workflow of creating functions with nodes and connecting them. Ru
 
 ## Setup
 
-Create an actor blueprint called FunctionNodeTest in the Blueprints folder.
+Create an actor blueprint called FunctionNodeTest in the Blueprints folder. If it already exists delete it and create a new one.
 
 ---
 
-Add a Health float variable to it.
+Add a Health float variable to FunctionNodeTest.
 
 ---
 
-Open it in the editor.
+Open FunctionNodeTest in the editor.
 
 ---
 
 ## Creating the Function
 
-What functions exist right now?
+What functions exist in FunctionNodeTest right now?
 
 ---
 
-Add a function called CalculateHealth.
+Add a function called CalculateHealth to FunctionNodeTest.
 
 ---
 
-Tell me about that function.
+Tell me about the CalculateHealth function in FunctionNodeTest.
 
 ---
 
-Show the function list again.
+Show the function list for FunctionNodeTest again.
 
 ---
 
 ## Adding Parameters
 
-What parameters does it have?
+What parameters does CalculateHealth have?
 
 ---
 
-Add float inputs for BaseHealth and Modifier.
+Add float inputs called BaseHealth and Modifier to the CalculateHealth function.
 
 ---
 
-Add a float output called ResultHealth.
+Add a float output called ResultHealth to CalculateHealth.
 
 ---
 
-Show me all parameters.
+Show me all parameters on CalculateHealth.
 
 ---
 
-Actually, change Modifier to an integer.
+Change the Modifier parameter in CalculateHealth to an integer type instead of float.
 
 ---
 
-Verify the change.
+Show me the CalculateHealth parameters again to verify the change.
 
 ---
 
 ## Local Variables
 
-What local variables are in the function?
+What local variables are in the CalculateHealth function?
 
 ---
 
-Add float locals called TempResult and Multiplier.
+Add float local variables called TempResult and Multiplier to CalculateHealth.
 
 ---
 
-Show the locals.
+Show the local variables in CalculateHealth.
 
 ---
 
-Change TempResult to integer.
+Change TempResult to an integer type in CalculateHealth.
 
 ---
 
-Remove Multiplier.
+Remove the Multiplier local variable from CalculateHealth.
 
 ---
 
-List the locals again.
+List the local variables in CalculateHealth again to verify.
 
 ---
 
 ## Finding the Right Nodes
 
-What multiply nodes are available? Show me the options.
+What multiply nodes are available in Unreal? Show me the options.
 
 ---
 
-How do I get the Health variable in a graph?
+How do I get the Health variable from FunctionNodeTest into a graph?
 
 ---
 
-What about print string for debugging?
+What print string nodes are available for debugging?
 
 ---
 
 ## Adding Nodes to the Function
 
-What nodes are in CalculateHealth right now?
+What nodes are in the CalculateHealth function graph right now?
 
 ---
 
-Add a float to int conversion node at position 200, 100.
+Add a Truncate node (FTrunc - converts float to integer) to CalculateHealth at position 200, 100.
 
 ---
 
-Add a multiply node at 400, 100.
+Add a multiply node to CalculateHealth at position 400, 100.
 
 ---
 
-Show me the nodes in the function now.
+Show me the nodes in CalculateHealth now.
 
 ---
 
-Tell me about the pins on those nodes.
+Tell me about the pins on the nodes in CalculateHealth.
 
 ---
 
 ## Wiring It Up
 
-Connect the BaseHealth parameter to the multiply A input.
+Connect the BaseHealth parameter to the multiply node's input in CalculateHealth.
 
 ---
 
-Connect Modifier to the conversion node input.
+Connect the Modifier parameter to the conversion node input in CalculateHealth.
 
 ---
 
-Connect the conversion output to multiply B.
+Connect the conversion output to the multiply node's B input in CalculateHealth.
 
 ---
 
-Connect the multiply result to the output.
+Connect the multiply result to the ResultHealth output in CalculateHealth.
 
 ---
 
-Show me the connections to make sure it's right.
+Show me the connections in CalculateHealth to make sure it's wired correctly.
 
 ---
 
 ## Compiling and Testing
 
-Compile the blueprint.
+Compile the FunctionNodeTest blueprint.
 
 ---
 
-Check that it compiled successfully.
+Check that FunctionNodeTest compiled successfully.
 
 ---
 
-Run the function with some test values to verify.
+Run the CalculateHealth function with some test values to verify it works.
 
 ---
 
