@@ -747,6 +747,12 @@ FActorOperationResult FLevelActorService::AddActor(const FActorAddParams& Params
 		NewActor->SetActorLabel(Params.ActorName);
 	}
 	
+	// Explicitly set rotation after spawn (spawn transform may be overridden by actor defaults)
+	if (!Params.Rotation.IsZero())
+	{
+		NewActor->SetActorRotation(Params.Rotation);
+	}
+	
 	EndTransaction();
 	
 	// Force viewport refresh so the new actor is visible immediately
