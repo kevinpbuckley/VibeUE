@@ -119,12 +119,18 @@ def register_level_actor_tools(mcp: FastMCP):
                     missing_params=["actor_class"]
                 )
             params["actor_class"] = effective_actor_class
-            params["actor_name"] = extra.get("actor_name", "")
+            # Use actor_label as the name for the new actor (LLM passes name via actor_label)
+            # Fall back to extra.actor_name for backwards compatibility
+            params["actor_name"] = actor_label or extra.get("actor_name", "")
             if location:
                 params["spawn_location"] = location
-            spawn_rotation = extra.get("spawn_rotation")
-            if spawn_rotation:
-                params["spawn_rotation"] = spawn_rotation
+            # Use top-level rotation parameter, fall back to extra.spawn_rotation
+            if rotation:
+                params["spawn_rotation"] = rotation
+            else:
+                spawn_rotation = extra.get("spawn_rotation")
+                if spawn_rotation:
+                    params["spawn_rotation"] = spawn_rotation
             spawn_scale = extra.get("spawn_scale")
             if spawn_scale:
                 params["spawn_scale"] = spawn_scale
