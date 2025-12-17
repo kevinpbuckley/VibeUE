@@ -98,7 +98,7 @@ TResult<TArray<FMaterialExpressionTypeInfo>> FMaterialNodeService::DiscoverExpre
         TypeInfo.ClassName = Class->GetName();
         TypeInfo.DisplayName = Class->GetName().Replace(TEXT("MaterialExpression"), TEXT(""));
         
-        // Get category from metadata
+        // Get category from metadata (note: most UE5 expression classes don't have this)
         const FString* CategoryMeta = Class->FindMetaData(TEXT("Category"));
         TypeInfo.Category = CategoryMeta ? *CategoryMeta : TEXT("Misc");
         
@@ -141,6 +141,18 @@ TResult<TArray<FMaterialExpressionTypeInfo>> FMaterialNodeService::DiscoverExpre
         {
             break;
         }
+    }
+    
+    // If category was specified but no results found, provide helpful error
+    if (Results.Num() == 0 && !Category.IsEmpty())
+    {
+        return TResult<TArray<FMaterialExpressionTypeInfo>>::Error(
+            VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("No expression types found for category '%s'. "
+                "RECOMMENDATION: Don't use category filter - use search_term instead. "
+                "Examples: search_term='Constant' for scalar constants, search_term='Vector' for vectors, "
+                "search_term='Parameter' for parameters, search_term='Texture' for texture samplers."),
+                *Category));
     }
     
     // Sort by category then name
@@ -461,9 +473,15 @@ TResult<void> FMaterialNodeService::ConnectExpressions(
     FExpressionInput* TargetInput = FindInputByName(TargetExpr, TargetInputName);
     if (!TargetInput)
     {
+        TArray<FString> ValidInputs = GetExpressionInputNames(TargetExpr);
+        FString ValidInputsStr = ValidInputs.Num() > 0 
+            ? FString::Join(ValidInputs, TEXT(", "))
+            : TEXT("none - this expression has no inputs");
+            
         return TResult<void>::Error(
-            VibeUE::ErrorCodes::EXPRESSION_NOT_FOUND,
-            FString::Printf(TEXT("Input not found: %s"), *TargetInputName)
+            VibeUE::ErrorCodes::EXPRESSION_INPUT_NOT_FOUND,
+            FString::Printf(TEXT("Input '%s' not found on target expression. Valid inputs: %s"), 
+                *TargetInputName, *ValidInputsStr)
         );
     }
     
@@ -503,9 +521,15 @@ TResult<void> FMaterialNodeService::DisconnectInput(
     FExpressionInput* Input = FindInputByName(Expression, InputName);
     if (!Input)
     {
+        TArray<FString> ValidInputs = GetExpressionInputNames(Expression);
+        FString ValidInputsStr = ValidInputs.Num() > 0 
+            ? FString::Join(ValidInputs, TEXT(", "))
+            : TEXT("none - this expression has no inputs");
+            
         return TResult<void>::Error(
-            VibeUE::ErrorCodes::EXPRESSION_NOT_FOUND,
-            FString::Printf(TEXT("Input not found: %s"), *InputName)
+            VibeUE::ErrorCodes::EXPRESSION_INPUT_NOT_FOUND,
+            FString::Printf(TEXT("Input '%s' not found. Valid inputs: %s"), 
+                *InputName, *ValidInputsStr)
         );
     }
     
@@ -543,10 +567,19 @@ TResult<void> FMaterialNodeService::ConnectToMaterialProperty(
     FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Connect to Material Property", "Connect to Material Property"));
     Material->Modify();
     
+    // Normalize OutputName: "Output_0", "Output_1" etc. should become empty string
+    // since UMaterialEditingLibrary expects empty for default output or actual output name
+    FString NormalizedOutputName = OutputName;
+    if (NormalizedOutputName.StartsWith(TEXT("Output_")))
+    {
+        // For synthesized output names like "Output_0", pass empty to use default
+        NormalizedOutputName = TEXT("");
+    }
+    
     // Use UMaterialEditingLibrary for this
     bool bSuccess = UMaterialEditingLibrary::ConnectMaterialProperty(
         Expression,
-        OutputName,
+        NormalizedOutputName,
         StringToMaterialProperty(MaterialProperty)
     );
     
@@ -1263,7 +1296,18 @@ int32 FMaterialNodeService::FindOutputIndexByName(UMaterialExpression* Expressio
         }
     }
     
-    // Try numeric index
+    // Handle synthetic names like "Output_0", "Output_1", etc.
+    if (OutputName.StartsWith(TEXT("Output_")))
+    {
+        FString IndexStr = OutputName.RightChop(7); // Remove "Output_"
+        int32 Index = FCString::Atoi(*IndexStr);
+        if (Index >= 0 && Index < Outputs.Num())
+        {
+            return Index;
+        }
+    }
+    
+    // Try numeric index (for backwards compat with raw numbers like "0")
     int32 Index = FCString::Atoi(*OutputName);
     if (Index >= 0 && Index < Outputs.Num())
     {
@@ -1271,6 +1315,53 @@ int32 FMaterialNodeService::FindOutputIndexByName(UMaterialExpression* Expressio
     }
     
     return 0; // Default to first output
+}
+
+TArray<FString> FMaterialNodeService::GetExpressionInputNames(UMaterialExpression* Expression)
+{
+    TArray<FString> Names;
+    if (!Expression) return Names;
+    
+    PRAGMA_DISABLE_DEPRECATION_WARNINGS
+    TArrayView<FExpressionInput*> Inputs = Expression->GetInputsView();
+    PRAGMA_ENABLE_DEPRECATION_WARNINGS
+    
+    for (int32 i = 0; i < Inputs.Num(); i++)
+    {
+        FName Name = Expression->GetInputName(i);
+        if (Name != NAME_None)
+        {
+            Names.Add(Name.ToString());
+        }
+        else
+        {
+            Names.Add(FString::Printf(TEXT("Input_%d"), i));
+        }
+    }
+    
+    return Names;
+}
+
+TArray<FString> FMaterialNodeService::GetExpressionOutputNames(UMaterialExpression* Expression)
+{
+    TArray<FString> Names;
+    if (!Expression) return Names;
+    
+    TArray<FExpressionOutput>& Outputs = Expression->GetOutputs();
+    
+    for (int32 i = 0; i < Outputs.Num(); i++)
+    {
+        if (Outputs[i].OutputName != NAME_None)
+        {
+            Names.Add(Outputs[i].OutputName.ToString());
+        }
+        else
+        {
+            Names.Add(FString::Printf(TEXT("Output_%d"), i));
+        }
+    }
+    
+    return Names;
 }
 
 UClass* FMaterialNodeService::ResolveExpressionClass(const FString& ClassName)

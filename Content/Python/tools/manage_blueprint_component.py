@@ -35,9 +35,9 @@ def register_blueprint_component_tools(mcp: FastMCP):
         component_order: List[str] = None,
         remove_children: bool = True,
         # Discovery parameters
-        category: str = "",
-        base_class: str = "",
-        search_text: str = "",
+        category: Optional[str] = "",
+        base_class: Optional[str] = "",
+        search_text: Optional[str] = "",
         include_abstract: bool = False,
         include_deprecated: bool = False,
         include_property_values: bool = False,
@@ -80,6 +80,11 @@ def register_blueprint_component_tools(mcp: FastMCP):
                 )
             
             # Route to appropriate backend command
+            
+            # Normalize Optional[str] params to ensure they're never None
+            category = category or ""
+            base_class = base_class or ""
+            search_text = search_text or ""
             
             if action == "search_types":
                 # No required params for search_types

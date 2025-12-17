@@ -57,6 +57,9 @@ public:
     int32 GetMaxTokens() const { return MaxTokens; }
     bool GetParallelToolCalls() const { return bParallelToolCalls; }
     
+    /** Fetch model info from /v1/models endpoint */
+    void FetchModelInfo(TFunction<void(bool bSuccess, int32 ContextLength, const FString& ModelId)> OnComplete);
+    
     /** Default values (optimized for coding assistants) */
     static constexpr float DefaultTemperature = 0.2f;
     static constexpr float DefaultTopP = 0.95f;

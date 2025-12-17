@@ -43,7 +43,7 @@ Material Output Actions:
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Union
 from mcp.server.fastmcp import FastMCP, Context
 
 logger = logging.getLogger("UnrealMCP")
@@ -53,7 +53,20 @@ def register_material_node_tools(mcp: FastMCP):
     """Register material node management tool with MCP server."""
     logger.info("Registering material node management tools...")
 
-    @mcp.tool(description="Material graph node operations: discover types, create expressions, connect pins, configure properties. Actions: discover_types, get_categories, create, delete, move, list, get_details, get_pins, connect, disconnect, connect_to_output, disconnect_output, list_connections, get_property, set_property, list_properties, promote_to_parameter, create_parameter, set_parameter_metadata, get_output_properties, get_output_connections. Use action='help' for all actions and detailed parameter info.")
+    @mcp.tool(description="""Material graph node operations: discover types, create expressions, connect pins, configure properties. 
+Actions: discover_types, get_categories, create, delete, move, list, get_details, get_pins, connect, disconnect, connect_to_output, disconnect_output, list_connections, get_property, set_property, list_properties, promote_to_parameter, create_parameter, set_parameter_metadata, get_output_properties, get_output_connections. 
+Use action='help' for all actions and detailed parameter info.
+
+DISCOVER_TYPES - Finding material expression classes:
+- Use search_term with keywords like 'Constant', 'Texture', 'Parameter', 'Add', 'Multiply'
+- category filter often fails - prefer search_term instead
+- Example: manage_material_node(action=\"discover_types\", search_term=\"Constant\")
+
+CONNECT_TO_OUTPUT - Connecting expressions to material outputs (BaseColor, Roughness, etc):
+- REQUIRED: expression_id, material_property (NOT output_type!)
+- material_property: 'BaseColor', 'Roughness', 'Metallic', 'Normal', 'EmissiveColor', etc.
+- output_name: Optional - which output pin to use (default first output)
+- Example: manage_material_node(action=\"connect_to_output\", material_path=\"/Game/M_Test\", expression_id=\"expr_id\", material_property=\"BaseColor\")""")
     def manage_material_node(
         ctx: Context,
         action: str,
@@ -76,19 +89,23 @@ def register_material_node_tools(mcp: FastMCP):
         material_property: str = "",
         # Property operations
         property_name: str = "",
-        value: str = "",
+        value: Union[str, int, float, bool] = "",
         # Parameter operations
         parameter_name: str = "",
         parameter_type: str = "",
         group_name: str = "",
-        default_value: str = "",
+        default_value: Union[str, int, float, bool] = "",
         sort_priority: int = 0,
-        # Discovery options
-        category: str = "",
-        search_term: str = "",
+        # Discovery options - Optional to handle null from LLM
+        category: Optional[str] = "",
+        search_term: Optional[str] = "",
         max_results: int = 100,
     ) -> Dict[str, Any]:
         """Route to material node action handlers."""
+        # Normalize None to empty string for optional params
+        category = category or ""
+        search_term = search_term or ""
+        
         # Handle help action
         if action and action.lower() == "help":
             from help_system import generate_help_response
@@ -281,8 +298,9 @@ def register_material_node_tools(mcp: FastMCP):
         # Property operations
         if property_name:
             params["property_name"] = property_name
-        if value:
-            params["value"] = value
+        if value != "":
+            # Convert to string for C++ side (accepts int, float, bool, or string)
+            params["value"] = str(value) if not isinstance(value, str) else value
         
         # Parameter operations
         if parameter_name:
@@ -291,8 +309,9 @@ def register_material_node_tools(mcp: FastMCP):
             params["parameter_type"] = parameter_type
         if group_name:
             params["group_name"] = group_name
-        if default_value:
-            params["default_value"] = default_value
+        if default_value != "":
+            # Convert to string for C++ side (accepts int, float, bool, or string)
+            params["default_value"] = str(default_value) if not isinstance(default_value, str) else default_value
         if sort_priority != 0:
             params["sort_priority"] = sort_priority
         

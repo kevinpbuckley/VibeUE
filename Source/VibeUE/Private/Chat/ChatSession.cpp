@@ -245,6 +245,20 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     {
         FChatMessage& Message = Messages[CurrentStreamingMessageIndex];
         
+        // Extract and log thinking content (model reasoning) before stripping
+        FString ThinkingContent = ExtractThinkingContent(Message.Content);
+        if (!ThinkingContent.IsEmpty())
+        {
+            UE_LOG(LogChatSession, Log, TEXT("Model reasoning (%d chars): %s"), 
+                ThinkingContent.Len(), 
+                ThinkingContent.Len() > 500 ? *(ThinkingContent.Left(500) + TEXT("...")) : *ThinkingContent);
+            // Store thinking content for potential UI display (collapsible section)
+            Message.ThinkingContent = ThinkingContent;
+        }
+        
+        // Strip thinking tags from visible content - model benefits from reasoning, user sees clean output
+        Message.Content = StripThinkingTags(Message.Content);
+        
         // If the message is empty and has no tool calls, remove it (failed/empty response)
         if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
         {
@@ -391,6 +405,9 @@ void FChatSession::ExecuteNextToolInQueue()
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
             
+            // Loop detection is now handled via prompt-based self-awareness instructions
+            // The model follows guidelines in vibeue.instructions.md to self-limit retries
+            
             // Debug log tool result content
             if (IsDebugModeEnabled())
             {
@@ -403,8 +420,15 @@ void FChatSession::ExecuteNextToolInQueue()
                 UE_LOG(LogChatSession, Log, TEXT("================================="));
             }
             
+            // Truncate tool results using Copilot-style smart truncation
+            // - Token-based limits (not just character count)
+            // - Keep 40% from beginning, 60% from end (end often has important results)
+            // - Insert truncation message in middle
+            FString TruncatedContent = bSuccess ? Result.Content : Result.ErrorMessage;
+            TruncatedContent = SmartTruncateToolResult(TruncatedContent, ToolCallCopy.ToolName);
+            
             // Add tool result as a separate "tool" message
-            FChatMessage ToolResultMsg(TEXT("tool"), bSuccess ? Result.Content : Result.ErrorMessage);
+            FChatMessage ToolResultMsg(TEXT("tool"), TruncatedContent);
             ToolResultMsg.ToolCallId = ToolCallCopy.Id;
             Messages.Add(ToolResultMsg);
             OnMessageAdded.ExecuteIfBound(ToolResultMsg);
@@ -714,6 +738,99 @@ int32 FChatSession::EstimateTokenCount(const FString& Text)
     // Approximate: ~4 characters per token for English text
     // This is a rough estimate; actual tokenization varies by model
     return FMath::CeilToInt(Text.Len() / 4.0f);
+}
+
+FString FChatSession::SmartTruncateToolResult(const FString& Content, const FString& ToolName) const
+{
+    // Copilot-style smart truncation:
+    // - Use 50% of context window as max for ALL tool results combined
+    // - Per-tool result limit: ~2000 tokens (8000 chars) for most tools
+    // - Larger limit for certain tools that need more context
+    // - Keep 40% from beginning, 60% from end (end often has important results/errors)
+    
+    const int32 ContextLength = GetCurrentModelContextLength();
+    
+    // Calculate per-tool-result token budget
+    // Total tool result budget = 50% of context
+    // Individual tool results get a fraction of that
+    const float MaxToolResponsePct = 0.5f;
+    const int32 TotalToolResultBudget = FMath::FloorToInt(ContextLength * MaxToolResponsePct);
+    
+    // Per-tool limits - some tools naturally produce larger outputs
+    int32 MaxTokensForTool = 2000;  // Default: ~8000 chars
+    
+    // Tools that benefit from larger outputs
+    if (ToolName.Contains(TEXT("list")) || 
+        ToolName.Contains(TEXT("search")) ||
+        ToolName.Contains(TEXT("discover")) ||
+        ToolName.Contains(TEXT("get_all")))
+    {
+        MaxTokensForTool = 3000;  // ~12000 chars for list/search results
+    }
+    else if (ToolName.Contains(TEXT("summarize")) ||
+             ToolName.Contains(TEXT("info")) ||
+             ToolName.Contains(TEXT("details")))
+    {
+        MaxTokensForTool = 4000;  // ~16000 chars for detailed info
+    }
+    
+    // Convert token limit to approximate character limit
+    const float CharsPerToken = 4.0f;
+    const int32 MaxChars = FMath::FloorToInt(MaxTokensForTool * CharsPerToken);
+    
+    // Check if truncation is needed
+    const int32 ContentTokens = EstimateTokenCount(Content);
+    if (ContentTokens <= MaxTokensForTool)
+    {
+        return Content;  // No truncation needed
+    }
+    
+    UE_LOG(LogChatSession, Log, TEXT("SmartTruncate: Tool '%s' result has %d tokens (max: %d), truncating %d chars"), 
+        *ToolName, ContentTokens, MaxTokensForTool, Content.Len());
+    
+    // Copilot truncation strategy: keep 40% from start, 60% from end
+    // This preserves structure at the beginning and important results at the end
+    const FString TruncationMessage = TEXT("\n\n[...Tool response truncated. Use more specific queries for full results...]\n\n");
+    const int32 TruncationMessageLen = TruncationMessage.Len();
+    
+    // Calculate how many chars we can keep
+    const int32 AvailableChars = MaxChars - TruncationMessageLen;
+    const int32 KeepFromStart = FMath::FloorToInt(AvailableChars * 0.4f);  // 40% from beginning
+    const int32 KeepFromEnd = AvailableChars - KeepFromStart;              // 60% from end
+    
+    // Try to find good truncation points (JSON boundaries)
+    int32 StartCutPoint = KeepFromStart;
+    int32 EndCutPoint = Content.Len() - KeepFromEnd;
+    
+    // Look for a good start cut point (end of a JSON element)
+    for (int32 i = KeepFromStart; i > KeepFromStart - 200 && i > 0; --i)
+    {
+        TCHAR C = Content[i];
+        if (C == TEXT('}') || C == TEXT(']') || C == TEXT(',') || C == TEXT('\n'))
+        {
+            StartCutPoint = i + 1;
+            break;
+        }
+    }
+    
+    // Look for a good end cut point (start of a JSON element)
+    for (int32 i = EndCutPoint; i < EndCutPoint + 200 && i < Content.Len(); ++i)
+    {
+        TCHAR C = Content[i];
+        if (C == TEXT('{') || C == TEXT('[') || C == TEXT('"') || C == TEXT('\n'))
+        {
+            EndCutPoint = i;
+            break;
+        }
+    }
+    
+    // Build truncated result
+    FString Result = Content.Left(StartCutPoint) + TruncationMessage + Content.RightChop(EndCutPoint);
+    
+    UE_LOG(LogChatSession, Log, TEXT("SmartTruncate: Truncated from %d to %d chars (kept %d from start, %d from end)"), 
+        Content.Len(), Result.Len(), StartCutPoint, Content.Len() - EndCutPoint);
+    
+    return Result;
 }
 
 int32 FChatSession::GetCurrentModelContextLength() const
@@ -1513,3 +1630,115 @@ void FChatSession::ApplyLLMParametersToClient()
             bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 }
+
+// ============ Thinking Tag Handling ============
+
+FString FChatSession::StripThinkingTags(const FString& Text)
+{
+    FString Result = Text;
+    
+    // Strip <think>...</think> blocks (Qwen3 reasoning format)
+    // Use simple iterative approach since FString doesn't have full regex support
+    int32 ThinkStart = Result.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
+    while (ThinkStart != INDEX_NONE)
+    {
+        int32 ThinkEnd = Result.Find(TEXT("</think>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ThinkStart);
+        if (ThinkEnd != INDEX_NONE)
+        {
+            // Remove the entire <think>...</think> block
+            Result.RemoveAt(ThinkStart, ThinkEnd + 8 - ThinkStart); // 8 = len("</think>")
+        }
+        else
+        {
+            // Unclosed <think> tag - remove from <think> to end of string
+            Result = Result.Left(ThinkStart);
+            break;
+        }
+        ThinkStart = Result.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
+    }
+    
+    // Strip <reasoning>...</reasoning> blocks
+    int32 ReasonStart = Result.Find(TEXT("<reasoning>"), ESearchCase::IgnoreCase);
+    while (ReasonStart != INDEX_NONE)
+    {
+        int32 ReasonEnd = Result.Find(TEXT("</reasoning>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ReasonStart);
+        if (ReasonEnd != INDEX_NONE)
+        {
+            Result.RemoveAt(ReasonStart, ReasonEnd + 12 - ReasonStart); // 12 = len("</reasoning>")
+        }
+        else
+        {
+            Result = Result.Left(ReasonStart);
+            break;
+        }
+        ReasonStart = Result.Find(TEXT("<reasoning>"), ESearchCase::IgnoreCase);
+    }
+    
+    // Strip <thought>...</thought> blocks
+    int32 ThoughtStart = Result.Find(TEXT("<thought>"), ESearchCase::IgnoreCase);
+    while (ThoughtStart != INDEX_NONE)
+    {
+        int32 ThoughtEnd = Result.Find(TEXT("</thought>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ThoughtStart);
+        if (ThoughtEnd != INDEX_NONE)
+        {
+            Result.RemoveAt(ThoughtStart, ThoughtEnd + 10 - ThoughtStart); // 10 = len("</thought>")
+        }
+        else
+        {
+            Result = Result.Left(ThoughtStart);
+            break;
+        }
+        ThoughtStart = Result.Find(TEXT("<thought>"), ESearchCase::IgnoreCase);
+    }
+    
+    return Result.TrimStartAndEnd();
+}
+
+FString FChatSession::ExtractThinkingContent(const FString& Text)
+{
+    TArray<FString> ThinkingParts;
+    
+    // Extract <think>...</think> blocks
+    int32 SearchStart = 0;
+    while (true)
+    {
+        int32 ThinkStart = Text.Find(TEXT("<think>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (ThinkStart == INDEX_NONE) break;
+        
+        int32 ContentStart = ThinkStart + 7; // len("<think>")
+        int32 ThinkEnd = Text.Find(TEXT("</think>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+        if (ThinkEnd == INDEX_NONE) break;
+        
+        FString Content = Text.Mid(ContentStart, ThinkEnd - ContentStart).TrimStartAndEnd();
+        if (!Content.IsEmpty())
+        {
+            ThinkingParts.Add(Content);
+        }
+        SearchStart = ThinkEnd + 8; // len("</think>")
+    }
+    
+    // Extract <reasoning>...</reasoning> blocks
+    SearchStart = 0;
+    while (true)
+    {
+        int32 Start = Text.Find(TEXT("<reasoning>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (Start == INDEX_NONE) break;
+        
+        int32 ContentStart = Start + 11; // len("<reasoning>")
+        int32 End = Text.Find(TEXT("</reasoning>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+        if (End == INDEX_NONE) break;
+        
+        FString Content = Text.Mid(ContentStart, End - ContentStart).TrimStartAndEnd();
+        if (!Content.IsEmpty())
+        {
+            ThinkingParts.Add(Content);
+        }
+        SearchStart = End + 12;
+    }
+    
+    // Join all thinking parts
+    return FString::Join(ThinkingParts, TEXT("\n---\n"));
+}
+
+// Loop detection removed - now using prompt-based self-awareness instructions
+// See vibeue.instructions.md for the loop prevention guidelines the model follows

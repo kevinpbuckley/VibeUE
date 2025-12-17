@@ -10,6 +10,7 @@ Base Material Actions:
 - create: Create a new material asset
 - create_instance: Create a new material instance (MIC) from a parent material
 - get_info: Get comprehensive material information
+- summarize: Get AI-optimized summary with clear categorization of what's editable vs what needs graph nodes (USE THIS FIRST!)
 - list_properties: List all editable properties via reflection
 - get_property: Get a property value
 - get_property_info: Get detailed property metadata
@@ -33,6 +34,10 @@ Material Instance Actions:
 - set_instance_texture_parameter: Set a texture parameter override
 - clear_instance_parameter_override: Remove parameter override, revert to parent
 - save_instance: Save material instance to disk
+
+IMPORTANT: Material inputs like Roughness, BaseColor, Metallic etc. are NOT simple 
+properties - they are graph connections. Use 'summarize' action to understand the
+difference, then use manage_material_node to set these values via the material graph.
 """
 
 import logging
@@ -46,7 +51,7 @@ def register_material_tools(mcp: FastMCP):
     """Register material management tool with MCP server."""
     logger.info("Registering material management tools...")
 
-    @mcp.tool(description="Material and material instance management: create, configure properties, manage parameters. Base actions: create, save, compile, refresh_editor, get_info, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default. Instance actions: create_instance, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance. Use action='help' for all actions and detailed parameter info.")
+    @mcp.tool(description="Material and material instance management: create, configure properties, manage parameters. Base actions: create, save, compile, refresh_editor, get_info, summarize, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default. Instance actions: create_instance, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance. Use action='help' for all actions and detailed parameter info. IMPORTANT: Use 'summarize' action first to understand what can be edited vs what needs material graph nodes.")
     def manage_material(
         ctx: Context,
         action: str,
@@ -66,7 +71,7 @@ def register_material_tools(mcp: FastMCP):
         # Property operations
         property_name: str = "",
         property_value: Union[str, int, float, bool] = "",
-        value: str = "",  # Alias for property_value (used by some actions)
+        value: Union[str, int, float, bool] = "",  # Alias for property_value (used by some actions - accepts numbers or strings)
         properties: Optional[Dict[str, Any]] = None,
         include_advanced: bool = False,
         # Parameter operations
@@ -193,7 +198,13 @@ def register_material_tools(mcp: FastMCP):
         if property_name:
             params["property_name"] = property_name
         # Support both property_value and value parameters (value is alias)
-        actual_value = value if value else (str(property_value) if property_value != "" else "")
+        # Convert to string for Unreal side
+        if value != "":
+            actual_value = str(value)
+        elif property_value != "":
+            actual_value = str(property_value)
+        else:
+            actual_value = ""
         if actual_value:
             params["value"] = actual_value
         if properties:

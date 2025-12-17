@@ -1473,33 +1473,64 @@ def generate_help_response(tool_name: str, help_action: Optional[str] = None) ->
     
     # If specific action requested, return detailed action help
     if help_action:
-        if help_action not in tool_help["actions"]:
-            available_actions = _get_available_actions(tool_name)
+        available_actions = _get_available_actions(tool_name)
+        
+        # Check if action exists in detailed help
+        if help_action in tool_help["actions"]:
+            action_info = tool_help["actions"][help_action]
             return {
-                "success": False,
-                "error": f"Action '{help_action}' not found",
-                "available_actions": available_actions,
-                "suggestion": f"Use action='help' without help_action to see all available actions"
+                "success": True,
+                "tool": tool_name,
+                "action": help_action,
+                "description": action_info["description"],
+                "parameters": action_info.get("parameters", {}),
+                "example": action_info.get("example", ""),
+                "help_type": "action_detail"
             }
         
-        action_info = tool_help["actions"][help_action]
+        # Check if action exists in overrides (valid action but no detailed help)
+        if help_action in available_actions:
+            topic_name = tool_help.get("topic")
+            response = {
+                "success": True,
+                "tool": tool_name,
+                "action": help_action,
+                "description": f"Action '{help_action}' is available. Detailed parameter help not documented yet.",
+                "suggestion": f"Try the action directly or see the tool description for parameter hints.",
+                "help_type": "action_brief"
+            }
+            # Include topic content if available
+            if topic_name:
+                topic_result = _load_topic_content(topic_name)
+                if topic_result.get("success"):
+                    response["topic_guide"] = topic_result.get("content", "")
+            return response
+        
+        # Action not found anywhere
         return {
-            "success": True,
-            "tool": tool_name,
-            "action": help_action,
-            "description": action_info["description"],
-            "parameters": action_info.get("parameters", {}),
-            "example": action_info.get("example", ""),
-            "help_type": "action_detail"
+            "success": False,
+            "error": f"Action '{help_action}' not found",
+            "available_actions": available_actions,
+            "suggestion": f"Use action='help' without help_action to see all available actions"
         }
     
     # Return overview of all actions
+    # Use overrides if available to get the complete action list
+    all_actions = _get_available_actions(tool_name)
     action_list = []
-    for action_name, action_info in tool_help["actions"].items():
-        action_list.append({
-            "action": action_name,
-            "description": action_info["description"]
-        })
+    for action_name in all_actions:
+        if action_name in tool_help["actions"]:
+            action_info = tool_help["actions"][action_name]
+            action_list.append({
+                "action": action_name,
+                "description": action_info["description"]
+            })
+        else:
+            # Action exists but no detailed help - add with brief description
+            action_list.append({
+                "action": action_name,
+                "description": f"(Use help_action='{action_name}' for topic guide)"
+            })
     
     response = {
         "success": True,

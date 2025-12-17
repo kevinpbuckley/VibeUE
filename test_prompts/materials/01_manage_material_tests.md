@@ -92,7 +92,7 @@ Create an instance of MaterialTest called RedVariant.
 
 ---
 
-Set some scalar and color parameters to make it red.
+Set the roughness parameter on the instance to 0.8.
 
 ---
 

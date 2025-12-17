@@ -64,8 +64,8 @@ def register_umg_tools(mcp: FastMCP):
         remove_from_variables: bool = True,
         
         # Discovery/search options
-        category: str = "",
-        search_text: str = "",
+        category: Optional[str] = "",
+        search_text: Optional[str] = "",
         include_custom: bool = True,
         include_engine: bool = True,
         parent_compatibility: str = "",
@@ -91,6 +91,10 @@ def register_umg_tools(mcp: FastMCP):
         try:
             # Normalize action to lowercase
             action = action.lower().strip()
+            
+            # Normalize Optional[str] params to ensure they're never None
+            category = category or ""
+            search_text = search_text or ""
             
             # Validate action
             valid_actions = [

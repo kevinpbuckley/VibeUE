@@ -244,6 +244,9 @@ public:
     /** Get MCP client */
     TSharedPtr<FMCPClient> GetMCPClient() const { return MCPClient; }
     
+    /** Get VibeUE API client */
+    TSharedPtr<FVibeUEAPIClient> GetVibeUEClient() const { return VibeUEClient; }
+    
     /** Get available MCP tools */
     const TArray<FMCPTool>& GetAvailableTools() const;
     
@@ -406,6 +409,25 @@ private:
     /** Estimate token count for a string (approximate: ~4 chars per token) */
     static int32 EstimateTokenCount(const FString& Text);
     
+    /** Smart truncate tool result using Copilot-style approach:
+     *  - Token-based limits
+     *  - Keep 40% from beginning, 60% from end
+     *  - Insert truncation message in middle
+     */
+    FString SmartTruncateToolResult(const FString& Content, const FString& ToolName) const;
+    
+    /** Strip thinking/reasoning tags from model output.
+     *  Some models (Qwen3, Claude, etc.) output chain-of-thought in special tags.
+     *  This content should not be included in final output.
+     */
+    static FString StripThinkingTags(const FString& Text);
+    
+    /** Extract thinking/reasoning content from model output.
+     *  Returns the content from <think>...</think> and similar tags.
+     *  Used for logging and potential UI display in a collapsible section.
+     */
+    static FString ExtractThinkingContent(const FString& Text);
+    
     /** Get the current model's context length */
     int32 GetCurrentModelContextLength() const;
     
@@ -450,4 +472,7 @@ private:
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;
+    
+    // Loop detection is handled via prompt-based self-awareness instructions
+    // See vibeue.instructions.md for details
 };

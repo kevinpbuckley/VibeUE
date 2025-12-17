@@ -21,12 +21,8 @@ FString FVibeUEAPIClient::GetDefaultEndpoint()
 
 FString FVibeUEAPIClient::GetDefaultSystemPrompt()
 {
-    return TEXT(
-        "You are an AI assistant helping with Unreal Engine game development. "
-        "You have access to the Model Context Protocol (MCP) tools to interact with the Unreal Engine editor. "
-        "When the user asks you to perform actions in the editor, use the appropriate tools. "
-        "Be helpful, concise, and focus on the task at hand."
-    );
+    // Use shared system prompt loading from base class
+    return FLLMClientBase::LoadSystemPromptFromFile();
 }
 
 FVibeUEAPIClient::FVibeUEAPIClient()
@@ -189,7 +185,98 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     Request->SetVerb(TEXT("POST"));
     Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
     Request->SetHeader(ApiKeyHeader, ApiKey);
+    // Disable keep-alive to prevent stale connections causing stuck requests
+    Request->SetHeader(TEXT("Connection"), TEXT("close"));
     Request->SetContentAsString(RequestBodyString);
+    // Set timeout to 30 seconds to fail fast on stuck connections
+    Request->SetTimeout(30.0f);
 
     return Request;
+}
+
+void FVibeUEAPIClient::FetchModelInfo(TFunction<void(bool bSuccess, int32 ContextLength, const FString& ModelId)> OnComplete)
+{
+    if (!OnComplete)
+    {
+        return;
+    }
+    
+    // Build the models endpoint URL from the chat endpoint
+    // e.g., https://llm.vibeue.com/v1/chat/completions -> https://llm.vibeue.com/v1/models
+    FString ModelsUrl = EndpointUrl;
+    ModelsUrl.ReplaceInline(TEXT("/v1/chat/completions"), TEXT("/v1/models"));
+    
+    UE_LOG(LogVibeUEAPIClient, Log, TEXT("Fetching model info from: %s"), *ModelsUrl);
+    
+    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(ModelsUrl);
+    Request->SetVerb(TEXT("GET"));
+    Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
+    if (HasApiKey())
+    {
+        Request->SetHeader(ApiKeyHeader, ApiKey);
+    }
+    Request->SetTimeout(10.0f);  // Short timeout for simple GET request
+    
+    Request->OnProcessRequestComplete().BindLambda([OnComplete](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+    {
+        if (!bConnectedSuccessfully || !Response.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to fetch model info - connection error"));
+            OnComplete(false, 131072, TEXT("")); // Default fallback
+            return;
+        }
+        
+        int32 ResponseCode = Response->GetResponseCode();
+        if (ResponseCode != 200)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to fetch model info - HTTP %d"), ResponseCode);
+            OnComplete(false, 131072, TEXT("")); // Default fallback
+            return;
+        }
+        
+        FString ResponseBody = Response->GetContentAsString();
+        
+        // Parse JSON response
+        TSharedPtr<FJsonObject> JsonObject;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+        if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to parse model info JSON"));
+            OnComplete(false, 131072, TEXT(""));
+            return;
+        }
+        
+        // Get the data array
+        const TArray<TSharedPtr<FJsonValue>>* DataArray;
+        if (!JsonObject->TryGetArrayField(TEXT("data"), DataArray) || DataArray->Num() == 0)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("No models in response"));
+            OnComplete(false, 131072, TEXT(""));
+            return;
+        }
+        
+        // Get the first model
+        TSharedPtr<FJsonObject> ModelObject = (*DataArray)[0]->AsObject();
+        if (!ModelObject.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Invalid model object"));
+            OnComplete(false, 131072, TEXT(""));
+            return;
+        }
+        
+        // Extract context_length and model id
+        int32 ContextLength = ModelObject->GetIntegerField(TEXT("context_length"));
+        FString ModelId = ModelObject->GetStringField(TEXT("id"));
+        
+        if (ContextLength <= 0)
+        {
+            ContextLength = 131072; // Default fallback
+        }
+        
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Fetched model info: id=%s, context_length=%d"), *ModelId, ContextLength);
+        OnComplete(true, ContextLength, ModelId);
+    });
+    
+    Request->ProcessRequest();
 }

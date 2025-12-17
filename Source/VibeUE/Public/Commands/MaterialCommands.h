@@ -55,6 +55,7 @@ private:
 
 	// Information actions
 	TSharedPtr<FJsonObject> HandleGetInfo(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleSummarize(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleListProperties(const TSharedPtr<FJsonObject>& Params);
 
 	// Property actions

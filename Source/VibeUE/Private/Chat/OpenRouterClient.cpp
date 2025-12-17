@@ -43,48 +43,8 @@ bool FOpenRouterClient::HasApiKey() const
 
 FString FOpenRouterClient::GetDefaultSystemPrompt()
 {
-    // Try to load instructions from file
-    FString InstructionsPath;
-    FString InstructionsContent;
-    
-    // Priority 1: Project plugins (local development)
-    InstructionsPath = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("vibeue.instructions.md");
-    if (FFileHelper::LoadFileToString(InstructionsContent, *InstructionsPath))
-    {
-        UE_LOG(LogOpenRouterClient, Log, TEXT("Loaded system prompt from: %s"), *InstructionsPath);
-        return InstructionsContent;
-    }
-    
-    // Priority 2: Engine marketplace (FAB install) - scan for VibeUE folder
-    FString EngineMarketplacePath = FPaths::EnginePluginsDir() / TEXT("Marketplace");
-    if (FPaths::DirectoryExists(EngineMarketplacePath))
-    {
-        IFileManager& FileManager = IFileManager::Get();
-        TArray<FString> Directories;
-        FileManager.FindFiles(Directories, *(EngineMarketplacePath / TEXT("*")), false, true);
-        
-        for (const FString& DirName : Directories)
-        {
-            InstructionsPath = EngineMarketplacePath / DirName / TEXT("Content") / TEXT("vibeue.instructions.md");
-            if (FFileHelper::LoadFileToString(InstructionsContent, *InstructionsPath))
-            {
-                UE_LOG(LogOpenRouterClient, Log, TEXT("Loaded system prompt from: %s"), *InstructionsPath);
-                return InstructionsContent;
-            }
-        }
-    }
-    
-    // Fallback: Built-in minimal prompt
-    UE_LOG(LogOpenRouterClient, Warning, TEXT("Could not load vibeue.instructions.md, using fallback prompt"));
-    return TEXT(
-        "You are an AI assistant integrated into Unreal Engine via the VibeUE plugin. "
-        "You help users with Blueprint development, material creation, asset management, "
-        "UMG widget design, Enhanced Input setup, and general Unreal Engine questions.\n\n"
-        "You have access to MCP tools that can directly manipulate Unreal Engine. "
-        "Use get_help(topic=\"overview\") to learn about available tools and workflows.\n\n"
-        "Be concise and provide actionable guidance. When suggesting code or Blueprint "
-        "logic, be specific about node names and connections."
-    );
+    // Use shared system prompt loading from base class
+    return FLLMClientBase::LoadSystemPromptFromFile();
 }
 
 void FOpenRouterClient::FetchModels(FOnLLMModelsFetched OnComplete)

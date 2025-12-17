@@ -32,6 +32,63 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogMaterialService, Log, All);
 
+// Known material input names (graph connections, not simple properties)
+static const TSet<FString> MaterialInputNames = {
+    TEXT("BaseColor"), TEXT("Metallic"), TEXT("Specular"), TEXT("Roughness"),
+    TEXT("Anisotropy"), TEXT("EmissiveColor"), TEXT("Opacity"), TEXT("OpacityMask"),
+    TEXT("Normal"), TEXT("Tangent"), TEXT("WorldPositionOffset"), TEXT("SubsurfaceColor"),
+    TEXT("ClearCoat"), TEXT("ClearCoatRoughness"), TEXT("AmbientOcclusion"),
+    TEXT("Refraction"), TEXT("PixelDepthOffset"), TEXT("ShadingModelFromMaterialExpression"),
+    TEXT("FrontMaterial"), TEXT("Displacement")
+};
+
+// Check if property name is a material input (graph connection)
+static bool IsMaterialInputProperty(const FString& PropertyName)
+{
+    return MaterialInputNames.Contains(PropertyName);
+}
+
+// Get all editable property names from UMaterial
+static TArray<FString> GetAllEditablePropertyNames()
+{
+    TArray<FString> PropertyNames;
+    
+    for (TFieldIterator<FProperty> It(UMaterial::StaticClass()); It; ++It)
+    {
+        FProperty* Property = *It;
+        if (!Property->HasAnyPropertyFlags(CPF_Edit))
+        {
+            continue;
+        }
+        
+        // Skip material input types (they're not settable via set_property)
+        FString TypeName = Property->GetCPPType();
+        if (TypeName.Contains(TEXT("MaterialInput")))
+        {
+            continue;
+        }
+        
+        PropertyNames.Add(Property->GetName());
+    }
+    
+    return PropertyNames;
+}
+
+// Get the most commonly used editable properties (key properties)
+static TArray<FString> GetKeyPropertyNames()
+{
+    return {
+        TEXT("TwoSided"),
+        TEXT("BlendMode"),
+        TEXT("ShadingModel"),
+        TEXT("MaterialDomain"),
+        TEXT("OpacityMaskClipValue"),
+        TEXT("bCastDynamicShadowAsMasked"),
+        TEXT("DitheredLODTransition"),
+        TEXT("bTangentSpaceNormal")
+    };
+}
+
 // Local helper function for property type names
 static FString GetPropertyTypeName(FProperty* Property)
 {
@@ -926,6 +983,41 @@ TResult<void> FMaterialService::SetInstanceScalarParameter(const FString& Instan
 
     UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
     
+    // Verify the parameter exists in the parent material
+    TArray<FMaterialParameterInfo> AllScalarParams;
+    TArray<FGuid> ScalarGuids;
+    MaterialInstance->GetAllScalarParameterInfo(AllScalarParams, ScalarGuids);
+    
+    bool bParameterExists = false;
+    for (const FMaterialParameterInfo& ParamInfo : AllScalarParams)
+    {
+        if (ParamInfo.Name.ToString() == ParameterName)
+        {
+            bParameterExists = true;
+            break;
+        }
+    }
+    
+    if (!bParameterExists)
+    {
+        // List available parameters to help the user
+        TArray<FString> AvailableParams;
+        for (const FMaterialParameterInfo& ParamInfo : AllScalarParams)
+        {
+            AvailableParams.Add(ParamInfo.Name.ToString());
+        }
+        
+        FString AvailableStr = AvailableParams.Num() > 0 
+            ? FString::Printf(TEXT("Available: %s"), *FString::Join(AvailableParams, TEXT(", ")))
+            : TEXT("The parent material has NO scalar parameters exposed");
+            
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("CANNOT SET: Scalar parameter '%s' does not exist in parent material. %s. "
+                "This operation will ALWAYS FAIL until the parent material is modified to add this parameter. "
+                "To add parameters: use manage_material_node to create a ScalarParameter node and connect it to a material output."),
+                *ParameterName, *AvailableStr));
+    }
+    
     // Set the parameter value
     MaterialInstance->SetScalarParameterValueEditorOnly(FName(*ParameterName), Value);
     
@@ -945,6 +1037,41 @@ TResult<void> FMaterialService::SetInstanceVectorParameter(const FString& Instan
     }
 
     UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Verify the parameter exists in the parent material
+    TArray<FMaterialParameterInfo> AllVectorParams;
+    TArray<FGuid> VectorGuids;
+    MaterialInstance->GetAllVectorParameterInfo(AllVectorParams, VectorGuids);
+    
+    bool bParameterExists = false;
+    for (const FMaterialParameterInfo& ParamInfo : AllVectorParams)
+    {
+        if (ParamInfo.Name.ToString() == ParameterName)
+        {
+            bParameterExists = true;
+            break;
+        }
+    }
+    
+    if (!bParameterExists)
+    {
+        // List available parameters to help the user
+        TArray<FString> AvailableParams;
+        for (const FMaterialParameterInfo& ParamInfo : AllVectorParams)
+        {
+            AvailableParams.Add(ParamInfo.Name.ToString());
+        }
+        
+        FString AvailableStr = AvailableParams.Num() > 0 
+            ? FString::Printf(TEXT("Available: %s"), *FString::Join(AvailableParams, TEXT(", ")))
+            : TEXT("The parent material has NO vector/color parameters exposed");
+            
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("CANNOT SET: Vector parameter '%s' does not exist in parent material. %s. "
+                "This operation will ALWAYS FAIL until the parent material is modified to add this parameter. "
+                "To add parameters: use manage_material_node to create a VectorParameter node and connect it to a material output."),
+                *ParameterName, *AvailableStr));
+    }
     
     // Set the parameter value
     MaterialInstance->SetVectorParameterValueEditorOnly(FName(*ParameterName), Value);
@@ -966,6 +1093,41 @@ TResult<void> FMaterialService::SetInstanceTextureParameter(const FString& Insta
     }
 
     UMaterialInstanceConstant* MaterialInstance = LoadResult.GetValue();
+    
+    // Verify the parameter exists in the parent material
+    TArray<FMaterialParameterInfo> AllTextureParams;
+    TArray<FGuid> TextureGuids;
+    MaterialInstance->GetAllTextureParameterInfo(AllTextureParams, TextureGuids);
+    
+    bool bParameterExists = false;
+    for (const FMaterialParameterInfo& ParamInfo : AllTextureParams)
+    {
+        if (ParamInfo.Name.ToString() == ParameterName)
+        {
+            bParameterExists = true;
+            break;
+        }
+    }
+    
+    if (!bParameterExists)
+    {
+        // List available parameters to help the user
+        TArray<FString> AvailableParams;
+        for (const FMaterialParameterInfo& ParamInfo : AllTextureParams)
+        {
+            AvailableParams.Add(ParamInfo.Name.ToString());
+        }
+        
+        FString AvailableStr = AvailableParams.Num() > 0 
+            ? FString::Printf(TEXT("Available: %s"), *FString::Join(AvailableParams, TEXT(", ")))
+            : TEXT("The parent material has NO texture parameters exposed");
+            
+        return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID,
+            FString::Printf(TEXT("CANNOT SET: Texture parameter '%s' does not exist in parent material. %s. "
+                "This operation will ALWAYS FAIL until the parent material is modified to add this parameter. "
+                "To add parameters: use manage_material_node to create a TextureSampleParameter node and connect it to a material output."),
+                *ParameterName, *AvailableStr));
+    }
     
     // Load the texture
     UTexture* Texture = nullptr;
@@ -1223,11 +1385,42 @@ TResult<FString> FMaterialService::GetProperty(const FString& MaterialPath, cons
     FProperty* Property = FindFProperty<FProperty>(UMaterial::StaticClass(), *PropertyName);
     if (!Property)
     {
+        // Check if it's a known material input name
+        if (IsMaterialInputProperty(PropertyName))
+        {
+            return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+                FString::Printf(TEXT("%s is a MATERIAL INPUT (graph connection), not a simple property. "
+                    "Use manage_material_node to create and connect expression nodes to this input. "
+                    "Example: Create a MaterialExpressionConstant node and connect it to the %s input."), 
+                    *PropertyName, *PropertyName));
+        }
+        
+        // Return all valid editable properties
+        TArray<FString> KeyProps = GetKeyPropertyNames();
+        TArray<FString> AllProps = GetAllEditablePropertyNames();
+        
+        FString KeyPropsStr = FString::Join(KeyProps, TEXT(", "));
+        
         return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
-            FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+            FString::Printf(TEXT("Property not found: '%s'. Key properties: %s. Total editable properties: %d. "
+                "Use action='summarize' or action='list_properties' to see all."), 
+                *PropertyName, *KeyPropsStr, AllProps.Num()));
     }
 
     FString Value = PropertyToString(Property, Material);
+    
+    // Check if this is a material input type (FScalarMaterialInput, FColorMaterialInput, etc.)
+    FString TypeName = Property->GetCPPType();
+    if (TypeName.Contains(TEXT("MaterialInput")))
+    {
+        // This is a material input - provide guidance
+        return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+            FString::Printf(TEXT("%s is a MATERIAL INPUT (type: %s). Current connection: %s. "
+                "To modify this value, use manage_material_node to create expression nodes (like MaterialExpressionConstant) "
+                "and connect them to this input. You cannot set material inputs directly with set_property."), 
+                *PropertyName, *TypeName, *Value));
+    }
+    
     return TResult<FString>::Success(Value);
 }
 
@@ -1245,8 +1438,24 @@ TResult<FMaterialPropertyInfo> FMaterialService::GetPropertyInfo(const FString& 
     FProperty* Property = FindFProperty<FProperty>(UMaterial::StaticClass(), *PropertyName);
     if (!Property)
     {
+        // Check if it's a known material input name
+        if (IsMaterialInputProperty(PropertyName))
+        {
+            return TResult<FMaterialPropertyInfo>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+                FString::Printf(TEXT("%s is a MATERIAL INPUT (graph connection), not a simple property. "
+                    "Use manage_material_node to create and connect expression nodes. "
+                    "Use action='summarize' to see all material inputs and their connection status."), 
+                    *PropertyName));
+        }
+        
+        // Return all valid editable properties
+        TArray<FString> KeyProps = GetKeyPropertyNames();
+        FString KeyPropsStr = FString::Join(KeyProps, TEXT(", "));
+        
         return TResult<FMaterialPropertyInfo>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
-            FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+            FString::Printf(TEXT("Property not found: '%s'. Key properties: %s. "
+                "Use action='summarize' or action='list_properties' to see all."), 
+                *PropertyName, *KeyPropsStr));
     }
 
     FMaterialPropertyInfo PropInfo;
@@ -1314,13 +1523,44 @@ TResult<FString> FMaterialService::SetProperty(const FString& MaterialPath, cons
     FProperty* Property = FindFProperty<FProperty>(UMaterial::StaticClass(), *PropertyName);
     if (!Property)
     {
+        // Check if it's a known material input name
+        if (IsMaterialInputProperty(PropertyName))
+        {
+            return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+                FString::Printf(TEXT("CANNOT SET %s with set_property - it is a MATERIAL INPUT (graph connection). "
+                    "Use manage_material_node instead: "
+                    "(1) Create a node like MaterialExpressionConstant or MaterialExpressionVectorParameter, "
+                    "(2) Set its value, "
+                    "(3) Connect its output to the %s input using connect_to_output action."), 
+                    *PropertyName, *PropertyName));
+        }
+        
+        // Return all valid editable properties
+        TArray<FString> KeyProps = GetKeyPropertyNames();
+        FString KeyPropsStr = FString::Join(KeyProps, TEXT(", "));
+        
         return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
-            FString::Printf(TEXT("Property not found: %s"), *PropertyName));
+            FString::Printf(TEXT("Property not found: '%s'. Key properties: %s. "
+                "Use action='summarize' or action='list_properties' to see all."), 
+                *PropertyName, *KeyPropsStr));
     }
 
     // Check if editable
     if (!Property->HasAnyPropertyFlags(CPF_Edit))
     {
+        // Check if it's a material input type
+        FString TypeName = Property->GetCPPType();
+        if (TypeName.Contains(TEXT("MaterialInput")))
+        {
+            return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
+                FString::Printf(TEXT("CANNOT SET %s - it is a MATERIAL INPUT (type: %s). "
+                    "Material inputs require graph nodes. Use manage_material_node to: "
+                    "(1) Create expression nodes (MaterialExpressionConstant for scalars, MaterialExpressionConstant3Vector for colors), "
+                    "(2) Connect them to this input. "
+                    "DO NOT call get_property or set_property for material inputs again."), 
+                    *PropertyName, *TypeName));
+        }
+        
         return TResult<FString>::Error(VibeUE::ErrorCodes::PROPERTY_NOT_FOUND, 
             FString::Printf(TEXT("Property is not editable: %s"), *PropertyName));
     }

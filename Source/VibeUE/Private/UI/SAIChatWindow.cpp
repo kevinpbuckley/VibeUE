@@ -1684,15 +1684,49 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
         AvailableModels.Empty();
         SelectedModel.Reset();
         
-        // Create a single "VibeUE" model entry
+        // Create a single "VibeUE" model entry with default values
         TSharedPtr<FOpenRouterModel> VibeUEModelPtr = MakeShared<FOpenRouterModel>();
         VibeUEModelPtr->Id = TEXT("vibeue");
         VibeUEModelPtr->Name = TEXT("VibeUE");
         VibeUEModelPtr->bSupportsTools = true;
-        VibeUEModelPtr->ContextLength = 131072; // Server configured for 128K context (model supports 256K native)
+        VibeUEModelPtr->ContextLength = 131072; // Default, will be updated from API
         
         AvailableModels.Add(VibeUEModelPtr);
         SelectedModel = VibeUEModelPtr;
+        
+        // Fetch actual model info from API to get real context length
+        if (ChatSession.IsValid())
+        {
+            TSharedPtr<FVibeUEAPIClient> VibeUEClient = ChatSession->GetVibeUEClient();
+            if (VibeUEClient.IsValid())
+            {
+                // Capture weak pointers for the lambda
+                TWeakPtr<FOpenRouterModel> WeakModel = VibeUEModelPtr;
+                TWeakPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> WeakComboBox = ModelComboBox;
+                
+                VibeUEClient->FetchModelInfo([WeakModel, WeakComboBox](bool bSuccess, int32 ContextLength, const FString& ModelId)
+                {
+                    // Must run on game thread since we're updating UI
+                    AsyncTask(ENamedThreads::GameThread, [WeakModel, WeakComboBox, bSuccess, ContextLength, ModelId]()
+                    {
+                        if (TSharedPtr<FOpenRouterModel> Model = WeakModel.Pin())
+                        {
+                            if (bSuccess && ContextLength > 0)
+                            {
+                                Model->ContextLength = ContextLength;
+                                UE_LOG(LogAIChatWindow, Log, TEXT("Updated VibeUE model context length to %d from API"), ContextLength);
+                            }
+                            
+                            // Refresh the combo box to show updated info
+                            if (TSharedPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> ComboBox = WeakComboBox.Pin())
+                            {
+                                ComboBox->RefreshOptions();
+                            }
+                        }
+                    });
+                });
+            }
+        }
         
         if (ModelComboBox.IsValid())
         {

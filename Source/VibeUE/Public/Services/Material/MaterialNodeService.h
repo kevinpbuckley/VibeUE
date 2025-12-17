@@ -437,6 +437,8 @@ private:
     FString GetExpressionId(UMaterialExpression* Expression);
     FExpressionInput* FindInputByName(UMaterialExpression* Expression, const FString& InputName);
     int32 FindOutputIndexByName(UMaterialExpression* Expression, const FString& OutputName);
+    TArray<FString> GetExpressionInputNames(UMaterialExpression* Expression);
+    TArray<FString> GetExpressionOutputNames(UMaterialExpression* Expression);
     UClass* ResolveExpressionClass(const FString& ClassName);
     FMaterialExpressionInfo BuildExpressionInfo(UMaterialExpression* Expression);
     EMaterialProperty StringToMaterialProperty(const FString& PropertyName);

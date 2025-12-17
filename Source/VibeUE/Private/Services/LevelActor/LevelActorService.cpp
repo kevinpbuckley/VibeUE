@@ -1373,11 +1373,12 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 	// Determine target object (actor or component)
 	UObject* TargetObject = Actor;
 	FString PropertyName = Params.PropertyPath;
+	FString SpecifiedComponentName;  // Track if user specified a component
 	
 	// Check if targeting a component (format: "ComponentName.PropertyName" or just use component_name param)
 	if (!Params.ComponentName.IsEmpty())
 	{
-		UActorComponent* Component = Actor->GetComponentByClass(UActorComponent::StaticClass());
+		SpecifiedComponentName = Params.ComponentName;
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
 			if (Comp && Comp->GetName() == Params.ComponentName)
@@ -1388,8 +1389,15 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 		}
 		if (TargetObject == Actor)
 		{
+			// Component not found - list available components
+			TArray<FString> ComponentNames;
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp) ComponentNames.Add(Comp->GetName());
+			}
 			return FActorOperationResult::Error(TEXT("COMPONENT_NOT_FOUND"), 
-				FString::Printf(TEXT("Component '%s' not found"), *Params.ComponentName));
+				FString::Printf(TEXT("Component '%s' not found. Available components: %s"), 
+					*Params.ComponentName, *FString::Join(ComponentNames, TEXT(", "))));
 		}
 	}
 	else if (PropertyName.Contains(TEXT(".")))
@@ -1397,6 +1405,7 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 		// Parse "ComponentName.PropertyName" format
 		FString ComponentName;
 		PropertyName.Split(TEXT("."), &ComponentName, &PropertyName);
+		SpecifiedComponentName = ComponentName;
 		
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
@@ -1408,17 +1417,108 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 		}
 		if (TargetObject == Actor)
 		{
+			// Component not found - list available components
+			TArray<FString> ComponentNames;
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp) ComponentNames.Add(Comp->GetName());
+			}
 			return FActorOperationResult::Error(TEXT("COMPONENT_NOT_FOUND"), 
-				FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+				FString::Printf(TEXT("Component '%s' not found. Available components: %s"), 
+					*ComponentName, *FString::Join(ComponentNames, TEXT(", "))));
 		}
 	}
 	
-	// Find the property
+	// Find the property on the target object
 	FProperty* Property = TargetObject->GetClass()->FindPropertyByName(FName(*PropertyName));
+	
+	// If not found and no component was specified, search components for the property
+	if (!Property && SpecifiedComponentName.IsEmpty())
+	{
+		for (UActorComponent* Comp : Actor->GetComponents())
+		{
+			if (!Comp) continue;
+			
+			FProperty* CompProperty = Comp->GetClass()->FindPropertyByName(FName(*PropertyName));
+			if (CompProperty)
+			{
+				// Found on a component - use it
+				TargetObject = Comp;
+				Property = CompProperty;
+				UE_LOG(LogTemp, Log, TEXT("Property '%s' found on component '%s'"), 
+					*PropertyName, *Comp->GetName());
+				break;
+			}
+		}
+	}
+	
 	if (!Property)
 	{
-		return FActorOperationResult::Error(TEXT("PROPERTY_NOT_FOUND"), 
-			FString::Printf(TEXT("Property '%s' not found"), *PropertyName));
+		// Build helpful error message with available properties
+		TArray<FString> AvailableProps;
+		
+		// List properties on the target object
+		FString TargetName = (TargetObject == Actor) ? TEXT("actor") : Cast<UActorComponent>(TargetObject)->GetName();
+		for (TFieldIterator<FProperty> It(TargetObject->GetClass()); It; ++It)
+		{
+			FProperty* Prop = *It;
+			if (!Prop->HasAnyPropertyFlags(CPF_Deprecated | CPF_Transient))
+			{
+				// Only add first 20 properties to avoid overwhelming output
+				if (AvailableProps.Num() < 20)
+				{
+					AvailableProps.Add(Prop->GetName());
+				}
+			}
+		}
+		
+		// Also list component names if searching on actor
+		TArray<FString> ComponentsWithProperty;
+		if (TargetObject == Actor)
+		{
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (!Comp) continue;
+				for (TFieldIterator<FProperty> It(Comp->GetClass()); It; ++It)
+				{
+					FProperty* Prop = *It;
+					if (Prop->GetName().Contains(PropertyName, ESearchCase::IgnoreCase))
+					{
+						ComponentsWithProperty.Add(FString::Printf(TEXT("%s.%s"), *Comp->GetName(), *Prop->GetName()));
+					}
+				}
+			}
+		}
+		
+		FString ErrorMsg = FString::Printf(TEXT("Property '%s' not found on %s."), *PropertyName, *TargetName);
+		if (AvailableProps.Num() > 0)
+		{
+			ErrorMsg += FString::Printf(TEXT(" Some available properties: %s"), *FString::Join(AvailableProps, TEXT(", ")));
+		}
+		if (ComponentsWithProperty.Num() > 0)
+		{
+			ErrorMsg += FString::Printf(TEXT(" Similar properties on components: %s"), *FString::Join(ComponentsWithProperty, TEXT(", ")));
+		}
+		else if (TargetObject == Actor)
+		{
+			// List some key components the user might want to try
+			TArray<FString> KeyComponents;
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp && (Comp->GetName().Contains(TEXT("Light")) || 
+				             Comp->GetName().Contains(TEXT("Mesh")) ||
+				             Comp->GetName().Contains(TEXT("Root"))))
+				{
+					KeyComponents.Add(Comp->GetName());
+				}
+			}
+			if (KeyComponents.Num() > 0)
+			{
+				ErrorMsg += FString::Printf(TEXT(" Try specifying a component: %s"), *FString::Join(KeyComponents, TEXT(", ")));
+			}
+		}
+		
+		return FActorOperationResult::Error(TEXT("PROPERTY_NOT_FOUND"), ErrorMsg);
 	}
 	
 	// Get property value
@@ -1464,10 +1564,12 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 	// Determine target object (actor or component)
 	UObject* TargetObject = Actor;
 	FString PropertyName = Params.PropertyPath;
+	FString SpecifiedComponentName;  // Track if user specified a component
 	
 	// Check if targeting a component
 	if (!Params.ComponentName.IsEmpty())
 	{
+		SpecifiedComponentName = Params.ComponentName;
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
 			if (Comp && Comp->GetName() == Params.ComponentName)
@@ -1478,8 +1580,15 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 		}
 		if (TargetObject == Actor)
 		{
+			// Component not found - list available components
+			TArray<FString> ComponentNames;
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp) ComponentNames.Add(Comp->GetName());
+			}
 			return FActorOperationResult::Error(TEXT("COMPONENT_NOT_FOUND"), 
-				FString::Printf(TEXT("Component '%s' not found"), *Params.ComponentName));
+				FString::Printf(TEXT("Component '%s' not found. Available components: %s"), 
+					*Params.ComponentName, *FString::Join(ComponentNames, TEXT(", "))));
 		}
 	}
 	else if (PropertyName.Contains(TEXT(".")))
@@ -1487,6 +1596,7 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 		// Parse "ComponentName.PropertyName" format
 		FString ComponentName;
 		PropertyName.Split(TEXT("."), &ComponentName, &PropertyName);
+		SpecifiedComponentName = ComponentName;
 		
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
@@ -1498,8 +1608,15 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 		}
 		if (TargetObject == Actor)
 		{
+			// Component not found - list available components
+			TArray<FString> ComponentNames;
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (Comp) ComponentNames.Add(Comp->GetName());
+			}
 			return FActorOperationResult::Error(TEXT("COMPONENT_NOT_FOUND"), 
-				FString::Printf(TEXT("Component '%s' not found"), *ComponentName));
+				FString::Printf(TEXT("Component '%s' not found. Available components: %s"), 
+					*ComponentName, *FString::Join(ComponentNames, TEXT(", "))));
 		}
 	}
 	
@@ -1516,12 +1633,76 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 		}
 	}
 	
-	// Find the property
+	// Find the property on the target object
 	FProperty* Property = TargetObject->GetClass()->FindPropertyByName(FName(*BasePropertyName));
+	
+	// If not found and no component was specified, search components for the property
+	if (!Property && SpecifiedComponentName.IsEmpty())
+	{
+		for (UActorComponent* Comp : Actor->GetComponents())
+		{
+			if (!Comp) continue;
+			
+			FProperty* CompProperty = Comp->GetClass()->FindPropertyByName(FName(*BasePropertyName));
+			if (CompProperty)
+			{
+				// Found on a component - use it
+				TargetObject = Comp;
+				Property = CompProperty;
+				UE_LOG(LogTemp, Log, TEXT("Property '%s' found on component '%s' for set operation"), 
+					*BasePropertyName, *Comp->GetName());
+				break;
+			}
+		}
+	}
+	
 	if (!Property)
 	{
-		return FActorOperationResult::Error(TEXT("PROPERTY_NOT_FOUND"), 
-			FString::Printf(TEXT("Property '%s' not found"), *BasePropertyName));
+		// Build helpful error message with available properties
+		TArray<FString> AvailableProps;
+		
+		FString TargetName = (TargetObject == Actor) ? TEXT("actor") : Cast<UActorComponent>(TargetObject)->GetName();
+		for (TFieldIterator<FProperty> It(TargetObject->GetClass()); It; ++It)
+		{
+			FProperty* Prop = *It;
+			if (!Prop->HasAnyPropertyFlags(CPF_Deprecated | CPF_Transient | CPF_EditConst))
+			{
+				if (AvailableProps.Num() < 20)
+				{
+					AvailableProps.Add(Prop->GetName());
+				}
+			}
+		}
+		
+		// Also list component names if searching on actor
+		TArray<FString> ComponentsWithProperty;
+		if (TargetObject == Actor)
+		{
+			for (UActorComponent* Comp : Actor->GetComponents())
+			{
+				if (!Comp) continue;
+				for (TFieldIterator<FProperty> It(Comp->GetClass()); It; ++It)
+				{
+					FProperty* Prop = *It;
+					if (Prop->GetName().Contains(BasePropertyName, ESearchCase::IgnoreCase))
+					{
+						ComponentsWithProperty.Add(FString::Printf(TEXT("%s.%s"), *Comp->GetName(), *Prop->GetName()));
+					}
+				}
+			}
+		}
+		
+		FString ErrorMsg = FString::Printf(TEXT("Property '%s' not found on %s."), *BasePropertyName, *TargetName);
+		if (AvailableProps.Num() > 0)
+		{
+			ErrorMsg += FString::Printf(TEXT(" Some available properties: %s"), *FString::Join(AvailableProps, TEXT(", ")));
+		}
+		if (ComponentsWithProperty.Num() > 0)
+		{
+			ErrorMsg += FString::Printf(TEXT(" Similar properties on components: %s"), *FString::Join(ComponentsWithProperty, TEXT(", ")));
+		}
+		
+		return FActorOperationResult::Error(TEXT("PROPERTY_NOT_FOUND"), ErrorMsg);
 	}
 	
 	// Check if property is editable

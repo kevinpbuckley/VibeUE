@@ -86,6 +86,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	{
 		return HandleGetInfo(Params);
 	}
+	else if (Action == TEXT("summarize"))
+	{
+		return HandleSummarize(Params);
+	}
 	else if (Action == TEXT("list_properties"))
 	{
 		return HandleListProperties(Params);
@@ -177,6 +181,7 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("compile")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("refresh_editor")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_info")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("summarize")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_properties")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_property")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_property_info")));
@@ -462,6 +467,182 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleGetInfo(const TSharedPtr<FJsonO
 		PropsArray.Add(MakeShareable(new FJsonValueObject(PropObj)));
 	}
 	Response->SetArrayField(TEXT("properties"), PropsArray);
+
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleSummarize(const TSharedPtr<FJsonObject>& Params)
+{
+	// Comprehensive material summary designed for AI understanding
+	// Returns everything needed in ONE call with clear categorization
+	
+	FString MaterialPath;
+	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+	}
+
+	auto InfoResult = Service->GetMaterialInfo(MaterialPath);
+	if (!InfoResult.IsSuccess())
+	{
+		return CreateErrorResponse(TEXT("GET_INFO_FAILED"), InfoResult.GetErrorMessage());
+	}
+
+	const FMaterialInfo& Info = InfoResult.GetValue();
+	
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("material_path"), MaterialPath);
+	Response->SetStringField(TEXT("name"), Info.Name);
+	
+	// Current material configuration (most important for understanding state)
+	TSharedPtr<FJsonObject> ConfigObj = MakeShareable(new FJsonObject);
+	ConfigObj->SetStringField(TEXT("domain"), Info.MaterialDomain);
+	ConfigObj->SetStringField(TEXT("blend_mode"), Info.BlendMode);
+	ConfigObj->SetStringField(TEXT("shading_model"), Info.ShadingModel);
+	ConfigObj->SetBoolField(TEXT("two_sided"), Info.bTwoSided);
+	Response->SetObjectField(TEXT("current_config"), ConfigObj);
+	
+	// Separate properties into categories for AI clarity
+	TArray<TSharedPtr<FJsonValue>> EditableProps;      // Properties that CAN be set with set_property
+	TArray<TSharedPtr<FJsonValue>> ReadOnlyProps;      // Informational only
+	
+	// Key editable properties to highlight (most commonly used)
+	TArray<FString> KeyEditableProps = {
+		TEXT("TwoSided"), TEXT("BlendMode"), TEXT("ShadingModel"), TEXT("MaterialDomain"),
+		TEXT("OpacityMaskClipValue"), TEXT("bCastDynamicShadowAsMasked"), 
+		TEXT("DitheredLODTransition"), TEXT("bTangentSpaceNormal")
+	};
+	
+	TArray<TSharedPtr<FJsonValue>> KeyProps;
+	
+	for (const FMaterialPropertyInfo& Prop : Info.Properties)
+	{
+		TSharedPtr<FJsonObject> PropObj = MakeShareable(new FJsonObject);
+		PropObj->SetStringField(TEXT("name"), Prop.Name);
+		PropObj->SetStringField(TEXT("type"), Prop.Type);
+		PropObj->SetStringField(TEXT("value"), Prop.CurrentValue);
+		
+		// Add enum options if available
+		if (Prop.AllowedValues.Num() > 0)
+		{
+			TArray<TSharedPtr<FJsonValue>> AllowedArray;
+			for (const FString& Val : Prop.AllowedValues)
+			{
+				AllowedArray.Add(MakeShareable(new FJsonValueString(Val)));
+			}
+			PropObj->SetArrayField(TEXT("options"), AllowedArray);
+		}
+		
+		if (Prop.bIsEditable)
+		{
+			PropObj->SetStringField(TEXT("how_to_modify"), 
+				TEXT("Use set_property action with property_name and property_value"));
+			
+			// Add to key props if it's a commonly used property
+			if (KeyEditableProps.Contains(Prop.Name))
+			{
+				KeyProps.Add(MakeShareable(new FJsonValueObject(PropObj)));
+			}
+			else
+			{
+				EditableProps.Add(MakeShareable(new FJsonValueObject(PropObj)));
+			}
+		}
+		else
+		{
+			ReadOnlyProps.Add(MakeShareable(new FJsonValueObject(PropObj)));
+		}
+	}
+	
+	// Key properties section (most commonly used)
+	TSharedPtr<FJsonObject> KeySection = MakeShareable(new FJsonObject);
+	KeySection->SetStringField(TEXT("description"), 
+		TEXT("Most commonly used properties - can be changed with set_property action"));
+	KeySection->SetArrayField(TEXT("properties"), KeyProps);
+	KeySection->SetNumberField(TEXT("count"), KeyProps.Num());
+	Response->SetObjectField(TEXT("key_properties"), KeySection);
+	
+	// All other editable properties
+	TSharedPtr<FJsonObject> EditableSection = MakeShareable(new FJsonObject);
+	EditableSection->SetStringField(TEXT("description"), 
+		TEXT("Additional properties that can be changed with set_property action"));
+	EditableSection->SetArrayField(TEXT("properties"), EditableProps);
+	EditableSection->SetNumberField(TEXT("count"), EditableProps.Num());
+	Response->SetObjectField(TEXT("other_editable_properties"), EditableSection);
+	
+	// Material inputs - these are the graph connections (hardcoded list of common inputs)
+	// These are NOT in Info.Properties because they're not CPF_Edit, but they ARE queryable
+	TArray<TSharedPtr<FJsonValue>> MaterialInputs;
+	
+	// Common material inputs that need graph nodes to modify
+	TArray<FString> CommonInputNames = {
+		TEXT("BaseColor"), TEXT("Metallic"), TEXT("Specular"), TEXT("Roughness"),
+		TEXT("Anisotropy"), TEXT("EmissiveColor"), TEXT("Opacity"), TEXT("OpacityMask"),
+		TEXT("Normal"), TEXT("Tangent"), TEXT("WorldPositionOffset"), TEXT("SubsurfaceColor"),
+		TEXT("ClearCoat"), TEXT("ClearCoatRoughness"), TEXT("AmbientOcclusion"),
+		TEXT("Refraction"), TEXT("PixelDepthOffset"), TEXT("ShadingModelFromMaterialExpression"),
+		TEXT("FrontMaterial"), TEXT("Displacement")
+	};
+	
+	for (const FString& InputName : CommonInputNames)
+	{
+		auto PropResult = Service->GetPropertyInfo(MaterialPath, InputName);
+		if (PropResult.IsSuccess())
+		{
+			const FMaterialPropertyInfo& Prop = PropResult.GetValue();
+			TSharedPtr<FJsonObject> InputObj = MakeShareable(new FJsonObject);
+			InputObj->SetStringField(TEXT("name"), Prop.Name);
+			InputObj->SetStringField(TEXT("type"), Prop.Type);
+			InputObj->SetStringField(TEXT("current_value"), Prop.CurrentValue);
+			InputObj->SetBoolField(TEXT("is_connected"), !Prop.CurrentValue.IsEmpty() && Prop.CurrentValue != TEXT("()"));
+			InputObj->SetStringField(TEXT("how_to_modify"), 
+				TEXT("Create a Constant or Parameter node with manage_material_node and connect it to this input"));
+			MaterialInputs.Add(MakeShareable(new FJsonValueObject(InputObj)));
+		}
+	}
+	
+	TSharedPtr<FJsonObject> InputsSection = MakeShareable(new FJsonObject);
+	InputsSection->SetStringField(TEXT("description"), 
+		TEXT("Material graph inputs - these CANNOT be set with set_property. Use manage_material_node tool to create Constant or Parameter nodes and connect them."));
+	InputsSection->SetArrayField(TEXT("inputs"), MaterialInputs);
+	InputsSection->SetNumberField(TEXT("count"), MaterialInputs.Num());
+	InputsSection->SetStringField(TEXT("important"), 
+		TEXT("To set BaseColor, Roughness, Metallic etc., you must create material graph nodes!"));
+	InputsSection->SetStringField(TEXT("example_roughness"), 
+		TEXT("(1) manage_material_node(action='create', expression_class='MaterialExpressionConstant', material_path=...) (2) set its R value (3) connect output to Roughness"));
+	InputsSection->SetStringField(TEXT("example_basecolor"), 
+		TEXT("(1) manage_material_node(action='create', expression_class='MaterialExpressionConstant3Vector', material_path=...) (2) set RGB values (3) connect output to BaseColor"));
+	Response->SetObjectField(TEXT("material_inputs"), InputsSection);
+	
+	// Parameters (runtime-controllable)
+	TSharedPtr<FJsonObject> ParamsSection = MakeShareable(new FJsonObject);
+	ParamsSection->SetStringField(TEXT("description"), 
+		TEXT("Material parameters exposed for runtime control and material instances"));
+	TArray<TSharedPtr<FJsonValue>> ParamNames;
+	for (const FString& Name : Info.ParameterNames)
+	{
+		ParamNames.Add(MakeShareable(new FJsonValueString(Name)));
+	}
+	ParamsSection->SetArrayField(TEXT("parameter_names"), ParamNames);
+	ParamsSection->SetNumberField(TEXT("count"), ParamNames.Num());
+	ParamsSection->SetStringField(TEXT("tip"), 
+		TEXT("Use list_parameters for full parameter details including types and default values"));
+	Response->SetObjectField(TEXT("parameters"), ParamsSection);
+	
+	// Graph statistics
+	TSharedPtr<FJsonObject> GraphStats = MakeShareable(new FJsonObject);
+	GraphStats->SetNumberField(TEXT("expression_count"), Info.ExpressionCount);
+	GraphStats->SetNumberField(TEXT("texture_sample_count"), Info.TextureSampleCount);
+	Response->SetObjectField(TEXT("graph_stats"), GraphStats);
+	
+	// Usage guidance - clear examples
+	TSharedPtr<FJsonObject> UsageGuide = MakeShareable(new FJsonObject);
+	UsageGuide->SetStringField(TEXT("change_blend_mode"), TEXT("manage_material(action='set_property', material_path='...', property_name='BlendMode', property_value='BLEND_Masked')"));
+	UsageGuide->SetStringField(TEXT("enable_two_sided"), TEXT("manage_material(action='set_property', material_path='...', property_name='TwoSided', property_value='true')"));
+	UsageGuide->SetStringField(TEXT("set_opacity_clip"), TEXT("manage_material(action='set_property', material_path='...', property_name='OpacityMaskClipValue', property_value='0.5')"));
+	UsageGuide->SetStringField(TEXT("set_roughness"), TEXT("Use manage_material_node: create MaterialExpressionConstant, connect to Roughness input"));
+	UsageGuide->SetStringField(TEXT("set_base_color"), TEXT("Use manage_material_node: create MaterialExpressionConstant3Vector, connect to BaseColor input"));
+	Response->SetObjectField(TEXT("usage_guide"), UsageGuide);
 
 	return Response;
 }

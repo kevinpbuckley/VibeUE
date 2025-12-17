@@ -91,10 +91,25 @@ Example:
 - **REPORT** the failure to the user with the error message
 - **MOVE ON** to the next task or ask the user for guidance
 
+**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, you should stop and ask the user what to do next.
+
+**Self-Monitoring Guidelines:**
+- Keep track of how many times you've tried a particular operation
+- If you notice you're repeating similar tool calls with similar errors, STOP
+- After 2-3 failures, summarize what was accomplished, what failed, and why
+- Suggest alternative approaches instead of continuing to fail
+
 **Example - If adding a modifier fails because "Context has 0 mappings":**
 - First attempt fails → Check help OR try different parameters
 - Second attempt fails → STOP and report: "Could not add modifier to IMC_TestVehicle - it has no key mappings. Would you like me to add a key mapping first?"
 - DO NOT retry 10+ times with the same parameters!
+
+**When You're Stuck:**
+If you find yourself making the same or similar tool calls repeatedly without success:
+1. Stop and take stock of what you've tried
+2. Summarize your progress to the user
+3. Explain what's blocking you
+4. Ask for guidance or suggest a different approach
 
 **Remember: ALL VibeUE tools support `action="help"` - use it whenever a tool fails!**
 
@@ -330,6 +345,35 @@ manage_material(action="set_instance_vector_parameter",
                instance_path="/Game/Materials/MI_RedBright",
                parameter_name="BaseColor", r=1.0, g=0.0, b=0.0, a=1.0)
 ```
+
+### ⚠️ COMMON TOOL MISTAKES TO AVOID
+
+**Opening Assets in Editor:**
+- ❌ WRONG: `manage_material(action="open_editor", ...)` - this action doesn't exist!
+- ✅ CORRECT: `manage_asset(action="open_in_editor", asset_path="/Game/Materials/M_MyMaterial")` - use manage_asset for opening ANY asset
+
+**Material Properties vs Graph Nodes:**
+- `manage_material` = Material asset properties, instances, and parameters (NOT graph editing)
+- `manage_material_node` = Material graph expressions, node connections, and visual graph editing
+
+**Creating Parameters in Materials:**
+- ❌ WRONG: `manage_material(action="create_scalar_parameter", ...)` - this action doesn't exist!
+- ✅ CORRECT: `manage_material_node(action="create_parameter", parameter_type="Scalar", parameter_name="Roughness", ...)`
+
+**Listing vs Getting Properties:**
+- ❌ WRONG: `manage_material_node(action="get_properties", ...)` - use singular form!
+- ✅ CORRECT: `manage_material_node(action="list_properties", ...)` to list all properties
+- ✅ CORRECT: `manage_material_node(action="get_property", property_name="R", ...)` to get one property
+
+**Material Expression Property Names:**
+- For `MaterialExpressionConstant`, the value property is `R` (not `Value` or `ConstantValue`)
+- For `MaterialExpressionConstant3Vector`, use `Constant` to set the color
+- When unsure, use `manage_material_node(action="list_properties", ...)` to discover available properties
+
+**Category Filters in discover_types:**
+- ❌ WRONG: `manage_material_node(action="discover_types", category="All")` - "All" is not a valid category
+- ✅ CORRECT: `manage_material_node(action="discover_types", search_term="Constant")` - use search_term instead
+- ✅ CORRECT: `manage_material_node(action="get_categories")` - to list valid categories first
 
 ## Error Handling
 

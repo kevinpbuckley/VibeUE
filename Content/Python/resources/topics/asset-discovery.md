@@ -179,19 +179,24 @@ export_texture_for_analysis(
 
 ## Asset Opening in Editor
 
-```python
-# Open asset in appropriate editor
-open_asset_in_editor("/Game/Textures/UI/T_ButtonNormal")
-open_asset_in_editor("/Game/Materials/M_MetalShiny")
-open_asset_in_editor("/Game/UI/WBP_MainMenu")
-open_asset_in_editor("/Game/Blueprints/BP_Player")
+**Use `manage_asset` with `action="open_in_editor"` to open ANY asset in its appropriate editor:**
 
-# Parameters
-open_asset_in_editor(
+```python
+# Open asset in appropriate editor (works for materials, blueprints, widgets, textures, etc.)
+manage_asset(action="open_in_editor", asset_path="/Game/Textures/UI/T_ButtonNormal")
+manage_asset(action="open_in_editor", asset_path="/Game/Materials/M_MetalShiny")
+manage_asset(action="open_in_editor", asset_path="/Game/UI/WBP_MainMenu")
+manage_asset(action="open_in_editor", asset_path="/Game/Blueprints/BP_Player")
+
+# With force_open parameter
+manage_asset(
+    action="open_in_editor",
     asset_path="/Game/Materials/M_Metal",
     force_open=False  # False = focus existing, True = force reopen
 )
 ```
+
+**IMPORTANT:** Do NOT use `manage_material(action="open_editor")` - that action does not exist! Always use `manage_asset` to open assets in their editors.
 
 ## Asset Type Detection
 

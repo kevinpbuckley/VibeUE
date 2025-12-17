@@ -49,6 +49,10 @@ struct VIBEUE_API FChatMessage
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FString Content;
     
+    /** Chain-of-thought reasoning content (from <think> tags, not shown to user) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString ThinkingContent;
+    
     /** When the message was sent or received */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FDateTime Timestamp;

@@ -147,4 +147,12 @@ public:
      * Call this on any content that might contain binary data or encoding artifacts
      */
     static FString SanitizeForLLM(const FString& Input);
+    
+    /**
+     * Load system prompt from vibeue.instructions.md file
+     * Searches in multiple locations (project plugins, engine marketplace)
+     * Falls back to built-in prompt if file not found
+     * @return The system prompt content
+     */
+    static FString LoadSystemPromptFromFile();
 };
