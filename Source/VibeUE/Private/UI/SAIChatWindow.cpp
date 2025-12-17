@@ -452,10 +452,17 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
         BorderColor = VibeUEColors::TextSecondary;
     }
     
-    // Create a solid color brush for borders
-    static FSlateBrush SolidBrush;
-    SolidBrush.DrawAs = ESlateBrushDrawType::Box;
-    SolidBrush.TintColor = FSlateColor(FLinearColor::White);
+    // Create rounded brush for bubble effect
+    static FSlateBrush RoundedBrush;
+    RoundedBrush.DrawAs = ESlateBrushDrawType::RoundedBox;
+    RoundedBrush.TintColor = FSlateColor(FLinearColor::White);
+    RoundedBrush.OutlineSettings.CornerRadii = FVector4(4.0f, 4.0f, 4.0f, 4.0f);
+    RoundedBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+    
+    // Create thin border strip brush (not rounded)
+    static FSlateBrush BorderStripBrush;
+    BorderStripBrush.DrawAs = ESlateBrushDrawType::Box;
+    BorderStripBrush.TintColor = FSlateColor(FLinearColor::White);
     
     FString DisplayText = Message.Content;
     if (Message.bIsStreaming && DisplayText.IsEmpty())
@@ -466,61 +473,56 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     // Create the message content text block and store reference for streaming updates
     TSharedPtr<STextBlock> ContentTextBlock;
     
-    // Create the message with colored left border (no role label)
+    // Create the message bubble with rounded corners
     TSharedRef<SWidget> MessageContent = 
-        SNew(SHorizontalBox)
-        
-        // Colored left border strip
-        + SHorizontalBox::Slot()
-        .AutoWidth()
+        SNew(SBorder)
+        .BorderImage(&RoundedBrush)
+        .BorderBackgroundColor(BackgroundColor)
+        .Padding(FMargin(8, 4, 8, 4))
         [
-            SNew(SBorder)
-            .BorderImage(&SolidBrush)
-            .BorderBackgroundColor(BorderColor)
-            .Padding(FMargin(3, 0, 0, 0))
+            SNew(SHorizontalBox)
+            
+            // Colored accent line (left side)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .Padding(FMargin(0, 0, 6, 0))
             [
-                SNew(SSpacer)
-                .Size(FVector2D(0, 0))
+                SNew(SBorder)
+                .BorderImage(&BorderStripBrush)
+                .BorderBackgroundColor(BorderColor)
+                .Padding(FMargin(2, 0, 0, 0))
+                [
+                    SNew(SSpacer)
+                    .Size(FVector2D(0, 0))
+                ]
             ]
-        ]
-        
-        // Message content area
-        + SHorizontalBox::Slot()
-        .FillWidth(1.0f)
-        [
-            SNew(SBorder)
-            .BorderImage(&SolidBrush)
-            .BorderBackgroundColor(BackgroundColor)
-            .Padding(10)
+            
+            // Message content - fills available space
+            + SHorizontalBox::Slot()
+            .FillWidth(1.0f)
+            .VAlign(VAlign_Center)
             [
-                SNew(SVerticalBox)
-                
-                // Message content
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                [
-                    SAssignNew(ContentTextBlock, STextBlock)
-                    .Text(FText::FromString(DisplayText))
-                    .AutoWrapText(true)
-                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
-                    .ColorAndOpacity(FSlateColor(TextColor))
-                ]
-                
-                // Copy button - subtle styling
-                + SVerticalBox::Slot()
-                .AutoHeight()
-                .HAlign(HAlign_Right)
-                .Padding(0, 6, 0, 0)
-                [
-                    SNew(SButton)
-                    .Text(FText::FromString(TEXT("Copy")))
-                    .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                    .OnClicked_Lambda([this, Index]() -> FReply
-                    {
-                        CopyMessageToClipboard(Index);
-                        return FReply::Handled();
-                    })
-                ]
+                SAssignNew(ContentTextBlock, STextBlock)
+                .Text(FText::FromString(DisplayText))
+                .AutoWrapText(true)
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                .ColorAndOpacity(FSlateColor(TextColor))
+            ]
+            
+            // Copy button - on same line, right side
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Top)
+            .Padding(FMargin(6, 0, 0, 0))
+            [
+                SNew(SButton)
+                .Text(FText::FromString(TEXT("Copy")))
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([this, Index]() -> FReply
+                {
+                    CopyMessageToClipboard(Index);
+                    return FReply::Handled();
+                })
             ]
         ];
     
@@ -529,7 +531,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     if (Message.Role == TEXT("user"))
     {
         MessageScrollBox->AddSlot()
-        .Padding(4)
+        .Padding(2)
         .HAlign(HAlign_Right)
         [
             SNew(SBox)
@@ -543,7 +545,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     {
         // Assistant/system messages fill width
         MessageScrollBox->AddSlot()
-        .Padding(4)
+        .Padding(2)
         [
             MessageContent
         ];
@@ -723,7 +725,7 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
         // Main header row
         + SVerticalBox::Slot()
         .AutoHeight()
-        .Padding(2, 1)
+        .Padding(2, 0)
         [
             SNew(SHorizontalBox)
             
@@ -792,7 +794,7 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
     
     // Add to scroll box
     MessageScrollBox->AddSlot()
-    .Padding(FMargin(4, 0, 4, 0))
+    .Padding(FMargin(2, 0, 2, 0))
     [
         CompactWidget
     ];
