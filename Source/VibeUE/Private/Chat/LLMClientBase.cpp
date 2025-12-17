@@ -264,20 +264,22 @@ void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 Bytes
         {
             UE_LOG(LogLLMClientBase, Verbose, TEXT("New SSE content (%d chars)"), NewContent.Len());
         }
-        StreamBuffer = ResponseContent;
         
         // Check if this is SSE data or plain JSON (non-streaming response)
-        // SSE data starts with "data: " prefix
+        // SSE data starts with "data: " prefix, or may start with ":" (comment) followed by data lines
         FString TrimmedContent = NewContent.TrimStart();
-        if (TrimmedContent.StartsWith(TEXT("data: ")))
+        if (TrimmedContent.StartsWith(TEXT("data: ")) || TrimmedContent.StartsWith(TEXT(":")))
         {
-            // SSE streaming response
+            // SSE streaming response (including SSE comments like ": OPENROUTER PROCESSING")
+            // Update StreamBuffer ONLY for SSE content that we're processing
+            StreamBuffer = ResponseContent;
+            // Process the entire content - ProcessSSEData will skip comment lines and process data lines
             ProcessSSEData(NewContent);
         }
         else
         {
             // Non-streaming response - will be processed in HandleRequestComplete
-            // Just store it in the buffer, don't process here
+            // Do NOT update StreamBuffer here so HandleRequestComplete knows to process it
             if (IsDebugLoggingEnabled())
             {
                 UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] Non-SSE content detected, deferring to HandleRequestComplete"));
@@ -556,6 +558,30 @@ void FLLMClientBase::FirePendingToolCalls()
     {
         FMCPToolCall& ToolCall = PendingToolCalls[Index];
         
+        // VALIDATION: Skip tool calls with empty name or ID (malformed streaming response)
+        if (ToolCall.ToolName.IsEmpty())
+        {
+            UE_LOG(LogLLMClientBase, Warning, TEXT("Skipping tool call with empty name at index %d (ID=%s, Args=%s)"), 
+                Index, *ToolCall.Id, *ToolCall.ArgumentsJson.Left(100));
+            // Create error result for this malformed tool call
+            if (!ToolCall.Id.IsEmpty())
+            {
+                // If we have an ID but no name, we need to report an error
+                FMCPToolCall ErrorCall = ToolCall;
+                ErrorCall.ToolName = TEXT("__error__");
+                CurrentOnToolCall.Execute(ErrorCall);
+            }
+            continue;
+        }
+        
+        // Generate a fallback ID if empty (some providers don't send IDs correctly)
+        if (ToolCall.Id.IsEmpty())
+        {
+            ToolCall.Id = FString::Printf(TEXT("call_%d_%lld"), Index, FDateTime::UtcNow().GetTicks());
+            UE_LOG(LogLLMClientBase, Warning, TEXT("Generated fallback ID for tool call: %s -> %s"), 
+                *ToolCall.ToolName, *ToolCall.Id);
+        }
+        
         // Parse accumulated arguments JSON into the Arguments object
         if (!ToolCall.ArgumentsJson.IsEmpty())
         {
@@ -571,6 +597,9 @@ void FLLMClientBase::FirePendingToolCalls()
         UE_LOG(LogLLMClientBase, Log, TEXT("Firing tool call: %s"), *ToolCall.ToolName);
         CurrentOnToolCall.Execute(ToolCall);
     }
+    
+    // Clear pending tool calls after firing to prevent duplicate execution
+    PendingToolCalls.Empty();
     
     if (IsDebugLoggingEnabled())
     {
@@ -742,23 +771,45 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         {
             // Check if this is non-SSE (JSON) content that wasn't processed in progress callback
             FString TrimmedContent = ResponseContent.TrimStart();
-            bool bIsSSEContent = TrimmedContent.StartsWith(TEXT("data: "));
+            bool bIsSSEContent = TrimmedContent.StartsWith(TEXT("data: ")) || TrimmedContent.StartsWith(TEXT(":"));
+            
+            // If we already have data in StreamBuffer, it means SSE processing already happened
+            bool bAlreadyProcessedAsStream = StreamBuffer.Len() > 0;
             
             // For non-SSE content, we need to process it here since progress callback deferred it
-            if (!bIsSSEContent && !bToolCallsDetectedInStream)
+            if (!bIsSSEContent && !bToolCallsDetectedInStream && !bAlreadyProcessedAsStream)
             {
                 UE_LOG(LogLLMClientBase, Log, TEXT("Processing non-streaming JSON response"));
                 UE_LOG(LogLLMClientBase, Log, TEXT("Response preview: %s"), *ResponseContent.Left(1000));
                 ProcessNonStreamingResponse(ResponseContent);
             }
-            else if (StreamBuffer.Len() == 0)
+            else if (StreamBuffer.Len() == 0 && bIsSSEContent)
             {
                 // SSE content that wasn't captured by progress callback
                 UE_LOG(LogLLMClientBase, Log, TEXT("Processing SSE content that wasn't captured by progress callback"));
                 StreamBuffer = ResponseContent;
                 ProcessSSEData(ResponseContent);
             }
+            else if (bAlreadyProcessedAsStream && ResponseContent.Len() > StreamBuffer.Len())
+            {
+                // There's more content in ResponseContent than what we processed - final chunk was deferred
+                // Extract and process the unprocessed portion
+                FString UnprocessedContent = ResponseContent.Right(ResponseContent.Len() - StreamBuffer.Len());
+                if (!UnprocessedContent.IsEmpty())
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Processing %d chars of deferred SSE content from final chunk"), UnprocessedContent.Len());
+                    StreamBuffer = ResponseContent;
+                    ProcessSSEData(UnprocessedContent);
+                }
+            }
         }
+    }
+    
+    // Fire any pending tool calls that weren't fired (e.g., if [DONE] was in a deferred chunk)
+    if (PendingToolCalls.Num() > 0)
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Firing %d pending tool calls that weren't fired during stream"), PendingToolCalls.Num());
+        FirePendingToolCalls();
     }
     
     // Also log the request URL and verb for context
