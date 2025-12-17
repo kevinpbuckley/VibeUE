@@ -707,13 +707,22 @@ def _handle_bind_events(widget_name: str, component_name: str, input_events: Opt
             logger.error("Failed to connect to Unreal Engine")
             return {"success": False, "error": "Failed to connect to Unreal Engine"}
         
+        # Convert input_events dict to input_mappings array format expected by C++
+        # e.g., {"OnClicked": "HandleClick"} -> [{"event_name": "OnClicked", "function_name": "HandleClick"}]
+        input_mappings = []
+        for event_name, function_name in input_events.items():
+            input_mappings.append({
+                "event_name": event_name,
+                "function_name": function_name
+            })
+        
         params = {
             "widget_name": widget_name,
             "component_name": component_name,
-            "input_events": input_events
+            "input_mappings": input_mappings
         }
         
-        logger.info(f"Binding events for component '{component_name}' in widget '{widget_name}': {input_events}")
+        logger.info(f"Binding events for component '{component_name}' in widget '{widget_name}': {input_mappings}")
         response = unreal.send_command("bind_input_events", params)
         
         if not response:

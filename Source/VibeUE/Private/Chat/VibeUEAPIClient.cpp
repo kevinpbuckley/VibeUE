@@ -1,6 +1,7 @@
 // Copyright 2025 Vibe AI. All Rights Reserved.
 
 #include "Chat/VibeUEAPIClient.h"
+#include "Chat/ChatSession.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Dom/JsonObject.h"
@@ -178,6 +179,18 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     FJsonSerializer::Serialize(RequestBody.ToSharedRef(), Writer);
 
     UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Sending chat request to VibeUE API: %s"), *EndpointUrl);
+    
+    // Log raw request to dedicated file for debugging (if file logging enabled)
+    if (FChatSession::IsFileLoggingEnabled())
+    {
+        FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\n%s\n"),
+            *FDateTime::Now().ToString(),
+            *EndpointUrl,
+            *RequestBodyString);
+        FFileHelper::SaveStringToFile(RequestLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Raw request logged to: %s"), *RawLogPath);
+    }
 
     // Create HTTP request
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();

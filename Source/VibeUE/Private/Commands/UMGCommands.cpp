@@ -524,7 +524,64 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 	const auto Result = PropertyService->SetWidgetProperty(WidgetBlueprint, WidgetName, Request);
 	if (Result.IsError())
 	{
-		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+		// Property not found or set failed - include list of available properties to help the user
+		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+		Response->SetBoolField(TEXT("success"), false);
+		Response->SetStringField(TEXT("error"), Result.GetErrorMessage());
+		
+		// Get available properties for this component
+		const auto PropertiesResult = PropertyService->ListWidgetProperties(WidgetBlueprint, WidgetName, true);
+		if (PropertiesResult.IsSuccess())
+		{
+			const TArray<FWidgetPropertyInfo>& Properties = PropertiesResult.GetValue();
+			TArray<TSharedPtr<FJsonValue>> AvailableProps;
+			
+			// Prioritize common editable properties
+			// Filter out raw UObject pointer properties like 'Slot' - these should be accessed via Slot.PropertyName syntax
+			for (const FWidgetPropertyInfo& Info : Properties)
+			{
+				// Skip raw object pointers that can't be directly accessed
+				if (Info.PropertyName.Equals(TEXT("Slot"), ESearchCase::IgnoreCase) ||
+					Info.PropertyType.Contains(TEXT("TObjectPtr")) ||
+					Info.PropertyType.Contains(TEXT("UObject*")))
+				{
+					continue;
+				}
+				
+				if (Info.bIsEditable && Info.bIsBlueprintVisible && AvailableProps.Num() < 20)
+				{
+					TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+					PropObj->SetStringField(TEXT("name"), Info.PropertyName);
+					PropObj->SetStringField(TEXT("type"), Info.PropertyType);
+					if (!Info.Category.IsEmpty())
+					{
+						PropObj->SetStringField(TEXT("category"), Info.Category);
+					}
+					AvailableProps.Add(MakeShared<FJsonValueObject>(PropObj));
+				}
+			}
+			
+			Response->SetArrayField(TEXT("available_properties"), AvailableProps);
+			
+			// Provide context-aware hint based on error message
+			FString HintMessage;
+			const FString ErrorMsg = Result.GetErrorMessage();
+			if (ErrorMsg.Contains(TEXT("Canvas")) && (ErrorMsg.Contains(TEXT("Alignment")) || ErrorMsg.Contains(TEXT("LayoutData"))))
+			{
+				HintMessage = FString::Printf(TEXT("Property '%s' not found. For CanvasPanel children, use Slot.LayoutData.Anchors.Minimum/Maximum (set to 0,0 and 1,1 for fill) instead of Slot.HorizontalAlignment."), *PropertyName);
+			}
+			else if (PropertyName.StartsWith(TEXT("Slot.")))
+			{
+				HintMessage = FString::Printf(TEXT("Slot property '%s' not found. Slot properties vary by parent panel type (CanvasPanel uses LayoutData, Overlay/Box use Alignment)."), *PropertyName);
+			}
+			else
+			{
+				HintMessage = FString::Printf(TEXT("Property '%s' not found or could not be set. Use one of the available_properties listed. For slot properties use 'Slot.PropertyName' format."), *PropertyName);
+			}
+			Response->SetStringField(TEXT("hint"), HintMessage);
+		}
+		
+		return Response;
 	}
 
 	const FWidgetPropertySetResult& Payload = Result.GetValue();
@@ -1156,7 +1213,56 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 	const auto Result = PropertyService->GetWidgetProperty(WidgetBlueprint, WidgetName, PropertyName);
 	if (Result.IsError())
 	{
-		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+		// Property not found - include list of available properties to help the user
+		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+		Response->SetBoolField(TEXT("success"), false);
+		Response->SetStringField(TEXT("error"), Result.GetErrorMessage());
+		
+		// Get available properties for this component
+		const auto PropertiesResult = PropertyService->ListWidgetProperties(WidgetBlueprint, WidgetName, true);
+		if (PropertiesResult.IsSuccess())
+		{
+			const TArray<FWidgetPropertyInfo>& Properties = PropertiesResult.GetValue();
+			TArray<TSharedPtr<FJsonValue>> AvailableProps;
+			AvailableProps.Reserve(FMath::Min(Properties.Num(), 20)); // Limit to 20 most common
+			
+			// Prioritize common editable properties
+			// Filter out raw UObject pointer properties like 'Slot' - these should be accessed via Slot.PropertyName syntax
+			TArray<const FWidgetPropertyInfo*> SortedProps;
+			for (const FWidgetPropertyInfo& Info : Properties)
+			{
+				// Skip raw object pointers that can't be directly accessed
+				if (Info.PropertyName.Equals(TEXT("Slot"), ESearchCase::IgnoreCase) ||
+					Info.PropertyType.Contains(TEXT("TObjectPtr")) ||
+					Info.PropertyType.Contains(TEXT("UObject*")))
+				{
+					continue;
+				}
+				
+				if (Info.bIsEditable && Info.bIsBlueprintVisible)
+				{
+					SortedProps.Add(&Info);
+				}
+			}
+			
+			// Add up to 20 properties
+			for (int32 i = 0; i < FMath::Min(SortedProps.Num(), 20); ++i)
+			{
+				TSharedPtr<FJsonObject> PropObj = MakeShared<FJsonObject>();
+				PropObj->SetStringField(TEXT("name"), SortedProps[i]->PropertyName);
+				PropObj->SetStringField(TEXT("type"), SortedProps[i]->PropertyType);
+				if (!SortedProps[i]->Category.IsEmpty())
+				{
+					PropObj->SetStringField(TEXT("category"), SortedProps[i]->Category);
+				}
+				AvailableProps.Add(MakeShared<FJsonValueObject>(PropObj));
+			}
+			
+			Response->SetArrayField(TEXT("available_properties"), AvailableProps);
+			Response->SetStringField(TEXT("hint"), FString::Printf(TEXT("Property '%s' not found. Use one of the available_properties listed, or call list_properties action for full list. For slot properties use 'Slot.PropertyName' format."), *PropertyName));
+		}
+		
+		return Response;
 	}
 
 	const FWidgetPropertyGetResult& Payload = Result.GetValue();

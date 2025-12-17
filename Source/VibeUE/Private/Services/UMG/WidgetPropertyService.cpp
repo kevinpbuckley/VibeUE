@@ -179,7 +179,35 @@ static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segments, b
 
         if (!CurrentProperty)
         {
-            Error = FString::Printf(TEXT("Property '%s' not found"), *Segment.Name);
+            // Provide more helpful error for slot properties that vary by slot type
+            if (bSlotRoot && SegmentIndex == 0 && Widget->Slot)
+            {
+                const FString SlotClassName = Widget->Slot->GetClass()->GetName();
+                
+                // Check for common alignment property mistakes
+                if (Segment.Name.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase) ||
+                    Segment.Name.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase))
+                {
+                    if (SlotClassName.Contains(TEXT("CanvasPanelSlot")))
+                    {
+                        Error = FString::Printf(TEXT("Property '%s' not found on %s. Canvas children use Slot.LayoutData.Anchors (set Minimum/Maximum to 0,0/1,1 for fill) and Slot.LayoutData.Alignment instead."), 
+                            *Segment.Name, *SlotClassName);
+                    }
+                    else
+                    {
+                        Error = FString::Printf(TEXT("Property '%s' not found on %s. Available slot properties depend on parent panel type."), 
+                            *Segment.Name, *SlotClassName);
+                    }
+                }
+                else
+                {
+                    Error = FString::Printf(TEXT("Property '%s' not found on slot type %s"), *Segment.Name, *SlotClassName);
+                }
+            }
+            else
+            {
+                Error = FString::Printf(TEXT("Property '%s' not found"), *Segment.Name);
+            }
             return false;
         }
 
@@ -528,15 +556,31 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
 
                 if (BrushObj->HasField(TEXT("TintColor")))
                 {
+                    FLinearColor TintColor;
+                    bool bGotTint = false;
+                    
+                    // Try array format first [R, G, B, A]
                     const TArray<TSharedPtr<FJsonValue>>* ColorArray;
                     if (BrushObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
                     {
-                        FLinearColor TintColor;
                         TintColor.R = (*ColorArray)[0]->AsNumber();
                         TintColor.G = (*ColorArray)[1]->AsNumber();
                         TintColor.B = (*ColorArray)[2]->AsNumber();
                         TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
-
+                        bGotTint = true;
+                    }
+                    // Try object format {R:, G:, B:, A:}
+                    else if (const TSharedPtr<FJsonObject>* TintObj; BrushObj->TryGetObjectField(TEXT("TintColor"), TintObj))
+                    {
+                        TintColor.R = (*TintObj)->GetNumberField(TEXT("R"));
+                        TintColor.G = (*TintObj)->GetNumberField(TEXT("G"));
+                        TintColor.B = (*TintObj)->GetNumberField(TEXT("B"));
+                        TintColor.A = (*TintObj)->HasField(TEXT("A")) ? (*TintObj)->GetNumberField(TEXT("A")) : 1.0f;
+                        bGotTint = true;
+                    }
+                    
+                    if (bGotTint)
+                    {
                         SlateBrush->TintColor = FSlateColor(TintColor);
                         bModified = true;
                     }
@@ -959,6 +1003,14 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
         TArray<FPathSegment> Segments;
         if (!ParsePropertyPath(Request.PropertyPath, bSlotRoot, Segments))
         {
+            // Provide helpful error message for common mistakes
+            if (Request.PropertyPath.Equals(TEXT("Slot"), ESearchCase::IgnoreCase))
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PARAM_INVALID,
+                    TEXT("Cannot access 'Slot' directly. Use 'Slot.PropertyName' format (e.g., 'Slot.Padding', 'Slot.HorizontalAlignment', 'Slot.ChildOrder').")
+                );
+            }
             return TResult<FWidgetPropertySetResult>::Error(
                 VibeUE::ErrorCodes::PARAM_INVALID,
                 TEXT("Invalid property_path")
@@ -1297,12 +1349,24 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
             }
             else
             {
-                TSharedPtr<FJsonObject> JsonObj = Request.Value.JsonValue->AsObject();
-                void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-                bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                // Try custom ParseComplexPropertyValue first for special struct types like FSlateBrush, FButtonStyle
+                // These have custom JSON parsing that UE's FJsonObjectConverter doesn't handle well
+                const FString StructName = StructProperty->Struct->GetName();
+                if (StructName.Contains(TEXT("SlateBrush")) || StructName.Contains(TEXT("ButtonStyle")))
+                {
+                    bPropertySet = ParseComplexPropertyValue(Request.Value.JsonValue, Property, FoundWidget, ErrorMessage);
+                }
+                
+                // Fall back to standard JSON conversion if custom parsing didn't work
                 if (!bPropertySet)
                 {
-                    ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct for property '%s'"), *Request.PropertyPath);
+                    TSharedPtr<FJsonObject> JsonObj = Request.Value.JsonValue->AsObject();
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                    if (!bPropertySet)
+                    {
+                        ErrorMessage = FString::Printf(TEXT("Failed to convert JSON to struct for property '%s'. For FSlateBrush use: {\"ResourceObject\": \"/path/to/texture\", \"DrawAs\": \"Image\", \"TintColor\": [R,G,B,A]}"), *Request.PropertyPath);
+                    }
                 }
             }
         }
@@ -1533,6 +1597,14 @@ TResult<FWidgetPropertyGetResult> FWidgetPropertyService::GetWidgetProperty(UWid
     TArray<FPathSegment> Segments;
     if (!ParsePropertyPath(PropertyPath, bSlotRoot, Segments))
     {
+        // Provide helpful error message for common mistakes
+        if (PropertyPath.Equals(TEXT("Slot"), ESearchCase::IgnoreCase))
+        {
+            return TResult<FWidgetPropertyGetResult>::Error(
+                VibeUE::ErrorCodes::PARAM_INVALID,
+                TEXT("Cannot access 'Slot' directly. Use 'Slot.PropertyName' format (e.g., 'Slot.Padding', 'Slot.HorizontalAlignment', 'Slot.ChildOrder').")
+            );
+        }
         return TResult<FWidgetPropertyGetResult>::Error(
             VibeUE::ErrorCodes::PARAM_INVALID,
             TEXT("Invalid property_name path")

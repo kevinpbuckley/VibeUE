@@ -83,7 +83,7 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
 
 FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
-    , bInThinkingBlock(false)
+    , bInToolCallBlock(false)
 {
 }
 
@@ -98,7 +98,6 @@ void FLLMClientBase::ResetStreamingState()
     AccumulatedContent.Empty();
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
-    bInThinkingBlock = false;
     bInToolCallBlock = false;
 }
 
@@ -444,16 +443,19 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
         }
     }
 
-    // Get content if present (skip if we have tool calls)
+    // Get content if present
+    // Note: Content may come before tool calls in the same response, so we need to capture it
     FString DeltaContent;
     if ((*DeltaObj)->TryGetStringField(TEXT("content"), DeltaContent))
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("Delta content: '%s' (len=%d, bToolCalls=%d, bThinking=%d)"), 
-            *DeltaContent.Left(100), DeltaContent.Len(), bToolCallsDetectedInStream, bInThinkingBlock);
+        UE_LOG(LogLLMClientBase, Log, TEXT("Delta content: '%s' (len=%d, bToolCalls=%d)"), 
+            *DeltaContent.Left(100), DeltaContent.Len(), bToolCallsDetectedInStream);
         
-        if (!bToolCallsDetectedInStream && !DeltaContent.IsEmpty())
+        // Always process content - it may come before tool calls start
+        if (!DeltaContent.IsEmpty())
         {
-            FString CleanContent = FilterThinkingTags(DeltaContent);
+            // Filter only tool_call tags (those need to be parsed), but pass through thinking tags
+            FString CleanContent = FilterToolCallTags(DeltaContent);
             
             if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
             {
@@ -464,29 +466,14 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
     }
 }
 
-FString FLLMClientBase::FilterThinkingTags(const FString& Content)
+FString FLLMClientBase::FilterToolCallTags(const FString& Content)
 {
-    // Track previous thinking state to detect transitions
-    bool bWasThinking = bInThinkingBlock;
-    
-    // Handle <thinking>...</thinking> (Claude), <think>...</think> (Qwen), and <tool_call>...</tool_call> (Qwen text-based tool calls)
+    // Only filter <tool_call> tags - these need to be parsed for tool execution
+    // Keep thinking tags (<think>, <thinking>) visible to the user
     FString CleanContent = Content;
     
-    // First filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
+    // Filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
     CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
-    
-    // Then filter thinking tags
-    CleanContent = FilterTagBlock(CleanContent, TEXT("<thinking>"), TEXT("</thinking>"), bInThinkingBlock);
-    if (CleanContent == Content) // No <thinking> found, try <think>
-    {
-        CleanContent = FilterTagBlock(CleanContent, TEXT("<think>"), TEXT("</think>"), bInThinkingBlock);
-    }
-    
-    // Fire thinking status callback on state transitions
-    if (bInThinkingBlock != bWasThinking && CurrentOnThinkingStatus.IsBound())
-    {
-        CurrentOnThinkingStatus.Execute(bInThinkingBlock);
-    }
     
     return CleanContent;
 }
@@ -674,7 +661,40 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         return;
     }
     
-    // Check for tool calls
+    // ALWAYS extract and display content first, even when tool_calls are present
+    // This shows the LLM's reasoning/status message alongside tool execution
+    FString Content;
+    if ((*MessageObj)->TryGetStringField(TEXT("content"), Content) && !Content.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Content (with tool_calls check pending): %s"), *Content.Left(200));
+        
+        // Filter tool_call tags from content
+        FString CleanContent = FilterToolCallTags(Content);
+        
+        // Remove any text-based tool_call blocks from displayed content
+        // (these will be parsed separately if no JSON tool_calls array exists)
+        int32 FirstToolCallIndex = CleanContent.Find(TEXT("</tool_call>"));
+        if (FirstToolCallIndex > 0)
+        {
+            CleanContent = CleanContent.Left(FirstToolCallIndex).TrimEnd();
+        }
+        else if (CleanContent.StartsWith(TEXT("</tool_call>")))
+        {
+            CleanContent.Empty();
+        }
+        
+        if (!CleanContent.IsEmpty())
+        {
+            AccumulatedContent = CleanContent;
+            if (CurrentOnChunk.IsBound())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Displaying content to user: %s"), *CleanContent.Left(200));
+                CurrentOnChunk.Execute(CleanContent);
+            }
+        }
+    }
+    
+    // Check for tool calls in JSON format
     const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
     if ((*MessageObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray) && ToolCallsArray->Num() > 0)
     {
@@ -710,28 +730,83 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
                 CurrentOnToolCall.Execute(ToolCall);
             }
         }
+        return; // Tool calls handled via JSON array, skip text-based parsing
     }
-    else
+    
+    // No JSON tool_calls array - check for text-based tool calls in content
+    if (!Content.IsEmpty() && Content.Contains(TEXT("</tool_call>")))
     {
-        // Get content
-        FString Content;
-        if ((*MessageObj)->TryGetStringField(TEXT("content"), Content) && !Content.IsEmpty())
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for text-format tool calls..."));
+        
+        // Filter tool_call tags
+        FString CleanContent = FilterToolCallTags(Content);
+        
+        // Parse tool calls from text
+        // Format: </tool_call>\n{"name": "tool_name", "arguments": {...}}\n</tool_call>
+        TArray<FString> Parts;
+        CleanContent.ParseIntoArray(Parts, TEXT("</tool_call>"), true);
+        
+        int32 ToolCallIndex = 0;
+        for (const FString& Part : Parts)
         {
-            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Content: %s"), *Content.Left(200));
-            
-            // Filter thinking tags
-            FString CleanContent = FilterThinkingTags(Content);
-            
-            // Store accumulated content for retrieval (used by summarization)
-            AccumulatedContent = CleanContent;
-            
-            if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
+            FString TrimmedPart = Part.TrimStartAndEnd();
+            if (TrimmedPart.IsEmpty())
             {
-                CurrentOnChunk.Execute(CleanContent);
+                continue;
             }
+            
+            // Check if this part looks like JSON (starts with {)
+            if (!TrimmedPart.StartsWith(TEXT("{")))
+            {
+                continue;
+            }
+            
+            // Parse the JSON
+            TSharedPtr<FJsonObject> ToolCallJson;
+            TSharedRef<TJsonReader<>> ToolReader = TJsonReaderFactory<>::Create(TrimmedPart);
+            if (!FJsonSerializer::Deserialize(ToolReader, ToolCallJson) || !ToolCallJson.IsValid())
+            {
+                UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse tool call JSON: %s"), *TrimmedPart.Left(100));
+                continue;
+            }
+            
+            // Extract tool call info
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = ToolCallJson->GetStringField(TEXT("name"));
+            
+            // Get arguments - could be object or string
+            const TSharedPtr<FJsonObject>* ArgsObj;
+            if (ToolCallJson->TryGetObjectField(TEXT("arguments"), ArgsObj))
+            {
+                // Arguments is an object, serialize to string
+                TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+                FJsonSerializer::Serialize(ArgsObj->ToSharedRef(), Writer);
+                ToolCall.Arguments = *ArgsObj;
+            }
+            else
+            {
+                // Arguments might be a string
+                ToolCall.ArgumentsJson = ToolCallJson->GetStringField(TEXT("arguments"));
+                TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+                FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+            }
+            
+            // Generate ID since text format doesn't include one
+            ToolCall.Id = FString::Printf(TEXT("text_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed text tool call: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+            
+            bToolCallsDetectedInStream = true;
+            if (CurrentOnToolCall.IsBound() && !ToolCall.ToolName.IsEmpty())
+            {
+                CurrentOnToolCall.Execute(ToolCall);
+            }
+            
+            ToolCallIndex++;
         }
     }
 }
+
 void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 {
     // Check for timeout/connection failure first
@@ -765,6 +840,19 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         FString ResponseContent = Response->GetContentAsString();
         UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response content length=%d, StreamBuffer length=%d"), 
             ResponseContent.Len(), StreamBuffer.Len());
+        
+        // Log raw response to dedicated file for debugging (if file logging enabled)
+        if (FChatSession::IsFileLoggingEnabled())
+        {
+            FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+            FString ResponseLog = FString::Printf(TEXT("\n========== RESPONSE [%s] ==========\nHTTP %d, Content-Type: %s\n%s\n"),
+                *FDateTime::Now().ToString(),
+                ResponseCode,
+                *ContentType,
+                *ResponseContent);
+            FFileHelper::SaveStringToFile(ResponseLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+            UE_LOG(LogLLMClientBase, Log, TEXT("Raw response logged to: %s"), *RawLogPath);
+        }
         
         // Check if we have content that needs processing
         if (ResponseContent.Len() > 0)

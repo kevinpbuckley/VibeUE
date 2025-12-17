@@ -1424,6 +1424,19 @@ void FChatSession::SetDebugModeEnabled(bool bEnabled)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
+bool FChatSession::IsFileLoggingEnabled()
+{
+    bool bFileLogging = true; // Default to enabled
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("FileLogging"), bFileLogging, GEditorPerProjectIni);
+    return bFileLogging;
+}
+
+void FChatSession::SetFileLoggingEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("FileLogging"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 FString FChatSession::GetVibeUEApiKeyFromConfig()
 {
     FString ApiKey;

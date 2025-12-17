@@ -1363,13 +1363,19 @@ TOOL_HELP = {
                 "example": 'manage_umg_widget(action="get_property", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", property_name="ColorAndOpacity")'
             },
             "set_property": {
-                "description": "Set a component property or slot property",
+                "description": "Set a component property or slot property. NOTE: Slot properties vary by parent panel type - CanvasPanel uses Slot.LayoutData.Anchors, Overlay/Box use Slot.HorizontalAlignment",
                 "parameters": {
                     "widget_name": "REQUIRED: Full widget path",
                     "component_name": "REQUIRED: Component name",
-                    "property_name": "REQUIRED: Property path (Slot.HorizontalAlignment, ColorAndOpacity, etc.)",
+                    "property_name": "REQUIRED: Property path. For CanvasPanel children use Slot.LayoutData.Anchors.Minimum/Maximum. For Overlay/Box children use Slot.HorizontalAlignment/VerticalAlignment.",
                     "property_value": "REQUIRED: Value to assign (numbers, bools, dicts, strings)",
                     "property_type": "Optional override for value coercion (auto by default)"
+                },
+                "slot_properties_by_panel": {
+                    "CanvasPanel": ["Slot.LayoutData.Anchors.Minimum", "Slot.LayoutData.Anchors.Maximum", "Slot.LayoutData.Offsets", "Slot.LayoutData.Alignment", "Slot.bAutoSize", "Slot.ZOrder"],
+                    "Overlay": ["Slot.HorizontalAlignment", "Slot.VerticalAlignment", "Slot.Padding"],
+                    "HorizontalBox/VerticalBox": ["Slot.HorizontalAlignment", "Slot.VerticalAlignment", "Slot.Padding", "Slot.Size.SizeRule", "Slot.Size.Value"],
+                    "ScrollBox": ["Slot.HorizontalAlignment", "Slot.VerticalAlignment", "Slot.Padding"]
                 },
                 "example": 'manage_umg_widget(action="set_property", widget_name="/Game/UI/WBP_MainMenu", component_name="PlayButton", property_name="ColorAndOpacity", property_value={"R":1,"G":0.5,"B":0.1,"A":1})'
             },

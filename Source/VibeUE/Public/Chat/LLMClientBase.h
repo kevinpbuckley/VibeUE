@@ -105,8 +105,8 @@ private:
     /** Process a single SSE JSON chunk */
     void ProcessSSEChunk(const FString& JsonData);
 
-    /** Filter thinking tags and tool_call tags from content */
-    FString FilterThinkingTags(const FString& Content);
+    /** Filter tool_call tags from content (keeps thinking tags visible) */
+    FString FilterToolCallTags(const FString& Content);
 
     /** Helper to filter a specific tag block from content */
     FString FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock);
@@ -131,9 +131,6 @@ private:
 
     /** Flag: tool calls detected in stream (suppress content after this) */
     bool bToolCallsDetectedInStream;
-
-    /** Flag: currently inside a <thinking> block */
-    bool bInThinkingBlock;
 
     /** Flag: currently inside a <tool_call> block (Qwen models output these in text) */
     bool bInToolCallBlock;
