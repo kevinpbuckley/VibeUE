@@ -468,12 +468,31 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
 
 FString FLLMClientBase::FilterToolCallTags(const FString& Content)
 {
-    // Only filter <tool_call> tags - these need to be parsed for tool execution
+    // Filter tool_call tags from content - these need to be parsed for tool execution
     // Keep thinking tags (<think>, <thinking>) visible to the user
     FString CleanContent = Content;
     
     // Filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
     CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
+    
+    // Filter bracket-style [tool_call: ...] or [Tool call: ...] patterns
+    // Use a simple state-based approach for streaming (can't use regex on partial chunks)
+    int32 BracketStart;
+    while ((BracketStart = CleanContent.Find(TEXT("[tool_call:"), ESearchCase::IgnoreCase)) != INDEX_NONE)
+    {
+        int32 BracketEnd = CleanContent.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketStart);
+        if (BracketEnd != INDEX_NONE)
+        {
+            // Complete bracket tool call - remove it
+            CleanContent = CleanContent.Left(BracketStart) + CleanContent.Mid(BracketEnd + 1);
+        }
+        else
+        {
+            // Incomplete - truncate at bracket start (will accumulate in next chunk)
+            CleanContent = CleanContent.Left(BracketStart);
+            break;
+        }
+    }
     
     return CleanContent;
 }
@@ -517,6 +536,219 @@ FString FLLMClientBase::FilterTagBlock(const FString& Content, const FString& Op
     }
     
     return CleanContent;
+}
+
+TArray<FMCPToolCall> FLLMClientBase::ParseBracketStyleToolCalls(const FString& Content)
+{
+    // Parse bracket-style tool calls from content
+    // Formats supported:
+    //   [tool_call: func_name(arg1="value1", arg2=value2)]
+    //   [Tool call: func_name(arg1="value1", arg2=value2)]
+    
+    TArray<FMCPToolCall> ToolCalls;
+    
+    // Find all [tool_call: ...] or [Tool call: ...] patterns
+    int32 SearchStart = 0;
+    int32 CallIndex = 0;
+    
+    while (SearchStart < Content.Len())
+    {
+        // Find start of tool call - case insensitive
+        int32 BracketStart = Content.Find(TEXT("[tool_call:"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (BracketStart == INDEX_NONE)
+        {
+            // Try alternate format "[Tool call:"
+            BracketStart = Content.Find(TEXT("[Tool call:"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        }
+        
+        if (BracketStart == INDEX_NONE)
+        {
+            break;
+        }
+        
+        // Find the closing bracket
+        int32 BracketEnd = Content.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketStart);
+        if (BracketEnd == INDEX_NONE)
+        {
+            // Incomplete - might continue in next chunk
+            break;
+        }
+        
+        // Extract the content between [tool_call: and ]
+        int32 ContentStart = BracketStart;
+        // Skip past "[tool_call:" or "[Tool call:"
+        while (ContentStart < BracketEnd && Content[ContentStart] != TCHAR(':'))
+        {
+            ContentStart++;
+        }
+        ContentStart++; // Skip the colon
+        
+        FString CallContent = Content.Mid(ContentStart, BracketEnd - ContentStart).TrimStartAndEnd();
+        
+        // Parse: func_name(args)
+        int32 ParenStart = CallContent.Find(TEXT("("));
+        if (ParenStart == INDEX_NONE)
+        {
+            // No arguments - just function name
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = CallContent.TrimStartAndEnd();
+            ToolCall.Id = FString::Printf(TEXT("bracket_call_%d_%lld"), CallIndex, FDateTime::UtcNow().GetTicks());
+            ToolCall.ArgumentsJson = TEXT("{}");
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[BRACKET PARSE] Tool call (no args): %s"), *ToolCall.ToolName);
+                ToolCalls.Add(ToolCall);
+                CallIndex++;
+            }
+        }
+        else
+        {
+            // Has arguments
+            FString FuncName = CallContent.Left(ParenStart).TrimStartAndEnd();
+            
+            // Find matching closing paren
+            int32 ParenEnd = CallContent.Len() - 1;
+            while (ParenEnd > ParenStart && CallContent[ParenEnd] != TCHAR(')'))
+            {
+                ParenEnd--;
+            }
+            
+            FString ArgsStr = CallContent.Mid(ParenStart + 1, ParenEnd - ParenStart - 1);
+            
+            // Parse arguments into JSON object
+            // Format: key1="value1", key2=value2, key3=true
+            TSharedPtr<FJsonObject> ArgsObj = MakeShared<FJsonObject>();
+            
+            // Simple parser for key=value pairs
+            TArray<FString> ArgPairs;
+            
+            // Split by comma, but respect quotes and nested braces
+            FString CurrentArg;
+            int32 BraceDepth = 0;
+            bool bInQuotes = false;
+            TCHAR QuoteChar = 0;
+            
+            for (int32 i = 0; i < ArgsStr.Len(); i++)
+            {
+                TCHAR c = ArgsStr[i];
+                
+                if (!bInQuotes && (c == TCHAR('"') || c == TCHAR('\'')))
+                {
+                    bInQuotes = true;
+                    QuoteChar = c;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (bInQuotes && c == QuoteChar)
+                {
+                    bInQuotes = false;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && (c == TCHAR('{') || c == TCHAR('[')))
+                {
+                    BraceDepth++;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && (c == TCHAR('}') || c == TCHAR(']')))
+                {
+                    BraceDepth--;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && BraceDepth == 0 && c == TCHAR(','))
+                {
+                    // End of argument
+                    FString TrimmedArg = CurrentArg.TrimStartAndEnd();
+                    if (!TrimmedArg.IsEmpty())
+                    {
+                        ArgPairs.Add(TrimmedArg);
+                    }
+                    CurrentArg.Empty();
+                }
+                else
+                {
+                    CurrentArg.AppendChar(c);
+                }
+            }
+            
+            // Don't forget the last argument
+            FString TrimmedArg = CurrentArg.TrimStartAndEnd();
+            if (!TrimmedArg.IsEmpty())
+            {
+                ArgPairs.Add(TrimmedArg);
+            }
+            
+            // Parse each key=value pair
+            for (const FString& Pair : ArgPairs)
+            {
+                int32 EqPos = Pair.Find(TEXT("="));
+                if (EqPos != INDEX_NONE)
+                {
+                    FString Key = Pair.Left(EqPos).TrimStartAndEnd();
+                    FString Value = Pair.Mid(EqPos + 1).TrimStartAndEnd();
+                    
+                    // Remove quotes from string values
+                    if ((Value.StartsWith(TEXT("\"")) && Value.EndsWith(TEXT("\""))) ||
+                        (Value.StartsWith(TEXT("'")) && Value.EndsWith(TEXT("'"))))
+                    {
+                        Value = Value.Mid(1, Value.Len() - 2);
+                        ArgsObj->SetStringField(Key, Value);
+                    }
+                    else if (Value.Equals(TEXT("true"), ESearchCase::IgnoreCase))
+                    {
+                        ArgsObj->SetBoolField(Key, true);
+                    }
+                    else if (Value.Equals(TEXT("false"), ESearchCase::IgnoreCase))
+                    {
+                        ArgsObj->SetBoolField(Key, false);
+                    }
+                    else if (Value.StartsWith(TEXT("{")) || Value.StartsWith(TEXT("[")))
+                    {
+                        // Try to parse as JSON
+                        TSharedPtr<FJsonValue> JsonValue;
+                        TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Value);
+                        if (FJsonSerializer::Deserialize(JsonReader, JsonValue) && JsonValue.IsValid())
+                        {
+                            ArgsObj->SetField(Key, JsonValue);
+                        }
+                        else
+                        {
+                            ArgsObj->SetStringField(Key, Value);
+                        }
+                    }
+                    else if (Value.IsNumeric())
+                    {
+                        // Number
+                        ArgsObj->SetNumberField(Key, FCString::Atod(*Value));
+                    }
+                    else
+                    {
+                        // Plain string without quotes
+                        ArgsObj->SetStringField(Key, Value);
+                    }
+                }
+            }
+            
+            // Serialize arguments to JSON
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = FuncName;
+            ToolCall.Id = FString::Printf(TEXT("bracket_call_%d_%lld"), CallIndex, FDateTime::UtcNow().GetTicks());
+            ToolCall.Arguments = ArgsObj;
+            
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+            FJsonSerializer::Serialize(ArgsObj.ToSharedRef(), Writer);
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[BRACKET PARSE] Tool call: %s, args: %s"), *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(200));
+                ToolCalls.Add(ToolCall);
+                CallIndex++;
+            }
+        }
+        
+        SearchStart = BracketEnd + 1;
+    }
+    
+    return ToolCalls;
 }
 
 void FLLMClientBase::FirePendingToolCalls()
@@ -673,6 +905,8 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         
         // Remove any text-based tool_call blocks from displayed content
         // (these will be parsed separately if no JSON tool_calls array exists)
+        
+        // Filter XML-style </tool_call> tags
         int32 FirstToolCallIndex = CleanContent.Find(TEXT("</tool_call>"));
         if (FirstToolCallIndex > 0)
         {
@@ -681,6 +915,27 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         else if (CleanContent.StartsWith(TEXT("</tool_call>")))
         {
             CleanContent.Empty();
+        }
+        
+        // Filter bracket-style [tool_call: ...] patterns
+        // Remove all occurrences of [tool_call: func_name(...)]
+        FRegexPattern BracketToolCallPattern(TEXT("\\[tool_call:\\s*[^\\]]+\\]"));
+        FRegexMatcher BracketMatcher(BracketToolCallPattern, CleanContent);
+        while (BracketMatcher.FindNext())
+        {
+            // Replace from match start to end with empty string
+            int32 MatchStart = BracketMatcher.GetMatchBeginning();
+            int32 MatchEnd = BracketMatcher.GetMatchEnding();
+            CleanContent = CleanContent.Left(MatchStart) + CleanContent.Mid(MatchEnd);
+            // Reset matcher with updated string
+            BracketMatcher = FRegexMatcher(BracketToolCallPattern, CleanContent);
+        }
+        
+        // Clean up any extra whitespace/newlines from removed tool calls
+        CleanContent = CleanContent.TrimStartAndEnd();
+        while (CleanContent.Contains(TEXT("\n\n\n")))
+        {
+            CleanContent = CleanContent.Replace(TEXT("\n\n\n"), TEXT("\n\n"));
         }
         
         if (!CleanContent.IsEmpty())
@@ -734,6 +989,30 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
     }
     
     // No JSON tool_calls array - check for text-based tool calls in content
+    // First try bracket format: [tool_call: func(args)]
+    if (!Content.IsEmpty() && (Content.Contains(TEXT("[tool_call:")) || Content.Contains(TEXT("[Tool call:"))))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for bracket-format tool calls..."));
+        
+        TArray<FMCPToolCall> BracketToolCalls = ParseBracketStyleToolCalls(Content);
+        
+        if (BracketToolCalls.Num() > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found %d bracket-format tool calls"), BracketToolCalls.Num());
+            bToolCallsDetectedInStream = true;
+            
+            for (const FMCPToolCall& ToolCall : BracketToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled via bracket format
+        }
+    }
+    
+    // Try XML-style format: <tool_call>...</tool_call>
     if (!Content.IsEmpty() && Content.Contains(TEXT("</tool_call>")))
     {
         UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for text-format tool calls..."));

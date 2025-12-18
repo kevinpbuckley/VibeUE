@@ -111,6 +111,9 @@ private:
     /** Helper to filter a specific tag block from content */
     FString FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock);
 
+    /** Parse bracket-style tool calls from content: [tool_call: func(args)] */
+    TArray<FMCPToolCall> ParseBracketStyleToolCalls(const FString& Content);
+
     /** Fire accumulated tool calls */
     void FirePendingToolCalls();
 

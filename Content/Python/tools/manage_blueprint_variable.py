@@ -16,8 +16,8 @@ def register_blueprint_variable_tools(mcp: FastMCP):
     @mcp.tool(description="""Blueprint variable operations: create, delete, get/set properties, diagnostics. Actions: create, delete, list, get_info, modify, search_types, diagnostics, get_property, set_property, get_property_metadata, set_property_metadata. Use action='help' for all actions and detailed parameter info. For create: use search_types to discover type_path, or use aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'.""")
     def manage_blueprint_variable(
         ctx: Context,
-        blueprint_name: str,
         action: str,
+        blueprint_name: str = "",
         help_action: Optional[str] = None,
         variable_name: Optional[str] = None,
         variable_config: Optional[Dict[str, Any]] = None,
@@ -34,13 +34,22 @@ def register_blueprint_variable_tools(mcp: FastMCP):
         from vibe_ue_server import get_unreal_connection
         
         try:
-            # Handle help action
+            # Handle help action (doesn't require blueprint_name)
             if action == "help":
                 from help_system import generate_help_response
                 return generate_help_response("manage_blueprint_variable", help_action)
             
             # Import error response helper
             from help_system import generate_error_response
+            
+            # Validate blueprint_name is provided for non-help actions
+            if not blueprint_name:
+                return generate_error_response(
+                    "manage_blueprint_variable", action,
+                    "blueprint_name is required for this action",
+                    missing_parameters=["blueprint_name"],
+                    correct_format='manage_blueprint_variable(action="list", blueprint_name="/Game/Blueprints/BP_Player")'
+                )
             
             unreal = get_unreal_connection()
             if not unreal:

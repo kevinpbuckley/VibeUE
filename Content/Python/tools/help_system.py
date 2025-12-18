@@ -1408,6 +1408,54 @@ TOOL_HELP = {
             }
         },
         "note": "This tool supports 11 actions for UMG widget operations. Use action='help' for complete action list."
+    },
+    
+    "deep_researcher": {
+        "summary": "AI-powered research tool for Unreal Engine questions. Searches internet sources to provide comprehensive answers about UE5 development.",
+        "topic": "research-tools",
+        "actions": {
+            "help": {
+                "description": "Show help for this tool or a specific action",
+                "parameters": {
+                    "help_action": "Optional: specific action to get help for"
+                },
+                "example": 'deep_researcher(action="help") or deep_researcher(action="help", help_action="research")'
+            },
+            "research": {
+                "description": "Perform comprehensive research on an Unreal Engine topic",
+                "parameters": {
+                    "query": "REQUIRED: The question or topic to research",
+                    "max_results": "Maximum sources to include (default: 5)",
+                    "include_documentation": "Include official UE docs (default: True)",
+                    "include_forums": "Include forum discussions (default: True)",
+                    "include_tutorials": "Include tutorials (default: True)",
+                    "focus_area": "Focus: 'blueprints', 'c++', 'materials', 'ui', 'animation', 'networking'",
+                    "format": "Output: 'detailed', 'summary', 'bullet_points' (default: 'detailed')",
+                    "max_length": "Maximum response length (default: 2000)"
+                },
+                "example": 'deep_researcher(action="research", query="How to create a health bar in UE5", focus_area="ui")'
+            },
+            "search": {
+                "description": "Quick search for Unreal Engine resources",
+                "parameters": {
+                    "query": "REQUIRED: Search terms",
+                    "max_results": "Maximum results (default: 5)",
+                    "focus_area": "Optional area to focus search"
+                },
+                "example": 'deep_researcher(action="search", query="UE5 procedural mesh generation")'
+            },
+            "summarize": {
+                "description": "Get a quick summary of an Unreal Engine concept",
+                "parameters": {
+                    "query": "REQUIRED: Topic to summarize",
+                    "focus_area": "Optional context for summary",
+                    "max_length": "Maximum summary length (default: 2000)"
+                },
+                "example": 'deep_researcher(action="summarize", query="Enhanced Input System")'
+            }
+        },
+        "focus_areas": ["blueprints", "c++", "materials", "ui", "animation", "networking", "ai", "physics", "audio", "rendering"],
+        "note": "Use this tool to research UE5 topics before implementing with other VibeUE tools. Combines official docs, forums, and tutorials."
     }
 }
 

@@ -16,8 +16,8 @@ def register_blueprint_component_tools(mcp: FastMCP):
     @mcp.tool(description="Blueprint component operations: create, delete, get/set properties, hierarchy. Actions: search_types, get_info, get_property_metadata, list, create, delete, get_property, set_property, get_all_properties, compare_properties, reorder, reparent. Use action='help' for all actions and detailed parameter info. CRITICAL: Use full package paths like /Game/Blueprints/BP_Player (not short names).")
     def manage_blueprint_component(
         ctx: Context,
-        blueprint_name: str,
         action: str,
+        blueprint_name: str = "",
         help_action: str = "",
         # Component identification
         component_type: str = "",
@@ -52,18 +52,27 @@ def register_blueprint_component_tools(mcp: FastMCP):
         from vibe_ue_server import get_unreal_connection
         
         try:
-            # Handle help action
+            # Handle help action (doesn't require blueprint_name)
             if action == "help":
                 from help_system import generate_help_response
                 return generate_help_response("manage_blueprint_component", help_action if help_action else None)
+            
+            # Import error response helper
+            from help_system import generate_error_response
+            
+            # Validate blueprint_name is provided for most actions (except search_types)
+            if action != "search_types" and not blueprint_name:
+                return generate_error_response(
+                    "manage_blueprint_component", action,
+                    "blueprint_name is required for this action",
+                    missing_parameters=["blueprint_name"],
+                    correct_format='manage_blueprint_component(action="list", blueprint_name="/Game/Blueprints/BP_Player")'
+                )
             
             unreal = get_unreal_connection()
             if not unreal:
                 logger.error("Failed to connect to Unreal Engine")
                 return {"success": False, "message": "Failed to connect to Unreal Engine"}
-            
-            # Import error response helper
-            from help_system import generate_error_response
             
             # Validate action
             valid_actions = [

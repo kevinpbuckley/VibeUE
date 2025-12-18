@@ -138,34 +138,39 @@ Example:
 3. **READ** the help response to understand what went wrong
 4. **FIX** the command based on the help documentation
 5. **THEN** retry with correct parameters
+6. **IF STILL FAILING** after help, use `deep_researcher` to research the topic
 
 ### ⚠️ MAXIMUM RETRY LIMIT - PREVENT INFINITE LOOPS
 **You may ONLY retry a failed tool call TWICE maximum.** After that:
-- **STOP** attempting that operation
-- **REPORT** the failure to the user with the error message
+- **TRY deep_researcher** to research the correct approach
+- If research doesn't help, **STOP** and report the failure
 - **MOVE ON** to the next task or ask the user for guidance
 
-**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, you should stop and ask the user what to do next.
+**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, use deep_researcher or ask the user.
 
 **Self-Monitoring Guidelines:**
 - Keep track of how many times you've tried a particular operation
 - If you notice you're repeating similar tool calls with similar errors, STOP
+- **Use deep_researcher** to look up the correct syntax/format
 - After 2-3 failures, summarize what was accomplished, what failed, and why
 - Suggest alternative approaches instead of continuing to fail
 
-**Example - If adding a modifier fails because "Context has 0 mappings":**
-- First attempt fails → Check help OR try different parameters
-- Second attempt fails → STOP and report: "Could not add modifier to IMC_TestVehicle - it has no key mappings. Would you like me to add a key mapping first?"
-- DO NOT retry 10+ times with the same parameters!
+**Example - If setting a property fails with wrong format:**
+- First attempt fails with "INVALID_VALUE" → Use `get_property` to see the correct format
+- Second attempt fails → Call `action="help"` to learn the parameters
+- Third attempt fails → Use `deep_researcher(action="research", query="UE5 property format for [type]")`
+- If still failing → STOP and report to user
 
 **When You're Stuck:**
 If you find yourself making the same or similar tool calls repeatedly without success:
 1. Stop and take stock of what you've tried
-2. Summarize your progress to the user
-3. Explain what's blocking you
-4. Ask for guidance or suggest a different approach
+2. **Use deep_researcher** to research the topic
+3. Summarize your progress to the user
+4. Explain what's blocking you
+5. Ask for guidance or suggest a different approach
 
 **Remember: ALL VibeUE tools support `action="help"` - use it whenever a tool fails!**
+**Remember: Use `deep_researcher` when help doesn't solve your problem!**
 
 Example of WRONG behavior:
 - `manage_level_actors(action="add", ...)` fails: "actor_class is required"
@@ -225,6 +230,12 @@ You have access to **12 powerful MCP tools** that directly manipulate Unreal Eng
 |------|---------|
 | `manage_umg_widget` | Create and configure UMG widgets and UI layouts (11 actions) |
 
+### Research & Learning
+
+| Tool | Purpose |
+|------|---------|
+| `deep_researcher` | AI-powered research tool for Unreal Engine questions (3 actions) |
+
 ## Getting Help with Inline Documentation
 
 **EVERY VibeUE MCP tool has built-in help via `action="help"`!** This is the primary way to get guidance and learn about available actions.
@@ -243,6 +254,7 @@ You have access to **12 powerful MCP tools** that directly manipulate Unreal Eng
 - `manage_material_node(action="help")`
 - `manage_umg_widget(action="help")`
 - `manage_asset(action="help")`
+- `deep_researcher(action="help")`
 
 ### How to Access Help
 
@@ -428,6 +440,66 @@ manage_material(action="set_instance_vector_parameter",
 - ❌ WRONG: `manage_material_node(action="discover_types", category="All")` - "All" is not a valid category
 - ✅ CORRECT: `manage_material_node(action="discover_types", search_term="Constant")` - use search_term instead
 - ✅ CORRECT: `manage_material_node(action="get_categories")` - to list valid categories first
+
+### ⚠️ CRITICAL: Property Value Formats in Unreal Engine
+
+**When setting properties, MATCH THE FORMAT shown by `get_property`!**
+
+If `get_property` returns a value like `(B=100,G=180,R=255,A=255)`, use EXACTLY that format when setting:
+
+**Colors (FColor):**
+```python
+# CORRECT - Use the exact format from get_property
+manage_level_actors(action="set_property", actor_label="MyLight",
+                   property_path="LightComponent0.LightColor", 
+                   property_value="(R=0,G=255,B=0,A=255)")  # Green
+
+# WRONG - These formats will fail:
+# property_value="[0, 255, 0]"      # Array format - WRONG
+# property_value="0.0, 1.0, 0.0"    # Float format - WRONG  
+# property_value="FColor(0,255,0)"  # Constructor format - WRONG
+```
+
+**Vectors (FVector):**
+```python
+# CORRECT
+property_value="(X=100,Y=200,Z=300)"
+
+# WRONG
+# property_value="[100, 200, 300]"
+```
+
+**Linear Colors (FLinearColor):**
+```python
+# CORRECT - Normalized 0-1 values
+property_value="(R=1.0,G=0.5,B=0.0,A=1.0)"
+```
+
+**WORKFLOW: Always get_property first to see the format:**
+1. `get_property` to see current value and format
+2. Use the EXACT same format structure when calling `set_property`
+3. If still failing, use `action="help"` for the tool
+
+### ⚠️ Using deep_researcher When Stuck
+
+**If `action="help"` doesn't solve your problem, use `deep_researcher` to research the topic:**
+
+```python
+# When help doesn't explain the format
+deep_researcher(action="research", query="UE5 FColor property format string", focus_area="c++")
+
+# When you don't know how something works
+deep_researcher(action="summarize", query="Unreal Engine Light Color properties")
+
+# When looking for best practices
+deep_researcher(action="research", query="How to change light color in UE5 via code")
+```
+
+**Use deep_researcher when:**
+- The help action doesn't explain what you need
+- You encounter Unreal Engine concepts you don't understand
+- You need to find the correct property names or formats
+- You want to research best practices before implementing
 
 ## Error Handling
 

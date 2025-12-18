@@ -500,6 +500,9 @@ from tools.manage_asset import register_asset_tools  # Asset operations (4 actio
 # SYSTEM DIAGNOSTICS (AI Assistant Support)
 from tools.system import register_system_tools  # Connection testing, get_help
 
+# RESEARCH TOOLS (AI-powered research)
+from tools.deep_researcher import register_deep_researcher_tools  # Deep research for UE questions
+
 # TOOL REGISTRATION ORDER (Important for AI understanding):
 # 1. Core tools first (editor, blueprints, project)
 # 2. Basic UMG tools (simple widget operations)  
@@ -536,7 +539,10 @@ register_asset_tools(mcp)  # manage_asset: import, export, open, convert (4 acti
 # System Tools (1 file → 1 tool)
 register_system_tools(mcp)  # check_unreal_connection
 
-# ✅ TOTAL: 11 Python files providing 12 MCP tools (including 1 system tool)
+# Research Tools (1 file → 1 tool)
+register_deep_researcher_tools(mcp)  # deep_researcher: research, search, summarize UE topics
+
+# ✅ TOTAL: 12 Python files providing 13 MCP tools (including 1 system tool + 1 research tool)
 # 🆕 REMOVED: get_help tool - now each tool has action='help' for inline help
 # 🆕 ADDED: manage_material_node tool for material graph operations
 
