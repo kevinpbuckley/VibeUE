@@ -6,7 +6,7 @@ Tests for creating and configuring UI widgets. Run sequentially.
 
 ## Setup
 
-Create a widget blueprint called TestWidget in the Blueprints folder.
+Create a widget blueprint called TestWidget in the Blueprints folder. if it already exsits delete it and create a new one.
 
 ---
 

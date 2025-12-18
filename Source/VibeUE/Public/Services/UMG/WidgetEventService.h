@@ -17,9 +17,11 @@ public:
     virtual FString GetServiceName() const override { return TEXT("WidgetEventService"); }
 
     /**
-     * Discover available events and callable functions for a widget blueprint or class
+     * Discover available events and callable functions for a widget blueprint or specific component.
+     * If ComponentName is provided, returns delegate events for that specific component (e.g., Button's OnClicked).
+     * Otherwise returns widget-level events.
      */
-    TResult<TArray<FWidgetEventInfo>> GetAvailableEvents(UWidgetBlueprint* WidgetBlueprint, const FString& WidgetType = TEXT(""));
+    TResult<TArray<FWidgetEventInfo>> GetAvailableEvents(UWidgetBlueprint* WidgetBlueprint, const FString& ComponentName = TEXT(""), const FString& WidgetType = TEXT(""));
 
     /**
      * Bind input/event mappings to functions in the widget blueprint.

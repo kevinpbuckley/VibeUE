@@ -187,7 +187,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                     .Padding(0, 0, 12, 0)
                     [
                         SAssignNew(TokenBudgetText, STextBlock)
-                        .Text(FText::FromString(TEXT("Tokens: --")))
+                        .Text(FText::FromString(TEXT("Context: --")))
                         .ToolTipText(FText::FromString(TEXT("Context token usage (current / budget)")))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::Green))
                         .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
@@ -388,9 +388,94 @@ void SAIChatWindow::RebuildMessageList()
     PendingToolCallKeys.Empty();  // Clear pending tool call queue
     
     const TArray<FChatMessage>& Messages = ChatSession->GetMessages();
-    for (int32 i = 0; i < Messages.Num(); ++i)
+    
+    // Show empty state if no messages
+    if (Messages.Num() == 0)
     {
-        AddMessageWidget(Messages[i], i);
+        // Check if user has a VibeUE API key
+        bool bHasVibeUEApiKey = !FChatSession::GetVibeUEApiKeyFromConfig().IsEmpty();
+        
+        // Always recreate the empty state widget to reflect current API key status
+        TSharedPtr<SVerticalBox> EmptyStateContent;
+        
+        EmptyStateWidget = SNew(SBox)
+            .Padding(FMargin(20, 40))
+            .HAlign(HAlign_Center)
+            .VAlign(VAlign_Center)
+            [
+                SAssignNew(EmptyStateContent, SVerticalBox)
+                
+                // Welcome message
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .HAlign(HAlign_Center)
+                .Padding(0, 0, 0, 12)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Welcome to VibeUE AI Chat")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))
+                ]
+                
+                // Disclaimer
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .HAlign(HAlign_Center)
+                .Padding(0, 0, 0, 8)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("AI responses may be inaccurate.")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Italic", 11))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                ]
+                
+                // Hint
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .HAlign(HAlign_Center)
+                .Padding(0, 0, 0, 12)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Always verify important information.")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                ]
+            ];
+        
+        // Add API key link if user doesn't have one
+        if (!bHasVibeUEApiKey)
+        {
+            EmptyStateContent->AddSlot()
+            .AutoHeight()
+            .HAlign(HAlign_Center)
+            .Padding(0, 8, 0, 0)
+            [
+                SNew(SButton)
+                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([]() -> FReply {
+                    FPlatformProcess::LaunchURL(TEXT("https://www.vibeue.com/login"), nullptr, nullptr);
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Get a free API key at vibeue.com")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::Cyan))
+                ]
+            ];
+        }
+        
+        MessageScrollBox->AddSlot()
+        [
+            EmptyStateWidget.ToSharedRef()
+        ];
+    }
+    else
+    {
+        for (int32 i = 0; i < Messages.Num(); ++i)
+        {
+            AddMessageWidget(Messages[i], i);
+        }
     }
     
     ScrollToBottom();
@@ -1473,6 +1558,12 @@ void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
     
     int32 MessageIndex = ChatSession->GetMessages().Num() - 1;
     
+    // Remove empty state widget if this is the first message
+    if (MessageIndex == 0 && EmptyStateWidget.IsValid())
+    {
+        MessageScrollBox->ClearChildren();
+    }
+    
     // Check if widget already exists for this index (prevents duplicates)
     if (MessageTextBlocks.Contains(MessageIndex))
     {
@@ -1802,7 +1893,7 @@ void SAIChatWindow::HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxToken
 {
     if (!TokenBudgetText.IsValid()) return;
     
-    // Format the display: "Tokens: 12.5K / 117K (10%)"
+    // Format the display: "Context: 12.5K / 117K (10%)"
     auto FormatTokens = [](int32 Tokens) -> FString
     {
         if (Tokens >= 1000)
@@ -1812,7 +1903,7 @@ void SAIChatWindow::HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxToken
         return FString::Printf(TEXT("%d"), Tokens);
     };
     
-    FString TokenText = FString::Printf(TEXT("Tokens: %s / %s (%.0f%%)"),
+    FString TokenText = FString::Printf(TEXT("Context: %s / %s (%.0f%%)"),
         *FormatTokens(CurrentTokens), 
         *FormatTokens(MaxTokens), 
         UtilizationPercent * 100.f);

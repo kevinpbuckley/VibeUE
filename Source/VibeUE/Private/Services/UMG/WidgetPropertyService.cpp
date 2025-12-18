@@ -128,7 +128,35 @@ struct FResolvedTarget
     void* ContainerPtr = nullptr;
     FProperty* Property = nullptr;
     bool bIsSyntheticChildOrder = false;
+    
+    // Canvas slot virtual properties - these use getter/setter methods, not UPROPERTYs
+    bool bIsCanvasSlotVirtualProperty = false;
+    FString CanvasSlotVirtualPropertyName;
 };
+
+// Check if the property name is a canvas slot virtual property (uses getter/setter, not reflection)
+static bool IsCanvasSlotVirtualProperty(const FString& PropertyName)
+{
+    static const TArray<FString> VirtualProperties = {
+        TEXT("alignment"),
+        TEXT("anchors"),
+        TEXT("position"),
+        TEXT("size"),
+        TEXT("auto_size"),
+        TEXT("autosize"),
+        TEXT("z_order"),
+        TEXT("zorder")
+    };
+    
+    for (const FString& VP : VirtualProperties)
+    {
+        if (PropertyName.Equals(VP, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    return false;
+}
 
 static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segments, bool bSlotRoot, FResolvedTarget& Out, FString& Error)
 {
@@ -177,6 +205,23 @@ static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segments, b
             }
         }
 
+        // Check for canvas slot virtual properties (alignment, anchors, position, size, etc.)
+        // These are accessed via getter/setter methods, not as UPROPERTYs
+        if (!CurrentProperty && bSlotRoot && SegmentIndex == 0 && Widget->Slot)
+        {
+            UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot);
+            if (CanvasSlot && IsCanvasSlotVirtualProperty(Segment.Name))
+            {
+                // Mark this as a canvas slot virtual property for special handling
+                Out.RootObject = Widget->Slot;
+                Out.ContainerPtr = Widget->Slot;
+                Out.Property = nullptr;
+                Out.bIsCanvasSlotVirtualProperty = true;
+                Out.CanvasSlotVirtualPropertyName = Segment.Name;
+                return true;
+            }
+        }
+
         if (!CurrentProperty)
         {
             // Provide more helpful error for slot properties that vary by slot type
@@ -190,18 +235,18 @@ static bool ResolvePath(UWidget* Widget, const TArray<FPathSegment>& Segments, b
                 {
                     if (SlotClassName.Contains(TEXT("CanvasPanelSlot")))
                     {
-                        Error = FString::Printf(TEXT("Property '%s' not found on %s. Canvas children use Slot.LayoutData.Anchors (set Minimum/Maximum to 0,0/1,1 for fill) and Slot.LayoutData.Alignment instead."), 
+                        Error = FString::Printf(TEXT("Property '%s' not found on %s. For CanvasPanel slot properties, use Slot.alignment ([x,y] or 'center'), Slot.anchors ('fill' or object), Slot.position, Slot.size."), 
                             *Segment.Name, *SlotClassName);
                     }
                     else
                     {
-                        Error = FString::Printf(TEXT("Property '%s' not found on %s. Available slot properties depend on parent panel type."), 
+                        Error = FString::Printf(TEXT("Property '%s' not found on %s. Use Slot.horizontal_alignment or Slot.vertical_alignment for Box/Overlay panels."), 
                             *Segment.Name, *SlotClassName);
                     }
                 }
                 else
                 {
-                    Error = FString::Printf(TEXT("Property '%s' not found on slot type %s"), *Segment.Name, *SlotClassName);
+                    Error = FString::Printf(TEXT("Property '%s' not found on slot type %s. For CanvasPanel use: Slot.alignment, Slot.anchors, Slot.position, Slot.size. For Box/Overlay use: Slot.horizontal_alignment, Slot.vertical_alignment."), *Segment.Name, *SlotClassName);
                 }
             }
             else
@@ -1092,6 +1137,155 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
             return TResult<FWidgetPropertySetResult>::Success(ResultPayload);
         }
 
+        // Handle canvas slot virtual properties (alignment, anchors, position, size, etc.)
+        if (ResolvedTarget.bIsCanvasSlotVirtualProperty)
+        {
+            UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundWidget->Slot);
+            if (!CanvasSlot)
+            {
+                return TResult<FWidgetPropertySetResult>::Error(
+                    VibeUE::ErrorCodes::PROPERTY_SET_FAILED,
+                    TEXT("Widget is not in a CanvasPanel - cannot set canvas slot properties")
+                );
+            }
+
+            const FString& PropName = ResolvedTarget.CanvasSlotVirtualPropertyName;
+            
+            // Parse the value based on property type
+            if (PropName.Equals(TEXT("alignment"), ESearchCase::IgnoreCase))
+            {
+                // Alignment expects [x, y] array where 0.5, 0.5 = center
+                if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Array)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>& Arr = Request.Value.JsonValue->AsArray();
+                    if (Arr.Num() >= 2)
+                    {
+                        FVector2D Alignment(Arr[0]->AsNumber(), Arr[1]->AsNumber());
+                        CanvasSlot->SetAlignment(Alignment);
+                        ResultPayload.AppliedValue.SetString(FString::Printf(TEXT("[%f, %f]"), Alignment.X, Alignment.Y));
+                    }
+                }
+                else if (Request.Value.HasString())
+                {
+                    // Support string shortcuts like "center"
+                    FString AlignStr = Request.Value.StringValue.ToLower();
+                    FVector2D Alignment(0.0, 0.0);
+                    if (AlignStr.Contains(TEXT("center")))
+                    {
+                        Alignment = FVector2D(0.5, 0.5);
+                    }
+                    else if (AlignStr.Contains(TEXT("right")))
+                    {
+                        Alignment.X = 1.0;
+                    }
+                    else if (AlignStr.Contains(TEXT("bottom")))
+                    {
+                        Alignment.Y = 1.0;
+                    }
+                    CanvasSlot->SetAlignment(Alignment);
+                    ResultPayload.AppliedValue.SetString(FString::Printf(TEXT("[%f, %f]"), Alignment.X, Alignment.Y));
+                }
+            }
+            else if (PropName.Equals(TEXT("anchors"), ESearchCase::IgnoreCase))
+            {
+                // Anchors expects {min_x, min_y, max_x, max_y} or string like "fill", "center"
+                FAnchors Anchors;
+                if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Object)
+                {
+                    const TSharedPtr<FJsonObject>& Obj = Request.Value.JsonValue->AsObject();
+                    Anchors.Minimum.X = Obj->GetNumberField(TEXT("min_x"));
+                    Anchors.Minimum.Y = Obj->GetNumberField(TEXT("min_y"));
+                    Anchors.Maximum.X = Obj->GetNumberField(TEXT("max_x"));
+                    Anchors.Maximum.Y = Obj->GetNumberField(TEXT("max_y"));
+                }
+                else if (Request.Value.HasString())
+                {
+                    FString AnchorStr = Request.Value.StringValue.ToLower();
+                    if (AnchorStr.Contains(TEXT("fill")) || AnchorStr.Contains(TEXT("stretch")))
+                    {
+                        Anchors.Minimum = FVector2D(0, 0);
+                        Anchors.Maximum = FVector2D(1, 1);
+                    }
+                    else if (AnchorStr.Contains(TEXT("center")))
+                    {
+                        Anchors.Minimum = FVector2D(0.5, 0.5);
+                        Anchors.Maximum = FVector2D(0.5, 0.5);
+                    }
+                    else
+                    {
+                        // Default to top-left
+                        Anchors.Minimum = FVector2D(0, 0);
+                        Anchors.Maximum = FVector2D(0, 0);
+                    }
+                }
+                CanvasSlot->SetAnchors(Anchors);
+                ResultPayload.AppliedValue.SetString(FString::Printf(TEXT("{min:[%f,%f], max:[%f,%f]}"), 
+                    Anchors.Minimum.X, Anchors.Minimum.Y, Anchors.Maximum.X, Anchors.Maximum.Y));
+            }
+            else if (PropName.Equals(TEXT("position"), ESearchCase::IgnoreCase))
+            {
+                // Position expects [x, y] array
+                if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Array)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>& Arr = Request.Value.JsonValue->AsArray();
+                    if (Arr.Num() >= 2)
+                    {
+                        FVector2D Position(Arr[0]->AsNumber(), Arr[1]->AsNumber());
+                        CanvasSlot->SetPosition(Position);
+                        ResultPayload.AppliedValue.SetString(FString::Printf(TEXT("[%f, %f]"), Position.X, Position.Y));
+                    }
+                }
+            }
+            else if (PropName.Equals(TEXT("size"), ESearchCase::IgnoreCase))
+            {
+                // Size expects [width, height] array
+                if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Array)
+                {
+                    const TArray<TSharedPtr<FJsonValue>>& Arr = Request.Value.JsonValue->AsArray();
+                    if (Arr.Num() >= 2)
+                    {
+                        FVector2D Size(Arr[0]->AsNumber(), Arr[1]->AsNumber());
+                        CanvasSlot->SetSize(Size);
+                        ResultPayload.AppliedValue.SetString(FString::Printf(TEXT("[%f, %f]"), Size.X, Size.Y));
+                    }
+                }
+            }
+            else if (PropName.Equals(TEXT("auto_size"), ESearchCase::IgnoreCase) || PropName.Equals(TEXT("autosize"), ESearchCase::IgnoreCase))
+            {
+                bool bAutoSize = false;
+                if (Request.Value.HasJson())
+                {
+                    bAutoSize = Request.Value.JsonValue->AsBool();
+                }
+                else if (Request.Value.HasString())
+                {
+                    bAutoSize = Request.Value.StringValue.Equals(TEXT("true"), ESearchCase::IgnoreCase);
+                }
+                CanvasSlot->SetAutoSize(bAutoSize);
+                ResultPayload.AppliedValue.SetString(bAutoSize ? TEXT("true") : TEXT("false"));
+            }
+            else if (PropName.Equals(TEXT("z_order"), ESearchCase::IgnoreCase) || PropName.Equals(TEXT("zorder"), ESearchCase::IgnoreCase))
+            {
+                int32 ZOrder = 0;
+                if (Request.Value.HasJson() && Request.Value.JsonValue->Type == EJson::Number)
+                {
+                    ZOrder = static_cast<int32>(Request.Value.JsonValue->AsNumber());
+                }
+                else if (Request.Value.HasString())
+                {
+                    ZOrder = FCString::Atoi(*Request.Value.StringValue);
+                }
+                CanvasSlot->SetZOrder(ZOrder);
+                ResultPayload.AppliedValue.SetString(FString::FromInt(ZOrder));
+            }
+
+            FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+            WidgetBlueprint->MarkPackageDirty();
+
+            ResultPayload.Note = FString::Printf(TEXT("Canvas slot property '%s' set successfully"), *PropName);
+            return TResult<FWidgetPropertySetResult>::Success(ResultPayload);
+        }
+
         if (!ResolvedTarget.Property)
         {
             return TResult<FWidgetPropertySetResult>::Error(
@@ -1640,6 +1834,67 @@ TResult<FWidgetPropertyGetResult> FWidgetPropertyService::GetWidgetProperty(UWid
 
         ResultPayload.Constraints = MakeShareable(new FJsonObject);
         ResultPayload.Constraints->SetNumberField(TEXT("child_count"), ResultPayload.ChildCount);
+
+        return TResult<FWidgetPropertyGetResult>::Success(ResultPayload);
+    }
+
+    // Handle canvas slot virtual properties (alignment, anchors, position, size, etc.)
+    if (Target.bIsCanvasSlotVirtualProperty)
+    {
+        UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(FoundWidget->Slot);
+        if (!CanvasSlot)
+        {
+            return TResult<FWidgetPropertyGetResult>::Error(
+                VibeUE::ErrorCodes::PROPERTY_NOT_FOUND,
+                TEXT("Widget is not in a CanvasPanel - cannot get canvas slot properties")
+            );
+        }
+
+        const FString& PropName = Target.CanvasSlotVirtualPropertyName;
+        
+        if (PropName.Equals(TEXT("alignment"), ESearchCase::IgnoreCase))
+        {
+            FVector2D Alignment = CanvasSlot->GetAlignment();
+            ResultPayload.Value.SetString(FString::Printf(TEXT("[%f, %f]"), Alignment.X, Alignment.Y));
+            ResultPayload.PropertyType = TEXT("FVector2D");
+            ResultPayload.bIsEditable = true;
+        }
+        else if (PropName.Equals(TEXT("anchors"), ESearchCase::IgnoreCase))
+        {
+            FAnchors Anchors = CanvasSlot->GetAnchors();
+            ResultPayload.Value.SetString(FString::Printf(TEXT("{\"min_x\":%f,\"min_y\":%f,\"max_x\":%f,\"max_y\":%f}"), 
+                Anchors.Minimum.X, Anchors.Minimum.Y, Anchors.Maximum.X, Anchors.Maximum.Y));
+            ResultPayload.PropertyType = TEXT("FAnchors");
+            ResultPayload.bIsEditable = true;
+        }
+        else if (PropName.Equals(TEXT("position"), ESearchCase::IgnoreCase))
+        {
+            FVector2D Position = CanvasSlot->GetPosition();
+            ResultPayload.Value.SetString(FString::Printf(TEXT("[%f, %f]"), Position.X, Position.Y));
+            ResultPayload.PropertyType = TEXT("FVector2D");
+            ResultPayload.bIsEditable = true;
+        }
+        else if (PropName.Equals(TEXT("size"), ESearchCase::IgnoreCase))
+        {
+            FVector2D Size = CanvasSlot->GetSize();
+            ResultPayload.Value.SetString(FString::Printf(TEXT("[%f, %f]"), Size.X, Size.Y));
+            ResultPayload.PropertyType = TEXT("FVector2D");
+            ResultPayload.bIsEditable = true;
+        }
+        else if (PropName.Equals(TEXT("auto_size"), ESearchCase::IgnoreCase) || PropName.Equals(TEXT("autosize"), ESearchCase::IgnoreCase))
+        {
+            bool bAutoSize = CanvasSlot->GetAutoSize();
+            ResultPayload.Value.SetString(bAutoSize ? TEXT("true") : TEXT("false"));
+            ResultPayload.PropertyType = TEXT("bool");
+            ResultPayload.bIsEditable = true;
+        }
+        else if (PropName.Equals(TEXT("z_order"), ESearchCase::IgnoreCase) || PropName.Equals(TEXT("zorder"), ESearchCase::IgnoreCase))
+        {
+            int32 ZOrder = CanvasSlot->GetZOrder();
+            ResultPayload.Value.SetString(FString::FromInt(ZOrder));
+            ResultPayload.PropertyType = TEXT("int32");
+            ResultPayload.bIsEditable = true;
+        }
 
         return TResult<FWidgetPropertyGetResult>::Success(ResultPayload);
     }

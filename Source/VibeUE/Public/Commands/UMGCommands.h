@@ -52,6 +52,7 @@ private:
     TSharedPtr<FJsonObject> HandleAddChildToPanel(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleRemoveUMGComponent(const TSharedPtr<FJsonObject>& Params);  // Universal component removal
     TSharedPtr<FJsonObject> HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleSetWidgetSlotPropertyFromPath(const TSharedPtr<FJsonObject>& Params, const FString& WidgetBlueprintName, const FString& WidgetName, const FString& PropertyName);
 
     // Property Management Methods
     TSharedPtr<FJsonObject> HandleSetWidgetProperty(const TSharedPtr<FJsonObject>& Params);

@@ -1,6 +1,6 @@
 # Asset Management Tests
 
-These tests verify searching, duplicating, opening, saving, and deleting assets. Run sequentially.
+These tests verify searching, duplicating, opening, saving, and deleting assets. Run sequentially. If you try to create an asset and and already exists delete the asset and try again.
 
 ---
 

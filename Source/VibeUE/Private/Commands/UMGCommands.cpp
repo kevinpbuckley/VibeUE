@@ -480,6 +480,12 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
 	}
 
+	// Check if this is a slot property - route to slot property handler instead
+	if (PropertyName.StartsWith(TEXT("Slot."), ESearchCase::IgnoreCase))
+	{
+		return HandleSetWidgetSlotPropertyFromPath(Params, WidgetBlueprintName, WidgetName, PropertyName);
+	}
+
 	FWidgetPropertySetRequest Request;
 	Request.PropertyPath = PropertyName;
 
@@ -568,11 +574,11 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 			const FString ErrorMsg = Result.GetErrorMessage();
 			if (ErrorMsg.Contains(TEXT("Canvas")) && (ErrorMsg.Contains(TEXT("Alignment")) || ErrorMsg.Contains(TEXT("LayoutData"))))
 			{
-				HintMessage = FString::Printf(TEXT("Property '%s' not found. For CanvasPanel children, use Slot.LayoutData.Anchors.Minimum/Maximum (set to 0,0 and 1,1 for fill) instead of Slot.HorizontalAlignment."), *PropertyName);
+				HintMessage = FString::Printf(TEXT("Property '%s' not found. For CanvasPanel slot properties, use Slot.alignment ([x,y] or 'center'), Slot.anchors ('fill' or {min_x,min_y,max_x,max_y}), Slot.position, Slot.size."), *PropertyName);
 			}
 			else if (PropertyName.StartsWith(TEXT("Slot.")))
 			{
-				HintMessage = FString::Printf(TEXT("Slot property '%s' not found. Slot properties vary by parent panel type (CanvasPanel uses LayoutData, Overlay/Box use Alignment)."), *PropertyName);
+				HintMessage = FString::Printf(TEXT("Slot property '%s' not found. Supported: Slot.alignment, Slot.anchors, Slot.position, Slot.size, Slot.auto_size, Slot.z_order (CanvasPanel) or Slot.horizontal_alignment, Slot.vertical_alignment (Box/Overlay)."), *PropertyName);
 			}
 			else
 			{
@@ -1305,6 +1311,256 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetProperty(const TSharedPtr<F
 
 	return Response;
 }
+
+TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
+	const TSharedPtr<FJsonObject>& Params,
+	const FString& WidgetBlueprintName,
+	const FString& WidgetName,
+	const FString& PropertyName)
+{
+	if (!WidgetService.IsValid())
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("WidgetService not available"));
+	}
+
+	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
+	if (!WidgetBlueprint)
+	{
+		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
+	}
+
+	// Parse the slot property path: "Slot.alignment", "Slot.anchors", "Slot.position", etc.
+	FString SlotPropertyPath = PropertyName;
+	SlotPropertyPath.RemoveFromStart(TEXT("Slot."), ESearchCase::IgnoreCase);
+	
+	// Normalize common variations
+	FString NormalizedProperty = SlotPropertyPath.ToLower();
+	
+	// Get the property value
+	const TSharedPtr<FJsonValue>* PropertyValueField = Params->Values.Find(TEXT("property_value"));
+	if (!PropertyValueField || !PropertyValueField->IsValid())
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
+	}
+	
+	// Build the slot_properties JSON object for ApplySlotProperties
+	TSharedPtr<FJsonObject> SlotProperties = MakeShared<FJsonObject>();
+	
+	// Map Slot.PropertyName paths to the slot_properties JSON format
+	// CanvasPanel slot properties: position, size, anchors, alignment, auto_size, z_order
+	// Overlay/Box slot properties: horizontal_alignment, vertical_alignment, padding, size, fill
+	
+	if (NormalizedProperty == TEXT("alignment") || NormalizedProperty == TEXT("layoutdata.alignment"))
+	{
+		// Alignment expects [x, y] array (0.5, 0.5 = center)
+		if ((*PropertyValueField)->Type == EJson::Array)
+		{
+			SlotProperties->SetField(TEXT("alignment"), *PropertyValueField);
+		}
+		else if ((*PropertyValueField)->Type == EJson::String)
+		{
+			// Parse common alignment strings
+			FString AlignStr = (*PropertyValueField)->AsString().ToLower();
+			TArray<TSharedPtr<FJsonValue>> AlignArray;
+			
+			if (AlignStr.Contains(TEXT("center")))
+			{
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+			}
+			else if (AlignStr.Contains(TEXT("left")))
+			{
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.0));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+			}
+			else if (AlignStr.Contains(TEXT("right")))
+			{
+				AlignArray.Add(MakeShared<FJsonValueNumber>(1.0));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+			}
+			else if (AlignStr.Contains(TEXT("top")))
+			{
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.0));
+			}
+			else if (AlignStr.Contains(TEXT("bottom")))
+			{
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(1.0));
+			}
+			else
+			{
+				// Default to center
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+			}
+			
+			SlotProperties->SetArrayField(TEXT("alignment"), AlignArray);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Slot.alignment requires array [x, y] or string like 'center', 'left', 'right', 'top', 'bottom'"));
+		}
+	}
+	else if (NormalizedProperty == TEXT("anchors") || NormalizedProperty.StartsWith(TEXT("layoutdata.anchors")))
+	{
+		// Anchors expects {min_x, min_y, max_x, max_y}
+		if ((*PropertyValueField)->Type == EJson::Object)
+		{
+			const TSharedPtr<FJsonObject>& AnchorObj = (*PropertyValueField)->AsObject();
+			TSharedPtr<FJsonObject> AnchorsJson = MakeShared<FJsonObject>();
+			
+			// Support various formats
+			if (AnchorObj->HasField(TEXT("min_x")))
+			{
+				AnchorsJson = AnchorObj;
+			}
+			else if (AnchorObj->HasField(TEXT("Minimum")))
+			{
+				// Convert from Minimum/Maximum format
+				const TArray<TSharedPtr<FJsonValue>>* MinArray;
+				const TArray<TSharedPtr<FJsonValue>>* MaxArray;
+				if (AnchorObj->TryGetArrayField(TEXT("Minimum"), MinArray) && MinArray->Num() >= 2 &&
+					AnchorObj->TryGetArrayField(TEXT("Maximum"), MaxArray) && MaxArray->Num() >= 2)
+				{
+					AnchorsJson->SetNumberField(TEXT("min_x"), (*MinArray)[0]->AsNumber());
+					AnchorsJson->SetNumberField(TEXT("min_y"), (*MinArray)[1]->AsNumber());
+					AnchorsJson->SetNumberField(TEXT("max_x"), (*MaxArray)[0]->AsNumber());
+					AnchorsJson->SetNumberField(TEXT("max_y"), (*MaxArray)[1]->AsNumber());
+				}
+			}
+			
+			SlotProperties->SetObjectField(TEXT("anchors"), AnchorsJson);
+		}
+		else if ((*PropertyValueField)->Type == EJson::String)
+		{
+			// Parse common anchor presets
+			FString AnchorStr = (*PropertyValueField)->AsString().ToLower();
+			TSharedPtr<FJsonObject> AnchorsJson = MakeShared<FJsonObject>();
+			
+			if (AnchorStr.Contains(TEXT("fill")) || AnchorStr.Contains(TEXT("stretch")))
+			{
+				// Fill/Stretch: anchors 0,0 to 1,1
+				AnchorsJson->SetNumberField(TEXT("min_x"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("min_y"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("max_x"), 1.0);
+				AnchorsJson->SetNumberField(TEXT("max_y"), 1.0);
+			}
+			else if (AnchorStr.Contains(TEXT("center")))
+			{
+				AnchorsJson->SetNumberField(TEXT("min_x"), 0.5);
+				AnchorsJson->SetNumberField(TEXT("min_y"), 0.5);
+				AnchorsJson->SetNumberField(TEXT("max_x"), 0.5);
+				AnchorsJson->SetNumberField(TEXT("max_y"), 0.5);
+			}
+			else if (AnchorStr.Contains(TEXT("top")) && AnchorStr.Contains(TEXT("left")))
+			{
+				AnchorsJson->SetNumberField(TEXT("min_x"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("min_y"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("max_x"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("max_y"), 0.0);
+			}
+			else
+			{
+				// Default to top-left
+				AnchorsJson->SetNumberField(TEXT("min_x"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("min_y"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("max_x"), 0.0);
+				AnchorsJson->SetNumberField(TEXT("max_y"), 0.0);
+			}
+			
+			SlotProperties->SetObjectField(TEXT("anchors"), AnchorsJson);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Slot.anchors requires object {min_x, min_y, max_x, max_y} or string like 'fill', 'center', 'top-left'"));
+		}
+	}
+	else if (NormalizedProperty == TEXT("position") || NormalizedProperty == TEXT("layoutdata.position"))
+	{
+		if ((*PropertyValueField)->Type == EJson::Array)
+		{
+			SlotProperties->SetField(TEXT("position"), *PropertyValueField);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Slot.position requires array [x, y]"));
+		}
+	}
+	else if (NormalizedProperty == TEXT("size") || NormalizedProperty == TEXT("layoutdata.size"))
+	{
+		if ((*PropertyValueField)->Type == EJson::Array)
+		{
+			SlotProperties->SetField(TEXT("size"), *PropertyValueField);
+		}
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Slot.size requires array [width, height]"));
+		}
+	}
+	else if (NormalizedProperty == TEXT("auto_size") || NormalizedProperty == TEXT("autosize"))
+	{
+		SlotProperties->SetBoolField(TEXT("auto_size"), (*PropertyValueField)->AsBool());
+	}
+	else if (NormalizedProperty == TEXT("z_order") || NormalizedProperty == TEXT("zorder"))
+	{
+		SlotProperties->SetNumberField(TEXT("z_order"), (*PropertyValueField)->AsNumber());
+	}
+	else if (NormalizedProperty == TEXT("horizontal_alignment") || NormalizedProperty == TEXT("horizontalalignment"))
+	{
+		SlotProperties->SetStringField(TEXT("horizontal_alignment"), (*PropertyValueField)->AsString());
+	}
+	else if (NormalizedProperty == TEXT("vertical_alignment") || NormalizedProperty == TEXT("verticalalignment"))
+	{
+		SlotProperties->SetStringField(TEXT("vertical_alignment"), (*PropertyValueField)->AsString());
+	}
+	else if (NormalizedProperty == TEXT("padding"))
+	{
+		SlotProperties->SetField(TEXT("padding"), *PropertyValueField);
+	}
+	else if (NormalizedProperty == TEXT("fill") || NormalizedProperty == TEXT("fill_width") || NormalizedProperty == TEXT("fillwidth"))
+	{
+		SlotProperties->SetBoolField(TEXT("fill"), (*PropertyValueField)->AsBool());
+	}
+	else
+	{
+		// Unknown slot property - provide helpful error
+		return FCommonUtils::CreateErrorResponse(FString::Printf(
+			TEXT("Unknown slot property '%s'. For CanvasPanel children, supported slot properties are: "
+			     "Slot.alignment (array [x,y] or 'center'), Slot.anchors (object or 'fill'/'center'), "
+			     "Slot.position ([x,y]), Slot.size ([w,h]), Slot.auto_size (bool), Slot.z_order (int). "
+			     "For Overlay/Box children: Slot.horizontal_alignment, Slot.vertical_alignment, Slot.padding, Slot.fill."),
+			*PropertyName));
+	}
+
+	// Call the slot property setter
+	FWidgetSlotUpdateRequest Request;
+	Request.WidgetBlueprintName = WidgetBlueprintName;
+	Request.WidgetName = WidgetName;
+	Request.SlotProperties = SlotProperties;
+
+	const auto Result = WidgetService->SetSlotProperties(WidgetBlueprint, Request);
+	if (Result.IsError())
+	{
+		return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+	}
+
+	const FWidgetSlotUpdateResult& Payload = Result.GetValue();
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Response->SetStringField(TEXT("component_name"), WidgetName);
+	Response->SetStringField(TEXT("property_name"), PropertyName);
+	Response->SetStringField(TEXT("slot_type"), Payload.SlotType);
+	if (Payload.AppliedProperties.IsValid())
+	{
+		Response->SetObjectField(TEXT("applied_slot_properties"), Payload.AppliedProperties);
+	}
+	Response->SetStringField(TEXT("note"), TEXT("Slot property set successfully"));
+	return Response;
+}
+
 TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TSharedPtr<FJsonObject>& Params)
 {
 	if (!WidgetService.IsValid())
@@ -1518,6 +1774,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<FJsonObject>& Params)
 {
 	FString WidgetBlueprintName;
+	FString ComponentName;
 	FString WidgetType;
 	
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
@@ -1525,6 +1782,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
+	Params->TryGetStringField(TEXT("component_name"), ComponentName);
 	Params->TryGetStringField(TEXT("widget_type"), WidgetType);
 	
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
@@ -1538,7 +1796,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 		return FCommonUtils::CreateErrorResponse(TEXT("WidgetEventService not available"));
 	}
 
-	const auto ResultT = EventService->GetAvailableEvents(WidgetBlueprint, WidgetType);
+	const auto ResultT = EventService->GetAvailableEvents(WidgetBlueprint, ComponentName, WidgetType);
 	if (ResultT.IsError())
 	{
 		return FCommonUtils::CreateErrorResponse(ResultT.GetErrorMessage());
@@ -1558,6 +1816,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+	Result->SetStringField(TEXT("component_name"), ComponentName);
 	Result->SetStringField(TEXT("widget_type"), WidgetType);
 	Result->SetArrayField(TEXT("available_events"), EventsJson);
 	return Result;

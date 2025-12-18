@@ -81,6 +81,9 @@ private:
     /** Token budget text block */
     TSharedPtr<STextBlock> TokenBudgetText;
     
+    /** Empty state container shown when no messages */
+    TSharedPtr<SWidget> EmptyStateWidget;
+    
     /** Map of message index to text block for streaming updates */
     TMap<int32, TSharedPtr<STextBlock>> MessageTextBlocks;
     

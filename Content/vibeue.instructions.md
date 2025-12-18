@@ -148,6 +148,49 @@ Example:
 
 **Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, use deep_researcher or ask the user.
 
+### ⚠️ RECOGNIZE UNSUPPORTED PROPERTIES - STOP IMMEDIATELY
+**If a property returns `"editable": false` or `"UnsupportedType"`, DO NOT try to modify it!**
+- These properties CANNOT be changed via the MCP tools
+- **STOP immediately** and explain why to the user
+- Suggest alternatives (e.g., use `bind_events` action for delegate binding instead of `set_property`)
+
+**Common unsupported properties:**
+- `OnClicked`, `OnHovered`, `OnPressed`, `OnReleased` - Use `bind_events` action instead
+- `MulticastInlineDelegateProperty` types - These are event delegates, not settable properties
+
+### ⚠️ STOP REPEATING IDENTICAL TOOL CALLS
+**If you call the same tool with the same parameters and get the same result, DO NOT call it again!**
+- The result will not change on subsequent calls
+- If the result doesn't contain what you expected, the tool may not support that query
+- After ONE call, either:
+  - Use the result as-is, OR
+  - Try a different action/approach, OR
+  - Call `action="help"` to learn the correct usage
+
+**CRITICAL Pattern to Avoid - Empty Component List Loop:**
+```
+❌ BAD: list_components → [] → get_component_properties("RootWidget") → not found → repeat
+✅ GOOD: list_components → [] → "Widget is empty, adding a root component..." → add_component
+```
+
+**Button Events - Use component_name Parameter:**
+When querying events for a specific component (like a Button), always pass `component_name`:
+```python
+# Correct - returns Button-specific events like OnClicked, OnHovered
+manage_umg_widget(action="get_available_events", widget_name="...", component_name="PlayButton")
+
+# Then bind the events
+manage_umg_widget(action="bind_events", widget_name="...", component_name="PlayButton", 
+                  input_events={"OnClicked": "HandlePlayButtonClicked"})
+```
+
+**Example of CORRECT behavior when property is unsupported:**
+```
+get_property returns: {"editable": false, "property_type": "MulticastInlineDelegateProperty"}
+You: "This is an event delegate property and cannot be set directly. Use manage_umg_widget(action='bind_events') to bind click/hover handlers instead."
+[STOP - do NOT retry get_property or set_property on this]
+```
+
 **Self-Monitoring Guidelines:**
 - Keep track of how many times you've tried a particular operation
 - If you notice you're repeating similar tool calls with similar errors, STOP
@@ -228,7 +271,90 @@ You have access to **12 powerful MCP tools** that directly manipulate Unreal Eng
 
 | Tool | Purpose |
 |------|---------|
-| `manage_umg_widget` | Create and configure UMG widgets and UI layouts (11 actions) |
+| `manage_umg_widget` | Add, configure, and style components inside Widget Blueprints (11 actions) |
+
+**⚠️ CRITICAL: Widget Blueprint Creation vs Component Management**
+
+`manage_umg_widget` manages components INSIDE existing widget blueprints - it does NOT create widget blueprints!
+
+**To create a new Widget Blueprint, use `manage_blueprint`:**
+```python
+# Step 1: CREATE the Widget Blueprint using manage_blueprint
+manage_blueprint(action="create", blueprint_name="/Game/Blueprints/MyWidget", parent_class="UserWidget")
+
+# Step 2: THEN add components using manage_umg_widget
+manage_umg_widget(action="add_component", widget_name="/Game/Blueprints/MyWidget", component_type="Button", component_name="PlayButton")
+```
+
+**WRONG - This will fail:**
+```python
+# manage_umg_widget does NOT have a "create" action!
+manage_umg_widget(action="create", widget_name="MyWidget")  # ❌ FAILS
+```
+
+**For UMG widget work, ALWAYS call `manage_umg_widget(action="help")` first!**
+The help response includes a comprehensive UMG styling guide with:
+- Correct color/alignment enum values (`HAlign_Fill`, `VAlign_Center`, etc.)
+- Container-specific background rules (Canvas needs Overlay wrapper, ScrollBox uses direct children)
+- Slot property syntax for layout control (see below)
+- Known limitations (bind_events issues, Canvas vs Box/Overlay slot properties)
+
+### ⚠️ Canvas Panel Slot Properties - Use Simplified Syntax!
+**For widgets inside a CanvasPanel, use these slot properties:**
+```python
+# Center a widget (alignment is [x, y] where 0.5,0.5 = center)
+manage_umg_widget(action="set_property", widget_name="/Game/UI/MyWidget",
+                  component_name="PlayButton", property_name="Slot.alignment", 
+                  property_value=[0.5, 0.5])  # Or use "center" string
+
+# Fill the whole screen (anchors 0,0 to 1,1)
+manage_umg_widget(action="set_property", widget_name="/Game/UI/MyWidget",
+                  component_name="Background", property_name="Slot.anchors", 
+                  property_value="fill")  # Or {min_x:0, min_y:0, max_x:1, max_y:1}
+
+# Set position and size
+manage_umg_widget(action="set_property", ..., property_name="Slot.position", property_value=[100, 200])
+manage_umg_widget(action="set_property", ..., property_name="Slot.size", property_value=[300, 150])
+```
+
+**For Box/Overlay panels, use these slot properties:**
+```python
+manage_umg_widget(action="set_property", ..., property_name="Slot.horizontal_alignment", property_value="Center")
+manage_umg_widget(action="set_property", ..., property_name="Slot.vertical_alignment", property_value="Fill")
+```
+
+### ⚠️ CRITICAL: Empty Widget Blueprints - No "RootWidget" Exists!
+**A freshly created UserWidget blueprint has NO components at all - not even a root!**
+
+When `list_components` returns `[]` (empty array), this means:
+- The widget has zero components
+- There is NO "RootWidget", "RootCanvas", or any implicit root
+- **DO NOT** try to find or query a non-existent root
+- **DO NOT** call `get_component_properties` for components that don't exist
+
+**Correct workflow for empty widgets:**
+```python
+# Step 1: Check components
+result = manage_umg_widget(action="list_components", widget_name="/Game/UI/MyWidget")
+# Result: {"components": [], "count": 0}  ← EMPTY!
+
+# Step 2: Accept it's empty, add a root container
+manage_umg_widget(action="add_component", widget_name="/Game/UI/MyWidget", 
+                  component_type="CanvasPanel", component_name="RootCanvas")
+
+# Step 3: Now add children to the root
+manage_umg_widget(action="add_component", widget_name="/Game/UI/MyWidget",
+                  component_type="Button", component_name="PlayButton", parent_name="RootCanvas")
+```
+
+**WRONG - Will loop forever:**
+```python
+list_components → [] (empty)
+get_component_properties("RootWidget") → "not found"  # ❌ Stop looking!
+list_components → [] (still empty)
+get_component_properties("RootCanvas") → "not found"  # ❌ Stop looking!
+# Repeating will NOT make a root appear!
+```
 
 ### Research & Learning
 
@@ -326,13 +452,23 @@ manage_blueprint(action="help", help_action="create")
 5. Add Nodes with `manage_blueprint_node`
 6. Compile with `manage_blueprint(action="compile")`
 
-### 5. Save Your Work
+### 5. Widget Blueprint Development Order
+**Widget Blueprints use TWO tools - `manage_blueprint` for creation, `manage_umg_widget` for components:**
+1. **Create Widget Blueprint**: `manage_blueprint(action="create", blueprint_name="/Game/UI/MyWidget", parent_class="UserWidget")`
+2. **Add UI Components**: `manage_umg_widget(action="add_component", widget_name="/Game/UI/MyWidget", component_type="Button", component_name="PlayBtn")`
+3. **Configure Properties**: `manage_umg_widget(action="set_property", widget_name="/Game/UI/MyWidget", component_name="PlayBtn", property_name="ColorAndOpacity", property_value={"R": 1, "G": 1, "B": 1, "A": 1})`
+4. **Bind Events**: Use `manage_umg_widget(action="bind_events")` or create handler functions manually
+5. **Compile**: `manage_blueprint(action="compile", blueprint_name="/Game/UI/MyWidget")`
+
+**Common Mistake:** Trying to use `manage_umg_widget(action="create")` - this action does NOT exist! Use `manage_blueprint` to create widget blueprints.
+
+### 6. Save Your Work
 Always save after making changes:
 ```python
 manage_asset(action="save_all")  # Save all dirty assets
 ```
 
-### 6. Use Full Paths
+### 7. Use Full Paths
 Always use full package paths for assets:
 - ✅ `/Game/Blueprints/BP_MyActor`
 - ❌ `BP_MyActor`
@@ -473,6 +609,41 @@ property_value="(X=100,Y=200,Z=300)"
 ```python
 # CORRECT - Normalized 0-1 values
 property_value="(R=1.0,G=0.5,B=0.0,A=1.0)"
+```
+
+### ⚠️ CRITICAL: UMG Color Property Formats
+
+**UMG widgets use FLinearColor with dict/object format, NOT string format:**
+
+```python
+# ✅ CORRECT - UMG ColorAndOpacity (use dict with 0-1 values)
+manage_umg_widget(action="set_property", widget_name="MyWidget", 
+                 component_name="MyText", property_name="ColorAndOpacity",
+                 property_value={"R": 1.0, "G": 0.5, "B": 0.0, "A": 1.0})
+
+# ✅ CORRECT - Cyan text
+property_value={"R": 0.0, "G": 1.0, "B": 1.0, "A": 1.0}
+
+# ✅ CORRECT - Semi-transparent dark blue background  
+property_value={"R": 0.05, "G": 0.1, "B": 0.25, "A": 0.8}
+
+# ❌ WRONG - String format doesn't work for UMG
+property_value="(R=1.0,G=0.5,B=0.0,A=1.0)"  # WRONG!
+
+# ❌ WRONG - Array format doesn't work
+property_value=[1.0, 0.5, 0.0, 1.0]  # WRONG!
+```
+
+**UMG Alignment Enum Values:**
+```python
+# ✅ CORRECT horizontal alignment values
+"HAlign_Fill", "HAlign_Left", "HAlign_Center", "HAlign_Right"
+
+# ✅ CORRECT vertical alignment values  
+"VAlign_Fill", "VAlign_Top", "VAlign_Center", "VAlign_Bottom"
+
+# ❌ WRONG - Missing prefix
+"Fill", "Center", "Left"  # WRONG! Use HAlign_/VAlign_ prefix
 ```
 
 **WORKFLOW: Always get_property first to see the format:**

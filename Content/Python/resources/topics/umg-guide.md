@@ -5,6 +5,24 @@ This guide provides DO's and DON'Ts for AI assistants when styling UMG widgets i
 
 **IMPORTANT**: This guide focuses on **layout structure and component organization rules**, not specific color schemes. Color choices should be determined by user requirements or project-specific themes.
 
+## ⚠️ CRITICAL: Creating Widget Blueprints
+
+**`manage_umg_widget` does NOT create Widget Blueprints - it only manages components INSIDE existing widgets!**
+
+To create a new Widget Blueprint, use `manage_blueprint`:
+```python
+# Step 1: CREATE the Widget Blueprint using manage_blueprint
+manage_blueprint(action="create", blueprint_name="/Game/UI/WBP_MainMenu", parent_class="UserWidget")
+
+# Step 2: THEN add components using manage_umg_widget
+manage_umg_widget(action="add_component", widget_name="/Game/UI/WBP_MainMenu", 
+                  component_type="Button", component_name="PlayButton")
+```
+
+**Available `manage_umg_widget` actions:** `list_components`, `add_component`, `remove_component`, `validate`, `search_types`, `get_component_properties`, `get_property`, `set_property`, `list_properties`, `get_available_events`, `bind_events`
+
+**There is NO "create" action in manage_umg_widget!**
+
 ## Compilation Requirements
 - **ALWAYS** compile the widget after making styling changes using `compile_blueprint(blueprint_name)`
 - **REQUIRED** for changes to take effect in the editor and runtime
@@ -96,7 +114,7 @@ manage_umg_widget(
 
 | Legacy helper | Updated call | Notes |
 |---|---|---|
-| `set_widget_property` | `manage_umg_widget(action="set_property", ...)` | Supports nested names like `Slot.LayoutData.Anchors.Minimum`. |
+| `set_widget_property` | `manage_umg_widget(action="set_property", ...)` | Supports slot properties like `Slot.alignment`, `Slot.anchors`, `Slot.position`. |
 | `add_overlay`, `add_image`, `add_button`, etc. | `manage_umg_widget(action="add_component", component_type="Overlay"/"Image"/"Button", parent_name=...)` | Provide `component_name` when you need deterministic names. |
 | `list_widget_components` | `manage_umg_widget(action="list_components", widget_name=...)` | Returns the hierarchy plus slot info. |
 | `get_widget_properties`, `get_widget_property` | `manage_umg_widget(action="get_component_properties"|"get_property", ...)` | Pass `include_inherited=True` to see defaults. |
@@ -350,48 +368,51 @@ set_widget_transform(
 )
 ```
 
-**Step 6**: **CRITICAL** - Configure Canvas slot `LayoutData` so the image actually fills the panel
+**Step 6**: **CRITICAL** - Configure Canvas slot properties so the image fills the panel
 ```python
-# CanvasPanelSlot exposes LayoutData.* fields instead of Horizontal/Vertical enums
+# CanvasPanelSlot uses simplified slot property syntax
+# Fill entire screen with anchors 0,0 to 1,1
 manage_umg_widget(
     action="set_property",
     widget_name="MyWidget",
     component_name="MainBackground",
-    property_name="Slot.LayoutData.Anchors.Minimum",
-    property_value={"x": 0.0, "y": 0.0}
+    property_name="Slot.anchors",
+    property_value="fill"  # Shorthand for {min_x:0, min_y:0, max_x:1, max_y:1}
 )
+# Or use explicit object format:
 manage_umg_widget(
     action="set_property",
     widget_name="MyWidget",
     component_name="MainBackground",
-    property_name="Slot.LayoutData.Anchors.Maximum",
-    property_value={"x": 1.0, "y": 1.0}
+    property_name="Slot.anchors",
+    property_value={"min_x": 0, "min_y": 0, "max_x": 1, "max_y": 1}
 )
+
+# Center alignment (optional, 0.5,0.5 = centered pivot)
 manage_umg_widget(
     action="set_property",
     widget_name="MyWidget",
     component_name="MainBackground",
-    property_name="Slot.LayoutData.Alignment",
-    property_value={"x": 0.0, "y": 0.0}
-)
-manage_umg_widget(
-    action="set_property",
-    widget_name="MyWidget",
-    component_name="MainBackground",
-    property_name="Slot.LayoutData.Offsets",
-    property_value={"left": 0, "top": 0, "right": 0, "bottom": 0}
+    property_name="Slot.alignment",
+    property_value=[0.0, 0.0]  # Or "center" for [0.5, 0.5]
 )
 ```
-These settings mirror the old `HAlign_Fill` / `VAlign_Fill` workflow. For Overlay/ScrollBox/VBox slots you can still set `Slot.HorizontalAlignment` / `Slot.VerticalAlignment` directly, but Canvas children require the `LayoutData` field names shown above.
+These settings achieve Fill behavior on CanvasPanel children. For Overlay/ScrollBox/VBox panels, use `Slot.horizontal_alignment` / `Slot.vertical_alignment` instead.
 
 **Step 7**: Set background image Z-order
 ```python
-set_widget_z_order(widget_name="MyWidget", component_name="MainBackground", z_order=-10)
+manage_umg_widget(
+    action="set_property",
+    widget_name="MyWidget",
+    component_name="MainBackground",
+    property_name="Slot.z_order",
+    property_value=-10
+)
 ```
 
 - **Note**: Canvas panels require Overlay wrapper for proper background layering
 - **CRITICAL**: Always set slot properties (Fill alignment) for background images in overlays
-- **CRITICAL**: Use "HAlign_Fill" and "VAlign_Fill" enum values, NOT "Fill"
+- **CRITICAL**: Use "HAlign_Fill" and "VAlign_Fill" enum values for Box/Overlay panels, NOT "Fill"
 
 ### ScrollBox, VerticalBox, HorizontalBox
 - **✅ DO**: Add images directly as children with proper Fill configuration
@@ -1306,7 +1327,13 @@ set_widget_property(widget_name, component_name, "Slot.VerticalAlignment", "VAli
 These issues are tracked in `Plugins/VibeUE/test_prompts/umg/issues.md` and reflected in current MCP builds. Plan for the workarounds below until the backend is updated.
 
 - **`bind_events` demands `input_mappings` but still rejects the request.** Even when both `input_events={"OnClicked": "MyBP_C::HandleClick"}` and `input_mappings={}` are supplied, the tool returns `Missing input_mappings parameter`. For now, bind button delegates manually inside the Blueprint Editor after MCP creates the handler functions.
-- **Canvas children expose `Slot.LayoutData.*` instead of `Slot.HorizontalAlignment`.** Attempting to set `Slot.HorizontalAlignment` on a Canvas child raises `Property 'HorizontalAlignment' not found`. Use the LayoutData-based calls outlined in the Canvas Panel workflow earlier in this guide (anchors min/max to 0/1, zero offsets, explicit alignment vector) to achieve Fill behavior.
+- **Canvas slot properties use simplified syntax.** For CanvasPanel children, use `Slot.alignment` (array or string), `Slot.anchors` (object or "fill"), `Slot.position`, `Slot.size`, `Slot.auto_size`, `Slot.z_order`. For Box/Overlay children, use `Slot.horizontal_alignment` and `Slot.vertical_alignment`.
+
+**Tip:** Use `component_name` with `get_available_events` to retrieve button-specific delegate events:
+```python
+manage_umg_widget(action="get_available_events", widget_name="...", component_name="MyButton")
+# Returns: OnClicked, OnPressed, OnReleased, OnHovered, OnUnhovered
+```
 
 ## 🔍 MANDATORY PRE-IMPLEMENTATION VALIDATION
 
