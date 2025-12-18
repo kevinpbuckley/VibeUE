@@ -583,17 +583,34 @@ manage_material(action="set_instance_vector_parameter",
 
 If `get_property` returns a value like `(B=100,G=180,R=255,A=255)`, use EXACTLY that format when setting:
 
-**Colors (FColor):**
+**Colors (FColor) - For Light Components and Blueprint Components:**
 ```python
-# CORRECT - Use the exact format from get_property
+# ✅ CORRECT - JSON object format (0-255 byte values, RGB order)
+manage_blueprint_component(action="set_property", 
+    blueprint_name="/Game/Blueprints/BP_Light",
+    component_name="SpotLight",
+    property_name="LightColor",
+    property_value={"R": 0, "G": 255, "B": 0, "A": 255})  # Green
+
+# ✅ CORRECT - Array format (0-255 byte values, RGB order)
+manage_blueprint_component(action="set_property",
+    blueprint_name="/Game/Blueprints/BP_Light",
+    component_name="SpotLight",
+    property_name="LightColor",
+    property_value=[255, 0, 0, 255])  # Red (RGB order)
+
+# ✅ CORRECT - Level actors use string format
 manage_level_actors(action="set_property", actor_label="MyLight",
                    property_path="LightComponent0.LightColor", 
                    property_value="(R=0,G=255,B=0,A=255)")  # Green
 
-# WRONG - These formats will fail:
-# property_value="[0, 255, 0]"      # Array format - WRONG
+# ❌ WRONG - These formats will fail:
+# property_value="[0, 255, 0]"      # String array - WRONG for level actors
 # property_value="0.0, 1.0, 0.0"    # Float format - WRONG  
 # property_value="FColor(0,255,0)"  # Constructor format - WRONG
+
+# ⚠️ NOTE: FColor uses 0-255 byte values (NOT 0-1 normalized!)
+# For normalized colors (0-1), see FLinearColor below (used in UMG widgets)
 ```
 
 **Vectors (FVector):**
@@ -611,18 +628,20 @@ property_value="(X=100,Y=200,Z=300)"
 property_value="(R=1.0,G=0.5,B=0.0,A=1.0)"
 ```
 
-### ⚠️ CRITICAL: UMG Color Property Formats
+### ⚠️ CRITICAL: UMG Color Property Formats (FLinearColor)
 
-**UMG widgets use FLinearColor with dict/object format, NOT string format:**
+**UMG widgets use FLinearColor with 0.0-1.0 normalized values (NOT 0-255!):**
 
 ```python
-# ✅ CORRECT - UMG ColorAndOpacity (use dict with 0-1 values)
+# ✅ CORRECT - UMG ColorAndOpacity (use dict with 0-1 normalized values)
 manage_umg_widget(action="set_property", widget_name="MyWidget", 
                  component_name="MyText", property_name="ColorAndOpacity",
-                 property_value={"R": 1.0, "G": 0.5, "B": 0.0, "A": 1.0})
+                 property_value={"R": 1.0, "G": 0.5, "B": 0.0, "A": 1.0})  # Orange
 
-# ✅ CORRECT - Cyan text
-property_value={"R": 0.0, "G": 1.0, "B": 1.0, "A": 1.0}
+# ✅ CORRECT - Array format also works (0-1 normalized)
+manage_umg_widget(action="set_property", widget_name="MyWidget",
+                 component_name="MyText", property_name="ColorAndOpacity",
+                 property_value=[0.0, 1.0, 1.0, 1.0])  # Cyan (array format)
 
 # ✅ CORRECT - Semi-transparent dark blue background  
 property_value={"R": 0.05, "G": 0.1, "B": 0.25, "A": 0.8}
@@ -630,9 +649,16 @@ property_value={"R": 0.05, "G": 0.1, "B": 0.25, "A": 0.8}
 # ❌ WRONG - String format doesn't work for UMG
 property_value="(R=1.0,G=0.5,B=0.0,A=1.0)"  # WRONG!
 
-# ❌ WRONG - Array format doesn't work
-property_value=[1.0, 0.5, 0.0, 1.0]  # WRONG!
+# ❌ WRONG - Using 0-255 byte values (FColor range) instead of 0-1 (FLinearColor)
+property_value={"R": 255, "G": 128, "B": 0, "A": 255}  # WRONG! Use 0-1 range
 ```
+
+**Key Differences:**
+- **FColor** (lights, components): 0-255 byte values, RGB order
+- **FLinearColor** (UMG widgets): 0.0-1.0 normalized floats, RGB order
+- Both support JSON object `{"R": ..., "G": ..., "B": ..., "A": ...}` format
+- Both support array `[R, G, B, A]` format
+- **DO NOT confuse the ranges!** FColor = 0-255, FLinearColor = 0.0-1.0
 
 **UMG Alignment Enum Values:**
 ```python
