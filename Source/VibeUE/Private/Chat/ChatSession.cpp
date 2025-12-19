@@ -1474,7 +1474,7 @@ void FChatSession::SummarizeConversation()
     UE_LOG(LogChatSession, Log, TEXT("Conversation summarization requested (not yet implemented)"));
 }
 
-void FChatSession::InitializeMCP(bool bEngineMode)
+void FChatSession::InitializeMCP()
 {
     if (bMCPInitialized)
     {
@@ -1483,7 +1483,7 @@ void FChatSession::InitializeMCP(bool bEngineMode)
     }
     
     MCPClient = MakeShared<FMCPClient>();
-    MCPClient->Initialize(bEngineMode);
+    MCPClient->Initialize();
     
     // Discover available tools
     MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& MCPTools)
@@ -1496,22 +1496,6 @@ void FChatSession::InitializeMCP(bool bEngineMode)
         UE_LOG(LogChatSession, Log, TEXT("Total tools available: %d (internal + MCP)"), TotalToolCount);
         OnToolsReady.ExecuteIfBound(bSuccess || TotalToolCount > 0, TotalToolCount);
     }));
-}
-
-void FChatSession::ReinitializeMCP(bool bEngineMode)
-{
-    // Shutdown existing MCP if initialized
-    if (MCPClient.IsValid())
-    {
-        MCPClient->Shutdown();
-        MCPClient.Reset();
-    }
-    bMCPInitialized = false;
-    
-    UE_LOG(LogChatSession, Log, TEXT("Reinitializing MCP in %s mode"), bEngineMode ? TEXT("Engine") : TEXT("Local"));
-    
-    // Now initialize fresh
-    InitializeMCP(bEngineMode);
 }
 
 TArray<FMCPTool> FChatSession::GetAllEnabledTools() const
@@ -1812,6 +1796,48 @@ void FChatSession::ApplyLLMParametersToClient()
         UE_LOG(LogChatSession, Log, TEXT("Applied parallel_tool_calls=%s to OpenRouter"),
             bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
+}
+
+// ============ MCP Server Settings ============
+
+bool FChatSession::GetMCPServerEnabledFromConfig()
+{
+    bool bEnabled = true; // Default to enabled
+    GConfig->GetBool(TEXT("VibeUE.MCPServer"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    return bEnabled;
+}
+
+void FChatSession::SaveMCPServerEnabledToConfig(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE.MCPServer"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FChatSession::GetMCPServerPortFromConfig()
+{
+    int32 Port = DefaultMCPServerPort;
+    GConfig->GetInt(TEXT("VibeUE.MCPServer"), TEXT("Port"), Port, GEditorPerProjectIni);
+    return FMath::Clamp(Port, 1024, 65535); // Valid port range
+}
+
+void FChatSession::SaveMCPServerPortToConfig(int32 Port)
+{
+    Port = FMath::Clamp(Port, 1024, 65535);
+    GConfig->SetInt(TEXT("VibeUE.MCPServer"), TEXT("Port"), Port, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+FString FChatSession::GetMCPServerApiKeyFromConfig()
+{
+    FString ApiKey;
+    GConfig->GetString(TEXT("VibeUE.MCPServer"), TEXT("ApiKey"), ApiKey, GEditorPerProjectIni);
+    return ApiKey;
+}
+
+void FChatSession::SaveMCPServerApiKeyToConfig(const FString& ApiKey)
+{
+    GConfig->SetString(TEXT("VibeUE.MCPServer"), TEXT("ApiKey"), *ApiKey, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
 }
 
 // ============ Thinking Tag Handling ============

@@ -4,6 +4,7 @@
 #include "Chat/AIChatCommands.h"
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
+#include "MCP/MCPServer.h"
 #include "Core/ToolRegistry.h"
 #include "Chat/ILLMClient.h"
 #include "Chat/VibeUEAPIClient.h"
@@ -327,12 +328,8 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     // Update model dropdown based on current provider
     UpdateModelDropdownForProvider();
     
-    // Initialize MCP - auto-detect mode based on what's installed
-    // Priority: Saved preference (if that mode is available) > Local mode > Engine mode
-    bool bHasSavedPreference = false;
-    bool bSavedEngineMode = false;
-    bool bEngineMode = FMCPClient::DetermineDefaultMode(bHasSavedPreference, bSavedEngineMode);
-    ChatSession->InitializeMCP(bEngineMode);
+    // Initialize MCP
+    ChatSession->InitializeMCP();
     
     // Check API key
     if (!ChatSession->HasApiKey())
@@ -1506,13 +1503,12 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Show API key input dialog
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(500, 720))
+        .ClientSize(FVector2D(500, 900))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
     
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
-    TSharedPtr<SCheckBox> EngineModeCheckBox;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
     TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
     TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
@@ -1520,12 +1516,22 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxToolIterationsSpinBox;
     
+    // MCP Server settings widgets
+    TSharedPtr<SCheckBox> MCPServerEnabledCheckBox;
+    TSharedPtr<SSpinBox<int32>> MCPServerPortSpinBox;
+    TSharedPtr<SEditableTextBox> MCPServerApiKeyInput;
+    
     // Load current LLM parameter values
     float CurrentTemperature = FChatSession::GetTemperatureFromConfig();
     float CurrentTopP = FChatSession::GetTopPFromConfig();
     int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
     bool bCurrentParallelToolCalls = FChatSession::GetParallelToolCallsFromConfig();
     int32 CurrentMaxToolIterations = FChatSession::GetMaxToolCallIterationsFromConfig();
+    
+    // Load current MCP Server settings
+    bool bMCPServerEnabled = FMCPServer::GetEnabledFromConfig();
+    int32 MCPServerPort = FMCPServer::GetPortFromConfig();
+    FString MCPServerApiKey = FMCPServer::GetApiKeyFromConfig();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -1553,11 +1559,6 @@ FReply SAIChatWindow::OnSettingsClicked()
         SelectedProvider = (*ProviderOptions)[0];
     }
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
-    
-    // Determine current mode using the same logic as initialization
-    bool bHasSavedPreference = false;
-    bool bSavedEngineMode = false;
-    bool bCurrentEngineMode = FMCPClient::DetermineDefaultMode(bHasSavedPreference, bSavedEngineMode);
     
     bool bCurrentDebugMode = FChatSession::IsDebugModeEnabled();
     
@@ -1672,33 +1673,6 @@ FReply SAIChatWindow::OnSettingsClicked()
                     .Text(FText::FromString(TEXT("Get OpenRouter API key at openrouter.ai")))
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
                 ]
-            ]
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 16, 8, 4)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("MCP Server Mode:")))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(EngineModeCheckBox, SCheckBox)
-                .IsChecked(bCurrentEngineMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Engine Mode (FAB install)")))
-                .ToolTipText(FText::FromString(TEXT("OFF = Use Project/Plugins/VibeUE (development)\nON = Use Engine/Plugins/Marketplace/VibeUE (testing FAB install)")))
             ]
         ]
         + SVerticalBox::Slot()
@@ -1851,23 +1825,99 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .ToolTipText(FText::FromString(TEXT("ON = LLM can make multiple tool calls at once (faster)\nOFF = One tool call at a time (shows progress between calls)")))
             ]
         ]
+        // ============ MCP Server Settings ============
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 16, 8, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("MCP Server (Expose Tools to External Clients):")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+        ]
+        // MCP Server Enabled
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(MCPServerEnabledCheckBox, SCheckBox)
+                .IsChecked(bMCPServerEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Enable MCP Server")))
+                .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Desktop, etc.")))
+            ]
+        ]
+        // MCP Server Port
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(0.4f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Port:")))
+                .ToolTipText(FText::FromString(TEXT("Port for the MCP HTTP server. Default: 8080")))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(0.6f)
+            [
+                SAssignNew(MCPServerPortSpinBox, SSpinBox<int32>)
+                .MinValue(1024)
+                .MaxValue(65535)
+                .Delta(1)
+                .Value(MCPServerPort)
+                .MinDesiredWidth(100)
+            ]
+        ]
+        // MCP Server API Key
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4, 8, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("API Key (optional):")))
+            .ToolTipText(FText::FromString(TEXT("Require this API key in requests. Leave empty for no authentication.")))
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 0)
+        [
+            SAssignNew(MCPServerApiKeyInput, SEditableTextBox)
+            .Text(FText::FromString(MCPServerApiKey))
+            .IsPassword(true)
+            .HintText(FText::FromString(TEXT("Leave empty for no auth")))
+        ]
+        // MCP Server Status
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8, 8, 8, 0)
         [
             SNew(STextBlock)
             .Text_Lambda([]() -> FText {
-                FString LocalPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("Python"));
-                FString EnginePath = FMCPClient::GetEngineVibeUEPythonPath();
-                if (EnginePath.IsEmpty())
+                FMCPServer& Server = FMCPServer::Get();
+                if (Server.IsRunning())
                 {
-                    EnginePath = TEXT("(VibeUE not found in Engine Marketplace)");
+                    return FText::FromString(FString::Printf(TEXT("Status: Running at %s"), *Server.GetServerUrl()));
                 }
-                return FText::FromString(FString::Printf(TEXT("Local: %s\nEngine: %s"), *LocalPath, *EnginePath));
+                return FText::FromString(TEXT("Status: Not running"));
             })
             .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-            .AutoWrapText(true)
-            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+            .ColorAndOpacity_Lambda([]() -> FSlateColor {
+                return FMCPServer::Get().IsRunning() 
+                    ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f)) 
+                    : FSlateColor(VibeUEColors::TextMuted);
+            })
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
@@ -1876,7 +1926,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, EngineModeCheckBox, DebugModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -1893,10 +1943,6 @@ FReply SAIChatWindow::OnSettingsClicked()
                     NewProvider = ELLMProvider::OpenRouter;
                 }
                 ChatSession->SetCurrentProvider(NewProvider);
-                
-                // Save and apply MCP mode
-                bool bNewEngineMode = EngineModeCheckBox->IsChecked();
-                GConfig->SetBool(TEXT("VibeUE"), TEXT("MCPEngineMode"), bNewEngineMode, GEditorPerProjectIni);
                 
                 // Save debug mode
                 bool bNewDebugMode = DebugModeCheckBox->IsChecked();
@@ -1915,10 +1961,28 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Apply the new LLM parameters to the client
                 ChatSession->ApplyLLMParametersToClient();
                 
-                GConfig->Flush(false, GEditorPerProjectIni);
+                // Save MCP Server settings
+                bool bNewMCPServerEnabled = MCPServerEnabledCheckBox->IsChecked();
+                int32 NewMCPServerPort = MCPServerPortSpinBox->GetValue();
+                FString NewMCPServerApiKey = MCPServerApiKeyInput->GetText().ToString();
                 
-                // Reinitialize MCP with new mode (this properly shuts down, clears state, and rediscovers tools)
-                ChatSession->ReinitializeMCP(bNewEngineMode);
+                FMCPServer::SaveEnabledToConfig(bNewMCPServerEnabled);
+                FMCPServer::SavePortToConfig(NewMCPServerPort);
+                FMCPServer::SaveApiKeyToConfig(NewMCPServerApiKey);
+                
+                // Restart MCP Server if settings changed
+                FMCPServer& MCPServer = FMCPServer::Get();
+                MCPServer.LoadConfig();
+                if (bNewMCPServerEnabled && !MCPServer.IsRunning())
+                {
+                    MCPServer.Start();
+                }
+                else if (!bNewMCPServerEnabled && MCPServer.IsRunning())
+                {
+                    MCPServer.StopServer();
+                }
+                
+                GConfig->Flush(false, GEditorPerProjectIni);
                 
                 // Update the model dropdown based on new provider
                 UpdateModelDropdownForProvider();

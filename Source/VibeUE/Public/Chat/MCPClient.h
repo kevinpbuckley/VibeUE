@@ -60,9 +60,8 @@ public:
     
     /**
      * Initialize the MCP client
-     * @param bEngineMode True for Engine (FAB) install, False for Local (open source) install
      */
-    void Initialize(bool bEngineMode);
+    void Initialize();
     
     /** Shutdown all server connections */
     void Shutdown();
@@ -115,44 +114,6 @@ public:
     /** Get the loaded configuration */
     const FMCPConfiguration& GetConfiguration() const { return Configuration; }
     
-    /** Get current mode (Engine or Local) */
-    bool IsEngineMode() const { return bEngineMode; }
-    
-    /**
-     * Find the VibeUE plugin folder in the Engine Marketplace directory
-     * FAB installs use random folder names, so we scan for the vibe_ue_server.py file
-     * @param OutFolderName Returns the folder name if found
-     * @return True if VibeUE was found in the Marketplace
-     */
-    static bool FindVibeUEInMarketplace(FString& OutFolderName);
-    
-    /**
-     * Get the full path to the VibeUE Python content folder for Engine mode
-     * @return Full path if found, empty string if not found
-     */
-    static FString GetEngineVibeUEPythonPath();
-    
-    /**
-     * Check if VibeUE is installed in Local mode (Project/Plugins)
-     * @return True if VibeUE is found in project plugins
-     */
-    static bool IsLocalModeAvailable();
-    
-    /**
-     * Check if VibeUE is installed in Engine mode (Engine/Plugins/Marketplace)
-     * @return True if VibeUE is found in engine marketplace
-     */
-    static bool IsEngineModeAvailable();
-    
-    /**
-     * Determine the default mode based on what's installed
-     * Priority: Saved preference > Local mode (if available) > Engine mode
-     * @param bHasSavedPreference Output: true if a saved preference exists
-     * @param bSavedEngineMode Output: the saved preference value (if exists)
-     * @return The recommended default mode
-     */
-    static bool DetermineDefaultMode(bool& bHasSavedPreference, bool& bSavedEngineMode);
-    
 private:
     /** MCP configuration loaded from mcp.json */
     FMCPConfiguration Configuration;
@@ -162,9 +123,6 @@ private:
     
     /** MCP tools discovered from external MCP servers */
     TArray<FMCPTool> MCPTools;
-    
-    /** Whether running in Engine mode (FAB install) vs Local mode */
-    bool bEngineMode = false;
     
     /** Resolve variable substitutions in config strings */
     FString ResolveConfigVariables(const FString& Input) const;

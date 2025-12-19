@@ -26,11 +26,9 @@ FMCPClient::~FMCPClient()
     Shutdown();
 }
 
-void FMCPClient::Initialize(bool bInEngineMode)
+void FMCPClient::Initialize()
 {
-    bEngineMode = bInEngineMode;
-    
-    UE_LOG(LogMCPClient, Log, TEXT("MCP Client initializing in %s mode"), bEngineMode ? TEXT("Engine") : TEXT("Local"));
+    UE_LOG(LogMCPClient, Log, TEXT("MCP Client initializing"));
     
     // Always look for vibeue.mcp.json - first in plugin folder, then fallback locations
     FString ConfigPath;
@@ -101,159 +99,13 @@ bool FMCPClient::LoadConfiguration(const FString& ConfigPath)
     return true;
 }
 
-bool FMCPClient::FindVibeUEInMarketplace(FString& OutFolderName)
-{
-    FString EngineMarketplacePath = FPaths::ConvertRelativePathToFull(FPaths::EnginePluginsDir() / TEXT("Marketplace"));
-    
-    if (!FPaths::DirectoryExists(EngineMarketplacePath))
-    {
-        return false;
-    }
-    
-    IFileManager& FileManager = IFileManager::Get();
-    TArray<FString> Directories;
-    FileManager.FindFiles(Directories, *(EngineMarketplacePath / TEXT("*")), false, true);
-    
-    for (const FString& DirName : Directories)
-    {
-        FString FullPath = EngineMarketplacePath / DirName;
-        // Look for the vibe_ue_server.py file which uniquely identifies VibeUE
-        FString ServerPyPath = FullPath / TEXT("Content") / TEXT("Python") / TEXT("vibe_ue_server.py");
-        if (FPaths::FileExists(ServerPyPath))
-        {
-            OutFolderName = DirName;
-            return true;
-        }
-    }
-    
-    return false;
-}
-
-FString FMCPClient::GetEngineVibeUEPythonPath()
-{
-    FString FolderName;
-    if (FindVibeUEInMarketplace(FolderName))
-    {
-        FString EngineMarketplacePath = FPaths::ConvertRelativePathToFull(FPaths::EnginePluginsDir() / TEXT("Marketplace"));
-        return EngineMarketplacePath / FolderName / TEXT("Content") / TEXT("Python");
-    }
-    return FString();
-}
-
-bool FMCPClient::IsLocalModeAvailable()
-{
-    FString LocalPath = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("Python") / TEXT("vibe_ue_server.py");
-    return FPaths::FileExists(LocalPath);
-}
-
-bool FMCPClient::IsEngineModeAvailable()
-{
-    FString FolderName;
-    return FindVibeUEInMarketplace(FolderName);
-}
-
-bool FMCPClient::DetermineDefaultMode(bool& bHasSavedPreference, bool& bSavedEngineMode)
-{
-    // Check for saved preference
-    bHasSavedPreference = GConfig->GetBool(TEXT("VibeUE"), TEXT("MCPEngineMode"), bSavedEngineMode, GEditorPerProjectIni);
-    
-    bool bLocalAvailable = IsLocalModeAvailable();
-    bool bEngineAvailable = IsEngineModeAvailable();
-    
-    UE_LOG(LogMCPClient, Log, TEXT("Mode detection - Local available: %s, Engine available: %s, Has saved preference: %s"),
-        bLocalAvailable ? TEXT("Yes") : TEXT("No"),
-        bEngineAvailable ? TEXT("Yes") : TEXT("No"),
-        bHasSavedPreference ? TEXT("Yes") : TEXT("No"));
-    
-    // If user has a saved preference and that mode is available, use it
-    if (bHasSavedPreference)
-    {
-        if (bSavedEngineMode && bEngineAvailable)
-        {
-            UE_LOG(LogMCPClient, Log, TEXT("Using saved preference: Engine mode"));
-            return true; // Engine mode
-        }
-        else if (!bSavedEngineMode && bLocalAvailable)
-        {
-            UE_LOG(LogMCPClient, Log, TEXT("Using saved preference: Local mode"));
-            return false; // Local mode
-        }
-        // Saved preference mode not available, fall through to auto-detect
-        UE_LOG(LogMCPClient, Warning, TEXT("Saved preference mode not available, auto-detecting..."));
-    }
-    
-    // Auto-detect: prefer Local mode if available, otherwise Engine mode
-    if (bLocalAvailable)
-    {
-        UE_LOG(LogMCPClient, Log, TEXT("Auto-selected: Local mode"));
-        return false; // Local mode
-    }
-    else if (bEngineAvailable)
-    {
-        UE_LOG(LogMCPClient, Log, TEXT("Auto-selected: Engine mode"));
-        return true; // Engine mode
-    }
-    
-    // Neither available - default to Local mode (will show error later)
-    UE_LOG(LogMCPClient, Warning, TEXT("No VibeUE installation found! Defaulting to Local mode."));
-    return false;
-}
-
 FString FMCPClient::ResolveConfigVariables(const FString& Input) const
 {
     FString Result = Input;
     
-    // Replace ${VibeUE_Instance} based on mode setting
-    // - Local mode: Forces use of Project/Plugins/VibeUE (for development)
-    // - Engine mode: Scans Engine/Plugins/Marketplace for VibeUE plugin (FAB installs use random folder names)
-    FString VibeUEInstance;
-    FString VibeUEPluginFolder;
-    
+    // Replace ${VibeUE_Instance} with project plugins path
     FString ProjectPluginPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir());
-    FString EngineMarketplacePath = FPaths::ConvertRelativePathToFull(FPaths::EnginePluginsDir() / TEXT("Marketplace"));
-    
-    if (bEngineMode)
-    {
-        // Engine mode: Use the static helper to find VibeUE in marketplace
-        FString FoundFolder;
-        if (FindVibeUEInMarketplace(FoundFolder))
-        {
-            VibeUEInstance = EngineMarketplacePath;
-            VibeUEPluginFolder = FoundFolder;
-            UE_LOG(LogMCPClient, Log, TEXT("Engine Mode - found VibeUE plugin in: %s/%s"), *EngineMarketplacePath, *FoundFolder);
-        }
-        else
-        {
-            // Fallback: use the path anyway, user may need to install
-            VibeUEInstance = EngineMarketplacePath;
-            VibeUEPluginFolder = TEXT("VibeUE");
-            UE_LOG(LogMCPClient, Warning, TEXT("Engine Mode enabled but VibeUE not found in %s. Please install VibeUE from FAB."), *EngineMarketplacePath);
-        }
-    }
-    else
-    {
-        // Local mode: Use project plugins path (for development)
-        VibeUEInstance = ProjectPluginPath;
-        VibeUEPluginFolder = TEXT("VibeUE");
-        UE_LOG(LogMCPClient, Log, TEXT("Local Mode - using project plugins path: %s/VibeUE"), *VibeUEInstance);
-        
-        // Warn if the plugin doesn't exist there
-        if (!FPaths::DirectoryExists(ProjectPluginPath / TEXT("VibeUE")))
-        {
-            UE_LOG(LogMCPClient, Warning, TEXT("Local Mode enabled but VibeUE not found in %s/VibeUE"), *ProjectPluginPath);
-        }
-    }
-    
-    // Replace ${VibeUE_Instance} - this is the parent folder containing the VibeUE plugin
-    // The config uses ${VibeUE_Instance}/VibeUE/Content/Python, so we need to handle versioned folder names
-    Result = Result.Replace(TEXT("${VibeUE_Instance}"), *VibeUEInstance);
-    
-    // Also replace the hardcoded "VibeUE" folder name with the actual folder name if different
-    if (!VibeUEPluginFolder.IsEmpty() && VibeUEPluginFolder != TEXT("VibeUE"))
-    {
-        Result = Result.Replace(TEXT("/VibeUE/"), *(TEXT("/") + VibeUEPluginFolder + TEXT("/")));
-        Result = Result.Replace(TEXT("\\VibeUE\\"), *(TEXT("\\") + VibeUEPluginFolder + TEXT("\\")));
-    }
+    Result = Result.Replace(TEXT("${VibeUE_Instance}"), *ProjectPluginPath);
     
     // Legacy support: Replace ${workspaceFolder} with project directory
     Result = Result.Replace(TEXT("${workspaceFolder}"), *FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));

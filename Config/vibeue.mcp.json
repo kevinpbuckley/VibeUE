@@ -1,19 +1,4 @@
 {
   "servers": {
-    "public-chat": {
-      "type": "stdio",
-      "command": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool\\.venv\\Scripts\\python.exe",
-      "args": [
-        "-u",
-        "-m",
-        "python_mcp_discord_tool.tool"
-      ],
-      "env": {
-        "PYTHONUNBUFFERED": "1",
-        "PYTHONPATH": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool\\src",
-        "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/1420767981272698932/SMiBxp3lg-JIHx8kKrHEJhezg9scH_9OsOZk-BPB-rl2qjaixTGkXHjrK72XDtzmhOFl"
-      },
-      "cwd": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool"
-    }
   }
 }

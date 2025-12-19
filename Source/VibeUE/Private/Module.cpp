@@ -7,6 +7,7 @@
 #include "Editor.h"
 #include "Chat/AIChatCommands.h"
 #include "Core/ToolRegistry.h"
+#include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "Tools/ExampleTools.h"
 
@@ -148,10 +149,16 @@ void FModule::StartupModule()
 	
 	// Initialize AI Chat commands
 	FAIChatCommands::Initialize();
+	
+	// Initialize MCP Server (auto-starts if enabled in config)
+	FMCPServer::Get().Initialize();
 }
 
 void FModule::ShutdownModule()
 {
+	// Shutdown MCP Server
+	FMCPServer::Get().Shutdown();
+	
 	// Shutdown AI Chat commands
 	FAIChatCommands::Shutdown();
 	

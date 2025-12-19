@@ -236,10 +236,7 @@ public:
     static void SetAutoSummarizeEnabled(bool bEnabled);
     
     /** Initialize MCP client and discover tools */
-    void InitializeMCP(bool bEngineMode);
-    
-    /** Reinitialize MCP client (shutdown and restart with new mode) */
-    void ReinitializeMCP(bool bEngineMode);
+    void InitializeMCP();
     
     /** Get MCP client */
     TSharedPtr<FMCPClient> GetMCPClient() const { return MCPClient; }
@@ -310,6 +307,25 @@ public:
 
     /** Continue tool calls after iteration limit was reached (user chose to continue) */
     void ContinueAfterIterationLimit();
+
+    // ============ MCP Server Settings (expose internal tools via Streamable HTTP) ============
+    
+    /** Get/Set MCP Server enabled state (default: true) */
+    static bool GetMCPServerEnabledFromConfig();
+    static void SaveMCPServerEnabledToConfig(bool bEnabled);
+    
+    /** Get/Set MCP Server port (default: 8080) */
+    static int32 GetMCPServerPortFromConfig();
+    static void SaveMCPServerPortToConfig(int32 Port);
+    
+    /** Get MCP Server API key from config */
+    static FString GetMCPServerApiKeyFromConfig();
+    
+    /** Save MCP Server API key to config */
+    static void SaveMCPServerApiKeyToConfig(const FString& ApiKey);
+    
+    /** Default MCP Server port */
+    static constexpr int32 DefaultMCPServerPort = 8080;
 
     // Delegates
     FOnMessageAdded OnMessageAdded;

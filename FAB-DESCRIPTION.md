@@ -41,4 +41,4 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 Transform your Unreal Engine development from manual to magical with VibeUE's AI-powered automation. Experience the future of agentic development today!
 
 
-Requirements: Windows, Python 3.12+, Unreal Engine 5.6+, EditorScriptingUtilities Plugin
+Requirements: Windows,  Unreal Engine 5.7+, EditorScriptingUtilities Plugin
