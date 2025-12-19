@@ -76,7 +76,7 @@ private:
     TSharedPtr<STextBlock> StatusText;
     
     /** MCP Tools count text block */
-    TSharedPtr<STextBlock> MCPToolsText;
+    TSharedPtr<STextBlock> ToolsCountText;
     
     /** Token budget text block */
     TSharedPtr<STextBlock> TokenBudgetText;
@@ -142,6 +142,22 @@ private:
     /** Handle settings button clicked */
     FReply OnSettingsClicked();
     
+    /** Handle tools button clicked */
+    FReply OnToolsClicked();
+    
+    /** Build an icon button for the toolbar */
+    TSharedRef<SWidget> MakeToolbarIconButton(
+        const FSlateBrush* IconBrush,
+        const FText& ToolTip,
+        FOnClicked OnClicked
+    );
+    
+    /** Close the tools popup */
+    void CloseToolsPopup();
+    
+    /** Tools popup window */
+    TWeakPtr<SWindow> ToolsPopupWindow;
+    
     /** Handle input text committed (Enter pressed) */
     void OnInputTextCommitted(const FText& Text, ETextCommit::Type CommitType);
     
@@ -176,7 +192,7 @@ private:
     void HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterModel>& Models);
     
     /** Handle MCP tools ready callback */
-    void HandleMCPToolsReady(bool bSuccess, int32 ToolCount);
+    void HandleToolsReady(bool bSuccess, int32 ToolCount);
     
     /** Handle summarization started callback */
     void HandleSummarizationStarted(const FString& Reason);

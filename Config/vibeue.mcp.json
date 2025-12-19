@@ -1,18 +1,19 @@
 {
   "servers": {
-    "VibeUE": {
+    "public-chat": {
       "type": "stdio",
-      "command": "python",
+      "command": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool\\.venv\\Scripts\\python.exe",
       "args": [
         "-u",
         "-m",
-        "vibe_ue_server"
+        "python_mcp_discord_tool.tool"
       ],
       "env": {
-        "PYTHONPATH": "${VibeUE_Instance}/VibeUE/Content/Python",
-        "PYTHONUNBUFFERED": "1"
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool\\src",
+        "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/1420767981272698932/SMiBxp3lg-JIHx8kKrHEJhezg9scH_9OsOZk-BPB-rl2qjaixTGkXHjrK72XDtzmhOFl"
       },
-      "cwd": "${VibeUE_Instance}/VibeUE/Content/Python"
+      "cwd": "e:\\az-dev-ops\\Hooman\\python-mcp-discord-tool"
     }
   }
 }

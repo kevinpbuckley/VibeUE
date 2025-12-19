@@ -75,7 +75,7 @@ void FMCPClient::Shutdown()
     }
     
     ServerStates.Empty();
-    AllTools.Empty();
+    MCPTools.Empty();
     
     UE_LOG(LogMCPClient, Log, TEXT("MCP Client shutdown"));
 }
@@ -472,7 +472,7 @@ void FMCPClient::StopServer(const FString& ServerName)
     }
     
     // Remove tools from this server
-    AllTools.RemoveAll([&ServerName](const FMCPTool& Tool) {
+    MCPTools.RemoveAll([&ServerName](const FMCPTool& Tool) {
         return Tool.ServerName == ServerName;
     });
     
@@ -703,7 +703,7 @@ void FMCPClient::RequestToolsList(FMCPServerState& State)
                     {
                         FMCPTool Tool = FMCPTool::FromJson(ToolObjRef, State.Config.Name);
                         State.Tools.Add(Tool);
-                        AllTools.Add(Tool);
+                        MCPTools.Add(Tool);
                         
                         UE_LOG(LogMCPClient, Log, TEXT("Discovered tool: %s from %s"), *Tool.Name, *State.Config.Name);
                     }
@@ -756,8 +756,8 @@ void FMCPClient::DiscoverTools(FOnToolsDiscovered OnComplete)
         }
     }
     
-    // Return all discovered tools
-    OnComplete.ExecuteIfBound(AllTools.Num() > 0, AllTools);
+    // Return all discovered MCP tools
+    OnComplete.ExecuteIfBound(MCPTools.Num() > 0, MCPTools);
 }
 
 void FMCPClient::ExecuteTool(const FMCPToolCall& ToolCall, FOnToolExecuted OnComplete)

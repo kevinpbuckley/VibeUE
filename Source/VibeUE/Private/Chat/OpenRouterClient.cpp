@@ -172,11 +172,14 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     // Add tools if available
     if (Tools.Num() > 0)
     {
+        UE_LOG(LogOpenRouterClient, Warning, TEXT("=== TOOLS BEING SENT TO LLM ==="));
         TArray<TSharedPtr<FJsonValue>> ToolsArray;
         for (const FMCPTool& Tool : Tools)
         {
+            UE_LOG(LogOpenRouterClient, Warning, TEXT("  Sending tool: %s"), *Tool.Name);
             ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
+        UE_LOG(LogOpenRouterClient, Warning, TEXT("=== END TOOLS (%d total) ==="), Tools.Num());
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
         
         // Control parallel tool calls - when false, model makes one tool call at a time

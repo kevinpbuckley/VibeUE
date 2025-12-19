@@ -162,6 +162,7 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         TArray<TSharedPtr<FJsonValue>> ToolsArray;
         for (const FMCPTool& Tool : Tools)
         {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("  Sending tool to VibeUE: %s"), *Tool.Name);
             ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);

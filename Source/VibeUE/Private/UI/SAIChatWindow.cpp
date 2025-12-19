@@ -4,6 +4,7 @@
 #include "Chat/AIChatCommands.h"
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
+#include "Core/ToolRegistry.h"
 #include "Chat/ILLMClient.h"
 #include "Chat/VibeUEAPIClient.h"
 #include "Widgets/Layout/SScrollBox.h"
@@ -123,7 +124,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnMessageUpdated.BindSP(this, &SAIChatWindow::HandleMessageUpdated);
     ChatSession->OnChatReset.BindSP(this, &SAIChatWindow::HandleChatReset);
     ChatSession->OnChatError.BindSP(this, &SAIChatWindow::HandleChatError);
-    ChatSession->OnMCPToolsReady.BindSP(this, &SAIChatWindow::HandleMCPToolsReady);
+    ChatSession->OnToolsReady.BindSP(this, &SAIChatWindow::HandleToolsReady);
     ChatSession->OnSummarizationStarted.BindSP(this, &SAIChatWindow::HandleSummarizationStarted);
     ChatSession->OnSummarizationComplete.BindSP(this, &SAIChatWindow::HandleSummarizationComplete);
     ChatSession->OnTokenBudgetUpdated.BindSP(this, &SAIChatWindow::HandleTokenBudgetUpdated);
@@ -173,7 +174,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                     .VAlign(VAlign_Center)
                     .Padding(0, 0, 12, 0)
                     [
-                        SAssignNew(MCPToolsText, STextBlock)
+                        SAssignNew(ToolsCountText, STextBlock)
                         .Text(FText::FromString(TEXT("Tools: --")))
                         .ToolTipText(FText::FromString(TEXT("Available MCP tools")))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::Cyan))
@@ -193,25 +194,60 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
                     ]
                     
-                    // Reset button
+                    // Reset button (icon) - First
                     + SHorizontalBox::Slot()
                     .AutoWidth()
+                    .VAlign(VAlign_Center)
                     .Padding(0, 0, 4, 0)
                     [
                         SNew(SButton)
-                        .Text(FText::FromString(TEXT("Reset")))
-                        .ToolTipText(FText::FromString(TEXT("Clear conversation history")))
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .ContentPadding(FMargin(4))
+                        .ToolTipText(FText::FromString(TEXT("Reset - Clear conversation history")))
                         .OnClicked(this, &SAIChatWindow::OnResetClicked)
+                        [
+                            SNew(SImage)
+                            .Image(FAppStyle::GetBrush("Icons.Refresh"))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                            .DesiredSizeOverride(FVector2D(16, 16))
+                        ]
                     ]
                     
-                    // Settings button
+                    // Tools button (icon) - puzzle piece / plug icon
                     + SHorizontalBox::Slot()
                     .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(0, 0, 4, 0)
                     [
                         SNew(SButton)
-                        .Text(FText::FromString(TEXT("Settings")))
-                        .ToolTipText(FText::FromString(TEXT("Configure API key and preferences")))
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .ContentPadding(FMargin(4))
+                        .ToolTipText(FText::FromString(TEXT("Manage Tools - Enable/Disable AI tools")))
+                        .OnClicked(this, &SAIChatWindow::OnToolsClicked)
+                        [
+                            SNew(SImage)
+                            .Image(FAppStyle::GetBrush("Icons.Package"))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                            .DesiredSizeOverride(FVector2D(16, 16))
+                        ]
+                    ]
+                    
+                    // Settings button (icon) - gear
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SButton)
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .ContentPadding(FMargin(4))
+                        .ToolTipText(FText::FromString(TEXT("Settings - Configure API key and preferences")))
                         .OnClicked(this, &SAIChatWindow::OnSettingsClicked)
+                        [
+                            SNew(SImage)
+                            .Image(FAppStyle::GetBrush("Icons.Toolbar.Settings"))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                            .DesiredSizeOverride(FVector2D(16, 16))
+                        ]
                     ]
                 ]
             ]
@@ -1044,6 +1080,427 @@ FReply SAIChatWindow::OnResetClicked()
     return FReply::Handled();
 }
 
+void SAIChatWindow::CloseToolsPopup()
+{
+    if (TSharedPtr<SWindow> Window = ToolsPopupWindow.Pin())
+    {
+        Window->RequestDestroyWindow();
+    }
+    ToolsPopupWindow.Reset();
+}
+
+FReply SAIChatWindow::OnToolsClicked()
+{
+    // Close existing popup if open
+    CloseToolsPopup();
+    
+    // Get all tools from registry
+    FToolRegistry& Registry = FToolRegistry::Get();
+    const TArray<FToolMetadata>& AllTools = Registry.GetAllTools();
+    
+    // Get MCP tools directly from MCP client (not merged list)
+    // IMPORTANT: Get ALL MCP tools regardless of enabled state for display in popup
+    TArray<FMCPTool> MCPTools;
+    if (ChatSession.IsValid())
+    {
+        bool bMCPInitialized = ChatSession->IsMCPInitialized();
+        UE_LOG(LogAIChatWindow, Log, TEXT("Tools popup: MCP initialized = %s"), bMCPInitialized ? TEXT("YES") : TEXT("NO"));
+        
+        if (bMCPInitialized && ChatSession->GetMCPClient().IsValid())
+        {
+            // Get MCP tools directly from client (external server tools only)
+            // Note: GetMCPTools() returns only MCP tools, not internal tools
+            const TArray<FMCPTool>& AllMCPTools = ChatSession->GetMCPClient()->GetMCPTools();
+            MCPTools = AllMCPTools;
+            UE_LOG(LogAIChatWindow, Log, TEXT("Tools popup: Found %d MCP tools from client"), MCPTools.Num());
+            
+            // Log each MCP tool for debugging
+            for (const FMCPTool& Tool : MCPTools)
+            {
+                bool bEnabled = Registry.IsToolEnabled(Tool.Name);
+                UE_LOG(LogAIChatWindow, Log, TEXT("  MCP Tool: %s (Server: %s, Enabled: %s)"), 
+                    *Tool.Name, *Tool.ServerName, bEnabled ? TEXT("YES") : TEXT("NO"));
+            }
+        }
+        else
+        {
+            UE_LOG(LogAIChatWindow, Warning, TEXT("Tools popup: MCP not initialized or client invalid, no MCP tools available"));
+        }
+    }
+    
+    // Count enabled internal tools
+    int32 EnabledInternalCount = 0;
+    for (const FToolMetadata& Tool : AllTools)
+    {
+        if (Registry.IsToolEnabled(Tool.Name))
+        {
+            EnabledInternalCount++;
+        }
+    }
+    
+    // Create a shared map to track pending tool state changes
+    // This is modified by checkboxes and applied when Save is clicked
+    TSharedPtr<TMap<FString, bool>> PendingToolStates = MakeShared<TMap<FString, bool>>();
+    
+    // Initialize with current states
+    for (const FToolMetadata& Tool : AllTools)
+    {
+        PendingToolStates->Add(Tool.Name, Registry.IsToolEnabled(Tool.Name));
+    }
+    for (const FMCPTool& Tool : MCPTools)
+    {
+        if (Tool.ServerName != TEXT("Internal"))
+        {
+            PendingToolStates->Add(Tool.Name, Registry.IsToolEnabled(Tool.Name));
+        }
+    }
+    
+    // Create the tools popup window
+    TSharedRef<SWindow> PopupWindow = SNew(SWindow)
+        .Title(FText::FromString(TEXT("VibeUE Tools")))
+        .ClientSize(FVector2D(500, 600))
+        .SupportsMinimize(false)
+        .SupportsMaximize(false)
+        .IsTopmostWindow(true);
+    
+    // Build tools list content
+    TSharedRef<SVerticalBox> ToolsListBox = SNew(SVerticalBox);
+    
+    // Shared pointer for updating tool count text
+    TSharedPtr<STextBlock> ToolCountText;
+    
+    // Internal tools section
+    if (AllTools.Num() > 0)
+    {
+        ToolsListBox->AddSlot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SAssignNew(ToolCountText, STextBlock)
+            .Text(FText::FromString(FString::Printf(TEXT("Internal Tools (%d/%d enabled)"), EnabledInternalCount, AllTools.Num())))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+            .ColorAndOpacity(FSlateColor(VibeUEColors::Cyan))
+        ];
+        
+        for (const FToolMetadata& Tool : AllTools)
+        {
+            // Capture tool name for lambda
+            FString ToolName = Tool.Name;
+            bool bIsEnabled = Registry.IsToolEnabled(ToolName);
+            
+            // Create checkbox with dynamic state
+            TSharedPtr<SCheckBox> ToolCheckBox;
+            
+            ToolsListBox->AddSlot()
+            .AutoHeight()
+            .Padding(12, 4, 8, 4)
+            [
+                SNew(SBorder)
+                .BorderBackgroundColor(bIsEnabled ? FLinearColor(0.1f, 0.12f, 0.14f, 1.0f) : FLinearColor(0.08f, 0.08f, 0.08f, 1.0f))
+                .Padding(6)
+                [
+                    SNew(SHorizontalBox)
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(0, 0, 8, 0)
+                    [
+                        SAssignNew(ToolCheckBox, SCheckBox)
+                        .IsChecked(bIsEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                        .ToolTipText(FText::FromString(FString::Printf(TEXT("Enable/Disable %s"), *Tool.Name)))
+                        .OnCheckStateChanged_Lambda([ToolName, PendingToolStates](ECheckBoxState NewState)
+                        {
+                            bool bNewEnabled = (NewState == ECheckBoxState::Checked);
+                            UE_LOG(LogAIChatWindow, Log, TEXT("Checkbox changed for tool '%s': bNewEnabled=%s (pending)"), 
+                                *ToolName, bNewEnabled ? TEXT("true") : TEXT("false"));
+                            PendingToolStates->Add(ToolName, bNewEnabled);
+                        })
+                    ]
+                    
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SVerticalBox)
+                        
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.Name))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                            .ColorAndOpacity(FSlateColor(bIsEnabled ? VibeUEColors::TextPrimary : VibeUEColors::TextMuted))
+                        ]
+                        
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.Description.Left(100) + (Tool.Description.Len() > 100 ? TEXT("...") : TEXT(""))))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                            .AutoWrapText(true)
+                        ]
+                    ]
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(8, 0, 0, 0)
+                    [
+                        SNew(SBorder)
+                        .BorderBackgroundColor(FLinearColor(0.15f, 0.15f, 0.18f, 1.0f))
+                        .Padding(FMargin(6, 2))
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.Category))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                        ]
+                    ]
+                ]
+            ];
+        }
+    }
+    
+    // MCP tools section (tools from external servers)
+    int32 ExternalToolCount = 0;
+    for (const FMCPTool& Tool : MCPTools)
+    {
+        if (Tool.ServerName != TEXT("Internal")) // Skip internal tools
+        {
+            if (ExternalToolCount == 0)
+            {
+                ToolsListBox->AddSlot()
+                .AutoHeight()
+                .Padding(8, 16, 8, 4)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("MCP Tools (External)")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Bold", 12))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::Green))
+                ];
+            }
+            
+            ExternalToolCount++;
+            FString MCPToolName = Tool.Name;
+            bool bMCPEnabled = Registry.IsToolEnabled(MCPToolName);
+            
+            ToolsListBox->AddSlot()
+            .AutoHeight()
+            .Padding(12, 4, 8, 4)
+            [
+                SNew(SBorder)
+                .BorderBackgroundColor(bMCPEnabled ? FLinearColor(0.1f, 0.12f, 0.14f, 1.0f) : FLinearColor(0.08f, 0.08f, 0.08f, 1.0f))
+                .Padding(6)
+                [
+                    SNew(SHorizontalBox)
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(0, 0, 8, 0)
+                    [
+                        SNew(SCheckBox)
+                        .IsChecked(bMCPEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                        .ToolTipText(FText::FromString(FString::Printf(TEXT("Enable/Disable %s"), *Tool.Name)))
+                        .OnCheckStateChanged_Lambda([MCPToolName, PendingToolStates](ECheckBoxState NewState)
+                        {
+                            bool bNewEnabled = (NewState == ECheckBoxState::Checked);
+                            UE_LOG(LogAIChatWindow, Log, TEXT("MCP Checkbox changed for tool '%s': bNewEnabled=%s (pending)"), 
+                                *MCPToolName, bNewEnabled ? TEXT("true") : TEXT("false"));
+                            PendingToolStates->Add(MCPToolName, bNewEnabled);
+                        })
+                    ]
+                    
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SVerticalBox)
+                        
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.Name))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                            .ColorAndOpacity(FSlateColor(bMCPEnabled ? VibeUEColors::TextPrimary : VibeUEColors::TextMuted))
+                        ]
+                        
+                        + SVerticalBox::Slot()
+                        .AutoHeight()
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.Description.Left(100) + (Tool.Description.Len() > 100 ? TEXT("...") : TEXT(""))))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                            .AutoWrapText(true)
+                        ]
+                    ]
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(8, 0, 0, 0)
+                    [
+                        SNew(SBorder)
+                        .BorderBackgroundColor(FLinearColor(0.1f, 0.15f, 0.1f, 1.0f))
+                        .Padding(FMargin(6, 2))
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(Tool.ServerName))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 8))
+                            .ColorAndOpacity(FSlateColor(VibeUEColors::Green))
+                        ]
+                    ]
+                ]
+            ];
+        }
+    }
+    
+    // Capture this pointer for Save button lambda
+    SAIChatWindow* Self = this;
+    TWeakPtr<SWindow> WeakPopupWindow = PopupWindow;
+    
+    // Build the popup content
+    PopupWindow->SetContent(
+        SNew(SBorder)
+        .BorderBackgroundColor(VibeUEColors::Background)
+        .Padding(0)
+        [
+            SNew(SVerticalBox)
+            
+            // Header
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                SNew(SBorder)
+                .BorderBackgroundColor(VibeUEColors::BackgroundLight)
+                .Padding(12)
+                [
+                    SNew(SHorizontalBox)
+                    
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(FString::Printf(TEXT("Tool Manager - %d Internal, %d MCP"), AllTools.Num(), ExternalToolCount)))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))
+                    ]
+                ]
+            ]
+            
+            // Scrollable tools list
+            + SVerticalBox::Slot()
+            .FillHeight(1.0f)
+            [
+                SNew(SScrollBox)
+                + SScrollBox::Slot()
+                [
+                    ToolsListBox
+                ]
+            ]
+            
+            // Footer with Save button
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(8)
+            [
+                SNew(SVerticalBox)
+                
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 8)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Click Save to apply changes. Disabled tools won't be used by AI.")))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                ]
+                
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                [
+                    SNew(SHorizontalBox)
+                    
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Save & Close")))
+                        .OnClicked_Lambda([Self, PendingToolStates, WeakPopupWindow]() -> FReply
+                        {
+                            UE_LOG(LogAIChatWindow, Log, TEXT("=== SAVE BUTTON CLICKED ==="));
+                            
+                            // Build the new disabled tools set directly
+                            TSet<FString> NewDisabledTools;
+                            for (const auto& Pair : *PendingToolStates)
+                            {
+                                UE_LOG(LogAIChatWindow, Log, TEXT("  Tool '%s' -> %s"), 
+                                    *Pair.Key, Pair.Value ? TEXT("ENABLED") : TEXT("DISABLED"));
+                                if (!Pair.Value) // If NOT enabled, add to disabled set
+                                {
+                                    NewDisabledTools.Add(Pair.Key);
+                                }
+                            }
+                            
+                            // Use the new bulk update method that bypasses change detection
+                            FToolRegistry& Reg = FToolRegistry::Get();
+                            Reg.SetDisabledToolsAndSave(NewDisabledTools);
+                            
+                            UE_LOG(LogAIChatWindow, Log, TEXT("Applied %d tool states, %d now disabled"), 
+                                PendingToolStates->Num(), NewDisabledTools.Num());
+                            
+                            // Update the main chat window's tool count
+                            if (Self && Self->ChatSession.IsValid())
+                            {
+                                Self->HandleToolsReady(true, Self->ChatSession->GetEnabledToolCount());
+                            }
+                            
+                            // Close the popup
+                            if (TSharedPtr<SWindow> StrongWindow = WeakPopupWindow.Pin())
+                            {
+                                StrongWindow->RequestDestroyWindow();
+                            }
+                            
+                            return FReply::Handled();
+                        })
+                    ]
+                    
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(8, 0, 0, 0)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Cancel")))
+                        .OnClicked_Lambda([WeakPopupWindow]() -> FReply
+                        {
+                            if (TSharedPtr<SWindow> StrongWindow = WeakPopupWindow.Pin())
+                            {
+                                StrongWindow->RequestDestroyWindow();
+                            }
+                            return FReply::Handled();
+                        })
+                    ]
+                ]
+            ]
+        ]
+    );
+    
+    // Show the popup
+    FSlateApplication::Get().AddWindow(PopupWindow);
+    ToolsPopupWindow = PopupWindow;
+    
+    return FReply::Handled();
+}
+
 FReply SAIChatWindow::OnSettingsClicked()
 {
     // Show API key input dialog
@@ -1831,20 +2288,20 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
     }
 }
 
-void SAIChatWindow::HandleMCPToolsReady(bool bSuccess, int32 ToolCount)
+void SAIChatWindow::HandleToolsReady(bool bSuccess, int32 ToolCount)
 {
-    if (MCPToolsText.IsValid())
+    if (ToolsCountText.IsValid())
     {
         if (bSuccess && ToolCount > 0)
         {
-            MCPToolsText->SetText(FText::FromString(FString::Printf(TEXT("Tools: %d"), ToolCount)));
-            MCPToolsText->SetColorAndOpacity(FSlateColor(VibeUEColors::Green)); // Green for connected
+            ToolsCountText->SetText(FText::FromString(FString::Printf(TEXT("Tools: %d"), ToolCount)));
+            ToolsCountText->SetColorAndOpacity(FSlateColor(VibeUEColors::Green)); // Green for connected
             CHAT_LOG(Log, TEXT("MCP tools ready: %d tools available"), ToolCount);
         }
         else
         {
-            MCPToolsText->SetText(FText::FromString(TEXT("Tools: 0")));
-            MCPToolsText->SetColorAndOpacity(FSlateColor(VibeUEColors::TextMuted)); // Muted for no tools
+            ToolsCountText->SetText(FText::FromString(TEXT("Tools: 0")));
+            ToolsCountText->SetColorAndOpacity(FSlateColor(VibeUEColors::TextMuted)); // Muted for no tools
             CHAT_LOG(Log, TEXT("MCP tools: none available"));
         }
     }

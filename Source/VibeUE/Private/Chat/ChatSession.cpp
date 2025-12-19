@@ -8,6 +8,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/ConfigCacheIni.h"
 #include "UI/SAIChatWindow.h"
+#include "Core/ToolRegistry.h"
+#include "Core/ToolMetadata.h"
+#include "Chat/MCPTypes.h"
+#include "Async/Async.h"
 
 DEFINE_LOG_CATEGORY(LogChatSession);
 
@@ -99,6 +103,9 @@ void FChatSession::Initialize()
     // Apply LLM generation parameters to VibeUE client
     ApplyLLMParametersToClient();
     
+    // Initialize internal tools (reflection-based, from ToolRegistry)
+    InitializeInternalTools();
+    
     // Load max tool call iterations setting
     MaxToolCallIterations = GetMaxToolCallIterationsFromConfig();
     
@@ -169,13 +176,19 @@ void FChatSession::SendMessage(const FString& UserMessage)
     // Build messages for API (includes context management)
     TArray<FChatMessage> ApiMessages = BuildApiMessages();
     
-    // Get available tools
-    TArray<FMCPTool> Tools = GetAvailableTools();
+    // Get all enabled tools (internal + MCP)
+    TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log what we're sending to the LLM
     FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"), 
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
+    
+    // Log the actual tool names being sent
+    for (const FMCPTool& Tool : Tools)
+    {
+        CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
+    }
     
     // Send request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
@@ -259,30 +272,42 @@ void FChatSession::OnStreamComplete(bool bSuccess)
         // Strip thinking tags from visible content - model benefits from reasoning, user sees clean output
         Message.Content = StripThinkingTags(Message.Content);
         
-        // If the message is empty and has no tool calls, remove it (failed/empty response)
+        // If the message is empty and has no tool calls, try to populate from accumulated response (non-streaming paths)
         if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
         {
-            UE_LOG(LogChatSession, Warning, TEXT("Removing empty assistant message at index %d"), CurrentStreamingMessageIndex);
-            Messages.RemoveAt(CurrentStreamingMessageIndex);
-            // Trigger a rebuild to remove the empty message from UI
-            OnChatReset.ExecuteIfBound();
-            for (int32 i = 0; i < Messages.Num(); i++)
+            FString Accumulated;
+            if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
             {
-                OnMessageAdded.ExecuteIfBound(Messages[i]);
+                Accumulated = VibeUEClient->GetLastAccumulatedResponse();
+            }
+            else if (OpenRouterClient.IsValid())
+            {
+                Accumulated = OpenRouterClient->GetLastAccumulatedResponse();
+            }
+
+            if (!Accumulated.IsEmpty())
+            {
+                UE_LOG(LogChatSession, Log, TEXT("Populating assistant message from accumulated response (%d chars)"), Accumulated.Len());
+                Message.Content = Accumulated;
             }
         }
-        else
+
+        // If still empty after attempting to populate, fall back to a placeholder instead of deleting
+        if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
         {
-            // Log complete assistant response
-            if (!Message.Content.IsEmpty())
-            {
-                CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
-                    Message.Content.Len(), *Message.Content);
-            }
-            
-            Message.bIsStreaming = false;
-            OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
+            UE_LOG(LogChatSession, Warning, TEXT("Assistant response empty; keeping placeholder instead of removing"));
+            Message.Content = TEXT("No response received from the model.");
         }
+
+        // Log complete assistant response
+        if (!Message.Content.IsEmpty())
+        {
+            CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
+                Message.Content.Len(), *Message.Content);
+        }
+        
+        Message.bIsStreaming = false;
+        OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
     }
     
     CurrentStreamingMessageIndex = INDEX_NONE;
@@ -321,13 +346,9 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
         UE_LOG(LogChatSession, Log, TEXT("Tool call received: %s"), *ToolCall.ToolName);
     }
     
-    if (!MCPClient.IsValid())
-    {
-        UE_LOG(LogChatSession, Error, TEXT("MCP client not available for tool call"));
-        return;
-    }
-    
     // Increment pending tool call count
+    // Note: Don't check MCPClient here - reflection tools work without it
+    // ExecuteNextToolInQueue will route to the appropriate handler
     PendingToolCallCount++;
     UE_LOG(LogChatSession, Log, TEXT("Pending tool calls: %d (queue size: %d)"), PendingToolCallCount, ToolCallQueue.Num() + 1);
     
@@ -370,16 +391,29 @@ void FChatSession::ExecuteNextToolInQueue()
     {
         bIsExecutingTool = false;
         
+        UE_LOG(LogChatSession, Log, TEXT("ExecuteNextToolInQueue: Queue empty, PendingToolCallCount=%d"), PendingToolCallCount);
+        
         // All tools executed - check if we should send follow-up
         if (PendingToolCallCount <= 0)
         {
             PendingToolCallCount = 0; // Safety reset
             
+            UE_LOG(LogChatSession, Log, TEXT("All tool calls completed - checking summarization before follow-up"));
+            
             // Check if summarization is needed after tool results (they can be large)
             TriggerSummarizationIfNeeded();
             
+            // Log summarization state
+            UE_LOG(LogChatSession, Log, TEXT("After TriggerSummarizationIfNeeded: bIsSummarizing=%s, bPendingFollowUpAfterSummarization=%s"), 
+                bIsSummarizing ? TEXT("true") : TEXT("false"),
+                bPendingFollowUpAfterSummarization ? TEXT("true") : TEXT("false"));
+            
             UE_LOG(LogChatSession, Log, TEXT("All tool calls completed, sending follow-up request"));
             SendFollowUpAfterToolCall();
+        }
+        else
+        {
+            UE_LOG(LogChatSession, Warning, TEXT("ExecuteNextToolInQueue: Queue empty but PendingToolCallCount=%d > 0, NOT sending follow-up"), PendingToolCallCount);
         }
         return;
     }
@@ -391,6 +425,108 @@ void FChatSession::ExecuteNextToolInQueue()
     ToolCallQueue.RemoveAt(0);
     
     UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
+    
+    // Check if this is a reflection-based tool first
+    FToolRegistry& Registry = FToolRegistry::Get();
+    const FToolMetadata* ReflectionTool = Registry.FindTool(ToolCall.ToolName);
+    
+    if (ReflectionTool)
+    {
+        // Execute via reflection
+        UE_LOG(LogChatSession, Log, TEXT("Executing reflection tool: %s"), *ToolCall.ToolName);
+        
+        // Convert arguments to parameter map
+        TMap<FString, FString> Parameters;
+        if (ToolCall.Arguments.IsValid())
+        {
+            for (const auto& Pair : ToolCall.Arguments->Values)
+            {
+                FString ValueStr;
+                if (Pair.Value->Type == EJson::String)
+                {
+                    ValueStr = Pair.Value->AsString();
+                }
+                else if (Pair.Value->Type == EJson::Number)
+                {
+                    ValueStr = FString::Printf(TEXT("%f"), Pair.Value->AsNumber());
+                }
+                else if (Pair.Value->Type == EJson::Boolean)
+                {
+                    ValueStr = Pair.Value->AsBool() ? TEXT("true") : TEXT("false");
+                }
+                else
+                {
+                    // For complex types, serialize to JSON string
+                    TSharedPtr<FJsonObject> TempObj = MakeShared<FJsonObject>();
+                    TempObj->SetField(Pair.Key, Pair.Value);
+                    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(TempObj.ToSharedRef(), Writer);
+                }
+                Parameters.Add(Pair.Key, ValueStr);
+            }
+        }
+        
+        // Execute tool
+        FString Result = Registry.ExecuteTool(ToolCall.ToolName, Parameters);
+        
+        // Create result
+        FMCPToolResult ToolResult;
+        ToolResult.ToolCallId = ToolCall.Id;
+        ToolResult.bSuccess = true;
+        ToolResult.Content = Result;
+        
+        // Process result (same as MCP path)
+        FString ResultContent = ToolResult.Content;
+        CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: true, Result: %s"), 
+            *ToolCall.ToolName, *ToolCall.Id, *ResultContent);
+        
+        FString TruncatedContent = SmartTruncateToolResult(ResultContent, ToolCall.ToolName);
+        FChatMessage ToolResultMsg(TEXT("tool"), TruncatedContent);
+        ToolResultMsg.ToolCallId = ToolCall.Id;
+        Messages.Add(ToolResultMsg);
+        OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        PendingToolCallCount--;
+        UE_LOG(LogChatSession, Log, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
+        
+        // IMPORTANT: Defer to next tick to ensure the HTTP callback completes cleanly
+        // Internal tools execute synchronously which can cause issues if we immediately
+        // start a new HTTP request while still inside the previous callback's stack
+        UE_LOG(LogChatSession, Log, TEXT("Internal tool: Deferring ExecuteNextToolInQueue to next tick"));
+        
+        // Use a weak pointer to avoid accessing 'this' if session is destroyed
+        TWeakPtr<FChatSession> WeakSession = AsShared();
+        AsyncTask(ENamedThreads::GameThread, [WeakSession]()
+        {
+            if (TSharedPtr<FChatSession> StrongSession = WeakSession.Pin())
+            {
+                UE_LOG(LogChatSession, Log, TEXT("Internal tool: Executing deferred ExecuteNextToolInQueue - PendingToolCallCount=%d, QueueSize=%d"), 
+                    StrongSession->PendingToolCallCount, StrongSession->ToolCallQueue.Num());
+                StrongSession->ExecuteNextToolInQueue();
+            }
+        });
+        return;
+    }
+    
+    // Fall back to MCP if not a reflection tool
+    if (!MCPClient.IsValid())
+    {
+        UE_LOG(LogChatSession, Error, TEXT("Tool %s not found in reflection registry and MCP client not available"), *ToolCall.ToolName);
+        
+        FMCPToolResult ErrorResult;
+        ErrorResult.ToolCallId = ToolCall.Id;
+        ErrorResult.bSuccess = false;
+        ErrorResult.ErrorMessage = FString::Printf(TEXT("Tool '%s' not found"), *ToolCall.ToolName);
+        
+        FChatMessage ToolResultMsg(TEXT("tool"), ErrorResult.ErrorMessage);
+        ToolResultMsg.ToolCallId = ToolCall.Id;
+        Messages.Add(ToolResultMsg);
+        OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        PendingToolCallCount--;
+        ExecuteNextToolInQueue();
+        return;
+    }
     
     // Execute the tool via MCP
     MCPClient->ExecuteTool(ToolCall, FOnToolExecuted::CreateLambda(
@@ -486,8 +622,8 @@ void FChatSession::SendFollowUpAfterToolCall()
         UE_LOG(LogChatSession, Log, TEXT("Built %d API messages for follow-up"), ApiMessages.Num());
     }
     
-    // Get available tools
-    TArray<FMCPTool> Tools = GetAvailableTools();
+    // Get all enabled tools (internal + MCP)
+    TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log follow-up request to LLM
     FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
@@ -1350,11 +1486,15 @@ void FChatSession::InitializeMCP(bool bEngineMode)
     MCPClient->Initialize(bEngineMode);
     
     // Discover available tools
-    MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& Tools)
+    MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& MCPTools)
     {
         bMCPInitialized = true;
-        UE_LOG(LogChatSession, Log, TEXT("MCP initialized with %d tools"), Tools.Num());
-        OnMCPToolsReady.ExecuteIfBound(bSuccess, Tools.Num());
+        UE_LOG(LogChatSession, Log, TEXT("MCP initialized with %d MCP tools"), MCPTools.Num());
+        
+        // Report TOTAL tool count (internal + MCP), not just MCP
+        int32 TotalToolCount = GetEnabledToolCount();
+        UE_LOG(LogChatSession, Log, TEXT("Total tools available: %d (internal + MCP)"), TotalToolCount);
+        OnToolsReady.ExecuteIfBound(bSuccess || TotalToolCount > 0, TotalToolCount);
     }));
 }
 
@@ -1374,23 +1514,53 @@ void FChatSession::ReinitializeMCP(bool bEngineMode)
     InitializeMCP(bEngineMode);
 }
 
-const TArray<FMCPTool>& FChatSession::GetAvailableTools() const
+TArray<FMCPTool> FChatSession::GetAllEnabledTools() const
 {
-    static TArray<FMCPTool> EmptyTools;
+    TArray<FMCPTool> MergedTools;
+    FToolRegistry& Registry = FToolRegistry::Get();
+    
+    // Add internal tools first (already filtered by enabled state)
+    TArray<FMCPTool> InternalTools = GetInternalToolsAsMCP();
+    MergedTools.Append(InternalTools);
+    
+    // Add MCP tools (if any) - also filter by enabled state
     if (MCPClient.IsValid())
     {
-        return MCPClient->GetAvailableTools();
+        const TArray<FMCPTool>& MCPTools = MCPClient->GetMCPTools();
+        // Only add MCP tools that don't conflict with internal tools AND are enabled
+        for (const FMCPTool& MCPTool : MCPTools)
+        {
+            // Check if this MCP tool is disabled
+            if (!Registry.IsToolEnabled(MCPTool.Name))
+            {
+                UE_LOG(LogChatSession, Verbose, TEXT("Skipping disabled MCP tool: %s"), *MCPTool.Name);
+                continue;
+            }
+            
+            bool bConflict = false;
+            for (const FMCPTool& InternalTool : MergedTools)
+            {
+                if (InternalTool.Name == MCPTool.Name)
+                {
+                    bConflict = true;
+                    break;
+                }
+            }
+            if (!bConflict)
+            {
+                MergedTools.Add(MCPTool);
+            }
+        }
     }
-    return EmptyTools;
+    
+    return MergedTools;
 }
 
-int32 FChatSession::GetMCPToolCount() const
+int32 FChatSession::GetEnabledToolCount() const
 {
-    if (MCPClient.IsValid())
-    {
-        return MCPClient->GetToolCount();
-    }
-    return 0;
+    // Simply return the count of enabled tools (internal + MCP)
+    // GetAllEnabledTools already filters by enabled state
+    return GetAllEnabledTools().Num();
 }
 
 bool FChatSession::IsMCPInitialized() const
@@ -1755,3 +1925,136 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
 
 // Loop detection removed - now using prompt-based self-awareness instructions
 // See vibeue.instructions.md for the loop prevention guidelines the model follows
+
+void FChatSession::InitializeInternalTools()
+{
+    // Ensure ToolRegistry is initialized
+    FToolRegistry& Registry = FToolRegistry::Get();
+    if (!Registry.IsInitialized())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Initializing ToolRegistry..."));
+        Registry.Initialize();
+        UE_LOG(LogChatSession, Log, TEXT("ToolRegistry initialized with %d tools"), Registry.GetAllTools().Num());
+    }
+    else
+    {
+        UE_LOG(LogChatSession, Log, TEXT("ToolRegistry already initialized with %d tools"), Registry.GetAllTools().Num());
+    }
+    
+    // Load internal tools (will be cached)
+    TArray<FMCPTool> Tools = GetInternalToolsAsMCP();
+    
+    UE_LOG(LogChatSession, Log, TEXT("Internal tools initialized: %d tools available"), Tools.Num());
+    for (const FMCPTool& Tool : Tools)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("  - %s: %s"), *Tool.Name, *Tool.Description);
+    }
+    
+    // Notify UI that tools are ready (even if count is 0, so UI can update)
+    int32 TotalToolCount = GetEnabledToolCount();
+    OnToolsReady.ExecuteIfBound(true, TotalToolCount);
+    UE_LOG(LogChatSession, Log, TEXT("Notified UI: tools ready, count = %d"), TotalToolCount);
+}
+
+TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
+{
+    // Always rebuild from registry to respect enabled/disabled state
+    // (Caching disabled because users can enable/disable tools at any time)
+    
+    // Load tools from registry
+    FToolRegistry& Registry = FToolRegistry::Get();
+    if (!Registry.IsInitialized())
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("ToolRegistry not initialized, initializing now..."));
+        const_cast<FChatSession*>(this)->InitializeInternalTools();
+    }
+    
+    // Get only ENABLED tools
+    TArray<FToolMetadata> Tools = Registry.GetEnabledTools();
+    UE_LOG(LogChatSession, Verbose, TEXT("GetInternalToolsAsMCP: Registry has %d enabled tools"), Tools.Num());
+    
+    if (Tools.Num() == 0)
+    {
+        UE_LOG(LogChatSession, Verbose, TEXT("No enabled tools in ToolRegistry"));
+        return TArray<FMCPTool>();
+    }
+    
+    UE_LOG(LogChatSession, Verbose, TEXT("Converting %d enabled internal tools to MCP format"), Tools.Num());
+    
+    TArray<FMCPTool> Result;
+    Result.Reserve(Tools.Num());
+    
+    // Convert each internal tool to MCP tool format (for API compatibility)
+    for (const FToolMetadata& Tool : Tools)
+    {
+        FMCPTool MCPTool;
+        MCPTool.Name = Tool.Name;
+        MCPTool.Description = Tool.Description;
+        MCPTool.ServerName = TEXT("Internal"); // Mark as internal tool (from ToolRegistry)
+        
+        // Build input schema (JSON Schema format)
+        TSharedPtr<FJsonObject> InputSchema = MakeShared<FJsonObject>();
+        InputSchema->SetStringField(TEXT("type"), TEXT("object"));
+        
+        TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> RequiredArray;
+        
+        for (const FToolParameter& Param : Tool.Parameters)
+        {
+            TSharedPtr<FJsonObject> ParamSchema = MakeShared<FJsonObject>();
+            ParamSchema->SetStringField(TEXT("type"), Param.Type);
+            ParamSchema->SetStringField(TEXT("description"), Param.Description);
+            
+            if (!Param.DefaultValue.IsEmpty())
+            {
+                // Try to parse default value based on type
+                if (Param.Type == TEXT("string"))
+                {
+                    ParamSchema->SetStringField(TEXT("default"), Param.DefaultValue);
+                }
+                else if (Param.Type == TEXT("int"))
+                {
+                    int32 IntValue = 0;
+                    if (LexTryParseString(IntValue, *Param.DefaultValue))
+                    {
+                        ParamSchema->SetNumberField(TEXT("default"), IntValue);
+                    }
+                }
+                else if (Param.Type == TEXT("float"))
+                {
+                    float FloatValue = 0.0f;
+                    if (LexTryParseString(FloatValue, *Param.DefaultValue))
+                    {
+                        ParamSchema->SetNumberField(TEXT("default"), FloatValue);
+                    }
+                }
+                else if (Param.Type == TEXT("bool"))
+                {
+                    bool BoolValue = (Param.DefaultValue.ToLower() == TEXT("true") || Param.DefaultValue == TEXT("1"));
+                    ParamSchema->SetBoolField(TEXT("default"), BoolValue);
+                }
+            }
+            
+            Properties->SetObjectField(Param.Name, ParamSchema);
+            
+            if (Param.bRequired)
+            {
+                RequiredArray.Add(MakeShared<FJsonValueString>(Param.Name));
+            }
+        }
+        
+        InputSchema->SetObjectField(TEXT("properties"), Properties);
+        
+        if (RequiredArray.Num() > 0)
+        {
+            InputSchema->SetArrayField(TEXT("required"), RequiredArray);
+        }
+        
+        MCPTool.InputSchema = InputSchema;
+        Result.Add(MCPTool);
+    }
+    
+    UE_LOG(LogChatSession, Verbose, TEXT("Returning %d enabled reflection tools"), Result.Num());
+    
+    return Result;
+}

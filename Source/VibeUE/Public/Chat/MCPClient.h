@@ -100,11 +100,11 @@ public:
      */
     void ExecuteTool(const FMCPToolCall& ToolCall, FOnToolExecuted OnComplete);
     
-    /** Get all available tools */
-    const TArray<FMCPTool>& GetAvailableTools() const { return AllTools; }
+    /** Get MCP tools discovered from external servers */
+    const TArray<FMCPTool>& GetMCPTools() const { return MCPTools; }
     
-    /** Get count of available tools */
-    int32 GetToolCount() const { return AllTools.Num(); }
+    /** Get count of MCP tools from external servers */
+    int32 GetMCPToolCount() const { return MCPTools.Num(); }
     
     /** Get count of connected servers */
     int32 GetConnectedServerCount() const;
@@ -160,8 +160,8 @@ private:
     /** State for each server */
     TMap<FString, TSharedPtr<FMCPServerState>> ServerStates;
     
-    /** All available tools from all servers */
-    TArray<FMCPTool> AllTools;
+    /** MCP tools discovered from external MCP servers */
+    TArray<FMCPTool> MCPTools;
     
     /** Whether running in Engine mode (FAB install) vs Local mode */
     bool bEngineMode = false;

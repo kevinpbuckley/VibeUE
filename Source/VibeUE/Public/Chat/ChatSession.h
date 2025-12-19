@@ -45,9 +45,9 @@ struct FLLMUsageStats
 };
 
 /**
- * Delegate called when MCP tools are ready
+ * Delegate called when tools are ready (internal + MCP)
  */
-DECLARE_DELEGATE_TwoParams(FOnMCPToolsReady, bool /* bSuccess */, int32 /* ToolCount */);
+DECLARE_DELEGATE_TwoParams(FOnToolsReady, bool /* bSuccess */, int32 /* ToolCount */);
 
 /**
  * Delegate called when a new message is added to the conversation
@@ -247,14 +247,20 @@ public:
     /** Get VibeUE API client */
     TSharedPtr<FVibeUEAPIClient> GetVibeUEClient() const { return VibeUEClient; }
     
-    /** Get available MCP tools */
-    const TArray<FMCPTool>& GetAvailableTools() const;
+    /** Get all enabled tools for AI use (merged: internal + MCP, filtered by enabled state) */
+    TArray<FMCPTool> GetAllEnabledTools() const;
     
-    /** Get count of available MCP tools */
-    int32 GetMCPToolCount() const;
+    /** Get count of all enabled tools (internal + MCP) */
+    int32 GetEnabledToolCount() const;
     
     /** Check if MCP is initialized */
     bool IsMCPInitialized() const;
+    
+    /** Initialize internal tools (reflection-based, from ToolRegistry) */
+    void InitializeInternalTools();
+    
+    /** Get internal tools converted to MCP tool format (for API compatibility) */
+    TArray<FMCPTool> GetInternalToolsAsMCP() const;
     
     /** Get usage statistics */
     const FLLMUsageStats& GetUsageStats() const { return UsageStats; }
@@ -310,7 +316,7 @@ public:
     FOnMessageUpdated OnMessageUpdated;
     FOnChatReset OnChatReset;
     FOnChatError OnChatError;
-    FOnMCPToolsReady OnMCPToolsReady;
+    FOnToolsReady OnToolsReady;
     FOnSummarizationStarted OnSummarizationStarted;
     FOnSummarizationComplete OnSummarizationComplete;
     FOnTokenBudgetUpdated OnTokenBudgetUpdated;
@@ -451,6 +457,12 @@ private:
     
     /** Whether MCP has been initialized */
     bool bMCPInitialized = false;
+    
+    /** Internal tools cached in MCP format (from ToolRegistry) */
+    mutable TArray<FMCPTool> CachedInternalTools;
+    
+    /** Whether internal tools have been cached */
+    mutable bool bInternalToolsCached = false;
     
     /** Number of tool calls pending completion */
     int32 PendingToolCallCount = 0;
