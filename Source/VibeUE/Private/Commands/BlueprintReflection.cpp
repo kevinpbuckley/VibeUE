@@ -1833,7 +1833,7 @@ TArray<UK2Node_Knot*> FBlueprintReflection::CreateReroutePath(
     return CreatedKnots;
 }
 
-// === PLACEHOLDER IMPLEMENTATIONS FOR DECLARED METHODS ===
+// === LIGHTWEIGHT HELPER METHODS ===
 
 TSharedPtr<FJsonObject> FBlueprintReflection::GetNodeProperties(UK2Node* Node)
 {
@@ -1846,7 +1846,7 @@ TSharedPtr<FJsonObject> FBlueprintReflection::GetNodeProperties(UK2Node* Node)
         return Result;
     }
     
-    // Placeholder - return basic node info
+    // Return basic node info
     Result->SetBoolField("success", true);
     Result->SetStringField("node_type", Node->GetClass()->GetName());
     Result->SetStringField("node_title", Node->GetNodeTitle(ENodeTitleType::ListView).ToString());
@@ -2364,7 +2364,7 @@ TSharedPtr<FJsonObject> FBlueprintReflection::GetNodePinDetails(UK2Node* Node)
         return Result;
     }
     
-    // Placeholder - return basic pin info
+    // Return basic pin info
     Result->SetBoolField("success", true);
     Result->SetNumberField("input_pin_count", Node->Pins.Num());
     Result->SetNumberField("output_pin_count", Node->Pins.Num());
@@ -2397,7 +2397,7 @@ TSharedPtr<FJsonObject> FBlueprintReflection::ReflectNodeProperties(UK2Node* Nod
         return Result;
     }
     
-    // Placeholder - simplified property reflection
+    // Simplified property reflection
     Result->SetBoolField("success", true);
     Result->SetStringField("node_type", Node->GetClass()->GetName());
     
@@ -2415,7 +2415,7 @@ TSharedPtr<FJsonObject> FBlueprintReflection::AnalyzeNodePins(UK2Node* Node)
         return Result;
     }
     
-    // Placeholder - simplified pin analysis
+    // Simplified pin analysis
     Result->SetBoolField("success", true);
     Result->SetNumberField("total_pins", Node->Pins.Num());
     

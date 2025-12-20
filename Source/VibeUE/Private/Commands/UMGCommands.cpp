@@ -1216,7 +1216,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<
 
 
 // ===================================================================
-// UMG Layout Methods Implementation (Stub implementations)
+// UMG Layout Methods Implementation
 // ===================================================================
 
 
@@ -1670,7 +1670,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 }
 
 // ===================================================================
-// UMG Styling Methods Implementation (Stub implementations)
+// UMG Styling Methods Implementation
 // ===================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params)
@@ -1748,7 +1748,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPt
 
 
 // ===================================================================
-// UMG Event Methods Implementation (Stub implementations)
+// UMG Event Methods Implementation
 // ===================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params)

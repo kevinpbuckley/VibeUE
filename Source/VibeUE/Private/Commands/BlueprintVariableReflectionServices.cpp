@@ -861,7 +861,7 @@ bool FVariableDefinitionService::CompileIfNeeded(UBlueprint* Blueprint, FString&
 }
 
 // =============================
-// FPropertyAccessService (stubs)
+// FPropertyAccessService
 // =============================
 FPropertyAccessService::FPropertyAccessService() {}
 FPropertyAccessService::~FPropertyAccessService() {}

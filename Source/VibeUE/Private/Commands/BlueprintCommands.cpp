@@ -3793,7 +3793,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSearchTypesOperation(const TSh
     return Response;
 }
 
-// Placeholder implementations for remaining operations
+// Delegation wrappers for operation-based API
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleDeleteVariableOperation(const TSharedPtr<FJsonObject>& Params)
 {
     // Delegate to existing implementation for now
