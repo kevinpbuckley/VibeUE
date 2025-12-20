@@ -27,16 +27,6 @@ public:
 	static FString CheckUnrealConnection();
 
 	//========================================================================
-	// DEEP RESEARCHER
-	//========================================================================
-	
-	/**
-	 * Deep researcher - comprehensive search and analysis tool
-	 * Searches across assets, actors, blueprints, and provides detailed information
-	 */
-	UFUNCTION()
-	static FString DeepResearcher(const FString& Query, const FString& SearchScope, const FString& OptionsJson);
-
 	//========================================================================
 	// ASSET TOOLS
 	//========================================================================

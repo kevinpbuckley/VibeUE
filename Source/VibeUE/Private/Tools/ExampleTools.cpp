@@ -59,3 +59,20 @@ FString UExampleTools::GetSystemInfo()
 	return OutputString;
 }
 
+FString UExampleTools::CheckUnrealConnection()
+{
+	TSharedPtr<FJsonObject> Result = MakeShareable(new FJsonObject);
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("connection_status"), TEXT("Connected successfully"));
+	Result->SetStringField(TEXT("plugin_status"), TEXT("VibeUE plugin is responding"));
+	Result->SetStringField(TEXT("server"), TEXT("Native C++ MCP Server"));
+	Result->SetStringField(TEXT("port"), TEXT("8088"));
+	Result->SetStringField(TEXT("host"), TEXT("127.0.0.1"));
+	Result->SetStringField(TEXT("help_info"), TEXT("Use action='help' on multi-action tools (e.g., manage_level_actors with action='help')"));
+
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(Result.ToSharedRef(), Writer);
+	return OutputString;
+}
+

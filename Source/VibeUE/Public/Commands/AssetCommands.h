@@ -33,6 +33,12 @@ private:
     TSharedPtr<FAssetImportService> ImportService;
     TSharedPtr<FServiceContext> ServiceContext;
 
+    // Help handler
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
+    // Search handler
+    TSharedPtr<FJsonObject> HandleSearchAssets(const TSharedPtr<FJsonObject>& Params);
+
     // Asset Discovery command handlers
     TSharedPtr<FJsonObject> HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params);

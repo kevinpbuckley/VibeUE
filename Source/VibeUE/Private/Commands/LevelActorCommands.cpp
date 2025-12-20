@@ -47,6 +47,12 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleCommand(const FString& Comman
 	Action = Action.ToLower();
 	UE_LOG(LogTemp, Display, TEXT("LevelActorCommands: Handling action '%s'"), *Action);
 
+	// Handle help action
+	if (Action == TEXT("help"))
+	{
+		return HandleHelp(Params);
+	}
+
 	// Phase 1: Basic actor operations
 	if (Action == TEXT("add"))
 	{
@@ -116,7 +122,7 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleCommand(const FString& Comman
 		return HandleGetAllProperties(Params);
 	}
 	// Phase 4: Hierarchy & Organization
-	else if (Action == TEXT("set_folder"))
+	else if (Action == TEXT("set_folder") || Action == TEXT("create_folder"))
 	{
 		return HandleSetFolder(Params);
 	}
@@ -179,8 +185,9 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetInfo(const TSharedPtr<FJso
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	bool bIncludeComponents = true;
-	bool bIncludeProperties = true;
+	// Default to minimal response - user must opt-in for components/properties
+	bool bIncludeComponents = false;
+	bool bIncludeProperties = false;
 	FString CategoryFilter;
 	
 	Params->TryGetBoolField(TEXT("include_components"), bIncludeComponents);
@@ -214,18 +221,37 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetLocation(const TSharedPtr<
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse location array
+	// Parse location - accept either array [X, Y, Z] or object {x, y, z}
 	FVector Location = FVector::ZeroVector;
-	const TArray<TSharedPtr<FJsonValue>>* LocationArray;
-	if (Params->TryGetArrayField(TEXT("location"), LocationArray) && LocationArray->Num() >= 3)
+	bool bHasLocation = false;
+	
+	// Try object format first {x, y, z}
+	const TSharedPtr<FJsonObject>* LocationObj;
+	if (Params->TryGetObjectField(TEXT("location"), LocationObj))
 	{
-		Location.X = (*LocationArray)[0]->AsNumber();
-		Location.Y = (*LocationArray)[1]->AsNumber();
-		Location.Z = (*LocationArray)[2]->AsNumber();
+		double X = 0, Y = 0, Z = 0;
+		(*LocationObj)->TryGetNumberField(TEXT("x"), X);
+		(*LocationObj)->TryGetNumberField(TEXT("y"), Y);
+		(*LocationObj)->TryGetNumberField(TEXT("z"), Z);
+		Location = FVector(X, Y, Z);
+		bHasLocation = true;
 	}
 	else
 	{
-		return CreateErrorResponse(TEXT("MISSING_LOCATION"), TEXT("location parameter is required as [X, Y, Z] array"));
+		// Try array format [X, Y, Z]
+		const TArray<TSharedPtr<FJsonValue>>* LocationArray;
+		if (Params->TryGetArrayField(TEXT("location"), LocationArray) && LocationArray->Num() >= 3)
+		{
+			Location.X = (*LocationArray)[0]->AsNumber();
+			Location.Y = (*LocationArray)[1]->AsNumber();
+			Location.Z = (*LocationArray)[2]->AsNumber();
+			bHasLocation = true;
+		}
+	}
+	
+	if (!bHasLocation)
+	{
+		return CreateErrorResponse(TEXT("MISSING_LOCATION"), TEXT("location parameter is required as {x, y, z} object or [X, Y, Z] array"));
 	}
 	
 	bool bWorldSpace = true;
@@ -241,18 +267,37 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetRotation(const TSharedPtr<
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse rotation array [Pitch, Yaw, Roll]
+	// Parse rotation - accept either array [Pitch, Yaw, Roll] or object {pitch, yaw, roll}
 	FRotator Rotation = FRotator::ZeroRotator;
-	const TArray<TSharedPtr<FJsonValue>>* RotationArray;
-	if (Params->TryGetArrayField(TEXT("rotation"), RotationArray) && RotationArray->Num() >= 3)
+	bool bHasRotation = false;
+	
+	// Try object format first {pitch, yaw, roll}
+	const TSharedPtr<FJsonObject>* RotationObj;
+	if (Params->TryGetObjectField(TEXT("rotation"), RotationObj))
 	{
-		Rotation.Pitch = (*RotationArray)[0]->AsNumber();
-		Rotation.Yaw = (*RotationArray)[1]->AsNumber();
-		Rotation.Roll = (*RotationArray)[2]->AsNumber();
+		double Pitch = 0, Yaw = 0, Roll = 0;
+		(*RotationObj)->TryGetNumberField(TEXT("pitch"), Pitch);
+		(*RotationObj)->TryGetNumberField(TEXT("yaw"), Yaw);
+		(*RotationObj)->TryGetNumberField(TEXT("roll"), Roll);
+		Rotation = FRotator(Pitch, Yaw, Roll);
+		bHasRotation = true;
 	}
 	else
 	{
-		return CreateErrorResponse(TEXT("MISSING_ROTATION"), TEXT("rotation parameter is required as [Pitch, Yaw, Roll] array"));
+		// Try array format [Pitch, Yaw, Roll]
+		const TArray<TSharedPtr<FJsonValue>>* RotationArray;
+		if (Params->TryGetArrayField(TEXT("rotation"), RotationArray) && RotationArray->Num() >= 3)
+		{
+			Rotation.Pitch = (*RotationArray)[0]->AsNumber();
+			Rotation.Yaw = (*RotationArray)[1]->AsNumber();
+			Rotation.Roll = (*RotationArray)[2]->AsNumber();
+			bHasRotation = true;
+		}
+	}
+	
+	if (!bHasRotation)
+	{
+		return CreateErrorResponse(TEXT("MISSING_ROTATION"), TEXT("rotation parameter is required as {pitch, yaw, roll} object or [Pitch, Yaw, Roll] array"));
 	}
 	
 	bool bWorldSpace = true;
@@ -266,18 +311,37 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetScale(const TSharedPtr<FJs
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse scale array [X, Y, Z]
+	// Parse scale - accept either array [X, Y, Z] or object {x, y, z}
 	FVector Scale = FVector::OneVector;
-	const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-	if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
+	bool bHasScale = false;
+	
+	// Try object format first {x, y, z}
+	const TSharedPtr<FJsonObject>* ScaleObj;
+	if (Params->TryGetObjectField(TEXT("scale"), ScaleObj))
 	{
-		Scale.X = (*ScaleArray)[0]->AsNumber();
-		Scale.Y = (*ScaleArray)[1]->AsNumber();
-		Scale.Z = (*ScaleArray)[2]->AsNumber();
+		double X = 1, Y = 1, Z = 1;
+		(*ScaleObj)->TryGetNumberField(TEXT("x"), X);
+		(*ScaleObj)->TryGetNumberField(TEXT("y"), Y);
+		(*ScaleObj)->TryGetNumberField(TEXT("z"), Z);
+		Scale = FVector(X, Y, Z);
+		bHasScale = true;
 	}
 	else
 	{
-		return CreateErrorResponse(TEXT("MISSING_SCALE"), TEXT("scale parameter is required as [X, Y, Z] array"));
+		// Try array format [X, Y, Z]
+		const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
+		if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
+		{
+			Scale.X = (*ScaleArray)[0]->AsNumber();
+			Scale.Y = (*ScaleArray)[1]->AsNumber();
+			Scale.Z = (*ScaleArray)[2]->AsNumber();
+			bHasScale = true;
+		}
+	}
+	
+	if (!bHasScale)
+	{
+		return CreateErrorResponse(TEXT("MISSING_SCALE"), TEXT("scale parameter is required as {x, y, z} object or [X, Y, Z] array"));
 	}
 	
 	FActorOperationResult Result = Service->SetScale(Identifier, Scale);
@@ -346,7 +410,14 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetFolder(const TSharedPtr<FJ
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	FString FolderPath;
-	Params->TryGetStringField(TEXT("folder_path"), FolderPath);
+	// Accept folder_path, folder_name, or folder as the path
+	if (!Params->TryGetStringField(TEXT("folder_path"), FolderPath))
+	{
+		if (!Params->TryGetStringField(TEXT("folder_name"), FolderPath))
+		{
+			Params->TryGetStringField(TEXT("folder"), FolderPath);
+		}
+	}
 	
 	FActorOperationResult Result = Service->SetFolder(Identifier, FolderPath);
 	return Result.ToJson();
@@ -382,4 +453,57 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleRename(const TSharedPtr<FJson
 	
 	FActorOperationResult Result = Service->RenameActor(Identifier, NewLabel);
 	return Result.ToJson();
+}
+
+TSharedPtr<FJsonObject> FLevelActorCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("tool"), TEXT("manage_level_actors"));
+	Response->SetStringField(TEXT("summary"), TEXT("Level actor operations including add/remove, transforms, properties, and hierarchy management"));
+	Response->SetStringField(TEXT("topic"), TEXT("level-actors"));
+	
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+	
+	// Build actions array with detailed parameter info
+	TArray<TPair<FString, FString>> ActionsList = {
+		{TEXT("help"), TEXT("Show help for this tool")},
+		{TEXT("add"), TEXT("Add/spawn actor. Params: actor_class (required), actor_label, spawn_location [x,y,z], spawn_rotation [pitch,yaw,roll]")},
+		{TEXT("remove"), TEXT("Remove actor. Params: actor_label (required)")},
+		{TEXT("list"), TEXT("List all actors. Params: actor_class (optional filter)")},
+		{TEXT("find"), TEXT("Find actors. Params: actor_label, actor_class, actor_tag")},
+		{TEXT("get_info"), TEXT("Get actor info. Params: actor_label (required), include_properties, include_components")},
+		{TEXT("set_transform"), TEXT("Set transform. Params: actor_label (required), location [x,y,z], rotation [pitch,yaw,roll], scale [x,y,z]")},
+		{TEXT("get_transform"), TEXT("Get transform. Params: actor_label (required)")},
+		{TEXT("set_location"), TEXT("Set location. Params: actor_label (required), location [x,y,z]")},
+		{TEXT("set_rotation"), TEXT("Set rotation. Params: actor_label (required), rotation [pitch,yaw,roll]")},
+		{TEXT("set_scale"), TEXT("Set scale. Params: actor_label (required), scale [x,y,z]")},
+		{TEXT("focus"), TEXT("Move CAMERA to actor. Params: actor_label (required)")},
+		{TEXT("move_to_view"), TEXT("Move ACTOR to camera. Params: actor_label (required)")},
+		{TEXT("refresh_viewport"), TEXT("Refresh viewport")},
+		{TEXT("get_property"), TEXT("Get property. Params: actor_label (required), property_path (required)")},
+		{TEXT("set_property"), TEXT("Set property. Params: actor_label (required), property_path (required), property_value (required)")},
+		{TEXT("get_all_properties"), TEXT("Get all properties. Params: actor_label (required)")},
+		{TEXT("set_folder"), TEXT("Set folder. Params: actor_label (required), folder_path (required). Note: folders are created automatically")},
+		{TEXT("attach"), TEXT("Attach child to parent. Params: child_label (required), parent_label (required), socket_name (optional)")},
+		{TEXT("detach"), TEXT("Detach from parent. Params: actor_label (required)")},
+		{TEXT("select"), TEXT("Select actor. Params: actor_label (required)")},
+		{TEXT("rename"), TEXT("Rename actor. Params: actor_label (required), new_label (required)")}
+	};
+	
+	for (const auto& ActionPair : ActionsList)
+	{
+		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+	}
+	
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("manage_level_actors(action='action_name', ParamsJson='{...}')"));
+	Response->SetStringField(TEXT("note"), TEXT("IMPORTANT: 'focus' moves camera TO actor, 'move_to_view' moves actor TO camera. For attach, use child_label and parent_label (not actor_label)."));
+	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+	
+	return Response;
 }

@@ -138,15 +138,14 @@ Example:
 3. **READ** the help response to understand what went wrong
 4. **FIX** the command based on the help documentation
 5. **THEN** retry with correct parameters
-6. **IF STILL FAILING** after help, use `deep_researcher` to research the topic
+6. **IF STILL FAILING** after help, ask the user for guidance
 
 ### ⚠️ MAXIMUM RETRY LIMIT - PREVENT INFINITE LOOPS
 **You may ONLY retry a failed tool call TWICE maximum.** After that:
-- **TRY deep_researcher** to research the correct approach
-- If research doesn't help, **STOP** and report the failure
+- **STOP** and report the failure to the user
 - **MOVE ON** to the next task or ask the user for guidance
 
-**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, use deep_researcher or ask the user.
+**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, ask the user for help.
 
 ### ⚠️ RECOGNIZE UNSUPPORTED PROPERTIES - STOP IMMEDIATELY
 **If a property returns `"editable": false` or `"UnsupportedType"`, DO NOT try to modify it!**
@@ -194,26 +193,22 @@ You: "This is an event delegate property and cannot be set directly. Use manage_
 **Self-Monitoring Guidelines:**
 - Keep track of how many times you've tried a particular operation
 - If you notice you're repeating similar tool calls with similar errors, STOP
-- **Use deep_researcher** to look up the correct syntax/format
 - After 2-3 failures, summarize what was accomplished, what failed, and why
 - Suggest alternative approaches instead of continuing to fail
 
 **Example - If setting a property fails with wrong format:**
 - First attempt fails with "INVALID_VALUE" → Use `get_property` to see the correct format
 - Second attempt fails → Call `action="help"` to learn the parameters
-- Third attempt fails → Use `deep_researcher(action="research", query="UE5 property format for [type]")`
-- If still failing → STOP and report to user
+- Third attempt fails → STOP and report to user with details
 
 **When You're Stuck:**
 If you find yourself making the same or similar tool calls repeatedly without success:
 1. Stop and take stock of what you've tried
-2. **Use deep_researcher** to research the topic
-3. Summarize your progress to the user
-4. Explain what's blocking you
-5. Ask for guidance or suggest a different approach
+2. Summarize your progress to the user
+3. Explain what's blocking you
+4. Ask for guidance or suggest a different approach
 
 **Remember: ALL VibeUE tools support `action="help"` - use it whenever a tool fails!**
-**Remember: Use `deep_researcher` when help doesn't solve your problem!**
 
 Example of WRONG behavior:
 - `manage_level_actors(action="add", ...)` fails: "actor_class is required"
@@ -356,11 +351,6 @@ get_component_properties("RootCanvas") → "not found"  # ❌ Stop looking!
 # Repeating will NOT make a root appear!
 ```
 
-### Research & Learning
-
-| Tool | Purpose |
-|------|---------|
-| `deep_researcher` | AI-powered research tool for Unreal Engine questions (3 actions) |
 
 ## Getting Help with Inline Documentation
 
@@ -380,7 +370,6 @@ get_component_properties("RootCanvas") → "not found"  # ❌ Stop looking!
 - `manage_material_node(action="help")`
 - `manage_umg_widget(action="help")`
 - `manage_asset(action="help")`
-- `deep_researcher(action="help")`
 
 ### How to Access Help
 
@@ -482,7 +471,7 @@ manage_blueprint(action="create", name="BP_Enemy", parent_class="Actor")
 
 # 2. Add a mesh component
 manage_blueprint_component(action="add", blueprint_name="BP_Enemy", 
-                          component_class="StaticMeshComponent", component_name="EnemyMesh")
+                          component_type="StaticMeshComponent", component_name="EnemyMesh")
 
 # 3. Add a variable
 manage_blueprint_variable(action="add", blueprint_name="BP_Enemy",
@@ -530,6 +519,22 @@ manage_level_actors(action="focus", actor_label="SpotLight")
 
 # When user says "move to my viewport" or "place at my view" → use move_to_view
 # When user says "focus on" or "look at" → use focus
+
+# Attach actors (e.g., attach weapon to character)
+# IMPORTANT: Use child_label and parent_label (NOT actor_label, NOT parent_actor_label)
+manage_level_actors(action="attach", child_label="Sword", parent_label="Knight")
+
+# Attach to a specific socket
+manage_level_actors(action="attach", child_label="Sword", 
+                   parent_label="Knight", socket_name="hand_r")
+
+# Detach an actor from its parent
+manage_level_actors(action="detach", actor_label="Sword")
+
+# Organize actors into folders (folders are created automatically)
+# IMPORTANT: Use folder_path (NOT folder_name), action is set_folder (NOT create_folder)
+manage_level_actors(action="set_folder", actor_label="Enemy_1", folder_path="Enemies")
+manage_level_actors(action="set_folder", actor_label="Enemy_2", folder_path="Enemies/Bosses")
 ```
 
 ### Creating Materials
@@ -549,6 +554,15 @@ manage_material(action="set_instance_vector_parameter",
 ```
 
 ### ⚠️ COMMON TOOL MISTAKES TO AVOID
+
+**Attaching Actors:**
+- ❌ WRONG: `manage_level_actors(action="attach", actor_label="Sword", parent_actor_label="Knight")` - wrong param names!
+- ✅ CORRECT: `manage_level_actors(action="attach", child_label="Sword", parent_label="Knight")` - use child_label and parent_label
+
+**Organizing into Folders:**
+- ❌ WRONG: `manage_level_actors(action="create_folder", ...)` - action doesn't exist!
+- ❌ WRONG: `manage_level_actors(action="set_folder", folder_name="Enemies", ...)` - wrong param name!
+- ✅ CORRECT: `manage_level_actors(action="set_folder", actor_label="Enemy_1", folder_path="Enemies")` - folders auto-create
 
 **Opening Assets in Editor:**
 - ❌ WRONG: `manage_material(action="open_editor", ...)` - this action doesn't exist!
@@ -676,27 +690,6 @@ property_value={"R": 255, "G": 128, "B": 0, "A": 255}  # WRONG! Use 0-1 range
 1. `get_property` to see current value and format
 2. Use the EXACT same format structure when calling `set_property`
 3. If still failing, use `action="help"` for the tool
-
-### ⚠️ Using deep_researcher When Stuck
-
-**If `action="help"` doesn't solve your problem, use `deep_researcher` to research the topic:**
-
-```python
-# When help doesn't explain the format
-deep_researcher(action="research", query="UE5 FColor property format string", focus_area="c++")
-
-# When you don't know how something works
-deep_researcher(action="summarize", query="Unreal Engine Light Color properties")
-
-# When looking for best practices
-deep_researcher(action="research", query="How to change light color in UE5 via code")
-```
-
-**Use deep_researcher when:**
-- The help action doesn't explain what you need
-- You encounter Unreal Engine concepts you don't understand
-- You need to find the correct property names or formats
-- You want to research best practices before implementing
 
 ## Error Handling
 

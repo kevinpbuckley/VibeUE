@@ -85,6 +85,9 @@ private:
 	TSharedPtr<FJsonObject> HandleClearInstanceParameterOverride(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSaveInstance(const TSharedPtr<FJsonObject>& Params);
 
+	// Help action
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
 	// Utility
 	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& Code, const FString& Message);
 	TSharedPtr<FJsonObject> CreateSuccessResponse();

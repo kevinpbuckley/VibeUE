@@ -126,15 +126,8 @@ TSharedPtr<FJsonObject> FActorInfo::ToJson() const
 TSharedPtr<FJsonObject> FActorInfo::ToMinimalJson() const
 {
 	TSharedPtr<FJsonObject> Json = MakeShareable(new FJsonObject);
-	Json->SetStringField(TEXT("actor_path"), ActorPath);
 	Json->SetStringField(TEXT("actor_label"), ActorLabel);
 	Json->SetStringField(TEXT("class_name"), ClassName);
-	
-	TArray<TSharedPtr<FJsonValue>> LocArray;
-	LocArray.Add(MakeShareable(new FJsonValueNumber(Location.X)));
-	LocArray.Add(MakeShareable(new FJsonValueNumber(Location.Y)));
-	LocArray.Add(MakeShareable(new FJsonValueNumber(Location.Z)));
-	Json->SetArrayField(TEXT("location"), LocArray);
 	
 	return Json;
 }
@@ -157,8 +150,18 @@ FActorQueryCriteria FActorQueryCriteria::FromJson(const TSharedPtr<FJsonObject>&
 	FActorQueryCriteria Criteria;
 	if (Params)
 	{
-		Params->TryGetStringField(TEXT("class_filter"), Criteria.ClassFilter);
-		Params->TryGetStringField(TEXT("label_filter"), Criteria.LabelFilter);
+		// Accept both class_filter and filter_class for flexibility
+		if (!Params->TryGetStringField(TEXT("class_filter"), Criteria.ClassFilter))
+		{
+			Params->TryGetStringField(TEXT("filter_class"), Criteria.ClassFilter);
+		}
+		
+		// Accept both label_filter and filter_label for flexibility
+		if (!Params->TryGetStringField(TEXT("label_filter"), Criteria.LabelFilter))
+		{
+			Params->TryGetStringField(TEXT("filter_label"), Criteria.LabelFilter);
+		}
+		
 		Params->TryGetBoolField(TEXT("selected_only"), Criteria.bSelectedOnly);
 		
 		int32 MaxResults;
@@ -192,37 +195,82 @@ FActorAddParams FActorAddParams::FromJson(const TSharedPtr<FJsonObject>& Params)
 	if (Params)
 	{
 		Params->TryGetStringField(TEXT("actor_class"), AddParams.ActorClass);
-		Params->TryGetStringField(TEXT("actor_name"), AddParams.ActorName);
 		
-		const TArray<TSharedPtr<FJsonValue>>* LocArray;
-		if (Params->TryGetArrayField(TEXT("spawn_location"), LocArray) && LocArray->Num() >= 3)
+		// Accept both actor_name and actor_label for the display name
+		if (!Params->TryGetStringField(TEXT("actor_name"), AddParams.ActorName))
 		{
-			AddParams.Location = FVector(
-				(*LocArray)[0]->AsNumber(),
-				(*LocArray)[1]->AsNumber(),
-				(*LocArray)[2]->AsNumber()
-			);
-			AddParams.bLocationProvided = true;  // Explicit location given
+			Params->TryGetStringField(TEXT("actor_label"), AddParams.ActorName);
 		}
 		
-		const TArray<TSharedPtr<FJsonValue>>* RotArray;
-		if (Params->TryGetArrayField(TEXT("spawn_rotation"), RotArray) && RotArray->Num() >= 3)
+		// Accept location as object {x, y, z} or array [x, y, z]
+		const TSharedPtr<FJsonObject>* LocObj;
+		if (Params->TryGetObjectField(TEXT("location"), LocObj))
 		{
-			AddParams.Rotation = FRotator(
-				(*RotArray)[0]->AsNumber(),
-				(*RotArray)[1]->AsNumber(),
-				(*RotArray)[2]->AsNumber()
-			);
+			double X = 0, Y = 0, Z = 0;
+			(*LocObj)->TryGetNumberField(TEXT("x"), X);
+			(*LocObj)->TryGetNumberField(TEXT("y"), Y);
+			(*LocObj)->TryGetNumberField(TEXT("z"), Z);
+			AddParams.Location = FVector(X, Y, Z);
+			AddParams.bLocationProvided = true;
+		}
+		else
+		{
+			const TArray<TSharedPtr<FJsonValue>>* LocArray;
+			if (Params->TryGetArrayField(TEXT("spawn_location"), LocArray) && LocArray->Num() >= 3)
+			{
+				AddParams.Location = FVector(
+					(*LocArray)[0]->AsNumber(),
+					(*LocArray)[1]->AsNumber(),
+					(*LocArray)[2]->AsNumber()
+				);
+				AddParams.bLocationProvided = true;
+			}
 		}
 		
-		const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-		if (Params->TryGetArrayField(TEXT("spawn_scale"), ScaleArray) && ScaleArray->Num() >= 3)
+		// Accept rotation as object {pitch, yaw, roll} or array [pitch, yaw, roll]
+		const TSharedPtr<FJsonObject>* RotObj;
+		if (Params->TryGetObjectField(TEXT("rotation"), RotObj))
 		{
-			AddParams.Scale = FVector(
-				(*ScaleArray)[0]->AsNumber(),
-				(*ScaleArray)[1]->AsNumber(),
-				(*ScaleArray)[2]->AsNumber()
-			);
+			double Pitch = 0, Yaw = 0, Roll = 0;
+			(*RotObj)->TryGetNumberField(TEXT("pitch"), Pitch);
+			(*RotObj)->TryGetNumberField(TEXT("yaw"), Yaw);
+			(*RotObj)->TryGetNumberField(TEXT("roll"), Roll);
+			AddParams.Rotation = FRotator(Pitch, Yaw, Roll);
+		}
+		else
+		{
+			const TArray<TSharedPtr<FJsonValue>>* RotArray;
+			if (Params->TryGetArrayField(TEXT("spawn_rotation"), RotArray) && RotArray->Num() >= 3)
+			{
+				AddParams.Rotation = FRotator(
+					(*RotArray)[0]->AsNumber(),
+					(*RotArray)[1]->AsNumber(),
+					(*RotArray)[2]->AsNumber()
+				);
+			}
+		}
+		
+		// Accept scale as object {x, y, z} or array [x, y, z]
+		const TSharedPtr<FJsonObject>* ScaleObj;
+		if (Params->TryGetObjectField(TEXT("scale"), ScaleObj))
+		{
+			double X = 1, Y = 1, Z = 1;
+			(*ScaleObj)->TryGetNumberField(TEXT("x"), X);
+			(*ScaleObj)->TryGetNumberField(TEXT("y"), Y);
+			(*ScaleObj)->TryGetNumberField(TEXT("z"), Z);
+			AddParams.Scale = FVector(X, Y, Z);
+		}
+		else
+		{
+			const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
+			if (Params->TryGetArrayField(TEXT("spawn_scale"), ScaleArray) && ScaleArray->Num() >= 3)
+			{
+				AddParams.Scale = FVector(
+					(*ScaleArray)[0]->AsNumber(),
+					(*ScaleArray)[1]->AsNumber(),
+					(*ScaleArray)[2]->AsNumber()
+				);
+			}
 		}
 		
 		const TArray<TSharedPtr<FJsonValue>>* TagsArray;
@@ -253,6 +301,14 @@ FActorOperationResult FActorOperationResult::Success(const TArray<FActorInfo>& A
 	return Result;
 }
 
+FActorOperationResult FActorOperationResult::SuccessWithJson(TSharedPtr<FJsonObject> Json)
+{
+	FActorOperationResult Result;
+	Result.bSuccess = true;
+	Result.CustomJson = Json;
+	return Result;
+}
+
 FActorOperationResult FActorOperationResult::Error(const FString& Code, const FString& Message)
 {
 	FActorOperationResult Result;
@@ -271,6 +327,14 @@ TSharedPtr<FJsonObject> FActorOperationResult::ToJson() const
 	{
 		Json->SetStringField(TEXT("error_code"), ErrorCode);
 		Json->SetStringField(TEXT("error"), ErrorMessage);
+	}
+	else if (CustomJson.IsValid())
+	{
+		// Minimal response - just merge in the custom JSON fields
+		for (const auto& Field : CustomJson->Values)
+		{
+			Json->SetField(Field.Key, Field.Value);
+		}
 	}
 	else if (ActorInfo.IsSet())
 	{
@@ -1337,6 +1401,48 @@ FActorOperationResult FLevelActorService::RefreshViewport()
 // Phase 3: Property Operations
 // ═══════════════════════════════════════════════════════════════════
 
+// Helper function to convert JSON object to Unreal property format string
+static FString ConvertJsonObjectToUnrealFormat(const TSharedPtr<FJsonObject>& ValueObj)
+{
+	if (!ValueObj.IsValid()) return FString();
+	
+	// Check if it's a color {R, G, B, A}
+	double R = 0, G = 0, B = 0, A = 255;
+	if (ValueObj->TryGetNumberField(TEXT("R"), R) || ValueObj->TryGetNumberField(TEXT("r"), R))
+	{
+		if (!ValueObj->TryGetNumberField(TEXT("G"), G))
+			ValueObj->TryGetNumberField(TEXT("g"), G);
+		if (!ValueObj->TryGetNumberField(TEXT("B"), B))
+			ValueObj->TryGetNumberField(TEXT("b"), B);
+		if (!ValueObj->TryGetNumberField(TEXT("A"), A))
+			ValueObj->TryGetNumberField(TEXT("a"), A);
+		return FString::Printf(TEXT("(R=%d,G=%d,B=%d,A=%d)"), (int)R, (int)G, (int)B, (int)A);
+	}
+	// Check if it's a vector {X, Y, Z}
+	else if (ValueObj->TryGetNumberField(TEXT("X"), R) || ValueObj->TryGetNumberField(TEXT("x"), R))
+	{
+		double X = R, Y = 0, Z = 0;
+		if (!ValueObj->TryGetNumberField(TEXT("Y"), Y))
+			ValueObj->TryGetNumberField(TEXT("y"), Y);
+		if (!ValueObj->TryGetNumberField(TEXT("Z"), Z))
+			ValueObj->TryGetNumberField(TEXT("z"), Z);
+		return FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), X, Y, Z);
+	}
+	// Check if it's a rotator {Pitch, Yaw, Roll}
+	else if (ValueObj->TryGetNumberField(TEXT("Pitch"), R) || ValueObj->TryGetNumberField(TEXT("pitch"), R))
+	{
+		double Pitch = R, Yaw = 0, Roll = 0;
+		if (!ValueObj->TryGetNumberField(TEXT("Yaw"), Yaw))
+			ValueObj->TryGetNumberField(TEXT("yaw"), Yaw);
+		if (!ValueObj->TryGetNumberField(TEXT("Roll"), Roll))
+			ValueObj->TryGetNumberField(TEXT("roll"), Roll);
+		return FString::Printf(TEXT("(Pitch=%f,Yaw=%f,Roll=%f)"), Pitch, Yaw, Roll);
+	}
+	
+	// Fallback: return empty to use original value
+	return FString();
+}
+
 FActorPropertyParams FActorPropertyParams::FromJson(const TSharedPtr<FJsonObject>& Params)
 {
 	FActorPropertyParams PropertyParams;
@@ -1344,7 +1450,36 @@ FActorPropertyParams FActorPropertyParams::FromJson(const TSharedPtr<FJsonObject
 	
 	PropertyParams.Identifier = FActorIdentifier::FromJson(Params);
 	Params->TryGetStringField(TEXT("property_path"), PropertyParams.PropertyPath);
-	Params->TryGetStringField(TEXT("property_value"), PropertyParams.PropertyValue);
+	
+	// Handle property_value as either string or object
+	// If object, serialize to string format that Unreal can parse
+	if (!Params->TryGetStringField(TEXT("property_value"), PropertyParams.PropertyValue))
+	{
+		const TSharedPtr<FJsonObject>* ValueObj;
+		if (Params->TryGetObjectField(TEXT("property_value"), ValueObj))
+		{
+			PropertyParams.PropertyValue = ConvertJsonObjectToUnrealFormat(*ValueObj);
+		}
+	}
+	else
+	{
+		// Check if the string value is actually escaped JSON (e.g., "{\"R\": 255, ...}")
+		// This happens when the LLM passes JSON as a string instead of an object
+		if (PropertyParams.PropertyValue.StartsWith(TEXT("{")) && PropertyParams.PropertyValue.EndsWith(TEXT("}")))
+		{
+			TSharedPtr<FJsonObject> ParsedObj;
+			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertyParams.PropertyValue);
+			if (FJsonSerializer::Deserialize(Reader, ParsedObj) && ParsedObj.IsValid())
+			{
+				FString ConvertedValue = ConvertJsonObjectToUnrealFormat(ParsedObj);
+				if (!ConvertedValue.IsEmpty())
+				{
+					PropertyParams.PropertyValue = ConvertedValue;
+				}
+			}
+		}
+	}
+	
 	Params->TryGetStringField(TEXT("component_name"), PropertyParams.ComponentName);
 	Params->TryGetBoolField(TEXT("include_inherited"), PropertyParams.bIncludeInherited);
 	Params->TryGetStringField(TEXT("category_filter"), PropertyParams.CategoryFilter);
@@ -1368,6 +1503,21 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 	if (!Actor)
 	{
 		return FActorOperationResult::Error(TEXT("ACTOR_NOT_FOUND"), TEXT("Actor not found"));
+	}
+	
+	// Check if the user passed just a component name (common mistake)
+	// If property_path matches a component name and has no dot, give helpful error
+	if (!Params.PropertyPath.Contains(TEXT(".")))
+	{
+		for (UActorComponent* Comp : Actor->GetComponents())
+		{
+			if (Comp && Comp->GetName() == Params.PropertyPath)
+			{
+				return FActorOperationResult::Error(TEXT("INVALID_FORMAT"), 
+					FString::Printf(TEXT("'%s' is a component, not a property. To get component properties, use get_info with include_properties=true, or specify a property like '%s.Intensity'"), 
+						*Params.PropertyPath, *Params.PropertyPath));
+			}
+		}
 	}
 	
 	// Determine target object (actor or component)
@@ -1501,7 +1651,7 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 		}
 		else if (TargetObject == Actor)
 		{
-			// List some key components the user might want to try
+			// List some key components the user might want to try with example format
 			TArray<FString> KeyComponents;
 			for (UActorComponent* Comp : Actor->GetComponents())
 			{
@@ -1514,7 +1664,7 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 			}
 			if (KeyComponents.Num() > 0)
 			{
-				ErrorMsg += FString::Printf(TEXT(" Try specifying a component: %s"), *FString::Join(KeyComponents, TEXT(", ")));
+				ErrorMsg += FString::Printf(TEXT(" For component properties use format 'ComponentName.PropertyName', e.g. '%s.Intensity'"), *KeyComponents[0]);
 			}
 		}
 		
@@ -1524,13 +1674,19 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 	// Get property value
 	FString Value = GetPropertyValueAsString(TargetObject, Property);
 	
-	// Build result
-	FActorInfo Info = BuildActorInfo(Actor, false, false, TEXT(""));
-	FActorOperationResult Result = FActorOperationResult::Success(Info);
-	
-	// Add property info to result
+	// Build MINIMAL result - just the property info, not full actor details
 	TSharedPtr<FJsonObject> PropertyJson = MakeShareable(new FJsonObject);
-	PropertyJson->SetStringField(TEXT("name"), PropertyName);
+	PropertyJson->SetBoolField(TEXT("success"), true);
+	PropertyJson->SetStringField(TEXT("actor_label"), Actor->GetActorLabel());
+	
+	// Include which component if targeting a component
+	if (TargetObject != Actor)
+	{
+		PropertyJson->SetStringField(TEXT("component"), Cast<UActorComponent>(TargetObject)->GetName());
+	}
+	
+	PropertyJson->SetStringField(TEXT("property_name"), PropertyName);
+	PropertyJson->SetStringField(TEXT("property_path"), Params.PropertyPath);
 	PropertyJson->SetStringField(TEXT("value"), Value);
 	PropertyJson->SetStringField(TEXT("type"), Property->GetCPPType());
 	PropertyJson->SetBoolField(TEXT("is_editable"), !Property->HasAnyPropertyFlags(CPF_EditConst | CPF_BlueprintReadOnly));
@@ -1539,8 +1695,7 @@ FActorOperationResult FLevelActorService::GetProperty(const FActorPropertyParams
 	PropertyJson->SetStringField(TEXT("category"), Property->GetMetaData(TEXT("Category")));
 #endif
 	
-	Result.TransformInfo = PropertyJson;  // Reuse TransformInfo for property data
-	return Result;
+	return FActorOperationResult::SuccessWithJson(PropertyJson);
 }
 
 FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams& Params)
@@ -1779,8 +1934,30 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 			if (!Property->ImportText_Direct(*Params.PropertyValue, ValuePtr, TargetObject, PPF_None))
 			{
 				EndTransaction();
+				
+				// Build helpful error message with expected format
+				FString TypeHint;
+				FString TypeName = Property->GetCPPType();
+				if (TypeName.Contains(TEXT("FColor")))
+				{
+					TypeHint = TEXT(" Use format: (R=255,G=128,B=0,A=255)");
+				}
+				else if (TypeName.Contains(TEXT("FVector")))
+				{
+					TypeHint = TEXT(" Use format: (X=100.0,Y=200.0,Z=300.0)");
+				}
+				else if (TypeName.Contains(TEXT("FRotator")))
+				{
+					TypeHint = TEXT(" Use format: (Pitch=0.0,Yaw=45.0,Roll=0.0)");
+				}
+				else if (TypeName.Contains(TEXT("FLinearColor")))
+				{
+					TypeHint = TEXT(" Use format: (R=1.0,G=0.5,B=0.0,A=1.0) with values 0.0-1.0");
+				}
+				
 				return FActorOperationResult::Error(TEXT("INVALID_VALUE"), 
-					FString::Printf(TEXT("Failed to set property '%s' to '%s'"), *PropertyName, *Params.PropertyValue));
+					FString::Printf(TEXT("Failed to set property '%s' (type: %s) to '%s'.%s"), 
+						*PropertyName, *TypeName, *Params.PropertyValue, *TypeHint));
 			}
 		}
 	}
@@ -1826,8 +2003,20 @@ FActorOperationResult FLevelActorService::SetProperty(const FActorPropertyParams
 	
 	Actor->MarkPackageDirty();
 	
-	FActorInfo Info = BuildActorInfo(Actor, false, false, TEXT(""));
-	return FActorOperationResult::Success(Info);
+	// Read back the property value to confirm it was set correctly
+	FString ConfirmedValue;
+	void* ReadBackPtr = Property->ContainerPtrToValuePtr<void>(TargetObject);
+	if (ReadBackPtr)
+	{
+		Property->ExportText_Direct(ConfirmedValue, ReadBackPtr, ReadBackPtr, TargetObject, PPF_None);
+	}
+	
+	// Return minimal response with just the property confirmation
+	TSharedPtr<FJsonObject> ResultJson = MakeShareable(new FJsonObject());
+	ResultJson->SetStringField(TEXT("property_path"), Params.PropertyPath);
+	ResultJson->SetStringField(TEXT("confirmed_value"), ConfirmedValue);
+	
+	return FActorOperationResult::SuccessWithJson(ResultJson);
 }
 
 FActorOperationResult FLevelActorService::GetAllProperties(const FActorPropertyParams& Params)
@@ -1882,15 +2071,33 @@ FActorAttachParams FActorAttachParams::FromJson(const TSharedPtr<FJsonObject>& P
 	FActorAttachParams AttachParams;
 	if (!Params) return AttachParams;
 	
-	// Child identifier
-	AttachParams.ChildIdentifier = FActorIdentifier::FromJson(Params);
+	// Child identifier - accept both standard fields and child_* prefixed fields
+	FString ChildPath, ChildLabel, ChildGuid, ChildTag;
+	// Try child_* prefixed versions first (more intuitive for attach)
+	if (!Params->TryGetStringField(TEXT("child_path"), ChildPath))
+		Params->TryGetStringField(TEXT("actor_path"), ChildPath);
+	if (!Params->TryGetStringField(TEXT("child_label"), ChildLabel))
+		Params->TryGetStringField(TEXT("actor_label"), ChildLabel);
+	if (!Params->TryGetStringField(TEXT("child_guid"), ChildGuid))
+		Params->TryGetStringField(TEXT("actor_guid"), ChildGuid);
+	if (!Params->TryGetStringField(TEXT("child_tag"), ChildTag))
+		Params->TryGetStringField(TEXT("actor_tag"), ChildTag);
 	
-	// Parent identifier - prefixed fields
+	AttachParams.ChildIdentifier.ActorPath = ChildPath;
+	AttachParams.ChildIdentifier.ActorLabel = ChildLabel;
+	AttachParams.ChildIdentifier.ActorGuid = ChildGuid;
+	AttachParams.ChildIdentifier.ActorTag = ChildTag;
+	
+	// Parent identifier - prefixed fields with _actor_ variants for LLM compatibility
 	FString ParentPath, ParentLabel, ParentGuid, ParentTag;
-	Params->TryGetStringField(TEXT("parent_path"), ParentPath);
-	Params->TryGetStringField(TEXT("parent_label"), ParentLabel);
-	Params->TryGetStringField(TEXT("parent_guid"), ParentGuid);
-	Params->TryGetStringField(TEXT("parent_tag"), ParentTag);
+	if (!Params->TryGetStringField(TEXT("parent_path"), ParentPath))
+		Params->TryGetStringField(TEXT("parent_actor_path"), ParentPath);
+	if (!Params->TryGetStringField(TEXT("parent_label"), ParentLabel))
+		Params->TryGetStringField(TEXT("parent_actor_label"), ParentLabel);
+	if (!Params->TryGetStringField(TEXT("parent_guid"), ParentGuid))
+		Params->TryGetStringField(TEXT("parent_actor_guid"), ParentGuid);
+	if (!Params->TryGetStringField(TEXT("parent_tag"), ParentTag))
+		Params->TryGetStringField(TEXT("parent_actor_tag"), ParentTag);
 	
 	AttachParams.ParentIdentifier.ActorPath = ParentPath;
 	AttachParams.ParentIdentifier.ActorLabel = ParentLabel;
@@ -1950,7 +2157,8 @@ FActorOperationResult FLevelActorService::SetFolder(const FActorIdentifier& Iden
 {
 	if (!Identifier.IsValid())
 	{
-		return FActorOperationResult::Error(TEXT("INVALID_IDENTIFIER"), TEXT("No actor identifier provided"));
+		return FActorOperationResult::Error(TEXT("INVALID_IDENTIFIER"), 
+			TEXT("No actor identifier provided. Use set_folder/create_folder to move actors into folders. Provide actor_label to specify which actor to move. Folders are created automatically when an actor is moved into them."));
 	}
 	
 	AActor* Actor = FindActorByIdentifier(Identifier);

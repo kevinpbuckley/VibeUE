@@ -632,8 +632,31 @@ bool FVariableDefinitionService::CreateOrUpdateVariable(UBlueprint* Blueprint, c
         {
             Var->FriendlyName = Definition.Tooltip;
         }
-        // Apply metadata flags roughly
+        // Update default value if provided
+        if (!Definition.DefaultValueString.IsEmpty())
+        {
+            Var->DefaultValue = Definition.DefaultValueString;
+        }
+        // Apply property flags
         if (Definition.bPrivate)
+        {
+            Var->PropertyFlags |= CPF_DisableEditOnInstance;
+        }
+        else
+        {
+            Var->PropertyFlags &= ~CPF_DisableEditOnInstance;
+        }
+        if (Definition.bBlueprintReadOnly)
+        {
+            Var->PropertyFlags |= CPF_BlueprintReadOnly;
+        }
+        else
+        {
+            Var->PropertyFlags &= ~CPF_BlueprintReadOnly;
+        }
+        // bEditableBlueprint controls whether variable is visible/editable in BP graph
+        // This is typically controlled via BlueprintVisible flag
+        if (!Definition.bEditableBlueprint)
         {
             Var->PropertyFlags |= CPF_DisableEditOnInstance;
         }
@@ -785,6 +808,10 @@ FVariableDefinition FVariableDefinitionService::BPVariableToDefinition(const FBP
     // Copy default value
     Def.DefaultValueString = BPVar.DefaultValue;
     
+    // Extract property flags for read-only and visibility
+    Def.bBlueprintReadOnly = (BPVar.PropertyFlags & CPF_BlueprintReadOnly) != 0;
+    Def.bEditableBlueprint = (BPVar.PropertyFlags & CPF_DisableEditOnInstance) == 0; // If DisableEditOnInstance is NOT set, it's editable
+    
     // Copy metadata out
     Def.MetadataMap.Reset();
     for (const FBPVariableMetaDataEntry& Entry : BPVar.MetaDataArray)
@@ -902,7 +929,18 @@ FResolvedProperty FPropertyAccessService::ResolveProperty(UBlueprint* Blueprint,
     }
     if (!VarDesc)
     {
-        OutError = FString::Printf(TEXT("VARIABLE_NOT_FOUND: %s"), *VarName);
+        // Check if user is trying to access metadata like bIsReadOnly directly
+        FString VarNameLower = VarName.ToLower();
+        if (VarNameLower.StartsWith(TEXT("bis")) || VarNameLower.Contains(TEXT("readonly")) || 
+            VarNameLower.Contains(TEXT("editable")) || VarNameLower.Contains(TEXT("category")) ||
+            VarNameLower.Contains(TEXT("tooltip")))
+        {
+            OutError = FString::Printf(TEXT("INVALID_PATH: '%s' appears to be metadata, not a variable name. Use action='get_info' to read variable metadata (category, tooltip, etc). Use action='get_property' with path like 'VariableName' to get its default value."), *VarName);
+        }
+        else
+        {
+            OutError = FString::Printf(TEXT("VARIABLE_NOT_FOUND: No variable named '%s' exists in this blueprint. Available variables can be listed with action='list'."), *VarName);
+        }
         return FResolvedProperty();
     }
     // Resolve property on CDO of generated class
@@ -1812,6 +1850,11 @@ TSharedPtr<FJsonObject> FResponseSerializer::SerializeVariableDefinition(const F
     Obj->SetStringField(TEXT("category"), Definition.Category);
     Obj->SetStringField(TEXT("tooltip"), Definition.Tooltip);
     Obj->SetStringField(TEXT("default_value"), Definition.DefaultValueString);
+    // Include property flags for LLM visibility
+    Obj->SetBoolField(TEXT("is_blueprint_read_only"), Definition.bBlueprintReadOnly);
+    Obj->SetBoolField(TEXT("is_editable_in_details"), Definition.bEditableBlueprint);
+    Obj->SetBoolField(TEXT("is_private"), Definition.bPrivate);
+    Obj->SetBoolField(TEXT("is_expose_on_spawn"), Definition.bExposeOnSpawn);
     return Obj;
 }
 
@@ -1928,6 +1971,13 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::ExecuteCommand(const F
         if (Params.IsValid()) { Params->TryGetStringField(TEXT("blueprint_name"), BPN); }
         UE_LOG(LogVibeUEManageVars, Verbose, TEXT("ExecuteCommand Action='%s' BP='%s'"), *Normalized, *BPN);
     }
+    
+    // Handle help action
+    if (Normalized.Equals(TEXT("help"), ESearchCase::IgnoreCase))
+    {
+        return HandleHelp(Params);
+    }
+    
     if (Normalized.Equals(TEXT("search_types"), ESearchCase::IgnoreCase))
     {
         return HandleSearchTypes(Params);
@@ -1992,6 +2042,11 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleSearchTypes(cons
     FTypeQuery Query;
     SearchParams->TryGetStringField(TEXT("category"), Query.Category);
     SearchParams->TryGetStringField(TEXT("search_text"), Query.SearchText);
+    // Also accept search_filter as an alias for search_text (LLM sometimes uses this)
+    if (Query.SearchText.IsEmpty())
+    {
+        SearchParams->TryGetStringField(TEXT("search_filter"), Query.SearchText);
+    }
     SearchParams->TryGetBoolField(TEXT("include_blueprints"), Query.bIncludeBlueprints);
     SearchParams->TryGetBoolField(TEXT("include_engine_types"), Query.bIncludeEngine);
     int32 PageOffset = 0; SearchParams->TryGetNumberField(TEXT("page_offset"), PageOffset); Query.PageOffset = PageOffset;
@@ -2001,10 +2056,14 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleSearchTypes(cons
     bool bCompact = true;
     SearchParams->TryGetBoolField(TEXT("compact"), bCompact);
     
-    // Also check top-level params for search_text in case it was passed directly
+    // Also check top-level params for search_text/search_filter in case it was passed directly
     if (Query.SearchText.IsEmpty())
     {
         Params->TryGetStringField(TEXT("search_text"), Query.SearchText);
+    }
+    if (Query.SearchText.IsEmpty())
+    {
+        Params->TryGetStringField(TEXT("search_filter"), Query.SearchText);
     }
     
     // VALIDATION: Check for invalid category to prevent AI loops
@@ -2071,12 +2130,12 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleSearchTypes(cons
 }
 
 // Common type name aliases - allows "float" instead of "/Script/CoreUObject.FloatProperty"
-// Only supports primitive property types, not struct types (Vector, Rotator, etc.)
+// Only supports primitive property types, not object/class types
 static FString ExpandTypeAlias(const FString& TypePath)
 {
     FString Lower = TypePath.TrimStartAndEnd().ToLower();
     
-    // Direct alias mappings for common primitive types
+    // Direct alias mappings for common primitive types ONLY
     if (Lower == TEXT("float") || Lower == TEXT("real"))
     {
         return TEXT("/Script/CoreUObject.FloatProperty");
@@ -2157,28 +2216,44 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSh
     FVariableDefinition Def;
     FString VarNameStr;
     // variable_name can be inside variable_config or at top-level for convenience
+    // Also accept "name" as an alias for "variable_name"
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("variable_name"), VarNameStr))
     {
-        Params->TryGetStringField(TEXT("variable_name"), VarNameStr);
+        if (!(*VariableConfigObj)->TryGetStringField(TEXT("name"), VarNameStr))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), VarNameStr))
+            {
+                Params->TryGetStringField(TEXT("name"), VarNameStr);
+            }
+        }
     }
     if (VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' (or 'name') is required in variable_config"));
     }
     Def.VariableName = FName(*VarNameStr);
 
     // Require canonical 'type_path' - supports common aliases like "float" for convenience
+    // Also accept "type_name", "type" as aliases for "type_path"
     FString TypePathStr;
     FTopLevelAssetPath TypePath;
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("type_path"), TypePathStr) || TypePathStr.TrimStartAndEnd().IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_REQUIRED"), TEXT("'variable_config.type_path' must be provided. Use search_types action to discover valid type paths, or use aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'."));
+        // Try type_name as alias
+        if (!(*VariableConfigObj)->TryGetStringField(TEXT("type_name"), TypePathStr) || TypePathStr.TrimStartAndEnd().IsEmpty())
+        {
+            // Try type as alias
+            if (!(*VariableConfigObj)->TryGetStringField(TEXT("type"), TypePathStr) || TypePathStr.TrimStartAndEnd().IsEmpty())
+            {
+                return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_REQUIRED"), TEXT("'variable_config.type_path' (or 'type_name', 'type') must be provided. Use search_types action to discover valid type paths, or use aliases: 'float', 'double', 'int', 'int64', 'bool', 'string', 'name', 'text', 'byte'."));
+            }
+        }
     }
     // Expand common type aliases (e.g., "float" -> "/Script/CoreUObject.FloatProperty")
     TypePathStr = ExpandTypeAlias(TypePathStr);
     if (!ParseTopLevelAssetPathString(TypePathStr, TypePath))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'. Use search_types action to discover valid type paths."), *TypePathStr));
+        return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'. For object/class types, use THIS TOOL's 'search_types' action with search_text param to find valid type paths (e.g., search_text='UserWidget' returns '/Script/UMG.UserWidget'). Do NOT use manage_asset for type discovery."), *TypePathStr));
     }
     Def.TypePath = TypePath;
 
@@ -2210,6 +2285,8 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSh
     bool bTmp = false;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_private"), bTmp)) Def.bPrivate = bTmp;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_on_spawn"), bTmp)) Def.bExposeOnSpawn = bTmp;
+    if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_blueprint_read_only"), bTmp)) Def.bBlueprintReadOnly = bTmp;
+    if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_editable_in_details"), bTmp)) Def.bEditableBlueprint = bTmp;
 
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
@@ -2274,12 +2351,49 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleList(const TShar
         if (Err.IsEmpty()) { Err = FString::Printf(TEXT("Blueprint '%s' not found"), *BlueprintName); }
         return FResponseSerializer::CreateErrorResponse(TEXT("BLUEPRINT_NOT_FOUND"), Err);
     }
+    
+    // Optional filters - accept multiple alias names for each
+    FString FilterCategory;
+    if (!Params->TryGetStringField(TEXT("filter_category"), FilterCategory))
+    {
+        if (!Params->TryGetStringField(TEXT("category"), FilterCategory))
+        {
+            Params->TryGetStringField(TEXT("category_filter"), FilterCategory);
+        }
+    }
+    FString FilterName;
+    if (!Params->TryGetStringField(TEXT("filter_name"), FilterName))
+    {
+        if (!Params->TryGetStringField(TEXT("name_filter"), FilterName))
+        {
+            Params->TryGetStringField(TEXT("search"), FilterName);
+        }
+    }
+    
     const TArray<FBPVariableDescription*> Vars = VariableService.GetAllVariables(BP);
     TArray<TSharedPtr<FJsonValue>> Arr;
     Arr.Reserve(Vars.Num());
     for (const FBPVariableDescription* V : Vars)
     {
         FVariableDefinition D = VariableService.BPVariableToDefinition(*V);
+        
+        // Apply category filter if specified (case-insensitive, partial match)
+        if (!FilterCategory.IsEmpty())
+        {
+            if (!D.Category.Contains(FilterCategory, ESearchCase::IgnoreCase))
+            {
+                continue;
+            }
+        }
+        // Apply name filter if specified (case-insensitive, partial match)
+        if (!FilterName.IsEmpty())
+        {
+            if (!D.VariableName.ToString().Contains(FilterName, ESearchCase::IgnoreCase))
+            {
+                continue;
+            }
+        }
+        
         Arr.Add(MakeShared<FJsonValueObject>(FResponseSerializer::SerializeVariableDefinition(D)));
     }
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
@@ -2331,13 +2445,20 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
         return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'variable_config' object"));
     }
     FString VarNameStr;
+    // Accept both "variable_name" and "name" as the variable identifier
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("variable_name"), VarNameStr))
     {
-        Params->TryGetStringField(TEXT("variable_name"), VarNameStr);
+        if (!(*VariableConfigObj)->TryGetStringField(TEXT("name"), VarNameStr))
+        {
+            if (!Params->TryGetStringField(TEXT("variable_name"), VarNameStr))
+            {
+                Params->TryGetStringField(TEXT("name"), VarNameStr);
+            }
+        }
     }
     if (VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' (or 'name') is required"));
     }
 
     FString Err;
@@ -2356,14 +2477,24 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
         return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NOT_FOUND"), Err);
     }
 
-    // Apply incoming changes
+    // Apply incoming changes - accept "type_path", "type_name", or "type"
     FString TypePathStr;
-    if ((*VariableConfigObj)->TryGetStringField(TEXT("type_path"), TypePathStr) && !TypePathStr.TrimStartAndEnd().IsEmpty())
+    bool bHasTypeOverride = (*VariableConfigObj)->TryGetStringField(TEXT("type_path"), TypePathStr) && !TypePathStr.TrimStartAndEnd().IsEmpty();
+    if (!bHasTypeOverride)
     {
+        bHasTypeOverride = (*VariableConfigObj)->TryGetStringField(TEXT("type_name"), TypePathStr) && !TypePathStr.TrimStartAndEnd().IsEmpty();
+    }
+    if (!bHasTypeOverride)
+    {
+        bHasTypeOverride = (*VariableConfigObj)->TryGetStringField(TEXT("type"), TypePathStr) && !TypePathStr.TrimStartAndEnd().IsEmpty();
+    }
+    if (bHasTypeOverride)
+    {
+        TypePathStr = ExpandTypeAlias(TypePathStr);
         FTopLevelAssetPath NewTypePath;
         if (!ParseTopLevelAssetPathString(TypePathStr, NewTypePath))
         {
-            return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'"), *TypePathStr));
+            return FResponseSerializer::CreateErrorResponse(TEXT("TYPE_PATH_INVALID"), FString::Printf(TEXT("Invalid type_path '%s'. For object/class types, use THIS TOOL's 'search_types' action with search_text param to find valid type paths (e.g., search_text='UserWidget' returns '/Script/UMG.UserWidget')."), *TypePathStr));
         }
         Def.TypePath = NewTypePath;
     }
@@ -2376,6 +2507,7 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     }
     (*VariableConfigObj)->TryGetStringField(TEXT("category"), Def.Category);
     (*VariableConfigObj)->TryGetStringField(TEXT("tooltip"), Def.Tooltip);
+    (*VariableConfigObj)->TryGetStringField(TEXT("default_value"), Def.DefaultValueString);
     const TSharedPtr<FJsonObject>* MetadataObj = nullptr;
     if ((*VariableConfigObj)->TryGetObjectField(TEXT("metadata"), MetadataObj))
     {
@@ -2391,6 +2523,8 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     bool bTmp = false;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_private"), bTmp)) Def.bPrivate = bTmp;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_on_spawn"), bTmp)) Def.bExposeOnSpawn = bTmp;
+    if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_blueprint_read_only"), bTmp)) Def.bBlueprintReadOnly = bTmp;
+    if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_editable_in_details"), bTmp)) Def.bEditableBlueprint = bTmp;
 
     if (!VariableService.CreateOrUpdateVariable(BP, Def, Err))
     {
@@ -2516,4 +2650,51 @@ bool FBlueprintVariableCommandContext::ParseRequestParams(const TSharedPtr<FJson
         return false;
     }
     return true;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint_variable"));
+	Response->SetStringField(TEXT("summary"), TEXT("Blueprint variable management including creation, deletion, and property access"));
+	Response->SetStringField(TEXT("topic"), TEXT("multi-action-tools"));
+
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+	// Build actions array matching Python help_system structure
+	TArray<TPair<FString, FString>> ActionsList = {
+		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
+		{TEXT("search_types"), TEXT("Search for available variable types using reflection. ALWAYS use this before create to find correct type_path.")},
+		{TEXT("create"), TEXT("Create a new variable in a Blueprint")},
+		{TEXT("delete"), TEXT("Delete a variable from a Blueprint")},
+		{TEXT("get_info"), TEXT("Get detailed information about a variable")},
+		{TEXT("list"), TEXT("List all variables in a Blueprint")},
+		{TEXT("get_property"), TEXT("Get a variable's current default value. The property_path is the variable name itself.")},
+		{TEXT("set_property"), TEXT("Set a variable's default value. The property_path is the variable name, value is the new default.")},
+		{TEXT("modify"), TEXT("Modify a variable's type or properties")},
+		{TEXT("diagnostics"), TEXT("Get diagnostic information about variable issues")},
+		{TEXT("get_property_metadata"), TEXT("Get metadata about a variable property")},
+		{TEXT("set_property_metadata"), TEXT("Set metadata on a variable property")}
+	};
+
+	for (const auto& ActionPair : ActionsList)
+	{
+		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+	}
+
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_blueprint_variable(action='help', help_action='action_name')"));
+	Response->SetStringField(TEXT("note"), TEXT("Use search_types to find correct type_path values before creating variables. Supported type aliases: float, double, int, int64, bool, string, name, text, byte"));
+	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+
+	return Response;
 }

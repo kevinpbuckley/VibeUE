@@ -24,6 +24,9 @@ public:
     // Handle component reflection commands
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
+    // Help handler
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
 private:
     // Discovery Methods (100% Reflection-Based)
     TSharedPtr<FJsonObject> HandleGetAvailableComponents(const TSharedPtr<FJsonObject>& Params);

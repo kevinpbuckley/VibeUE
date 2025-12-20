@@ -60,6 +60,7 @@ private:
 	TSharedPtr<FSocket> ListenerSocket;
 	TSharedPtr<FSocket> ConnectionSocket;
 	FRunnableThread* ServerThread;
+	FMCPServerRunnable* ServerRunnable;
 
 	// Server configuration
 	FIPv4Address ServerAddress;

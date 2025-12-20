@@ -252,27 +252,7 @@ manage_blueprint_component(
 
 ---
 
-### 11. `reorder` - Change Component Order
-**Purpose**: Reorder components in the hierarchy.
-
-**Parameters**:
-- `blueprint_name`: Full Blueprint path
-- `action`: "reorder"
-- `component_order`: Array of component names in desired order
-
-**Example**:
-```python
-manage_blueprint_component(
-    blueprint_name="/Game/Blueprints/BP_Player2",
-    action="reorder",
-    component_order=["SpotLight_Top", "SpotLight_Right", "SpotLight_Left", "TrailVFX", "PointLight"]
-)
-# Returns: {"success": true, "final_order": [...]}
-```
-
----
-
-### 12. `get_property_metadata` - Property Metadata
+### 11. `get_property_metadata` - Property Metadata
 **Purpose**: Get detailed metadata about a specific property.
 
 **Status**: ⚠️ Available but not tested
@@ -426,13 +406,6 @@ manage_blueprint_component(
     parent_name="CameraBoom"
 )
 
-# Reorder components
-manage_blueprint_component(
-    blueprint_name="/Game/Blueprints/BP_Test",
-    action="reorder",
-    component_order=["DynamicLight", "OtherLight", "VFX"]
-)
-
 # Delete when done
 manage_blueprint_component(
     blueprint_name="/Game/Blueprints/BP_Test",
@@ -477,7 +450,6 @@ manage_blueprint_component(
 ✅ create - 100% working
 ✅ delete - 100% working
 ✅ reparent - 100% working
-✅ reorder - 100% working
 ⚠️ get_property_metadata - Available but not tested
 
 ### Real-World Test Case

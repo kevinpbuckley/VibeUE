@@ -459,15 +459,6 @@ manage_blueprint_component(
 
 #### Hierarchy Actions
 
-**reorder** - Change component order
-```python
-manage_blueprint_component(
-    blueprint_name="/Game/Blueprints/BP_Player2",
-    action="reorder",
-    component_order=["SpotLight_Top", "SpotLight_Right", "TrailVFX"]
-)
-```
-
 **reparent** - Change parent attachment
 ```python
 manage_blueprint_component(

@@ -44,9 +44,8 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleCommand(const FString& Com
 		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Parameters object is null"));
 	}
 
-	// Extract action and service from params
+	// Extract action from params
 	FString Action = Params->GetStringField(TEXT("action"));
-	FString Service = Params->GetStringField(TEXT("service"));
 
 	if (Action.IsEmpty())
 	{
@@ -54,14 +53,23 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleCommand(const FString& Com
 		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action' parameter"));
 	}
 
+	// Normalize to lowercase
+	Action = Action.ToLower();
+
+	// Handle help action before requiring service parameter
+	if (Action == TEXT("help"))
+	{
+		return HandleHelp(Params);
+	}
+
+	// For non-help actions, require service parameter
+	FString Service = Params->GetStringField(TEXT("service"));
 	if (Service.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("EnhancedInputCommands: Missing 'service' parameter"));
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'service' parameter"));
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'service' parameter. Use action='help' to see available services and actions."));
 	}
 
-	// Normalize to lowercase
-	Action = Action.ToLower();
 	Service = Service.ToLower();
 
 	UE_LOG(LogTemp, Display, TEXT("EnhancedInputCommands: Routing action='%s' service='%s'"), *Action, *Service);
@@ -165,28 +173,6 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleReflectionService(const FS
 		Response->SetArrayField(TEXT("action_types"), ActionTypesArray);
 		Response->SetArrayField(TEXT("modifier_types"), ModifierTypesArray);
 		Response->SetArrayField(TEXT("trigger_types"), TriggerTypesArray);
-		
-		return Response;
-	}
-	else if (Action == TEXT("reflection_get_metadata"))
-	{
-		FString InputType = Params->GetStringField(TEXT("input_type"));
-		if (InputType.IsEmpty())
-		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("input_type parameter required"));
-		}
-
-		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-		Response->SetBoolField(TEXT("success"), true);
-		Response->SetStringField(TEXT("action"), Action);
-		Response->SetStringField(TEXT("service"), TEXT("reflection"));
-		Response->SetStringField(TEXT("input_type"), InputType);
-		
-		// Get metadata would be implemented here by reflection service
-		TSharedPtr<FJsonObject> MetadataObj = MakeShared<FJsonObject>();
-		MetadataObj->SetStringField(TEXT("name"), InputType);
-		MetadataObj->SetStringField(TEXT("category"), TEXT("enhanced_input"));
-		Response->SetObjectField(TEXT("metadata"), MetadataObj);
 		
 		return Response;
 	}
@@ -1139,6 +1125,65 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::CreateSuccessResponse(const TSha
 		return Data;
 	}
 	
+	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("tool"), TEXT("manage_enhanced_input"));
+	Response->SetStringField(TEXT("summary"), TEXT("Enhanced Input system management for input actions, mapping contexts, key bindings"));
+	Response->SetStringField(TEXT("topic"), TEXT("enhanced-input-management"));
+
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+	// Build actions array - organized by service
+	TArray<TPair<FString, FString>> ActionsList = {
+		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
+		// Reflection service
+		{TEXT("reflection_discover_types"), TEXT("Discover all Enhanced Input types (modifiers, triggers, actions) [service=reflection]")},
+		// Action service
+		{TEXT("action_create"), TEXT("Create a new input action asset [service=action]")},
+		{TEXT("action_list"), TEXT("List all input actions in the project [service=action]")},
+		{TEXT("action_get_properties"), TEXT("Get properties of an input action [service=action]")},
+		{TEXT("action_configure"), TEXT("Configure input action properties [service=action]")},
+		// Mapping service
+		{TEXT("mapping_create_context"), TEXT("Create a new input mapping context [service=mapping]")},
+		{TEXT("mapping_list_contexts"), TEXT("List all mapping contexts in the project [service=mapping]")},
+		{TEXT("mapping_add_key_mapping"), TEXT("Add a key binding to a mapping context [service=mapping]")},
+		{TEXT("mapping_get_mappings"), TEXT("Get all key mappings in a context [service=mapping]")},
+		{TEXT("mapping_remove_mapping"), TEXT("Remove a key mapping by index [service=mapping]")},
+		{TEXT("mapping_get_properties"), TEXT("Get properties of a mapping context [service=mapping]")},
+		{TEXT("mapping_get_available_keys"), TEXT("Get list of available key bindings [service=mapping]")},
+		{TEXT("mapping_add_modifier"), TEXT("Add a modifier to a key mapping [service=mapping]")},
+		{TEXT("mapping_remove_modifier"), TEXT("Remove a modifier from a key mapping [service=mapping]")},
+		{TEXT("mapping_get_modifiers"), TEXT("Get modifiers on a key mapping [service=mapping]")},
+		{TEXT("mapping_get_available_modifier_types"), TEXT("Get list of available modifier types [service=mapping]")},
+		{TEXT("mapping_add_trigger"), TEXT("Add a trigger to a key mapping [service=mapping]")},
+		{TEXT("mapping_remove_trigger"), TEXT("Remove a trigger from a key mapping [service=mapping]")},
+		{TEXT("mapping_get_triggers"), TEXT("Get triggers on a key mapping [service=mapping]")},
+		{TEXT("mapping_get_available_trigger_types"), TEXT("Get list of available trigger types [service=mapping]")}
+	};
+
+	for (const auto& ActionPair : ActionsList)
+	{
+		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+	}
+
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("manage_enhanced_input(action='action_name', service='service_name', ...params)"));
+	Response->SetStringField(TEXT("note"), TEXT("Enhanced Input requires both action and service parameters. Services: action, mapping, reflection"));
+	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+
 	return Response;
 }
 

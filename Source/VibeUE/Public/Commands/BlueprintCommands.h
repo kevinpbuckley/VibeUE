@@ -18,6 +18,9 @@ public:
     // Handle blueprint commands
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
+    // Help handler
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
 private:
     // Specific blueprint command handlers
     TSharedPtr<FJsonObject> HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params);

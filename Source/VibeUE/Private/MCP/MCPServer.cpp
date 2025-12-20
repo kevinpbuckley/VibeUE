@@ -725,6 +725,59 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     
     UE_LOG(LogMCPServer, Log, TEXT("MCP tools/call - Tool: %s"), *ToolName);
     
+    // Transform flat arguments into Action + ParamsJson format for tools that expect it
+    // This handles the case where MCP clients send {"action": "list", "blueprint_name": "..."} 
+    // but the tool expects {"Action": "list", "ParamsJson": "{\"blueprint_name\":\"...\"}"}
+    if (Arguments.Contains(TEXT("action")) || Arguments.Contains(TEXT("Action")))
+    {
+        FString ActionValue;
+        if (Arguments.Contains(TEXT("action")))
+        {
+            ActionValue = Arguments.FindRef(TEXT("action"));
+            Arguments.Remove(TEXT("action"));
+        }
+        else if (Arguments.Contains(TEXT("Action")))
+        {
+            ActionValue = Arguments.FindRef(TEXT("Action"));
+            Arguments.Remove(TEXT("Action"));
+        }
+        
+        // Check if this is NOT using the ParamsJson pattern already
+        if (!Arguments.Contains(TEXT("ParamsJson")))
+        {
+            // Build ParamsJson from remaining arguments
+            TSharedPtr<FJsonObject> ParamsObj = MakeShared<FJsonObject>();
+            for (const auto& Pair : Arguments)
+            {
+                // Try to parse as JSON first (for nested objects/arrays)
+                TSharedPtr<FJsonValue> JsonValue;
+                TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Pair.Value);
+                if (FJsonSerializer::Deserialize(Reader, JsonValue) && JsonValue.IsValid())
+                {
+                    ParamsObj->SetField(Pair.Key, JsonValue);
+                }
+                else
+                {
+                    ParamsObj->SetStringField(Pair.Key, Pair.Value);
+                }
+            }
+            
+            FString ParamsJsonStr;
+            TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ParamsJsonStr);
+            FJsonSerializer::Serialize(ParamsObj.ToSharedRef(), Writer);
+            
+            // Replace arguments with Action + ParamsJson
+            Arguments.Empty();
+            Arguments.Add(TEXT("Action"), ActionValue);
+            Arguments.Add(TEXT("ParamsJson"), ParamsJsonStr);
+        }
+        else
+        {
+            // Already has ParamsJson, just ensure Action is capitalized
+            Arguments.Add(TEXT("Action"), ActionValue);
+        }
+    }
+    
     // Check if tool exists (can be done on any thread)
     FToolRegistry& Registry = FToolRegistry::Get();
     const FToolMetadata* ToolMeta = Registry.FindTool(ToolName);
@@ -737,9 +790,9 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     FString ToolResult;
     FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
     
-    AsyncTask(ENamedThreads::GameThread, [&Registry, ToolName, Arguments, &ToolResult, CompletionEvent]()
+    AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent]()
     {
-        ToolResult = Registry.ExecuteTool(ToolName, Arguments);
+        ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
         CompletionEvent->Trigger();
     });
     

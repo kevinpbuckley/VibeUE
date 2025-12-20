@@ -1119,17 +1119,25 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
 // --- Unified Function Management (Phase 1) ---
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName; FString Action;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+    FString Action;
     if (!Params->TryGetStringField(TEXT("action"), Action))
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter"));
+
+    const FString NormalizedAction = Action.ToLower();
+
+    // Handle help action (doesn't require blueprint_name)
+    if (NormalizedAction == TEXT("help"))
+    {
+        return HandleFunctionHelp();
+    }
+
+    FString BlueprintName;
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
 
     UBlueprint* Blueprint = FCommonUtils::FindBlueprint(BlueprintName);
     if (!Blueprint)
         return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Blueprint not found: %s"), *BlueprintName));
-
-    const FString NormalizedAction = Action.ToLower();
 
     // Core CRUD
     if (NormalizedAction == TEXT("list"))
@@ -1347,11 +1355,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintNode(const 
 
     const FString NormalizedAction = Action.ToLower();
 
+    // Handle help action
+    if (NormalizedAction == TEXT("help"))
+    {
+        return HandleHelp(Params);
+    }
+
     if (NormalizedAction == TEXT("list") || NormalizedAction == TEXT("list_nodes") || NormalizedAction == TEXT("enumerate"))
     {
         return HandleListEventGraphNodes(Params);
     }
-    if (NormalizedAction == TEXT("find") || NormalizedAction == TEXT("search") || NormalizedAction == TEXT("locate"))
+    if (NormalizedAction == TEXT("find") || NormalizedAction == TEXT("search") || NormalizedAction == TEXT("locate") || NormalizedAction == TEXT("discover"))
     {
         return HandleFindBlueprintNodes(Params);
     }
@@ -4329,4 +4343,98 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
     UE_LOG(LogVibeUE, Log, TEXT("Successfully created input key node for key: %s"), *KeyInfo.KeyName);
 
     return Result;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint_node"));
+	Response->SetStringField(TEXT("summary"), TEXT("Blueprint node/graph operations including discovery, creation, connections, and configuration"));
+	Response->SetStringField(TEXT("topic"), TEXT("node-tools"));
+
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+	// Build actions array matching Python help_system structure
+	TArray<TPair<FString, FString>> ActionsList = {
+		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
+		{TEXT("discover"), TEXT("Discover available Blueprint nodes with spawner keys")},
+		{TEXT("create"), TEXT("Create a new node in the Event Graph or function graph")},
+		{TEXT("delete"), TEXT("Delete a node from the Event Graph or function graph")},
+		{TEXT("move"), TEXT("Move a node to a new position")},
+		{TEXT("list"), TEXT("List all nodes in the Event Graph or function graph")},
+		{TEXT("describe"), TEXT("Get description and pins for a node type")},
+		{TEXT("configure"), TEXT("Configure node properties or pin default values")},
+		{TEXT("get_details"), TEXT("Get detailed information about a specific node instance")},
+		{TEXT("split"), TEXT("Split a struct pin into its individual components")},
+		{TEXT("recombine"), TEXT("Recombine a split struct pin")},
+		{TEXT("refresh_node"), TEXT("Refresh a single node to update its structure")},
+		{TEXT("refresh_nodes"), TEXT("Refresh all nodes in the Event Graph")},
+		{TEXT("connect"), TEXT("Connect two node pins together")},
+		{TEXT("disconnect"), TEXT("Disconnect a node pin from all its connections")},
+		{TEXT("set_property"), TEXT("Set a property value on a node")},
+		{TEXT("list_custom_events"), TEXT("List all custom events in the Blueprint")},
+		{TEXT("create_component_event"), TEXT("Create an event node for a component event")},
+		{TEXT("discover_component_events"), TEXT("Discover available events for a component")},
+		{TEXT("discover_input_keys"), TEXT("Discover available input keys for input actions")},
+		{TEXT("create_input_key"), TEXT("Create an input action/axis event node")}
+	};
+
+	for (const auto& ActionPair : ActionsList)
+	{
+		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+	}
+
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_blueprint_node(action='help', help_action='action_name')"));
+	Response->SetStringField(TEXT("note"), TEXT("IMPORTANT: Basic math operators (+, -, *, /) are NOT available through discovery. Always use spawner_key from discover results to create nodes."));
+	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFunctionHelp()
+{
+TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+Response->SetBoolField(TEXT("success"), true);
+Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint_function"));
+Response->SetStringField(TEXT("summary"), TEXT("Manage blueprint functions - create, delete, get/set functions"));
+Response->SetStringField(TEXT("topic"), TEXT("Blueprint"));
+
+TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+TArray<TPair<FString, FString>> ActionsList = {
+{TEXT("help"), TEXT("Display all available actions and usage information")},
+{TEXT("create"), TEXT("Create a new function in the Blueprint")},
+{TEXT("delete"), TEXT("Delete a function from the Blueprint")},
+{TEXT("get"), TEXT("Get detailed information about a specific function")},
+{TEXT("list"), TEXT("List all functions in the Blueprint")},
+{TEXT("add_input"), TEXT("Add an input parameter to a function")},
+{TEXT("add_output"), TEXT("Add an output parameter to a function")},
+{TEXT("remove_param"), TEXT("Remove a parameter from a function")}
+};
+
+for (const auto& ActionPair : ActionsList)
+{
+TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+}
+
+Response->SetArrayField(TEXT("actions"), ActionsArray);
+Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+Response->SetStringField(TEXT("usage"), TEXT("manage_blueprint_function(action=action_name, blueprint_name=BP_Name)"));
+Response->SetStringField(TEXT("note"), TEXT("Use action=help to see all available actions. Most actions require blueprint_name parameter."));
+Response->SetStringField(TEXT("help_type"), TEXT("multi-action"));
+
+return Response;
 }

@@ -454,9 +454,25 @@ void FChatSession::ExecuteNextToolInQueue()
                 {
                     ValueStr = Pair.Value->AsBool() ? TEXT("true") : TEXT("false");
                 }
+                else if (Pair.Value->Type == EJson::Object)
+                {
+                    // Serialize object directly without wrapping
+                    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(Pair.Value->AsObject().ToSharedRef(), Writer);
+                }
+                else if (Pair.Value->Type == EJson::Array)
+                {
+                    // Serialize array directly
+                    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(Pair.Value->AsArray(), Writer);
+                }
+                else if (Pair.Value->Type == EJson::Null)
+                {
+                    ValueStr = TEXT("null");
+                }
                 else
                 {
-                    // For complex types, serialize to JSON string
+                    // Fallback - try to serialize as object wrapped (legacy behavior)
                     TSharedPtr<FJsonObject> TempObj = MakeShared<FJsonObject>();
                     TempObj->SetField(Pair.Key, Pair.Value);
                     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ValueStr);
@@ -464,6 +480,69 @@ void FChatSession::ExecuteNextToolInQueue()
                 }
                 Parameters.Add(Pair.Key, ValueStr);
             }
+        }
+        
+        // Transform flat arguments into Action + ParamsJson format for tools that expect it
+        // This handles the case where LLM sends {"action": "list", "blueprint_name": "..."} 
+        // but the tool expects {"Action": "list", "ParamsJson": "{\"blueprint_name\":\"...\"}"}
+        if (Parameters.Contains(TEXT("action")) || Parameters.Contains(TEXT("Action")))
+        {
+            FString ActionValue;
+            if (Parameters.Contains(TEXT("action")))
+            {
+                ActionValue = Parameters.FindRef(TEXT("action"));
+                Parameters.Remove(TEXT("action"));
+            }
+            else if (Parameters.Contains(TEXT("Action")))
+            {
+                ActionValue = Parameters.FindRef(TEXT("Action"));
+                Parameters.Remove(TEXT("Action"));
+            }
+            
+            // Check if this is NOT using the ParamsJson pattern already
+            if (!Parameters.Contains(TEXT("ParamsJson")))
+            {
+                // Build ParamsJson from remaining arguments
+                TSharedPtr<FJsonObject> ParamsObj = MakeShared<FJsonObject>();
+                for (const auto& Pair : Parameters)
+                {
+                    // Try to parse as JSON first (for nested objects/arrays)
+                    TSharedPtr<FJsonValue> JsonValue;
+                    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Pair.Value);
+                    if (FJsonSerializer::Deserialize(Reader, JsonValue) && JsonValue.IsValid())
+                    {
+                        ParamsObj->SetField(Pair.Key, JsonValue);
+                    }
+                    else
+                    {
+                        ParamsObj->SetStringField(Pair.Key, Pair.Value);
+                    }
+                }
+                
+                FString ParamsJsonStr;
+                TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ParamsJsonStr);
+                FJsonSerializer::Serialize(ParamsObj.ToSharedRef(), Writer);
+                
+                // Replace parameters with Action + ParamsJson
+                Parameters.Empty();
+                Parameters.Add(TEXT("Action"), ActionValue);
+                Parameters.Add(TEXT("ParamsJson"), ParamsJsonStr);
+                
+                UE_LOG(LogChatSession, Log, TEXT("Transformed flat params to Action='%s' ParamsJson='%s'"), *ActionValue, *ParamsJsonStr);
+            }
+            else
+            {
+                // Already has ParamsJson, just ensure Action is capitalized
+                Parameters.Add(TEXT("Action"), ActionValue);
+                UE_LOG(LogChatSession, Log, TEXT("ParamsJson already present, Action='%s', ParamsJson='%s'"), *ActionValue, *Parameters.FindRef(TEXT("ParamsJson")));
+            }
+        }
+        
+        // Debug: Log all parameters before execution
+        UE_LOG(LogChatSession, Log, TEXT("Final parameters for tool %s:"), *ToolCall.ToolName);
+        for (const auto& Pair : Parameters)
+        {
+            UE_LOG(LogChatSession, Log, TEXT("  %s = %s"), *Pair.Key, *Pair.Value);
         }
         
         // Execute tool

@@ -16,7 +16,6 @@ The `manage_enhanced_input` tool provides comprehensive control over Unreal Engi
 | Action | Purpose |
 |--------|---------|
 | `reflection_discover_types` | Discover all modifier/trigger types |
-| `reflection_get_metadata` | Get detailed type metadata |
 
 ### Action Service
 

@@ -128,6 +128,48 @@ FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
 {
+	// Handle multi-action manage_umg_widget command
+	if (CommandName == TEXT("manage_umg_widget"))
+	{
+		FString Action;
+		if (!Params->TryGetStringField(TEXT("action"), Action))
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter for manage_umg_widget"));
+		}
+		
+		// Handle help action
+		if (Action.ToLower() == TEXT("help"))
+		{
+			return HandleHelp();
+		}
+		
+		// Normalize action to lowercase for case-insensitive matching
+		FString NormalizedAction = Action.ToLower();
+		
+		// Route to appropriate command based on action (support both C++ and Python action names)
+		FString RoutedCommand;
+		if (NormalizedAction == TEXT("create")) RoutedCommand = TEXT("create_umg_widget_blueprint");
+		else if (NormalizedAction == TEXT("delete")) RoutedCommand = TEXT("delete_widget_blueprint");
+		else if (NormalizedAction == TEXT("get_info")) RoutedCommand = TEXT("get_widget_blueprint_info");
+		else if (NormalizedAction == TEXT("add_child") || NormalizedAction == TEXT("add_component")) RoutedCommand = TEXT("add_child_to_panel");
+		else if (NormalizedAction == TEXT("remove_child") || NormalizedAction == TEXT("remove_component")) RoutedCommand = TEXT("remove_umg_component");
+		else if (NormalizedAction == TEXT("set_property")) RoutedCommand = TEXT("set_widget_property");
+		else if (NormalizedAction == TEXT("get_property")) RoutedCommand = TEXT("get_widget_property");
+		else if (NormalizedAction == TEXT("list_components")) RoutedCommand = TEXT("list_widget_components");
+		else if (NormalizedAction == TEXT("get_available_types") || NormalizedAction == TEXT("search_types")) RoutedCommand = TEXT("get_available_widget_types");
+		else if (NormalizedAction == TEXT("add_widget")) RoutedCommand = TEXT("add_widget_component");
+		else if (NormalizedAction == TEXT("validate")) RoutedCommand = TEXT("validate_widget");
+		else if (NormalizedAction == TEXT("get_component_properties") || NormalizedAction == TEXT("list_properties")) RoutedCommand = TEXT("get_widget_component_properties");
+		else if (NormalizedAction == TEXT("get_available_events")) RoutedCommand = TEXT("get_available_widget_events");
+		else if (NormalizedAction == TEXT("bind_events")) RoutedCommand = TEXT("bind_widget_events");
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Valid actions: create, delete, get_info, add_child/add_component, remove_child/remove_component, set_property, get_property, list_components, get_available_types/search_types, add_widget, validate, get_component_properties/list_properties, get_available_events, bind_events"), *Action));
+		}
+		
+		return HandleCommand(RoutedCommand, Params);
+	}
+	
 	// Original UMG Commands
 	if (CommandName == TEXT("create_umg_widget_blueprint"))
 	{
@@ -1822,10 +1864,79 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 	return Result;
 }
 
-
-
-
-// ============================================================================
-// NEW BULK OPERATIONS AND IMPROVED FUNCTIONALITY - Added based on Issues Report
-// ============================================================================
+TSharedPtr<FJsonObject> FUMGCommands::HandleHelp()
+{
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), true);
+	Response->SetStringField(TEXT("tool"), TEXT("manage_umg_widget"));
+	Response->SetStringField(TEXT("summary"), TEXT("Manage UMG widgets - create, modify widget blueprints"));
+	Response->SetStringField(TEXT("topic"), TEXT("UMG"));
+	
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+	
+	TSharedPtr<FJsonObject> Action;
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("help"));
+	Action->SetStringField(TEXT("description"), TEXT("Display all available actions and usage information"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("create"));
+	Action->SetStringField(TEXT("description"), TEXT("Create a new UMG Widget Blueprint"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("delete"));
+	Action->SetStringField(TEXT("description"), TEXT("Delete a Widget Blueprint"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("get_info"));
+	Action->SetStringField(TEXT("description"), TEXT("Get information about a Widget Blueprint"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("add_child"));
+	Action->SetStringField(TEXT("description"), TEXT("Add a child widget to a panel"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("remove_child"));
+	Action->SetStringField(TEXT("description"), TEXT("Remove a widget component from its parent"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("set_property"));
+	Action->SetStringField(TEXT("description"), TEXT("Set a property on a widget component"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("get_property"));
+	Action->SetStringField(TEXT("description"), TEXT("Get a property value from a widget component"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("list_components"));
+	Action->SetStringField(TEXT("description"), TEXT("List all widget components in a Widget Blueprint"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("get_available_types"));
+	Action->SetStringField(TEXT("description"), TEXT("Get all available UMG widget types that can be added"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Action = MakeShared<FJsonObject>();
+	Action->SetStringField(TEXT("action"), TEXT("add_widget"));
+	Action->SetStringField(TEXT("description"), TEXT("Add a new widget component to a Widget Blueprint"));
+	ActionsArray.Add(MakeShared<FJsonValueObject>(Action));
+	
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("manage_umg_widget(action=\"<action_name>\", ...)"));
+	Response->SetStringField(TEXT("note"), TEXT("Use action='help' to see all available actions. Each action may require additional parameters."));
+	Response->SetStringField(TEXT("help_type"), TEXT("multi-action"));
+	
+	return Response;
+}
 

@@ -6,6 +6,8 @@
 #include "Services/Asset/AssetImportService.h"
 #include "Core/ServiceContext.h"
 #include "Core/Result.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 FAssetCommands::FAssetCommands()
 {
@@ -18,7 +20,72 @@ FAssetCommands::FAssetCommands()
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
-    if (CommandType == TEXT("import_texture_asset"))
+    // Handle multi-action manage_asset routing
+    if (CommandType == TEXT("manage_asset"))
+    {
+        if (!Params.IsValid())
+        {
+            return CreateErrorResponse(TEXT("Parameters are required"));
+        }
+
+        FString Action;
+        if (!Params->TryGetStringField(TEXT("action"), Action))
+        {
+            return CreateErrorResponse(TEXT("action parameter is required"));
+        }
+
+        Action = Action.ToLower();
+        UE_LOG(LogTemp, Display, TEXT("AssetCommands: Handling action '%s'"), *Action);
+
+        // Help action
+        if (Action == TEXT("help"))
+        {
+            return HandleHelp(Params);
+        }
+        // Route to specific handlers
+        else if (Action == TEXT("search"))
+        {
+            return HandleSearchAssets(Params);
+        }
+        else if (Action == TEXT("import_texture"))
+        {
+            return HandleImportTextureAsset(Params);
+        }
+        else if (Action == TEXT("export_texture"))
+        {
+            return HandleExportTextureForAnalysis(Params);
+        }
+        else if (Action == TEXT("delete"))
+        {
+            return HandleDeleteAsset(Params);
+        }
+        else if (Action == TEXT("duplicate"))
+        {
+            return HandleDuplicateAsset(Params);
+        }
+        else if (Action == TEXT("save"))
+        {
+            return HandleSaveAsset(Params);
+        }
+        else if (Action == TEXT("save_all"))
+        {
+            return HandleSaveAllAssets(Params);
+        }
+        else if (Action == TEXT("list_references"))
+        {
+            return HandleListReferences(Params);
+        }
+        else if (Action == TEXT("open") || Action == TEXT("open_in_editor"))
+        {
+            return HandleOpenAssetInEditor(Params);
+        }
+        else
+        {
+            return CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Use action='help' for available actions."), *Action));
+        }
+    }
+    // Legacy direct command routing
+    else if (CommandType == TEXT("import_texture_asset"))
     {
         return HandleImportTextureAsset(Params);
     }
@@ -408,5 +475,171 @@ TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& Error
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField(TEXT("success"), false);
     Response->SetStringField(TEXT("error"), ErrorMessage);
+    return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Help for manage_asset"));
+    Response->SetStringField(TEXT("tool"), TEXT("manage_asset"));
+    Response->SetStringField(TEXT("summary"), TEXT("Asset management including search, import, export, save, delete operations"));
+    Response->SetStringField(TEXT("topic"), TEXT("asset-management"));
+
+    TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+    // Build actions array matching Python help_system structure
+    TArray<TPair<FString, FString>> ActionsList = {
+        {TEXT("help"), TEXT("Show help for this tool or a specific action")},
+        {TEXT("search"), TEXT("Search for assets by name, path, or class filter")},
+        {TEXT("import_texture"), TEXT("Import a texture from external file")},
+        {TEXT("export_texture"), TEXT("Export a texture for external analysis")},
+        {TEXT("delete"), TEXT("Delete an asset from the project")},
+        {TEXT("duplicate"), TEXT("Duplicate an existing asset")},
+        {TEXT("save"), TEXT("Save a modified asset to disk")},
+        {TEXT("save_all"), TEXT("Save all modified assets to disk")},
+        {TEXT("list_references"), TEXT("List all assets that reference or are referenced by an asset")},
+        {TEXT("open"), TEXT("Open an asset in its editor")}
+    };
+
+    for (const auto& ActionPair : ActionsList)
+    {
+        TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+        ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+        ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+        ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+    }
+
+    Response->SetArrayField(TEXT("actions"), ActionsArray);
+    Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+    Response->SetStringField(TEXT("usage"), TEXT("manage_asset(action='action_name', ...params)"));
+    Response->SetStringField(TEXT("note"), TEXT("This tool manages all asset operations. Use save_all to save all dirty assets before building."));
+    Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+
+    return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Search Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleSearchAssets(const TSharedPtr<FJsonObject>& Params)
+{
+    FString SearchTerm;
+    if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+    {
+        return CreateErrorResponse(TEXT("Missing 'search_term' parameter. Usage: manage_asset(action='search', search_term='YourAssetName')"));
+    }
+
+    FString AssetType;
+    Params->TryGetStringField(TEXT("asset_type"), AssetType);
+
+    FString Path = TEXT("/Game");
+    Params->TryGetStringField(TEXT("path"), Path);
+
+    bool bCaseSensitive = false;
+    Params->TryGetBoolField(TEXT("case_sensitive"), bCaseSensitive);
+
+    bool bIncludeEngineContent = false;
+    Params->TryGetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
+
+    int32 MaxResults = 100;
+    double MaxResultsValue = 0.0;
+    if (Params->TryGetNumberField(TEXT("max_results"), MaxResultsValue))
+    {
+        MaxResults = FMath::Max(1, static_cast<int32>(MaxResultsValue));
+    }
+
+    // Build asset filter
+    FARFilter Filter;
+    Filter.bRecursivePaths = true;
+    Filter.PackagePaths.Add(*Path);
+    if (bIncludeEngineContent)
+    {
+        Filter.PackagePaths.Add(TEXT("/Engine"));
+    }
+    
+    // Handle asset type filtering
+    if (!AssetType.IsEmpty())
+    {
+        FTopLevelAssetPath AssetClassPath = UClass::TryConvertShortTypeNameToPathName<UClass>(AssetType, ELogVerbosity::NoLogging);
+        if (AssetClassPath.IsNull())
+        {
+            if (AssetType.Contains(TEXT("/")))
+            {
+                AssetClassPath = FTopLevelAssetPath(*AssetType);
+            }
+            else if (UClass* AssetClass = FindFirstObjectSafe<UClass>(*AssetType))
+            {
+                AssetClassPath = AssetClass->GetClassPathName();
+            }
+        }
+
+        if (!AssetClassPath.IsNull())
+        {
+            Filter.ClassPaths.Add(AssetClassPath);
+        }
+    }
+
+    // Get asset registry
+    IAssetRegistry* AssetRegistry = ServiceContext->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return CreateErrorResponse(TEXT("Failed to get Asset Registry"));
+    }
+
+    // Query assets
+    TArray<FAssetData> Assets;
+    AssetRegistry->GetAssets(Filter, Assets);
+
+    // Filter and format results
+    TArray<TSharedPtr<FJsonValue>> ItemArray;
+    const ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;
+    int32 MatchCount = 0;
+
+    for (const FAssetData& Asset : Assets)
+    {
+        if (MatchCount >= MaxResults)
+        {
+            break;
+        }
+
+        const FString AssetName = Asset.AssetName.ToString();
+        const FString ObjectPath = Asset.GetObjectPathString();
+
+        // Check if search term matches asset name or path
+        if (AssetName.Contains(SearchTerm, SearchCase) || ObjectPath.Contains(SearchTerm, SearchCase))
+        {
+            TSharedPtr<FJsonObject> ItemObj = MakeShared<FJsonObject>();
+            ItemObj->SetStringField(TEXT("asset_name"), AssetName);
+            ItemObj->SetStringField(TEXT("object_path"), ObjectPath);
+            ItemObj->SetStringField(TEXT("package_path"), Asset.PackageName.ToString());
+            ItemObj->SetStringField(TEXT("class_name"), Asset.AssetClassPath.GetAssetName().ToString());
+            
+            ItemArray.Add(MakeShared<FJsonValueObject>(ItemObj));
+            MatchCount++;
+        }
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetArrayField(TEXT("items"), ItemArray);
+    Response->SetNumberField(TEXT("count"), ItemArray.Num());
+
+    // Include search info for debugging
+    TSharedPtr<FJsonObject> SearchInfo = MakeShared<FJsonObject>();
+    SearchInfo->SetStringField(TEXT("search_term"), SearchTerm);
+    SearchInfo->SetStringField(TEXT("asset_type"), AssetType.IsEmpty() ? TEXT("all") : AssetType);
+    SearchInfo->SetStringField(TEXT("path"), Path);
+    SearchInfo->SetBoolField(TEXT("case_sensitive"), bCaseSensitive);
+    SearchInfo->SetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
+    SearchInfo->SetNumberField(TEXT("max_results"), MaxResults);
+    SearchInfo->SetNumberField(TEXT("total_scanned"), Assets.Num());
+    Response->SetObjectField(TEXT("search_info"), SearchInfo);
+
     return Response;
 }

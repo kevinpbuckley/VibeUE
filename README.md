@@ -172,7 +172,6 @@ Component discovery, creation, and property management.
 | `set_property` | Set component property value |
 | `get_all_properties` | Get all property values |
 | `compare_properties` | Compare properties between Blueprints |
-| `reorder` | Change component order |
 | `reparent` | Change component parent attachment |
 
 ### 4. `manage_blueprint_node` (17 actions)
@@ -247,13 +246,12 @@ UMG Widget Blueprint operations.
 | `get_available_events` | Get bindable events |
 | `bind_events` | Bind input events |
 
-### 8. `manage_enhanced_input` (24 actions)
+### 8. `manage_enhanced_input` (22 actions)
 Complete Enhanced Input system control.
 
 | Action | Purpose |
 |--------|---------|
 | `reflection_discover_types` | Discover modifier/trigger types |
-| `reflection_get_metadata` | Get type metadata |
 | `action_create` | Create Input Action |
 | `action_list` | List all Input Actions |
 | `action_get_properties` | Get action properties |

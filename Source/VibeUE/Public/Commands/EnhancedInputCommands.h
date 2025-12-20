@@ -41,6 +41,9 @@ public:
 	 */
 	TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
+	// Help handler
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
 private:
 	// Service instances
 	TSharedPtr<FEnhancedInputReflectionService> ReflectionService;

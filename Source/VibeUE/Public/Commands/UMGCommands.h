@@ -32,6 +32,12 @@ public:
      */
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
 
+    /**
+     * Handle help request for manage_umg_widget tool
+     * @return JSON response with all available actions and usage information
+     */
+    TSharedPtr<FJsonObject> HandleHelp();
+
 private:
     /**
      * Create a new UMG Widget Blueprint

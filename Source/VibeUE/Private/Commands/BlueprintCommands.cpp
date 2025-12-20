@@ -87,7 +87,61 @@ TSharedPtr<FJsonObject> FBlueprintCommands::CreateErrorResponse(const FString& E
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
-    if (CommandType == TEXT("create_blueprint"))
+    // Handle multi-action manage_blueprint routing
+    if (CommandType == TEXT("manage_blueprint"))
+    {
+        if (!Params.IsValid())
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Parameters are required"));
+        }
+
+        FString Action;
+        if (!Params->TryGetStringField(TEXT("action"), Action))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("action parameter is required"));
+        }
+
+        Action = Action.ToLower();
+        UE_LOG(LogTemp, Display, TEXT("BlueprintCommands: Handling action '%s'"), *Action);
+
+        // Help action
+        if (Action == TEXT("help"))
+        {
+            return HandleHelp(Params);
+        }
+        // Route to specific handlers
+        else if (Action == TEXT("create"))
+        {
+            return HandleCreateBlueprint(Params);
+        }
+        else if (Action == TEXT("get_info"))
+        {
+            return HandleGetBlueprintInfo(Params);
+        }
+        else if (Action == TEXT("compile"))
+        {
+            return HandleCompileBlueprint(Params);
+        }
+        else if (Action == TEXT("reparent"))
+        {
+            return HandleReparentBlueprint(Params);
+        }
+        else if (Action == TEXT("set_property"))
+        {
+            return HandleSetBlueprintProperty(Params);
+        }
+        else if (Action == TEXT("get_property"))
+        {
+            return HandleGetBlueprintProperty(Params);
+        }
+        else
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
+                FString::Printf(TEXT("Unknown action: %s. Use action='help' for available actions."), *Action));
+        }
+    }
+    // Legacy direct command routing
+    else if (CommandType == TEXT("create_blueprint"))
     {
         return HandleCreateBlueprint(Params);
     }
@@ -148,7 +202,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
     AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_available_blueprint_variable_types")));
     ErrorResponse->SetArrayField(TEXT("available_commands"), AvailableCommands);
     
-    ErrorResponse->SetStringField(TEXT("help_tip"), TEXT("Use manage_blueprint(action='help') to see available actions in the Python layer"));
+    ErrorResponse->SetStringField(TEXT("help_tip"), TEXT("Use manage_blueprint(action='help') to see available actions"));
     
     return ErrorResponse;
 }
@@ -4126,6 +4180,47 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleListVariablesOperation(const T
     Response->SetStringField(TEXT("blueprint_name"), BlueprintName);
     Response->SetNumberField(TEXT("total_count"), VariablesArray.Num());
     Response->SetArrayField(TEXT("variables"), VariablesArray);
+
+    return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint"));
+    Response->SetStringField(TEXT("summary"), TEXT("Blueprint management including creation, properties, compilation, and reparenting"));
+    Response->SetStringField(TEXT("topic"), TEXT("blueprint-management"));
+
+    TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+    // Build actions array matching Python help_system structure
+    TArray<TPair<FString, FString>> ActionsList = {
+        {TEXT("help"), TEXT("Show help for this tool or a specific action")},
+        {TEXT("create"), TEXT("Create a new blueprint asset")},
+        {TEXT("get_info"), TEXT("Get comprehensive blueprint information including variables, components, functions")},
+        {TEXT("compile"), TEXT("Compile a blueprint to update its generated class")},
+        {TEXT("reparent"), TEXT("Change the parent class of a blueprint")},
+        {TEXT("set_property"), TEXT("Set a property value on the blueprint CDO")},
+        {TEXT("get_property"), TEXT("Get a property value from the blueprint CDO")}
+    };
+
+    for (const auto& ActionPair : ActionsList)
+    {
+        TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+        ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+        ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+        ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+    }
+
+    Response->SetArrayField(TEXT("actions"), ActionsArray);
+    Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+    Response->SetStringField(TEXT("usage"), TEXT("manage_blueprint(action='action_name', blueprint_name='...', ...params)"));
+    Response->SetStringField(TEXT("note"), TEXT("For variable management use manage_blueprint_variable, for component management use manage_blueprint_component"));
+    Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
 
     return Response;
 }

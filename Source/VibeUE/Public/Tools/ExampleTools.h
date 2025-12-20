@@ -55,5 +55,17 @@ public:
 		ToolExamples = "get_system_info()"
 	))
 	static FString GetSystemInfo();
+
+	/**
+	 * System tool: Check Unreal connection
+	 * Verifies connection to Unreal Engine
+	 */
+	UFUNCTION(meta = (
+		ToolName = "check_unreal_connection",
+		ToolDescription = "Test Unreal Engine connection and plugin status",
+		ToolCategory = "System",
+		ToolExamples = "check_unreal_connection()"
+	))
+	static FString CheckUnrealConnection();
 };
 

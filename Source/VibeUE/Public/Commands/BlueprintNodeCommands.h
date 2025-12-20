@@ -64,7 +64,9 @@ private:
     // NEW (Oct 6, 2025): Input Key Discovery - Reflection-Based
     TSharedPtr<FJsonObject> HandleGetAllInputKeys(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleCreateInputKeyNode(const TSharedPtr<FJsonObject>& Params);
-
+	// Help actions
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleFunctionHelp();
 private:
     // Internal helpers (Phase 1 minimal)
     TSharedPtr<FJsonObject> BuildFunctionSummary(UBlueprint* Blueprint);

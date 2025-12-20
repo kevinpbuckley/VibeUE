@@ -210,7 +210,7 @@ manage_blueprint_variable(
 ### Blueprint Components
 - `manage_blueprint_component` - **UNIFIED MULTI-ACTION TOOL** for complete component management (12 actions)
   - **Discovery**: search_types, get_info, get_property_metadata, list
-  - **Lifecycle**: create, delete, reparent, reorder
+  - **Lifecycle**: create, delete, reparent
   - **Properties**: get_property, set_property, get_all_properties, compare_properties
   - **Status**: ✅ FULLY TESTED AND WORKING (11/12 actions validated)
   - **⚠️ CRITICAL**: `blueprint_name` parameter MUST be full package path (e.g., `/Game/Blueprints/BP_Player2`)
@@ -225,7 +225,6 @@ manage_blueprint_variable(
 - `get_property_metadata` - (Legacy - use manage_blueprint_component with get_property_metadata)
 - `set_component_property` - (Legacy - use manage_blueprint_component with set_property)
 - `remove_component` - (Legacy - use manage_blueprint_component with delete)
-- `reorder_components` - (Legacy - use manage_blueprint_component with reorder)
 
 ### Blueprint Functions & Nodes
 - `manage_blueprint_function` - **MULTI-ACTION TOOL** for function management (includes listing functions)

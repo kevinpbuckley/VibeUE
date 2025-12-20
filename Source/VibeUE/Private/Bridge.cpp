@@ -73,6 +73,9 @@
 #define MCP_SERVER_PORT 55557
 
 UBridge::UBridge()
+    : bIsRunning(false)
+    , ServerThread(nullptr)
+    , ServerRunnable(nullptr)
 {
     // Create service context (shared across all services and command handlers)
     ServiceContext = MakeShared<FServiceContext>();
@@ -206,9 +209,10 @@ void UBridge::StartServer()
     bIsRunning = true;
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server started successfully on %s:%d - ready for connections"), *ServerAddress.ToString(), Port);
 
-    // Start server thread
+    // Create the server runnable and start thread
+    ServerRunnable = new FMCPServerRunnable(this, ListenerSocket);
     ServerThread = FRunnableThread::Create(
-        new FMCPServerRunnable(this, ListenerSocket),
+        ServerRunnable,
         TEXT("VibeUEServerThread"),
         0, TPri_Normal
     );
@@ -234,28 +238,52 @@ void UBridge::StopServer()
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Stopping server..."));
     bIsRunning = false;
 
-    // Clean up thread
-    if (ServerThread)
+    // FIRST: Signal the runnable to stop
+    if (ServerRunnable)
     {
-        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Terminating server thread"));
-        ServerThread->Kill(true);
-        delete ServerThread;
-        ServerThread = nullptr;
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Signaling server runnable to stop"));
+        ServerRunnable->Stop();
+        
+        // Give the thread a moment to notice the stop signal and exit its loop
+        // This prevents race conditions where we destroy the socket while thread is using it
+        FPlatformProcess::Sleep(0.2f);
     }
 
-    // Close sockets
+    // SECOND: Close sockets to unblock any blocking Recv() calls
     if (ConnectionSocket.IsValid())
     {
         UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Closing connection socket"));
-        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ConnectionSocket.Get());
+        ConnectionSocket->Close();
+        ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+        if (SocketSubsystem)
+        {
+            SocketSubsystem->DestroySocket(ConnectionSocket.Get());
+        }
         ConnectionSocket.Reset();
     }
 
     if (ListenerSocket.IsValid())
     {
         UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Closing listener socket"));
-        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ListenerSocket.Get());
+        ListenerSocket->Close();
+        ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+        if (SocketSubsystem)
+        {
+            SocketSubsystem->DestroySocket(ListenerSocket.Get());
+        }
         ListenerSocket.Reset();
+    }
+
+    // THIRD: Wait for thread to finish (it should exit quickly since stop was signaled)
+    if (ServerThread)
+    {
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Waiting for server thread to complete..."));
+        ServerThread->WaitForCompletion();
+        delete ServerThread;
+        ServerThread = nullptr;
+        // Note: ServerRunnable is deleted by the thread, just clear our pointer
+        ServerRunnable = nullptr;
+        UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server thread terminated"));
     }
 
     UE_LOG(LogTemp, Display, TEXT("VibeUEBridge: Server stopped successfully"));

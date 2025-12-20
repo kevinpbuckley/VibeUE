@@ -60,6 +60,12 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	Action = Action.ToLower();
 	UE_LOG(LogMaterialCommands, Display, TEXT("MaterialCommands: Handling action '%s'"), *Action);
 
+	// Help action
+	if (Action == TEXT("help"))
+	{
+		return HandleHelp(Params);
+	}
+
 	// Lifecycle actions
 	if (Action == TEXT("create"))
 	{
@@ -1458,5 +1464,64 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSaveInstance(const TSharedPtr<F
 	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
 	Response->SetStringField(TEXT("instance_path"), InstancePath);
 	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Saved material instance: %s"), *InstancePath));
+	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("tool"), TEXT("manage_material"));
+	Response->SetStringField(TEXT("summary"), TEXT("Material and Material Instance management including creation, properties, and parameters"));
+	Response->SetStringField(TEXT("topic"), TEXT("material-management"));
+
+	TArray<TSharedPtr<FJsonValue>> ActionsArray;
+
+	// Build actions array matching Python help_system structure
+	TArray<TPair<FString, FString>> ActionsList = {
+		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
+		{TEXT("create"), TEXT("Create a new material asset")},
+		{TEXT("get_info"), TEXT("Get comprehensive material information")},
+		{TEXT("list_properties"), TEXT("List all editable properties")},
+		{TEXT("get_property"), TEXT("Get a property value")},
+		{TEXT("set_property"), TEXT("Set a property value")},
+		{TEXT("set_properties"), TEXT("Set multiple properties at once")},
+		{TEXT("get_property_info"), TEXT("Get detailed property metadata")},
+		{TEXT("list_parameters"), TEXT("List all material parameters")},
+		{TEXT("get_parameter"), TEXT("Get a specific parameter")},
+		{TEXT("set_parameter_default"), TEXT("Set a parameter's default value")},
+		{TEXT("compile"), TEXT("Recompile material shaders")},
+		{TEXT("save"), TEXT("Save material to disk")},
+		{TEXT("refresh_editor"), TEXT("Refresh open Material Editor")},
+		{TEXT("create_instance"), TEXT("Create a material instance from a parent material")},
+		{TEXT("get_instance_info"), TEXT("Get comprehensive info about a material instance")},
+		{TEXT("list_instance_properties"), TEXT("List all editable properties on a material instance")},
+		{TEXT("get_instance_property"), TEXT("Get a single property value from instance")},
+		{TEXT("set_instance_property"), TEXT("Set a property on material instance")},
+		{TEXT("list_instance_parameters"), TEXT("List all parameters with current/default values")},
+		{TEXT("set_instance_scalar_parameter"), TEXT("Set a scalar parameter override")},
+		{TEXT("set_instance_vector_parameter"), TEXT("Set a vector/color parameter override")},
+		{TEXT("set_instance_texture_parameter"), TEXT("Set a texture parameter override")},
+		{TEXT("clear_instance_parameter_override"), TEXT("Remove parameter override, revert to parent")},
+		{TEXT("save_instance"), TEXT("Save material instance to disk")}
+	};
+
+	for (const auto& ActionPair : ActionsList)
+	{
+		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
+		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
+		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
+		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
+	}
+
+	Response->SetArrayField(TEXT("actions"), ActionsArray);
+	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
+	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_material(action='help', help_action='action_name')"));
+	Response->SetStringField(TEXT("note"), TEXT("This tool supports 25 actions (12 base material + 13 instance). Base actions work with materials, instance actions work with material instances (MIC)."));
+	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
+
 	return Response;
 }

@@ -115,92 +115,28 @@ FString UEditorTools::CheckUnrealConnection()
 	return SerializeResult(Result);
 }
 
-FString UEditorTools::DeepResearcher(const FString& Query, const FString& SearchScope, const FString& OptionsJson)
-{
-	EnsureCommandHandlersInitialized();
-	TSharedPtr<FJsonObject> Params = ParseParams(OptionsJson);
-	Params->SetStringField(TEXT("query"), Query);
-	Params->SetStringField(TEXT("search_type"), SearchScope.IsEmpty() ? TEXT("all") : SearchScope);
-	TSharedPtr<FJsonObject> Result = UMGCommandsInstance->HandleCommand(TEXT("search_items"), Params);
-	return SerializeResult(Result);
-}
-
 FString UEditorTools::ManageAsset(const FString& Action, const FString& ParamsJson)
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	
-	if (Action.ToLower() == TEXT("search"))
-	{
-		return SerializeResult(UMGCommandsInstance->HandleCommand(TEXT("search_items"), Params));
-	}
-	
-	FString CommandType;
-	if (Action == TEXT("import_texture")) CommandType = TEXT("import_texture_asset");
-	else if (Action == TEXT("export_texture")) CommandType = TEXT("export_texture_for_analysis");
-	else if (Action == TEXT("delete")) CommandType = TEXT("delete_asset");
-	else if (Action == TEXT("duplicate")) CommandType = TEXT("duplicate_asset");
-	else if (Action == TEXT("save")) CommandType = TEXT("save_asset");
-	else if (Action == TEXT("save_all")) CommandType = TEXT("save_all_assets");
-	else if (Action == TEXT("list_references")) CommandType = TEXT("list_references");
-	else if (Action == TEXT("open")) CommandType = TEXT("OpenAssetInEditor");
-	else
-	{
-		TSharedPtr<FJsonObject> Err = MakeShareable(new FJsonObject);
-		Err->SetBoolField(TEXT("success"), false);
-		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s"), *Action));
-		return SerializeResult(Err);
-	}
-	
-	return SerializeResult(AssetCommandsInstance->HandleCommand(CommandType, Params));
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(AssetCommandsInstance->HandleCommand(TEXT("manage_asset"), Params));
 }
 
 FString UEditorTools::ManageBlueprint(const FString& Action, const FString& ParamsJson)
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	
-	FString CommandType;
-	if (Action == TEXT("create")) CommandType = TEXT("create_blueprint");
-	else if (Action == TEXT("get_info")) CommandType = TEXT("get_blueprint_info");
-	else if (Action == TEXT("compile")) CommandType = TEXT("compile_blueprint");
-	else if (Action == TEXT("reparent")) CommandType = TEXT("reparent_blueprint");
-	else if (Action == TEXT("set_property")) CommandType = TEXT("set_blueprint_property");
-	else if (Action == TEXT("get_property")) CommandType = TEXT("get_blueprint_property");
-	else
-	{
-		TSharedPtr<FJsonObject> Err = MakeShareable(new FJsonObject);
-		Err->SetBoolField(TEXT("success"), false);
-		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s"), *Action));
-		return SerializeResult(Err);
-	}
-	
-	return SerializeResult(BlueprintCommandsInstance->HandleCommand(CommandType, Params));
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(BlueprintCommandsInstance->HandleCommand(TEXT("manage_blueprint"), Params));
 }
 
 FString UEditorTools::ManageBlueprintComponent(const FString& Action, const FString& ParamsJson)
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	
-	FString CommandType;
-	if (Action == TEXT("add")) CommandType = TEXT("add_component");
-	else if (Action == TEXT("remove")) CommandType = TEXT("remove_component");
-	else if (Action == TEXT("get_hierarchy")) CommandType = TEXT("get_component_hierarchy");
-	else if (Action == TEXT("set_property")) CommandType = TEXT("set_component_property");
-	else if (Action == TEXT("get_property")) CommandType = TEXT("get_component_property");
-	else if (Action == TEXT("get_all_properties")) CommandType = TEXT("get_all_component_properties");
-	else if (Action == TEXT("reparent")) CommandType = TEXT("reparent_component");
-	else if (Action == TEXT("get_available")) CommandType = TEXT("get_available_components");
-	else
-	{
-		TSharedPtr<FJsonObject> Err = MakeShareable(new FJsonObject);
-		Err->SetBoolField(TEXT("success"), false);
-		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s"), *Action));
-		return SerializeResult(Err);
-	}
-	
-	return SerializeResult(BlueprintComponentInstance->HandleCommand(CommandType, Params));
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(BlueprintComponentInstance->HandleCommand(TEXT("manage_blueprint_component"), Params));
 }
 
 FString UEditorTools::ManageBlueprintFunction(const FString& Action, const FString& ParamsJson)
@@ -229,24 +165,8 @@ FString UEditorTools::ManageBlueprintVariable(const FString& Action, const FStri
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	
-	FString CommandType;
-	if (Action == TEXT("add")) CommandType = TEXT("add_blueprint_variable");
-	else if (Action == TEXT("delete")) CommandType = TEXT("delete_blueprint_variable");
-	else if (Action == TEXT("get")) CommandType = TEXT("get_blueprint_variable");
-	else if (Action == TEXT("get_property")) CommandType = TEXT("get_variable_property");
-	else if (Action == TEXT("set_property")) CommandType = TEXT("set_variable_property");
-	else if (Action == TEXT("list")) CommandType = TEXT("get_blueprint_info");
-	else if (Action == TEXT("get_available_types")) CommandType = TEXT("get_available_blueprint_variable_types");
-	else
-	{
-		TSharedPtr<FJsonObject> Err = MakeShareable(new FJsonObject);
-		Err->SetBoolField(TEXT("success"), false);
-		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s"), *Action));
-		return SerializeResult(Err);
-	}
-	
-	return SerializeResult(BlueprintCommandsInstance->HandleCommand(CommandType, Params));
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(BlueprintCommandsInstance->HandleCommand(TEXT("manage_blueprint_variable"), Params));
 }
 
 FString UEditorTools::ManageEnhancedInput(const FString& Action, const FString& ParamsJson)
@@ -285,27 +205,8 @@ FString UEditorTools::ManageUMGWidget(const FString& Action, const FString& Para
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	
-	FString CommandType;
-	if (Action == TEXT("create")) CommandType = TEXT("create_umg_widget_blueprint");
-	else if (Action == TEXT("delete")) CommandType = TEXT("delete_widget_blueprint");
-	else if (Action == TEXT("get_info")) CommandType = TEXT("get_widget_blueprint_info");
-	else if (Action == TEXT("add_child")) CommandType = TEXT("add_child_to_panel");
-	else if (Action == TEXT("remove_child")) CommandType = TEXT("remove_umg_component");
-	else if (Action == TEXT("set_property")) CommandType = TEXT("set_widget_property");
-	else if (Action == TEXT("get_property")) CommandType = TEXT("get_widget_property");
-	else if (Action == TEXT("list_components")) CommandType = TEXT("list_widget_components");
-	else if (Action == TEXT("get_available_types")) CommandType = TEXT("get_available_widget_types");
-	else if (Action == TEXT("add_widget")) CommandType = TEXT("add_widget_component");
-	else
-	{
-		TSharedPtr<FJsonObject> Err = MakeShareable(new FJsonObject);
-		Err->SetBoolField(TEXT("success"), false);
-		Err->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s"), *Action));
-		return SerializeResult(Err);
-	}
-	
-	return SerializeResult(UMGCommandsInstance->HandleCommand(CommandType, Params));
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(UMGCommandsInstance->HandleCommand(TEXT("manage_umg_widget"), Params));
 }
 
 //=============================================================================
@@ -323,27 +224,9 @@ REGISTER_VIBEUE_TOOL(check_unreal_connection,
 	}
 );
 
-// 2. deep_researcher
-REGISTER_VIBEUE_TOOL(deep_researcher,
-	"Deep researcher - comprehensive search and analysis across assets, actors, blueprints, and classes",
-	"Discovery",
-	TOOL_PARAMS(
-		TOOL_PARAM("Query", "Search query string", "string", true),
-		TOOL_PARAM_DEFAULT("SearchScope", "Scope: all, assets, actors, blueprints, classes", "string", "all"),
-		TOOL_PARAM_DEFAULT("OptionsJson", "Additional search options as JSON", "string", "{}")
-	),
-	{
-		return UEditorTools::DeepResearcher(
-			Params.FindRef(TEXT("Query")),
-			Params.FindRef(TEXT("SearchScope")),
-			Params.FindRef(TEXT("OptionsJson"))
-		);
-	}
-);
-
-// 3. manage_asset
+// 2. manage_asset
 REGISTER_VIBEUE_TOOL(manage_asset,
-	"Manage assets - search, import, export, save, delete assets. Actions: search, import_texture, export_texture, delete, duplicate, save, save_all, list_references, open",
+	"Manage assets - search, import, export, save, delete assets. Actions: search, import_texture, export_texture, delete, duplicate, save, save_all, list_references, open (or open_in_editor). For duplicate use: asset_path (source), destination_path (folder), new_name (optional)",
 	"Asset",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -375,7 +258,7 @@ REGISTER_VIBEUE_TOOL(manage_blueprint,
 
 // 5. manage_blueprint_component
 REGISTER_VIBEUE_TOOL(manage_blueprint_component,
-	"Manage blueprint components - add, configure, organize components. Actions: add, remove, get_hierarchy, set_property, get_property, get_all_properties, reparent, get_available",
+	"Manage blueprint components - add, configure, organize components. Actions: add (or create), remove (or delete), get_hierarchy (or list), set_property, get_property, get_all_properties, reparent, get_available (or search_types), get_info (get component CLASS properties without a blueprint instance). ParamsJson params: blueprint_name (required for most actions), component_type (for add or get_info), component_name (for operations on specific component), property_name/property_value (for properties), parent_name (for reparent), search_filter (for get_available).",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -407,7 +290,7 @@ REGISTER_VIBEUE_TOOL(manage_blueprint_function,
 
 // 7. manage_blueprint_node
 REGISTER_VIBEUE_TOOL(manage_blueprint_node,
-	"Manage blueprint graph nodes - add, remove, connect nodes. Actions: add, remove, connect, disconnect, get_nodes, get_node_info, discover",
+	"Manage blueprint graph nodes. WORKFLOW: 1) discover/search to find nodes -> returns spawner_key; 2) create/add using spawner_key; 3) connect to wire nodes. Actions: discover (or search/find), create (or add), delete (or remove), connect, disconnect, list (nodes in graph), details (node info), set_property, configure, split, recombine, refresh_node. ParamsJson params: blueprint_name (required), search_term (for discover), spawner_key (for create, from discover result), position [X,Y] (for create), node_id (for operations), source_node_id/source_pin/target_node_id/target_pin (for connect), function_name (for function graphs).",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -423,7 +306,7 @@ REGISTER_VIBEUE_TOOL(manage_blueprint_node,
 
 // 8. manage_blueprint_variable
 REGISTER_VIBEUE_TOOL(manage_blueprint_variable,
-	"Manage blueprint variables - add, delete, get/set variables. Actions: add, delete, get, get_property, set_property, list, get_available_types",
+	"Manage blueprint variables. Actions: help, search_types, create, delete, get_info, list, modify. IMPORTANT: For object/class types (widgets, actors, etc.), ALWAYS use 'search_types' action FIRST with search_text param to find the full type_path (e.g., '/Script/UMG.UserWidget'). Primitive type aliases: float, int, bool, string. For create/modify: use variable_config with type_path, name, category, tooltip, default_value, is_blueprint_read_only, is_editable_in_details. For list: use filter_name or filter_category to filter results.",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -439,7 +322,7 @@ REGISTER_VIBEUE_TOOL(manage_blueprint_variable,
 
 // 9. manage_enhanced_input
 REGISTER_VIBEUE_TOOL(manage_enhanced_input,
-	"Manage enhanced input - create input actions, mapping contexts, key bindings. Actions: create_action, create_context, add_mapping, remove_mapping, get_actions, get_contexts",
+	"Enhanced Input System management for Input Actions, Mapping Contexts, Modifiers, and Triggers. Actions: action_create, action_list, action_get_properties, action_configure, mapping_create_context, mapping_list_contexts, mapping_add_key_mapping, mapping_get_mappings, mapping_remove_mapping, mapping_add_modifier, mapping_remove_modifier, mapping_get_modifiers, mapping_add_trigger, mapping_remove_trigger, mapping_get_triggers, mapping_get_available_keys, mapping_get_available_modifier_types, mapping_get_available_trigger_types, reflection_discover_types. ParamsJson params: service (action, mapping, reflection), action_name, asset_path, value_type (Digital, Axis1D, Axis2D, Axis3D), context_name, context_path, key, mapping_index, modifier_type, trigger_type. Use action='help' for details.",
 	"Input",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -455,7 +338,7 @@ REGISTER_VIBEUE_TOOL(manage_enhanced_input,
 
 // 10. manage_level_actors
 REGISTER_VIBEUE_TOOL(manage_level_actors,
-	"Manage level actors - spawn, transform, query, modify actors. Actions: add, remove, list, find, get_info, set_transform, set_location, set_rotation, set_scale, focus, get_property, set_property, attach, detach, select, rename",
+	"Manage level actors - spawn, transform, query, modify actors. Actions: help, add, remove, list, find, get_info, set_transform, get_transform, set_location, set_rotation, set_scale, focus, move_to_view, refresh_viewport, get_property, set_property, get_all_properties, set_folder, attach, detach, select, rename",
 	"Level",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -503,7 +386,7 @@ REGISTER_VIBEUE_TOOL(manage_material_node,
 
 // 13. manage_umg_widget
 REGISTER_VIBEUE_TOOL(manage_umg_widget,
-	"Manage UMG widgets - create, modify widget blueprints. Actions: create, delete, get_info, add_child, remove_child, set_property, get_property, list_components, get_available_types, add_widget",
+	"UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_child (or add_component), remove_child (or remove_component), validate, search_types (or get_available_types), get_component_properties (or list_properties), get_property, set_property, get_available_events, bind_events, create, delete, get_info, add_widget. ParamsJson params: widget_name (required), component_name, component_type, parent_name, property_name, property_value, category, search_text.",
 	"UI",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
