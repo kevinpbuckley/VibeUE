@@ -120,6 +120,14 @@ void FChatSession::Shutdown()
 {
     CancelRequest();
     SaveHistory();
+    
+    // Shutdown MCP client to stop any subprocess servers
+    if (MCPClient.IsValid())
+    {
+        MCPClient->Shutdown();
+        MCPClient.Reset();
+    }
+    
     UE_LOG(LogChatSession, Log, TEXT("Chat session shutdown"));
 }
 
@@ -321,6 +329,8 @@ void FChatSession::OnStreamComplete(bool bSuccess)
 
 void FChatSession::OnStreamError(const FString& ErrorMessage)
 {
+    CHAT_SESSION_LOG(Error, TEXT("[STREAM ERROR] %s"), *ErrorMessage);
+    
     // Remove the incomplete assistant message
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
     {

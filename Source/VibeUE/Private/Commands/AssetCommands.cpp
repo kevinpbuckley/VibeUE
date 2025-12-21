@@ -6,6 +6,7 @@
 #include "Services/Asset/AssetImportService.h"
 #include "Core/ServiceContext.h"
 #include "Core/Result.h"
+#include "Utils/HelpFileReader.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 
@@ -271,13 +272,21 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJson
     }
     
     // Extract optional parameters
+    // NOTE: bShowConfirmation defaults to false for MCP calls because modal dialogs
+    // can cause deadlocks when MCP is blocking on the game thread
     bool bForceDelete = false;
-    bool bShowConfirmation = true;
+    bool bShowConfirmation = false;
     
     if (Params.IsValid())
     {
         Params->TryGetBoolField(TEXT("force_delete"), bForceDelete);
         Params->TryGetBoolField(TEXT("show_confirmation"), bShowConfirmation);
+    }
+    
+    // Validate LifecycleService is initialized
+    if (!LifecycleService.IsValid())
+    {
+        return CreateErrorResponse(TEXT("LifecycleService not initialized"));
     }
     
     // Delegate to LifecycleService
@@ -484,42 +493,7 @@ TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& Error
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Help for manage_asset"));
-    Response->SetStringField(TEXT("tool"), TEXT("manage_asset"));
-    Response->SetStringField(TEXT("summary"), TEXT("Asset management including search, import, export, save, delete operations"));
-    Response->SetStringField(TEXT("topic"), TEXT("asset-management"));
-
-    TArray<TSharedPtr<FJsonValue>> ActionsArray;
-
-    // Build actions array matching Python help_system structure
-    TArray<TPair<FString, FString>> ActionsList = {
-        {TEXT("help"), TEXT("Show help for this tool or a specific action")},
-        {TEXT("search"), TEXT("Search for assets by name, path, or class filter")},
-        {TEXT("import_texture"), TEXT("Import a texture from external file")},
-        {TEXT("export_texture"), TEXT("Export a texture for external analysis")},
-        {TEXT("delete"), TEXT("Delete an asset from the project")},
-        {TEXT("duplicate"), TEXT("Duplicate an existing asset")},
-        {TEXT("save"), TEXT("Save a modified asset to disk")},
-        {TEXT("save_all"), TEXT("Save all modified assets to disk")},
-        {TEXT("list_references"), TEXT("List all assets that reference or are referenced by an asset")},
-        {TEXT("open"), TEXT("Open an asset in its editor")}
-    };
-
-    for (const auto& ActionPair : ActionsList)
-    {
-        TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-        ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-        ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-        ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-    }
-
-    Response->SetArrayField(TEXT("actions"), ActionsArray);
-    Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-    Response->SetStringField(TEXT("usage"), TEXT("manage_asset(action='action_name', ...params)"));
-    Response->SetStringField(TEXT("note"), TEXT("This tool manages all asset operations. Use save_all to save all dirty assets before building."));
-    Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-
-    return Response;
+    return FHelpFileReader::HandleHelp(TEXT("manage_asset"), Params);
 }
 
 //-----------------------------------------------------------------------------

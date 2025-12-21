@@ -227,6 +227,12 @@ public:
 	UFUNCTION()
 	static FString ManageUMGWidget(const FString& Action, const FString& ParamsJson);
 
+	/**
+	 * Cleanup all static command handler instances
+	 * Called during module shutdown to ensure proper cleanup
+	 */
+	static void CleanupCommandHandlers();
+
 private:
 	/** Helper to parse JSON params */
 	static TSharedPtr<FJsonObject> ParseParams(const FString& ParamsJson);

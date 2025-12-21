@@ -3,6 +3,7 @@
 #include "Commands/BlueprintVariableReflectionServices.h"
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
+#include "Utils/HelpFileReader.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
@@ -2658,43 +2659,5 @@ bool FBlueprintVariableCommandContext::ParseRequestParams(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-	Response->SetBoolField(TEXT("success"), true);
-	Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint_variable"));
-	Response->SetStringField(TEXT("summary"), TEXT("Blueprint variable management including creation, deletion, and property access"));
-	Response->SetStringField(TEXT("topic"), TEXT("multi-action-tools"));
-
-	TArray<TSharedPtr<FJsonValue>> ActionsArray;
-
-	// Build actions array matching Python help_system structure
-	TArray<TPair<FString, FString>> ActionsList = {
-		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
-		{TEXT("search_types"), TEXT("Search for available variable types using reflection. ALWAYS use this before create to find correct type_path.")},
-		{TEXT("create"), TEXT("Create a new variable in a Blueprint")},
-		{TEXT("delete"), TEXT("Delete a variable from a Blueprint")},
-		{TEXT("get_info"), TEXT("Get detailed information about a variable")},
-		{TEXT("list"), TEXT("List all variables in a Blueprint")},
-		{TEXT("get_property"), TEXT("Get a variable's current default value. The property_path is the variable name itself.")},
-		{TEXT("set_property"), TEXT("Set a variable's default value. The property_path is the variable name, value is the new default.")},
-		{TEXT("modify"), TEXT("Modify a variable's type or properties")},
-		{TEXT("diagnostics"), TEXT("Get diagnostic information about variable issues")},
-		{TEXT("get_property_metadata"), TEXT("Get metadata about a variable property")},
-		{TEXT("set_property_metadata"), TEXT("Set metadata on a variable property")}
-	};
-
-	for (const auto& ActionPair : ActionsList)
-	{
-		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-	}
-
-	Response->SetArrayField(TEXT("actions"), ActionsArray);
-	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_blueprint_variable(action='help', help_action='action_name')"));
-	Response->SetStringField(TEXT("note"), TEXT("Use search_types to find correct type_path values before creating variables. Supported type aliases: float, double, int, int64, bool, string, name, text, byte"));
-	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-
-	return Response;
+	return FHelpFileReader::HandleHelp(TEXT("manage_blueprint_variable"), Params);
 }

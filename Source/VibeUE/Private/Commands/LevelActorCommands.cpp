@@ -3,6 +3,7 @@
 #include "Commands/LevelActorCommands.h"
 #include "Services/LevelActor/LevelActorService.h"
 #include "Services/LevelActor/Types/LevelActorTypes.h"
+#include "Utils/HelpFileReader.h"
 
 FLevelActorCommands::FLevelActorCommands()
 {
@@ -457,53 +458,5 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleRename(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-	TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
-	Response->SetBoolField(TEXT("success"), true);
-	Response->SetStringField(TEXT("tool"), TEXT("manage_level_actors"));
-	Response->SetStringField(TEXT("summary"), TEXT("Level actor operations including add/remove, transforms, properties, and hierarchy management"));
-	Response->SetStringField(TEXT("topic"), TEXT("level-actors"));
-	
-	TArray<TSharedPtr<FJsonValue>> ActionsArray;
-	
-	// Build actions array with detailed parameter info
-	TArray<TPair<FString, FString>> ActionsList = {
-		{TEXT("help"), TEXT("Show help for this tool")},
-		{TEXT("add"), TEXT("Add/spawn actor. Params: actor_class (required), actor_label, spawn_location [x,y,z], spawn_rotation [pitch,yaw,roll]")},
-		{TEXT("remove"), TEXT("Remove actor. Params: actor_label (required)")},
-		{TEXT("list"), TEXT("List all actors. Params: actor_class (optional filter)")},
-		{TEXT("find"), TEXT("Find actors. Params: actor_label, actor_class, actor_tag")},
-		{TEXT("get_info"), TEXT("Get actor info. Params: actor_label (required), include_properties, include_components")},
-		{TEXT("set_transform"), TEXT("Set transform. Params: actor_label (required), location [x,y,z], rotation [pitch,yaw,roll], scale [x,y,z]")},
-		{TEXT("get_transform"), TEXT("Get transform. Params: actor_label (required)")},
-		{TEXT("set_location"), TEXT("Set location. Params: actor_label (required), location [x,y,z]")},
-		{TEXT("set_rotation"), TEXT("Set rotation. Params: actor_label (required), rotation [pitch,yaw,roll]")},
-		{TEXT("set_scale"), TEXT("Set scale. Params: actor_label (required), scale [x,y,z]")},
-		{TEXT("focus"), TEXT("Move CAMERA to actor. Params: actor_label (required)")},
-		{TEXT("move_to_view"), TEXT("Move ACTOR to camera. Params: actor_label (required)")},
-		{TEXT("refresh_viewport"), TEXT("Refresh viewport")},
-		{TEXT("get_property"), TEXT("Get property. Params: actor_label (required), property_path (required)")},
-		{TEXT("set_property"), TEXT("Set property. Params: actor_label (required), property_path (required), property_value (required)")},
-		{TEXT("get_all_properties"), TEXT("Get all properties. Params: actor_label (required)")},
-		{TEXT("set_folder"), TEXT("Set folder. Params: actor_label (required), folder_path (required). Note: folders are created automatically")},
-		{TEXT("attach"), TEXT("Attach child to parent. Params: child_label (required), parent_label (required), socket_name (optional)")},
-		{TEXT("detach"), TEXT("Detach from parent. Params: actor_label (required)")},
-		{TEXT("select"), TEXT("Select actor. Params: actor_label (required)")},
-		{TEXT("rename"), TEXT("Rename actor. Params: actor_label (required), new_label (required)")}
-	};
-	
-	for (const auto& ActionPair : ActionsList)
-	{
-		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-	}
-	
-	Response->SetArrayField(TEXT("actions"), ActionsArray);
-	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-	Response->SetStringField(TEXT("usage"), TEXT("manage_level_actors(action='action_name', ParamsJson='{...}')"));
-	Response->SetStringField(TEXT("note"), TEXT("IMPORTANT: 'focus' moves camera TO actor, 'move_to_view' moves actor TO camera. For attach, use child_label and parent_label (not actor_label)."));
-	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-	
-	return Response;
+	return FHelpFileReader::HandleHelp(TEXT("manage_level_actors"), Params);
 }

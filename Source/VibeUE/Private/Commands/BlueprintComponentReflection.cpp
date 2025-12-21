@@ -1,6 +1,7 @@
 // Copyright Kevin Buckley 2025 All Rights Reserved.
 
 #include "Commands/BlueprintComponentReflection.h"
+#include "Utils/HelpFileReader.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
@@ -2754,40 +2755,5 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReparentComponent(c
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-    TSharedPtr<FJsonObject> Response = CreateSuccessResponse(TEXT("Help for manage_blueprint_component"));
-    Response->SetStringField(TEXT("tool"), TEXT("manage_blueprint_component"));
-    Response->SetStringField(TEXT("summary"), TEXT("Blueprint component management including adding, removing, configuring, and organizing components"));
-    Response->SetStringField(TEXT("topic"), TEXT("blueprint-component-management"));
-
-    TArray<TSharedPtr<FJsonValue>> ActionsArray;
-
-    // Build actions array matching Python help_system structure
-    TArray<TPair<FString, FString>> ActionsList = {
-        {TEXT("help"), TEXT("Show help for this tool or a specific action")},
-        {TEXT("add"), TEXT("Add a component to a blueprint")},
-        {TEXT("remove"), TEXT("Remove a component from a blueprint")},
-        {TEXT("get_hierarchy"), TEXT("Get the component hierarchy tree of a blueprint")},
-        {TEXT("set_property"), TEXT("Set a property value on a component")},
-        {TEXT("get_property"), TEXT("Get a property value from a component")},
-        {TEXT("get_all_properties"), TEXT("Get all property values from a component instance")},
-        {TEXT("get_info"), TEXT("Get properties and info for a component CLASS/TYPE (no blueprint needed)")},
-        {TEXT("reparent"), TEXT("Change the parent of a component in the hierarchy")},
-        {TEXT("get_available"), TEXT("Get list of available component types that can be added")}
-    };
-
-    for (const auto& ActionPair : ActionsList)
-    {
-        TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-        ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-        ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-        ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-    }
-
-    Response->SetArrayField(TEXT("actions"), ActionsArray);
-    Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-    Response->SetStringField(TEXT("usage"), TEXT("manage_blueprint_component(action='action_name', blueprint_name='...', ...params)"));
-    Response->SetStringField(TEXT("note"), TEXT("Components are the building blocks of blueprint actors. Use get_hierarchy to see the current structure."));
-    Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-
-    return Response;
+    return FHelpFileReader::HandleHelp(TEXT("manage_blueprint_component"), Params);
 }

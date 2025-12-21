@@ -97,7 +97,38 @@ TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* Widget
 
     if (ParentName.IsEmpty())
     {
-        WidgetBlueprint->WidgetTree->RootWidget = NewWidget;
+        // If there's no root yet, this becomes the root
+        if (!WidgetBlueprint->WidgetTree->RootWidget)
+        {
+            WidgetBlueprint->WidgetTree->RootWidget = NewWidget;
+        }
+        // If root exists and is a panel, add to it
+        else if (UPanelWidget* RootPanel = Cast<UPanelWidget>(WidgetBlueprint->WidgetTree->RootWidget))
+        {
+            RootPanel->AddChild(NewWidget);
+        }
+        // If root exists but is not a panel, we need to wrap both in a CanvasPanel
+        else
+        {
+            UWidget* OldRoot = WidgetBlueprint->WidgetTree->RootWidget;
+            
+            // Create a new CanvasPanel to be the root
+            UCanvasPanel* NewRootPanel = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), FName(TEXT("RootCanvas")));
+            if (NewRootPanel)
+            {
+                // Set as new root
+                WidgetBlueprint->WidgetTree->RootWidget = NewRootPanel;
+                // Add old root and new widget as children
+                NewRootPanel->AddChild(OldRoot);
+                NewRootPanel->AddChild(NewWidget);
+            }
+            else
+            {
+                // Fallback: just replace root (old behavior, but log warning)
+                UE_LOG(LogWidgetComponent, Warning, TEXT("Could not create CanvasPanel wrapper, replacing root widget"));
+                WidgetBlueprint->WidgetTree->RootWidget = NewWidget;
+            }
+        }
     }
     else
     {

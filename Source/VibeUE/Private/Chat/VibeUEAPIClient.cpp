@@ -202,8 +202,9 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     // Disable keep-alive to prevent stale connections causing stuck requests
     Request->SetHeader(TEXT("Connection"), TEXT("close"));
     Request->SetContentAsString(RequestBodyString);
-    // Set timeout to 30 seconds to fail fast on stuck connections
-    Request->SetTimeout(30.0f);
+    // Set timeout to 120 seconds - LLM inference with tools and large context can take time
+    // especially with chain-of-thought reasoning enabled
+    Request->SetTimeout(120.0f);
 
     return Request;
 }

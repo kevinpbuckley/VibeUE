@@ -3,6 +3,7 @@
 #include "Commands/MaterialNodeCommands.h"
 #include "Services/Material/MaterialNodeService.h"
 #include "Core/ServiceContext.h"
+#include "Utils/HelpFileReader.h"
 #include "Materials/Material.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
@@ -706,9 +707,11 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleSetProperty(const TSharedPt
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Accept both "value" and "property_value" as parameter names (docs use property_value)
+	if (!Params->TryGetStringField(TEXT("value"), Value) && 
+		!Params->TryGetStringField(TEXT("property_value"), Value))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 	}
 
 	auto Result = Service->SetExpressionProperty(Material, ExpressionId, PropertyName, Value);
@@ -923,52 +926,5 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetOutputConnections(const 
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetStringField(TEXT("tool"), TEXT("manage_material_node"));
-	Response->SetStringField(TEXT("summary"), TEXT("Material graph node (expression) operations including discovery, creation, connections, and parameters"));
-	Response->SetStringField(TEXT("topic"), TEXT("material-node-tools"));
-
-	TArray<TSharedPtr<FJsonValue>> ActionsArray;
-
-	// Build actions array matching Python help_system TOOL_ACTION_OVERRIDES structure
-	TArray<TPair<FString, FString>> ActionsList = {
-		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
-		{TEXT("discover_types"), TEXT("Discover available material expression types")},
-		{TEXT("get_categories"), TEXT("Get expression type categories")},
-		{TEXT("create"), TEXT("Create a new expression node")},
-		{TEXT("delete"), TEXT("Delete an expression node")},
-		{TEXT("move"), TEXT("Move a node to a new position")},
-		{TEXT("list"), TEXT("List all nodes in the material graph")},
-		{TEXT("get_details"), TEXT("Get detailed information about a node")},
-		{TEXT("get_pins"), TEXT("Get pin information for a node")},
-		{TEXT("connect"), TEXT("Connect two expression pins")},
-		{TEXT("disconnect"), TEXT("Disconnect an expression pin")},
-		{TEXT("connect_to_output"), TEXT("Connect an expression to a material output")},
-		{TEXT("disconnect_output"), TEXT("Disconnect a material output")},
-		{TEXT("list_connections"), TEXT("List all connections in the material")},
-		{TEXT("get_property"), TEXT("Get a node property value")},
-		{TEXT("set_property"), TEXT("Set a node property value")},
-		{TEXT("list_properties"), TEXT("List all editable properties for a node")},
-		{TEXT("promote_to_parameter"), TEXT("Promote an expression pin to a material parameter")},
-		{TEXT("create_parameter"), TEXT("Create a new material parameter")},
-		{TEXT("set_parameter_metadata"), TEXT("Set parameter metadata")},
-		{TEXT("get_output_properties"), TEXT("Get material output properties")},
-		{TEXT("get_output_connections"), TEXT("Get material output connections")}  
-	};
-
-	for (const auto& ActionPair : ActionsList)
-	{
-		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-	}
-
-	Response->SetArrayField(TEXT("actions"), ActionsArray);
-	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_material_node(action='help', help_action='action_name')"));
-	Response->SetStringField(TEXT("note"), TEXT("This tool supports 21 actions for material graph operations. Use action='help' for complete action list."));
-	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-
-	return Response;
+	return FHelpFileReader::HandleHelp(TEXT("manage_material_node"), Params);
 }

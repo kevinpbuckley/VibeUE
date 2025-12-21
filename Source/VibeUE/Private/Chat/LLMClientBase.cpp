@@ -1095,6 +1095,9 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         if (RequestStatus == EHttpRequestStatus::Failed)
         {
             UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed with connection error (possibly timeout)"));
+            UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: OnError bound=%s, OnComplete bound=%s"), 
+                CurrentOnError.IsBound() ? TEXT("Yes") : TEXT("No"),
+                CurrentOnComplete.IsBound() ? TEXT("Yes") : TEXT("No"));
             CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed. Please try again."));
             CurrentOnComplete.ExecuteIfBound(false);
             CurrentRequest.Reset();

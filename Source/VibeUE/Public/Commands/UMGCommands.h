@@ -34,9 +34,10 @@ public:
 
     /**
      * Handle help request for manage_umg_widget tool
+     * @param Params - Optional parameters including help_action for specific action help
      * @return JSON response with all available actions and usage information
      */
-    TSharedPtr<FJsonObject> HandleHelp();
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
 
 private:
     /**

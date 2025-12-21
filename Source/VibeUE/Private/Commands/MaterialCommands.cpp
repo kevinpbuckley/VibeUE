@@ -3,6 +3,7 @@
 #include "Commands/MaterialCommands.h"
 #include "Services/Material/MaterialService.h"
 #include "Core/ServiceContext.h"
+#include "Utils/HelpFileReader.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
@@ -181,6 +182,7 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 		
 		// Add array of available commands
 		TArray<TSharedPtr<FJsonValue>> AvailableCommands;
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("help")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create_instance")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("save")));
@@ -862,22 +864,23 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetProperty(const TSharedPtr<FJ
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters (property_value is the documented parameter)
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
-		// Try to get as other types
+		// Try to get as other types from both parameter names
 		bool bBoolValue;
 		double NumValue;
-		if (Params->TryGetBoolField(TEXT("value"), bBoolValue))
+		if (Params->TryGetBoolField(TEXT("value"), bBoolValue) || Params->TryGetBoolField(TEXT("property_value"), bBoolValue))
 		{
 			Value = bBoolValue ? TEXT("true") : TEXT("false");
 		}
-		else if (Params->TryGetNumberField(TEXT("value"), NumValue))
+		else if (Params->TryGetNumberField(TEXT("value"), NumValue) || Params->TryGetNumberField(TEXT("property_value"), NumValue))
 		{
 			Value = FString::SanitizeFloat(NumValue);
 		}
 		else
 		{
-			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 		}
 	}
 
@@ -1050,16 +1053,17 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetParameterDefault(const TShar
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
 		double NumValue;
-		if (Params->TryGetNumberField(TEXT("value"), NumValue))
+		if (Params->TryGetNumberField(TEXT("value"), NumValue) || Params->TryGetNumberField(TEXT("property_value"), NumValue))
 		{
 			Value = FString::SanitizeFloat(NumValue);
 		}
 		else
 		{
-			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 		}
 	}
 
@@ -1231,9 +1235,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceProperty(const TShar
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 	}
 
 	auto Result = Service->SetInstanceProperty(InstancePath, PropertyName, Value);
@@ -1473,55 +1478,6 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSaveInstance(const TSharedPtr<F
 
 TSharedPtr<FJsonObject> FMaterialCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	Response->SetStringField(TEXT("tool"), TEXT("manage_material"));
-	Response->SetStringField(TEXT("summary"), TEXT("Material and Material Instance management including creation, properties, and parameters"));
-	Response->SetStringField(TEXT("topic"), TEXT("material-management"));
-
-	TArray<TSharedPtr<FJsonValue>> ActionsArray;
-
-	// Build actions array matching Python help_system structure
-	TArray<TPair<FString, FString>> ActionsList = {
-		{TEXT("help"), TEXT("Show help for this tool or a specific action")},
-		{TEXT("create"), TEXT("Create a new material asset")},
-		{TEXT("get_info"), TEXT("Get comprehensive material information")},
-		{TEXT("list_properties"), TEXT("List all editable properties")},
-		{TEXT("get_property"), TEXT("Get a property value")},
-		{TEXT("set_property"), TEXT("Set a property value")},
-		{TEXT("set_properties"), TEXT("Set multiple properties at once")},
-		{TEXT("get_property_info"), TEXT("Get detailed property metadata")},
-		{TEXT("list_parameters"), TEXT("List all material parameters")},
-		{TEXT("get_parameter"), TEXT("Get a specific parameter")},
-		{TEXT("set_parameter_default"), TEXT("Set a parameter's default value")},
-		{TEXT("compile"), TEXT("Recompile material shaders")},
-		{TEXT("save"), TEXT("Save material to disk")},
-		{TEXT("refresh_editor"), TEXT("Refresh open Material Editor")},
-		{TEXT("create_instance"), TEXT("Create a material instance from a parent material")},
-		{TEXT("get_instance_info"), TEXT("Get comprehensive info about a material instance")},
-		{TEXT("list_instance_properties"), TEXT("List all editable properties on a material instance")},
-		{TEXT("get_instance_property"), TEXT("Get a single property value from instance")},
-		{TEXT("set_instance_property"), TEXT("Set a property on material instance")},
-		{TEXT("list_instance_parameters"), TEXT("List all parameters with current/default values")},
-		{TEXT("set_instance_scalar_parameter"), TEXT("Set a scalar parameter override")},
-		{TEXT("set_instance_vector_parameter"), TEXT("Set a vector/color parameter override")},
-		{TEXT("set_instance_texture_parameter"), TEXT("Set a texture parameter override")},
-		{TEXT("clear_instance_parameter_override"), TEXT("Remove parameter override, revert to parent")},
-		{TEXT("save_instance"), TEXT("Save material instance to disk")}
-	};
-
-	for (const auto& ActionPair : ActionsList)
-	{
-		TSharedPtr<FJsonObject> ActionObj = MakeShared<FJsonObject>();
-		ActionObj->SetStringField(TEXT("action"), ActionPair.Key);
-		ActionObj->SetStringField(TEXT("description"), ActionPair.Value);
-		ActionsArray.Add(MakeShared<FJsonValueObject>(ActionObj));
-	}
-
-	Response->SetArrayField(TEXT("actions"), ActionsArray);
-	Response->SetNumberField(TEXT("total_actions"), ActionsArray.Num());
-	Response->SetStringField(TEXT("usage"), TEXT("For detailed help on a specific action: manage_material(action='help', help_action='action_name')"));
-	Response->SetStringField(TEXT("note"), TEXT("This tool supports 25 actions (12 base material + 13 instance). Base actions work with materials, instance actions work with material instances (MIC)."));
-	Response->SetStringField(TEXT("help_type"), TEXT("tool_overview"));
-
-	return Response;
+	// Use file-based help system
+	return FHelpFileReader::HandleHelp(TEXT("manage_material"), Params);
 }

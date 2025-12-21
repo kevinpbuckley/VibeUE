@@ -1468,51 +1468,37 @@ void FMaterialNodeService::RefreshMaterialGraph(UMaterial* Material)
 {
     if (!Material) return;
     
+    // Don't refresh if we're not on the game thread
+    if (!IsInGameThread())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("RefreshMaterialGraph called from non-game thread, skipping"));
+        return;
+    }
+    
     // Mark material as modified
     Material->MarkPackageDirty();
     
-    // Update preview material
-    Material->PreEditChange(nullptr);
-    Material->PostEditChange();
-    
-    // Rebuild the material graph if it exists
-    if (UMaterialGraph* MaterialGraph = Cast<UMaterialGraph>(Material->MaterialGraph))
+    // Update preview material - wrap in validity check
+    if (IsValid(Material))
     {
-        MaterialGraph->LinkMaterialExpressionsFromGraph();
-        MaterialGraph->RebuildGraph();
+        Material->PreEditChange(nullptr);
+        Material->PostEditChange();
     }
     
-    // Save, close, and reopen the material to ensure the UI is updated
-    // This is more reliable than trying to refresh the graph in place
-    if (GEditor)
+    // Rebuild the material graph if it exists
+    if (Material->MaterialGraph)
     {
-        if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+        if (UMaterialGraph* MaterialGraph = Cast<UMaterialGraph>(Material->MaterialGraph))
         {
-            // Check if the material is currently open in an editor
-            bool bWasOpen = AssetEditorSubsystem->FindEditorForAsset(Material, false) != nullptr;
-            
-            if (bWasOpen)
+            if (IsValid(MaterialGraph))
             {
-                // Save the material first
-                UPackage* Package = Material->GetOutermost();
-                if (Package && Package->IsDirty())
-                {
-                    FString PackageFilename;
-                    if (FPackageName::DoesPackageExist(Package->GetName(), &PackageFilename))
-                    {
-                        FSavePackageArgs SaveArgs;
-                        SaveArgs.TopLevelFlags = RF_Standalone;
-                        UPackage::SavePackage(Package, nullptr, *PackageFilename, SaveArgs);
-                    }
-                }
-                
-                // Close the editor
-                AssetEditorSubsystem->CloseAllEditorsForAsset(Material);
-                
-                // Reopen the material
-                AssetEditorSubsystem->OpenEditorForAsset(Material);
+                MaterialGraph->LinkMaterialExpressionsFromGraph();
+                MaterialGraph->RebuildGraph();
             }
         }
     }
+    
+    // Skip the close/reopen cycle which can cause crashes during rapid operations
+    // The graph rebuild above is sufficient for most operations
 }
 

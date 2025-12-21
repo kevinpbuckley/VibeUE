@@ -85,7 +85,10 @@ TSharedPtr<FJsonObject> UEditorTools::ParseParams(const FString& ParamsJson)
 		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ParamsJson);
 		if (!FJsonSerializer::Deserialize(Reader, Params))
 		{
+			// Return object with parse error flag so callers can provide better error messages
 			Params = MakeShareable(new FJsonObject);
+			Params->SetBoolField(TEXT("__json_parse_error__"), true);
+			Params->SetStringField(TEXT("__raw_json__"), ParamsJson.Left(500)); // Truncate for safety
 		}
 	}
 	return Params;
@@ -226,7 +229,7 @@ REGISTER_VIBEUE_TOOL(check_unreal_connection,
 
 // 2. manage_asset
 REGISTER_VIBEUE_TOOL(manage_asset,
-	"Manage assets - search, import, export, save, delete assets. Actions: search, import_texture, export_texture, delete, duplicate, save, save_all, list_references, open (or open_in_editor). For duplicate use: asset_path (source), destination_path (folder), new_name (optional)",
+	"Manage assets - search, import, export, save, delete assets. Actions: search, import_texture, export_texture, delete, duplicate, save, save_all, list_references, open. For search: use search_term param (required). For duplicate: use asset_path (source), destination_path (folder), new_name (optional).",
 	"Asset",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -354,7 +357,7 @@ REGISTER_VIBEUE_TOOL(manage_level_actors,
 
 // 11. manage_material
 REGISTER_VIBEUE_TOOL(manage_material,
-	"Manage materials - create, modify, compile materials. Actions: create, get_info, set_property, get_property, compile",
+	"Manage materials - create, modify, compile materials. Actions: help, create, create_instance, save, compile, refresh_editor, get_info, summarize, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance",
 	"Material",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -386,7 +389,7 @@ REGISTER_VIBEUE_TOOL(manage_material_node,
 
 // 13. manage_umg_widget
 REGISTER_VIBEUE_TOOL(manage_umg_widget,
-	"UMG Widget Blueprint management: add/remove components, set properties, bind events. Actions: list_components, add_child (or add_component), remove_child (or remove_component), validate, search_types (or get_available_types), get_component_properties (or list_properties), get_property, set_property, get_available_events, bind_events, create, delete, get_info, add_widget. ParamsJson params: widget_name (required), component_name, component_type, parent_name, property_name, property_value, category, search_text.",
+	"Manage UMG Widget Blueprint components: add/remove/configure UI widgets inside existing Widget Blueprints. NOTE: Use manage_blueprint to CREATE widget blueprints. Actions: list_components, add_component, remove_component, validate, search_types, get_component_properties, get_property, set_property, list_properties, get_available_events, bind_events. ParamsJson params: widget_name (required), component_name, component_type, parent_name, property_name, property_value, input_mappings (for bind_events).",
 	"UI",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -399,3 +402,24 @@ REGISTER_VIBEUE_TOOL(manage_umg_widget,
 		);
 	}
 );
+
+//=============================================================================
+// CLEANUP
+//=============================================================================
+void UEditorTools::CleanupCommandHandlers()
+{
+	UE_LOG(LogTemp, Display, TEXT("EditorTools: Cleaning up command handlers..."));
+	
+	LevelActorCommandsInstance.Reset();
+	BlueprintCommandsInstance.Reset();
+	BlueprintNodeCommandsInstance.Reset();
+	BlueprintComponentInstance.Reset();
+	UMGCommandsInstance.Reset();
+	MaterialCommandsInstance.Reset();
+	MaterialNodeCommandsInstance.Reset();
+	AssetCommandsInstance.Reset();
+	EnhancedInputCommandsInstance.Reset();
+	SharedServiceContext.Reset();
+	
+	UE_LOG(LogTemp, Display, TEXT("EditorTools: Command handlers cleaned up"));
+}

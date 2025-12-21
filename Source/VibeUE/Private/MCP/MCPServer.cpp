@@ -57,6 +57,10 @@ void FMCPServer::Shutdown()
 {
     StopServer();
     UE_LOG(LogMCPServer, Log, TEXT("MCP Server shutdown"));
+    
+    // Reset the static instance to ensure proper cleanup on editor exit
+    // This prevents the server from keeping the module alive
+    Instance.Reset();
 }
 
 bool FMCPServer::Start()
