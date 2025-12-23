@@ -10,6 +10,7 @@
 
 #include "Services/UMG/WidgetPropertyService.h"
 #include "Core/ErrorCodes.h"
+#include "Core/JsonValueHelper.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -408,63 +409,30 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
         {
             FLinearColor ColorValue;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats (object, array, string-encoded, hex, named colors)
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, ColorValue))
             {
-                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
-                ColorValue.R = ColorObj->GetNumberField(TEXT("R"));
-                ColorValue.G = ColorObj->GetNumberField(TEXT("G"));
-                ColorValue.B = ColorObj->GetNumberField(TEXT("B"));
-                ColorValue.A = ColorObj->GetNumberField(TEXT("A"));
-            }
-            else if (JsonValue->Type == EJson::Array)
-            {
-                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
-                if (ColorArray.Num() >= 3)
-                {
-                    ColorValue.R = ColorArray[0]->AsNumber();
-                    ColorValue.G = ColorArray[1]->AsNumber();
-                    ColorValue.B = ColorArray[2]->AsNumber();
-                    ColorValue.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
-                }
+                Property->SetValue_InContainer(Widget, &ColorValue);
+                return true;
             }
             else
             {
-                ErrorMessage = TEXT("LinearColor must be object {R,G,B,A} or array [R,G,B,A]");
+                ErrorMessage = TEXT("LinearColor must be object {R,G,B,A}, array [R,G,B,A], hex string #RRGGBB, or color name");
                 return false;
             }
-
-            Property->SetValue_InContainer(Widget, &ColorValue);
-            return true;
         }
         else if (StructProperty->Struct == TBaseStructure<FSlateColor>::Get())
         {
-            FSlateColor SlateColorValue;
+            FLinearColor LinearColor;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, LinearColor))
             {
-                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
-                FLinearColor LinearColor;
-                LinearColor.R = ColorObj->GetNumberField(TEXT("R"));
-                LinearColor.G = ColorObj->GetNumberField(TEXT("G"));
-                LinearColor.B = ColorObj->GetNumberField(TEXT("B"));
-                LinearColor.A = ColorObj->GetNumberField(TEXT("A"));
-                SlateColorValue = FSlateColor(LinearColor);
+                FSlateColor SlateColorValue = FSlateColor(LinearColor);
+                Property->SetValue_InContainer(Widget, &SlateColorValue);
+                return true;
             }
-            else if (JsonValue->Type == EJson::Array)
-            {
-                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
-                if (ColorArray.Num() >= 3)
-                {
-                    FLinearColor LinearColor;
-                    LinearColor.R = ColorArray[0]->AsNumber();
-                    LinearColor.G = ColorArray[1]->AsNumber();
-                    LinearColor.B = ColorArray[2]->AsNumber();
-                    LinearColor.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
-                    SlateColorValue = FSlateColor(LinearColor);
-                }
-            }
-
-            Property->SetValue_InContainer(Widget, &SlateColorValue);
+            // If no explicit color provided, leave as default
             return true;
         }
         else if (StructProperty->Struct == TBaseStructure<FMargin>::Get())
@@ -498,24 +466,17 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
         {
             FVector2D VectorValue;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats (object, array, string-encoded)
+            if (FJsonValueHelper::TryGetVector2D(JsonValue, VectorValue))
             {
-                const TSharedPtr<FJsonObject> VectorObj = JsonValue->AsObject();
-                VectorValue.X = VectorObj->GetNumberField(TEXT("X"));
-                VectorValue.Y = VectorObj->GetNumberField(TEXT("Y"));
+                Property->SetValue_InContainer(Widget, &VectorValue);
+                return true;
             }
-            else if (JsonValue->Type == EJson::Array)
+            else
             {
-                const TArray<TSharedPtr<FJsonValue>> VectorArray = JsonValue->AsArray();
-                if (VectorArray.Num() >= 2)
-                {
-                    VectorValue.X = VectorArray[0]->AsNumber();
-                    VectorValue.Y = VectorArray[1]->AsNumber();
-                }
+                ErrorMessage = TEXT("Vector2D must be object {X, Y} or array [X, Y]");
+                return false;
             }
-
-            Property->SetValue_InContainer(Widget, &VectorValue);
-            return true;
         }
         else if (StructProperty->Struct->GetName().Contains(TEXT("SlateBrush")))
         {

@@ -124,6 +124,9 @@ private:
     /** Update a message widget (for streaming) */
     void UpdateMessageWidget(int32 Index, const FChatMessage& Message);
     
+    /** Add a system notification to the chat UI (not stored in conversation history) */
+    void AddSystemNotification(const FString& Message);
+    
     /** Scroll to the bottom of the message list */
     void ScrollToBottom();
     

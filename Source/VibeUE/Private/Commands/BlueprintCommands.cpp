@@ -3,6 +3,7 @@
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Utils/HelpFileReader.h"
+#include "Core/JsonValueHelper.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
 #include "Commands/BlueprintVariableReflectionServices.h"
@@ -220,11 +221,15 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Extract required parameters - accept both 'name' and 'blueprint_name' for consistency
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'name' parameter"));
+        // Try alternative parameter name for consistency with other actions
+        if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'name' parameter (or 'blueprint_name')"));
+        }
     }
     
     // Extract optional parent class parameter
@@ -460,120 +465,36 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 // Special handling for common Spring Arm struct properties
                 if (StructProp->Struct == TBaseStructure<FVector>::Get())
                 {
-                    if (JsonValue->Type == EJson::Array)
+                    FVector Vec;
+                    if (FJsonValueHelper::TryGetVector(JsonValue, Vec))
                     {
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() == 3)
-                        {
-                            FVector Vec(
-                                Arr[0]->AsNumber(),
-                                Arr[1]->AsNumber(),
-                                Arr[2]->AsNumber()
-                            );
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            StructProp->CopySingleValue(PropertyAddr, &Vec);
-                            bSuccess = true;
-                        }
+                        void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
+                        StructProp->CopySingleValue(PropertyAddr, &Vec);
+                        bSuccess = true;
                     }
                 }
                 else if (StructProp->Struct == TBaseStructure<FRotator>::Get())
                 {
-                    if (JsonValue->Type == EJson::Array)
+                    FRotator Rot;
+                    if (FJsonValueHelper::TryGetRotator(JsonValue, Rot))
                     {
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() == 3)
-                        {
-                            FRotator Rot(
-                                Arr[0]->AsNumber(),
-                                Arr[1]->AsNumber(),
-                                Arr[2]->AsNumber()
-                            );
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            StructProp->CopySingleValue(PropertyAddr, &Rot);
-                            bSuccess = true;
-                        }
+                        void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
+                        StructProp->CopySingleValue(PropertyAddr, &Rot);
+                        bSuccess = true;
                     }
                 }
                 else if (StructProp->Struct == TBaseStructure<FColor>::Get())
                 {
                     // Handle FColor struct properties (e.g., LightColor on light components)
-                    // Auto-detects normalized (0-1) vs byte (0-255) values
-                    if (JsonValue->Type == EJson::Object)
+                    // Uses FJsonValueHelper which handles arrays, objects, hex strings, and named colors
+                    FLinearColor LinearColor;
+                    if (FJsonValueHelper::TryGetLinearColor(JsonValue, LinearColor))
                     {
-                        const TSharedPtr<FJsonObject>& ColorObj = JsonValue->AsObject();
-                        double RVal = 255.0, GVal = 255.0, BVal = 255.0, AVal = 255.0;
-                        
-                        if (ColorObj->HasField(TEXT("R")))
-                        {
-                            RVal = ColorObj->GetNumberField(TEXT("R"));
-                        }
-                        if (ColorObj->HasField(TEXT("G")))
-                        {
-                            GVal = ColorObj->GetNumberField(TEXT("G"));
-                        }
-                        if (ColorObj->HasField(TEXT("B")))
-                        {
-                            BVal = ColorObj->GetNumberField(TEXT("B"));
-                        }
-                        if (ColorObj->HasField(TEXT("A")))
-                        {
-                            AVal = ColorObj->GetNumberField(TEXT("A"));
-                        }
-                        
-                        // Auto-detect: if values are <= 1.0, treat as normalized (0-1) and convert to bytes (0-255)
-                        uint8 R, G, B, A;
-                        if (RVal <= 1.0 && GVal <= 1.0 && BVal <= 1.0 && AVal <= 1.0)
-                        {
-                            R = static_cast<uint8>(FMath::Clamp(RVal * 255.0, 0.0, 255.0));
-                            G = static_cast<uint8>(FMath::Clamp(GVal * 255.0, 0.0, 255.0));
-                            B = static_cast<uint8>(FMath::Clamp(BVal * 255.0, 0.0, 255.0));
-                            A = static_cast<uint8>(FMath::Clamp(AVal * 255.0, 0.0, 255.0));
-                        }
-                        else
-                        {
-                            R = static_cast<uint8>(FMath::Clamp(RVal, 0.0, 255.0));
-                            G = static_cast<uint8>(FMath::Clamp(GVal, 0.0, 255.0));
-                            B = static_cast<uint8>(FMath::Clamp(BVal, 0.0, 255.0));
-                            A = static_cast<uint8>(FMath::Clamp(AVal, 0.0, 255.0));
-                        }
-                        
-                        FColor Color(R, G, B, A);
+                        // Convert FLinearColor to FColor (handles normalized 0-1 values correctly)
+                        FColor Color = LinearColor.ToFColor(true);
                         void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
                         StructProp->CopySingleValue(PropertyAddr, &Color);
                         bSuccess = true;
-                    }
-                    else if (JsonValue->Type == EJson::Array)
-                    {
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() >= 3)
-                        {
-                            double RVal = Arr[0]->AsNumber();
-                            double GVal = Arr[1]->AsNumber();
-                            double BVal = Arr[2]->AsNumber();
-                            double AVal = Arr.Num() >= 4 ? Arr[3]->AsNumber() : 255.0;
-                            
-                            // Auto-detect: if values are <= 1.0, treat as normalized (0-1) and convert to bytes (0-255)
-                            uint8 R, G, B, A;
-                            if (RVal <= 1.0 && GVal <= 1.0 && BVal <= 1.0 && AVal <= 1.0)
-                            {
-                                R = static_cast<uint8>(FMath::Clamp(RVal * 255.0, 0.0, 255.0));
-                                G = static_cast<uint8>(FMath::Clamp(GVal * 255.0, 0.0, 255.0));
-                                B = static_cast<uint8>(FMath::Clamp(BVal * 255.0, 0.0, 255.0));
-                                A = static_cast<uint8>(FMath::Clamp(AVal * 255.0, 0.0, 255.0));
-                            }
-                            else
-                            {
-                                R = static_cast<uint8>(FMath::Clamp(RVal, 0.0, 255.0));
-                                G = static_cast<uint8>(FMath::Clamp(GVal, 0.0, 255.0));
-                                B = static_cast<uint8>(FMath::Clamp(BVal, 0.0, 255.0));
-                                A = static_cast<uint8>(FMath::Clamp(AVal, 0.0, 255.0));
-                            }
-                            
-                            FColor Color(R, G, B, A);
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            StructProp->CopySingleValue(PropertyAddr, &Color);
-                            bSuccess = true;
-                        }
                     }
                 }
             }
@@ -639,41 +560,25 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
         {
             if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
             {
-                // Handle vector properties
-                
+                // Handle vector properties using FJsonValueHelper for robust parsing
+                // This handles arrays, objects, and string-encoded JSON values
                     
                 if (StructProp->Struct == TBaseStructure<FVector>::Get())
                 {
-                    if (JsonValue->Type == EJson::Array)
+                    FVector Vec;
+                    if (FJsonValueHelper::TryGetVector(JsonValue, Vec))
                     {
-                        // Handle array input [x, y, z]
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() == 3)
-                        {
-                            FVector Vec(
-                                Arr[0]->AsNumber(),
-                                Arr[1]->AsNumber(),
-                                Arr[2]->AsNumber()
-                            );
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            
-                            StructProp->CopySingleValue(PropertyAddr, &Vec);
-                            bSuccess = true;
-                        }
-                        else
-                        {
-                            ErrorMessage = FString::Printf(TEXT("Vector property requires 3 values, got %d"), Arr.Num());
-                            UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
-                        }
+                        void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
+                        StructProp->CopySingleValue(PropertyAddr, &Vec);
+                        bSuccess = true;
                     }
                     else if (JsonValue->Type == EJson::Number)
                     {
                         // Handle scalar input (sets all components to same value)
                         float Value = JsonValue->AsNumber();
-                        FVector Vec(Value, Value, Value);
+                        FVector ScalarVec(Value, Value, Value);
                         void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                        
-                        StructProp->CopySingleValue(PropertyAddr, &Vec);
+                        StructProp->CopySingleValue(PropertyAddr, &ScalarVec);
                         bSuccess = true;
                     }
                     else
@@ -684,133 +589,34 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
                 }
                 else if (StructProp->Struct == TBaseStructure<FRotator>::Get())
                 {
-                    if (JsonValue->Type == EJson::Array)
+                    FRotator Rot;
+                    if (FJsonValueHelper::TryGetRotator(JsonValue, Rot))
                     {
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() == 3)
-                        {
-                            FRotator Rot(
-                                Arr[0]->AsNumber(),
-                                Arr[1]->AsNumber(),
-                                Arr[2]->AsNumber()
-                            );
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            StructProp->CopySingleValue(PropertyAddr, &Rot);
-                            bSuccess = true;
-                        }
-                        else
-                        {
-                            ErrorMessage = FString::Printf(TEXT("Rotator property requires 3 values, got %d"), Arr.Num());
-                            UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
-                        }
+                        void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
+                        StructProp->CopySingleValue(PropertyAddr, &Rot);
+                        bSuccess = true;
                     }
                     else
                     {
-                        ErrorMessage = TEXT("Rotator property requires an array of 3 numbers [Pitch, Yaw, Roll]");
+                        ErrorMessage = TEXT("Rotator property requires an array of 3 numbers [Pitch, Yaw, Roll] or object");
                         UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
                     }
                 }
                 else if (StructProp->Struct == TBaseStructure<FColor>::Get())
                 {
-                    // Handle FColor struct properties (e.g., LightColor on SpotLightComponent)
-                    // Accepts both JSON object {"R": 255, "G": 0, "B": 0, "A": 255} and array [R, G, B, A]
-                    if (JsonValue->Type == EJson::Object)
+                    // Handle FColor using FJsonValueHelper - supports arrays, objects, hex strings, and named colors
+                    FLinearColor LinearColor;
+                    if (FJsonValueHelper::TryGetLinearColor(JsonValue, LinearColor))
                     {
-                        const TSharedPtr<FJsonObject>& ColorObj = JsonValue->AsObject();
-                        double RVal = 255.0, GVal = 255.0, BVal = 255.0, AVal = 255.0;
-                        
-                        if (ColorObj->HasField(TEXT("R")))
-                        {
-                            RVal = ColorObj->GetNumberField(TEXT("R"));
-                        }
-                        if (ColorObj->HasField(TEXT("G")))
-                        {
-                            GVal = ColorObj->GetNumberField(TEXT("G"));
-                        }
-                        if (ColorObj->HasField(TEXT("B")))
-                        {
-                            BVal = ColorObj->GetNumberField(TEXT("B"));
-                        }
-                        if (ColorObj->HasField(TEXT("A")))
-                        {
-                            AVal = ColorObj->GetNumberField(TEXT("A"));
-                        }
-                        
-                        // Auto-detect: if values are <= 1.0, treat as normalized (0-1) and convert to bytes (0-255)
-                        // Otherwise, treat as byte values (0-255)
-                        uint8 R, G, B, A;
-                        if (RVal <= 1.0 && GVal <= 1.0 && BVal <= 1.0 && AVal <= 1.0)
-                        {
-                            // Normalized values (0-1), convert to bytes
-                            R = static_cast<uint8>(FMath::Clamp(RVal * 255.0, 0.0, 255.0));
-                            G = static_cast<uint8>(FMath::Clamp(GVal * 255.0, 0.0, 255.0));
-                            B = static_cast<uint8>(FMath::Clamp(BVal * 255.0, 0.0, 255.0));
-                            A = static_cast<uint8>(FMath::Clamp(AVal * 255.0, 0.0, 255.0));
-                            UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Detected normalized FColor values in object, converting to bytes"));
-                        }
-                        else
-                        {
-                            // Byte values (0-255)
-                            R = static_cast<uint8>(FMath::Clamp(RVal, 0.0, 255.0));
-                            G = static_cast<uint8>(FMath::Clamp(GVal, 0.0, 255.0));
-                            B = static_cast<uint8>(FMath::Clamp(BVal, 0.0, 255.0));
-                            A = static_cast<uint8>(FMath::Clamp(AVal, 0.0, 255.0));
-                        }
-                        
-                        FColor Color(R, G, B, A);
+                        FColor Color = LinearColor.ToFColor(true);
                         void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
                         StructProp->CopySingleValue(PropertyAddr, &Color);
                         bSuccess = true;
-                        
-                        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Set FColor to (R=%d, G=%d, B=%d, A=%d)"), R, G, B, A);
-                    }
-                    else if (JsonValue->Type == EJson::Array)
-                    {
-                        const TArray<TSharedPtr<FJsonValue>>& Arr = JsonValue->AsArray();
-                        if (Arr.Num() >= 3)
-                        {
-                            double RVal = Arr[0]->AsNumber();
-                            double GVal = Arr[1]->AsNumber();
-                            double BVal = Arr[2]->AsNumber();
-                            double AVal = Arr.Num() >= 4 ? Arr[3]->AsNumber() : 255.0;
-                            
-                            // Auto-detect: if values are <= 1.0, treat as normalized (0-1) and convert to bytes (0-255)
-                            // Otherwise, treat as byte values (0-255)
-                            uint8 R, G, B, A;
-                            if (RVal <= 1.0 && GVal <= 1.0 && BVal <= 1.0 && AVal <= 1.0)
-                            {
-                                // Normalized values (0-1), convert to bytes
-                                R = static_cast<uint8>(FMath::Clamp(RVal * 255.0, 0.0, 255.0));
-                                G = static_cast<uint8>(FMath::Clamp(GVal * 255.0, 0.0, 255.0));
-                                B = static_cast<uint8>(FMath::Clamp(BVal * 255.0, 0.0, 255.0));
-                                A = static_cast<uint8>(FMath::Clamp(AVal * 255.0, 0.0, 255.0));
-                                UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Detected normalized FColor values, converting to bytes"));
-                            }
-                            else
-                            {
-                                // Byte values (0-255)
-                                R = static_cast<uint8>(FMath::Clamp(RVal, 0.0, 255.0));
-                                G = static_cast<uint8>(FMath::Clamp(GVal, 0.0, 255.0));
-                                B = static_cast<uint8>(FMath::Clamp(BVal, 0.0, 255.0));
-                                A = static_cast<uint8>(FMath::Clamp(AVal, 0.0, 255.0));
-                            }
-                            
-                            FColor Color(R, G, B, A);
-                            void* PropertyAddr = StructProp->ContainerPtrToValuePtr<void>(ComponentTemplate);
-                            StructProp->CopySingleValue(PropertyAddr, &Color);
-                            bSuccess = true;
-                            
-                            UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Set FColor from array to (R=%d, G=%d, B=%d, A=%d)"), R, G, B, A);
-                        }
-                        else
-                        {
-                            ErrorMessage = TEXT("FColor array requires at least 3 values [R, G, B] or 4 values [R, G, B, A]");
-                            UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
-                        }
+                        UE_LOG(LogTemp, Log, TEXT("SetComponentProperty - Set FColor to (R=%d, G=%d, B=%d, A=%d)"), Color.R, Color.G, Color.B, Color.A);
                     }
                     else
                     {
-                        ErrorMessage = TEXT("FColor property requires either a JSON object {\"R\": 255, \"G\": 0, \"B\": 0, \"A\": 255} or array [R, G, B, A]");
+                        ErrorMessage = TEXT("FColor property requires a color value (array, object, hex string, or named color)");
                         UE_LOG(LogTemp, Error, TEXT("SetComponentProperty - %s"), *ErrorMessage);
                     }
                 }

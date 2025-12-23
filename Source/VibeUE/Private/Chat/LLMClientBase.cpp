@@ -99,6 +99,7 @@ void FLLMClientBase::ResetStreamingState()
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInToolCallBlock = false;
+    bInThinkingBlock = false;
 }
 
 void FLLMClientBase::CancelRequest()
@@ -454,6 +455,9 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
         // Always process content - it may come before tool calls start
         if (!DeltaContent.IsEmpty())
         {
+            // Detect thinking block start/end and fire status callback
+            DetectThinkingBlocks(DeltaContent);
+            
             // Filter only tool_call tags (those need to be parsed), but pass through thinking tags
             FString CleanContent = FilterToolCallTags(DeltaContent);
             
@@ -536,6 +540,51 @@ FString FLLMClientBase::FilterTagBlock(const FString& Content, const FString& Op
     }
     
     return CleanContent;
+}
+
+void FLLMClientBase::DetectThinkingBlocks(const FString& Content)
+{
+    // Detect start and end of thinking blocks and fire status callback
+    // Supports: <think>, <thinking>, <reasoning>, <thought>
+    
+    bool bWasInThinkingBlock = bInThinkingBlock;
+    
+    // Check for thinking block start tags
+    static const TArray<FString> OpenTags = { 
+        TEXT("<think>"), TEXT("<thinking>"), TEXT("<reasoning>"), TEXT("<thought>") 
+    };
+    
+    // Check for thinking block end tags
+    static const TArray<FString> CloseTags = { 
+        TEXT("</think>"), TEXT("</thinking>"), TEXT("</reasoning>"), TEXT("</thought>") 
+    };
+    
+    // Check if any open tag is present
+    for (const FString& OpenTag : OpenTags)
+    {
+        if (Content.Contains(OpenTag, ESearchCase::IgnoreCase))
+        {
+            bInThinkingBlock = true;
+            break;
+        }
+    }
+    
+    // Check if any close tag is present
+    for (const FString& CloseTag : CloseTags)
+    {
+        if (Content.Contains(CloseTag, ESearchCase::IgnoreCase))
+        {
+            bInThinkingBlock = false;
+            break;
+        }
+    }
+    
+    // Fire callback if state changed
+    if (bWasInThinkingBlock != bInThinkingBlock && CurrentOnThinkingStatus.IsBound())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[THINKING] Status changed: %s"), bInThinkingBlock ? TEXT("started") : TEXT("ended"));
+        CurrentOnThinkingStatus.Execute(bInThinkingBlock);
+    }
 }
 
 TArray<FMCPToolCall> FLLMClientBase::ParseBracketStyleToolCalls(const FString& Content)
@@ -830,6 +879,9 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
 {
     UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Processing non-streaming response"));
     
+    // Track completion tokens to detect API filtering
+    int32 CompletionTokensInResponse = 0;
+    
     // Parse the JSON response
     TSharedPtr<FJsonObject> JsonObject;
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseContent);
@@ -861,6 +913,7 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         int32 CompletionTokens = 0;
         (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
         (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
+        CompletionTokensInResponse = CompletionTokens;  // Save for later check
         
         if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
         {
@@ -1012,40 +1065,76 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         }
     }
     
-    // Try XML-style format: <tool_call>...</tool_call>
-    if (!Content.IsEmpty() && Content.Contains(TEXT("</tool_call>")))
+    // Try XML-style format: <tool_call>...</tool_call> or just <tool_call>... (some models don't close)
+    if (!Content.IsEmpty() && (Content.Contains(TEXT("<tool_call>")) || Content.Contains(TEXT("</tool_call>"))))
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for text-format tool calls..."));
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for XML-style tool calls in content..."));
         
-        // Filter tool_call tags
-        FString CleanContent = FilterToolCallTags(Content);
-        
-        // Parse tool calls from text
-        // Format: </tool_call>\n{"name": "tool_name", "arguments": {...}}\n</tool_call>
-        TArray<FString> Parts;
-        CleanContent.ParseIntoArray(Parts, TEXT("</tool_call>"), true);
-        
+        // Extract content between <tool_call> tags (or after <tool_call> if no closing tag)
+        FString WorkContent = Content;
+        TArray<FMCPToolCall> ParsedToolCalls;
         int32 ToolCallIndex = 0;
-        for (const FString& Part : Parts)
+        
+        int32 StartIdx = 0;
+        while ((StartIdx = WorkContent.Find(TEXT("<tool_call>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIdx)) != INDEX_NONE)
         {
-            FString TrimmedPart = Part.TrimStartAndEnd();
-            if (TrimmedPart.IsEmpty())
+            // Move past the opening tag
+            int32 ContentStart = StartIdx + 11; // Length of "<tool_call>"
+            
+            // Find the closing tag or end of string
+            int32 EndIdx = WorkContent.Find(TEXT("</tool_call>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+            FString ToolCallContent;
+            if (EndIdx != INDEX_NONE)
+            {
+                ToolCallContent = WorkContent.Mid(ContentStart, EndIdx - ContentStart);
+                StartIdx = EndIdx + 12; // Move past closing tag
+            }
+            else
+            {
+                // No closing tag - take rest of string
+                ToolCallContent = WorkContent.Mid(ContentStart);
+                StartIdx = WorkContent.Len(); // End loop
+            }
+            
+            // Trim and look for JSON
+            ToolCallContent = ToolCallContent.TrimStartAndEnd();
+            
+            // Skip if empty
+            if (ToolCallContent.IsEmpty())
             {
                 continue;
             }
             
-            // Check if this part looks like JSON (starts with {)
-            if (!TrimmedPart.StartsWith(TEXT("{")))
+            // Find the JSON object in this content
+            int32 JsonStart = ToolCallContent.Find(TEXT("{"));
+            if (JsonStart == INDEX_NONE)
             {
                 continue;
             }
+            
+            // Find matching closing brace
+            int32 BraceCount = 0;
+            int32 JsonEnd = JsonStart;
+            for (int32 i = JsonStart; i < ToolCallContent.Len(); i++)
+            {
+                if (ToolCallContent[i] == TEXT('{')) BraceCount++;
+                else if (ToolCallContent[i] == TEXT('}')) BraceCount--;
+                
+                if (BraceCount == 0)
+                {
+                    JsonEnd = i + 1;
+                    break;
+                }
+            }
+            
+            FString JsonStr = ToolCallContent.Mid(JsonStart, JsonEnd - JsonStart);
             
             // Parse the JSON
             TSharedPtr<FJsonObject> ToolCallJson;
-            TSharedRef<TJsonReader<>> ToolReader = TJsonReaderFactory<>::Create(TrimmedPart);
+            TSharedRef<TJsonReader<>> ToolReader = TJsonReaderFactory<>::Create(JsonStr);
             if (!FJsonSerializer::Deserialize(ToolReader, ToolCallJson) || !ToolCallJson.IsValid())
             {
-                UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse tool call JSON: %s"), *TrimmedPart.Left(100));
+                UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse XML-style tool call JSON: %s"), *JsonStr.Left(200));
                 continue;
             }
             
@@ -1071,18 +1160,45 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
             }
             
             // Generate ID since text format doesn't include one
-            ToolCall.Id = FString::Printf(TEXT("text_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
+            ToolCall.Id = FString::Printf(TEXT("xml_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
             
-            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed text tool call: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
-            
-            bToolCallsDetectedInStream = true;
-            if (CurrentOnToolCall.IsBound() && !ToolCall.ToolName.IsEmpty())
+            if (!ToolCall.ToolName.IsEmpty())
             {
-                CurrentOnToolCall.Execute(ToolCall);
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed XML-style tool call: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+                ParsedToolCalls.Add(ToolCall);
             }
             
             ToolCallIndex++;
         }
+        
+        // Fire all parsed tool calls
+        if (ParsedToolCalls.Num() > 0)
+        {
+            bToolCallsDetectedInStream = true;
+            for (const FMCPToolCall& ToolCall : ParsedToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled
+        }
+    }
+    
+    // Final check: if no content and no tool calls but completion tokens > threshold,
+    // the API is likely filtering the response (e.g., content moderation)
+    if (AccumulatedContent.IsEmpty() && !bToolCallsDetectedInStream && CompletionTokensInResponse > 50)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] API filtering detected: %d completion tokens consumed but empty response"), CompletionTokensInResponse);
+        
+        // Generate a synthetic status message explaining the issue
+        FString FilteredMsg = FString::Printf(TEXT("⚠️ API response filtered (%d tokens consumed). The model generated content that was filtered by the API. Try rephrasing your request."), CompletionTokensInResponse);
+        if (CurrentOnChunk.IsBound())
+        {
+            CurrentOnChunk.Execute(FilteredMsg);
+        }
+        AccumulatedContent = FilteredMsg;
     }
 }
 

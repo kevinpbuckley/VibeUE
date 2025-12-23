@@ -4,6 +4,7 @@
 #include "Services/LevelActor/LevelActorService.h"
 #include "Services/LevelActor/Types/LevelActorTypes.h"
 #include "Utils/HelpFileReader.h"
+#include "Core/JsonValueHelper.h"
 
 FLevelActorCommands::FLevelActorCommands()
 {
@@ -222,35 +223,10 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetLocation(const TSharedPtr<
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse location - accept either array [X, Y, Z] or object {x, y, z}
+	// Parse location using helper - handles arrays, objects, and string-encoded JSON
 	FVector Location = FVector::ZeroVector;
-	bool bHasLocation = false;
-	
-	// Try object format first {x, y, z}
-	const TSharedPtr<FJsonObject>* LocationObj;
-	if (Params->TryGetObjectField(TEXT("location"), LocationObj))
-	{
-		double X = 0, Y = 0, Z = 0;
-		(*LocationObj)->TryGetNumberField(TEXT("x"), X);
-		(*LocationObj)->TryGetNumberField(TEXT("y"), Y);
-		(*LocationObj)->TryGetNumberField(TEXT("z"), Z);
-		Location = FVector(X, Y, Z);
-		bHasLocation = true;
-	}
-	else
-	{
-		// Try array format [X, Y, Z]
-		const TArray<TSharedPtr<FJsonValue>>* LocationArray;
-		if (Params->TryGetArrayField(TEXT("location"), LocationArray) && LocationArray->Num() >= 3)
-		{
-			Location.X = (*LocationArray)[0]->AsNumber();
-			Location.Y = (*LocationArray)[1]->AsNumber();
-			Location.Z = (*LocationArray)[2]->AsNumber();
-			bHasLocation = true;
-		}
-	}
-	
-	if (!bHasLocation)
+	const TSharedPtr<FJsonValue>* LocationValue = Params->Values.Find(TEXT("location"));
+	if (!LocationValue || !FJsonValueHelper::TryGetVector(*LocationValue, Location))
 	{
 		return CreateErrorResponse(TEXT("MISSING_LOCATION"), TEXT("location parameter is required as {x, y, z} object or [X, Y, Z] array"));
 	}
@@ -268,35 +244,10 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetRotation(const TSharedPtr<
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse rotation - accept either array [Pitch, Yaw, Roll] or object {pitch, yaw, roll}
+	// Parse rotation using helper - handles arrays, objects, and string-encoded JSON
 	FRotator Rotation = FRotator::ZeroRotator;
-	bool bHasRotation = false;
-	
-	// Try object format first {pitch, yaw, roll}
-	const TSharedPtr<FJsonObject>* RotationObj;
-	if (Params->TryGetObjectField(TEXT("rotation"), RotationObj))
-	{
-		double Pitch = 0, Yaw = 0, Roll = 0;
-		(*RotationObj)->TryGetNumberField(TEXT("pitch"), Pitch);
-		(*RotationObj)->TryGetNumberField(TEXT("yaw"), Yaw);
-		(*RotationObj)->TryGetNumberField(TEXT("roll"), Roll);
-		Rotation = FRotator(Pitch, Yaw, Roll);
-		bHasRotation = true;
-	}
-	else
-	{
-		// Try array format [Pitch, Yaw, Roll]
-		const TArray<TSharedPtr<FJsonValue>>* RotationArray;
-		if (Params->TryGetArrayField(TEXT("rotation"), RotationArray) && RotationArray->Num() >= 3)
-		{
-			Rotation.Pitch = (*RotationArray)[0]->AsNumber();
-			Rotation.Yaw = (*RotationArray)[1]->AsNumber();
-			Rotation.Roll = (*RotationArray)[2]->AsNumber();
-			bHasRotation = true;
-		}
-	}
-	
-	if (!bHasRotation)
+	const TSharedPtr<FJsonValue>* RotationValue = Params->Values.Find(TEXT("rotation"));
+	if (!RotationValue || !FJsonValueHelper::TryGetRotator(*RotationValue, Rotation))
 	{
 		return CreateErrorResponse(TEXT("MISSING_ROTATION"), TEXT("rotation parameter is required as {pitch, yaw, roll} object or [Pitch, Yaw, Roll] array"));
 	}
@@ -312,35 +263,10 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetScale(const TSharedPtr<FJs
 {
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse scale - accept either array [X, Y, Z] or object {x, y, z}
+	// Parse scale using helper - handles arrays, objects, and string-encoded JSON
 	FVector Scale = FVector::OneVector;
-	bool bHasScale = false;
-	
-	// Try object format first {x, y, z}
-	const TSharedPtr<FJsonObject>* ScaleObj;
-	if (Params->TryGetObjectField(TEXT("scale"), ScaleObj))
-	{
-		double X = 1, Y = 1, Z = 1;
-		(*ScaleObj)->TryGetNumberField(TEXT("x"), X);
-		(*ScaleObj)->TryGetNumberField(TEXT("y"), Y);
-		(*ScaleObj)->TryGetNumberField(TEXT("z"), Z);
-		Scale = FVector(X, Y, Z);
-		bHasScale = true;
-	}
-	else
-	{
-		// Try array format [X, Y, Z]
-		const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-		if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
-		{
-			Scale.X = (*ScaleArray)[0]->AsNumber();
-			Scale.Y = (*ScaleArray)[1]->AsNumber();
-			Scale.Z = (*ScaleArray)[2]->AsNumber();
-			bHasScale = true;
-		}
-	}
-	
-	if (!bHasScale)
+	const TSharedPtr<FJsonValue>* ScaleValue = Params->Values.Find(TEXT("scale"));
+	if (!ScaleValue || !FJsonValueHelper::TryGetVector(*ScaleValue, Scale))
 	{
 		return CreateErrorResponse(TEXT("MISSING_SCALE"), TEXT("scale parameter is required as {x, y, z} object or [X, Y, Z] array"));
 	}

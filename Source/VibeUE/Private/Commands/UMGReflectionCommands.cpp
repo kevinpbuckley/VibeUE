@@ -1,6 +1,7 @@
 // Copyright Kevin Buckley 2025 All Rights Reserved.
 
 #include "Commands/UMGReflectionCommands.h"
+#include "Core/JsonValueHelper.h"
 #include "Engine/Engine.h"
 #include "Blueprint/WidgetBlueprintGeneratedClass.h"
 #include "Blueprint/UserWidget.h"
@@ -498,13 +499,17 @@ void FUMGReflectionCommands::ApplyWidgetProperties(UWidget* Widget, const TShare
 		}
 	}
 
-	// Apply size if specified
-	const TArray<TSharedPtr<FJsonValue>>* SizeArray;
-	if (Properties->TryGetArrayField(TEXT("size"), SizeArray) && SizeArray->Num() >= 2)
+	// Apply size if specified using helper - handles arrays and string-encoded JSON
+	const TSharedPtr<FJsonValue>* SizeValue = Properties->Values.Find(TEXT("size"));
+	if (SizeValue)
 	{
-		float Width = (*SizeArray)[0]->AsNumber();
-		float Height = (*SizeArray)[1]->AsNumber();
-		// Apply size - implementation depends on widget type
+		FVector2D Size;
+		if (FJsonValueHelper::TryGetVector2D(*SizeValue, Size))
+		{
+			float Width = Size.X;
+			float Height = Size.Y;
+			// Apply size - implementation depends on widget type
+		}
 	}
 
 	// Add more property applications as needed

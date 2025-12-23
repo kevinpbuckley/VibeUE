@@ -444,7 +444,13 @@ private:
      */
     FString SmartTruncateToolResult(const FString& Content, const FString& ToolName) const;
     
-    /** Strip thinking/reasoning tags from model output.
+    /** Format thinking/reasoning blocks with visual indicator.
+     *  Replaces <think>content</think> with styled format like "💭 **Thinking:** content"
+     *  Keeps thinking content visible but formatted, rather than removing it.
+     */
+    static FString FormatThinkingBlocks(const FString& Text);
+    
+    /** Strip thinking/reasoning tags from model output (removes entirely).
      *  Some models (Qwen3, Claude, etc.) output chain-of-thought in special tags.
      *  This content should not be included in final output.
      */

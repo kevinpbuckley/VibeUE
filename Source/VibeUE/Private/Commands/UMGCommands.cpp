@@ -2,6 +2,7 @@
 
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
+#include "Core/JsonValueHelper.h"
 #include "Utils/HelpFileReader.h"
 #include "Services/UMG/WidgetLifecycleService.h"
 #include "Services/UMG/WidgetPropertyService.h"
@@ -1438,14 +1439,19 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	if (NormalizedProperty == TEXT("alignment") || NormalizedProperty == TEXT("layoutdata.alignment"))
 	{
 		// Alignment expects [x, y] array (0.5, 0.5 = center)
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// First try to get as Vector2D using helper (handles arrays, string arrays, objects)
+		FVector2D Alignment;
+		if (FJsonValueHelper::TryGetVector2D(*PropertyValueField, Alignment))
 		{
-			SlotProperties->SetField(TEXT("alignment"), *PropertyValueField);
+			TArray<TSharedPtr<FJsonValue>> AlignArray;
+			AlignArray.Add(MakeShared<FJsonValueNumber>(Alignment.X));
+			AlignArray.Add(MakeShared<FJsonValueNumber>(Alignment.Y));
+			SlotProperties->SetArrayField(TEXT("alignment"), AlignArray);
 		}
 		else if ((*PropertyValueField)->Type == EJson::String)
 		{
-			// Parse common alignment strings
-			FString AlignStr = (*PropertyValueField)->AsString().ToLower();
+			// Parse common alignment strings like "center", "left", "top", etc.
+			FString AlignStr = (*PropertyValueField)->AsString().TrimStartAndEnd().ToLower();
 			TArray<TSharedPtr<FJsonValue>> AlignArray;
 			
 			if (AlignStr.Contains(TEXT("center")))
@@ -1475,9 +1481,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 			}
 			else
 			{
-				// Default to center
-				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
-				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				return FCommonUtils::CreateErrorResponse(TEXT("Slot.alignment requires array [x, y] or string like 'center', 'left', 'right', 'top', 'bottom'"));
 			}
 			
 			SlotProperties->SetArrayField(TEXT("alignment"), AlignArray);
@@ -1563,9 +1567,11 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	}
 	else if (NormalizedProperty == TEXT("position") || NormalizedProperty == TEXT("layoutdata.position"))
 	{
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// Use FJsonValueHelper to handle both array and string-encoded array
+		TArray<TSharedPtr<FJsonValue>> ArrayValues;
+		if (FJsonValueHelper::TryGetArray(*PropertyValueField, ArrayValues) && ArrayValues.Num() >= 2)
 		{
-			SlotProperties->SetField(TEXT("position"), *PropertyValueField);
+			SlotProperties->SetArrayField(TEXT("position"), ArrayValues);
 		}
 		else
 		{
@@ -1574,9 +1580,11 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	}
 	else if (NormalizedProperty == TEXT("size") || NormalizedProperty == TEXT("layoutdata.size"))
 	{
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// Use FJsonValueHelper to handle both array and string-encoded array
+		TArray<TSharedPtr<FJsonValue>> ArrayValues;
+		if (FJsonValueHelper::TryGetArray(*PropertyValueField, ArrayValues) && ArrayValues.Num() >= 2)
 		{
-			SlotProperties->SetField(TEXT("size"), *PropertyValueField);
+			SlotProperties->SetArrayField(TEXT("size"), ArrayValues);
 		}
 		else
 		{
@@ -1804,13 +1812,19 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
-	const TArray<TSharedPtr<FJsonValue>>* InputMappingsArray;
-	if (!Params->TryGetArrayField(TEXT("input_mappings"), InputMappingsArray))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing input_mappings parameter"));
-	}
+	// Try to get input_mappings as array first
+	const TArray<TSharedPtr<FJsonValue>>* InputMappingsArray = nullptr;
+	bool bHasInputMappingsArray = Params->TryGetArrayField(TEXT("input_mappings"), InputMappingsArray);
 	
-	InputMappings = *InputMappingsArray;
+	// If no array, try to build from flat parameters (event_name + function_name)
+	FString EventName, FunctionName;
+	bool bHasFlatParams = Params->TryGetStringField(TEXT("event_name"), EventName) && 
+	                      Params->TryGetStringField(TEXT("function_name"), FunctionName);
+	
+	if (!bHasInputMappingsArray && !bHasFlatParams)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing input_mappings array OR event_name+function_name. Use either: input_mappings: [{\"event_name\": \"OnClicked\", \"function_name\": \"HandleClick\"}] OR flat params: event_name, function_name"));
+	}
 	
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
@@ -1825,17 +1839,30 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 
 	// Convert JSON input mappings to DTOs
 	TArray<FWidgetInputMapping> Mappings;
-	for (const TSharedPtr<FJsonValue>& MappingValue : InputMappings)
+	
+	// If flat params provided, create single mapping from them
+	if (bHasFlatParams)
 	{
-		if (MappingValue->Type == EJson::Object)
+		FWidgetInputMapping Map;
+		Map.EventName = EventName;
+		Map.FunctionName = FunctionName;
+		Mappings.Add(Map);
+	}
+	else if (bHasInputMappingsArray && InputMappingsArray)
+	{
+		// Process array format
+		for (const TSharedPtr<FJsonValue>& MappingValue : *InputMappingsArray)
 		{
-			TSharedPtr<FJsonObject> MappingObj = MappingValue->AsObject();
-			FWidgetInputMapping Map;
-			MappingObj->TryGetStringField(TEXT("event_name"), Map.EventName);
-			MappingObj->TryGetStringField(TEXT("function_name"), Map.FunctionName);
-			if (!Map.EventName.IsEmpty() && !Map.FunctionName.IsEmpty())
+			if (MappingValue->Type == EJson::Object)
 			{
-				Mappings.Add(Map);
+				TSharedPtr<FJsonObject> MappingObj = MappingValue->AsObject();
+				FWidgetInputMapping Map;
+				MappingObj->TryGetStringField(TEXT("event_name"), Map.EventName);
+				MappingObj->TryGetStringField(TEXT("function_name"), Map.FunctionName);
+				if (!Map.EventName.IsEmpty() && !Map.FunctionName.IsEmpty())
+				{
+					Mappings.Add(Map);
+				}
 			}
 		}
 	}
@@ -1847,10 +1874,21 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 	}
 
 	int32 BoundCount = ResultT.GetValue();
+	
+	// Build output array from the mappings we processed
+	TArray<TSharedPtr<FJsonValue>> BoundMappingsJson;
+	for (const FWidgetInputMapping& Map : Mappings)
+	{
+		TSharedPtr<FJsonObject> MapObj = MakeShared<FJsonObject>();
+		MapObj->SetStringField(TEXT("event_name"), Map.EventName);
+		MapObj->SetStringField(TEXT("function_name"), Map.FunctionName);
+		BoundMappingsJson.Add(MakeShared<FJsonValueObject>(MapObj));
+	}
+	
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetArrayField(TEXT("input_mappings"), InputMappings);
+	Result->SetArrayField(TEXT("bound_events"), BoundMappingsJson);
 	Result->SetNumberField(TEXT("bindings_count"), BoundCount);
 	Result->SetStringField(TEXT("note"), TEXT("Input events bound to widget functions successfully"));
 	return Result;

@@ -107,7 +107,7 @@ namespace VibeUEColors
     const FLinearColor UserMessage(0.14f, 0.14f, 0.16f, 1.0f);     // User messages - neutral dark gray
     const FLinearColor AssistantMessage(0.10f, 0.12f, 0.18f, 1.0f);// Assistant - dark blue tint
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
-    const FLinearColor SystemMessage(0.25f, 0.15f, 0.1f, 1.0f);    // System - dark orange
+    const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
     
     // Border/highlight
     const FLinearColor Border(0.2f, 0.2f, 0.25f, 1.0f);
@@ -335,7 +335,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     if (!ChatSession->HasApiKey())
     {
         FLLMProviderInfo ProviderInfo = ChatSession->GetCurrentProviderInfo();
-        SetStatusText(FString::Printf(TEXT("Please set your %s API key in Settings"), *ProviderInfo.DisplayName));
+        AddSystemNotification(FString::Printf(TEXT("⚠️ Please set your %s API key in Settings"), *ProviderInfo.DisplayName));
     }
 }
 
@@ -673,6 +673,20 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     MessageTextBlocks.Add(Index, ContentTextBlock);
 }
 
+void SAIChatWindow::AddSystemNotification(const FString& Message)
+{
+    // Create a simple system notification that appears in chat but isn't part of conversation
+    FChatMessage SystemMsg(TEXT("system"), Message);
+    SystemMsg.bIsStreaming = false;
+    
+    // Use a negative index to avoid conflicts with real messages
+    static int32 NotificationCounter = -1000;
+    int32 NotificationIndex = NotificationCounter--;
+    
+    AddMessageWidget(SystemMsg, NotificationIndex);
+    ScrollToBottom();
+}
+
 void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 MessageIndex, int32 ToolIndex)
 {
     // Generate a unique key that includes message index and tool index
@@ -688,9 +702,6 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
         }
         return;
     }
-    
-    // Update status to show tool execution
-    SetStatusText(FString::Printf(TEXT("Executing: %s"), *ToolCall.Name));
     
     // Create a solid color brush for borders
     static FSlateBrush SolidBrush;
@@ -922,8 +933,6 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
 
 void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const FString& ResponseJson, bool bSuccess)
 {
-    // Update status to show tool completed
-    SetStatusText(bSuccess ? TEXT("Tool completed successfully") : TEXT("Tool execution failed"));
     
     // Find the first pending widget that hasn't received a response yet
     // We use a queue because vLLM/Qwen may return the same ID (call_0) for all tool calls
@@ -1030,7 +1039,7 @@ FReply SAIChatWindow::OnSendClicked()
         }
         
         // Clear any previous error message before sending new request
-        SetStatusText(TEXT("Sending request..."));
+        // Status now shown via streaming indicator in chat
         
         InputTextBox->SetText(FText::GetEmpty());
         
@@ -1056,7 +1065,7 @@ FReply SAIChatWindow::OnStopClicked()
             CHAT_LOG(Log, TEXT("[UI EVENT] Stop button clicked - Cancelling request"));
         }
         ChatSession->CancelRequest();
-        SetStatusText(TEXT("Request cancelled"));
+        // Cancellation reflected in chat UI
     }
     return FReply::Handled();
 }
@@ -1987,7 +1996,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Update the model dropdown based on new provider
                 UpdateModelDropdownForProvider();
                 
-                SetStatusText(FString::Printf(TEXT("Settings saved - Using %s"), 
+                AddSystemNotification(FString::Printf(TEXT("✅ Settings saved - Using %s"), 
                     NewProvider == ELLMProvider::VibeUE ? TEXT("VibeUE API") : TEXT("OpenRouter")));
                 SettingsWindow->RequestDestroyWindow();
                 return FReply::Handled();
@@ -2195,7 +2204,8 @@ void SAIChatWindow::HandleChatReset()
 
 void SAIChatWindow::HandleChatError(const FString& ErrorMessage)
 {
-    SetStatusText(ErrorMessage);
+    // Add error message to chat window instead of status bar
+    AddSystemNotification(FString::Printf(TEXT("❌ Error: %s"), *ErrorMessage));
     UpdateUIState();
 }
 
@@ -2275,7 +2285,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
     }
     else
     {
-        SetStatusText(TEXT("Failed to fetch models"));
+        AddSystemNotification(TEXT("❌ Failed to fetch models"));
     }
 }
 
@@ -2377,7 +2387,7 @@ void SAIChatWindow::HandleToolsReady(bool bSuccess, int32 ToolCount)
 void SAIChatWindow::HandleSummarizationStarted(const FString& Reason)
 {
     CHAT_LOG(Log, TEXT("Summarization started: %s"), *Reason);
-    SetStatusText(FString::Printf(TEXT("📋 Summarizing conversation... (%s)"), *Reason));
+    AddSystemNotification(FString::Printf(TEXT("📋 Summarizing conversation... (%s)"), *Reason));
     
     // Update token budget display color to indicate summarization
     if (TokenBudgetText.IsValid())
@@ -2391,7 +2401,7 @@ void SAIChatWindow::HandleSummarizationComplete(bool bSuccess, const FString& Su
     if (bSuccess)
     {
         CHAT_LOG(Log, TEXT("Summarization complete: %d chars"), Summary.Len());
-        SetStatusText(TEXT("✅ Conversation summarized to save context space."));
+        AddSystemNotification(TEXT("✅ Conversation summarized to save context space."));
         
         // Show summary preview in a system message
         FString PreviewText = Summary.Left(200);
@@ -2401,7 +2411,7 @@ void SAIChatWindow::HandleSummarizationComplete(bool bSuccess, const FString& Su
     else
     {
         CHAT_LOG(Warning, TEXT("Summarization failed"));
-        SetStatusText(TEXT("⚠️ Failed to summarize conversation."));
+        AddSystemNotification(TEXT("⚠️ Failed to summarize conversation."));
     }
     
     // Update token budget display
@@ -2461,9 +2471,8 @@ void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int3
         TEXT("⚠️ Tool iteration limit reached (%d/%d). The AI has been working and may need more iterations.\n\nType 'continue' to increase the limit to %d, or send a new message to start fresh."),
         CurrentIteration, MaxIterations, NewLimit);
     
-    SetStatusText(FString::Printf(TEXT("Tool limit reached (%d/%d) - type 'continue' (new limit: %d) or new message"), CurrentIteration, MaxIterations, NewLimit));
-    
-    // Add a system message to the chat
+    // Add the message to chat (system message is the primary notification)
+    AddSystemNotification(Message);
     FChatMessage SystemMsg(TEXT("system"), Message);
     SystemMsg.Role = TEXT("system");
     if (ChatSession.IsValid())
@@ -2477,18 +2486,13 @@ void SAIChatWindow::HandleThinkingStatusChanged(bool bIsThinking)
 {
     if (bIsThinking)
     {
-        SetStatusText(TEXT("AI is thinking..."));
-    }
-    else
-    {
-        // Transitioning from thinking to generating
-        SetStatusText(TEXT("Generating response..."));
+        AddSystemNotification(TEXT("💭 AI is thinking..."));
     }
 }
 
 void SAIChatWindow::HandleToolPreparing(const FString& ToolName)
 {
-    SetStatusText(FString::Printf(TEXT("Preparing tool: %s"), *ToolName));
+    // Tool preparation shown in tool call widget, no need for status bar
 }
 
 void SAIChatWindow::UpdateTokenBudgetDisplay()
@@ -2543,6 +2547,6 @@ void SAIChatWindow::CopyMessageToClipboard(int32 MessageIndex)
     if (Messages.IsValidIndex(MessageIndex))
     {
         FPlatformApplicationMisc::ClipboardCopy(*Messages[MessageIndex].Content);
-        SetStatusText(TEXT("Copied to clipboard"));
+        // Transient clipboard notification not needed - user knows they copied
     }
 }

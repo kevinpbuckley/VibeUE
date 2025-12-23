@@ -116,6 +116,9 @@ TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* Widget
             UCanvasPanel* NewRootPanel = WidgetBlueprint->WidgetTree->ConstructWidget<UCanvasPanel>(UCanvasPanel::StaticClass(), FName(TEXT("RootCanvas")));
             if (NewRootPanel)
             {
+                // IMPORTANT: Set bIsVariable to true so it gets a GUID during compilation
+                NewRootPanel->bIsVariable = true;
+                
                 // Set as new root
                 WidgetBlueprint->WidgetTree->RootWidget = NewRootPanel;
                 // Add old root and new widget as children
@@ -153,12 +156,20 @@ TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* Widget
         ParentPanel->AddChild(NewWidget);
     }
 
-    if (bIsVariable)
-    {
-        NewWidget->bIsVariable = true;
-    }
+    // IMPORTANT: Always set bIsVariable to true for programmatically created widgets
+    // This ensures the widget gets a GUID assigned during blueprint compilation.
+    // Without this, the widget will be lost when MarkBlueprintAsStructurallyModified triggers a recompile.
+    // The error "Widget [X] was added but did not get a GUID" occurs when this is false.
+    NewWidget->bIsVariable = true;
 
+    // Mark as modified first (registers the widget properly)
     WidgetBlueprint->Modify();
+    
+    // Use MarkBlueprintAsModified to allow the widget to be registered
+    // before doing a full structural modification
+    FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
+    
+    // Now do the structural modification which will properly compile with the GUID
     FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
 
     return TResult<UWidget*>::Success(NewWidget);
@@ -746,6 +757,9 @@ TResult<UPanelWidget*> FUMGWidgetService::ResolveParentPanel(UWidgetBlueprint* W
 
     if (NewParent)
     {
+        // IMPORTANT: Set bIsVariable to true so it gets a GUID during compilation
+        NewParent->bIsVariable = true;
+        
         if (UPanelWidget* RootPanel = Cast<UPanelWidget>(WidgetTree->RootWidget))
         {
             RootPanel->AddChild(NewParent);

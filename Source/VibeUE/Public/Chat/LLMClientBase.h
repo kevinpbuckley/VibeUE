@@ -111,6 +111,9 @@ private:
     /** Helper to filter a specific tag block from content */
     FString FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock);
 
+    /** Detect thinking blocks (<think>, <thinking>, <reasoning>, <thought>) and fire status callback */
+    void DetectThinkingBlocks(const FString& Content);
+
     /** Parse bracket-style tool calls from content: [tool_call: func(args)] */
     TArray<FMCPToolCall> ParseBracketStyleToolCalls(const FString& Content);
 
@@ -137,6 +140,9 @@ private:
 
     /** Flag: currently inside a <tool_call> block (Qwen models output these in text) */
     bool bInToolCallBlock;
+
+    /** Flag: currently inside a thinking block (<think>, <thinking>, <reasoning>) */
+    bool bInThinkingBlock;
 
 public:
     /** Get the accumulated response content (for non-streaming summarization) */

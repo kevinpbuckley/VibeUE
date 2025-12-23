@@ -266,7 +266,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     {
         FChatMessage& Message = Messages[CurrentStreamingMessageIndex];
         
-        // Extract and log thinking content (model reasoning) before stripping
+        // Extract and log thinking content (model reasoning)
         FString ThinkingContent = ExtractThinkingContent(Message.Content);
         if (!ThinkingContent.IsEmpty())
         {
@@ -277,8 +277,10 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             Message.ThinkingContent = ThinkingContent;
         }
         
-        // Strip thinking tags from visible content - model benefits from reasoning, user sees clean output
-        Message.Content = StripThinkingTags(Message.Content);
+        // Format thinking blocks - replace tags with styled format but keep content visible
+        // During streaming: <think>content</think> (shown as-is)
+        // After complete: 💭 Thinking: content (styled but visible)
+        Message.Content = FormatThinkingBlocks(Message.Content);
         
         // If the message is empty and has no tool calls, try to populate from accumulated response (non-streaming paths)
         if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
@@ -1931,6 +1933,74 @@ void FChatSession::SaveMCPServerApiKeyToConfig(const FString& ApiKey)
 
 // ============ Thinking Tag Handling ============
 
+FString FChatSession::FormatThinkingBlocks(const FString& Text)
+{
+    FString Result = Text;
+    
+    // Format thinking blocks with visual indicator instead of removing them
+    // Replaces <think>content</think> with: 💭 **Thinking:** content
+    
+    struct FTagPair
+    {
+        const TCHAR* OpenTag;
+        int32 OpenLen;
+        const TCHAR* CloseTag;
+        int32 CloseLen;
+    };
+    
+    static const TArray<FTagPair> TagPairs = {
+        { TEXT("<think>"), 7, TEXT("</think>"), 8 },
+        { TEXT("<thinking>"), 10, TEXT("</thinking>"), 11 },
+        { TEXT("<reasoning>"), 11, TEXT("</reasoning>"), 12 },
+        { TEXT("<thought>"), 9, TEXT("</thought>"), 10 }
+    };
+    
+    for (const FTagPair& Tags : TagPairs)
+    {
+        int32 SearchStart = 0;
+        while (true)
+        {
+            int32 OpenPos = Result.Find(Tags.OpenTag, ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+            if (OpenPos == INDEX_NONE) break;
+            
+            int32 ContentStart = OpenPos + Tags.OpenLen;
+            int32 ClosePos = Result.Find(Tags.CloseTag, ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+            
+            if (ClosePos != INDEX_NONE)
+            {
+                // Extract content between tags
+                FString Content = Result.Mid(ContentStart, ClosePos - ContentStart).TrimStartAndEnd();
+                
+                // Format with visual indicator
+                // Use line breaks to separate thinking from main content
+                FString FormattedThinking = FString::Printf(
+                    TEXT("\n💭 **Thinking:**\n%s\n---\n"),
+                    *Content
+                );
+                
+                // Replace the entire tag block
+                Result = Result.Left(OpenPos) + FormattedThinking + Result.Mid(ClosePos + Tags.CloseLen);
+                
+                // Continue searching after the replacement
+                SearchStart = OpenPos + FormattedThinking.Len();
+            }
+            else
+            {
+                // Unclosed tag - format everything after the open tag as thinking
+                FString Content = Result.Mid(ContentStart).TrimStartAndEnd();
+                FString FormattedThinking = FString::Printf(
+                    TEXT("\n💭 **Thinking:**\n%s"),
+                    *Content
+                );
+                Result = Result.Left(OpenPos) + FormattedThinking;
+                break;
+            }
+        }
+    }
+    
+    return Result.TrimStartAndEnd();
+}
+
 FString FChatSession::StripThinkingTags(const FString& Text)
 {
     FString Result = Text;
@@ -1953,6 +2023,23 @@ FString FChatSession::StripThinkingTags(const FString& Text)
             break;
         }
         ThinkStart = Result.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
+    }
+    
+    // Strip <thinking>...</thinking> blocks (Anthropic/Claude style)
+    int32 ThinkingStart = Result.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
+    while (ThinkingStart != INDEX_NONE)
+    {
+        int32 ThinkingEnd = Result.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ThinkingStart);
+        if (ThinkingEnd != INDEX_NONE)
+        {
+            Result.RemoveAt(ThinkingStart, ThinkingEnd + 11 - ThinkingStart); // 11 = len("</thinking>")
+        }
+        else
+        {
+            Result = Result.Left(ThinkingStart);
+            break;
+        }
+        ThinkingStart = Result.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
     }
     
     // Strip <reasoning>...</reasoning> blocks
@@ -2013,6 +2100,25 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
             ThinkingParts.Add(Content);
         }
         SearchStart = ThinkEnd + 8; // len("</think>")
+    }
+    
+    // Extract <thinking>...</thinking> blocks (Anthropic/Claude style)
+    SearchStart = 0;
+    while (true)
+    {
+        int32 Start = Text.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (Start == INDEX_NONE) break;
+        
+        int32 ContentStart = Start + 10; // len("<thinking>")
+        int32 End = Text.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+        if (End == INDEX_NONE) break;
+        
+        FString Content = Text.Mid(ContentStart, End - ContentStart).TrimStartAndEnd();
+        if (!Content.IsEmpty())
+        {
+            ThinkingParts.Add(Content);
+        }
+        SearchStart = End + 11; // len("</thinking>")
     }
     
     // Extract <reasoning>...</reasoning> blocks

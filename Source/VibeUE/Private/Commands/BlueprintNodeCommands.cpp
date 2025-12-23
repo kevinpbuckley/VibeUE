@@ -7,6 +7,7 @@
 #include "Commands/InputKeyEnumerator.h"
 #include "Utils/HelpFileReader.h"
 #include "Core/ServiceContext.h"
+#include "Core/JsonValueHelper.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
 #include "Services/Blueprint/BlueprintLifecycleService.h"
 #include "Services/Blueprint/BlueprintPropertyService.h"
@@ -4084,13 +4085,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateComponentEvent(const
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'component_name' or 'delegate_name' in node_params.component_event"));
     }
 
-    // Parse position
+    // Parse position using helper - handles arrays and string-encoded JSON
     FVector2D Position(0.0, 0.0);
-    const TArray<TSharedPtr<FJsonValue>>* PositionArray = nullptr;
-    if (Params->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray && PositionArray->Num() >= 2)
+    const TSharedPtr<FJsonValue>* PositionValue = Params->Values.Find(TEXT("position"));
+    if (PositionValue)
     {
-        Position.X = (*PositionArray)[0]->AsNumber();
-        Position.Y = (*PositionArray)[1]->AsNumber();
+        FJsonValueHelper::TryGetVector2D(*PositionValue, Position);
     }
 
     // Find Blueprint
@@ -4325,13 +4325,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleCreateInputKeyNode(const T
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'key_name' parameter"));
     }
 
-    // Parse position
+    // Parse position using helper - handles arrays and string-encoded JSON
     FVector2D Position(0.0, 0.0);
-    const TArray<TSharedPtr<FJsonValue>>* PositionArray = nullptr;
-    if (Params->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray && PositionArray->Num() >= 2)
+    const TSharedPtr<FJsonValue>* PositionValue = Params->Values.Find(TEXT("position"));
+    if (PositionValue)
     {
-        Position.X = (*PositionArray)[0]->AsNumber();
-        Position.Y = (*PositionArray)[1]->AsNumber();
+        FJsonValueHelper::TryGetVector2D(*PositionValue, Position);
     }
 
     // Find Blueprint

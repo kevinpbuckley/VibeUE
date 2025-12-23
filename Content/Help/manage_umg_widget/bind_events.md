@@ -7,7 +7,11 @@ Bind widget events to Blueprint functions.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | widget_name | string | Yes | Content path to the Widget Blueprint |
-| input_mappings | array | Yes | Array of event-to-function mappings |
+| input_mappings | array | Optional* | Array of event-to-function mappings |
+| event_name | string | Optional* | Name of the event to bind (alternative to input_mappings) |
+| function_name | string | Optional* | Name of the function to call (alternative to input_mappings) |
+
+*Either `input_mappings` array OR `event_name` + `function_name` pair is required.
 
 ### input_mappings Array Format
 
@@ -20,7 +24,15 @@ Each item in `input_mappings` is an object with:
 
 ## Examples
 
-### Bind Button Click
+### Bind Single Event (Flat Parameters - Recommended)
+```json
+{
+  "Action": "bind_events",
+  "ParamsJson": "{\"widget_name\": \"/Game/UI/WBP_MainMenu\", \"event_name\": \"OnClicked\", \"function_name\": \"HandlePlayButtonClicked\"}"
+}
+```
+
+### Bind Button Click (Array Format)
 ```json
 {
   "Action": "bind_events",

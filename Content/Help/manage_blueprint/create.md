@@ -6,7 +6,7 @@ Create a new Blueprint asset with a specified parent class.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| name | string | **Yes** | Full path including asset name (e.g., "/Game/Blueprints/BP_Pickup") |
+| name | string | **Yes** | Full path including asset name (e.g., "/Game/Blueprints/BP_Pickup"). Also accepts `blueprint_name` as alias. |
 | parent_class | string | No | Parent class name (default: "Actor") |
 
 ## Widget Blueprint Support

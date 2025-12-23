@@ -2,6 +2,7 @@
 
 #include "Services/LevelActor/LevelActorService.h"
 #include "Services/LevelActor/Types/LevelActorTypes.h"
+#include "Core/JsonValueHelper.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "Engine/Level.h"
@@ -202,75 +203,37 @@ FActorAddParams FActorAddParams::FromJson(const TSharedPtr<FJsonObject>& Params)
 			Params->TryGetStringField(TEXT("actor_label"), AddParams.ActorName);
 		}
 		
-		// Accept location as object {x, y, z} or array [x, y, z]
-		const TSharedPtr<FJsonObject>* LocObj;
-		if (Params->TryGetObjectField(TEXT("location"), LocObj))
+		// Accept location/spawn_location using helper - handles arrays, objects, and string-encoded JSON
+		const TSharedPtr<FJsonValue>* LocValue = Params->Values.Find(TEXT("location"));
+		if (!LocValue)
 		{
-			double X = 0, Y = 0, Z = 0;
-			(*LocObj)->TryGetNumberField(TEXT("x"), X);
-			(*LocObj)->TryGetNumberField(TEXT("y"), Y);
-			(*LocObj)->TryGetNumberField(TEXT("z"), Z);
-			AddParams.Location = FVector(X, Y, Z);
+			LocValue = Params->Values.Find(TEXT("spawn_location"));
+		}
+		if (LocValue && FJsonValueHelper::TryGetVector(*LocValue, AddParams.Location))
+		{
 			AddParams.bLocationProvided = true;
 		}
-		else
+		
+		// Accept rotation/spawn_rotation using helper
+		const TSharedPtr<FJsonValue>* RotValue = Params->Values.Find(TEXT("rotation"));
+		if (!RotValue)
 		{
-			const TArray<TSharedPtr<FJsonValue>>* LocArray;
-			if (Params->TryGetArrayField(TEXT("spawn_location"), LocArray) && LocArray->Num() >= 3)
-			{
-				AddParams.Location = FVector(
-					(*LocArray)[0]->AsNumber(),
-					(*LocArray)[1]->AsNumber(),
-					(*LocArray)[2]->AsNumber()
-				);
-				AddParams.bLocationProvided = true;
-			}
+			RotValue = Params->Values.Find(TEXT("spawn_rotation"));
+		}
+		if (RotValue)
+		{
+			FJsonValueHelper::TryGetRotator(*RotValue, AddParams.Rotation);
 		}
 		
-		// Accept rotation as object {pitch, yaw, roll} or array [pitch, yaw, roll]
-		const TSharedPtr<FJsonObject>* RotObj;
-		if (Params->TryGetObjectField(TEXT("rotation"), RotObj))
+		// Accept scale/spawn_scale using helper
+		const TSharedPtr<FJsonValue>* ScaleValue = Params->Values.Find(TEXT("scale"));
+		if (!ScaleValue)
 		{
-			double Pitch = 0, Yaw = 0, Roll = 0;
-			(*RotObj)->TryGetNumberField(TEXT("pitch"), Pitch);
-			(*RotObj)->TryGetNumberField(TEXT("yaw"), Yaw);
-			(*RotObj)->TryGetNumberField(TEXT("roll"), Roll);
-			AddParams.Rotation = FRotator(Pitch, Yaw, Roll);
+			ScaleValue = Params->Values.Find(TEXT("spawn_scale"));
 		}
-		else
+		if (ScaleValue)
 		{
-			const TArray<TSharedPtr<FJsonValue>>* RotArray;
-			if (Params->TryGetArrayField(TEXT("spawn_rotation"), RotArray) && RotArray->Num() >= 3)
-			{
-				AddParams.Rotation = FRotator(
-					(*RotArray)[0]->AsNumber(),
-					(*RotArray)[1]->AsNumber(),
-					(*RotArray)[2]->AsNumber()
-				);
-			}
-		}
-		
-		// Accept scale as object {x, y, z} or array [x, y, z]
-		const TSharedPtr<FJsonObject>* ScaleObj;
-		if (Params->TryGetObjectField(TEXT("scale"), ScaleObj))
-		{
-			double X = 1, Y = 1, Z = 1;
-			(*ScaleObj)->TryGetNumberField(TEXT("x"), X);
-			(*ScaleObj)->TryGetNumberField(TEXT("y"), Y);
-			(*ScaleObj)->TryGetNumberField(TEXT("z"), Z);
-			AddParams.Scale = FVector(X, Y, Z);
-		}
-		else
-		{
-			const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-			if (Params->TryGetArrayField(TEXT("spawn_scale"), ScaleArray) && ScaleArray->Num() >= 3)
-			{
-				AddParams.Scale = FVector(
-					(*ScaleArray)[0]->AsNumber(),
-					(*ScaleArray)[1]->AsNumber(),
-					(*ScaleArray)[2]->AsNumber()
-				);
-			}
+			FJsonValueHelper::TryGetVector(*ScaleValue, AddParams.Scale);
 		}
 		
 		const TArray<TSharedPtr<FJsonValue>>* TagsArray;
@@ -1025,45 +988,36 @@ FActorTransformParams FActorTransformParams::FromJson(const TSharedPtr<FJsonObje
 	
 	TransformParams.Identifier = FActorIdentifier::FromJson(Params);
 	
-	// Parse location if present
-	if (Params->HasField(TEXT("location")))
+	// Parse location using helper - handles arrays, objects, and string-encoded JSON
+	const TSharedPtr<FJsonValue>* LocValue = Params->Values.Find(TEXT("location"));
+	if (LocValue)
 	{
-		const TArray<TSharedPtr<FJsonValue>>* LocArray;
-		if (Params->TryGetArrayField(TEXT("location"), LocArray) && LocArray->Num() >= 3)
+		FVector TempLoc;
+		if (FJsonValueHelper::TryGetVector(*LocValue, TempLoc))
 		{
-			TransformParams.Location = FVector(
-				(*LocArray)[0]->AsNumber(),
-				(*LocArray)[1]->AsNumber(),
-				(*LocArray)[2]->AsNumber()
-			);
+			TransformParams.Location = TempLoc;
 		}
 	}
 	
-	// Parse rotation if present
-	if (Params->HasField(TEXT("rotation")))
+	// Parse rotation using helper
+	const TSharedPtr<FJsonValue>* RotValue = Params->Values.Find(TEXT("rotation"));
+	if (RotValue)
 	{
-		const TArray<TSharedPtr<FJsonValue>>* RotArray;
-		if (Params->TryGetArrayField(TEXT("rotation"), RotArray) && RotArray->Num() >= 3)
+		FRotator TempRot;
+		if (FJsonValueHelper::TryGetRotator(*RotValue, TempRot))
 		{
-			TransformParams.Rotation = FRotator(
-				(*RotArray)[0]->AsNumber(),
-				(*RotArray)[1]->AsNumber(),
-				(*RotArray)[2]->AsNumber()
-			);
+			TransformParams.Rotation = TempRot;
 		}
 	}
 	
-	// Parse scale if present
-	if (Params->HasField(TEXT("scale")))
+	// Parse scale using helper
+	const TSharedPtr<FJsonValue>* ScaleValue = Params->Values.Find(TEXT("scale"));
+	if (ScaleValue)
 	{
-		const TArray<TSharedPtr<FJsonValue>>* ScaleArray;
-		if (Params->TryGetArrayField(TEXT("scale"), ScaleArray) && ScaleArray->Num() >= 3)
+		FVector TempScale;
+		if (FJsonValueHelper::TryGetVector(*ScaleValue, TempScale))
 		{
-			TransformParams.Scale = FVector(
-				(*ScaleArray)[0]->AsNumber(),
-				(*ScaleArray)[1]->AsNumber(),
-				(*ScaleArray)[2]->AsNumber()
-			);
+			TransformParams.Scale = TempScale;
 		}
 	}
 	
