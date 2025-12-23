@@ -52,6 +52,7 @@ private:
 	TSharedPtr<FJsonObject> HandleSave(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleCompile(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleRefreshEditor(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleOpenInEditor(const TSharedPtr<FJsonObject>& Params);
 
 	// Information actions
 	TSharedPtr<FJsonObject> HandleGetInfo(const TSharedPtr<FJsonObject>& Params);

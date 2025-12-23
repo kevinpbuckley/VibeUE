@@ -1006,106 +1006,64 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableWidgetTypes(const TSharedPtr<FJsonObject>& Params)
 {
-	// Get optional filter parameters
-	FString Category;
-	Params->TryGetStringField(TEXT("category"), Category);
-	
-	FString SearchText;
-	if (!Params->TryGetStringField(TEXT("search_text"), SearchText))
+	// Prefer discovery service list for consistency
+	if (DiscoveryService.IsValid())
 	{
-		Params->TryGetStringField(TEXT("search_term"), SearchText);
+		auto Result = DiscoveryService->GetAvailableWidgetTypes();
+		if (Result.IsError())
+		{
+			return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+		}
+
+		const TArray<FString>& WidgetTypes = Result.GetValue();
+		TArray<TSharedPtr<FJsonValue>> TypeArray;
+		for (const FString& Type : WidgetTypes)
+		{
+			TypeArray.Add(MakeShared<FJsonValueString>(Type));
+		}
+
+		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+		Response->SetBoolField(TEXT("success"), true);
+		Response->SetArrayField(TEXT("widget_types"), TypeArray);
+		Response->SetNumberField(TEXT("count"), WidgetTypes.Num());
+		return Response;
 	}
 
-	// Define widget types by category
-	struct FWidgetTypeInfo
-	{
-		FString Name;
-		FString Category;
+	// Fallback: local list (kept for compatibility)
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
+	TArray<FString> WidgetTypes = {
+		TEXT("TextBlock"),
+		TEXT("Button"),
+		TEXT("EditableText"),
+		TEXT("EditableTextBox"),
+		TEXT("RichTextBlock"),
+		TEXT("CheckBox"),
+		TEXT("Slider"),
+		TEXT("ProgressBar"),
+		TEXT("Image"),
+		TEXT("Spacer"),
+		TEXT("CanvasPanel"),
+		TEXT("Overlay"),
+		TEXT("HorizontalBox"),
+		TEXT("VerticalBox"),
+		TEXT("ScrollBox"),
+		TEXT("GridPanel"),
+		TEXT("ListView"),
+		TEXT("TileView"),
+		TEXT("TreeView"),
+		TEXT("WidgetSwitcher")
 	};
-	
-	TArray<FWidgetTypeInfo> AllWidgetTypes = {
-		// Common category
-		{TEXT("TextBlock"), TEXT("Common")},
-		{TEXT("Button"), TEXT("Common")},
-		{TEXT("EditableText"), TEXT("Common")},
-		{TEXT("EditableTextBox"), TEXT("Common")},
-		{TEXT("RichTextBlock"), TEXT("Common")},
-		{TEXT("CheckBox"), TEXT("Common")},
-		{TEXT("Slider"), TEXT("Common")},
-		{TEXT("ProgressBar"), TEXT("Common")},
-		{TEXT("Image"), TEXT("Common")},
-		{TEXT("Spacer"), TEXT("Common")},
-		// Panel category
-		{TEXT("CanvasPanel"), TEXT("Panel")},
-		{TEXT("Overlay"), TEXT("Panel")},
-		{TEXT("HorizontalBox"), TEXT("Panel")},
-		{TEXT("VerticalBox"), TEXT("Panel")},
-		{TEXT("ScrollBox"), TEXT("Panel")},
-		{TEXT("GridPanel"), TEXT("Panel")},
-		{TEXT("UniformGridPanel"), TEXT("Panel")},
-		{TEXT("WrapBox"), TEXT("Panel")},
-		{TEXT("SizeBox"), TEXT("Panel")},
-		{TEXT("ScaleBox"), TEXT("Panel")},
-		{TEXT("Border"), TEXT("Panel")},
-		// List category
-		{TEXT("ListView"), TEXT("List")},
-		{TEXT("TileView"), TEXT("List")},
-		{TEXT("TreeView"), TEXT("List")},
-		// Misc category
-		{TEXT("WidgetSwitcher"), TEXT("Misc")},
-		{TEXT("Throbber"), TEXT("Misc")},
-		{TEXT("CircularThrobber"), TEXT("Misc")},
-		{TEXT("NamedSlot"), TEXT("Misc")},
-	};
-
-	// Filter by category and/or search text
-	TArray<FString> FilteredTypes;
-	for (const FWidgetTypeInfo& TypeInfo : AllWidgetTypes)
-	{
-		// Filter by category if specified
-		if (!Category.IsEmpty() && !TypeInfo.Category.Equals(Category, ESearchCase::IgnoreCase))
-		{
-			continue;
-		}
-		
-		// Filter by search text if specified
-		if (!SearchText.IsEmpty() && !TypeInfo.Name.Contains(SearchText, ESearchCase::IgnoreCase))
-		{
-			continue;
-		}
-		
-		FilteredTypes.Add(TypeInfo.Name);
-	}
-
+    
 	TArray<TSharedPtr<FJsonValue>> TypeArray;
-	for (const FString& Type : FilteredTypes)
+	for (const FString& Type : WidgetTypes)
 	{
 		TypeArray.Add(MakeShared<FJsonValueString>(Type));
 	}
-
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetArrayField(TEXT("widget_types"), TypeArray);
-	Response->SetNumberField(TEXT("count"), FilteredTypes.Num());
-	
-	// Include filter info in response
-	if (!Category.IsEmpty())
-	{
-		Response->SetStringField(TEXT("category_filter"), Category);
-	}
-	if (!SearchText.IsEmpty())
-	{
-		Response->SetStringField(TEXT("search_filter"), SearchText);
-	}
-	
-	// List available categories for reference
-	TArray<TSharedPtr<FJsonValue>> CategoriesArray;
-	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Common")));
-	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Panel")));
-	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("List")));
-	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Misc")));
-	Response->SetArrayField(TEXT("available_categories"), CategoriesArray);
-	
+	Response->SetNumberField(TEXT("count"), WidgetTypes.Num());
 	return Response;
 }
 

@@ -1343,7 +1343,10 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         }
         if (!Params->TryGetStringField(TEXT("parameter_type"), TypeDesc))
         {
-            if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_type' or 'type'"));
+            if (!Params->TryGetStringField(TEXT("param_type"), TypeDesc))
+            {
+                if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_type', 'param_type', or 'type'"));
+            }
         }
         UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
         {
@@ -1361,7 +1364,10 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         }
         if (!Params->TryGetStringField(TEXT("parameter_type"), TypeDesc))
         {
-            if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_type' or 'type'"));
+            if (!Params->TryGetStringField(TEXT("param_type"), TypeDesc))
+            {
+                if (!Params->TryGetStringField(TEXT("type"), TypeDesc)) return FCommonUtils::CreateErrorResponse(TEXT("Missing 'parameter_type', 'param_type', or 'type'"));
+            }
         }
         UEdGraph* Graph = nullptr; if (!FindUserFunctionGraph(Blueprint, FunctionName, Graph))
         {

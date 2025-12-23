@@ -6,10 +6,10 @@ Add an output parameter (return value) to a function.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| BlueprintPath | string | Yes | Content path to the Blueprint |
-| FunctionName | string | Yes | Name of the function to modify |
-| ParamName | string | Yes | Name for the new output parameter |
-| ParamType | string | Yes | Type of the parameter (e.g., "Float", "Integer", "Boolean", "String", "Vector") |
+| blueprint_name | string | Yes | Name of the Blueprint (short name, not full path) |
+| function_name | string | Yes | Name of the function to modify |
+| param_name | string | Yes | Name for the new output parameter |
+| param_type | string | Yes | Type of the parameter (e.g., "Float", "Integer", "Boolean", "String", "Vector", "LinearColor") |
 
 ## Examples
 
@@ -17,7 +17,7 @@ Add an output parameter (return value) to a function.
 ```json
 {
   "Action": "add_output",
-  "ParamsJson": "{\"BlueprintPath\": \"/Game/Blueprints/BP_Player\", \"FunctionName\": \"GetHealth\", \"ParamName\": \"CurrentHealth\", \"ParamType\": \"Float\"}"
+  "ParamsJson": {"blueprint_name": "BP_Player", "function_name": "GetHealth", "param_name": "CurrentHealth", "param_type": "Float"}
 }
 ```
 
@@ -25,15 +25,15 @@ Add an output parameter (return value) to a function.
 ```json
 {
   "Action": "add_output",
-  "ParamsJson": "{\"BlueprintPath\": \"/Game/Blueprints/BP_Enemy\", \"FunctionName\": \"IsAlive\", \"ParamName\": \"bAlive\", \"ParamType\": \"Boolean\"}"
+  "ParamsJson": {"blueprint_name": "BP_Enemy", "function_name": "IsAlive", "param_name": "bAlive", "param_type": "Boolean"}
 }
 ```
 
-### Add Object Output
+### Add LinearColor Output
 ```json
 {
   "Action": "add_output",
-  "ParamsJson": "{\"BlueprintPath\": \"/Game/Blueprints/BP_Spawner\", \"FunctionName\": \"SpawnEnemy\", \"ParamName\": \"SpawnedActor\", \"ParamType\": \"Actor\"}"
+  "ParamsJson": {"blueprint_name": "BP_Widget", "function_name": "SetColors", "param_name": "OutColor", "param_type": "LinearColor"}
 }
 ```
 
@@ -41,7 +41,7 @@ Add an output parameter (return value) to a function.
 ```json
 {
   "Action": "add_output",
-  "ParamsJson": "{\"BlueprintPath\": \"/Game/Blueprints/BP_Inventory\", \"FunctionName\": \"GetItemInfo\", \"ParamName\": \"ItemName\", \"ParamType\": \"String\"}"
+  "ParamsJson": {"blueprint_name": "BP_Inventory", "function_name": "GetItemInfo", "param_name": "ItemName", "param_type": "String"}
 }
 ```
 
@@ -49,12 +49,12 @@ Add an output parameter (return value) to a function.
 
 ```json
 {
-  "Success": true,
-  "BlueprintPath": "/Game/Blueprints/BP_Player",
-  "FunctionName": "GetHealth",
-  "ParamName": "CurrentHealth",
-  "ParamType": "Float",
-  "Message": "Output parameter added successfully"
+  "success": true,
+  "blueprint_name": "BP_Player",
+  "function_name": "GetHealth",
+  "param_name": "CurrentHealth",
+  "param_type": "Float",
+  "message": "Output parameter added successfully"
 }
 ```
 
@@ -62,7 +62,7 @@ Add an output parameter (return value) to a function.
 
 - Functions can have multiple output parameters (call this action multiple times)
 - Output parameters appear as pins on the Return Node
+- Common types: Float, Integer, Boolean, String, Name, Text, Vector, Rotator, Transform, LinearColor, Actor, Object
+- For color outputs, use "LinearColor" as the type
 - The first output is typically the "main" return value
 - For simple returns, name the output "ReturnValue"
-- Pure functions commonly return calculated values
-- Compile after adding parameters to update the function signature

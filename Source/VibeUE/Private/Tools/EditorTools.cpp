@@ -245,7 +245,7 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 
 // 4. manage_blueprint
 REGISTER_VIBEUE_TOOL(manage_blueprint,
-	"Manage blueprints - create, compile, reparent, get/set properties. Actions: create, get_info, compile, reparent, set_property, get_property. For create: ParamsJson requires name (or blueprint_name), optional parent_class. For get_info/compile/reparent/set_property/get_property: requires blueprint_name.",
+	"Manage blueprints - create, compile, reparent, get/set properties. Actions: create, get_info, compile, reparent, set_property, get_property",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -357,7 +357,7 @@ REGISTER_VIBEUE_TOOL(manage_level_actors,
 
 // 11. manage_material
 REGISTER_VIBEUE_TOOL(manage_material,
-	"Manage materials - create, modify, compile materials. Actions: help, create, create_instance, save, compile, refresh_editor, get_info, summarize, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance",
+	"Manage materials - create, modify, compile materials. Actions: help, create, create_instance, save, compile, refresh_editor, open, get_info, summarize, list_properties, get_property, get_property_info, set_property, set_properties, list_parameters, get_parameter, set_parameter_default, get_instance_info, list_instance_properties, get_instance_property, set_instance_property, list_instance_parameters, set_instance_scalar_parameter, set_instance_vector_parameter, set_instance_texture_parameter, clear_instance_parameter_override, save_instance",
 	"Material",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),

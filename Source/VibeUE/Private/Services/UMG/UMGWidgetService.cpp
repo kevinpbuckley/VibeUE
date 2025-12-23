@@ -163,18 +163,15 @@ TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* Widget
     // The error "Widget [X] was added but did not get a GUID" occurs when this is false.
     NewWidget->bIsVariable = true;
 
-    // Mark as modified (registers the widget properly)
+    // Mark as modified first (registers the widget properly)
     WidgetBlueprint->Modify();
     
-    // Use MarkBlueprintAsModified to register the widget
-    // NOTE: Do NOT call MarkBlueprintAsStructurallyModified here!
-    // Structural modification triggers a recompilation that rebuilds the widget tree
-    // from serialized data, losing any widgets we just created.
-    // The widget will be properly saved when the user saves the asset.
+    // Use MarkBlueprintAsModified to allow the widget to be registered
+    // before doing a full structural modification
     FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
     
-    // Mark the package as dirty so the user knows to save
-    WidgetBlueprint->MarkPackageDirty();
+    // Now do the structural modification which will properly compile with the GUID
+    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
 
     return TResult<UWidget*>::Success(NewWidget);
 }

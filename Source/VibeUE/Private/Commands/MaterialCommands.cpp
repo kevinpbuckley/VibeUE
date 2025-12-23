@@ -143,6 +143,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	{
 		return HandleRefreshEditor(Params);
 	}
+	else if (Action == TEXT("open") || Action == TEXT("open_in_editor"))
+	{
+		return HandleOpenInEditor(Params);
+	}
 	// Information actions
 	else if (Action == TEXT("get_info"))
 	{
@@ -243,6 +247,7 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("save")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("compile")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("refresh_editor")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("open")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_info")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("summarize")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_properties")));
@@ -474,6 +479,42 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleRefreshEditor(const TSharedPtr<
 	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
 	Response->SetStringField(TEXT("material_path"), MaterialPath);
 	Response->SetStringField(TEXT("message"), TEXT("Material Editor refreshed successfully"));
+	return Response;
+}
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleOpenInEditor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString MaterialPath;
+	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+	{
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
+	}
+
+	// Load the material asset
+	UObject* Asset = StaticLoadObject(UMaterial::StaticClass(), nullptr, *MaterialPath);
+	if (!Asset)
+	{
+		// Try loading as material instance
+		Asset = StaticLoadObject(UMaterialInstance::StaticClass(), nullptr, *MaterialPath);
+	}
+	
+	if (!Asset)
+	{
+		return CreateErrorResponse(TEXT("MATERIAL_NOT_FOUND"), 
+			FString::Printf(TEXT("Material not found: %s"), *MaterialPath));
+	}
+
+	// Open in asset editor
+	if (GEditor)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Asset);
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("material_path"), MaterialPath);
+	Response->SetStringField(TEXT("message"), TEXT("Material opened in editor"));
 	return Response;
 }
 

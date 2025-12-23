@@ -16,6 +16,7 @@ Create, modify, compile, and manage materials and material instances. Supports p
 | save | Save material to disk |
 | compile | Recompile material shaders |
 | refresh_editor | Refresh open Material Editor |
+| open | Open a material in the Material Editor |
 | get_info | Get comprehensive material information |
 | summarize | Get a brief summary of material |
 | list_properties | List all editable properties |

@@ -1423,33 +1423,7 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
     {
         if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
         {
-            const FString StructName = StructProperty->Struct->GetName();
-            
-            // Special handling for color types - support array format [R, G, B, A]
-            if (StructName.Contains(TEXT("LinearColor")) || StructName.Contains(TEXT("SlateColor")))
-            {
-                FLinearColor ParsedColor;
-                if (FJsonValueHelper::TryGetLinearColor(Request.Value.JsonValue, ParsedColor))
-                {
-                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-                    if (StructName.Contains(TEXT("SlateColor")))
-                    {
-                        FSlateColor* SlateColorPtr = static_cast<FSlateColor*>(ValuePtr);
-                        *SlateColorPtr = FSlateColor(ParsedColor);
-                    }
-                    else
-                    {
-                        FLinearColor* ColorPtr = static_cast<FLinearColor*>(ValuePtr);
-                        *ColorPtr = ParsedColor;
-                    }
-                    bPropertySet = true;
-                }
-                else
-                {
-                    ErrorMessage = FString::Printf(TEXT("Invalid color format for '%s'. Use array [R,G,B,A], hex \"#RRGGBB\", or object {\"R\":...,\"G\":...,\"B\":...,\"A\":...}"), *Request.PropertyPath);
-                }
-            }
-            else if (Request.Value.JsonValue->Type != EJson::Object)
+            if (Request.Value.JsonValue->Type != EJson::Object)
             {
                 ErrorMessage = FString::Printf(TEXT("Struct property '%s' requires JSON object"), *Request.PropertyPath);
             }
@@ -1457,6 +1431,7 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
             {
                 // Try custom ParseComplexPropertyValue first for special struct types like FSlateBrush, FButtonStyle
                 // These have custom JSON parsing that UE's FJsonObjectConverter doesn't handle well
+                const FString StructName = StructProperty->Struct->GetName();
                 if (StructName.Contains(TEXT("SlateBrush")) || StructName.Contains(TEXT("ButtonStyle")))
                 {
                     bPropertySet = ParseComplexPropertyValue(Request.Value.JsonValue, Property, FoundWidget, ErrorMessage);
@@ -1563,21 +1538,86 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
         }
         else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
         {
-            TSharedPtr<FJsonObject> JsonObj;
-            const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StringValue);
-            if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+            // Special handling for color types - try color parsing first before generic JSON
+            if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
             {
-                void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-                bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
-                if (!bPropertySet)
+                // Create a JSON value from the string for FJsonValueHelper
+                TSharedPtr<FJsonValue> ColorJsonValue;
+                
+                // Try to parse as JSON array first (e.g., "[1.0, 0.5, 0.0, 1.0]")
+                TArray<TSharedPtr<FJsonValue>> ArrayValues;
+                const TSharedRef<TJsonReader<>> ArrayReader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(ArrayReader, ArrayValues))
                 {
-                    TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
-                    bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+                    ColorJsonValue = MakeShareable(new FJsonValueArray(ArrayValues));
+                }
+                else
+                {
+                    // Treat as string (color name, hex, etc.)
+                    ColorJsonValue = MakeShareable(new FJsonValueString(StringValue));
+                }
+                
+                FLinearColor ColorValue;
+                if (FJsonValueHelper::TryGetLinearColor(ColorJsonValue, ColorValue))
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    *static_cast<FLinearColor*>(ValuePtr) = ColorValue;
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid color value for '%s'. Use array [R,G,B,A], hex #RRGGBB, object {R,G,B,A}, or color name"), *Request.PropertyPath);
+                }
+            }
+            else if (StructProperty->Struct == TBaseStructure<FSlateColor>::Get())
+            {
+                // Create a JSON value from the string for FJsonValueHelper
+                TSharedPtr<FJsonValue> ColorJsonValue;
+                
+                // Try to parse as JSON array first
+                TArray<TSharedPtr<FJsonValue>> ArrayValues;
+                const TSharedRef<TJsonReader<>> ArrayReader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(ArrayReader, ArrayValues))
+                {
+                    ColorJsonValue = MakeShareable(new FJsonValueArray(ArrayValues));
+                }
+                else
+                {
+                    // Treat as string (color name, hex, etc.)
+                    ColorJsonValue = MakeShareable(new FJsonValueString(StringValue));
+                }
+                
+                FLinearColor LinearColor;
+                if (FJsonValueHelper::TryGetLinearColor(ColorJsonValue, LinearColor))
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    *static_cast<FSlateColor*>(ValuePtr) = FSlateColor(LinearColor);
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid color value for '%s'. Use array [R,G,B,A], hex #RRGGBB, object {R,G,B,A}, or color name"), *Request.PropertyPath);
                 }
             }
             else
             {
-                ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *Request.PropertyPath);
+                // Generic struct handling via JSON
+                TSharedPtr<FJsonObject> JsonObj;
+                const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                    if (!bPropertySet)
+                    {
+                        TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
+                        bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+                    }
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *Request.PropertyPath);
+                }
             }
         }
     }

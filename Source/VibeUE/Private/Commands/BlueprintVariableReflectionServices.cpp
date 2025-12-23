@@ -2218,10 +2218,14 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSh
     FString BlueprintName;
     Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
+    // Support both nested variable_config object and flat params
     const TSharedPtr<FJsonObject>* VariableConfigObj = nullptr;
+    TSharedPtr<FJsonObject> FlatConfig;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigObj))
     {
-        return ParamValidation::MissingParamsError(TEXT("variable_config object is required"), ValidParams);
+        // No variable_config - use Params itself as the config (flat params)
+        FlatConfig = Params;
+        VariableConfigObj = &FlatConfig;
     }
 
     FVariableDefinition Def;
@@ -2466,11 +2470,17 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     {
         return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
     }
+    
+    // Support both nested variable_config object and flat params
     const TSharedPtr<FJsonObject>* VariableConfigObj = nullptr;
+    TSharedPtr<FJsonObject> FlatConfig;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigObj))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'variable_config' object"));
+        // No variable_config - use Params itself as the config (flat params)
+        FlatConfig = Params;
+        VariableConfigObj = &FlatConfig;
     }
+    
     FString VarNameStr;
     // Accept both "variable_name" and "name" as the variable identifier
     if (!(*VariableConfigObj)->TryGetStringField(TEXT("variable_name"), VarNameStr))

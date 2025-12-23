@@ -6,17 +6,17 @@ Comprehensive tests for all color handling scenarios in VibeUE. Tests all suppor
 
 ## Create Test Blueprints
 
-Create an actor blueprint called ColorTestActor in /Game/Tests/ColorTests. If it exists, delete it first and create a new one.
+Create an actor blueprint called ColorTestActor in /Game/Tests/ColorTests with parent_class "Actor". If it exists, delete it first and create a new one.
 
 ---
 
-Create a widget blueprint called ColorTestWidget in /Game/Tests/ColorTests. If it exists, delete it first and create a new one.
+Create a widget blueprint called ColorTestWidget in /Game/Tests/ColorTests with parent_class "UserWidget". Use manage_blueprint to create widget blueprints, NOT manage_umg_widget. If it exists, delete it first and create a new one.
 
 ---
 
 ## Create Test Materials
 
-Create a material called ColorTestMaterial in /Game/Tests/ColorTests. If it exists, delete it first.
+Create a material called ColorTestMaterial in /Game/Tests/ColorTests with destination_path "/Game/Tests/ColorTests". If it exists, delete it first.
 
 ---
 
@@ -28,15 +28,15 @@ Open the ColorTestMaterial in the editor.
 
 ## Add Components for Color Testing
 
-Add a spotlight component called TestSpotLight to ColorTestActor.
+Add a SpotLightComponent called TestSpotLight to ColorTestActor.
 
 ---
 
-Add a point light component called TestPointLight to ColorTestActor.
+Add a PointLightComponent called TestPointLight to ColorTestActor.
 
 ---
 
-Add a directional light component called TestDirectionalLight to ColorTestActor.
+Add a DirectionalLightComponent called TestDirectionalLight to ColorTestActor.
 
 ---
 
@@ -112,11 +112,11 @@ Get the LightColor from TestSpotLight to verify the object format worked.
 
 ## Create Color Variables
 
-Create a LinearColor variable called TestLinearColor on ColorTestActor.
+Create a LinearColor variable called TestLinearColor on ColorTestActor using type_path "/Script/CoreUObject.LinearColor".
 
 ---
 
-Create another LinearColor variable called AmbientColor on ColorTestActor with a default value of [0.2, 0.3, 0.4, 1.0].
+Create another LinearColor variable called AmbientColor on ColorTestActor with type_path "/Script/CoreUObject.LinearColor" and default_value [0.2, 0.3, 0.4, 1.0].
 
 ---
 
@@ -150,11 +150,11 @@ Create a function called SetColors on ColorTestActor.
 
 ---
 
-Add an input parameter called InColor of type LinearColor to SetColors.
+Add an input parameter called InColor with param_type "LinearColor" to the SetColors function.
 
 ---
 
-Add an output parameter called OutColor of type LinearColor to SetColors.
+Add an output parameter called OutColor with param_type "LinearColor" to the SetColors function.
 
 ---
 
@@ -166,29 +166,29 @@ Get the info on the SetColors function to verify the color parameters.
 
 ## Discover Color Nodes
 
-Search for nodes related to "MakeColor" in ColorTestActor.
+Discover nodes with search_term "MakeColor" in ColorTestActor blueprint.
 
 ---
 
-Search for nodes related to "LinearColor" in ColorTestActor.
+Discover nodes with search_term "LinearColor" in ColorTestActor blueprint.
 
 ---
 
-Search for nodes related to "GetColor" in ColorTestActor.
+Discover nodes with search_term "Color" in ColorTestActor blueprint.
 
 ---
 
 ## Create Color Nodes in EventGraph
 
-Add a Make LinearColor node to the EventGraph of ColorTestActor.
+Using the spawner_key from the discover results, create a MakeLinearColor node in the EventGraph of ColorTestActor.
 
 ---
 
-Add a Make Color node to the EventGraph of ColorTestActor.
+Using the spawner_key from the discover results, create a MakeColor node in the EventGraph of ColorTestActor.
 
 ---
 
-Add a LinearColorLerp node to the EventGraph of ColorTestActor.
+Using the spawner_key from the discover results, create a LinearColorLerp node in the EventGraph of ColorTestActor.
 
 ---
 
@@ -499,7 +499,7 @@ Set ColorAndOpacity on ColorText to "purple" and get the value.
 # Summary
 
 This test suite validates:
-1. **Blueprint Components** - LightColor on SpotLight, PointLight, DirectionalLight
+1. **Blueprint Components** - LightColor on SpotLightComponent, PointLightComponent, DirectionalLightComponent
 2. **Blueprint Variables** - LinearColor type variables with default values
 3. **Blueprint Functions** - Color input/output parameters
 4. **Blueprint Nodes** - MakeColor, MakeLinearColor, LinearColorLerp nodes
