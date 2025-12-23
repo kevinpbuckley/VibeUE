@@ -151,22 +151,36 @@ FActorQueryCriteria FActorQueryCriteria::FromJson(const TSharedPtr<FJsonObject>&
 	FActorQueryCriteria Criteria;
 	if (Params)
 	{
-		// Accept both class_filter and filter_class for flexibility
+		// Accept class_filter, filter_class, or just class for flexibility
 		if (!Params->TryGetStringField(TEXT("class_filter"), Criteria.ClassFilter))
 		{
-			Params->TryGetStringField(TEXT("filter_class"), Criteria.ClassFilter);
+			if (!Params->TryGetStringField(TEXT("filter_class"), Criteria.ClassFilter))
+			{
+				Params->TryGetStringField(TEXT("class"), Criteria.ClassFilter);
+			}
 		}
 		
-		// Accept both label_filter and filter_label for flexibility
+		// Accept label_filter, filter_label, filter, or name_pattern for flexibility
 		if (!Params->TryGetStringField(TEXT("label_filter"), Criteria.LabelFilter))
 		{
-			Params->TryGetStringField(TEXT("filter_label"), Criteria.LabelFilter);
+			if (!Params->TryGetStringField(TEXT("filter_label"), Criteria.LabelFilter))
+			{
+				if (!Params->TryGetStringField(TEXT("filter"), Criteria.LabelFilter))
+				{
+					Params->TryGetStringField(TEXT("name_pattern"), Criteria.LabelFilter);
+				}
+			}
 		}
 		
 		Params->TryGetBoolField(TEXT("selected_only"), Criteria.bSelectedOnly);
 		
 		int32 MaxResults;
 		if (Params->TryGetNumberField(TEXT("max_results"), MaxResults))
+		{
+			Criteria.MaxResults = MaxResults;
+		}
+		// Also accept "limit" as an alias for max_results
+		else if (Params->TryGetNumberField(TEXT("limit"), MaxResults))
 		{
 			Criteria.MaxResults = MaxResults;
 		}
@@ -179,6 +193,13 @@ FActorQueryCriteria FActorQueryCriteria::FromJson(const TSharedPtr<FJsonObject>&
 				Criteria.RequiredTags.Add(Val->AsString());
 			}
 		}
+		// Accept single tag parameter and add to required_tags
+		FString SingleTag;
+		if (Params->TryGetStringField(TEXT("tag"), SingleTag) && !SingleTag.IsEmpty())
+		{
+			Criteria.RequiredTags.AddUnique(SingleTag);
+		}
+		
 		if (Params->TryGetArrayField(TEXT("excluded_tags"), TagsArray))
 		{
 			for (const auto& Val : *TagsArray)
@@ -1403,34 +1424,88 @@ FActorPropertyParams FActorPropertyParams::FromJson(const TSharedPtr<FJsonObject
 	if (!Params) return PropertyParams;
 	
 	PropertyParams.Identifier = FActorIdentifier::FromJson(Params);
-	Params->TryGetStringField(TEXT("property_path"), PropertyParams.PropertyPath);
 	
-	// Handle property_value as either string or object
-	// If object, serialize to string format that Unreal can parse
-	if (!Params->TryGetStringField(TEXT("property_value"), PropertyParams.PropertyValue))
+	// Accept both "property_path" (documented) and "property_name" (common LLM mistake)
+	if (!Params->TryGetStringField(TEXT("property_path"), PropertyParams.PropertyPath))
 	{
-		const TSharedPtr<FJsonObject>* ValueObj;
-		if (Params->TryGetObjectField(TEXT("property_value"), ValueObj))
-		{
-			PropertyParams.PropertyValue = ConvertJsonObjectToUnrealFormat(*ValueObj);
-		}
+		Params->TryGetStringField(TEXT("property_name"), PropertyParams.PropertyPath);
 	}
-	else
+	
+	// Handle value as either string, array, or object
+	// Try both "value" (documented) and "property_value" (legacy)
+	const TSharedPtr<FJsonValue>* ValueField = Params->Values.Find(TEXT("value"));
+	if (!ValueField)
 	{
-		// Check if the string value is actually escaped JSON (e.g., "{\"R\": 255, ...}")
-		// This happens when the LLM passes JSON as a string instead of an object
-		if (PropertyParams.PropertyValue.StartsWith(TEXT("{")) && PropertyParams.PropertyValue.EndsWith(TEXT("}")))
+		ValueField = Params->Values.Find(TEXT("property_value"));
+	}
+	
+	if (ValueField && ValueField->IsValid())
+	{
+		TSharedPtr<FJsonValue> Value = *ValueField;
+		
+		// First try to use JsonValueHelper for smart color parsing
+		// This handles: "warm", "#FF8800", [1.0, 0.5, 0.0, 1.0], {"R": 255, "G": 128, "B": 0}
+		FLinearColor Color;
+		if (FJsonValueHelper::TryGetLinearColor(Value, Color))
 		{
-			TSharedPtr<FJsonObject> ParsedObj;
-			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(PropertyParams.PropertyValue);
-			if (FJsonSerializer::Deserialize(Reader, ParsedObj) && ParsedObj.IsValid())
+			// Detected a color - convert to Unreal property format
+			// Use the helper which handles sRGB gamma correctly
+			PropertyParams.PropertyValue = FJsonValueHelper::LinearColorToFColorPropertyString(Color);
+		}
+		else if (Value->Type == EJson::String)
+		{
+			PropertyParams.PropertyValue = Value->AsString();
+			
+			// Check if the string is escaped JSON (e.g., "{\"X\": 1, ...}" or "[1, 2, 3]")
+			FString TrimmedValue = PropertyParams.PropertyValue.TrimStartAndEnd();
+			if ((TrimmedValue.StartsWith(TEXT("{")) && TrimmedValue.EndsWith(TEXT("}"))) ||
+			    (TrimmedValue.StartsWith(TEXT("[")) && TrimmedValue.EndsWith(TEXT("]"))))
 			{
-				FString ConvertedValue = ConvertJsonObjectToUnrealFormat(ParsedObj);
-				if (!ConvertedValue.IsEmpty())
+				// Try to parse and convert to Unreal format
+				TSharedPtr<FJsonValue> ParsedValue = FJsonValueHelper::ParseStringToValue(TrimmedValue);
+				if (ParsedValue.IsValid())
 				{
-					PropertyParams.PropertyValue = ConvertedValue;
+					FString ConvertedValue = ConvertJsonObjectToUnrealFormat(ParsedValue->AsObject());
+					if (!ConvertedValue.IsEmpty())
+					{
+						PropertyParams.PropertyValue = ConvertedValue;
+					}
 				}
 			}
+		}
+		else if (Value->Type == EJson::Object)
+		{
+			// Direct JSON object - convert to Unreal format
+			PropertyParams.PropertyValue = ConvertJsonObjectToUnrealFormat(Value->AsObject());
+		}
+		else if (Value->Type == EJson::Array)
+		{
+			// Direct JSON array - try to convert to Unreal vector format
+			TArray<double> Numbers;
+			if (FJsonValueHelper::TryGetNumberArray(Value, Numbers))
+			{
+				if (Numbers.Num() == 3)
+				{
+					PropertyParams.PropertyValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Numbers[0], Numbers[1], Numbers[2]);
+				}
+				else if (Numbers.Num() == 4)
+				{
+					// Could be color or 4-component vector - assume color if values look like color
+					PropertyParams.PropertyValue = FString::Printf(TEXT("(R=%d,G=%d,B=%d,A=%d)"),
+						FMath::Clamp((int)(Numbers[0] * 255), 0, 255),
+						FMath::Clamp((int)(Numbers[1] * 255), 0, 255),
+						FMath::Clamp((int)(Numbers[2] * 255), 0, 255),
+						FMath::Clamp((int)(Numbers[3] * 255), 0, 255));
+				}
+			}
+		}
+		else if (Value->Type == EJson::Number)
+		{
+			PropertyParams.PropertyValue = FString::Printf(TEXT("%g"), Value->AsNumber());
+		}
+		else if (Value->Type == EJson::Boolean)
+		{
+			PropertyParams.PropertyValue = Value->AsBool() ? TEXT("true") : TEXT("false");
 		}
 	}
 	
@@ -2026,16 +2101,21 @@ FActorAttachParams FActorAttachParams::FromJson(const TSharedPtr<FJsonObject>& P
 	if (!Params) return AttachParams;
 	
 	// Child identifier - accept both standard fields and child_* prefixed fields
+	// Also accept child_actor_* variants for LLM compatibility
 	FString ChildPath, ChildLabel, ChildGuid, ChildTag;
 	// Try child_* prefixed versions first (more intuitive for attach)
 	if (!Params->TryGetStringField(TEXT("child_path"), ChildPath))
-		Params->TryGetStringField(TEXT("actor_path"), ChildPath);
+		if (!Params->TryGetStringField(TEXT("child_actor_path"), ChildPath))
+			Params->TryGetStringField(TEXT("actor_path"), ChildPath);
 	if (!Params->TryGetStringField(TEXT("child_label"), ChildLabel))
-		Params->TryGetStringField(TEXT("actor_label"), ChildLabel);
+		if (!Params->TryGetStringField(TEXT("child_actor_label"), ChildLabel))
+			Params->TryGetStringField(TEXT("actor_label"), ChildLabel);
 	if (!Params->TryGetStringField(TEXT("child_guid"), ChildGuid))
-		Params->TryGetStringField(TEXT("actor_guid"), ChildGuid);
+		if (!Params->TryGetStringField(TEXT("child_actor_guid"), ChildGuid))
+			Params->TryGetStringField(TEXT("actor_guid"), ChildGuid);
 	if (!Params->TryGetStringField(TEXT("child_tag"), ChildTag))
-		Params->TryGetStringField(TEXT("actor_tag"), ChildTag);
+		if (!Params->TryGetStringField(TEXT("child_actor_tag"), ChildTag))
+			Params->TryGetStringField(TEXT("actor_tag"), ChildTag);
 	
 	AttachParams.ChildIdentifier.ActorPath = ChildPath;
 	AttachParams.ChildIdentifier.ActorLabel = ChildLabel;

@@ -1,15 +1,17 @@
 # attach
 
-Attach an actor to another actor as a child.
+Attach an actor to another actor as a child. The child actor will follow the parent's transforms.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| ActorName | string | Yes | Name of the actor to attach |
-| ParentName | string | Yes | Name of the parent actor |
-| SocketName | string | No | Socket to attach to (for skeletal meshes) |
-| AttachmentRule | string | No | "KeepRelative", "KeepWorld", or "SnapToTarget" (default: "KeepWorld") |
+| child_label | string | Yes* | Label of the child actor to attach |
+| parent_label | string | Yes* | Label of the parent actor |
+| socket_name | string | No | Socket to attach to (for skeletal meshes) |
+| weld_simulated_bodies | bool | No | Whether to weld physics bodies (default: false) |
+
+*Alternative identifiers: `child_path`, `child_guid`, `child_tag` for child; `parent_path`, `parent_guid`, `parent_tag` for parent.
 
 ## Examples
 
@@ -17,7 +19,7 @@ Attach an actor to another actor as a child.
 ```json
 {
   "Action": "attach",
-  "ParamsJson": "{\"ActorName\": \"Weapon\", \"ParentName\": \"BP_Player_C_0\"}"
+  "ParamsJson": "{\"child_label\": \"Weapon\", \"parent_label\": \"BP_Player_C_0\"}"
 }
 ```
 
@@ -25,15 +27,15 @@ Attach an actor to another actor as a child.
 ```json
 {
   "Action": "attach",
-  "ParamsJson": "{\"ActorName\": \"Weapon\", \"ParentName\": \"BP_Player_C_0\", \"SocketName\": \"hand_r\"}"
+  "ParamsJson": "{\"child_label\": \"Sword\", \"parent_label\": \"Character\", \"socket_name\": \"hand_r\"}"
 }
 ```
 
-### Attach with Rule
+### Attach Light to Platform
 ```json
 {
   "Action": "attach",
-  "ParamsJson": "{\"ActorName\": \"Light\", \"ParentName\": \"Platform\", \"AttachmentRule\": \"KeepRelative\"}"
+  "ParamsJson": "{\"child_label\": \"PointLight1\", \"parent_label\": \"MovingPlatform\"}"
 }
 ```
 
@@ -41,17 +43,27 @@ Attach an actor to another actor as a child.
 
 ```json
 {
-  "Success": true,
-  "ActorName": "Weapon",
-  "ParentName": "BP_Player_C_0",
-  "Message": "Actor attached successfully"
+  "success": true,
+  "actor": {
+    "actor_label": "Weapon",
+    "class_name": "StaticMeshActor",
+    "parent": "BP_Player_C_0"
+  }
 }
 ```
 
+## Error Responses
+
+| Error Code | Description |
+|------------|-------------|
+| INVALID_CHILD | No child actor identifier provided or child not found |
+| INVALID_PARENT | No parent actor identifier provided or parent not found |
+| ATTACH_FAILED | Failed to attach the actors |
+
 ## Tips
 
-- KeepWorld: Maintains world position during attachment
-- KeepRelative: Maintains relative offset to parent
-- SnapToTarget: Moves to parent's position
-- Attached actors follow parent transforms
-- Use sockets for precise skeletal mesh attachment points
+- Attached actors follow parent transforms automatically
+- Use sockets for precise attachment to skeletal meshes
+- Common for attaching weapons, lights, effects to characters/vehicles
+- Child maintains its relative offset to parent
+- Detach with the `detach` action when needed

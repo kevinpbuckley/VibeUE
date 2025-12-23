@@ -205,6 +205,17 @@ bool FJsonValueHelper::TryGetVector2D(const TSharedPtr<FJsonValue>& Value, FVect
 	return false;
 }
 
+bool FJsonValueHelper::TryGetVector2DField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FVector2D& OutVector)
+{
+	if (!Object.IsValid() || !Object->HasField(FieldName))
+	{
+		return false;
+	}
+	
+	TSharedPtr<FJsonValue> Value = Object->TryGetField(FieldName);
+	return TryGetVector2D(Value, OutVector);
+}
+
 bool FJsonValueHelper::TryGetVector(const TSharedPtr<FJsonValue>& Value, FVector& OutVector)
 {
 	if (!Value.IsValid())
@@ -258,6 +269,17 @@ bool FJsonValueHelper::TryGetVector(const TSharedPtr<FJsonValue>& Value, FVector
 	}
 	
 	return false;
+}
+
+bool FJsonValueHelper::TryGetVectorField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FVector& OutVector)
+{
+	if (!Object.IsValid() || !Object->HasField(FieldName))
+	{
+		return false;
+	}
+	
+	TSharedPtr<FJsonValue> Value = Object->TryGetField(FieldName);
+	return TryGetVector(Value, OutVector);
 }
 
 bool FJsonValueHelper::TryGetRotator(const TSharedPtr<FJsonValue>& Value, FRotator& OutRotator)
@@ -394,6 +416,28 @@ bool FJsonValueHelper::TryGetMargin(const TSharedPtr<FJsonValue>& Value, float& 
 	return false;
 }
 
+bool FJsonValueHelper::TryGetMargin(const TSharedPtr<FJsonValue>& Value, FMargin& OutMargin)
+{
+	float Left, Top, Right, Bottom;
+	if (TryGetMargin(Value, Left, Top, Right, Bottom))
+	{
+		OutMargin = FMargin(Left, Top, Right, Bottom);
+		return true;
+	}
+	return false;
+}
+
+bool FJsonValueHelper::TryGetMarginField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FMargin& OutMargin)
+{
+	if (!Object.IsValid() || !Object->HasField(FieldName))
+	{
+		return false;
+	}
+	
+	TSharedPtr<FJsonValue> Value = Object->TryGetField(FieldName);
+	return TryGetMargin(Value, OutMargin);
+}
+
 bool FJsonValueHelper::TryGetString(const TSharedPtr<FJsonValue>& Value, FString& OutString)
 {
 	if (!Value.IsValid())
@@ -510,6 +554,66 @@ bool FJsonValueHelper::TryGetLinearColor(const TSharedPtr<FJsonValue>& Value, FL
 			OutColor.A = A;
 			return true;
 		}
+	}
+	
+	return false;
+}
+
+bool FJsonValueHelper::TryGetLinearColorField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FLinearColor& OutColor)
+{
+	if (!Object.IsValid() || !Object->HasField(FieldName))
+	{
+		return false;
+	}
+	
+	TSharedPtr<FJsonValue> Value = Object->TryGetField(FieldName);
+	return TryGetLinearColor(Value, OutColor);
+}
+
+bool FJsonValueHelper::TryParseLinearColor(const FString& ColorString, FLinearColor& OutColor)
+{
+	FString Trimmed = ColorString.TrimStartAndEnd();
+	if (Trimmed.IsEmpty())
+	{
+		return false;
+	}
+	
+	// Try hex color
+	if (Trimmed.StartsWith(TEXT("#")))
+	{
+		if (TryParseHexColor(Trimmed, OutColor))
+		{
+			return true;
+		}
+	}
+	
+	// Try named color
+	if (TryParseNamedColor(Trimmed.ToLower(), OutColor))
+	{
+		return true;
+	}
+	
+	// Try Unreal format: (R=1.0,G=0.5,B=0.0,A=1.0)
+	if (OutColor.InitFromString(Trimmed))
+	{
+		return true;
+	}
+	
+	// Try comma-separated values: 1.0,0.5,0.0,1.0 or (1.0,0.5,0.0,1.0)
+	FString CleanValue = Trimmed;
+	CleanValue.RemoveFromStart(TEXT("("));
+	CleanValue.RemoveFromEnd(TEXT(")"));
+	
+	TArray<FString> Components;
+	CleanValue.ParseIntoArray(Components, TEXT(","), true);
+	
+	if (Components.Num() >= 3)
+	{
+		OutColor.R = FCString::Atof(*Components[0]);
+		OutColor.G = FCString::Atof(*Components[1]);
+		OutColor.B = FCString::Atof(*Components[2]);
+		OutColor.A = Components.Num() >= 4 ? FCString::Atof(*Components[3]) : 1.0f;
+		return true;
 	}
 	
 	return false;
@@ -736,6 +840,146 @@ bool FJsonValueHelper::TryParseNamedColor(const FString& ColorName, FLinearColor
 	if (ColorName == TEXT("transparent"))
 	{
 		OutColor = FLinearColor::Transparent;
+		return true;
+	}
+	
+	// Temperature-based colors (common for lights)
+	if (ColorName == TEXT("warm") || ColorName == TEXT("warm white"))
+	{
+		// Warm white - like incandescent bulbs (~2700K)
+		OutColor = FLinearColor(1.0f, 0.85f, 0.6f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("cool") || ColorName == TEXT("cool white"))
+	{
+		// Cool white - like daylight (~6500K)
+		OutColor = FLinearColor(0.9f, 0.95f, 1.0f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("daylight"))
+	{
+		// Daylight white (~5500K)
+		OutColor = FLinearColor(1.0f, 1.0f, 0.98f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("candle") || ColorName == TEXT("candlelight"))
+	{
+		// Candle light (~1850K)
+		OutColor = FLinearColor(1.0f, 0.6f, 0.2f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("sunset") || ColorName == TEXT("golden"))
+	{
+		// Sunset/golden hour
+		OutColor = FLinearColor(1.0f, 0.7f, 0.3f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("pink"))
+	{
+		OutColor = FLinearColor(1.0f, 0.75f, 0.8f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("brown"))
+	{
+		OutColor = FLinearColor(0.6f, 0.4f, 0.2f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("lime"))
+	{
+		OutColor = FLinearColor(0.5f, 1.0f, 0.0f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("navy"))
+	{
+		OutColor = FLinearColor(0.0f, 0.0f, 0.5f, 1.0f);
+		return true;
+	}
+	if (ColorName == TEXT("teal"))
+	{
+		OutColor = FLinearColor(0.0f, 0.5f, 0.5f, 1.0f);
+		return true;
+	}
+	
+	return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Unreal Property Format String Conversion
+// ═══════════════════════════════════════════════════════════════════
+
+FString FJsonValueHelper::FColorToPropertyString(const FColor& Color)
+{
+	return FString::Printf(TEXT("(R=%d,G=%d,B=%d,A=%d)"), Color.R, Color.G, Color.B, Color.A);
+}
+
+FString FJsonValueHelper::LinearColorToFColorPropertyString(const FLinearColor& Color)
+{
+	// Convert linear color to sRGB FColor for proper property format
+	// FColor stores sRGB values (0-255), so we need to apply gamma encoding
+	FColor SRGBColor = Color.ToFColor(true); // true = apply sRGB gamma
+	return FString::Printf(TEXT("(R=%d,G=%d,B=%d,A=%d)"), SRGBColor.R, SRGBColor.G, SRGBColor.B, SRGBColor.A);
+}
+
+FString FJsonValueHelper::LinearColorToPropertyString(const FLinearColor& Color)
+{
+	return FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Color.R, Color.G, Color.B, Color.A);
+}
+
+FString FJsonValueHelper::VectorToPropertyString(const FVector& Vector)
+{
+	return FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Vector.X, Vector.Y, Vector.Z);
+}
+
+FString FJsonValueHelper::RotatorToPropertyString(const FRotator& Rotator)
+{
+	return FString::Printf(TEXT("(Pitch=%f,Yaw=%f,Roll=%f)"), Rotator.Pitch, Rotator.Yaw, Rotator.Roll);
+}
+
+bool FJsonValueHelper::TryConvertToPropertyString(const TSharedPtr<FJsonValue>& Value, FString& OutPropertyString)
+{
+	if (!Value.IsValid())
+	{
+		return false;
+	}
+	
+	// Try color first (handles "warm", "#FF8800", arrays, objects)
+	FLinearColor Color;
+	if (TryGetLinearColor(Value, Color))
+	{
+		OutPropertyString = LinearColorToFColorPropertyString(Color);
+		return true;
+	}
+	
+	// Try vector
+	FVector Vector;
+	if (TryGetVector(Value, Vector))
+	{
+		OutPropertyString = VectorToPropertyString(Vector);
+		return true;
+	}
+	
+	// Try rotator
+	FRotator Rotator;
+	if (TryGetRotator(Value, Rotator))
+	{
+		OutPropertyString = RotatorToPropertyString(Rotator);
+		return true;
+	}
+	
+	// Simple types
+	if (Value->Type == EJson::String)
+	{
+		OutPropertyString = Value->AsString();
+		return true;
+	}
+	if (Value->Type == EJson::Number)
+	{
+		OutPropertyString = FString::Printf(TEXT("%g"), Value->AsNumber());
+		return true;
+	}
+	if (Value->Type == EJson::Boolean)
+	{
+		OutPropertyString = Value->AsBool() ? TEXT("true") : TEXT("false");
 		return true;
 	}
 	

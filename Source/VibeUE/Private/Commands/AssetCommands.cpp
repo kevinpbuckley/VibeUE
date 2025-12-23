@@ -7,6 +7,7 @@
 #include "Core/ServiceContext.h"
 #include "Core/Result.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
 
@@ -125,6 +126,17 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("file_path"), TEXT("destination_path"), TEXT("texture_name"),
+        TEXT("replace_existing"), TEXT("save")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("file_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("file_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString SourceFile;
     FString DestinationPath = TEXT("/Game/Textures/Imported");
@@ -170,6 +182,16 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPt
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("export_format"), TEXT("temp_folder"), TEXT("max_size")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("asset_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString AssetPath;
     FString ExportFormat = TEXT("PNG");
@@ -228,6 +250,16 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSh
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("force_open")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("asset_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString AssetPath;
     bool bForceOpen = false;
@@ -264,11 +296,15 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("force_delete"), TEXT("show_confirmation")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Extract optional parameters
@@ -310,16 +346,20 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("destination_path"), TEXT("new_name")
+    };
+    
     FString AssetPath;
     FString DestinationPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'destination_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("destination_path is required"), ValidParams);
     }
     
     // Extract optional parameter
@@ -353,11 +393,15 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJ
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Delegate to LifecycleService
@@ -403,11 +447,15 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAllAssets(const TSharedPtr<FJs
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleListReferences(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("include_referencers"), TEXT("include_dependencies")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Extract optional parameters
@@ -502,10 +550,16 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleHelp(const TSharedPtr<FJsonObject>
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleSearchAssets(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("search_term"), TEXT("asset_type"), TEXT("path"),
+        TEXT("case_sensitive"), TEXT("include_engine_content"), TEXT("max_results")
+    };
+    
     FString SearchTerm;
     if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
     {
-        return CreateErrorResponse(TEXT("Missing 'search_term' parameter. Usage: manage_asset(action='search', search_term='YourAssetName')"));
+        return ParamValidation::MissingParamsError(TEXT("search_term is required"), ValidParams);
     }
 
     FString AssetType;

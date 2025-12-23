@@ -1,13 +1,14 @@
 # detach
 
-Detach an actor from its parent.
+Detach an actor from its parent, making it an independent actor in the level.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| ActorName | string | Yes | Name of the actor to detach |
-| DetachmentRule | string | No | "KeepRelative" or "KeepWorld" (default: "KeepWorld") |
+| actor_label | string | Yes* | Label of the actor to detach from its parent |
+
+*Alternative identifiers: `actor_path`, `actor_guid`, `actor_tag`
 
 ## Examples
 
@@ -15,15 +16,15 @@ Detach an actor from its parent.
 ```json
 {
   "Action": "detach",
-  "ParamsJson": "{\"ActorName\": \"Weapon\"}"
+  "ParamsJson": "{\"actor_label\": \"Weapon\"}"
 }
 ```
 
-### Detach Keeping Relative Transform
+### Detach by GUID
 ```json
 {
   "Action": "detach",
-  "ParamsJson": "{\"ActorName\": \"Attachment\", \"DetachmentRule\": \"KeepRelative\"}"
+  "ParamsJson": "{\"actor_guid\": \"ABC123DEF456\"}"
 }
 ```
 
@@ -31,16 +32,26 @@ Detach an actor from its parent.
 
 ```json
 {
-  "Success": true,
-  "ActorName": "Weapon",
-  "PreviousParent": "BP_Player_C_0",
-  "Message": "Actor detached successfully"
+  "success": true,
+  "actor": {
+    "actor_label": "Weapon",
+    "class_name": "StaticMeshActor",
+    "previous_parent": "BP_Player_C_0"
+  }
 }
 ```
 
+## Error Responses
+
+| Error Code | Description |
+|------------|-------------|
+| INVALID_IDENTIFIER | No actor identifier provided |
+| ACTOR_NOT_FOUND | Actor with given identifier not found |
+| DETACH_FAILED | Failed to detach the actor |
+
 ## Tips
 
-- KeepWorld maintains the actor's world position
-- KeepRelative maintains the transform values (which will change its world position)
-- Detached actors become independent world actors
-- Actor is moved to root level in World Outliner
+- Detached actors maintain their world position
+- Actor becomes independent in World Outliner
+- Use when you need to free an attached object
+- Commonly used for drop/throw mechanics

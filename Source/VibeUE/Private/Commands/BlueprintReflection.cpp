@@ -1,6 +1,7 @@
 // Copyright Kevin Buckley 2025 All Rights Reserved.
 
 #include "Commands/BlueprintReflection.h"
+#include "Core/JsonValueHelper.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
 #include "Services/Blueprint/BlueprintNodeService.h"
 #include "Engine/Blueprint.h"
@@ -384,12 +385,8 @@ namespace
             FVector2D NodePosition(200.0f, 200.0f);
             if (NodeParams.IsValid())
             {
-                const TArray<TSharedPtr<FJsonValue>>* PosArray;
-                if (NodeParams->TryGetArrayField(TEXT("position"), PosArray) && PosArray->Num() >= 2)
-                {
-                    NodePosition.X = (*PosArray)[0]->AsNumber();
-                    NodePosition.Y = (*PosArray)[1]->AsNumber();
-                }
+                // Use FJsonValueHelper for robust Vector2D parsing
+                FJsonValueHelper::TryGetVector2DField(NodeParams, TEXT("position"), NodePosition);
             }
 
             // Match standard graph spawning behavior so nodes fully initialize their state
@@ -1429,6 +1426,7 @@ void FBlueprintReflection::ConfigureDynamicCastNode(UK2Node_DynamicCast* CastNod
 
 /**
  * Try to apply a struct default value from JSON
+ * Uses FJsonValueHelper for robust parsing of vectors, colors, etc.
  */
 static bool TryApplyStructDefault(UEdGraphPin* Pin, const TSharedPtr<FJsonObject>& StructValue)
 {
@@ -1446,48 +1444,56 @@ static bool TryApplyStructDefault(UEdGraphPin* Pin, const TSharedPtr<FJsonObject
             return false;
         }
         
-        // Handle FVector
+        // Handle FVector using FJsonValueHelper
         if (Struct->GetFName() == NAME_Vector)
         {
-            double X = 0, Y = 0, Z = 0;
-            StructValue->TryGetNumberField(TEXT("X"), X);
-            StructValue->TryGetNumberField(TEXT("Y"), Y);
-            StructValue->TryGetNumberField(TEXT("Z"), Z);
-            Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), X, Y, Z);
-            return true;
+            FVector Vec;
+            TSharedPtr<FJsonValue> JsonVal = MakeShared<FJsonValueObject>(StructValue);
+            if (FJsonValueHelper::TryGetVector(JsonVal, Vec))
+            {
+                Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), Vec.X, Vec.Y, Vec.Z);
+                return true;
+            }
+            return false;
         }
         
-        // Handle FRotator
+        // Handle FRotator using FJsonValueHelper
         if (Struct->GetFName() == NAME_Rotator)
         {
-            double Pitch = 0, Yaw = 0, Roll = 0;
-            StructValue->TryGetNumberField(TEXT("Pitch"), Pitch);
-            StructValue->TryGetNumberField(TEXT("Yaw"), Yaw);
-            StructValue->TryGetNumberField(TEXT("Roll"), Roll);
-            Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), Pitch, Yaw, Roll);
-            return true;
+            FRotator Rot;
+            TSharedPtr<FJsonValue> JsonVal = MakeShared<FJsonValueObject>(StructValue);
+            if (FJsonValueHelper::TryGetRotator(JsonVal, Rot))
+            {
+                Pin->DefaultValue = FString::Printf(TEXT("%f,%f,%f"), Rot.Pitch, Rot.Yaw, Rot.Roll);
+                return true;
+            }
+            return false;
         }
         
-        // Handle FVector2D
+        // Handle FVector2D using FJsonValueHelper
         if (Struct->GetFName() == NAME_Vector2D)
         {
-            double X = 0, Y = 0;
-            StructValue->TryGetNumberField(TEXT("X"), X);
-            StructValue->TryGetNumberField(TEXT("Y"), Y);
-            Pin->DefaultValue = FString::Printf(TEXT("%f,%f"), X, Y);
-            return true;
+            FVector2D Vec2D;
+            TSharedPtr<FJsonValue> JsonVal = MakeShared<FJsonValueObject>(StructValue);
+            if (FJsonValueHelper::TryGetVector2D(JsonVal, Vec2D))
+            {
+                Pin->DefaultValue = FString::Printf(TEXT("%f,%f"), Vec2D.X, Vec2D.Y);
+                return true;
+            }
+            return false;
         }
         
-        // Handle FLinearColor / FColor
+        // Handle FLinearColor / FColor using FJsonValueHelper
         if (Struct->GetFName() == NAME_LinearColor || Struct->GetFName() == NAME_Color)
         {
-            double R = 1, G = 1, B = 1, A = 1;
-            StructValue->TryGetNumberField(TEXT("R"), R);
-            StructValue->TryGetNumberField(TEXT("G"), G);
-            StructValue->TryGetNumberField(TEXT("B"), B);
-            StructValue->TryGetNumberField(TEXT("A"), A);
-            Pin->DefaultValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), R, G, B, A);
-            return true;
+            FLinearColor Color;
+            TSharedPtr<FJsonValue> JsonVal = MakeShared<FJsonValueObject>(StructValue);
+            if (FJsonValueHelper::TryGetLinearColor(JsonVal, Color))
+            {
+                Pin->DefaultValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Color.R, Color.G, Color.B, Color.A);
+                return true;
+            }
+            return false;
         }
     }
     
@@ -2911,7 +2917,7 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
 
     NodeParamsShared->SetStringField(TEXT("spawner_key"), SpawnerKey);
 
-    // Extract desired position
+    // Extract desired position using FJsonValueHelper for robust parsing
     auto ExtractPosition = [](const TSharedPtr<FJsonObject>& Source, const TCHAR* Field, float& OutX, float& OutY) -> bool
     {
         if (!Source.IsValid())
@@ -2919,11 +2925,11 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
             return false;
         }
 
-        const TArray<TSharedPtr<FJsonValue>>* PositionArrayPtr = nullptr;
-        if (Source->TryGetArrayField(Field, PositionArrayPtr) && PositionArrayPtr && PositionArrayPtr->Num() >= 2)
+        FVector2D Position;
+        if (FJsonValueHelper::TryGetVector2DField(Source, Field, Position))
         {
-            OutX = static_cast<float>((*PositionArrayPtr)[0]->AsNumber());
-            OutY = static_cast<float>((*PositionArrayPtr)[1]->AsNumber());
+            OutX = static_cast<float>(Position.X);
+            OutY = static_cast<float>(Position.Y);
             return true;
         }
 
@@ -2937,19 +2943,9 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
 
     if (!bPositionSet)
     {
-        const TArray<TSharedPtr<FJsonValue>>* DirectPositionPtr = nullptr;
-        if (Params->TryGetArrayField(TEXT("position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
-        {
-            PosX = static_cast<float>((*DirectPositionPtr)[0]->AsNumber());
-            PosY = static_cast<float>((*DirectPositionPtr)[1]->AsNumber());
-            bPositionSet = true;
-        }
-        else if (Params->TryGetArrayField(TEXT("node_position"), DirectPositionPtr) && DirectPositionPtr && DirectPositionPtr->Num() >= 2)
-        {
-            PosX = static_cast<float>((*DirectPositionPtr)[0]->AsNumber());
-            PosY = static_cast<float>((*DirectPositionPtr)[1]->AsNumber());
-            bPositionSet = true;
-        }
+        // Also try direct position fields on Params
+        bPositionSet = ExtractPosition(Params, TEXT("position"), PosX, PosY) ||
+                       ExtractPosition(Params, TEXT("node_position"), PosX, PosY);
     }
 
     // Persist position inside node params for downstream configuration helpers

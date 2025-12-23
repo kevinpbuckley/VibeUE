@@ -4,7 +4,38 @@
 #include "Services/LevelActor/LevelActorService.h"
 #include "Services/LevelActor/Types/LevelActorTypes.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Core/JsonValueHelper.h"
+
+// ============================================================================
+// Level Actor Parameter Sets
+// ============================================================================
+
+namespace LevelActorParams
+{
+	// Actor identifier params - at least one required for most actions
+	static const TArray<FString> ActorIdentifierParams = {
+		TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag")
+	};
+	
+	// Check if any identifier is present
+	static bool HasActorIdentifier(const TSharedPtr<FJsonObject>& Params)
+	{
+		return ParamValidation::HasAnyStringParam(Params, ActorIdentifierParams);
+	}
+	
+	// Reuse ParamValidation helpers
+	static bool HasAnyParam(const TSharedPtr<FJsonObject>& Params, const TArray<FString>& ParamNames)
+	{
+		return ParamValidation::HasAnyParam(Params, ParamNames);
+	}
+	
+	// Build error message listing valid params
+	static FString BuildMissingParamsError(const FString& Description, const TArray<FString>& ValidParams)
+	{
+		return ParamValidation::BuildError(Description, ValidParams);
+	}
+}
 
 FLevelActorCommands::FLevelActorCommands()
 {
@@ -153,6 +184,18 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleCommand(const FString& Comman
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleAdd(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate required param: actor_class
+	FString ActorClass;
+	if (!Params->TryGetStringField(TEXT("actor_class"), ActorClass) || ActorClass.IsEmpty())
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_class"), TEXT("actor_name"), TEXT("actor_label"), 
+			TEXT("location"), TEXT("rotation"), TEXT("scale"), TEXT("tags")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("actor_class is required"), ValidParams));
+	}
+	
 	FActorAddParams AddParams = FActorAddParams::FromJson(Params);
 	FActorOperationResult Result = Service->AddActor(AddParams);
 	return Result.ToJson();
@@ -160,10 +203,87 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleAdd(const TSharedPtr<FJsonObj
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleRemove(const TSharedPtr<FJsonObject>& Params)
 {
-	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
-	
 	bool bWithUndo = true;
 	Params->TryGetBoolField(TEXT("with_undo"), bWithUndo);
+	
+	// Check for multiple actors first - support both actor_labels and actor_paths
+	const TArray<TSharedPtr<FJsonValue>>* ActorArray = nullptr;
+	bool bUsingPaths = false;
+	
+	if (!Params->TryGetArrayField(TEXT("actor_labels"), ActorArray) || !ActorArray || ActorArray->Num() == 0)
+	{
+		// Try actor_paths as an alias
+		if (Params->TryGetArrayField(TEXT("actor_paths"), ActorArray) && ActorArray && ActorArray->Num() > 0)
+		{
+			bUsingPaths = true;
+		}
+	}
+	
+	if (ActorArray && ActorArray->Num() > 0)
+	{
+		// Batch removal mode
+		TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
+		TArray<TSharedPtr<FJsonValue>> RemovedArray;
+		TArray<TSharedPtr<FJsonValue>> FailedArray;
+		
+		for (const TSharedPtr<FJsonValue>& Value : *ActorArray)
+		{
+			FString Identifier;
+			if (Value->TryGetString(Identifier) && !Identifier.IsEmpty())
+			{
+				FActorIdentifier ActorId;
+				if (bUsingPaths)
+				{
+					ActorId.ActorPath = Identifier;
+				}
+				else
+				{
+					ActorId.ActorLabel = Identifier;
+				}
+				
+				FActorOperationResult Result = Service->RemoveActor(ActorId, bWithUndo);
+				
+				TSharedPtr<FJsonObject> ItemResult = MakeShareable(new FJsonObject);
+				ItemResult->SetStringField(bUsingPaths ? TEXT("actor_path") : TEXT("actor_label"), Identifier);
+				ItemResult->SetBoolField(TEXT("success"), Result.bSuccess);
+				
+				if (Result.bSuccess)
+				{
+					RemovedArray.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+				}
+				else
+				{
+					ItemResult->SetStringField(TEXT("error"), Result.ErrorMessage);
+					FailedArray.Add(MakeShareable(new FJsonValueObject(ItemResult)));
+				}
+			}
+		}
+		
+		Response->SetBoolField(TEXT("success"), FailedArray.Num() == 0);
+		Response->SetArrayField(TEXT("removed"), RemovedArray);
+		if (FailedArray.Num() > 0)
+		{
+			Response->SetArrayField(TEXT("failed"), FailedArray);
+		}
+		Response->SetNumberField(TEXT("removed_count"), RemovedArray.Num());
+		Response->SetNumberField(TEXT("failed_count"), FailedArray.Num());
+		
+		return Response;
+	}
+	
+	// Single actor removal (existing behavior)
+	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
+	
+	// Validate - need either batch array or single identifier
+	if (!Identifier.IsValid())
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("actor_labels"), TEXT("actor_paths"), TEXT("with_undo")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
 	
 	FActorOperationResult Result = Service->RemoveActor(Identifier, bWithUndo);
 	return Result.ToJson();
@@ -185,6 +305,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleFind(const TSharedPtr<FJsonOb
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetInfo(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("include_components"), TEXT("include_properties"), TEXT("category_filter")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	// Default to minimal response - user must opt-in for components/properties
@@ -207,6 +338,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetInfo(const TSharedPtr<FJso
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetTransform(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("location"), TEXT("rotation"), TEXT("scale"), TEXT("world_space"), TEXT("sweep")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorTransformParams TransformParams = FActorTransformParams::FromJson(Params);
 	FActorOperationResult Result = Service->SetTransform(TransformParams);
 	return Result.ToJson();
@@ -214,6 +356,16 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetTransform(const TSharedPtr
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetTransform(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	FActorOperationResult Result = Service->GetTransform(Identifier);
 	return Result.ToJson();
@@ -221,6 +373,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetTransform(const TSharedPtr
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetLocation(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("location"), TEXT("world_space"), TEXT("sweep")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	// Parse location using helper - handles arrays, objects, and string-encoded JSON
@@ -228,7 +391,12 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetLocation(const TSharedPtr<
 	const TSharedPtr<FJsonValue>* LocationValue = Params->Values.Find(TEXT("location"));
 	if (!LocationValue || !FJsonValueHelper::TryGetVector(*LocationValue, Location))
 	{
-		return CreateErrorResponse(TEXT("MISSING_LOCATION"), TEXT("location parameter is required as {x, y, z} object or [X, Y, Z] array"));
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("location"), TEXT("world_space"), TEXT("sweep")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("location is required as {x, y, z} or [X, Y, Z]"), ValidParams));
 	}
 	
 	bool bWorldSpace = true;
@@ -242,6 +410,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetLocation(const TSharedPtr<
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetRotation(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("rotation"), TEXT("world_space")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	// Parse rotation using helper - handles arrays, objects, and string-encoded JSON
@@ -249,7 +428,12 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetRotation(const TSharedPtr<
 	const TSharedPtr<FJsonValue>* RotationValue = Params->Values.Find(TEXT("rotation"));
 	if (!RotationValue || !FJsonValueHelper::TryGetRotator(*RotationValue, Rotation))
 	{
-		return CreateErrorResponse(TEXT("MISSING_ROTATION"), TEXT("rotation parameter is required as {pitch, yaw, roll} object or [Pitch, Yaw, Roll] array"));
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("rotation"), TEXT("world_space")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("rotation is required as {pitch, yaw, roll} or [Pitch, Yaw, Roll]"), ValidParams));
 	}
 	
 	bool bWorldSpace = true;
@@ -261,6 +445,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetRotation(const TSharedPtr<
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetScale(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("scale")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	// Parse scale using helper - handles arrays, objects, and string-encoded JSON
@@ -268,7 +463,12 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetScale(const TSharedPtr<FJs
 	const TSharedPtr<FJsonValue>* ScaleValue = Params->Values.Find(TEXT("scale"));
 	if (!ScaleValue || !FJsonValueHelper::TryGetVector(*ScaleValue, Scale))
 	{
-		return CreateErrorResponse(TEXT("MISSING_SCALE"), TEXT("scale parameter is required as {x, y, z} object or [X, Y, Z] array"));
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("scale")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("scale is required as {x, y, z} or [X, Y, Z]"), ValidParams));
 	}
 	
 	FActorOperationResult Result = Service->SetScale(Identifier, Scale);
@@ -281,6 +481,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetScale(const TSharedPtr<FJs
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleFocus(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("instant")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	bool bInstant = false;
@@ -292,6 +503,16 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleFocus(const TSharedPtr<FJsonO
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleMoveToView(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	FActorOperationResult Result = Service->MoveActorToView(Identifier);
 	return Result.ToJson();
@@ -309,6 +530,28 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleRefreshViewport(const TShared
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetProperty(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("property_path"), TEXT("component_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
+	// Validate property_path
+	if (!LevelActorParams::HasAnyParam(Params, {TEXT("property_path"), TEXT("property_name")}))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("property_path"), TEXT("component_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("property_path is required"), ValidParams));
+	}
+	
 	FActorPropertyParams PropertyParams = FActorPropertyParams::FromJson(Params);
 	FActorOperationResult Result = Service->GetProperty(PropertyParams);
 	return Result.ToJson();
@@ -316,6 +559,39 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetProperty(const TSharedPtr<
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetProperty(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("property_path"), TEXT("property_value"), TEXT("component_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
+	// Validate property_path
+	if (!LevelActorParams::HasAnyParam(Params, {TEXT("property_path"), TEXT("property_name")}))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("property_path"), TEXT("property_value"), TEXT("component_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("property_path is required"), ValidParams));
+	}
+	
+	// Validate property_value
+	if (!Params->HasField(TEXT("property_value")))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("property_path"), TEXT("property_value"), TEXT("component_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("property_value is required"), ValidParams));
+	}
+	
 	FActorPropertyParams PropertyParams = FActorPropertyParams::FromJson(Params);
 	FActorOperationResult Result = Service->SetProperty(PropertyParams);
 	return Result.ToJson();
@@ -323,6 +599,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetProperty(const TSharedPtr<
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetAllProperties(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("component_name"), TEXT("category_filter"), TEXT("include_inherited")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorPropertyParams PropertyParams = FActorPropertyParams::FromJson(Params);
 	FActorOperationResult Result = Service->GetAllProperties(PropertyParams);
 	return Result.ToJson();
@@ -334,6 +621,17 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleGetAllProperties(const TShare
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetFolder(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("folder_path"), TEXT("folder_name"), TEXT("folder")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
 	FString FolderPath;
@@ -352,6 +650,27 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSetFolder(const TSharedPtr<FJ
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleAttach(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate - need both child and parent identifiers
+	static const TArray<FString> ValidParams = {
+		TEXT("child_label"), TEXT("child_path"), TEXT("child_guid"),
+		TEXT("parent_label"), TEXT("parent_path"), TEXT("parent_guid"),
+		TEXT("socket_name"), TEXT("weld_simulated_bodies")
+	};
+	
+	// Check for child identifier
+	if (!LevelActorParams::HasAnyParam(Params, {TEXT("child_label"), TEXT("child_path"), TEXT("child_guid"), TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid")}))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Child actor identifier required"), ValidParams));
+	}
+	
+	// Check for parent identifier
+	if (!LevelActorParams::HasAnyParam(Params, {TEXT("parent_label"), TEXT("parent_path"), TEXT("parent_guid")}))
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Parent actor identifier required"), ValidParams));
+	}
+	
 	FActorAttachParams AttachParams = FActorAttachParams::FromJson(Params);
 	FActorOperationResult Result = Service->AttachActor(AttachParams);
 	return Result.ToJson();
@@ -359,6 +678,16 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleAttach(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleDetach(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	FActorOperationResult Result = Service->DetachActor(Identifier);
 	return Result.ToJson();
@@ -373,10 +702,39 @@ TSharedPtr<FJsonObject> FLevelActorCommands::HandleSelect(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FLevelActorCommands::HandleRename(const TSharedPtr<FJsonObject>& Params)
 {
+	// Validate actor identifier
+	if (!LevelActorParams::HasActorIdentifier(Params))
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("new_label"), TEXT("new_actor_label"), TEXT("new_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("Actor identifier required"), ValidParams));
+	}
+	
 	FActorIdentifier Identifier = FActorIdentifier::FromJson(Params);
 	
+	// Accept multiple parameter name variations
 	FString NewLabel;
-	Params->TryGetStringField(TEXT("new_label"), NewLabel);
+	if (!Params->TryGetStringField(TEXT("new_label"), NewLabel))
+	{
+		if (!Params->TryGetStringField(TEXT("new_actor_label"), NewLabel))
+		{
+			Params->TryGetStringField(TEXT("new_name"), NewLabel);
+		}
+	}
+	
+	// Validate new_label
+	if (NewLabel.IsEmpty())
+	{
+		static const TArray<FString> ValidParams = {
+			TEXT("actor_label"), TEXT("actor_path"), TEXT("actor_guid"), TEXT("actor_tag"),
+			TEXT("new_label"), TEXT("new_actor_label"), TEXT("new_name")
+		};
+		return CreateErrorResponse(TEXT("MISSING_PARAMS"), 
+			LevelActorParams::BuildMissingParamsError(TEXT("new_label is required"), ValidParams));
+	}
 	
 	FActorOperationResult Result = Service->RenameActor(Identifier, NewLabel);
 	return Result.ToJson();

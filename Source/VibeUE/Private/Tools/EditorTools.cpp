@@ -245,7 +245,7 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 
 // 4. manage_blueprint
 REGISTER_VIBEUE_TOOL(manage_blueprint,
-	"Manage blueprints - create, compile, reparent, get/set properties. Actions: create, get_info, compile, reparent, set_property, get_property",
+	"Manage blueprints - create, compile, reparent, get/set properties. Actions: create, get_info, compile, reparent, set_property, get_property. For create: ParamsJson requires name (or blueprint_name), optional parent_class. For get_info/compile/reparent/set_property/get_property: requires blueprint_name.",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),
@@ -373,7 +373,7 @@ REGISTER_VIBEUE_TOOL(manage_material,
 
 // 12. manage_material_node
 REGISTER_VIBEUE_TOOL(manage_material_node,
-	"Manage material graph nodes - add, connect, configure nodes. Actions: add, remove, connect, disconnect, get_nodes, set_property",
+	"Manage material graph nodes - create, connect, configure nodes. Actions: help, discover_types, get_categories, create, delete, move, list, get_details, get_pins, connect, disconnect, connect_to_output, disconnect_output, list_connections, get_property, set_property, list_properties, promote_to_parameter, create_parameter, set_parameter_metadata, get_output_properties, get_output_connections. ParamsJson params: material_path (required for most), expression_id (for node operations), expression_class (for create), position [X,Y], property_name, property_value, output_name (for connect_to_output).",
 	"Material",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),

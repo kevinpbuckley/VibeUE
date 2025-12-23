@@ -4,10 +4,56 @@
 #include "Services/Material/MaterialNodeService.h"
 #include "Core/ServiceContext.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Materials/Material.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMaterialNodeCommands, Log, All);
+
+// Parameter validation for manage_material_node actions
+namespace MaterialNodeParams
+{
+	inline const TArray<FString>& CreateParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("expression_class"), TEXT("pos_x"), TEXT("pos_y")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& DeleteParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("expression_id")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& ConnectParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("source_expression_id"), TEXT("source_output"),
+			TEXT("target_expression_id"), TEXT("target_input")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& PropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("expression_id"), TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& MaterialPathParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path")
+		};
+		return Params;
+	}
+}
 
 FMaterialNodeCommands::FMaterialNodeCommands()
 {
@@ -43,7 +89,9 @@ UMaterial* FMaterialNodeCommands::LoadMaterialFromParams(const TSharedPtr<FJsonO
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		OutError = CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		OutError = ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialNodeParams::MaterialPathParams());
 		return nullptr;
 	}
 
@@ -341,7 +389,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleCreate(const TSharedPtr<FJs
 	FString ExpressionClass;
 	if (!Params->TryGetStringField(TEXT("expression_class"), ExpressionClass))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_class is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_class is required"),
+			MaterialNodeParams::CreateParams());
 	}
 
 	int32 PosX = 0, PosY = 0;
@@ -373,7 +423,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDelete(const TSharedPtr<FJs
 	FString ExpressionId;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			MaterialNodeParams::DeleteParams());
 	}
 
 	auto Result = Service->DeleteExpression(Material, ExpressionId);
@@ -387,6 +439,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDelete(const TSharedPtr<FJs
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleMove(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id"), TEXT("pos_x"), TEXT("pos_y")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -397,13 +453,17 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleMove(const TSharedPtr<FJson
 	FString ExpressionId;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 
 	int32 PosX = 0, PosY = 0;
 	if (!Params->TryGetNumberField(TEXT("pos_x"), PosX) || !Params->TryGetNumberField(TEXT("pos_y"), PosY))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("pos_x and pos_y are required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("pos_x and pos_y are required"),
+			ValidParams);
 	}
 
 	auto Result = Service->MoveExpression(Material, ExpressionId, PosX, PosY);
@@ -449,6 +509,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleList(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetDetails(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -459,7 +523,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetDetails(const TSharedPtr
 	FString ExpressionId;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->GetExpressionDetails(Material, ExpressionId);
@@ -476,6 +542,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetDetails(const TSharedPtr
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetPins(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -486,7 +556,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetPins(const TSharedPtr<FJ
 	FString ExpressionId;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->GetExpressionPins(Material, ExpressionId);
@@ -523,16 +595,22 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleConnect(const TSharedPtr<FJ
 	FString SourceExpressionId, SourceOutputName, TargetExpressionId, TargetInputName;
 	if (!Params->TryGetStringField(TEXT("source_expression_id"), SourceExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("source_expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("source_expression_id is required"),
+			MaterialNodeParams::ConnectParams());
 	}
 	Params->TryGetStringField(TEXT("source_output"), SourceOutputName);
 	if (!Params->TryGetStringField(TEXT("target_expression_id"), TargetExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("target_expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("target_expression_id is required"),
+			MaterialNodeParams::ConnectParams());
 	}
 	if (!Params->TryGetStringField(TEXT("target_input"), TargetInputName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("target_input is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("target_input is required"),
+			MaterialNodeParams::ConnectParams());
 	}
 
 	auto Result = Service->ConnectExpressions(Material, SourceExpressionId, SourceOutputName, TargetExpressionId, TargetInputName);
@@ -546,6 +624,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleConnect(const TSharedPtr<FJ
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDisconnect(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id"), TEXT("input_name")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -556,11 +638,15 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDisconnect(const TSharedPtr
 	FString ExpressionId, InputName;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 	if (!Params->TryGetStringField(TEXT("input_name"), InputName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("input_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("input_name is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->DisconnectInput(Material, ExpressionId, InputName);
@@ -574,6 +660,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDisconnect(const TSharedPtr
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleConnectToOutput(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id"), TEXT("output_name"), TEXT("material_property")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -584,12 +674,16 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleConnectToOutput(const TShar
 	FString ExpressionId, OutputName, MaterialProperty;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 	Params->TryGetStringField(TEXT("output_name"), OutputName);
 	if (!Params->TryGetStringField(TEXT("material_property"), MaterialProperty))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_property is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_property is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->ConnectToMaterialProperty(Material, ExpressionId, OutputName, MaterialProperty);
@@ -603,6 +697,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleConnectToOutput(const TShar
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDisconnectOutput(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("material_property")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -613,7 +711,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleDisconnectOutput(const TSha
 	FString MaterialProperty;
 	if (!Params->TryGetStringField(TEXT("material_property"), MaterialProperty))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_property is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_property is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->DisconnectMaterialProperty(Material, MaterialProperty);
@@ -669,11 +769,15 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleGetProperty(const TSharedPt
 	FString ExpressionId, PropertyName;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			MaterialNodeParams::PropertyParams());
 	}
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("property_name is required"),
+			MaterialNodeParams::PropertyParams());
 	}
 
 	auto Result = Service->GetExpressionProperty(Material, ExpressionId, PropertyName);
@@ -701,17 +805,57 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleSetProperty(const TSharedPt
 	FString ExpressionId, PropertyName, Value;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			MaterialNodeParams::PropertyParams());
 	}
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("property_name is required"),
+			MaterialNodeParams::PropertyParams());
 	}
+	
 	// Accept both "value" and "property_value" as parameter names (docs use property_value)
-	if (!Params->TryGetStringField(TEXT("value"), Value) && 
-		!Params->TryGetStringField(TEXT("property_value"), Value))
+	// Handle any JSON value type - string, array, object, number
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (!ValueField.IsValid())
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
+		ValueField = Params->TryGetField(TEXT("property_value"));
+	}
+	
+	if (!ValueField.IsValid())
+	{
+		return ParamValidation::MissingParamsError(
+			TEXT("value or property_value is required"),
+			MaterialNodeParams::PropertyParams());
+	}
+	
+	// Convert the JSON value to string format for the service
+	// The service handles parsing of color strings, arrays, hex, etc.
+	if (ValueField->Type == EJson::String)
+	{
+		Value = ValueField->AsString();
+	}
+	else if (ValueField->Type == EJson::Number)
+	{
+		Value = FString::Printf(TEXT("%g"), ValueField->AsNumber());
+	}
+	else if (ValueField->Type == EJson::Boolean)
+	{
+		Value = ValueField->AsBool() ? TEXT("true") : TEXT("false");
+	}
+	else if (ValueField->Type == EJson::Array || ValueField->Type == EJson::Object)
+	{
+		// For arrays and objects, serialize to JSON string for the service to parse
+		FString JsonString;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+		FJsonSerializer::Serialize(ValueField.ToSharedRef(), TEXT(""), Writer);
+		Value = JsonString;
+	}
+	else
+	{
+		return CreateErrorResponse(TEXT("INVALID_VALUE"), TEXT("property_value must be a string, number, boolean, array, or object"));
 	}
 
 	auto Result = Service->SetExpressionProperty(Material, ExpressionId, PropertyName, Value);
@@ -725,6 +869,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleSetProperty(const TSharedPt
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleListProperties(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -735,7 +883,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleListProperties(const TShare
 	FString ExpressionId;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 
 	auto Result = Service->ListExpressionProperties(Material, ExpressionId);
@@ -765,6 +915,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleListProperties(const TShare
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandlePromoteToParameter(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id"), TEXT("parameter_name"), TEXT("group_name")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -775,11 +929,15 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandlePromoteToParameter(const TS
 	FString ExpressionId, ParameterName, GroupName;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("parameter_name is required"),
+			ValidParams);
 	}
 	Params->TryGetStringField(TEXT("group_name"), GroupName);
 
@@ -798,6 +956,11 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandlePromoteToParameter(const TS
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleCreateParameter(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("parameter_type"), TEXT("parameter_name"), 
+		TEXT("group_name"), TEXT("default_value"), TEXT("pos_x"), TEXT("pos_y")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -808,11 +971,15 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleCreateParameter(const TShar
 	FString ParameterType, ParameterName, GroupName, DefaultValue;
 	if (!Params->TryGetStringField(TEXT("parameter_type"), ParameterType))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_type is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("parameter_type is required"),
+			ValidParams);
 	}
 	if (!Params->TryGetStringField(TEXT("parameter_name"), ParameterName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("parameter_name is required"),
+			ValidParams);
 	}
 	Params->TryGetStringField(TEXT("group_name"), GroupName);
 	Params->TryGetStringField(TEXT("default_value"), DefaultValue);
@@ -836,6 +1003,10 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleCreateParameter(const TShar
 
 TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleSetParameterMetadata(const TSharedPtr<FJsonObject>& Params)
 {
+	static const TArray<FString> ValidParams = {
+		TEXT("material_path"), TEXT("expression_id"), TEXT("group_name"), TEXT("sort_priority")
+	};
+	
 	TSharedPtr<FJsonObject> Error;
 	UMaterial* Material = LoadMaterialFromParams(Params, Error);
 	if (!Material)
@@ -846,7 +1017,9 @@ TSharedPtr<FJsonObject> FMaterialNodeCommands::HandleSetParameterMetadata(const 
 	FString ExpressionId, GroupName;
 	if (!Params->TryGetStringField(TEXT("expression_id"), ExpressionId))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("expression_id is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("expression_id is required"),
+			ValidParams);
 	}
 	Params->TryGetStringField(TEXT("group_name"), GroupName);
 

@@ -4,6 +4,7 @@
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "EdGraphSchema_K2.h"
@@ -2202,16 +2203,25 @@ static bool ParseTopLevelAssetPathString(const FString& In, FTopLevelAssetPath& 
 
 TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    // Define valid parameters for this action
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("variable_config"), TEXT("variable_name"),
+        TEXT("type_path"), TEXT("type_name"), TEXT("type"), TEXT("category"),
+        TEXT("default_value"), TEXT("is_instance_editable"), TEXT("is_blueprint_read_only")
+    };
+
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
+
+    FString BlueprintName;
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     const TSharedPtr<FJsonObject>* VariableConfigObj = nullptr;
     if (!Params->TryGetObjectField(TEXT("variable_config"), VariableConfigObj))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'variable_config' object"));
+        return ParamValidation::MissingParamsError(TEXT("variable_config object is required"), ValidParams);
     }
 
     FVariableDefinition Def;
@@ -2310,15 +2320,23 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleCreate(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleDelete(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    // Define valid parameters for this action
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("variable_name")
+    };
+
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
+
+    FString BlueprintName;
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
+
     FString VarNameStr;
     if (!Params->TryGetStringField(TEXT("variable_name"), VarNameStr) || VarNameStr.IsEmpty())
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("VARIABLE_NAME_MISSING"), TEXT("'variable_name' is required"));
+        return ParamValidation::MissingParamsError(TEXT("variable_name is required"), ValidParams);
     }
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
@@ -2340,11 +2358,19 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleDelete(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleList(const TSharedPtr<FJsonObject>& Params)
 {
-    FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    // Define valid parameters for this action
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("filter_category"), TEXT("category"),
+        TEXT("filter_name"), TEXT("name_filter"), TEXT("search")
+    };
+
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
     {
-        return FResponseSerializer::CreateErrorResponse(TEXT("PARAM_MISSING"), TEXT("Missing 'blueprint_name'"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
+
+    FString BlueprintName;
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
     FString Err;
     UBlueprint* BP = FindBlueprint(BlueprintName, Err);
     if (!BP)

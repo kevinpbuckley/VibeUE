@@ -81,6 +81,17 @@ public:
 	static bool TryGetVector2D(const TSharedPtr<FJsonValue>& Value, FVector2D& OutVector);
 	
 	/**
+	 * Try to get a Vector2D from a field in a JSON object.
+	 * Convenience wrapper around TryGetVector2D that handles field extraction.
+	 * 
+	 * @param Object The JSON object containing the field
+	 * @param FieldName The name of the field to extract
+	 * @param OutVector Output vector
+	 * @return True if field exists and was successfully parsed as a Vector2D
+	 */
+	static bool TryGetVector2DField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FVector2D& OutVector);
+	
+	/**
 	 * Try to get a Vector from a JSON value.
 	 * Accepts: [x, y, z], {"X": x, "Y": y, "Z": z}, or string versions.
 	 * 
@@ -89,6 +100,17 @@ public:
 	 * @return True if successfully extracted vector
 	 */
 	static bool TryGetVector(const TSharedPtr<FJsonValue>& Value, FVector& OutVector);
+	
+	/**
+	 * Try to get a Vector from a field in a JSON object.
+	 * Convenience wrapper around TryGetVector that handles field extraction.
+	 * 
+	 * @param Object The JSON object containing the field
+	 * @param FieldName The name of the field to extract
+	 * @param OutVector Output vector
+	 * @return True if field exists and was successfully parsed as a Vector
+	 */
+	static bool TryGetVectorField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FVector& OutVector);
 	
 	/**
 	 * Try to get a Rotator from a JSON value.
@@ -113,6 +135,28 @@ public:
 	static bool TryGetMargin(const TSharedPtr<FJsonValue>& Value, float& OutLeft, float& OutTop, float& OutRight, float& OutBottom);
 	
 	/**
+	 * Try to get an FMargin from a JSON value.
+	 * Accepts: [left, top, right, bottom], single number (uniform), 
+	 * [horizontal, vertical], or object {"Left": l, "Top": t, "Right": r, "Bottom": b}.
+	 * 
+	 * @param Value The JSON value
+	 * @param OutMargin Output margin
+	 * @return True if successfully extracted margin
+	 */
+	static bool TryGetMargin(const TSharedPtr<FJsonValue>& Value, FMargin& OutMargin);
+	
+	/**
+	 * Try to get an FMargin from a field in a JSON object.
+	 * Convenience wrapper around TryGetMargin that handles field extraction.
+	 * 
+	 * @param Object The JSON object containing the field
+	 * @param FieldName The name of the field to extract
+	 * @param OutMargin Output margin
+	 * @return True if field exists and was successfully parsed as a margin
+	 */
+	static bool TryGetMarginField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FMargin& OutMargin);
+	
+	/**
 	 * Try to get a string from a JSON value.
 	 * Numbers and booleans are converted to strings.
 	 * 
@@ -132,6 +176,29 @@ public:
 	 * @return True if successfully extracted color
 	 */
 	static bool TryGetLinearColor(const TSharedPtr<FJsonValue>& Value, FLinearColor& OutColor);
+	
+	/**
+	 * Try to parse a linear color from a string.
+	 * Accepts: hex strings "#FF0000" or "#FF8800FF", color names like "red", "warm",
+	 * Unreal format "(R=1.0,G=0.5,B=0.0,A=1.0)", or comma-separated "1.0,0.5,0.0,1.0".
+	 * 
+	 * @param ColorString The string to parse
+	 * @param OutColor Output color
+	 * @return True if successfully parsed color
+	 */
+	static bool TryParseLinearColor(const FString& ColorString, FLinearColor& OutColor);
+	
+	/**
+	 * Try to get a linear color from a field in a JSON object.
+	 * Convenience wrapper around TryGetLinearColor that handles field extraction.
+	 * Supports all color formats: arrays, objects, hex strings, and named colors.
+	 * 
+	 * @param Object The JSON object containing the field
+	 * @param FieldName The name of the field to extract
+	 * @param OutColor Output color
+	 * @return True if field exists and was successfully parsed as a color
+	 */
+	static bool TryGetLinearColorField(const TSharedPtr<FJsonObject>& Object, const FString& FieldName, FLinearColor& OutColor);
 	
 	/**
 	 * Try to get a boolean from a JSON value.
@@ -167,6 +234,51 @@ public:
 	 * Create an array JSON value from a Vector.
 	 */
 	static TSharedPtr<FJsonValue> MakeArrayValue(const FVector& Vector);
+	
+	// ═══════════════════════════════════════════════════════════════════
+	// Unreal Property Format String Conversion
+	// These convert to the format Unreal expects for property parsing
+	// ═══════════════════════════════════════════════════════════════════
+	
+	/**
+	 * Convert FColor to Unreal property string format.
+	 * @return String like "(R=255,G=128,B=0,A=255)"
+	 */
+	static FString FColorToPropertyString(const FColor& Color);
+	
+	/**
+	 * Convert FLinearColor to Unreal FColor property string format.
+	 * Values are scaled from 0.0-1.0 to 0-255.
+	 * @return String like "(R=255,G=128,B=0,A=255)"
+	 */
+	static FString LinearColorToFColorPropertyString(const FLinearColor& Color);
+	
+	/**
+	 * Convert FLinearColor to Unreal FLinearColor property string format.
+	 * @return String like "(R=1.0,G=0.5,B=0.0,A=1.0)"
+	 */
+	static FString LinearColorToPropertyString(const FLinearColor& Color);
+	
+	/**
+	 * Convert FVector to Unreal property string format.
+	 * @return String like "(X=100.0,Y=200.0,Z=300.0)"
+	 */
+	static FString VectorToPropertyString(const FVector& Vector);
+	
+	/**
+	 * Convert FRotator to Unreal property string format.
+	 * @return String like "(Pitch=0.0,Yaw=90.0,Roll=0.0)"
+	 */
+	static FString RotatorToPropertyString(const FRotator& Rotator);
+	
+	/**
+	 * Try to parse a JSON value and convert to appropriate Unreal property string.
+	 * Handles colors, vectors, rotators, and simple values.
+	 * @param Value The JSON value (from LLM input)
+	 * @param OutPropertyString Output string in Unreal property format
+	 * @return True if successfully converted
+	 */
+	static bool TryConvertToPropertyString(const TSharedPtr<FJsonValue>& Value, FString& OutPropertyString);
 
 private:
 	/** Check if a string looks like it might be a JSON value */

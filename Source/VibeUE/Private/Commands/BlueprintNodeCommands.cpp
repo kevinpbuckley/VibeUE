@@ -6,6 +6,7 @@
 #include "Commands/ComponentEventBinder.h"
 #include "Commands/InputKeyEnumerator.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Core/ServiceContext.h"
 #include "Core/JsonValueHelper.h"
 #include "Services/Blueprint/BlueprintDiscoveryService.h"
@@ -66,6 +67,90 @@
 
 // Declare the log category
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUE, Log, All);
+
+// Parameter validation for manage_blueprint_node actions
+namespace BlueprintNodeParams
+{
+	// Common params for most node operations
+	inline const TArray<FString>& ConnectParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("source_node_id"), TEXT("target_node_id"),
+			TEXT("source_pin"), TEXT("target_pin"), TEXT("connections"), TEXT("function_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& DisconnectParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("node_id"), TEXT("pin_name"),
+			TEXT("source_node_id"), TEXT("target_node_id"), TEXT("function_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& ListParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("graph_name"), TEXT("function_name"),
+			TEXT("include_functions"), TEXT("include_macros"), TEXT("include_timeline")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& FindParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("node_type"), TEXT("graph_name"), TEXT("function_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& CreateParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("spawner_key"), TEXT("node_type"),
+			TEXT("position"), TEXT("node_params"), TEXT("node_config"),
+			TEXT("function_name"), TEXT("graph_scope")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& DeleteParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("node_id"), TEXT("node_ids"), TEXT("function_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& DetailsParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("node_id"), TEXT("include_pins"), TEXT("include_internal")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& ConfigureParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("node_id"), TEXT("pin_defaults"),
+			TEXT("pin_operations"), TEXT("function_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& DiscoverParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("search_term"), TEXT("category"),
+			TEXT("max_results"), TEXT("include_functions"), TEXT("include_events")
+		};
+		return Params;
+	}
+}
 
 namespace VibeUENodeIntrospection
 {
@@ -301,12 +386,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectBlueprintNodes(cons
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectPins(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            BlueprintNodeParams::ConnectParams());
+    }
+
     // Extract blueprint name
     FString BlueprintName;
-    if (!Params.IsValid() || !Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
@@ -330,12 +420,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleConnectPins(const TSharedP
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            BlueprintNodeParams::DisconnectParams());
+    }
+
     // Extract blueprint name
     FString BlueprintName;
-    if (!Params.IsValid() || !Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
@@ -359,17 +454,24 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDisconnectPins(const TShar
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("event_name"), TEXT("graph_name")
+    };
+    
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
+    }
+
     // 1. Extract and validate parameters
     FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     FString EventName;
     if (!Params->TryGetStringField(TEXT("event_name"), EventName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'event_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("event_name is required"), ValidParams);
     }
 
     FString GraphName;
@@ -400,17 +502,24 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintEvent(const TS
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNode(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("action_name"), TEXT("graph_name")
+    };
+    
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
+    }
+
     // 1. Extract and validate parameters
     FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     FString ActionName;
     if (!Params->TryGetStringField(TEXT("action_name"), ActionName))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("action_name is required"), ValidParams);
     }
 
     FString GraphName;
@@ -442,17 +551,24 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleAddBlueprintInputActionNod
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleFindBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            BlueprintNodeParams::FindParams());
+    }
+
     // 1. Extract and validate parameters
     FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     FString NodeType;
     if (!Params->TryGetStringField(TEXT("node_type"), NodeType))
     {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_type' parameter"));
+        return ParamValidation::MissingParamsError(
+            TEXT("node_type is required"),
+            BlueprintNodeParams::FindParams());
     }
 
     // 2. Find Blueprint using DiscoveryService
@@ -936,12 +1052,20 @@ static TSharedPtr<FJsonObject> BuildNodeDescriptorJson(UBlueprint* Blueprint, UK
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("node_id"), TEXT("node_ids"),
+        TEXT("include_pins"), TEXT("include_internal"), TEXT("offset"), TEXT("limit")
+    };
+    
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
+    }
+
     // Extract and validate blueprint_name
     FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     // Find Blueprint using DiscoveryService
     auto FindResult = DiscoveryService->FindBlueprint(BlueprintName);
@@ -1007,12 +1131,17 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleDescribeBlueprintNodes(con
 
 TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleListEventGraphNodes(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            BlueprintNodeParams::ListParams());
+    }
+
     // 1. Extract and validate parameters
     FString BlueprintName;
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
-    {
-        return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
-    }
+    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 
     bool bIncludeFunctions = true, bIncludeMacros = true, bIncludeTimeline = true;
     Params->TryGetBoolField(TEXT("include_functions"), bIncludeFunctions);
@@ -1077,19 +1206,25 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleGetNodeDetails(const TShar
 {
 	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails called"));
 	
-	// Extract and validate parameters
-	FString BlueprintName, NodeId;
-	
-	if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+	// Validate required parameters
+	if (!ParamValidation::HasBlueprintIdentifier(Params))
 	{
 		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing blueprint_name parameter"));
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("blueprint_name is required"),
+			BlueprintNodeParams::DetailsParams());
 	}
+	
+	// Extract and validate parameters
+	FString BlueprintName, NodeId;
+	Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
 	
 	if (!Params->TryGetStringField(TEXT("node_id"), NodeId))
 	{
 		UE_LOG(LogVibeUE, Error, TEXT("MCP: HandleGetNodeDetails - Missing node_id parameter"));
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'node_id' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("node_id is required"),
+			BlueprintNodeParams::DetailsParams());
 	}
 	
 	UE_LOG(LogVibeUE, Warning, TEXT("MCP: HandleGetNodeDetails - Blueprint: %s, NodeId: %s"), *BlueprintName, *NodeId);

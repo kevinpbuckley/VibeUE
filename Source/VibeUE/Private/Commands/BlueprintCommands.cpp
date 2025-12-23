@@ -3,6 +3,7 @@
 #include "Commands/BlueprintCommands.h"
 #include "Commands/CommonUtils.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Core/JsonValueHelper.h"
 #include "Engine/Blueprint.h"
 #include "Engine/BlueprintGeneratedClass.h"
@@ -221,14 +222,17 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters - accept both 'name' and 'blueprint_name' for consistency
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("name"), TEXT("blueprint_name"), TEXT("parent_class")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
     {
-        // Try alternative parameter name for consistency with other actions
         if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
         {
-            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'name' parameter (or 'blueprint_name')"));
+            return ParamValidation::MissingParamsError(TEXT("name or blueprint_name is required"), ValidParams);
         }
     }
     
@@ -256,23 +260,28 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCreateBlueprint(const TSharedP
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddComponentToBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("component_type"), TEXT("component_name"),
+        TEXT("location"), TEXT("rotation"), TEXT("scale")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     FString ComponentType;
     if (!Params->TryGetStringField(TEXT("component_type"), ComponentType))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("component_type is required"), ValidParams);
     }
 
     FString ComponentName;
     if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("component_name is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -314,23 +323,27 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleAddComponentToBlueprint(const 
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("component_name"), TEXT("property_name"), TEXT("property_value")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     FString ComponentName;
     if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("component_name is required"), ValidParams);
     }
 
     FString PropertyName;
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("property_name is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -777,11 +790,15 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetComponentProperty(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleCompileBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("blueprint_path")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -808,17 +825,21 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCompileBlueprint(const TShared
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("property_name")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     FString PropertyName;
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("property_name is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -886,23 +907,27 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintProperty(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("property_name"), TEXT("property_value")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     FString PropertyName;
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("property_name is required"), ValidParams);
     }
 
     // Get property value
     if (!Params->HasField(TEXT("property_value")))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'property_value' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("property_value is required"), ValidParams);
     }
     
     TSharedPtr<FJsonValue> JsonValue = Params->Values.FindRef(TEXT("property_value"));
@@ -962,11 +987,17 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetBlueprintProperty(const TSh
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("auto_possess_player"), TEXT("auto_possess_ai"),
+        TEXT("use_controller_rotation_pitch"), TEXT("use_controller_rotation_yaw"),
+        TEXT("use_controller_rotation_roll"), TEXT("can_be_damaged")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -1089,17 +1120,21 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleSetPawnProperties(const TShare
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("new_parent_class")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("blueprint_name is required"), ValidParams);
     }
 
     FString NewParentClass;
     if (!Params->TryGetStringField(TEXT("new_parent_class"), NewParentClass))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'new_parent_class' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("new_parent_class is required"), ValidParams);
     }
 
     // Find Blueprint using DiscoveryService
@@ -1131,11 +1166,15 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleReparentBlueprint(const TShare
 
 TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract blueprint identifier (accepts name or full path)
+    // Validate - accepts blueprint_name, blueprint_path, or object_path
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_name"), TEXT("blueprint_path"), TEXT("object_path"),
+        TEXT("include_variables"), TEXT("include_functions"), TEXT("include_components")
+    };
+    
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        // Try alternates for compatibility
         Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
         if (BlueprintName.IsEmpty())
         {
@@ -1143,7 +1182,7 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
         }
         if (BlueprintName.IsEmpty())
         {
-            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter (accepts name or full path)"));
+            return ParamValidation::MissingParamsError(TEXT("blueprint_name, blueprint_path, or object_path is required"), ValidParams);
         }
     }
 

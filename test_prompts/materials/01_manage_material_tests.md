@@ -60,17 +60,31 @@ Tell me more about the blend mode property - what are my options?
 
 ---
 
-## Material Parameters
+## Adding Material Parameters
 
-What parameters does this material have?
-
----
-
-What's the roughness value?
+Add a scalar parameter node called Roughness with a default value of 0.5 to MaterialTest.
 
 ---
 
-Set roughness to 0.75.
+Add a vector parameter node called BaseColor with a default value of red to MaterialTest.
+
+---
+
+What parameters does this material have now?
+
+---
+
+## Modifying Parameter Values
+
+Set the Roughness parameter's default value to 0.75.
+
+---
+
+Set the BaseColor parameter's default value to orange.
+
+---
+
+Set the BaseColor parameter using hex color #00FF88.
 
 ---
 
@@ -92,7 +106,23 @@ Create an instance of MaterialTest called RedVariant.
 
 ---
 
-Set the roughness parameter on the instance to 0.8.
+What parameters are available on the RedVariant instance?
+
+---
+
+Set the roughness scalar parameter on the instance to 0.8.
+
+---
+
+Set the BaseColor vector parameter on the instance to cyan.
+
+---
+
+Set the BaseColor vector parameter using array format [0.5, 0.3, 0.1, 1.0].
+
+---
+
+Set the BaseColor vector parameter using hex #FF00FF.
 
 ---
 

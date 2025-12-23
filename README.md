@@ -329,11 +329,12 @@ Complete material and material instance management.
 | `clear_instance_parameter_override` | Remove parameter override |
 | `save_instance` | Save material instance to disk |
 
-### 11. `manage_material_node` (21 actions)
+### 11. `manage_material_node` (22 actions)
 Material graph node (expression) operations.
 
 | Action | Purpose |
 |--------|--------|
+| `help` | Get help for this tool or specific action |
 | `discover_types` | Discover available expression types |
 | `get_categories` | Get expression categories |
 | `create` | Create new expression node |

@@ -8,6 +8,7 @@
 #include "Services/UMG/UMGWidgetService.h"
 
 #include "Core/ErrorCodes.h"
+#include "Core/JsonValueHelper.h"
 #include "WidgetBlueprint.h"
 #include "Blueprint/WidgetTree.h"
 #include "Blueprint/UserWidget.h"
@@ -162,15 +163,18 @@ TResult<UWidget*> FUMGWidgetService::AddWidgetComponent(UWidgetBlueprint* Widget
     // The error "Widget [X] was added but did not get a GUID" occurs when this is false.
     NewWidget->bIsVariable = true;
 
-    // Mark as modified first (registers the widget properly)
+    // Mark as modified (registers the widget properly)
     WidgetBlueprint->Modify();
     
-    // Use MarkBlueprintAsModified to allow the widget to be registered
-    // before doing a full structural modification
+    // Use MarkBlueprintAsModified to register the widget
+    // NOTE: Do NOT call MarkBlueprintAsStructurallyModified here!
+    // Structural modification triggers a recompilation that rebuilds the widget tree
+    // from serialized data, losing any widgets we just created.
+    // The widget will be properly saved when the user saves the asset.
     FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBlueprint);
     
-    // Now do the structural modification which will properly compile with the GUID
-    FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBlueprint);
+    // Mark the package as dirty so the user knows to save
+    WidgetBlueprint->MarkPackageDirty();
 
     return TResult<UWidget*>::Success(NewWidget);
 }
@@ -787,16 +791,17 @@ bool FUMGWidgetService::ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, U
 
     if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(PanelSlot))
     {
-        const TArray<TSharedPtr<FJsonValue>>* PositionArray;
-        if (SlotProperties->TryGetArrayField(TEXT("position"), PositionArray) && PositionArray->Num() >= 2)
+        // Use FJsonValueHelper for robust Vector2D parsing (supports arrays, objects, strings)
+        FVector2D Position;
+        if (FJsonValueHelper::TryGetVector2DField(SlotProperties, TEXT("position"), Position))
         {
-            CanvasSlot->SetPosition(FVector2D((*PositionArray)[0]->AsNumber(), (*PositionArray)[1]->AsNumber()));
+            CanvasSlot->SetPosition(Position);
         }
 
-        const TArray<TSharedPtr<FJsonValue>>* SizeArray;
-        if (SlotProperties->TryGetArrayField(TEXT("size"), SizeArray) && SizeArray->Num() >= 2)
+        FVector2D Size;
+        if (FJsonValueHelper::TryGetVector2DField(SlotProperties, TEXT("size"), Size))
         {
-            CanvasSlot->SetSize(FVector2D((*SizeArray)[0]->AsNumber(), (*SizeArray)[1]->AsNumber()));
+            CanvasSlot->SetSize(Size);
         }
 
         const TSharedPtr<FJsonObject>* AnchorsObj;
@@ -810,10 +815,10 @@ bool FUMGWidgetService::ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, U
             CanvasSlot->SetAnchors(Anchors);
         }
 
-        const TArray<TSharedPtr<FJsonValue>>* AlignmentArray;
-        if (SlotProperties->TryGetArrayField(TEXT("alignment"), AlignmentArray) && AlignmentArray->Num() >= 2)
+        FVector2D Alignment;
+        if (FJsonValueHelper::TryGetVector2DField(SlotProperties, TEXT("alignment"), Alignment))
         {
-            CanvasSlot->SetAlignment(FVector2D((*AlignmentArray)[0]->AsNumber(), (*AlignmentArray)[1]->AsNumber()));
+            CanvasSlot->SetAlignment(Alignment);
         }
 
         if (SlotProperties->HasField(TEXT("auto_size")))
@@ -865,28 +870,29 @@ bool FUMGWidgetService::ApplySlotProperties(UWidgetBlueprint* WidgetBlueprint, U
 
     const auto ApplyPadding = [](UPanelSlot* Slot, const TSharedPtr<FJsonObject>& Properties)
     {
-        const TArray<TSharedPtr<FJsonValue>>* PaddingArray;
-        if (Properties->TryGetArrayField(TEXT("padding"), PaddingArray) && PaddingArray->Num() >= 4)
+        // Use FJsonValueHelper for robust margin parsing (supports arrays, objects, uniform values)
+        FMargin Padding;
+        if (FJsonValueHelper::TryGetMarginField(Properties, TEXT("padding"), Padding))
         {
             if (UHorizontalBoxSlot* HorizontalSlot = Cast<UHorizontalBoxSlot>(Slot))
             {
-                HorizontalSlot->SetPadding(FMargin((*PaddingArray)[0]->AsNumber(), (*PaddingArray)[1]->AsNumber(), (*PaddingArray)[2]->AsNumber(), (*PaddingArray)[3]->AsNumber()));
+                HorizontalSlot->SetPadding(Padding);
             }
             else if (UVerticalBoxSlot* VerticalSlot = Cast<UVerticalBoxSlot>(Slot))
             {
-                VerticalSlot->SetPadding(FMargin((*PaddingArray)[0]->AsNumber(), (*PaddingArray)[1]->AsNumber(), (*PaddingArray)[2]->AsNumber(), (*PaddingArray)[3]->AsNumber()));
+                VerticalSlot->SetPadding(Padding);
             }
             else if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(Slot))
             {
-                OverlaySlot->SetPadding(FMargin((*PaddingArray)[0]->AsNumber(), (*PaddingArray)[1]->AsNumber(), (*PaddingArray)[2]->AsNumber(), (*PaddingArray)[3]->AsNumber()));
+                OverlaySlot->SetPadding(Padding);
             }
             else if (UScrollBoxSlot* ScrollSlot = Cast<UScrollBoxSlot>(Slot))
             {
-                ScrollSlot->SetPadding(FMargin((*PaddingArray)[0]->AsNumber(), (*PaddingArray)[1]->AsNumber(), (*PaddingArray)[2]->AsNumber(), (*PaddingArray)[3]->AsNumber()));
+                ScrollSlot->SetPadding(Padding);
             }
             else if (UWidgetSwitcherSlot* SwitcherSlot = Cast<UWidgetSwitcherSlot>(Slot))
             {
-                SwitcherSlot->SetPadding(FMargin((*PaddingArray)[0]->AsNumber(), (*PaddingArray)[1]->AsNumber(), (*PaddingArray)[2]->AsNumber(), (*PaddingArray)[3]->AsNumber()));
+                SwitcherSlot->SetPadding(Padding);
             }
         }
     };

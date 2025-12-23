@@ -2,6 +2,7 @@
 
 #include "Services/Material/MaterialNodeService.h"
 #include "Core/ErrorCodes.h"
+#include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionParameter.h"
@@ -737,7 +738,39 @@ TResult<void> FMaterialNodeService::SetExpressionProperty(
     FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Set Material Expression Property", "Set Material Expression Property"));
     Expression->Modify();
     
-    Property->ImportText_Direct(*Value, Property->ContainerPtrToValuePtr<void>(Expression), Expression, PPF_None);
+    void* PropertyValue = Property->ContainerPtrToValuePtr<void>(Expression);
+    bool bValueSet = false;
+    
+    // Handle FLinearColor properties with JSON helper for robust parsing
+    if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
+    {
+        if (StructProp->Struct->GetName() == TEXT("LinearColor"))
+        {
+            FLinearColor Color;
+            if (FJsonValueHelper::TryParseLinearColor(Value, Color))
+            {
+                FLinearColor* ColorPtr = static_cast<FLinearColor*>(PropertyValue);
+                *ColorPtr = Color;
+                bValueSet = true;
+            }
+        }
+        else if (StructProp->Struct->GetName() == TEXT("Color"))
+        {
+            FLinearColor LinearColor;
+            if (FJsonValueHelper::TryParseLinearColor(Value, LinearColor))
+            {
+                FColor* ColorPtr = static_cast<FColor*>(PropertyValue);
+                *ColorPtr = LinearColor.ToFColor(true);
+                bValueSet = true;
+            }
+        }
+    }
+    
+    // Fallback to Unreal's standard text import
+    if (!bValueSet)
+    {
+        Property->ImportText_Direct(*Value, PropertyValue, Expression, PPF_None);
+    }
     
     RefreshMaterialGraph(Material);
     
@@ -1008,11 +1041,11 @@ TResult<FMaterialExpressionInfo> FMaterialNodeService::CreateParameter(
         if (VecParam)
         {
             VecParam->ParameterName = FName(*ParameterName);
-            // Parse default value as linear color
+            // Use FJsonValueHelper for robust color parsing (hex, named, Unreal format, etc.)
             if (!DefaultValue.IsEmpty())
             {
                 FLinearColor Color;
-                if (Color.InitFromString(DefaultValue))
+                if (FJsonValueHelper::TryParseLinearColor(DefaultValue, Color))
                 {
                     VecParam->DefaultValue = Color;
                 }

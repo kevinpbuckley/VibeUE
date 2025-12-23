@@ -4,6 +4,7 @@
 #include "Commands/CommonUtils.h"
 #include "Core/JsonValueHelper.h"
 #include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Services/UMG/WidgetLifecycleService.h"
 #include "Services/UMG/WidgetPropertyService.h"
 #include "Services/UMG/UMGWidgetService.h"
@@ -108,6 +109,85 @@
 #include "Fonts/SlateFontInfo.h"
 #include "Styling/SlateWidgetStyleAsset.h"
 #include "Styling/SlateTypes.h"
+
+// Parameter validation helpers for UMG Widget actions
+namespace UMGParams
+{
+	inline const TArray<FString>& WidgetNameParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("object_path")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& AddComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_type"),
+			TEXT("component_name"), TEXT("parent_name"), TEXT("slot_index")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& RemoveComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& PropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name"),
+			TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& GetPropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name"),
+			TEXT("property_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& SearchTypesParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("search_term"), TEXT("category"), TEXT("max_results")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& CreateWidgetParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("name"), TEXT("path"), TEXT("parent_class")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& EventParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("event_bindings")
+		};
+		return Params;
+	}
+}
 
 FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 {
@@ -258,7 +338,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing 'name' parameter"),
+			UMGParams::CreateWidgetParams());
 	}
 
 	// Get optional parameters
@@ -298,7 +380,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 	FString SearchTerm;
 	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'search_term' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing 'search_term' parameter"),
+			UMGParams::SearchTypesParams());
 	}
 
 	FString AssetType;
@@ -518,17 +602,23 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing widget_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing component_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing property_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	// Check if this is a slot property - route to slot property handler instead
@@ -555,7 +645,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 		}
 		else
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing property_value parameter"),
+				UMGParams::PropertyParams());
 		}
 	}
 
@@ -687,7 +779,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 		if (WidgetName.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter (accepts name or full path)"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
@@ -785,7 +879,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetComponents(const TSharedPt
 		}
 		if (WidgetIdentifier.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter (accepts name or full path)"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
@@ -846,11 +942,15 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 	FString WidgetName, ComponentName;
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing required 'widget_name' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing required 'widget_name' parameter"),
+			UMGParams::ComponentParams());
 	}
 	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing required 'component_name' parameter - use list_components first to get valid component names"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing required 'component_name' parameter - use list_components first to get valid component names"),
+			UMGParams::ComponentParams());
 	}
 
 	if (WidgetName.IsEmpty())
@@ -906,64 +1006,106 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableWidgetTypes(const TSharedPtr<FJsonObject>& Params)
 {
-	// Prefer discovery service list for consistency
-	if (DiscoveryService.IsValid())
+	// Get optional filter parameters
+	FString Category;
+	Params->TryGetStringField(TEXT("category"), Category);
+	
+	FString SearchText;
+	if (!Params->TryGetStringField(TEXT("search_text"), SearchText))
 	{
-		auto Result = DiscoveryService->GetAvailableWidgetTypes();
-		if (Result.IsError())
-		{
-			return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
-		}
-
-		const TArray<FString>& WidgetTypes = Result.GetValue();
-		TArray<TSharedPtr<FJsonValue>> TypeArray;
-		for (const FString& Type : WidgetTypes)
-		{
-			TypeArray.Add(MakeShared<FJsonValueString>(Type));
-		}
-
-		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-		Response->SetBoolField(TEXT("success"), true);
-		Response->SetArrayField(TEXT("widget_types"), TypeArray);
-		Response->SetNumberField(TEXT("count"), WidgetTypes.Num());
-		return Response;
+		Params->TryGetStringField(TEXT("search_term"), SearchText);
 	}
 
-	// Fallback: local list (kept for compatibility)
-	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-    
-	TArray<FString> WidgetTypes = {
-		TEXT("TextBlock"),
-		TEXT("Button"),
-		TEXT("EditableText"),
-		TEXT("EditableTextBox"),
-		TEXT("RichTextBlock"),
-		TEXT("CheckBox"),
-		TEXT("Slider"),
-		TEXT("ProgressBar"),
-		TEXT("Image"),
-		TEXT("Spacer"),
-		TEXT("CanvasPanel"),
-		TEXT("Overlay"),
-		TEXT("HorizontalBox"),
-		TEXT("VerticalBox"),
-		TEXT("ScrollBox"),
-		TEXT("GridPanel"),
-		TEXT("ListView"),
-		TEXT("TileView"),
-		TEXT("TreeView"),
-		TEXT("WidgetSwitcher")
+	// Define widget types by category
+	struct FWidgetTypeInfo
+	{
+		FString Name;
+		FString Category;
 	};
-    
+	
+	TArray<FWidgetTypeInfo> AllWidgetTypes = {
+		// Common category
+		{TEXT("TextBlock"), TEXT("Common")},
+		{TEXT("Button"), TEXT("Common")},
+		{TEXT("EditableText"), TEXT("Common")},
+		{TEXT("EditableTextBox"), TEXT("Common")},
+		{TEXT("RichTextBlock"), TEXT("Common")},
+		{TEXT("CheckBox"), TEXT("Common")},
+		{TEXT("Slider"), TEXT("Common")},
+		{TEXT("ProgressBar"), TEXT("Common")},
+		{TEXT("Image"), TEXT("Common")},
+		{TEXT("Spacer"), TEXT("Common")},
+		// Panel category
+		{TEXT("CanvasPanel"), TEXT("Panel")},
+		{TEXT("Overlay"), TEXT("Panel")},
+		{TEXT("HorizontalBox"), TEXT("Panel")},
+		{TEXT("VerticalBox"), TEXT("Panel")},
+		{TEXT("ScrollBox"), TEXT("Panel")},
+		{TEXT("GridPanel"), TEXT("Panel")},
+		{TEXT("UniformGridPanel"), TEXT("Panel")},
+		{TEXT("WrapBox"), TEXT("Panel")},
+		{TEXT("SizeBox"), TEXT("Panel")},
+		{TEXT("ScaleBox"), TEXT("Panel")},
+		{TEXT("Border"), TEXT("Panel")},
+		// List category
+		{TEXT("ListView"), TEXT("List")},
+		{TEXT("TileView"), TEXT("List")},
+		{TEXT("TreeView"), TEXT("List")},
+		// Misc category
+		{TEXT("WidgetSwitcher"), TEXT("Misc")},
+		{TEXT("Throbber"), TEXT("Misc")},
+		{TEXT("CircularThrobber"), TEXT("Misc")},
+		{TEXT("NamedSlot"), TEXT("Misc")},
+	};
+
+	// Filter by category and/or search text
+	TArray<FString> FilteredTypes;
+	for (const FWidgetTypeInfo& TypeInfo : AllWidgetTypes)
+	{
+		// Filter by category if specified
+		if (!Category.IsEmpty() && !TypeInfo.Category.Equals(Category, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		
+		// Filter by search text if specified
+		if (!SearchText.IsEmpty() && !TypeInfo.Name.Contains(SearchText, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+		
+		FilteredTypes.Add(TypeInfo.Name);
+	}
+
 	TArray<TSharedPtr<FJsonValue>> TypeArray;
-	for (const FString& Type : WidgetTypes)
+	for (const FString& Type : FilteredTypes)
 	{
 		TypeArray.Add(MakeShared<FJsonValueString>(Type));
 	}
-    
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
 	Response->SetArrayField(TEXT("widget_types"), TypeArray);
-	Response->SetNumberField(TEXT("count"), WidgetTypes.Num());
+	Response->SetNumberField(TEXT("count"), FilteredTypes.Num());
+	
+	// Include filter info in response
+	if (!Category.IsEmpty())
+	{
+		Response->SetStringField(TEXT("category_filter"), Category);
+	}
+	if (!SearchText.IsEmpty())
+	{
+		Response->SetStringField(TEXT("search_filter"), SearchText);
+	}
+	
+	// List available categories for reference
+	TArray<TSharedPtr<FJsonValue>> CategoriesArray;
+	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Common")));
+	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Panel")));
+	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("List")));
+	CategoriesArray.Add(MakeShared<FJsonValueString>(TEXT("Misc")));
+	Response->SetArrayField(TEXT("available_categories"), CategoriesArray);
+	
 	return Response;
 }
 
@@ -984,7 +1126,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 		}
 		if (WidgetIdentifier.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
