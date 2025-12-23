@@ -147,6 +147,10 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleCommand(const FString& Command
         {
             return HandleGetBlueprintProperty(Params);
         }
+        else if (Action == TEXT("diff") || Action == TEXT("compare"))
+        {
+            return HandleDiffBlueprints(Params);
+        }
         else
         {
             return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED, 
@@ -1448,6 +1452,386 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleGetBlueprintInfo(const TShared
     // Build success response
     TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
     Response->SetObjectField(TEXT("blueprint_info"), BlueprintInfo);
+    
+    return Response;
+}
+
+TSharedPtr<FJsonObject> FBlueprintCommands::HandleDiffBlueprints(const TSharedPtr<FJsonObject>& Params)
+{
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("blueprint_a"), TEXT("blueprint_b"), 
+        TEXT("source_blueprint"), TEXT("target_blueprint"),
+        TEXT("include_graphs"), TEXT("include_defaults")
+    };
+    
+    FString BlueprintAName, BlueprintBName;
+    
+    // Support both naming conventions
+    if (!Params->TryGetStringField(TEXT("blueprint_a"), BlueprintAName))
+    {
+        Params->TryGetStringField(TEXT("source_blueprint"), BlueprintAName);
+    }
+    if (!Params->TryGetStringField(TEXT("blueprint_b"), BlueprintBName))
+    {
+        Params->TryGetStringField(TEXT("target_blueprint"), BlueprintBName);
+    }
+    
+    if (BlueprintAName.IsEmpty() || BlueprintBName.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("Both blueprint_a and blueprint_b (or source_blueprint and target_blueprint) are required"), 
+            ValidParams);
+    }
+    
+    // Find both blueprints
+    auto FindResultA = DiscoveryService->FindBlueprint(BlueprintAName);
+    if (FindResultA.IsError())
+    {
+        return CreateErrorResponse(FindResultA.GetErrorCode(), 
+            FString::Printf(TEXT("Blueprint A: %s"), *FindResultA.GetErrorMessage()));
+    }
+    UBlueprint* BlueprintA = FindResultA.GetValue();
+    
+    auto FindResultB = DiscoveryService->FindBlueprint(BlueprintBName);
+    if (FindResultB.IsError())
+    {
+        return CreateErrorResponse(FindResultB.GetErrorCode(), 
+            FString::Printf(TEXT("Blueprint B: %s"), *FindResultB.GetErrorMessage()));
+    }
+    UBlueprint* BlueprintB = FindResultB.GetValue();
+    
+    // Optional flags
+    bool bIncludeGraphs = true;
+    bool bIncludeDefaults = true;
+    Params->TryGetBoolField(TEXT("include_graphs"), bIncludeGraphs);
+    Params->TryGetBoolField(TEXT("include_defaults"), bIncludeDefaults);
+    
+    // Build diff result
+    TSharedPtr<FJsonObject> DiffResult = MakeShared<FJsonObject>();
+    
+    // Blueprint metadata
+    TSharedPtr<FJsonObject> MetadataA = MakeShared<FJsonObject>();
+    MetadataA->SetStringField(TEXT("name"), BlueprintA->GetName());
+    MetadataA->SetStringField(TEXT("path"), BlueprintA->GetPathName());
+    MetadataA->SetStringField(TEXT("parent_class"), BlueprintA->ParentClass ? BlueprintA->ParentClass->GetName() : TEXT("None"));
+    DiffResult->SetObjectField(TEXT("blueprint_a"), MetadataA);
+    
+    TSharedPtr<FJsonObject> MetadataB = MakeShared<FJsonObject>();
+    MetadataB->SetStringField(TEXT("name"), BlueprintB->GetName());
+    MetadataB->SetStringField(TEXT("path"), BlueprintB->GetPathName());
+    MetadataB->SetStringField(TEXT("parent_class"), BlueprintB->ParentClass ? BlueprintB->ParentClass->GetName() : TEXT("None"));
+    DiffResult->SetObjectField(TEXT("blueprint_b"), MetadataB);
+    
+    // Check parent class difference
+    bool bParentClassDifferent = BlueprintA->ParentClass != BlueprintB->ParentClass;
+    DiffResult->SetBoolField(TEXT("parent_class_different"), bParentClassDifferent);
+    
+    // ============ VARIABLES DIFF ============
+    TSharedPtr<FJsonObject> VariablesDiff = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> OnlyInA, OnlyInB, InBoth, Modified;
+    
+    // Build maps for quick lookup
+    TMap<FName, const FBPVariableDescription*> VarsA, VarsB;
+    for (const FBPVariableDescription& Var : BlueprintA->NewVariables)
+    {
+        VarsA.Add(Var.VarName, &Var);
+    }
+    for (const FBPVariableDescription& Var : BlueprintB->NewVariables)
+    {
+        VarsB.Add(Var.VarName, &Var);
+    }
+    
+    // Find variables only in A or modified
+    for (const auto& Pair : VarsA)
+    {
+        const FBPVariableDescription* VarA = Pair.Value;
+        if (const FBPVariableDescription** VarBPtr = VarsB.Find(Pair.Key))
+        {
+            const FBPVariableDescription* VarB = *VarBPtr;
+            
+            // Check if modified
+            bool bTypeChanged = VarA->VarType.PinCategory != VarB->VarType.PinCategory ||
+                               VarA->VarType.PinSubCategoryObject != VarB->VarType.PinSubCategoryObject ||
+                               VarA->VarType.ContainerType != VarB->VarType.ContainerType;
+            bool bFlagsChanged = VarA->PropertyFlags != VarB->PropertyFlags;
+            bool bCategoryChanged = VarA->Category.ToString() != VarB->Category.ToString();
+            
+            if (bTypeChanged || bFlagsChanged || bCategoryChanged)
+            {
+                TSharedPtr<FJsonObject> ModInfo = MakeShared<FJsonObject>();
+                ModInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+                
+                TArray<TSharedPtr<FJsonValue>> Changes;
+                if (bTypeChanged)
+                {
+                    TSharedPtr<FJsonObject> Change = MakeShared<FJsonObject>();
+                    Change->SetStringField(TEXT("field"), TEXT("type"));
+                    Change->SetStringField(TEXT("in_a"), VarA->VarType.PinCategory.ToString());
+                    Change->SetStringField(TEXT("in_b"), VarB->VarType.PinCategory.ToString());
+                    Changes.Add(MakeShared<FJsonValueObject>(Change));
+                }
+                if (bFlagsChanged)
+                {
+                    TSharedPtr<FJsonObject> Change = MakeShared<FJsonObject>();
+                    Change->SetStringField(TEXT("field"), TEXT("property_flags"));
+                    Change->SetNumberField(TEXT("in_a"), (double)VarA->PropertyFlags);
+                    Change->SetNumberField(TEXT("in_b"), (double)VarB->PropertyFlags);
+                    Changes.Add(MakeShared<FJsonValueObject>(Change));
+                }
+                if (bCategoryChanged)
+                {
+                    TSharedPtr<FJsonObject> Change = MakeShared<FJsonObject>();
+                    Change->SetStringField(TEXT("field"), TEXT("category"));
+                    Change->SetStringField(TEXT("in_a"), VarA->Category.ToString());
+                    Change->SetStringField(TEXT("in_b"), VarB->Category.ToString());
+                    Changes.Add(MakeShared<FJsonValueObject>(Change));
+                }
+                ModInfo->SetArrayField(TEXT("changes"), Changes);
+                Modified.Add(MakeShared<FJsonValueObject>(ModInfo));
+            }
+            else
+            {
+                InBoth.Add(MakeShared<FJsonValueString>(Pair.Key.ToString()));
+            }
+        }
+        else
+        {
+            // Only in A
+            TSharedPtr<FJsonObject> VarInfo = MakeShared<FJsonObject>();
+            VarInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            VarInfo->SetStringField(TEXT("type"), VarA->VarType.PinCategory.ToString());
+            VarInfo->SetStringField(TEXT("category"), VarA->Category.ToString());
+            OnlyInA.Add(MakeShared<FJsonValueObject>(VarInfo));
+        }
+    }
+    
+    // Find variables only in B
+    for (const auto& Pair : VarsB)
+    {
+        if (!VarsA.Contains(Pair.Key))
+        {
+            const FBPVariableDescription* VarB = Pair.Value;
+            TSharedPtr<FJsonObject> VarInfo = MakeShared<FJsonObject>();
+            VarInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            VarInfo->SetStringField(TEXT("type"), VarB->VarType.PinCategory.ToString());
+            VarInfo->SetStringField(TEXT("category"), VarB->Category.ToString());
+            OnlyInB.Add(MakeShared<FJsonValueObject>(VarInfo));
+        }
+    }
+    
+    VariablesDiff->SetArrayField(TEXT("only_in_a"), OnlyInA);
+    VariablesDiff->SetArrayField(TEXT("only_in_b"), OnlyInB);
+    VariablesDiff->SetArrayField(TEXT("in_both"), InBoth);
+    VariablesDiff->SetArrayField(TEXT("modified"), Modified);
+    DiffResult->SetObjectField(TEXT("variables"), VariablesDiff);
+    
+    // ============ COMPONENTS DIFF ============
+    TSharedPtr<FJsonObject> ComponentsDiff = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> CompOnlyInA, CompOnlyInB, CompInBoth, CompModified;
+    
+    // Build maps for components
+    TMap<FName, USCS_Node*> CompsA, CompsB;
+    if (BlueprintA->SimpleConstructionScript)
+    {
+        for (USCS_Node* Node : BlueprintA->SimpleConstructionScript->GetAllNodes())
+        {
+            if (Node) CompsA.Add(Node->GetVariableName(), Node);
+        }
+    }
+    if (BlueprintB->SimpleConstructionScript)
+    {
+        for (USCS_Node* Node : BlueprintB->SimpleConstructionScript->GetAllNodes())
+        {
+            if (Node) CompsB.Add(Node->GetVariableName(), Node);
+        }
+    }
+    
+    // Compare components
+    for (const auto& Pair : CompsA)
+    {
+        USCS_Node* NodeA = Pair.Value;
+        if (USCS_Node** NodeBPtr = CompsB.Find(Pair.Key))
+        {
+            USCS_Node* NodeB = *NodeBPtr;
+            
+            // Check if component type changed
+            bool bTypeChanged = NodeA->ComponentTemplate && NodeB->ComponentTemplate &&
+                               NodeA->ComponentTemplate->GetClass() != NodeB->ComponentTemplate->GetClass();
+            bool bParentChanged = NodeA->ParentComponentOrVariableName != NodeB->ParentComponentOrVariableName;
+            
+            if (bTypeChanged || bParentChanged)
+            {
+                TSharedPtr<FJsonObject> ModInfo = MakeShared<FJsonObject>();
+                ModInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+                
+                TArray<TSharedPtr<FJsonValue>> Changes;
+                if (bTypeChanged)
+                {
+                    TSharedPtr<FJsonObject> Change = MakeShared<FJsonObject>();
+                    Change->SetStringField(TEXT("field"), TEXT("component_class"));
+                    Change->SetStringField(TEXT("in_a"), NodeA->ComponentTemplate ? NodeA->ComponentTemplate->GetClass()->GetName() : TEXT("None"));
+                    Change->SetStringField(TEXT("in_b"), NodeB->ComponentTemplate ? NodeB->ComponentTemplate->GetClass()->GetName() : TEXT("None"));
+                    Changes.Add(MakeShared<FJsonValueObject>(Change));
+                }
+                if (bParentChanged)
+                {
+                    TSharedPtr<FJsonObject> Change = MakeShared<FJsonObject>();
+                    Change->SetStringField(TEXT("field"), TEXT("parent_component"));
+                    Change->SetStringField(TEXT("in_a"), NodeA->ParentComponentOrVariableName.ToString());
+                    Change->SetStringField(TEXT("in_b"), NodeB->ParentComponentOrVariableName.ToString());
+                    Changes.Add(MakeShared<FJsonValueObject>(Change));
+                }
+                ModInfo->SetArrayField(TEXT("changes"), Changes);
+                CompModified.Add(MakeShared<FJsonValueObject>(ModInfo));
+            }
+            else
+            {
+                CompInBoth.Add(MakeShared<FJsonValueString>(Pair.Key.ToString()));
+            }
+        }
+        else
+        {
+            TSharedPtr<FJsonObject> CompInfo = MakeShared<FJsonObject>();
+            CompInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            CompInfo->SetStringField(TEXT("type"), NodeA->ComponentTemplate ? NodeA->ComponentTemplate->GetClass()->GetName() : TEXT("Unknown"));
+            CompOnlyInA.Add(MakeShared<FJsonValueObject>(CompInfo));
+        }
+    }
+    
+    for (const auto& Pair : CompsB)
+    {
+        if (!CompsA.Contains(Pair.Key))
+        {
+            USCS_Node* NodeB = Pair.Value;
+            TSharedPtr<FJsonObject> CompInfo = MakeShared<FJsonObject>();
+            CompInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            CompInfo->SetStringField(TEXT("type"), NodeB->ComponentTemplate ? NodeB->ComponentTemplate->GetClass()->GetName() : TEXT("Unknown"));
+            CompOnlyInB.Add(MakeShared<FJsonValueObject>(CompInfo));
+        }
+    }
+    
+    ComponentsDiff->SetArrayField(TEXT("only_in_a"), CompOnlyInA);
+    ComponentsDiff->SetArrayField(TEXT("only_in_b"), CompOnlyInB);
+    ComponentsDiff->SetArrayField(TEXT("in_both"), CompInBoth);
+    ComponentsDiff->SetArrayField(TEXT("modified"), CompModified);
+    DiffResult->SetObjectField(TEXT("components"), ComponentsDiff);
+    
+    // ============ FUNCTIONS DIFF ============
+    TSharedPtr<FJsonObject> FunctionsDiff = MakeShared<FJsonObject>();
+    TArray<TSharedPtr<FJsonValue>> FuncOnlyInA, FuncOnlyInB, FuncInBoth, FuncModified;
+    
+    // Build maps for functions
+    TMap<FName, UEdGraph*> FuncsA, FuncsB;
+    for (UEdGraph* Graph : BlueprintA->FunctionGraphs)
+    {
+        if (Graph) FuncsA.Add(Graph->GetFName(), Graph);
+    }
+    for (UEdGraph* Graph : BlueprintB->FunctionGraphs)
+    {
+        if (Graph) FuncsB.Add(Graph->GetFName(), Graph);
+    }
+    
+    // Compare functions
+    for (const auto& Pair : FuncsA)
+    {
+        UEdGraph* GraphA = Pair.Value;
+        if (UEdGraph** GraphBPtr = FuncsB.Find(Pair.Key))
+        {
+            UEdGraph* GraphB = *GraphBPtr;
+            
+            // Compare node counts as a simple diff metric
+            int32 NodeCountA = GraphA->Nodes.Num();
+            int32 NodeCountB = GraphB->Nodes.Num();
+            
+            if (bIncludeGraphs && NodeCountA != NodeCountB)
+            {
+                TSharedPtr<FJsonObject> ModInfo = MakeShared<FJsonObject>();
+                ModInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+                ModInfo->SetNumberField(TEXT("node_count_in_a"), NodeCountA);
+                ModInfo->SetNumberField(TEXT("node_count_in_b"), NodeCountB);
+                ModInfo->SetNumberField(TEXT("node_difference"), NodeCountB - NodeCountA);
+                FuncModified.Add(MakeShared<FJsonValueObject>(ModInfo));
+            }
+            else
+            {
+                FuncInBoth.Add(MakeShared<FJsonValueString>(Pair.Key.ToString()));
+            }
+        }
+        else
+        {
+            TSharedPtr<FJsonObject> FuncInfo = MakeShared<FJsonObject>();
+            FuncInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            FuncInfo->SetNumberField(TEXT("node_count"), GraphA->Nodes.Num());
+            FuncOnlyInA.Add(MakeShared<FJsonValueObject>(FuncInfo));
+        }
+    }
+    
+    for (const auto& Pair : FuncsB)
+    {
+        if (!FuncsA.Contains(Pair.Key))
+        {
+            UEdGraph* GraphB = Pair.Value;
+            TSharedPtr<FJsonObject> FuncInfo = MakeShared<FJsonObject>();
+            FuncInfo->SetStringField(TEXT("name"), Pair.Key.ToString());
+            FuncInfo->SetNumberField(TEXT("node_count"), GraphB->Nodes.Num());
+            FuncOnlyInB.Add(MakeShared<FJsonValueObject>(FuncInfo));
+        }
+    }
+    
+    FunctionsDiff->SetArrayField(TEXT("only_in_a"), FuncOnlyInA);
+    FunctionsDiff->SetArrayField(TEXT("only_in_b"), FuncOnlyInB);
+    FunctionsDiff->SetArrayField(TEXT("in_both"), FuncInBoth);
+    FunctionsDiff->SetArrayField(TEXT("modified"), FuncModified);
+    DiffResult->SetObjectField(TEXT("functions"), FunctionsDiff);
+    
+    // ============ EVENT GRAPHS DIFF ============
+    if (bIncludeGraphs)
+    {
+        TSharedPtr<FJsonObject> EventGraphsDiff = MakeShared<FJsonObject>();
+        
+        int32 EventNodesA = 0, EventNodesB = 0;
+        for (UEdGraph* Graph : BlueprintA->UbergraphPages)
+        {
+            if (Graph) EventNodesA += Graph->Nodes.Num();
+        }
+        for (UEdGraph* Graph : BlueprintB->UbergraphPages)
+        {
+            if (Graph) EventNodesB += Graph->Nodes.Num();
+        }
+        
+        EventGraphsDiff->SetNumberField(TEXT("total_nodes_in_a"), EventNodesA);
+        EventGraphsDiff->SetNumberField(TEXT("total_nodes_in_b"), EventNodesB);
+        EventGraphsDiff->SetNumberField(TEXT("node_difference"), EventNodesB - EventNodesA);
+        EventGraphsDiff->SetBoolField(TEXT("has_differences"), EventNodesA != EventNodesB);
+        
+        DiffResult->SetObjectField(TEXT("event_graphs"), EventGraphsDiff);
+    }
+    
+    // ============ SUMMARY ============
+    TSharedPtr<FJsonObject> Summary = MakeShared<FJsonObject>();
+    Summary->SetNumberField(TEXT("variables_only_in_a"), OnlyInA.Num());
+    Summary->SetNumberField(TEXT("variables_only_in_b"), OnlyInB.Num());
+    Summary->SetNumberField(TEXT("variables_modified"), Modified.Num());
+    Summary->SetNumberField(TEXT("components_only_in_a"), CompOnlyInA.Num());
+    Summary->SetNumberField(TEXT("components_only_in_b"), CompOnlyInB.Num());
+    Summary->SetNumberField(TEXT("components_modified"), CompModified.Num());
+    Summary->SetNumberField(TEXT("functions_only_in_a"), FuncOnlyInA.Num());
+    Summary->SetNumberField(TEXT("functions_only_in_b"), FuncOnlyInB.Num());
+    Summary->SetNumberField(TEXT("functions_modified"), FuncModified.Num());
+    
+    int32 TotalDifferences = OnlyInA.Num() + OnlyInB.Num() + Modified.Num() +
+                            CompOnlyInA.Num() + CompOnlyInB.Num() + CompModified.Num() +
+                            FuncOnlyInA.Num() + FuncOnlyInB.Num() + FuncModified.Num() +
+                            (bParentClassDifferent ? 1 : 0);
+    Summary->SetNumberField(TEXT("total_differences"), TotalDifferences);
+    Summary->SetBoolField(TEXT("blueprints_identical"), TotalDifferences == 0);
+    
+    DiffResult->SetObjectField(TEXT("summary"), Summary);
+    
+    // Build success response
+    TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+    Response->SetObjectField(TEXT("diff"), DiffResult);
     
     return Response;
 }

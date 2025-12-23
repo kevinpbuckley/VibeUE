@@ -245,7 +245,7 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 
 // 4. manage_blueprint
 REGISTER_VIBEUE_TOOL(manage_blueprint,
-	"Manage blueprints - create, compile, reparent, get/set properties. Actions: create, get_info, compile, reparent, set_property, get_property",
+	"Manage blueprints - create, compile, reparent, get/set properties, diff. Actions: create, get_info, compile, reparent, set_property, get_property, diff (or compare)",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),

@@ -1065,6 +1065,103 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         }
     }
     
+    // Try Qwen/vLLM function format: <function=name><parameter=key>value</parameter>...</function>
+    // This format is used by some models when they don't properly support tool_calls
+    if (!Content.IsEmpty() && Content.Contains(TEXT("<function=")))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for <function=name> style tool calls..."));
+        
+        FString WorkContent = Content;
+        TArray<FMCPToolCall> ParsedToolCalls;
+        int32 ToolCallIndex = 0;
+        
+        // Pattern: <function=tool_name><parameter=param_name>value</parameter>...</function>
+        FRegexPattern FunctionPattern(TEXT("<function=([^>]+)>([\\s\\S]*?)(?:</function>|</tool_call>|$)"));
+        FRegexMatcher FunctionMatcher(FunctionPattern, WorkContent);
+        
+        while (FunctionMatcher.FindNext())
+        {
+            FString ToolName = FunctionMatcher.GetCaptureGroup(1);
+            FString ParametersContent = FunctionMatcher.GetCaptureGroup(2);
+            
+            // Clean up tool name (might have trailing whitespace or newlines)
+            ToolName = ToolName.TrimStartAndEnd();
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found <function=%s> with content length %d"), *ToolName, ParametersContent.Len());
+            
+            // Extract parameters: <parameter=key>value</parameter>
+            TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+            FRegexPattern ParamPattern(TEXT("<parameter=([^>]+)>([\\s\\S]*?)</parameter>"));
+            FRegexMatcher ParamMatcher(ParamPattern, ParametersContent);
+            
+            while (ParamMatcher.FindNext())
+            {
+                FString ParamName = ParamMatcher.GetCaptureGroup(1);
+                FString ParamValue = ParamMatcher.GetCaptureGroup(2);
+                
+                // Trim whitespace
+                ParamName = ParamName.TrimStartAndEnd();
+                ParamValue = ParamValue.TrimStartAndEnd();
+                
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parameter: %s = %s"), *ParamName, *ParamValue.Left(100));
+                
+                // Try to parse as JSON if it looks like JSON
+                if (ParamValue.StartsWith(TEXT("{")) || ParamValue.StartsWith(TEXT("[")))
+                {
+                    TSharedPtr<FJsonValue> JsonValue;
+                    TSharedRef<TJsonReader<>> ParamReader = TJsonReaderFactory<>::Create(ParamValue);
+                    if (FJsonSerializer::Deserialize(ParamReader, JsonValue))
+                    {
+                        Arguments->SetField(ParamName, JsonValue);
+                    }
+                    else
+                    {
+                        // Failed to parse as JSON, store as string
+                        Arguments->SetStringField(ParamName, ParamValue);
+                    }
+                }
+                else
+                {
+                    Arguments->SetStringField(ParamName, ParamValue);
+                }
+            }
+            
+            // Build the tool call
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = ToolName;
+            ToolCall.Arguments = Arguments;
+            ToolCall.Id = FString::Printf(TEXT("func_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
+            
+            // Serialize arguments to JSON string
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+            FJsonSerializer::Serialize(Arguments.ToSharedRef(), Writer);
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed <function> tool call: %s (id=%s, args=%s)"), 
+                *ToolCall.ToolName, *ToolCall.Id, *ToolCall.ArgumentsJson.Left(200));
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                ParsedToolCalls.Add(ToolCall);
+            }
+            
+            ToolCallIndex++;
+        }
+        
+        // Fire all parsed tool calls
+        if (ParsedToolCalls.Num() > 0)
+        {
+            bToolCallsDetectedInStream = true;
+            for (const FMCPToolCall& ToolCall : ParsedToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled via function format
+        }
+    }
+    
     // Try XML-style format: <tool_call>...</tool_call> or just <tool_call>... (some models don't close)
     if (!Content.IsEmpty() && (Content.Contains(TEXT("<tool_call>")) || Content.Contains(TEXT("</tool_call>"))))
     {

@@ -12,11 +12,11 @@ manage_blueprint(action="help", help_action="compile")
 manage_blueprint(action="help", help_action="get_info")
 ```
 
-**Available help_action values:** create, get_info, compile, reparent, set_property, get_property
+**Available help_action values:** create, get_info, compile, reparent, set_property, get_property, diff
 
 ## Summary
 
-The `manage_blueprint` tool provides core Blueprint management functionality. It allows you to create new Blueprint classes, compile them, change their parent class, and read or modify Blueprint default properties. This is the foundation for programmatic Blueprint manipulation.
+The `manage_blueprint` tool provides core Blueprint management functionality. It allows you to create new Blueprint classes, compile them, change their parent class, compare blueprints, and read or modify Blueprint default properties. This is the foundation for programmatic Blueprint manipulation.
 
 ## Actions
 
@@ -28,6 +28,7 @@ The `manage_blueprint` tool provides core Blueprint management functionality. It
 | reparent | Change the parent class of a Blueprint |
 | set_property | Set a default property value on a Blueprint |
 | get_property | Get the current value of a default property |
+| diff | Compare two blueprints and return differences as JSON |
 
 ## Usage
 
