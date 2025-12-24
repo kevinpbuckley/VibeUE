@@ -11,6 +11,7 @@
 #include "Commands/MaterialNodeCommands.h"
 #include "Commands/AssetCommands.h"
 #include "Commands/EnhancedInputCommands.h"
+#include "Commands/DataAssetCommands.h"
 #include "Core/ServiceContext.h"
 #include "Json.h"
 #include "JsonUtilities.h"
@@ -28,6 +29,7 @@ static TSharedPtr<FMaterialCommands> MaterialCommandsInstance;
 static TSharedPtr<FMaterialNodeCommands> MaterialNodeCommandsInstance;
 static TSharedPtr<FAssetCommands> AssetCommandsInstance;
 static TSharedPtr<FEnhancedInputCommands> EnhancedInputCommandsInstance;
+static TSharedPtr<FDataAssetCommands> DataAssetCommandsInstance;
 static TSharedPtr<FServiceContext> SharedServiceContext;
 
 static void EnsureCommandHandlersInitialized()
@@ -71,6 +73,10 @@ static void EnsureCommandHandlersInitialized()
 	if (!EnhancedInputCommandsInstance.IsValid())
 	{
 		EnhancedInputCommandsInstance = MakeShared<FEnhancedInputCommands>();
+	}
+	if (!DataAssetCommandsInstance.IsValid())
+	{
+		DataAssetCommandsInstance = MakeShared<FDataAssetCommands>();
 	}
 }
 
@@ -124,6 +130,14 @@ FString UEditorTools::ManageAsset(const FString& Action, const FString& ParamsJs
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
 	Params->SetStringField(TEXT("action"), Action);
 	return SerializeResult(AssetCommandsInstance->HandleCommand(TEXT("manage_asset"), Params));
+}
+
+FString UEditorTools::ManageDataAsset(const FString& Action, const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(DataAssetCommandsInstance->HandleCommand(TEXT("manage_data_asset"), Params));
 }
 
 FString UEditorTools::ManageBlueprint(const FString& Action, const FString& ParamsJson)
@@ -237,6 +251,22 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 	),
 	{
 		return UEditorTools::ManageAsset(
+			Params.FindRef(TEXT("Action")),
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 3. manage_data_asset
+REGISTER_VIBEUE_TOOL(manage_data_asset,
+	"Manage UDataAsset instances with reflection-based property access. Actions: help, search_types (find UDataAsset subclasses), list (list data assets), create, get_info, list_properties, get_property, set_property, set_properties, get_class_info. Use search_types first to discover available data asset classes. For delete/duplicate/save, use manage_asset tool. ParamsJson params: asset_path, class_name, property_name, property_value, properties (object for set_properties), search_filter.",
+	"Data",
+	TOOL_PARAMS(
+		TOOL_PARAM("Action", "Action to perform", "string", true),
+		TOOL_PARAM_DEFAULT("ParamsJson", "Action parameters as JSON", "string", "{}")
+	),
+	{
+		return UEditorTools::ManageDataAsset(
 			Params.FindRef(TEXT("Action")),
 			Params.FindRef(TEXT("ParamsJson"))
 		);
@@ -419,6 +449,7 @@ void UEditorTools::CleanupCommandHandlers()
 	MaterialNodeCommandsInstance.Reset();
 	AssetCommandsInstance.Reset();
 	EnhancedInputCommandsInstance.Reset();
+	DataAssetCommandsInstance.Reset();
 	SharedServiceContext.Reset();
 	
 	UE_LOG(LogTemp, Display, TEXT("EditorTools: Command handlers cleaned up"));

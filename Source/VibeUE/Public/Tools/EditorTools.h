@@ -48,6 +48,26 @@ public:
 	UFUNCTION()
 	static FString ManageAsset(const FString& Action, const FString& ParamsJson);
 
+	/**
+	 * Manage UDataAsset instances with reflection-based property access
+	 * 
+	 * Actions:
+	 * - help: Get help for actions
+	 * - search_types: Find UDataAsset subclasses (use search_filter param)
+	 * - list: List data assets (use class_name and path params)
+	 * - create: Create data asset (class_name, asset_path, asset_name)
+	 * - get_info: Get data asset info with all properties (asset_path)
+	 * - list_properties: List available properties (asset_path or class_name)
+	 * - get_property: Get property value (asset_path, property_name)
+	 * - set_property: Set property value (asset_path, property_name, property_value)
+	 * - set_properties: Set multiple properties (asset_path, properties object)
+	 * - get_class_info: Get class info and properties (class_name)
+	 * 
+	 * Note: For delete/duplicate/save operations, use manage_asset tool instead.
+	 */
+	UFUNCTION()
+	static FString ManageDataAsset(const FString& Action, const FString& ParamsJson);
+
 	//========================================================================
 	// BLUEPRINT TOOLS
 	//========================================================================
