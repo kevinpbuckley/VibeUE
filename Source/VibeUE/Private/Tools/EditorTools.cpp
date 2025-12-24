@@ -12,6 +12,7 @@
 #include "Commands/AssetCommands.h"
 #include "Commands/EnhancedInputCommands.h"
 #include "Commands/DataAssetCommands.h"
+#include "Commands/DataTableCommands.h"
 #include "Core/ServiceContext.h"
 #include "Json.h"
 #include "JsonUtilities.h"
@@ -30,6 +31,7 @@ static TSharedPtr<FMaterialNodeCommands> MaterialNodeCommandsInstance;
 static TSharedPtr<FAssetCommands> AssetCommandsInstance;
 static TSharedPtr<FEnhancedInputCommands> EnhancedInputCommandsInstance;
 static TSharedPtr<FDataAssetCommands> DataAssetCommandsInstance;
+static TSharedPtr<FDataTableCommands> DataTableCommandsInstance;
 static TSharedPtr<FServiceContext> SharedServiceContext;
 
 static void EnsureCommandHandlersInitialized()
@@ -77,6 +79,10 @@ static void EnsureCommandHandlersInitialized()
 	if (!DataAssetCommandsInstance.IsValid())
 	{
 		DataAssetCommandsInstance = MakeShared<FDataAssetCommands>();
+	}
+	if (!DataTableCommandsInstance.IsValid())
+	{
+		DataTableCommandsInstance = MakeShared<FDataTableCommands>();
 	}
 }
 
@@ -138,6 +144,14 @@ FString UEditorTools::ManageDataAsset(const FString& Action, const FString& Para
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
 	Params->SetStringField(TEXT("action"), Action);
 	return SerializeResult(DataAssetCommandsInstance->HandleCommand(TEXT("manage_data_asset"), Params));
+}
+
+FString UEditorTools::ManageDataTable(const FString& Action, const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(DataTableCommandsInstance->HandleCommand(TEXT("manage_data_table"), Params));
 }
 
 FString UEditorTools::ManageBlueprint(const FString& Action, const FString& ParamsJson)
@@ -273,7 +287,23 @@ REGISTER_VIBEUE_TOOL(manage_data_asset,
 	}
 );
 
-// 4. manage_blueprint
+// 4. manage_data_table
+REGISTER_VIBEUE_TOOL(manage_data_table,
+	"Manage UDataTable assets with reflection-based row operations. Actions: help, search_row_types (find available row struct types), list (list data tables), create (create new data table), get_info (get table structure and rows), get_row_struct (get row struct columns), list_rows, get_row, add_row, update_row, remove_row, rename_row, add_rows (bulk add), clear_rows, import_json, export_json. Use search_row_types first to discover available row struct types for create. ParamsJson params: table_path (required for most), row_struct (for create), row_name (for row ops), data (JSON object for row values), rows (for add_rows), json_data (for import_json).",
+	"Data",
+	TOOL_PARAMS(
+		TOOL_PARAM("Action", "Action to perform", "string", true),
+		TOOL_PARAM_DEFAULT("ParamsJson", "Action parameters as JSON", "string", "{}")
+	),
+	{
+		return UEditorTools::ManageDataTable(
+			Params.FindRef(TEXT("Action")),
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 5. manage_blueprint
 REGISTER_VIBEUE_TOOL(manage_blueprint,
 	"Manage blueprints - create, compile, reparent, get/set properties, diff. Actions: create, get_info, compile, reparent, set_property, get_property, diff (or compare)",
 	"Blueprint",
@@ -450,6 +480,7 @@ void UEditorTools::CleanupCommandHandlers()
 	AssetCommandsInstance.Reset();
 	EnhancedInputCommandsInstance.Reset();
 	DataAssetCommandsInstance.Reset();
+	DataTableCommandsInstance.Reset();
 	SharedServiceContext.Reset();
 	
 	UE_LOG(LogTemp, Display, TEXT("EditorTools: Command handlers cleaned up"));

@@ -71,56 +71,8 @@ private:
     /** Get information about a data asset class (without an instance) */
     TSharedPtr<FJsonObject> HandleGetClassInfo(const TSharedPtr<FJsonObject>& Params);
 
-    // ========== Helper Functions ==========
+    // ========== Response Helpers ==========
     
-    /**
-     * Load a data asset by path
-     * @param AssetPath Full path like "/Game/Data/MyAsset" or just "MyAsset"
-     * @return Pointer to the loaded data asset, or nullptr if not found
-     */
-    UDataAsset* LoadDataAsset(const FString& AssetPath);
-    
-    /**
-     * Find a data asset class by name or path
-     * @param ClassNameOrPath Class name like "MyDataAsset" or path like "/Script/MyGame.MyDataAsset"
-     * @return UClass pointer or nullptr
-     */
-    UClass* FindDataAssetClass(const FString& ClassNameOrPath);
-    
-    /**
-     * Serialize a property to JSON value
-     * @param Property The property to serialize
-     * @param Container Pointer to the object containing the property
-     * @return JSON value representation
-     */
-    TSharedPtr<FJsonValue> PropertyToJson(FProperty* Property, void* Container);
-    
-    /**
-     * Set a property from a JSON value
-     * @param Property The property to set
-     * @param Container Pointer to the object containing the property
-     * @param Value JSON value to set
-     * @param OutError Error message if failed
-     * @return true if successful
-     */
-    bool JsonToProperty(FProperty* Property, void* Container, const TSharedPtr<FJsonValue>& Value, FString& OutError);
-    
-    /**
-     * Get property type information as a descriptive string
-     * @param Property The property
-     * @return Type string like "float", "FVector", "TArray<FString>", etc.
-     */
-    FString GetPropertyTypeString(FProperty* Property);
-    
-    /**
-     * Check if a property should be exposed to the tool
-     * @param Property The property to check
-     * @param bIncludeAll If true, include all properties regardless of edit flags
-     * @return true if the property should be visible
-     */
-    bool ShouldExposeProperty(FProperty* Property, bool bIncludeAll = false);
-
-    // Response helpers
     TSharedPtr<FJsonObject> CreateSuccessResponse(const FString& Message = TEXT(""));
     TSharedPtr<FJsonObject> CreateErrorResponse(const FString& ErrorMessage, const FString& ErrorCode = TEXT("ERROR"));
     TSharedPtr<FJsonObject> CreateErrorResponseWithParams(const FString& ErrorMessage, const TArray<FString>& ValidParams);

@@ -68,6 +68,32 @@ public:
 	UFUNCTION()
 	static FString ManageDataAsset(const FString& Action, const FString& ParamsJson);
 
+	/**
+	 * Manage UDataTable assets with reflection-based row operations
+	 * 
+	 * Actions:
+	 * - help: Get help for actions
+	 * - search_row_types: Find available row struct types (use search_filter param)
+	 * - list: List data tables (use row_struct and path params to filter)
+	 * - create: Create data table (row_struct, asset_path, asset_name)
+	 * - get_info: Get data table info with columns and rows (table_path)
+	 * - get_row_struct: Get row struct column definitions (table_path or struct_name)
+	 * - list_rows: List row names in table (table_path)
+	 * - get_row: Get single row data (table_path, row_name)
+	 * - add_row: Add new row (table_path, row_name, data)
+	 * - update_row: Update existing row (table_path, row_name, data)
+	 * - remove_row: Remove row (table_path, row_name)
+	 * - rename_row: Rename row (table_path, row_name, new_name)
+	 * - add_rows: Bulk add rows (table_path, rows object)
+	 * - clear_rows: Clear all rows (table_path, confirm=true)
+	 * - import_json: Import rows from JSON (table_path, json_data, mode)
+	 * - export_json: Export rows to JSON (table_path, format)
+	 * 
+	 * Note: For delete/duplicate/save operations, use manage_asset tool instead.
+	 */
+	UFUNCTION()
+	static FString ManageDataTable(const FString& Action, const FString& ParamsJson);
+
 	//========================================================================
 	// BLUEPRINT TOOLS
 	//========================================================================

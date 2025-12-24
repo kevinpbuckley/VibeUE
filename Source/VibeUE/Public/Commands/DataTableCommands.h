@@ -120,7 +120,7 @@ private:
 	 * @param RowData Pointer to the row data
 	 * @return JSON object representation of the row
 	 */
-	TSharedPtr<FJsonObject> RowToJson(UScriptStruct* RowStruct, void* RowData);
+	TSharedPtr<FJsonObject> RowToJson(const UScriptStruct* RowStruct, void* RowData);
 	
 	/**
 	 * Deserialize a row from JSON
@@ -130,7 +130,7 @@ private:
 	 * @param OutError Error message if failed
 	 * @return true if successful
 	 */
-	bool JsonToRow(UScriptStruct* RowStruct, void* RowData, const TSharedPtr<FJsonObject>& JsonObj, FString& OutError);
+	bool JsonToRow(const UScriptStruct* RowStruct, void* RowData, const TSharedPtr<FJsonObject>& JsonObj, FString& OutError);
 	
 	/**
 	 * Serialize a property to JSON value

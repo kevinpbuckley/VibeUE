@@ -121,13 +121,13 @@ For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **13 multi-action tools** exposing **167 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **14 multi-action tools** exposing **173 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (13 tools, 167 actions)
+## 🛠️ Canonical Tools Reference (14 tools, 173 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
-### 1. `manage_asset` (10 actions)
+### 1. `manage_asset` (9 actions)
 Asset import, export, search, and management operations.
 
 | Action | Purpose |
@@ -136,14 +136,13 @@ Asset import, export, search, and management operations.
 | `import_texture` | Import texture from file system |
 | `export_texture` | Export texture for AI analysis |
 | `delete` | Delete asset with safety checks |
-| `open_in_editor` | Open asset in appropriate editor |
-| `svg_to_png` | Convert SVG to PNG |
+| `open` | Open asset in appropriate editor |
 | `duplicate` | Duplicate asset to new location |
 | `save` | Save single asset to disk |
 | `save_all` | Save all modified assets |
 | `list_references` | List asset references/dependencies |
 
-### 2. `manage_blueprint` (8 actions)
+### 2. `manage_blueprint` (7 actions)
 Blueprint lifecycle, compilation, and property management.
 
 | Action | Purpose |
@@ -154,27 +153,24 @@ Blueprint lifecycle, compilation, and property management.
 | `get_property` | Get class default property value |
 | `set_property` | Set class default property value |
 | `reparent` | Change Blueprint parent class |
-| `list_custom_events` | List custom events in Blueprint |
-| `summarize_event_graph` | Get event graph summary |
+| `diff` | Compare two Blueprints |
 
-### 3. `manage_blueprint_component` (12 actions)
+### 3. `manage_blueprint_component` (9 actions)
 Component discovery, creation, and property management.
 
 | Action | Purpose |
 |--------|---------|
-| `search_types` | Discover available component types |
+| `get_available` | Discover available component types |
 | `get_info` | Get component type information |
-| `get_property_metadata` | Get detailed property metadata |
-| `list` | List all components in Blueprint |
-| `create` | Add new component to Blueprint |
-| `delete` | Remove component from Blueprint |
+| `get_hierarchy` | List all components in Blueprint with hierarchy |
+| `add` | Add new component to Blueprint |
+| `remove` | Remove component from Blueprint |
 | `get_property` | Get single property value |
 | `set_property` | Set component property value |
 | `get_all_properties` | Get all property values |
-| `compare_properties` | Compare properties between Blueprints |
 | `reparent` | Change component parent attachment |
 
-### 4. `manage_blueprint_node` (17 actions)
+### 4. `manage_blueprint_node` (12 actions)
 Node graph operations for Blueprint visual scripting.
 
 | Action | Purpose |
@@ -182,52 +178,40 @@ Node graph operations for Blueprint visual scripting.
 | `discover` | Discover available node types with spawner_key |
 | `create` | Create new node using spawner_key |
 | `connect` | Connect pins between nodes |
-| `connect_pins` | Batch connect with validation |
 | `disconnect` | Disconnect specific pins |
-| `disconnect_pins` | Break links or clear pins |
 | `delete` | Remove node from graph |
-| `move` | Reposition node |
 | `list` | List all nodes in graph |
-| `describe` | Get rich node + pin metadata |
-| `reset_pin_defaults` | Restore pin default values |
-| `get_details` | Get detailed node information |
+| `details` | Get detailed node information |
 | `configure` | Set pin defaults and node config |
+| `set_property` | Set node property value |
 | `split` | Split struct pins into sub-pins |
 | `recombine` | Collapse split pins back |
 | `refresh_node` | Reconstruct single node |
-| `refresh_nodes` | Refresh all nodes in Blueprint |
 
-### 5. `manage_blueprint_function` (13 actions)
+### 5. `manage_blueprint_function` (7 actions)
 Blueprint function lifecycle and parameter management.
 
 | Action | Purpose |
 |--------|---------|
 | `list` | List all functions in Blueprint |
-| `get` | Get detailed function information |
-| `list_params` | List function parameters (inputs/outputs) |
+| `get_info` | Get detailed function information |
 | `create` | Create new custom function |
 | `delete` | Remove function from Blueprint |
-| `add_param` | Add input/output parameter |
+| `add_input` | Add input parameter |
+| `add_output` | Add output parameter |
 | `remove_param` | Remove parameter from function |
-| `update_param` | Update parameter type or name |
-| `list_locals` | List local variables in function |
-| `add_local` | Add local variable to function |
-| `remove_local` | Remove local variable |
-| `update_local` | Update local variable type |
-| `update_properties` | Update function metadata (pure, category) |
 
-### 6. `manage_blueprint_variable` (7 actions)
+### 6. `manage_blueprint_variable` (6 actions)
 Variable creation, inspection, and management.
 
 | Action | Purpose |
 |--------|---------|
+| `search_types` | Discover available variable types |
 | `create` | Create new Blueprint variable |
 | `delete` | Remove variable with reference check |
 | `list` | List all variables in Blueprint |
 | `get_info` | Get detailed variable information |
-| `get_property` | Get nested property value |
-| `set_property` | Set nested property value |
-| `search_types` | Discover available variable types |
+| `modify` | Modify variable properties |
 
 ### 7. `manage_umg_widget` (11 actions)
 UMG Widget Blueprint operations.
@@ -246,7 +230,7 @@ UMG Widget Blueprint operations.
 | `get_available_events` | Get bindable events |
 | `bind_events` | Bind input events |
 
-### 8. `manage_enhanced_input` (22 actions)
+### 8. `manage_enhanced_input` (19 actions)
 Complete Enhanced Input system control.
 
 | Action | Purpose |
@@ -258,10 +242,6 @@ Complete Enhanced Input system control.
 | `action_configure` | Modify action properties |
 | `mapping_create_context` | Create Mapping Context |
 | `mapping_list_contexts` | List all contexts |
-| `mapping_get_properties` | Get context properties |
-| `mapping_get_property` | Get single property |
-| `mapping_update_context` | Update context |
-| `mapping_validate_context` | Validate context |
 | `mapping_get_mappings` | List key mappings |
 | `mapping_add_key_mapping` | Add key binding |
 | `mapping_remove_mapping` | Remove key mapping |
@@ -275,7 +255,7 @@ Complete Enhanced Input system control.
 | `mapping_get_triggers` | List triggers |
 | `mapping_get_available_trigger_types` | List trigger types |
 
-### 9. `manage_level_actors` (18 actions)
+### 9. `manage_level_actors` (21 actions)
 Complete level actor management for runtime level manipulation.
 
 | Action | Purpose |
@@ -298,8 +278,11 @@ Complete level actor management for runtime level manipulation.
 | `get_all_properties` | List all actor properties |
 | `set_folder` | Set actor's folder path in World Outliner |
 | `rename` | Rename actor label |
+| `attach` | Attach actor to parent |
+| `detach` | Detach actor from parent |
+| `select` | Select actor in editor |
 
-### 10. `manage_material` (24 actions)
+### 10. `manage_material` (26 actions)
 Complete material and material instance management.
 
 | Action | Purpose |
@@ -307,6 +290,8 @@ Complete material and material instance management.
 | `create` | Create new material asset |
 | `create_instance` | Create Material Instance Constant (MIC) |
 | `get_info` | Get comprehensive material information |
+| `summarize` | Get material summary overview |
+| `open` | Open material in editor |
 | `list_properties` | List all editable properties |
 | `get_property` | Get property value |
 | `get_property_info` | Get detailed property metadata |
@@ -329,12 +314,11 @@ Complete material and material instance management.
 | `clear_instance_parameter_override` | Remove parameter override |
 | `save_instance` | Save material instance to disk |
 
-### 11. `manage_material_node` (22 actions)
+### 11. `manage_material_node` (21 actions)
 Material graph node (expression) operations.
 
 | Action | Purpose |
 |--------|--------|
-| `help` | Get help for this tool or specific action |
 | `discover_types` | Discover available expression types |
 | `get_categories` | Get expression categories |
 | `create` | Create new expression node |
@@ -357,13 +341,44 @@ Material graph node (expression) operations.
 | `get_output_properties` | List material outputs |
 | `get_output_connections` | Get output connections |
 
-### 12. `check_unreal_connection` (1 action)
+### 12. `manage_data_asset` (9 actions)
+UDataAsset management with reflection-based property access.
+
+| Action | Purpose |
+|--------|---------|
+| `search_types` | Find UDataAsset subclasses |
+| `list` | List data assets in project |
+| `create` | Create new data asset |
+| `get_info` | Get data asset information |
+| `list_properties` | List all properties on asset |
+| `get_property` | Get property value |
+| `set_property` | Set property value |
+| `set_properties` | Set multiple properties at once |
+| `get_class_info` | Get class-level property information |
+
+### 13. `manage_data_table` (15 actions)
+DataTable management for structured game data.
+
+| Action | Purpose |
+|--------|---------|
+| `search_row_types` | Discover available row struct types |
+| `list` | List all data tables in project |
+| `create` | Create new data table |
+| `get_info` | Get data table information |
+| `get_row_struct` | Get row struct definition |
+| `list_rows` | List all rows in table |
+| `get_row` | Get single row data |
+| `add_row` | Add new row to table |
+| `add_rows` | Add multiple rows at once |
+| `update_row` | Update existing row |
+| `remove_row` | Remove row from table |
+| `rename_row` | Rename row key |
+| `clear_rows` | Remove all rows |
+| `import_json` | Import rows from JSON |
+| `export_json` | Export rows to JSON |
+
+### 14. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
-
-### 13. `get_help` (1 action)
-Get comprehensive help documentation by topic.
-
-**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `material-management`, `material-node-tools`, `asset-discovery`, `troubleshooting`, `topics`
 
 ---
 
