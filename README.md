@@ -76,29 +76,33 @@ The script automatically finds your Unreal Engine installation and project file,
 
 ### 4. Configure MCP Client
 
+VibeUE exposes its tools via a built-in **Streamable HTTP MCP server** - no Python required!
+
+#### Configure the MCP Server in Unreal
+
+1. Open **Project Settings > Plugins > VibeUE** (or click the gear icon in the AI Chat window)
+2. Enable **"Enable MCP Server"**
+3. Set your **Port** (default: 8088)
+4. Set an **API Key** for authentication (optional but recommended)
+5. The server starts automatically when Unreal Editor launches
+
 #### VS Code (Recommended)
 1. **Install the "Model Context Protocol" extension** from the VS Code marketplace
 2. **Create or update `.vscode/mcp.json`** in your project root:
    ```json
    {
      "servers": {
-        "VibeUE": {
-
-      "type": "stdio",
-      "command": "uv",
-      "args": [
-        "--directory",
-        "Plugins\\VibeUE\\Content\\Python",
-        "run",
-        "vibe_ue_server.py"
-      ],
-      "env": {},
-      "cwd": "${workspaceFolder}",
-    },
-     "inputs": []
+       "VibeUE": {
+         "type": "http",
+         "url": "http://127.0.0.1:8088/mcp",
+         "headers": {
+           "Authorization": "Bearer YOUR_API_KEY"
+         }
+       }
+     }
    }
    ```
-3. **Reload VS Code** - The MCP server will start automatically
+3. **Reload VS Code** - It will connect to the running Unreal Editor
 
 #### Other MCP Clients
 Use this configuration for Claude Desktop, Cursor, or Windsurf:
@@ -106,14 +110,12 @@ Use this configuration for Claude Desktop, Cursor, or Windsurf:
 ```json
 {
   "mcpServers": {
-    "unrealMCP": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "[PATH TO YOUR UNREAL PROJECT]\\Plugins\\VibeUE\\Python\\vibe-ue-main\\Python",
-        "run",
-        "vibe_ue_server.py"
-      ]
+    "VibeUE": {
+      "type": "http",
+      "url": "http://127.0.0.1:8088/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
     }
   }
 }
@@ -526,7 +528,9 @@ All capabilities are accessible through natural language commands via AI assista
 ## 🧩 Components
 
 ### Unreal Engine Plugin (VibeUE) `Plugins/VibeUE`
-- Native C++ implementation with TCP server for MCP communication
+- **Native C++ implementation** - no Python required
+- **Built-in MCP Server** using Streamable HTTP transport (MCP 2025-11-25 spec)
+- **In-Editor AI Chat** with tool integration
 - Deep integration with Unreal Editor subsystems and APIs
 - Comprehensive Blueprint manipulation and UMG widget control
 - Asset management with import/export capabilities
@@ -534,13 +538,12 @@ All capabilities are accessible through natural language commands via AI assista
 - Advanced node graph manipulation and analysis
 - Robust error handling and connection management
 
-### Python MCP Server `Plugins/VibeUE/Python/vibe-ue-main/Python/vibe_ue_server.py`
-- Implemented in `vibe_ue_server.py`
-- Manages TCP socket connections to the C++ plugin (port 55557)
-- Handles command serialization and response parsing
-- Provides error handling and connection management
-- Loads and registers tool modules from the `tools` directory
-- Uses the FastMCP library to implement the Model Context Protocol
+### MCP Server (Built-in)
+- Exposes all 14 VibeUE tools to external AI clients
+- **Streamable HTTP transport** - connects via HTTP POST to `/mcp` endpoint
+- Configurable port (default: 8088) and API key authentication
+- Compatible with VS Code, Claude Desktop, Cursor, Windsurf, and other MCP clients
+- Runs automatically when Unreal Editor starts (if enabled)
 
 ## 💡 Best Practices & AI Integration
 
@@ -577,16 +580,11 @@ The tools are specifically designed for AI assistants with:
     - **vibeue.mcp.json** - External MCP server configuration
     - **Instructions/** - Custom instruction files (`.md`)
   - **VibeUE.uplugin** - Plugin definition
-  - **Plugins/VibeUE/Python/vibe-ue-main/** - Python MCP server
-    - **Python/** - Python server and tools
-      - **tools/** - Tool modules for actor, editor, and blueprint operations
-      - **scripts/** - Example scripts and demos
-      - **vibe_ue_server.py** - Main MCP server script
 
 - **Docs/** - Comprehensive documentation
   - See [Docs/README.md](Docs/README.md) for documentation index
 
-## �️ Complete Setup Guide
+## 🛠️ Complete Setup Guide
 
 ### Advanced Plugin Configuration
 
@@ -604,20 +602,25 @@ If you prefer to build the plugin manually:
    - Build with your target platform (Win64, Development/DebugGame)
 
 
-### Python Environment Setup
+### MCP Server Configuration
 
-For detailed Python setup instructions, see [Python/vibe-ue-main/Python/README.md](Python/vibe-ue-main/Python/README.md), including:
-- Setting up your Python environment
-- Installing dependencies  
-- Running the MCP server
-- Using direct or server-based connections
+The built-in MCP server can be configured in **Project Settings > Plugins > VibeUE**:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Enable MCP Server** | Enabled | Toggle the HTTP MCP server |
+| **Port** | 8088 | HTTP port for MCP connections |
+| **API Key** | (empty) | Bearer token for authentication |
+
+When enabled, the server runs at `http://127.0.0.1:<port>/mcp` and accepts JSON-RPC requests following the MCP 2025-11-25 specification with Streamable HTTP transport.
 
 ### Configuring your MCP Client
 
 #### VS Code (Recommended)
 1. Install the "Model Context Protocol" extension
-2. Use the provided `.vscode/mcp.json` configuration file
-3. The server will start automatically when VS Code loads
+2. Create `.vscode/mcp.json` with the HTTP configuration (see Quick Start above)
+3. Make sure Unreal Editor is running with VibeUE enabled
+4. VS Code will connect to the running MCP server
 
 #### Other MCP Clients
 Use the following JSON for your MCP configuration:
@@ -626,15 +629,17 @@ Use the following JSON for your MCP configuration:
 {
   "mcpServers": {
     "VibeUE": {
-      "command": "python",
-      "args": [
-        "Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"
-      ],
-      "cwd": "<path/to/your/unreal/project>"
+      "type": "http",
+      "url": "http://127.0.0.1:8088/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
     }
   }
 }
 ```
+
+> **Note:** Replace `YOUR_API_KEY` with the API key configured in Unreal's VibeUE settings. If no API key is set, you can omit the `headers` section.
 
 #### MCP Configuration Locations
 
@@ -645,8 +650,7 @@ Use the following JSON for your MCP configuration:
 | Cursor | `.cursor/mcp.json` | Located in your project root directory |
 | Windsurf | `~/.config/windsurf/mcp.json` | On Windows: `%USERPROFILE%\.config\windsurf\mcp.json` |
 
-Each client uses the same JSON format as shown in the example above. 
-Simply place the configuration in the appropriate location for your MCP client.
+All clients use the same HTTP configuration format. The MCP server must be running (Unreal Editor open with VibeUE enabled) for clients to connect.
 
 
 ## Questions and Contributions
