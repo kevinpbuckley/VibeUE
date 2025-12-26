@@ -59,8 +59,11 @@ Add a new component to a Blueprint actor.
 
 ## Tips
 
+- **ALWAYS use `add` to create NEW components** - never rename or modify existing components
+- **NEVER modify DefaultSceneRoot** - add new components as its children instead
 - Common component classes: StaticMeshComponent, SkeletalMeshComponent, BoxComponent, SphereComponent, CapsuleComponent, PointLightComponent, SpotLightComponent, AudioComponent, ParticleSystemComponent, CameraComponent
 - Use `get_available` action to see all available component types
+- Use `get_hierarchy` first to understand the existing component structure
 - Component names must be unique within the Blueprint
 - Child components inherit transform from their parent
 - Compile the Blueprint after adding components

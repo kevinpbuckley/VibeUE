@@ -193,6 +193,42 @@ Always save after making changes:
 manage_asset(action="save_all")  # Save all dirty assets
 ```
 
+## CRITICAL: Component and Asset Protection Rules
+
+### ⚠️ NEVER Modify Existing Components Unless Explicitly Asked
+**When adding new components to a Blueprint, you must ONLY use the `add` action to create NEW components.**
+
+**FORBIDDEN actions without explicit user permission:**
+- Renaming existing components (especially `DefaultSceneRoot`)
+- Changing the type/class of existing components  
+- Removing existing components
+- Modifying properties on components the user didn't mention
+
+**Example - User says "Add three scene components named scomp1, scomp2, scomp3":**
+- ✅ **CORRECT:** Use `add` action 3 times to create NEW components named scomp1, scomp2, scomp3
+- ❌ **WRONG:** Rename DefaultSceneRoot to scomp1 and add scomp2, scomp3
+
+**Example - User says "Add sound component to BP":**
+- ✅ **CORRECT:** Use `add` action to create a NEW AudioComponent with an appropriate name
+- ❌ **WRONG:** Change an existing component's type to AudioComponent
+
+### ⚠️ ALWAYS Preserve the DefaultSceneRoot
+**The `DefaultSceneRoot` is the root scene component of Actor Blueprints. NEVER:**
+- Rename it
+- Change its type
+- Remove it
+- Replace it with something else
+
+**When adding components:**
+1. First check the existing hierarchy with `get_hierarchy`
+2. Add NEW components as children of DefaultSceneRoot or other existing components
+3. Never touch components the user didn't explicitly ask to modify
+
+### ⚠️ Ask Before Destructive Operations
+**If an operation would modify or remove existing content, ALWAYS confirm with the user first:**
+- "I see you have an existing AudioComponent. Do you want me to modify it or add a new one?"
+- "The Blueprint already has components X, Y, Z. I'll add the new components alongside them."
+
 ## Error Handling
 
 When you encounter errors:

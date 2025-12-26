@@ -48,6 +48,9 @@ The `manage_blueprint_component` tool provides comprehensive component managemen
 
 ## Notes
 
+- **IMPORTANT: When adding components, ALWAYS create NEW components** - never rename or change existing ones
+- **NEVER modify or rename DefaultSceneRoot** - it's the root component and should be preserved
+- Use `get_hierarchy` first to understand the existing component structure before making changes
 - Component names must be unique within a Blueprint
 - Some components can only be added to specific parent classes
 - Use `get_available` to discover valid component types
