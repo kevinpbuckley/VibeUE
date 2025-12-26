@@ -1,12 +1,12 @@
 <div align="center">
-# VibeUE - Model Context Protocol for Unreal Engine
+# VibeUE - Model Context Protocol for Unreal Engine with In Editor AI Agentic Chat
 
 https://www.vibeue.com/
 
 <span style="color: #555555">Vibe UE</span>
 
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.7%2B-orange)](https://www.unrealengine.com)
-[![Python](https://img.shields.io/badge/Python-3.12%2B-yellow)](https://www.python.org)
+[![MCP](https://img.shields.io/badge/MCP-2025--11--25-blue)](https://modelcontextprotocol.io)
 
 </div>
 
@@ -28,9 +28,8 @@ It's not perfect but it's a glimpse of a vision of how to better deal with No-Co
 
 ### Prerequisites
 - Unreal Engine 5.7+
-- Python 3.12+
 - Git
-- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf)
+- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf) - *optional, for external AI access*
 
 ### 1. Clone the Repository (manual installs only)
 
@@ -76,7 +75,7 @@ The script automatically finds your Unreal Engine installation and project file,
 
 ### 4. Configure MCP Client
 
-VibeUE exposes its tools via a built-in **Streamable HTTP MCP server** - no Python required!
+VibeUE exposes its tools via a built-in **Streamable HTTP MCP server**.
 
 #### Configure the MCP Server in Unreal
 
@@ -227,8 +226,8 @@ Edit `Plugins/VibeUE/Config/vibeue.mcp.json`:
   "servers": {
     "my-server-name": {
       "type": "stdio",
-      "command": "python",
-      "args": ["-m", "my_mcp_server"],
+      "command": "path/to/executable",
+      "args": ["--some-arg"],
       "env": {
         "MY_VAR": "value"
       },
@@ -543,7 +542,7 @@ All capabilities are accessible through natural language commands via AI assista
 ## 🧩 Components
 
 ### Unreal Engine Plugin (VibeUE) `Plugins/VibeUE`
-- **Native C++ implementation** - no Python required
+- **Native C++ implementation** - runs entirely within Unreal Editor
 - **Built-in MCP Server** using Streamable HTTP transport (MCP 2025-11-25 spec)
 - **In-Editor AI Chat** with tool integration
 - Deep integration with Unreal Editor subsystems and APIs
