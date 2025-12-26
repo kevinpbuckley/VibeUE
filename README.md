@@ -150,13 +150,28 @@ VibeUE includes a powerful **built-in AI chat interface** that runs directly ins
 
 ### Configuration
 
-Configure the chat client in **Project Settings > Plugins > VibeUE**:
+Configure the chat client in **Project Settings > Plugins > VibeUE** (or click the ⚙️ gear icon in the Chat window):
+
+#### LLM Provider
 
 | Setting | Description |
 |---------|-------------|
-| **API Key** | Your AI provider API key (stored securely) |
-| **Model** | Select AI model (GPT-4, Claude, etc.) |
-| **Endpoint** | API endpoint URL |
+| **LLM Provider** | Select your AI provider: `VibeUE` or `OpenRouter` |
+| **VibeUE API Key** | Free API key from [vibeue.com](https://vibeue.com) |
+| **OpenRouter API Key** | API key from [openrouter.ai](https://openrouter.ai) |
+| **Debug Mode** | Enable verbose logging for troubleshooting |
+
+> **💡 Free API Key:** Get a free VibeUE API key at [vibeue.com](https://vibeue.com) to start using the In-Editor Chat immediately!
+
+#### LLM Generation Parameters (VibeUE only)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Temperature** | 0.2 | Controls randomness (0.0 = deterministic, 1.0 = creative) |
+| **Top P** | 0.9 | Nucleus sampling threshold |
+| **Max Tokens** | 16384 | Maximum response length |
+| **Max Tool Iterations** | 100 | Maximum tool calls per conversation turn |
+| **Parallel Tool Calls** | Enabled | Allow AI to call multiple tools simultaneously |
 
 ## 📝 Custom Instructions
 
