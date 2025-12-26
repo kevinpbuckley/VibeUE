@@ -12,7 +12,17 @@ https://www.vibeue.com/
 
 This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and Claude Desktop to control Unreal Engine through natural language using the Model Context Protocol (MCP). With seamless VS Code integration, you can manipulate Blueprints, UMG widgets, and Unreal Engine assets directly from your code editor.
 
+**NEW:** VibeUE now includes a built-in **In-Editor AI Chat Client** that runs directly inside Unreal Engine - no external tools required!
+
 It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
+
+## ✨ Key Features
+
+- **In-Editor AI Chat** - Chat with AI directly inside Unreal Engine's editor
+- **14 Built-in Tools** - Comprehensive control over Blueprints, Materials, Widgets, Actors, and more
+- **Custom Instructions** - Add project-specific context via the Instructions folder
+- **External MCP Servers** - Connect additional MCP tools via the plugin's config
+- **MCP Server** - Expose VibeUE tools to external AI clients (VS Code, Claude Desktop, etc.)
 
 ## 🚀 Installation & Quick Start
 
@@ -118,6 +128,135 @@ Use this configuration for Claude Desktop, Cursor, or Windsurf:
 4. **Success!** If it returns widget information, VibeUE is working
 
 For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-guide) below.
+
+## 💬 In-Editor AI Chat Client
+
+VibeUE includes a powerful **built-in AI chat interface** that runs directly inside Unreal Engine. No external tools required!
+
+### Opening the Chat Window
+
+1. **Menu Bar**: Go to `Window > VibeUE > AI Chat`
+2. **Or use the toolbar button** if available
+
+### Features
+
+- **Direct AI Interaction** - Chat with AI models without leaving the editor
+- **Tool Integration** - All 14 VibeUE tools are available to the AI
+- **Tool Manager** - Enable/disable specific tools per conversation
+- **Conversation History** - Maintains context throughout your session
+- **External MCP Tools** - Connect additional MCP servers for extended capabilities
+
+### Configuration
+
+Configure the chat client in **Project Settings > Plugins > VibeUE**:
+
+| Setting | Description |
+|---------|-------------|
+| **API Key** | Your AI provider API key (stored securely) |
+| **Model** | Select AI model (GPT-4, Claude, etc.) |
+| **Endpoint** | API endpoint URL |
+
+## 📝 Custom Instructions
+
+Add project-specific context to help the AI understand your codebase and conventions.
+
+### Instructions Folder
+
+Place markdown (`.md`) files in the plugin's `Config/Instructions/` folder:
+
+```
+Plugins/VibeUE/Config/Instructions/
+├── project-overview.md      # Your project description
+├── coding-standards.md      # Your naming conventions
+├── blueprint-patterns.md    # Common patterns in your project
+└── ...
+```
+
+### How It Works
+
+- All `.md` files in the Instructions folder are automatically loaded
+- Content is included as system context for the AI
+- Helps the AI understand your project's specific requirements
+- Updates take effect on the next conversation
+
+### Example Instructions File
+
+```markdown
+# Project: My Awesome Game
+
+## Overview
+This is a top-down action RPG built in Unreal Engine 5.7.
+
+## Naming Conventions
+- Blueprints: BP_<Type>_<Name> (e.g., BP_Actor_Enemy)
+- Widgets: WBP_<Name> (e.g., WBP_MainMenu)
+- Materials: M_<Surface>_<Variant> (e.g., M_Metal_Rusty)
+
+## Common Patterns
+- All UI widgets inherit from WBP_BaseWidget
+- Enemy AI uses Behavior Trees in /Content/AI/BehaviorTrees/
+```
+
+## 🔌 External MCP Servers
+
+Connect additional MCP servers to extend the AI's capabilities beyond the built-in tools.
+
+### Configuration File
+
+Edit `Plugins/VibeUE/Config/vibeue.mcp.json`:
+
+```json
+{
+  "servers": {
+    "my-server-name": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "my_mcp_server"],
+      "env": {
+        "MY_VAR": "value"
+      },
+      "cwd": "C:\\path\\to\\server"
+    },
+    "http-server": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      }
+    }
+  }
+}
+```
+
+### Server Types
+
+| Type | Description |
+|------|-------------|
+| `stdio` | Launch a local process and communicate via stdin/stdout |
+| `http` | Connect to an HTTP MCP server (supports streamable HTTP transport) |
+
+### stdio Server Options
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `command` | Yes | Executable to run |
+| `args` | No | Array of command-line arguments |
+| `env` | No | Environment variables |
+| `cwd` | No | Working directory |
+
+### HTTP Server Options
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | Yes | Full URL to the MCP endpoint |
+| `headers` | No | HTTP headers (e.g., Authorization) |
+
+### Managing MCP Tools
+
+1. Open the **Tool Manager** in the chat window
+2. View all available tools (Internal + MCP)
+3. Enable/disable tools as needed
+4. MCP tools show their source server name
 
 ## 🌟 Overview
 
@@ -434,6 +573,9 @@ The tools are specifically designed for AI assistants with:
 
 - **Plugins/VibeUE/** - C++ plugin source
   - **Source/VibeUE/** - Plugin source code
+  - **Config/** - Plugin configuration
+    - **vibeue.mcp.json** - External MCP server configuration
+    - **Instructions/** - Custom instruction files (`.md`)
   - **VibeUE.uplugin** - Plugin definition
   - **Plugins/VibeUE/Python/vibe-ue-main/** - Python MCP server
     - **Python/** - Python server and tools
