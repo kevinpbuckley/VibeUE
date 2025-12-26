@@ -8,6 +8,10 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Async/Async.h"
+#include "HttpModule.h"
+#include "HttpManager.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -93,7 +97,14 @@ bool FMCPClient::LoadConfiguration(const FString& ConfigPath)
     
     for (const auto& Pair : Configuration.Servers)
     {
-        UE_LOG(LogMCPClient, Log, TEXT("  - %s (%s): %s"), *Pair.Key, *Pair.Value.Type, *Pair.Value.Command);
+        if (Pair.Value.Type == TEXT("http"))
+        {
+            UE_LOG(LogMCPClient, Log, TEXT("  - %s (%s): %s"), *Pair.Key, *Pair.Value.Type, *Pair.Value.Url);
+        }
+        else
+        {
+            UE_LOG(LogMCPClient, Log, TEXT("  - %s (%s): %s"), *Pair.Key, *Pair.Value.Type, *Pair.Value.Command);
+        }
     }
     
     return true;
@@ -141,7 +152,7 @@ bool FMCPClient::StartServer(const FString& ServerName)
         return false;
     }
     
-    if (Config->Type != TEXT("stdio"))
+    if (Config->Type != TEXT("stdio") && Config->Type != TEXT("http"))
     {
         UE_LOG(LogMCPClient, Error, TEXT("Server %s uses unsupported transport type: %s"), *ServerName, *Config->Type);
         return false;
@@ -150,6 +161,28 @@ bool FMCPClient::StartServer(const FString& ServerName)
     // Create server state
     TSharedPtr<FMCPServerState> State = MakeShared<FMCPServerState>();
     State->Config = *Config;
+    
+    // Handle HTTP servers differently than stdio
+    if (Config->Type == TEXT("http"))
+    {
+        // HTTP server - no process to launch, just store the state
+        ServerStates.Add(ServerName, State);
+        
+        UE_LOG(LogMCPClient, Log, TEXT("Starting HTTP MCP server %s: %s"), *ServerName, *Config->Url);
+        
+        // Initialize the HTTP server (MCP handshake)
+        if (!InitializeServer(*State))
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("Failed to initialize HTTP MCP server %s"), *ServerName);
+            ServerStates.Remove(ServerName);
+            return false;
+        }
+        
+        UE_LOG(LogMCPClient, Log, TEXT("HTTP MCP server %s initialized successfully"), *ServerName);
+        return true;
+    }
+    
+    // stdio server - launch subprocess
     
     // Resolve variables in config
     FString Command = ResolveConfigVariables(Config->Command);
@@ -301,26 +334,36 @@ void FMCPClient::StopServer(const FString& ServerName)
     
     TSharedPtr<FMCPServerState> State = *StatePtr;
     
-    // Close pipes
-    if (State->ReadPipe)
+    if (State->IsHttpServer())
     {
-        FPlatformProcess::ClosePipe(State->ReadPipe, nullptr);
-        State->ReadPipe = nullptr;
+        // HTTP server - just clear session and state
+        State->SessionId.Empty();
+        State->bInitialized = false;
+        UE_LOG(LogMCPClient, Log, TEXT("HTTP MCP server %s connection closed"), *ServerName);
     }
-    if (State->WritePipe)
+    else
     {
-        FPlatformProcess::ClosePipe(nullptr, State->WritePipe);
-        State->WritePipe = nullptr;
-    }
-    
-    // Terminate process if still running
-    if (State->ProcessHandle.IsValid())
-    {
-        if (FPlatformProcess::IsProcRunning(State->ProcessHandle))
+        // stdio server - close pipes and terminate process
+        if (State->ReadPipe)
         {
-            FPlatformProcess::TerminateProc(State->ProcessHandle, true);
+            FPlatformProcess::ClosePipe(State->ReadPipe, nullptr);
+            State->ReadPipe = nullptr;
         }
-        FPlatformProcess::CloseProc(State->ProcessHandle);
+        if (State->WritePipe)
+        {
+            FPlatformProcess::ClosePipe(nullptr, State->WritePipe);
+            State->WritePipe = nullptr;
+        }
+        
+        // Terminate process if still running
+        if (State->ProcessHandle.IsValid())
+        {
+            if (FPlatformProcess::IsProcRunning(State->ProcessHandle))
+            {
+                FPlatformProcess::TerminateProc(State->ProcessHandle, true);
+            }
+            FPlatformProcess::CloseProc(State->ProcessHandle);
+        }
     }
     
     // Remove tools from this server
@@ -335,6 +378,13 @@ void FMCPClient::StopServer(const FString& ServerName)
 
 bool FMCPClient::SendRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse)
 {
+    // Route to appropriate transport
+    if (State.IsHttpServer())
+    {
+        return SendHttpRequest(State, Method, Params, OnResponse);
+    }
+    
+    // stdio transport
     if (!State.WritePipe)
     {
         UE_LOG(LogMCPClient, Error, TEXT("Cannot send request - server pipe not open"));
@@ -394,6 +444,193 @@ bool FMCPClient::SendRequest(FMCPServerState& State, const FString& Method, TSha
     }
     
     return true;
+}
+
+bool FMCPClient::SendHttpRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse)
+{
+    // Check if this is a notification (no id field, no response expected)
+    bool bIsNotification = Method.StartsWith(TEXT("notifications/"));
+    
+    // Build JSON-RPC 2.0 request/notification
+    TSharedPtr<FJsonObject> Request = MakeShared<FJsonObject>();
+    Request->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+    Request->SetStringField(TEXT("method"), Method);
+    
+    int32 RequestId = 0;
+    if (!bIsNotification)
+    {
+        RequestId = State.NextRequestId++;
+        Request->SetNumberField(TEXT("id"), RequestId);
+    }
+    
+    if (Params.IsValid())
+    {
+        Request->SetObjectField(TEXT("params"), Params);
+    }
+    
+    // Serialize to JSON
+    FString RequestJson;
+    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = 
+        TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&RequestJson);
+    FJsonSerializer::Serialize(Request.ToSharedRef(), Writer);
+    
+    UE_LOG(LogMCPClient, Verbose, TEXT("Sending HTTP MCP request [%d] method=%s to %s"), RequestId, *Method, *State.Config.Url);
+    
+    // Create HTTP request
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
+    HttpRequest->SetURL(State.Config.Url);
+    HttpRequest->SetVerb(TEXT("POST"));
+    HttpRequest->SetHeader(TEXT("Content-Type"), TEXT("application/json"));
+    HttpRequest->SetHeader(TEXT("Accept"), TEXT("application/json, text/event-stream"));
+    HttpRequest->SetHeader(TEXT("MCP-Protocol-Version"), TEXT("2025-11-25"));
+    
+    // Add session ID if we have one
+    if (!State.SessionId.IsEmpty())
+    {
+        HttpRequest->SetHeader(TEXT("Mcp-Session-Id"), State.SessionId);
+    }
+    
+    // Add custom headers from config
+    for (const auto& HeaderPair : State.Config.Headers)
+    {
+        HttpRequest->SetHeader(HeaderPair.Key, HeaderPair.Value);
+        UE_LOG(LogMCPClient, Verbose, TEXT("  Header: %s: %s"), *HeaderPair.Key, *HeaderPair.Value);
+    }
+    
+    HttpRequest->SetContentAsString(RequestJson);
+    
+    // Store callback if provided (only for non-notifications)
+    if (OnResponse && !bIsNotification)
+    {
+        State.PendingRequests.Add(RequestId, OnResponse);
+    }
+    
+    // Set up response callback
+    HttpRequest->OnProcessRequestComplete().BindLambda([this, RequestId, bIsNotification, ServerName = State.Config.Name](
+        FHttpRequestPtr Request, FHttpResponsePtr Response, bool bWasSuccessful)
+    {
+        // Find server state (may have been removed)
+        TSharedPtr<FMCPServerState>* StatePtr = ServerStates.Find(ServerName);
+        if (!StatePtr)
+        {
+            UE_LOG(LogMCPClient, Warning, TEXT("HTTP response received for removed server: %s"), *ServerName);
+            return;
+        }
+        
+        FMCPServerState& State = **StatePtr;
+        
+        if (!bWasSuccessful || !Response.IsValid())
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("HTTP request failed for server %s"), *ServerName);
+            
+            // Call error callback if we have one
+            TFunction<void(TSharedPtr<FJsonObject>)>* Callback = State.PendingRequests.Find(RequestId);
+            if (Callback && *Callback)
+            {
+                // Create error response
+                TSharedPtr<FJsonObject> ErrorResponse = MakeShared<FJsonObject>();
+                ErrorResponse->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+                ErrorResponse->SetNumberField(TEXT("id"), RequestId);
+                
+                TSharedPtr<FJsonObject> Error = MakeShared<FJsonObject>();
+                Error->SetNumberField(TEXT("code"), -32603);
+                Error->SetStringField(TEXT("message"), TEXT("HTTP request failed"));
+                ErrorResponse->SetObjectField(TEXT("error"), Error);
+                
+                (*Callback)(ErrorResponse);
+                State.PendingRequests.Remove(RequestId);
+            }
+            return;
+        }
+        
+        // Handle initialize response - extract session ID
+        if (Response->GetHeader(TEXT("Mcp-Session-Id")).Len() > 0)
+        {
+            State.SessionId = Response->GetHeader(TEXT("Mcp-Session-Id"));
+            UE_LOG(LogMCPClient, Log, TEXT("HTTP MCP server %s assigned session ID: %s"), *ServerName, *State.SessionId);
+        }
+        
+        int32 StatusCode = Response->GetResponseCode();
+        FString ResponseBody = Response->GetContentAsString();
+        FString ContentType = Response->GetHeader(TEXT("Content-Type"));
+        
+        UE_LOG(LogMCPClient, Verbose, TEXT("HTTP response [%d] status=%d content-type=%s: %s"), RequestId, StatusCode, *ContentType, *ResponseBody.Left(300));
+        
+        if (StatusCode == 202 && bIsNotification)
+        {
+            // Notification accepted - nothing more to do
+            return;
+        }
+        
+        if (StatusCode != 200)
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("HTTP MCP server returned status %d: %s"), StatusCode, *ResponseBody);
+            
+            // Call error callback if we have one
+            TFunction<void(TSharedPtr<FJsonObject>)>* Callback = State.PendingRequests.Find(RequestId);
+            if (Callback && *Callback)
+            {
+                // Create error response
+                TSharedPtr<FJsonObject> ErrorResponse = MakeShared<FJsonObject>();
+                ErrorResponse->SetStringField(TEXT("jsonrpc"), TEXT("2.0"));
+                ErrorResponse->SetNumberField(TEXT("id"), RequestId);
+                
+                TSharedPtr<FJsonObject> Error = MakeShared<FJsonObject>();
+                Error->SetNumberField(TEXT("code"), StatusCode);
+                Error->SetStringField(TEXT("message"), ResponseBody);
+                ErrorResponse->SetObjectField(TEXT("error"), Error);
+                
+                (*Callback)(ErrorResponse);
+                State.PendingRequests.Remove(RequestId);
+            }
+            return;
+        }
+        
+        // Handle SSE (text/event-stream) format - extract JSON from "data:" lines
+        FString JsonToProcess = ResponseBody;
+        if (ContentType.Contains(TEXT("text/event-stream")) || ResponseBody.StartsWith(TEXT("event:")) || ResponseBody.StartsWith(TEXT("data:")))
+        {
+            // Parse SSE format: extract JSON from "data:" lines
+            TArray<FString> Lines;
+            ResponseBody.ParseIntoArrayLines(Lines);
+            
+            FString DataContent;
+            for (const FString& Line : Lines)
+            {
+                if (Line.StartsWith(TEXT("data:")))
+                {
+                    // Extract content after "data:" prefix
+                    FString Data = Line.Mid(5).TrimStartAndEnd();
+                    if (!Data.IsEmpty())
+                    {
+                        DataContent += Data;
+                    }
+                }
+            }
+            
+            if (!DataContent.IsEmpty())
+            {
+                JsonToProcess = DataContent;
+                UE_LOG(LogMCPClient, Verbose, TEXT("Extracted JSON from SSE: %s"), *JsonToProcess.Left(300));
+            }
+        }
+        
+        // Parse JSON response
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonToProcess);
+        TSharedPtr<FJsonObject> JsonResponse;
+        
+        if (!FJsonSerializer::Deserialize(Reader, JsonResponse) || !JsonResponse.IsValid())
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("Failed to parse HTTP MCP response: %s"), *JsonToProcess);
+            return;
+        }
+        
+        // Process the response
+        ProcessResponse(State, JsonToProcess);
+    });
+    
+    // Send the request
+    return HttpRequest->ProcessRequest();
 }
 
 bool FMCPClient::ReadResponse(FMCPServerState& State, FString& OutResponse)
@@ -458,7 +695,7 @@ bool FMCPClient::InitializeServer(FMCPServerState& State)
 {
     // Build initialize params
     TSharedPtr<FJsonObject> Params = MakeShared<FJsonObject>();
-    Params->SetStringField(TEXT("protocolVersion"), TEXT("2024-11-05"));
+    Params->SetStringField(TEXT("protocolVersion"), TEXT("2025-11-25"));
     
     TSharedPtr<FJsonObject> ClientInfo = MakeShared<FJsonObject>();
     ClientInfo->SetStringField(TEXT("name"), TEXT("VibeUE"));
@@ -468,6 +705,75 @@ bool FMCPClient::InitializeServer(FMCPServerState& State)
     TSharedPtr<FJsonObject> Capabilities = MakeShared<FJsonObject>();
     Params->SetObjectField(TEXT("capabilities"), Capabilities);
     
+    if (State.IsHttpServer())
+    {
+        // HTTP server - use synchronous approach with task completion tracking
+        bool bInitSuccess = false;
+        bool bRequestCompleted = false;
+        
+        // Send initialize request with callback
+        bool bSent = SendRequest(State, TEXT("initialize"), Params, [&bInitSuccess, &bRequestCompleted, &State](TSharedPtr<FJsonObject> Response)
+        {
+            // Check for result (successful init)
+            const TSharedPtr<FJsonObject>* ResultObj;
+            if (Response->TryGetObjectField(TEXT("result"), ResultObj))
+            {
+                UE_LOG(LogMCPClient, Log, TEXT("HTTP MCP server initialized successfully"));
+                State.bInitialized = true;
+                bInitSuccess = true;
+            }
+            else
+            {
+                // Check for error
+                const TSharedPtr<FJsonObject>* ErrorObj;
+                if (Response->TryGetObjectField(TEXT("error"), ErrorObj))
+                {
+                    FString ErrorMessage;
+                    (*ErrorObj)->TryGetStringField(TEXT("message"), ErrorMessage);
+                    UE_LOG(LogMCPClient, Error, TEXT("HTTP MCP initialize error: %s"), *ErrorMessage);
+                }
+                bInitSuccess = false;
+            }
+            
+            bRequestCompleted = true;
+        });
+        
+        if (!bSent)
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("Failed to send HTTP initialize request"));
+            return false;
+        }
+        
+        // Wait for response with timeout - must tick HTTP manager to process callbacks
+        double StartTime = FPlatformTime::Seconds();
+        double Timeout = 10.0;
+        
+        while (!bRequestCompleted && (FPlatformTime::Seconds() - StartTime < Timeout))
+        {
+            // Tick HTTP manager to process pending requests and callbacks
+            FHttpModule::Get().GetHttpManager().Tick(0.01f);
+            FPlatformProcess::Sleep(0.01f); // 10ms sleep
+        }
+        
+        if (!bRequestCompleted)
+        {
+            UE_LOG(LogMCPClient, Error, TEXT("HTTP MCP initialize timed out"));
+            return false;
+        }
+        
+        if (bInitSuccess)
+        {
+            // Send initialized notification (fire and forget)
+            SendRequest(State, TEXT("notifications/initialized"));
+            
+            // Request tools list
+            RequestToolsList(State);
+        }
+        
+        return bInitSuccess;
+    }
+    
+    // stdio server - original implementation
     // Send initialize request
     if (!SendRequest(State, TEXT("initialize"), Params))
     {
@@ -562,36 +868,62 @@ void FMCPClient::RequestToolsList(FMCPServerState& State)
                 }
             }
         }
-    });
-    
-    // Wait for tools response
-    double StartTime = FPlatformTime::Seconds();
-    double Timeout = 5.0;
-    
-    FString Response;
-    while (FPlatformTime::Seconds() - StartTime < Timeout)
-    {
-        if (ReadResponse(State, Response))
+        else
         {
-            TArray<FString> Lines;
-            Response.ParseIntoArray(Lines, TEXT("\n"));
-            
-            for (const FString& Line : Lines)
+            // Check for error
+            const TSharedPtr<FJsonObject>* ErrorObj;
+            if (Response->TryGetObjectField(TEXT("error"), ErrorObj))
             {
-                if (!Line.IsEmpty())
-                {
-                    ProcessResponse(State, Line);
-                }
-            }
-            
-            // Check if we got tools
-            if (State.Tools.Num() > 0)
-            {
-                break;
+                FString ErrorMessage;
+                (*ErrorObj)->TryGetStringField(TEXT("message"), ErrorMessage);
+                UE_LOG(LogMCPClient, Error, TEXT("Failed to list tools from %s: %s"), *State.Config.Name, *ErrorMessage);
             }
         }
         
-        FPlatformProcess::Sleep(0.1f);
+        UE_LOG(LogMCPClient, Log, TEXT("Discovered %d tools from %s"), State.Tools.Num(), *State.Config.Name);
+    });
+    
+    // Wait for tools response with appropriate method
+    double StartTime = FPlatformTime::Seconds();
+    double Timeout = 5.0;
+    
+    if (State.IsHttpServer())
+    {
+        // HTTP server - tick HTTP manager to process callbacks
+        while (State.Tools.Num() == 0 && (FPlatformTime::Seconds() - StartTime < Timeout))
+        {
+            FHttpModule::Get().GetHttpManager().Tick(0.01f);
+            FPlatformProcess::Sleep(0.01f);
+        }
+    }
+    else
+    {
+        // stdio server - read from pipe
+        FString Response;
+        while (FPlatformTime::Seconds() - StartTime < Timeout)
+        {
+            if (ReadResponse(State, Response))
+            {
+                TArray<FString> Lines;
+                Response.ParseIntoArray(Lines, TEXT("\n"));
+                
+                for (const FString& Line : Lines)
+                {
+                    if (!Line.IsEmpty())
+                    {
+                        ProcessResponse(State, Line);
+                    }
+                }
+                
+                // Check if we got tools
+                if (State.Tools.Num() > 0)
+                {
+                    break;
+                }
+            }
+            
+            FPlatformProcess::Sleep(0.1f);
+        }
     }
     
     UE_LOG(LogMCPClient, Log, TEXT("Discovered %d tools from %s"), State.Tools.Num(), *State.Config.Name);

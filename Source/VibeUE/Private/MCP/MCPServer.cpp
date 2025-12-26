@@ -14,12 +14,13 @@ DEFINE_LOG_CATEGORY(LogMCPServer);
 
 TSharedPtr<FMCPServer> FMCPServer::Instance;
 
-// MCP Protocol version we support
-static const FString MCP_PROTOCOL_VERSION = TEXT("2025-06-18");
+// MCP Protocol version we support (spec: 2025-11-25)
+static const FString MCP_PROTOCOL_VERSION = TEXT("2025-11-25");
 static const FString MCP_SERVER_NAME = TEXT("VibeUE");
 static const FString MCP_SERVER_VERSION = TEXT("1.0.0");
 
 FMCPServer::FMCPServer()
+    : NextEventId(0)
 {
 }
 
@@ -185,6 +186,20 @@ void FMCPServer::StopServer()
     FScopeLock Lock(&SessionLock);
     ActiveSessions.Empty();
     
+    // Clean up SSE connections
+    {
+        FScopeLock SSELockGuard(&SSELock);
+        for (auto& Connection : SSEConnections)
+        {
+            if (Connection->ClientSocket)
+            {
+                Connection->ClientSocket->Close();
+                ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(Connection->ClientSocket);
+            }
+        }
+        SSEConnections.Empty();
+    }
+    
     UE_LOG(LogMCPServer, Log, TEXT("MCP Server stopped"));
 }
 
@@ -288,13 +303,20 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
         return false;
     }
     
+    // Validate MCP-Protocol-Version header (for non-initialize requests)
+    FString SessionId = Headers.FindRef(TEXT("mcp-session-id"));
+    if (!SessionId.IsEmpty() && !ValidateProtocolVersion(Headers))
+    {
+        SendHttpResponse(ClientSocket, 400, TEXT("Bad Request"), TEXT("text/plain"), TEXT("Invalid or unsupported MCP-Protocol-Version"));
+        ClientSocket->Close();
+        ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+        return false;
+    }
+    
     // Handle different HTTP methods per MCP spec
     if (Method == TEXT("POST"))
     {
-        // Get session ID from header
-        FString SessionId = Headers.FindRef(TEXT("mcp-session-id"));
-        
-        // Process JSON-RPC request
+        // Process JSON-RPC request (SessionId already retrieved above)
         bool bIsNotification = false;
         FString Response = HandleMCPRequest(Body, SessionId, bIsNotification);
         
@@ -316,21 +338,45 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
             
             // Add CORS headers
             ResponseHeaders.Add(TEXT("Access-Control-Allow-Origin"), TEXT("*"));
-            ResponseHeaders.Add(TEXT("Access-Control-Allow-Headers"), TEXT("Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version"));
+            ResponseHeaders.Add(TEXT("Access-Control-Allow-Headers"), TEXT("Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Accept"));
             
-            SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
+            // Check if client wants SSE response
+            if (AcceptsSSE(Headers))
+            {
+                // Send as SSE stream (single event then close for POST)
+                SendSSEResponse(ClientSocket, SessionId);
+                int32 EventId = ++NextEventId;
+                SendSSEEvent(ClientSocket, Response, EventId);
+                // Note: Don't close socket here - let client close or we send more events
+                // For POST, we close after sending the response
+                ClientSocket->Close();
+                ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+                return true;
+            }
+            else
+            {
+                SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
+            }
         }
     }
     else if (Method == TEXT("GET"))
     {
-        // GET can be used to open SSE stream - for now we return 405
-        SendHttpResponse(ClientSocket, 405, TEXT("Method Not Allowed"), TEXT("text/plain"), 
-            TEXT("SSE streams not yet supported. Use POST for requests."));
+        // GET opens SSE stream for server-to-client messages
+        if (!AcceptsSSE(Headers))
+        {
+            SendHttpResponse(ClientSocket, 406, TEXT("Not Acceptable"), TEXT("text/plain"), 
+                TEXT("GET requests must accept text/event-stream"));
+            ClientSocket->Close();
+            ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+            return false;
+        }
+        
+        // Handle SSE stream request
+        return HandleSSERequest(ClientSocket, Headers);
     }
     else if (Method == TEXT("DELETE"))
     {
-        // Session termination
-        FString SessionId = Headers.FindRef(TEXT("mcp-session-id"));
+        // Session termination (SessionId already retrieved above)
         if (!SessionId.IsEmpty())
         {
             FScopeLock Lock(&SessionLock);
@@ -525,7 +571,7 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
 
 // ============ MCP Protocol Handling ============
 
-FString FMCPServer::HandleMCPRequest(const FString& JsonBody, const FString& SessionId, bool& bOutIsNotification)
+FString FMCPServer::HandleMCPRequest(const FString& JsonBody, FString& InOutSessionId, bool& bOutIsNotification)
 {
     bOutIsNotification = false;
     
@@ -583,7 +629,14 @@ FString FMCPServer::HandleMCPRequest(const FString& JsonBody, const FString& Ses
     // Route to handler
     if (Method == TEXT("initialize"))
     {
-        return HandleInitialize(Params, RequestId);
+        FString Response = HandleInitialize(Params, RequestId);
+        // Extract session ID from the initialized session for caller
+        InOutSessionId = GenerateSessionId();
+        {
+            FScopeLock Lock(&SessionLock);
+            ActiveSessions.Add(InOutSessionId, FDateTime::UtcNow());
+        }
+        return Response;
     }
     else if (Method == TEXT("initialized"))
     {
@@ -617,15 +670,6 @@ FString FMCPServer::HandleMCPRequest(const FString& JsonBody, const FString& Ses
 
 FString FMCPServer::HandleInitialize(TSharedPtr<FJsonObject> Params, const FString& RequestId)
 {
-    // Generate session ID
-    FString NewSessionId = GenerateSessionId();
-    
-    // Store session
-    {
-        FScopeLock Lock(&SessionLock);
-        ActiveSessions.Add(NewSessionId, FDateTime::UtcNow());
-    }
-    
     // Build capabilities
     TSharedPtr<FJsonObject> Capabilities = MakeShared<FJsonObject>();
     
@@ -644,13 +688,10 @@ FString FMCPServer::HandleInitialize(TSharedPtr<FJsonObject> Params, const FStri
     Result->SetObjectField(TEXT("capabilities"), Capabilities);
     Result->SetObjectField(TEXT("serverInfo"), ServerInfo);
     
-    UE_LOG(LogMCPServer, Log, TEXT("MCP Initialize - Session: %s"), *NewSessionId);
+    UE_LOG(LogMCPServer, Log, TEXT("MCP Initialize"));
     
-    // Build response with session ID in a special way (caller adds header)
-    FString Response = BuildJsonRpcResponse(RequestId, Result);
-    
-    // Note: The session ID should be added as Mcp-Session-Id header by the caller
-    return Response;
+    // Build response - session ID is added as header by caller
+    return BuildJsonRpcResponse(RequestId, Result);
 }
 
 FString FMCPServer::HandleToolsList(TSharedPtr<FJsonObject> Params, const FString& RequestId)
@@ -1016,6 +1057,183 @@ void FMCPServer::ProcessPendingRequests()
 {
     // Process any requests that need to run on game thread
     // (Currently not used since tool execution happens synchronously)
+    
+    // Clean up stale SSE connections
+    FScopeLock Lock(&SSELock);
+    SSEConnections.RemoveAll([](const TSharedPtr<FMCPSSEConnection>& Conn) {
+        return !Conn->bIsActive;
+    });
+}
+
+// ============ SSE Streaming Support ============
+
+bool FMCPServer::HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers)
+{
+    FString SessionId = Headers.FindRef(TEXT("mcp-session-id"));
+    
+    // Validate session exists if provided
+    if (!SessionId.IsEmpty())
+    {
+        FScopeLock Lock(&SessionLock);
+        if (!ActiveSessions.Contains(SessionId))
+        {
+            SendHttpResponse(ClientSocket, 404, TEXT("Not Found"), TEXT("text/plain"), TEXT("Session not found"));
+            ClientSocket->Close();
+            ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+            return false;
+        }
+    }
+    
+    // Check for Last-Event-ID for resumption
+    FString LastEventIdStr = Headers.FindRef(TEXT("last-event-id"));
+    int32 LastEventId = 0;
+    if (!LastEventIdStr.IsEmpty())
+    {
+        LastEventId = FCString::Atoi(*LastEventIdStr);
+        UE_LOG(LogMCPServer, Log, TEXT("SSE stream resuming from event ID: %d"), LastEventId);
+    }
+    
+    // Send SSE response headers
+    SendSSEResponse(ClientSocket, SessionId);
+    
+    // Create connection tracking
+    TSharedPtr<FMCPSSEConnection> Connection = MakeShared<FMCPSSEConnection>();
+    Connection->ClientSocket = ClientSocket;
+    Connection->SessionId = SessionId;
+    Connection->ConnectedAt = FDateTime::UtcNow();
+    Connection->LastEventId = LastEventId;
+    Connection->bIsActive = true;
+    
+    {
+        FScopeLock Lock(&SSELock);
+        SSEConnections.Add(Connection);
+    }
+    
+    // Send initial empty event to prime reconnection (per MCP spec)
+    int32 EventId = ++NextEventId;
+    SendSSEEvent(ClientSocket, TEXT(""), EventId);
+    
+    // Send retry hint (1 second recommended by spec)
+    FString RetryHint = TEXT("retry: 1000\n\n");
+    FTCHARToUTF8 Converter(*RetryHint);
+    int32 BytesSent = 0;
+    ClientSocket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
+    
+    UE_LOG(LogMCPServer, Log, TEXT("SSE stream opened for session: %s"), SessionId.IsEmpty() ? TEXT("<none>") : *SessionId);
+    
+    // Note: We keep the connection open for server-initiated messages
+    // The connection will be cleaned up when the client disconnects or on shutdown
+    // For now, we don't have server-initiated messages, so we just keep it open
+    // The client can close the connection when done
+    
+    return true;
+}
+
+void FMCPServer::SendSSEResponse(FSocket* Socket, const FString& SessionId)
+{
+    if (!Socket)
+    {
+        return;
+    }
+    
+    FString Response = TEXT("HTTP/1.1 200 OK\r\n");
+    Response += TEXT("Content-Type: text/event-stream\r\n");
+    Response += TEXT("Cache-Control: no-cache\r\n");
+    Response += TEXT("Connection: keep-alive\r\n");
+    Response += TEXT("Access-Control-Allow-Origin: *\r\n");
+    Response += TEXT("Access-Control-Allow-Headers: Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Accept, Last-Event-ID\r\n");
+    
+    if (!SessionId.IsEmpty())
+    {
+        Response += FString::Printf(TEXT("Mcp-Session-Id: %s\r\n"), *SessionId);
+    }
+    
+    Response += TEXT("\r\n");
+    
+    FTCHARToUTF8 Converter(*Response);
+    int32 BytesSent = 0;
+    Socket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
+}
+
+bool FMCPServer::SendSSEEvent(FSocket* ClientSocket, const FString& Data, int32 EventId)
+{
+    if (!ClientSocket)
+    {
+        return false;
+    }
+    
+    FString Event;
+    
+    // Add event ID for resumability
+    if (EventId >= 0)
+    {
+        Event += FString::Printf(TEXT("id: %d\n"), EventId);
+    }
+    
+    // Data field - handle multi-line data
+    if (Data.IsEmpty())
+    {
+        Event += TEXT("data: \n");
+    }
+    else
+    {
+        // SSE requires each line of data to be prefixed with "data: "
+        TArray<FString> Lines;
+        Data.ParseIntoArray(Lines, TEXT("\n"));
+        for (const FString& Line : Lines)
+        {
+            Event += FString::Printf(TEXT("data: %s\n"), *Line);
+        }
+    }
+    
+    Event += TEXT("\n"); // Empty line to signal end of event
+    
+    FTCHARToUTF8 Converter(*Event);
+    int32 BytesSent = 0;
+    bool bSuccess = ClientSocket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
+    
+    if (!bSuccess)
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("Failed to send SSE event"));
+    }
+    
+    return bSuccess;
+}
+
+bool FMCPServer::ValidateProtocolVersion(const TMap<FString, FString>& Headers) const
+{
+    const FString* VersionHeader = Headers.Find(TEXT("mcp-protocol-version"));
+    
+    if (!VersionHeader)
+    {
+        // Per spec: if no header and no other way to identify version, assume 2025-03-26
+        // We'll be permissive and allow missing header
+        return true;
+    }
+    
+    // Check if it's a version we support
+    // We support 2025-11-25 and are backwards compatible with 2024-11-05
+    if (*VersionHeader == TEXT("2025-11-25") || 
+        *VersionHeader == TEXT("2024-11-05") ||
+        *VersionHeader == TEXT("2025-03-26"))
+    {
+        return true;
+    }
+    
+    UE_LOG(LogMCPServer, Warning, TEXT("Unsupported MCP-Protocol-Version: %s"), **VersionHeader);
+    return false;
+}
+
+bool FMCPServer::AcceptsSSE(const TMap<FString, FString>& Headers) const
+{
+    const FString* AcceptHeader = Headers.Find(TEXT("accept"));
+    if (!AcceptHeader)
+    {
+        return false;
+    }
+    
+    // Check if text/event-stream is in the Accept header
+    return AcceptHeader->Contains(TEXT("text/event-stream"));
 }
 
 // ============ Config Persistence ============

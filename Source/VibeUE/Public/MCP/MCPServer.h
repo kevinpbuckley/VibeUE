@@ -48,6 +48,18 @@ struct FMCPPendingRequest
 };
 
 /**
+ * Represents an active SSE stream connection
+ */
+struct FMCPSSEConnection
+{
+    FSocket* ClientSocket = nullptr;
+    FString SessionId;
+    FDateTime ConnectedAt;
+    int32 LastEventId = 0;
+    bool bIsActive = true;
+};
+
+/**
  * MCP Server - Exposes internal tools to external chat clients
  * 
  * Implements the Model Context Protocol (MCP) Streamable HTTP transport
@@ -135,7 +147,22 @@ private:
                           const TMap<FString, FString>& ExtraHeaders = TMap<FString, FString>());
     
     /** Handle MCP JSON-RPC request */
-    FString HandleMCPRequest(const FString& JsonBody, const FString& SessionId, bool& bOutIsNotification);
+    FString HandleMCPRequest(const FString& JsonBody, FString& InOutSessionId, bool& bOutIsNotification);
+    
+    /** Handle SSE GET request - opens event stream */
+    bool HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers);
+    
+    /** Send SSE event to a client */
+    bool SendSSEEvent(FSocket* ClientSocket, const FString& Data, int32 EventId = -1);
+    
+    /** Send SSE response with Content-Type: text/event-stream */
+    void SendSSEResponse(FSocket* Socket, const FString& SessionId);
+    
+    /** Validate MCP-Protocol-Version header */
+    bool ValidateProtocolVersion(const TMap<FString, FString>& Headers) const;
+    
+    /** Parse Accept header to check for SSE support */
+    bool AcceptsSSE(const TMap<FString, FString>& Headers) const;
     
     /** Handle individual JSON-RPC methods */
     FString HandleInitialize(TSharedPtr<FJsonObject> Params, const FString& RequestId);
@@ -182,6 +209,13 @@ private:
     
     /** Queue of requests to process on game thread */
     TQueue<FMCPPendingRequest> PendingRequests;
+    
+    /** Active SSE connections */
+    TArray<TSharedPtr<FMCPSSEConnection>> SSEConnections;
+    FCriticalSection SSELock;
+    
+    /** Next SSE event ID for resumability */
+    TAtomic<int32> NextEventId;
     
     /** Tick delegate handle */
     FTSTicker::FDelegateHandle TickDelegateHandle;

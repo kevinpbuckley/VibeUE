@@ -26,12 +26,15 @@ struct FMCPServerState
     /** Server configuration */
     FMCPServerConfig Config;
     
-    /** Process handle if running */
+    /** Process handle if running (stdio only) */
     FProcHandle ProcessHandle;
     
     /** Pipe handles for stdio communication */
     void* ReadPipe = nullptr;
     void* WritePipe = nullptr;
+    
+    /** HTTP session ID for stateful connections */
+    FString SessionId;
     
     /** Whether server is initialized and ready */
     bool bInitialized = false;
@@ -44,6 +47,12 @@ struct FMCPServerState
     
     /** Pending requests awaiting responses */
     TMap<int32, TFunction<void(TSharedPtr<FJsonObject>)>> PendingRequests;
+    
+    /** Check if this is an HTTP server */
+    bool IsHttpServer() const { return Config.Type == TEXT("http"); }
+    
+    /** Check if this is a stdio server */
+    bool IsStdioServer() const { return Config.Type == TEXT("stdio"); }
 };
 
 /**
@@ -130,8 +139,11 @@ private:
     /** Send a JSON-RPC request to a server */
     bool SendRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params = nullptr, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse = nullptr);
     
-    /** Read response from server pipe */
+    /** Read response from server pipe (stdio only) */
     bool ReadResponse(FMCPServerState& State, FString& OutResponse);
+    
+    /** Send HTTP request to MCP server */
+    bool SendHttpRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse);
     
     /** Process a JSON-RPC response */
     void ProcessResponse(FMCPServerState& State, const FString& ResponseJson);
