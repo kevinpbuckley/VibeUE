@@ -37,39 +37,87 @@ FString FLLMClientBase::SanitizeForLLM(const FString& Input)
 
 FString FLLMClientBase::LoadSystemPromptFromFile()
 {
-    // Try to load instructions from file
-    FString InstructionsPath;
-    FString InstructionsContent;
+    // Try to load all instruction .md files from the instructions folder
+    FString InstructionsFolder;
+    FString CombinedInstructions;
+    IFileManager& FileManager = IFileManager::Get();
     
     // Priority 1: Project plugins (local development)
-    InstructionsPath = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("vibeue.instructions.md");
-    if (FFileHelper::LoadFileToString(InstructionsContent, *InstructionsPath))
+    InstructionsFolder = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("instructions");
+    if (FPaths::DirectoryExists(InstructionsFolder))
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("Loaded system prompt from: %s"), *InstructionsPath);
-        return InstructionsContent;
+        TArray<FString> FoundFiles;
+        FileManager.FindFiles(FoundFiles, *(InstructionsFolder / TEXT("*.md")), true, false);
+        
+        if (FoundFiles.Num() > 0)
+        {
+            for (const FString& FileName : FoundFiles)
+            {
+                FString FilePath = InstructionsFolder / FileName;
+                FString FileContent;
+                if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Loaded instruction file: %s"), *FilePath);
+                    if (!CombinedInstructions.IsEmpty())
+                    {
+                        CombinedInstructions += TEXT("\n\n---\n\n");
+                    }
+                    CombinedInstructions += FileContent;
+                }
+            }
+            
+            if (!CombinedInstructions.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
+                return CombinedInstructions;
+            }
+        }
     }
     
     // Priority 2: Engine marketplace (FAB install) - scan for VibeUE folder
     FString EngineMarketplacePath = FPaths::EnginePluginsDir() / TEXT("Marketplace");
     if (FPaths::DirectoryExists(EngineMarketplacePath))
     {
-        IFileManager& FileManager = IFileManager::Get();
         TArray<FString> Directories;
         FileManager.FindFiles(Directories, *(EngineMarketplacePath / TEXT("*")), false, true);
         
         for (const FString& DirName : Directories)
         {
-            InstructionsPath = EngineMarketplacePath / DirName / TEXT("Content") / TEXT("vibeue.instructions.md");
-            if (FFileHelper::LoadFileToString(InstructionsContent, *InstructionsPath))
+            InstructionsFolder = EngineMarketplacePath / DirName / TEXT("Content") / TEXT("instructions");
+            if (FPaths::DirectoryExists(InstructionsFolder))
             {
-                UE_LOG(LogLLMClientBase, Log, TEXT("Loaded system prompt from: %s"), *InstructionsPath);
-                return InstructionsContent;
+                TArray<FString> FoundFiles;
+                FileManager.FindFiles(FoundFiles, *(InstructionsFolder / TEXT("*.md")), true, false);
+                
+                if (FoundFiles.Num() > 0)
+                {
+                    for (const FString& FileName : FoundFiles)
+                    {
+                        FString FilePath = InstructionsFolder / FileName;
+                        FString FileContent;
+                        if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+                        {
+                            UE_LOG(LogLLMClientBase, Log, TEXT("Loaded instruction file: %s"), *FilePath);
+                            if (!CombinedInstructions.IsEmpty())
+                            {
+                                CombinedInstructions += TEXT("\n\n---\n\n");
+                            }
+                            CombinedInstructions += FileContent;
+                        }
+                    }
+                    
+                    if (!CombinedInstructions.IsEmpty())
+                    {
+                        UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
+                        return CombinedInstructions;
+                    }
+                }
             }
         }
     }
     
     // Fallback: Built-in minimal prompt
-    UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load vibeue.instructions.md, using fallback prompt"));
+    UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load instruction files from instructions folder, using fallback prompt"));
     return TEXT(
         "You are an AI assistant integrated into Unreal Engine via the VibeUE plugin. "
         "You help users with Blueprint development, material creation, asset management, "
