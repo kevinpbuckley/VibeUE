@@ -1,5 +1,5 @@
 <div align="center">
-# VibeUE - Model Context Protocol for Unreal Engine with In Editor AI Agentic Chat
+# VibeUE - AI-Powered Unreal Engine Editor with MCP Integration
 
 https://www.vibeue.com/
 
@@ -10,26 +10,24 @@ https://www.vibeue.com/
 
 </div>
 
-This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and Claude Desktop to control Unreal Engine through natural language using the Model Context Protocol (MCP). With seamless VS Code integration, you can manipulate Blueprints, UMG widgets, and Unreal Engine assets directly from your code editor.
+**VibeUE brings AI directly into Unreal Engine** with a powerful In-Editor Chat Client that can manipulate Blueprints, UMG widgets, materials, and assets through natural language. No external tools required!
 
-**NEW:** VibeUE now includes a built-in **In-Editor AI Chat Client** that runs directly inside Unreal Engine - no external tools required!
+Use AI to create UI widgets, modify Blueprints, manage materials, and control level actors - all from within the Unreal Editor. Extend the AI's capabilities by connecting external MCP servers, or expose VibeUE's tools to your favorite AI IDE.
 
-It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
 
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Engine's editor
 - **14 Built-in Tools** - Comprehensive control over Blueprints, Materials, Widgets, Actors, and more
 - **Custom Instructions** - Add project-specific context via the Instructions folder
-- **External MCP Servers** - Connect additional MCP tools via the plugin's config
-- **MCP Server** - Expose VibeUE tools to external AI clients (VS Code, Claude Desktop, etc.)
+- **Extend via MCP** - Connect external MCP servers to add more AI capabilities
+- **Expose to External IDEs** - Let VS Code, Claude Desktop, Cursor, and Windsurf control Unreal via MCP
 
 ## 🚀 Installation & Quick Start
 
 ### Prerequisites
 - Unreal Engine 5.7+
-- Git
-- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf) - *optional, for external AI access*
+- Git (for manual installation)
 
 ### 1. Clone the Repository (manual installs only)
 
@@ -73,62 +71,22 @@ The script automatically finds your Unreal Engine installation and project file,
 4. **Check the box to enable it**
 5. **Restart the editor when prompted**
 
-### 4. Configure MCP Client
+### 4. Open AI Chat & Get Your API Key
 
-VibeUE exposes its tools via a built-in **Streamable HTTP MCP server**.
-
-#### Configure the MCP Server in Unreal
-
-1. Open **Project Settings > Plugins > VibeUE** (or click the gear icon in the AI Chat window)
-2. Enable **"Enable MCP Server"**
-3. Set your **Port** (default: 8088)
-4. Set an **API Key** for authentication (optional but recommended)
-5. The server starts automatically when Unreal Editor launches
-
-#### VS Code (Recommended)
-1. **Install the "Model Context Protocol" extension** from the VS Code marketplace
-2. **Create or update `.vscode/mcp.json`** in your project root:
-   ```json
-   {
-     "servers": {
-       "VibeUE": {
-         "type": "http",
-         "url": "http://127.0.0.1:8088/mcp",
-         "headers": {
-           "Authorization": "Bearer YOUR_API_KEY"
-         }
-       }
-     }
-   }
-   ```
-3. **Reload VS Code** - It will connect to the running Unreal Editor
-
-#### Other MCP Clients
-Use this configuration for Claude Desktop, Cursor, or Windsurf:
-
-```json
-{
-  "mcpServers": {
-    "VibeUE": {
-      "type": "http",
-      "url": "http://127.0.0.1:8088/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_API_KEY"
-      }
-    }
-  }
-}
-
-```
+1. **Open the AI Chat**: Go to `Window > VibeUE > AI Chat`
+2. **Click the ⚙️ gear icon** to open Settings
+3. **Get a free API key** at [vibeue.com](https://vibeue.com) (or use [openrouter.ai](https://openrouter.ai))
+4. **Paste your API key** and click Save
+5. **Start chatting!** Ask the AI to create a widget, modify a Blueprint, or search your assets
 
 ### 5. Test the Installation
 
-1. **Open Unreal Engine** with your project
-2. **Open your MCP client** (VS Code, Claude Desktop, etc.)
-3. **Ask your AI assistant**: "Search for widgets in my project"
-4. **Success!** If it returns widget information, VibeUE is working
+Try these commands in the AI Chat:
+- "Search for all widgets in my project"
+- "Create a new Actor Blueprint called BP_TestActor"
+- "List all actors in the current level"
 
-For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-guide) below.
+**Success!** You're now using AI-powered development directly in Unreal Engine.
 
 ## 💬 In-Editor AI Chat Client
 
@@ -615,10 +573,13 @@ If you prefer to build the plugin manually:
    - Open the generated `.sln` file
    - Build with your target platform (Win64, Development/DebugGame)
 
+## 🌐 Expose VibeUE to External AI IDEs
 
-### MCP Server Configuration
+Want to use VS Code, Claude Desktop, Cursor, or Windsurf to control Unreal? VibeUE includes a built-in MCP server that exposes all 14 tools to external clients.
 
-The built-in MCP server can be configured in **Project Settings > Plugins > VibeUE**:
+### Enable the MCP Server
+
+Configure in **Project Settings > Plugins > VibeUE** (or ⚙️ in the Chat window):
 
 | Setting | Default | Description |
 |---------|---------|-------------|
@@ -626,18 +587,31 @@ The built-in MCP server can be configured in **Project Settings > Plugins > Vibe
 | **Port** | 8088 | HTTP port for MCP connections |
 | **API Key** | (empty) | Bearer token for authentication |
 
-When enabled, the server runs at `http://127.0.0.1:<port>/mcp` and accepts JSON-RPC requests following the MCP 2025-11-25 specification with Streamable HTTP transport.
+When enabled, the server runs at `http://127.0.0.1:<port>/mcp` using Streamable HTTP transport (MCP 2025-11-25 spec).
 
-### Configuring your MCP Client
+### Configure Your AI IDE
 
-#### VS Code (Recommended)
-1. Install the "Model Context Protocol" extension
-2. Create `.vscode/mcp.json` with the HTTP configuration (see Quick Start above)
-3. Make sure Unreal Editor is running with VibeUE enabled
-4. VS Code will connect to the running MCP server
+#### VS Code
+1. Install the **"Model Context Protocol" extension**
+2. Create `.vscode/mcp.json` in your project:
+   ```json
+   {
+     "servers": {
+       "VibeUE": {
+         "type": "http",
+         "url": "http://127.0.0.1:8088/mcp",
+         "headers": {
+           "Authorization": "Bearer YOUR_API_KEY"
+         }
+       }
+     }
+   }
+   ```
+3. Make sure Unreal Editor is running
+4. Reload VS Code - it will connect automatically
 
-#### Other MCP Clients
-Use the following JSON for your MCP configuration:
+#### Claude Desktop, Cursor, Windsurf
+Use this configuration:
 
 ```json
 {
@@ -653,18 +627,18 @@ Use the following JSON for your MCP configuration:
 }
 ```
 
-> **Note:** Replace `YOUR_API_KEY` with the API key configured in Unreal's VibeUE settings. If no API key is set, you can omit the `headers` section.
+> **Note:** Replace `YOUR_API_KEY` with the API key from VibeUE settings. If no API key is set, omit the `headers` section.
 
-#### MCP Configuration Locations
+### MCP Configuration File Locations
 
-| MCP Client | Configuration File Location | Notes |
-|------------|------------------------------|-------|
-| **VS Code** | `.vscode/mcp.json` | Located in your project root directory |
-| Claude Desktop | `~/.config/claude-desktop/mcp.json` | On Windows: `%USERPROFILE%\.config\claude-desktop\mcp.json` |
-| Cursor | `.cursor/mcp.json` | Located in your project root directory |
-| Windsurf | `~/.config/windsurf/mcp.json` | On Windows: `%USERPROFILE%\.config\windsurf\mcp.json` |
+| MCP Client | Configuration File Location |
+|------------|------------------------------|
+| **VS Code** | `.vscode/mcp.json` (in project root) |
+| **Claude Desktop** | `%USERPROFILE%\.config\claude-desktop\mcp.json` |
+| **Cursor** | `.cursor/mcp.json` (in project root) |
+| **Windsurf** | `%USERPROFILE%\.config\windsurf\mcp.json` |
 
-All clients use the same HTTP configuration format. The MCP server must be running (Unreal Editor open with VibeUE enabled) for clients to connect.
+**Important:** The MCP server only runs when Unreal Editor is open with VibeUE enabled.
 
 
 ## Questions and Contributions
