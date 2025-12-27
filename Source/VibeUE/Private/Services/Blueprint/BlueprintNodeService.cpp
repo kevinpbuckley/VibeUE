@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Services/Blueprint/BlueprintNodeService.h"
 #include "Core/ErrorCodes.h"
@@ -1177,15 +1177,21 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 		UEdGraphNode* TargetNode = nullptr;
 		UEdGraph* WorkingGraph = nullptr;
 
-		// Extract source pin info
+		// Extract source pin info - support source_pin, source_pin_name as aliases
 		FString SourceNodeId, SourcePinName;
 		ConnectionObj->TryGetStringField(TEXT("source_node_id"), SourceNodeId);
-		ConnectionObj->TryGetStringField(TEXT("source_pin_name"), SourcePinName);
+		if (!ConnectionObj->TryGetStringField(TEXT("source_pin_name"), SourcePinName))
+		{
+			ConnectionObj->TryGetStringField(TEXT("source_pin"), SourcePinName);
+		}
 
-		// Extract target pin info
+		// Extract target pin info - support target_pin, target_pin_name as aliases
 		FString TargetNodeId, TargetPinName;
 		ConnectionObj->TryGetStringField(TEXT("target_node_id"), TargetNodeId);
-		ConnectionObj->TryGetStringField(TEXT("target_pin_name"), TargetPinName);
+		if (!ConnectionObj->TryGetStringField(TEXT("target_pin_name"), TargetPinName))
+		{
+			ConnectionObj->TryGetStringField(TEXT("target_pin"), TargetPinName);
+		}
 
 		// Find source node and pin
 		if (!SourceNodeId.IsEmpty())

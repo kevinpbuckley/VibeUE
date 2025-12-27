@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -423,6 +423,31 @@ namespace ErrorCodes
 
 	/** @brief Expression cannot be promoted to parameter */
 	constexpr const TCHAR* EXPRESSION_CANNOT_PROMOTE = TEXT("EXPRESSION_CANNOT_PROMOTE");
+
+	// ============================================================================
+	// DataTable Errors (8000-8099)
+	// ============================================================================
+
+	/** @brief DataTable could not be found at specified path */
+	constexpr const TCHAR* DATATABLE_NOT_FOUND = TEXT("DATATABLE_NOT_FOUND");
+
+	/** @brief Row struct could not be found */
+	constexpr const TCHAR* ROW_STRUCT_NOT_FOUND = TEXT("ROW_STRUCT_NOT_FOUND");
+
+	/** @brief Row could not be found in data table */
+	constexpr const TCHAR* ROW_NOT_FOUND = TEXT("ROW_NOT_FOUND");
+
+	/** @brief Row already exists in data table */
+	constexpr const TCHAR* ROW_ALREADY_EXISTS = TEXT("ROW_ALREADY_EXISTS");
+
+	/** @brief Failed to create data table */
+	constexpr const TCHAR* DATATABLE_CREATE_FAILED = TEXT("DATATABLE_CREATE_FAILED");
+
+	/** @brief Invalid row struct type */
+	constexpr const TCHAR* ROW_STRUCT_INVALID = TEXT("ROW_STRUCT_INVALID");
+
+	/** @brief Row operation failed */
+	constexpr const TCHAR* ROW_OPERATION_FAILED = TEXT("ROW_OPERATION_FAILED");
 
 	// ============================================================================
 	// System/Connection Errors (9000-9099)

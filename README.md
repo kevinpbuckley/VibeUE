@@ -1,26 +1,33 @@
 <div align="center">
-# VibeUE - Model Context Protocol for Unreal Engine
+# VibeUE - AI-Powered Unreal Engine Editor with MCP Integration
 
 https://www.vibeue.com/
 
 <span style="color: #555555">Vibe UE</span>
 
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.7%2B-orange)](https://www.unrealengine.com)
-[![Python](https://img.shields.io/badge/Python-3.12%2B-yellow)](https://www.python.org)
+[![MCP](https://img.shields.io/badge/MCP-2025--11--25-blue)](https://modelcontextprotocol.io)
 
 </div>
 
-This project enables AI assistant clients like **VS Code**, Cursor, Windsurf and Claude Desktop to control Unreal Engine through natural language using the Model Context Protocol (MCP). With seamless VS Code integration, you can manipulate Blueprints, UMG widgets, and Unreal Engine assets directly from your code editor.
+**VibeUE brings AI directly into Unreal Engine** with a powerful In-Editor Chat Client that can manipulate Blueprints, UMG widgets, materials, and assets through natural language. No external tools required!
 
-It's not perfect but it's a glimpse of a vision of how to better deal with No-Code solutions.  It's also kind of fun to play with.
+Use AI to create UI widgets, modify Blueprints, manage materials, and control level actors - all from within the Unreal Editor. Extend the AI's capabilities by connecting external MCP servers, or expose VibeUE's tools to your favorite AI IDE.
+
+
+## ✨ Key Features
+
+- **In-Editor AI Chat** - Chat with AI directly inside Unreal Engine's editor
+- **14 Built-in Tools** - Comprehensive control over Blueprints, Materials, Widgets, Actors, and more
+- **Custom Instructions** - Add project-specific context via the Instructions folder
+- **Extend via MCP** - Connect external MCP servers to add more AI capabilities
+- **Expose to External IDEs** - Let VS Code, Claude Desktop, Cursor, and Windsurf control Unreal via MCP
 
 ## 🚀 Installation & Quick Start
 
 ### Prerequisites
 - Unreal Engine 5.7+
-- Python 3.12+
-- Git
-- MCP Client (VS Code with MCP extension, Claude Desktop, Cursor, Windsurf)
+- Git (for manual installation)
 
 ### 1. Clone the Repository (manual installs only)
 
@@ -64,70 +71,176 @@ The script automatically finds your Unreal Engine installation and project file,
 4. **Check the box to enable it**
 5. **Restart the editor when prompted**
 
-### 4. Configure MCP Client
+### 4. Open AI Chat & Get Your API Key
 
-#### VS Code (Recommended)
-1. **Install the "Model Context Protocol" extension** from the VS Code marketplace
-2. **Create or update `.vscode/mcp.json`** in your project root:
-   ```json
-   {
-     "servers": {
-        "VibeUE": {
-
-      "type": "stdio",
-      "command": "uv",
-      "args": [
-        "--directory",
-        "Plugins\\VibeUE\\Content\\Python",
-        "run",
-        "vibe_ue_server.py"
-      ],
-      "env": {},
-      "cwd": "${workspaceFolder}",
-    },
-     "inputs": []
-   }
-   ```
-3. **Reload VS Code** - The MCP server will start automatically
-
-#### Other MCP Clients
-Use this configuration for Claude Desktop, Cursor, or Windsurf:
-
-```json
-{
-  "mcpServers": {
-    "unrealMCP": {
-      "command": "uv",
-      "args": [
-        "--directory",
-        "[PATH TO YOUR UNREAL PROJECT]\\Plugins\\VibeUE\\Python\\vibe-ue-main\\Python",
-        "run",
-        "vibe_ue_server.py"
-      ]
-    }
-  }
-}
-
-```
+1. **Open the AI Chat**: Go to `Window > VibeUE > AI Chat`
+2. **Click the ⚙️ gear icon** to open Settings
+3. **Get a free API key** at [vibeue.com](https://vibeue.com) (or use [openrouter.ai](https://openrouter.ai))
+4. **Paste your API key** and click Save
+5. **Start chatting!** Ask the AI to create a widget, modify a Blueprint, or search your assets
 
 ### 5. Test the Installation
 
-1. **Open Unreal Engine** with your project
-2. **Open your MCP client** (VS Code, Claude Desktop, etc.)
-3. **Ask your AI assistant**: "Search for widgets in my project"
-4. **Success!** If it returns widget information, VibeUE is working
+Try these commands in the AI Chat:
+- "Search for all widgets in my project"
+- "Create a new Actor Blueprint called BP_TestActor"
+- "List all actors in the current level"
 
-For detailed setup instructions, see the [Complete Setup Guide](#complete-setup-guide) below.
+**Success!** You're now using AI-powered development directly in Unreal Engine.
+
+## 💬 In-Editor AI Chat Client
+
+VibeUE includes a powerful **built-in AI chat interface** that runs directly inside Unreal Engine. No external tools required!
+
+### Opening the Chat Window
+
+1. **Menu Bar**: Go to `Window > VibeUE > AI Chat`
+2. **Or use the toolbar button** if available
+
+### Features
+
+- **Direct AI Interaction** - Chat with AI models without leaving the editor
+- **Tool Integration** - All 14 VibeUE tools are available to the AI
+- **Tool Manager** - Enable/disable specific tools per conversation
+- **Conversation History** - Maintains context throughout your session
+- **External MCP Tools** - Connect additional MCP servers for extended capabilities
+
+### Configuration
+
+Configure the chat client in **Project Settings > Plugins > VibeUE** (or click the ⚙️ gear icon in the Chat window):
+
+#### LLM Provider
+
+| Setting | Description |
+|---------|-------------|
+| **LLM Provider** | Select your AI provider: `VibeUE` or `OpenRouter` |
+| **VibeUE API Key** | Free API key from [vibeue.com](https://vibeue.com) |
+| **OpenRouter API Key** | API key from [openrouter.ai](https://openrouter.ai) |
+| **Debug Mode** | Enable verbose logging for troubleshooting |
+
+> **💡 Free API Key:** Get a free VibeUE API key at [vibeue.com](https://vibeue.com) to start using the In-Editor Chat immediately!
+
+#### LLM Generation Parameters (VibeUE only)
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Temperature** | 0.2 | Controls randomness (0.0 = deterministic, 1.0 = creative) |
+| **Top P** | 0.9 | Nucleus sampling threshold |
+| **Max Tokens** | 16384 | Maximum response length |
+| **Max Tool Iterations** | 100 | Maximum tool calls per conversation turn |
+| **Parallel Tool Calls** | Enabled | Allow AI to call multiple tools simultaneously |
+
+## 📝 Custom Instructions
+
+Add project-specific context to help the AI understand your codebase and conventions.
+
+### Instructions Folder
+
+Place markdown (`.md`) files in the plugin's `Config/Instructions/` folder:
+
+```
+Plugins/VibeUE/Config/Instructions/
+├── project-overview.md      # Your project description
+├── coding-standards.md      # Your naming conventions
+├── blueprint-patterns.md    # Common patterns in your project
+└── ...
+```
+
+### How It Works
+
+- All `.md` files in the Instructions folder are automatically loaded
+- Content is included as system context for the AI
+- Helps the AI understand your project's specific requirements
+- Updates take effect on the next conversation
+
+### Example Instructions File
+
+```markdown
+# Project: My Awesome Game
+
+## Overview
+This is a top-down action RPG built in Unreal Engine 5.7.
+
+## Naming Conventions
+- Blueprints: BP_<Type>_<Name> (e.g., BP_Actor_Enemy)
+- Widgets: WBP_<Name> (e.g., WBP_MainMenu)
+- Materials: M_<Surface>_<Variant> (e.g., M_Metal_Rusty)
+
+## Common Patterns
+- All UI widgets inherit from WBP_BaseWidget
+- Enemy AI uses Behavior Trees in /Content/AI/BehaviorTrees/
+```
+
+## 🔌 External MCP Servers
+
+Connect additional MCP servers to extend the AI's capabilities beyond the built-in tools.
+
+### Configuration File
+
+Edit `Plugins/VibeUE/Config/vibeue.mcp.json`:
+
+```json
+{
+  "servers": {
+    "my-server-name": {
+      "type": "stdio",
+      "command": "path/to/executable",
+      "args": ["--some-arg"],
+      "env": {
+        "MY_VAR": "value"
+      },
+      "cwd": "C:\\path\\to\\server"
+    },
+    "http-server": {
+      "type": "http",
+      "url": "http://127.0.0.1:8080/mcp",
+      "headers": {
+        "Authorization": "Bearer your-token-here"
+      }
+    }
+  }
+}
+```
+
+### Server Types
+
+| Type | Description |
+|------|-------------|
+| `stdio` | Launch a local process and communicate via stdin/stdout |
+| `http` | Connect to an HTTP MCP server (supports streamable HTTP transport) |
+
+### stdio Server Options
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `command` | Yes | Executable to run |
+| `args` | No | Array of command-line arguments |
+| `env` | No | Environment variables |
+| `cwd` | No | Working directory |
+
+### HTTP Server Options
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `url` | Yes | Full URL to the MCP endpoint |
+| `headers` | No | HTTP headers (e.g., Authorization) |
+
+### Managing MCP Tools
+
+1. Open the **Tool Manager** in the chat window
+2. View all available tools (Internal + MCP)
+3. Enable/disable tools as needed
+4. MCP tools show their source server name
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **13 multi-action tools** exposing **167 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **14 multi-action tools** exposing **173 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (13 tools, 167 actions)
+## 🛠️ Canonical Tools Reference (14 tools, 173 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
-### 1. `manage_asset` (10 actions)
+### 1. `manage_asset` (9 actions)
 Asset import, export, search, and management operations.
 
 | Action | Purpose |
@@ -136,14 +249,13 @@ Asset import, export, search, and management operations.
 | `import_texture` | Import texture from file system |
 | `export_texture` | Export texture for AI analysis |
 | `delete` | Delete asset with safety checks |
-| `open_in_editor` | Open asset in appropriate editor |
-| `svg_to_png` | Convert SVG to PNG |
+| `open` | Open asset in appropriate editor |
 | `duplicate` | Duplicate asset to new location |
 | `save` | Save single asset to disk |
 | `save_all` | Save all modified assets |
 | `list_references` | List asset references/dependencies |
 
-### 2. `manage_blueprint` (8 actions)
+### 2. `manage_blueprint` (7 actions)
 Blueprint lifecycle, compilation, and property management.
 
 | Action | Purpose |
@@ -154,28 +266,24 @@ Blueprint lifecycle, compilation, and property management.
 | `get_property` | Get class default property value |
 | `set_property` | Set class default property value |
 | `reparent` | Change Blueprint parent class |
-| `list_custom_events` | List custom events in Blueprint |
-| `summarize_event_graph` | Get event graph summary |
+| `diff` | Compare two Blueprints |
 
-### 3. `manage_blueprint_component` (12 actions)
+### 3. `manage_blueprint_component` (9 actions)
 Component discovery, creation, and property management.
 
 | Action | Purpose |
 |--------|---------|
-| `search_types` | Discover available component types |
+| `get_available` | Discover available component types |
 | `get_info` | Get component type information |
-| `get_property_metadata` | Get detailed property metadata |
-| `list` | List all components in Blueprint |
-| `create` | Add new component to Blueprint |
-| `delete` | Remove component from Blueprint |
+| `get_hierarchy` | List all components in Blueprint with hierarchy |
+| `add` | Add new component to Blueprint |
+| `remove` | Remove component from Blueprint |
 | `get_property` | Get single property value |
 | `set_property` | Set component property value |
 | `get_all_properties` | Get all property values |
-| `compare_properties` | Compare properties between Blueprints |
-| `reorder` | Change component order |
 | `reparent` | Change component parent attachment |
 
-### 4. `manage_blueprint_node` (17 actions)
+### 4. `manage_blueprint_node` (12 actions)
 Node graph operations for Blueprint visual scripting.
 
 | Action | Purpose |
@@ -183,52 +291,40 @@ Node graph operations for Blueprint visual scripting.
 | `discover` | Discover available node types with spawner_key |
 | `create` | Create new node using spawner_key |
 | `connect` | Connect pins between nodes |
-| `connect_pins` | Batch connect with validation |
 | `disconnect` | Disconnect specific pins |
-| `disconnect_pins` | Break links or clear pins |
 | `delete` | Remove node from graph |
-| `move` | Reposition node |
 | `list` | List all nodes in graph |
-| `describe` | Get rich node + pin metadata |
-| `reset_pin_defaults` | Restore pin default values |
-| `get_details` | Get detailed node information |
+| `details` | Get detailed node information |
 | `configure` | Set pin defaults and node config |
+| `set_property` | Set node property value |
 | `split` | Split struct pins into sub-pins |
 | `recombine` | Collapse split pins back |
 | `refresh_node` | Reconstruct single node |
-| `refresh_nodes` | Refresh all nodes in Blueprint |
 
-### 5. `manage_blueprint_function` (13 actions)
+### 5. `manage_blueprint_function` (7 actions)
 Blueprint function lifecycle and parameter management.
 
 | Action | Purpose |
 |--------|---------|
 | `list` | List all functions in Blueprint |
-| `get` | Get detailed function information |
-| `list_params` | List function parameters (inputs/outputs) |
+| `get_info` | Get detailed function information |
 | `create` | Create new custom function |
 | `delete` | Remove function from Blueprint |
-| `add_param` | Add input/output parameter |
+| `add_input` | Add input parameter |
+| `add_output` | Add output parameter |
 | `remove_param` | Remove parameter from function |
-| `update_param` | Update parameter type or name |
-| `list_locals` | List local variables in function |
-| `add_local` | Add local variable to function |
-| `remove_local` | Remove local variable |
-| `update_local` | Update local variable type |
-| `update_properties` | Update function metadata (pure, category) |
 
-### 6. `manage_blueprint_variable` (7 actions)
+### 6. `manage_blueprint_variable` (6 actions)
 Variable creation, inspection, and management.
 
 | Action | Purpose |
 |--------|---------|
+| `search_types` | Discover available variable types |
 | `create` | Create new Blueprint variable |
 | `delete` | Remove variable with reference check |
 | `list` | List all variables in Blueprint |
 | `get_info` | Get detailed variable information |
-| `get_property` | Get nested property value |
-| `set_property` | Set nested property value |
-| `search_types` | Discover available variable types |
+| `modify` | Modify variable properties |
 
 ### 7. `manage_umg_widget` (11 actions)
 UMG Widget Blueprint operations.
@@ -247,23 +343,18 @@ UMG Widget Blueprint operations.
 | `get_available_events` | Get bindable events |
 | `bind_events` | Bind input events |
 
-### 8. `manage_enhanced_input` (24 actions)
+### 8. `manage_enhanced_input` (19 actions)
 Complete Enhanced Input system control.
 
 | Action | Purpose |
 |--------|---------|
 | `reflection_discover_types` | Discover modifier/trigger types |
-| `reflection_get_metadata` | Get type metadata |
 | `action_create` | Create Input Action |
 | `action_list` | List all Input Actions |
 | `action_get_properties` | Get action properties |
 | `action_configure` | Modify action properties |
 | `mapping_create_context` | Create Mapping Context |
 | `mapping_list_contexts` | List all contexts |
-| `mapping_get_properties` | Get context properties |
-| `mapping_get_property` | Get single property |
-| `mapping_update_context` | Update context |
-| `mapping_validate_context` | Validate context |
 | `mapping_get_mappings` | List key mappings |
 | `mapping_add_key_mapping` | Add key binding |
 | `mapping_remove_mapping` | Remove key mapping |
@@ -277,7 +368,7 @@ Complete Enhanced Input system control.
 | `mapping_get_triggers` | List triggers |
 | `mapping_get_available_trigger_types` | List trigger types |
 
-### 9. `manage_level_actors` (18 actions)
+### 9. `manage_level_actors` (21 actions)
 Complete level actor management for runtime level manipulation.
 
 | Action | Purpose |
@@ -300,8 +391,11 @@ Complete level actor management for runtime level manipulation.
 | `get_all_properties` | List all actor properties |
 | `set_folder` | Set actor's folder path in World Outliner |
 | `rename` | Rename actor label |
+| `attach` | Attach actor to parent |
+| `detach` | Detach actor from parent |
+| `select` | Select actor in editor |
 
-### 10. `manage_material` (24 actions)
+### 10. `manage_material` (26 actions)
 Complete material and material instance management.
 
 | Action | Purpose |
@@ -309,6 +403,8 @@ Complete material and material instance management.
 | `create` | Create new material asset |
 | `create_instance` | Create Material Instance Constant (MIC) |
 | `get_info` | Get comprehensive material information |
+| `summarize` | Get material summary overview |
+| `open` | Open material in editor |
 | `list_properties` | List all editable properties |
 | `get_property` | Get property value |
 | `get_property_info` | Get detailed property metadata |
@@ -358,13 +454,44 @@ Material graph node (expression) operations.
 | `get_output_properties` | List material outputs |
 | `get_output_connections` | Get output connections |
 
-### 12. `check_unreal_connection` (1 action)
+### 12. `manage_data_asset` (9 actions)
+UDataAsset management with reflection-based property access.
+
+| Action | Purpose |
+|--------|---------|
+| `search_types` | Find UDataAsset subclasses |
+| `list` | List data assets in project |
+| `create` | Create new data asset |
+| `get_info` | Get data asset information |
+| `list_properties` | List all properties on asset |
+| `get_property` | Get property value |
+| `set_property` | Set property value |
+| `set_properties` | Set multiple properties at once |
+| `get_class_info` | Get class-level property information |
+
+### 13. `manage_data_table` (15 actions)
+DataTable management for structured game data.
+
+| Action | Purpose |
+|--------|---------|
+| `search_row_types` | Discover available row struct types |
+| `list` | List all data tables in project |
+| `create` | Create new data table |
+| `get_info` | Get data table information |
+| `get_row_struct` | Get row struct definition |
+| `list_rows` | List all rows in table |
+| `get_row` | Get single row data |
+| `add_row` | Add new row to table |
+| `add_rows` | Add multiple rows at once |
+| `update_row` | Update existing row |
+| `remove_row` | Remove row from table |
+| `rename_row` | Rename row key |
+| `clear_rows` | Remove all rows |
+| `import_json` | Import rows from JSON |
+| `export_json` | Export rows to JSON |
+
+### 14. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
-
-### 13. `get_help` (1 action)
-Get comprehensive help documentation by topic.
-
-**Available Topics**: `overview`, `blueprint-workflow`, `node-tools`, `multi-action-tools`, `umg-guide`, `enhanced-input`, `level-actors`, `material-management`, `material-node-tools`, `asset-discovery`, `troubleshooting`, `topics`
 
 ---
 
@@ -373,7 +500,9 @@ All capabilities are accessible through natural language commands via AI assista
 ## 🧩 Components
 
 ### Unreal Engine Plugin (VibeUE) `Plugins/VibeUE`
-- Native C++ implementation with TCP server for MCP communication
+- **Native C++ implementation** - runs entirely within Unreal Editor
+- **Built-in MCP Server** using Streamable HTTP transport (MCP 2025-11-25 spec)
+- **In-Editor AI Chat** with tool integration
 - Deep integration with Unreal Editor subsystems and APIs
 - Comprehensive Blueprint manipulation and UMG widget control
 - Asset management with import/export capabilities
@@ -381,13 +510,12 @@ All capabilities are accessible through natural language commands via AI assista
 - Advanced node graph manipulation and analysis
 - Robust error handling and connection management
 
-### Python MCP Server `Plugins/VibeUE/Python/vibe-ue-main/Python/vibe_ue_server.py`
-- Implemented in `vibe_ue_server.py`
-- Manages TCP socket connections to the C++ plugin (port 55557)
-- Handles command serialization and response parsing
-- Provides error handling and connection management
-- Loads and registers tool modules from the `tools` directory
-- Uses the FastMCP library to implement the Model Context Protocol
+### MCP Server (Built-in)
+- Exposes all 14 VibeUE tools to external AI clients
+- **Streamable HTTP transport** - connects via HTTP POST to `/mcp` endpoint
+- Configurable port (default: 8088) and API key authentication
+- Compatible with VS Code, Claude Desktop, Cursor, Windsurf, and other MCP clients
+- Runs automatically when Unreal Editor starts (if enabled)
 
 ## 💡 Best Practices & AI Integration
 
@@ -420,17 +548,15 @@ The tools are specifically designed for AI assistants with:
 
 - **Plugins/VibeUE/** - C++ plugin source
   - **Source/VibeUE/** - Plugin source code
+  - **Config/** - Plugin configuration
+    - **vibeue.mcp.json** - External MCP server configuration
+    - **Instructions/** - Custom instruction files (`.md`)
   - **VibeUE.uplugin** - Plugin definition
-  - **Plugins/VibeUE/Python/vibe-ue-main/** - Python MCP server
-    - **Python/** - Python server and tools
-      - **tools/** - Tool modules for actor, editor, and blueprint operations
-      - **scripts/** - Example scripts and demos
-      - **vibe_ue_server.py** - Main MCP server script
 
 - **Docs/** - Comprehensive documentation
   - See [Docs/README.md](Docs/README.md) for documentation index
 
-## �️ Complete Setup Guide
+## 🛠️ Complete Setup Guide
 
 ### Advanced Plugin Configuration
 
@@ -447,50 +573,72 @@ If you prefer to build the plugin manually:
    - Open the generated `.sln` file
    - Build with your target platform (Win64, Development/DebugGame)
 
+## 🌐 Expose VibeUE to External AI IDEs
 
-### Python Environment Setup
+Want to use VS Code, Claude Desktop, Cursor, or Windsurf to control Unreal? VibeUE includes a built-in MCP server that exposes all 14 tools to external clients.
 
-For detailed Python setup instructions, see [Python/vibe-ue-main/Python/README.md](Python/vibe-ue-main/Python/README.md), including:
-- Setting up your Python environment
-- Installing dependencies  
-- Running the MCP server
-- Using direct or server-based connections
+### Enable the MCP Server
 
-### Configuring your MCP Client
+Configure in **Project Settings > Plugins > VibeUE** (or ⚙️ in the Chat window):
 
-#### VS Code (Recommended)
-1. Install the "Model Context Protocol" extension
-2. Use the provided `.vscode/mcp.json` configuration file
-3. The server will start automatically when VS Code loads
+| Setting | Default | Description |
+|---------|---------|-------------|
+| **Enable MCP Server** | Enabled | Toggle the HTTP MCP server |
+| **Port** | 8088 | HTTP port for MCP connections |
+| **API Key** | (empty) | Bearer token for authentication |
 
-#### Other MCP Clients
-Use the following JSON for your MCP configuration:
+When enabled, the server runs at `http://127.0.0.1:<port>/mcp` using Streamable HTTP transport (MCP 2025-11-25 spec).
+
+### Configure Your AI IDE
+
+#### VS Code
+1. Install the **"Model Context Protocol" extension**
+2. Create `.vscode/mcp.json` in your project:
+   ```json
+   {
+     "servers": {
+       "VibeUE": {
+         "type": "http",
+         "url": "http://127.0.0.1:8088/mcp",
+         "headers": {
+           "Authorization": "Bearer YOUR_API_KEY"
+         }
+       }
+     }
+   }
+   ```
+3. Make sure Unreal Editor is running
+4. Reload VS Code - it will connect automatically
+
+#### Claude Desktop, Cursor, Windsurf
+Use this configuration:
 
 ```json
 {
   "mcpServers": {
     "VibeUE": {
-      "command": "python",
-      "args": [
-        "Plugins\\VibeUE\\Python\\vibe-ue-main\\Python\\vibe_ue_server.py"
-      ],
-      "cwd": "<path/to/your/unreal/project>"
+      "type": "http",
+      "url": "http://127.0.0.1:8088/mcp",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
     }
   }
 }
 ```
 
-#### MCP Configuration Locations
+> **Note:** Replace `YOUR_API_KEY` with the API key from VibeUE settings. If no API key is set, omit the `headers` section.
 
-| MCP Client | Configuration File Location | Notes |
-|------------|------------------------------|-------|
-| **VS Code** | `.vscode/mcp.json` | Located in your project root directory |
-| Claude Desktop | `~/.config/claude-desktop/mcp.json` | On Windows: `%USERPROFILE%\.config\claude-desktop\mcp.json` |
-| Cursor | `.cursor/mcp.json` | Located in your project root directory |
-| Windsurf | `~/.config/windsurf/mcp.json` | On Windows: `%USERPROFILE%\.config\windsurf\mcp.json` |
+### MCP Configuration File Locations
 
-Each client uses the same JSON format as shown in the example above. 
-Simply place the configuration in the appropriate location for your MCP client.
+| MCP Client | Configuration File Location |
+|------------|------------------------------|
+| **VS Code** | `.vscode/mcp.json` (in project root) |
+| **Claude Desktop** | `%USERPROFILE%\.config\claude-desktop\mcp.json` |
+| **Cursor** | `.cursor/mcp.json` (in project root) |
+| **Windsurf** | `%USERPROFILE%\.config\windsurf\mcp.json` |
+
+**Important:** The MCP server only runs when Unreal Editor is open with VibeUE enabled.
 
 
 ## Questions and Contributions

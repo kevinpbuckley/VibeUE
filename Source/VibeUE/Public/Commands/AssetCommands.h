@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -32,6 +32,12 @@ private:
     TSharedPtr<FAssetLifecycleService> LifecycleService;
     TSharedPtr<FAssetImportService> ImportService;
     TSharedPtr<FServiceContext> ServiceContext;
+
+    // Help handler
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
+
+    // Search handler
+    TSharedPtr<FJsonObject> HandleSearchAssets(const TSharedPtr<FJsonObject>& Params);
 
     // Asset Discovery command handlers
     TSharedPtr<FJsonObject> HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params);

@@ -1,6 +1,9 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Commands/BlueprintComponentReflection.h"
+#include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
+#include "Core/JsonValueHelper.h"
 #include "Engine/Blueprint.h"
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
@@ -33,6 +36,61 @@
 #include "BlueprintEditor.h"
 #endif
 
+// Parameter validation for manage_blueprint_component actions
+namespace ComponentParams
+{
+	inline const TArray<FString>& AddParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("component_type"), TEXT("component_name"),
+			TEXT("parent_component"), TEXT("socket_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& RemoveParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("component_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& PropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("component_name"), TEXT("property_name"),
+			TEXT("property_value"), TEXT("property_path")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& HierarchyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("include_details")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& ReparentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("component_name"), TEXT("new_parent"), TEXT("socket_name")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& InfoParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("blueprint_name"), TEXT("component_name"), TEXT("component_type"),
+			TEXT("class_name"), TEXT("search_term")
+		};
+		return Params;
+	}
+}
+
 FBlueprintComponentReflection::FBlueprintComponentReflection()
 {
     // Phase 4: Initialize Blueprint Services
@@ -48,7 +106,73 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCommand(const FStri
 {
     UE_LOG(LogTemp, Log, TEXT("Blueprint Component Reflection: Processing command %s"), *CommandType);
 
-    if (CommandType == TEXT("get_available_components"))
+    // Handle multi-action manage_blueprint_component routing
+    if (CommandType == TEXT("manage_blueprint_component"))
+    {
+        if (!Params.IsValid())
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Parameters are required"));
+        }
+
+        FString Action;
+        if (!Params->TryGetStringField(TEXT("action"), Action))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("action parameter is required"));
+        }
+
+        Action = Action.ToLower();
+        UE_LOG(LogTemp, Display, TEXT("BlueprintComponentReflection: Handling action '%s'"), *Action);
+
+        // Help action
+        if (Action == TEXT("help"))
+        {
+            return HandleHelp(Params);
+        }
+        // Route to specific handlers - support both C++ and Python action names
+        else if (Action == TEXT("add") || Action == TEXT("create"))
+        {
+            return HandleAddComponent(Params);
+        }
+        else if (Action == TEXT("remove") || Action == TEXT("delete"))
+        {
+            return HandleRemoveComponent(Params);
+        }
+        else if (Action == TEXT("get_hierarchy") || Action == TEXT("list"))
+        {
+            return HandleGetComponentHierarchy(Params);
+        }
+        else if (Action == TEXT("set_property"))
+        {
+            return HandleSetComponentProperty(Params);
+        }
+        else if (Action == TEXT("get_property"))
+        {
+            return HandleGetComponentProperty(Params);
+        }
+        else if (Action == TEXT("get_all_properties"))
+        {
+            return HandleGetAllComponentProperties(Params);
+        }
+        else if (Action == TEXT("reparent"))
+        {
+            return HandleReparentComponent(Params);
+        }
+        else if (Action == TEXT("get_available") || Action == TEXT("search_types"))
+        {
+            return HandleGetAvailableComponents(Params);
+        }
+        else if (Action == TEXT("get_info") || Action == TEXT("get_class_info") || Action == TEXT("get_type_info"))
+        {
+            return HandleGetComponentInfo(Params);
+        }
+        else
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_FAILED,
+                FString::Printf(TEXT("Unknown action: %s. Use action='help' for available actions."), *Action));
+        }
+    }
+    // Legacy direct command routing
+    else if (CommandType == TEXT("get_available_components"))
     {
         return HandleGetAvailableComponents(Params);
     }
@@ -123,6 +247,26 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
     {
         Params->TryGetBoolField(TEXT("detailed_metadata"), bIncludeDetailedMetadata);
     }
+    
+    // Get optional search filter
+    FString SearchFilter;
+    if (Params.IsValid())
+    {
+        // Support multiple param names for filtering
+        if (!Params->TryGetStringField(TEXT("search_filter"), SearchFilter))
+        {
+            if (!Params->TryGetStringField(TEXT("filter"), SearchFilter))
+            {
+                if (!Params->TryGetStringField(TEXT("search"), SearchFilter))
+                {
+                    Params->TryGetStringField(TEXT("search_text"), SearchFilter);
+                }
+            }
+        }
+    }
+    SearchFilter = SearchFilter.TrimStartAndEnd();
+    
+    UE_LOG(LogTemp, Log, TEXT("Blueprint Component Reflection: Search filter = '%s'"), *SearchFilter);
 
     // Build component information array
     TArray<TSharedPtr<FJsonValue>> ComponentsArray;
@@ -130,6 +274,15 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
     
     for (const FString& ComponentTypeName : ComponentTypeNames)
     {
+        // Apply search filter if specified
+        if (!SearchFilter.IsEmpty())
+        {
+            if (!ComponentTypeName.Contains(SearchFilter, ESearchCase::IgnoreCase))
+            {
+                continue; // Skip components that don't match the filter
+            }
+        }
+        
         // Resolve component class
         auto ResolveResult = ReflectionService->ResolveClass(ComponentTypeName);
         if (ResolveResult.IsError())
@@ -210,6 +363,12 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
     Response->SetArrayField(TEXT("components"), ComponentsArray);
     Response->SetNumberField(TEXT("total_count"), ComponentsArray.Num());
     
+    // Add search filter info if one was applied
+    if (!SearchFilter.IsEmpty())
+    {
+        Response->SetStringField(TEXT("search_filter"), SearchFilter);
+    }
+    
     // Add categories list
     TArray<TSharedPtr<FJsonValue>> CategoriesArray;
     for (const FString& Category : Categories)
@@ -218,23 +377,34 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAvailableCompone
     }
     Response->SetArrayField(TEXT("categories"), CategoriesArray);
 
-    UE_LOG(LogTemp, Log, TEXT("Found %d component types in %d categories"), 
-        ComponentsArray.Num(), Categories.Num());
+    UE_LOG(LogTemp, Log, TEXT("Found %d component types in %d categories (filter: '%s')"), 
+        ComponentsArray.Num(), Categories.Num(), *SearchFilter);
         
     return Response;
 }
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentInfo(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract parameters - component_type and blueprint_name are primary (consistent with other tools)
     FString ComponentTypeName;
-    Params->TryGetStringField(TEXT("component_type"), ComponentTypeName);
+    // Component type - primary param, also accept component_class as alias
+    if (!Params->TryGetStringField(TEXT("component_type"), ComponentTypeName))
+    {
+        Params->TryGetStringField(TEXT("component_class"), ComponentTypeName);
+    }
     
     FString BlueprintName;
-    Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName);
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
     
     FString ComponentName;
-    Params->TryGetStringField(TEXT("component_name"), ComponentName);
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
 
     // If component_type is empty but blueprint_name and component_name are provided,
     // look up the component type from the blueprint
@@ -350,9 +520,13 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetPropertyMetadata
     FString ComponentTypeName;
     FString PropertyName;
     
+    // Component type - primary param, also accept component_class as alias
     if (!Params->TryGetStringField(TEXT("component_type"), ComponentTypeName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
+        if (!Params->TryGetStringField(TEXT("component_class"), ComponentTypeName))
+        {
+            return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'component_type' parameter"));
+        }
     }
     
     if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
@@ -394,9 +568,16 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetPropertyMetadata
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentHierarchy(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract parameters - blueprint_name is primary (consistent with other tools)
     FString BlueprintName;
+    
+    // Blueprint name - primary param, also accept blueprint_path as alias
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    if (BlueprintName.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
@@ -484,15 +665,50 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentHierarc
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleAddComponent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Validate required parameters upfront
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            ComponentParams::AddParams());
+    }
+
+    // Extract parameters - blueprint_name and component_type are primary (consistent with other tools)
     FString BlueprintName, ComponentType, ComponentName;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_type"), ComponentType) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-            TEXT("Missing required parameters: blueprint_name, component_type, component_name"));
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component type - primary param, also accept component_class, class_path as aliases
+    if (!Params->TryGetStringField(TEXT("component_type"), ComponentType))
+    {
+        if (!Params->TryGetStringField(TEXT("component_class"), ComponentType))
+        {
+            Params->TryGetStringField(TEXT("class_path"), ComponentType);
+        }
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    if (ComponentType.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("component_type is required"),
+            ComponentParams::AddParams());
+    }
+    
+    if (ComponentName.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("component_name is required"),
+            ComponentParams::AddParams());
     }
 
     // Find Blueprint using DiscoveryService
@@ -605,14 +821,34 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleAddComponent(const 
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleRemoveComponent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Validate required parameters upfront
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            ComponentParams::RemoveParams());
+    }
+
+    // Extract parameters - blueprint_name is primary (consistent with other tools)
     FString BlueprintName, ComponentName;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
-            TEXT("Missing required parameters: blueprint_name, component_name"));
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    if (ComponentName.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("component_name is required"),
+            ComponentParams::RemoveParams());
     }
 
     // Find Blueprint using DiscoveryService
@@ -652,9 +888,16 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleRemoveComponent(con
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReorderComponents(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract parameters - blueprint_name is primary (consistent with other tools)
     FString BlueprintName;
+    
+    // Blueprint name - primary param, also accept blueprint_path as alias
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    if (BlueprintName.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'blueprint_name' parameter"));
     }
@@ -1356,29 +1599,25 @@ bool FBlueprintComponentReflection::SetPropertyFromJson(const FProperty* Propert
         }
         else if (StructProp->Struct->GetName() == TEXT("LinearColor"))
         {
-            const TArray<TSharedPtr<FJsonValue>>* ArrayValue;
-            if (JsonValue->TryGetArray(ArrayValue) && ArrayValue->Num() >= 4)
+            // Use FJsonValueHelper for robust color parsing (arrays, objects, hex, named colors)
+            FLinearColor ColorValue;
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, ColorValue))
             {
-                FLinearColor* ColorValue = static_cast<FLinearColor*>(PropertyValue);
-                ColorValue->R = (*ArrayValue)[0]->AsNumber();
-                ColorValue->G = (*ArrayValue)[1]->AsNumber();
-                ColorValue->B = (*ArrayValue)[2]->AsNumber();
-                ColorValue->A = (*ArrayValue)[3]->AsNumber();
-                UE_LOG(LogTemp, Log, TEXT("Set LinearColor to (%f, %f, %f, %f)"), ColorValue->R, ColorValue->G, ColorValue->B, ColorValue->A);
+                FLinearColor* OutColorValue = static_cast<FLinearColor*>(PropertyValue);
+                *OutColorValue = ColorValue;
+                UE_LOG(LogTemp, Log, TEXT("Set LinearColor to (%f, %f, %f, %f)"), ColorValue.R, ColorValue.G, ColorValue.B, ColorValue.A);
                 return true;
             }
         }
         else if (StructProp->Struct->GetName() == TEXT("Color"))
         {
-            const TArray<TSharedPtr<FJsonValue>>* ArrayValue;
-            if (JsonValue->TryGetArray(ArrayValue) && ArrayValue->Num() >= 4)
+            // Use FJsonValueHelper for robust color parsing, then convert to FColor
+            FLinearColor LinearColor;
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, LinearColor))
             {
-                FColor* ColorValue = static_cast<FColor*>(PropertyValue);
-                ColorValue->R = static_cast<uint8>((*ArrayValue)[0]->AsNumber() * 255.0f);
-                ColorValue->G = static_cast<uint8>((*ArrayValue)[1]->AsNumber() * 255.0f);
-                ColorValue->B = static_cast<uint8>((*ArrayValue)[2]->AsNumber() * 255.0f);
-                ColorValue->A = static_cast<uint8>((*ArrayValue)[3]->AsNumber() * 255.0f);
-                UE_LOG(LogTemp, Log, TEXT("Set FColor to (%d, %d, %d, %d)"), ColorValue->R, ColorValue->G, ColorValue->B, ColorValue->A);
+                FColor* OutColorValue = static_cast<FColor*>(PropertyValue);
+                *OutColorValue = LinearColor.ToFColor(true);
+                UE_LOG(LogTemp, Log, TEXT("Set FColor to (%d, %d, %d, %d)"), OutColorValue->R, OutColorValue->G, OutColorValue->B, OutColorValue->A);
                 return true;
             }
         }
@@ -2134,9 +2373,22 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
 {
     FString BlueprintName, ComponentName, PropertyName;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
-        !Params->TryGetStringField(TEXT("property_name"), PropertyName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    // Property name
+    Params->TryGetStringField(TEXT("property_name"), PropertyName);
+    
+    if (BlueprintName.IsEmpty() || ComponentName.IsEmpty() || PropertyName.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
     }
@@ -2187,20 +2439,52 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetComponentPropert
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleSetComponentProperty(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameters upfront
+    if (!ParamValidation::HasBlueprintIdentifier(Params))
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("blueprint_name is required"),
+            ComponentParams::PropertyParams());
+    }
+
     FString BlueprintName, ComponentName, PropertyName;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
-        !Params->TryGetStringField(TEXT("property_name"), PropertyName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, property_name"));
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    // Property name
+    Params->TryGetStringField(TEXT("property_name"), PropertyName);
+    
+    if (ComponentName.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("component_name is required"),
+            ComponentParams::PropertyParams());
+    }
+    
+    if (PropertyName.IsEmpty())
+    {
+        return ParamValidation::MissingParamsError(
+            TEXT("property_name is required"),
+            ComponentParams::PropertyParams());
     }
 
     // Get property_value - can be any JSON type
     TSharedPtr<FJsonValue> PropertyValue = Params->TryGetField(TEXT("property_value"));
     if (!PropertyValue.IsValid())
     {
-        return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameter: property_value"));
+        return ParamValidation::MissingParamsError(
+            TEXT("property_value is required"),
+            ComponentParams::PropertyParams());
     }
 
     // Find Blueprint using DiscoveryService
@@ -2291,8 +2575,19 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleGetAllComponentProp
     FString BlueprintName, ComponentName;
     bool bIncludeInherited = true;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    if (BlueprintName.IsEmpty() || ComponentName.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name"));
     }
@@ -2362,10 +2657,25 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
 {
     FString BlueprintName, ComponentName, CompareToBlueprint, CompareToComponent;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
-        !Params->TryGetStringField(TEXT("compare_to_blueprint"), CompareToBlueprint) ||
-        !Params->TryGetStringField(TEXT("compare_to_component"), CompareToComponent))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    // Compare to blueprint
+    Params->TryGetStringField(TEXT("compare_to_blueprint"), CompareToBlueprint);
+    
+    // Compare to component
+    Params->TryGetStringField(TEXT("compare_to_component"), CompareToComponent);
+    
+    if (BlueprintName.IsEmpty() || ComponentName.IsEmpty() || CompareToBlueprint.IsEmpty() || CompareToComponent.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing required parameters: blueprint_name, component_name, compare_to_blueprint, compare_to_component"));
     }
@@ -2475,12 +2785,25 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleCompareComponentPro
 
 TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReparentComponent(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract parameters
+    // Extract parameters - blueprint_name is primary (consistent with other tools)
     FString BlueprintName, ComponentName, ParentName;
     
-    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName) ||
-        !Params->TryGetStringField(TEXT("component_name"), ComponentName) ||
-        !Params->TryGetStringField(TEXT("parent_name"), ParentName))
+    // Blueprint name - primary param, also accept blueprint_path as alias
+    if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
+    {
+        Params->TryGetStringField(TEXT("blueprint_path"), BlueprintName);
+    }
+    
+    // Component name
+    if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+    {
+        Params->TryGetStringField(TEXT("name"), ComponentName);
+    }
+    
+    // Parent name
+    Params->TryGetStringField(TEXT("parent_name"), ParentName);
+    
+    if (BlueprintName.IsEmpty() || ComponentName.IsEmpty() || ParentName.IsEmpty())
     {
         return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, 
             TEXT("Missing required parameters: blueprint_name, component_name, parent_name"));
@@ -2521,4 +2844,13 @@ TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleReparentComponent(c
     return CreateErrorResponse(VibeUE::ErrorCodes::OPERATION_NOT_SUPPORTED, 
         TEXT("Reparent component only available in Editor builds"));
 #endif
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FBlueprintComponentReflection::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+    return FHelpFileReader::HandleHelp(TEXT("manage_blueprint_component"), Params);
 }

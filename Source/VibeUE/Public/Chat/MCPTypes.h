@@ -1,4 +1,4 @@
-// Copyright 2025 Vibe AI. All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -33,9 +33,12 @@ struct VIBEUE_API FMCPServerConfig
     /** HTTP URL (for http transport) */
     FString Url;
     
+    /** HTTP Headers (for http transport) */
+    TMap<FString, FString> Headers;
+    
     /** Whether this server is enabled */
     bool bEnabled = true;
-    
+
     /** Parse from JSON object */
     static FMCPServerConfig FromJson(const FString& InName, TSharedPtr<FJsonObject> JsonObj)
     {
@@ -64,6 +67,16 @@ struct VIBEUE_API FMCPServerConfig
             for (const auto& Pair : (*EnvObj)->Values)
             {
                 Config.Environment.Add(Pair.Key, Pair.Value->AsString());
+            }
+        }
+        
+        // Parse HTTP headers
+        const TSharedPtr<FJsonObject>* HeadersObj;
+        if (JsonObj->TryGetObjectField(TEXT("headers"), HeadersObj))
+        {
+            for (const auto& Pair : (*HeadersObj)->Values)
+            {
+                Config.Headers.Add(Pair.Key, Pair.Value->AsString());
             }
         }
         

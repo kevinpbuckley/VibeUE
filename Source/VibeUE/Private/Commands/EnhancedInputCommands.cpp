@@ -1,11 +1,141 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Commands/EnhancedInputCommands.h"
 #include "Services/EnhancedInput/EnhancedInputReflectionService.h"
 #include "Services/EnhancedInput/InputActionService.h"
 #include "Services/EnhancedInput/InputMappingService.h"
 #include "Core/ErrorCodes.h"
+#include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Dom/JsonObject.h"
+
+// Parameter validation helpers for Enhanced Input actions
+namespace EnhancedInputParams
+{
+	// Action service params
+	inline const TArray<FString>& ActionCreateParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("action_name"), TEXT("asset_path"), TEXT("value_type")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ActionPathParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("action_path")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ActionConfigureParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("action_path"), TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+
+	// Mapping service params
+	inline const TArray<FString>& MappingCreateContextParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_name"), TEXT("context_path"), TEXT("priority")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ContextPathParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& MappingAddKeyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("action_path"), TEXT("key")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& MappingUpdateContextParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& MappingRemoveParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& MappingPropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("property_name")
+		};
+		return Params;
+	}
+
+	// Modifier service params
+	inline const TArray<FString>& ModifierAddParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index"), TEXT("modifier_type")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ModifierRemoveParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index"), TEXT("modifier_index")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ModifierGetParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index")
+		};
+		return Params;
+	}
+
+	// Trigger service params
+	inline const TArray<FString>& TriggerAddParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index"), TEXT("trigger_type")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& TriggerRemoveParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index"), TEXT("trigger_index")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& TriggerGetParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("context_path"), TEXT("mapping_index")
+		};
+		return Params;
+	}
+}
 
 FEnhancedInputCommands::FEnhancedInputCommands()
 {
@@ -44,9 +174,8 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleCommand(const FString& Com
 		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Parameters object is null"));
 	}
 
-	// Extract action and service from params
+	// Extract action from params
 	FString Action = Params->GetStringField(TEXT("action"));
-	FString Service = Params->GetStringField(TEXT("service"));
 
 	if (Action.IsEmpty())
 	{
@@ -54,14 +183,23 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleCommand(const FString& Com
 		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'action' parameter"));
 	}
 
+	// Normalize to lowercase
+	Action = Action.ToLower();
+
+	// Handle help action before requiring service parameter
+	if (Action == TEXT("help"))
+	{
+		return HandleHelp(Params);
+	}
+
+	// For non-help actions, require service parameter
+	FString Service = Params->GetStringField(TEXT("service"));
 	if (Service.IsEmpty())
 	{
 		UE_LOG(LogTemp, Warning, TEXT("EnhancedInputCommands: Missing 'service' parameter"));
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'service' parameter"));
+		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'service' parameter. Use action='help' to see available services and actions."));
 	}
 
-	// Normalize to lowercase
-	Action = Action.ToLower();
 	Service = Service.ToLower();
 
 	UE_LOG(LogTemp, Display, TEXT("EnhancedInputCommands: Routing action='%s' service='%s'"), *Action, *Service);
@@ -168,28 +306,6 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleReflectionService(const FS
 		
 		return Response;
 	}
-	else if (Action == TEXT("reflection_get_metadata"))
-	{
-		FString InputType = Params->GetStringField(TEXT("input_type"));
-		if (InputType.IsEmpty())
-		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("input_type parameter required"));
-		}
-
-		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-		Response->SetBoolField(TEXT("success"), true);
-		Response->SetStringField(TEXT("action"), Action);
-		Response->SetStringField(TEXT("service"), TEXT("reflection"));
-		Response->SetStringField(TEXT("input_type"), InputType);
-		
-		// Get metadata would be implemented here by reflection service
-		TSharedPtr<FJsonObject> MetadataObj = MakeShared<FJsonObject>();
-		MetadataObj->SetStringField(TEXT("name"), InputType);
-		MetadataObj->SetStringField(TEXT("category"), TEXT("enhanced_input"));
-		Response->SetObjectField(TEXT("metadata"), MetadataObj);
-		
-		return Response;
-	}
 	else
 	{
 		return CreateErrorResponse(VibeUE::ErrorCodes::ACTION_UNSUPPORTED, FString::Printf(TEXT("Unknown reflection action: %s"), *Action));
@@ -211,7 +327,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 
 		if (ActionName.IsEmpty() || AssetPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("action_name and asset_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("action_name and asset_path required"),
+				EnhancedInputParams::ActionCreateParams());
 		}
 
 		// Default to Axis1D, allow customization via parameters
@@ -282,7 +400,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 
 		if (ActionPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("action_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("action_path required"),
+				EnhancedInputParams::ActionPathParams());
 		}
 
 		auto Result = ActionService->GetActionProperties(ActionPath);
@@ -320,7 +440,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 
 		if (ActionPath.IsEmpty() || PropertyName.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("action_path and property_name required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("action_path and property_name required"),
+				EnhancedInputParams::ActionConfigureParams());
 		}
 
 		auto Result = ActionService->SetActionProperty(ActionPath, PropertyName, PropertyValue);
@@ -366,7 +488,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextName.IsEmpty() || AssetPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_name and context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_name and context_path required"),
+				EnhancedInputParams::MappingCreateContextParams());
 		}
 
 		auto Result = MappingService->CreateMappingContext(ContextName, AssetPath, Priority);
@@ -435,7 +559,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty() || ActionPath.IsEmpty() || KeyName.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path, action_path, and key required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path, action_path, and key required"),
+				EnhancedInputParams::MappingAddKeyParams());
 		}
 
 		auto Result = MappingService->AddInputMapping(ContextPath, ActionPath, KeyName);
@@ -463,7 +589,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty() || PropertyName.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path and property_name required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path and property_name required"),
+				EnhancedInputParams::MappingUpdateContextParams());
 		}
 
 		auto Result = MappingService->SetContextProperty(ContextPath, PropertyName, PropertyValue);
@@ -489,7 +617,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ContextPathParams());
 		}
 
 		// Load the mapping context
@@ -604,7 +734,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ContextPathParams());
 		}
 
 		auto Result = MappingService->GetContextMappings(ContextPath);
@@ -642,7 +774,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::MappingRemoveParams());
 		}
 
 		auto Result = MappingService->RemoveInputMapping(ContextPath, MappingIndex);
@@ -668,7 +802,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty() || PropertyName.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path and property_name required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path and property_name required"),
+				EnhancedInputParams::MappingPropertyParams());
 		}
 
 		auto Result = MappingService->GetContextProperty(ContextPath, PropertyName);
@@ -694,7 +830,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ContextPathParams());
 		}
 
 		auto Result = MappingService->ValidateContextConfiguration(ContextPath);
@@ -747,7 +885,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ContextPathParams());
 		}
 
 		auto Result = MappingService->AnalyzeContextUsage(ContextPath);
@@ -781,7 +921,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 		}
 		else
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ContextPathParams());
 		}
 
 		auto Result = MappingService->DetectKeyConflicts(ContextPaths);
@@ -826,11 +968,15 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ModifierAddParams());
 		}
 		if (ModifierType.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("modifier_type required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("modifier_type required"),
+				EnhancedInputParams::ModifierAddParams());
 		}
 
 		// Create the modifier instance
@@ -865,7 +1011,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ModifierRemoveParams());
 		}
 
 		auto Result = MappingService->RemoveModifierFromMapping(ContextPath, MappingIndex, ModifierIndex);
@@ -891,7 +1039,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::ModifierGetParams());
 		}
 
 		auto Result = MappingService->GetMappingModifiers(ContextPath, MappingIndex);
@@ -963,11 +1113,15 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::TriggerAddParams());
 		}
 		if (TriggerType.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("trigger_type required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("trigger_type required"),
+				EnhancedInputParams::TriggerAddParams());
 		}
 
 		// Create the trigger instance
@@ -1002,7 +1156,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::TriggerRemoveParams());
 		}
 
 		auto Result = MappingService->RemoveTriggerFromMapping(ContextPath, MappingIndex, TriggerIndex);
@@ -1028,7 +1184,9 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleMappingService(const FStri
 
 		if (ContextPath.IsEmpty())
 		{
-			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("context_path required"));
+			return ParamValidation::MissingParamsError(
+				TEXT("context_path required"),
+				EnhancedInputParams::TriggerGetParams());
 		}
 
 		auto Result = MappingService->GetMappingTriggers(ContextPath, MappingIndex);
@@ -1140,5 +1298,14 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::CreateSuccessResponse(const TSha
 	}
 	
 	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	return FHelpFileReader::HandleHelp(TEXT("manage_enhanced_input"), Params);
 }
 

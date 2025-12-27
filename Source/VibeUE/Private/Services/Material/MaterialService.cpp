@@ -1,7 +1,8 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Services/Material/MaterialService.h"
 #include "Core/ErrorCodes.h"
+#include "Core/JsonValueHelper.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialInstance.h"
 #include "Materials/MaterialInstanceConstant.h"
@@ -128,6 +129,69 @@ static FString GetPropertyTypeName(FProperty* Property)
     {
         return Property->GetCPPType();
     }
+}
+
+// Helper function to find enum value by name, trying multiple variations
+// Supports: "BLEND_Masked", "Masked", "masked", "EBlendMode::BLEND_Masked"
+static int64 FindEnumValueFlexible(UEnum* Enum, const FString& ValueName)
+{
+    if (!Enum)
+    {
+        return INDEX_NONE;
+    }
+    
+    // Try exact match first
+    int64 Value = Enum->GetValueByNameString(ValueName);
+    if (Value != INDEX_NONE)
+    {
+        return Value;
+    }
+    
+    // Get the enum prefix (e.g., "BLEND_" from "BLEND_Opaque")
+    FString EnumPrefix;
+    if (Enum->NumEnums() > 0)
+    {
+        FString FirstName = Enum->GetNameStringByIndex(0);
+        int32 UnderscoreIndex;
+        if (FirstName.FindChar('_', UnderscoreIndex))
+        {
+            EnumPrefix = FirstName.Left(UnderscoreIndex + 1);  // Include the underscore
+        }
+    }
+    
+    // Try with prefix prepended (e.g., "Masked" -> "BLEND_Masked")
+    if (!EnumPrefix.IsEmpty())
+    {
+        Value = Enum->GetValueByNameString(EnumPrefix + ValueName);
+        if (Value != INDEX_NONE)
+        {
+            return Value;
+        }
+    }
+    
+    // Try case-insensitive search through all enum values
+    for (int32 i = 0; i < Enum->NumEnums(); ++i)
+    {
+        FString EnumValueName = Enum->GetNameStringByIndex(i);
+        
+        // Exact case-insensitive match
+        if (EnumValueName.Equals(ValueName, ESearchCase::IgnoreCase))
+        {
+            return Enum->GetValueByIndex(i);
+        }
+        
+        // Check if the value after the prefix matches (e.g., "Masked" matches "BLEND_Masked")
+        if (!EnumPrefix.IsEmpty() && EnumValueName.StartsWith(EnumPrefix))
+        {
+            FString ShortName = EnumValueName.Mid(EnumPrefix.Len());
+            if (ShortName.Equals(ValueName, ESearchCase::IgnoreCase))
+            {
+                return Enum->GetValueByIndex(i);
+            }
+        }
+    }
+    
+    return INDEX_NONE;
 }
 
 FMaterialService::FMaterialService(TSharedPtr<FServiceContext> InContext)
@@ -1763,37 +1827,9 @@ TResult<void> FMaterialService::SetParameterDefault(const FString& MaterialPath,
                     FScopedTransaction Transaction(NSLOCTEXT("MaterialService", "SetVectorParameter", "Set Vector Parameter"));
                     VectorParam->Modify();
                     
-                    // Parse vector value - support multiple formats:
-                    // (R=1.0,G=0.5,B=0.0,A=1.0) or (1.0,0.5,0.0,1.0) or R=1.0,G=0.5,B=0.0,A=1.0
-                    FLinearColor Color = FLinearColor::Black;
-                    bool bParsed = false;
-                    
-                    // Try FLinearColor::InitFromString first (handles R=,G=,B=,A= format)
-                    if (Color.InitFromString(Value))
-                    {
-                        bParsed = true;
-                    }
-                    else
-                    {
-                        // Try parsing as simple comma-separated values (R,G,B,A)
-                        FString CleanValue = Value;
-                        CleanValue.RemoveFromStart(TEXT("("));
-                        CleanValue.RemoveFromEnd(TEXT(")"));
-                        
-                        TArray<FString> Components;
-                        CleanValue.ParseIntoArray(Components, TEXT(","), true);
-                        
-                        if (Components.Num() >= 3)
-                        {
-                            Color.R = FCString::Atof(*Components[0]);
-                            Color.G = FCString::Atof(*Components[1]);
-                            Color.B = FCString::Atof(*Components[2]);
-                            Color.A = Components.Num() >= 4 ? FCString::Atof(*Components[3]) : 1.0f;
-                            bParsed = true;
-                        }
-                    }
-                    
-                    if (bParsed)
+                    // Use FJsonValueHelper for robust color parsing (hex, named, Unreal format, comma-separated)
+                    FLinearColor Color;
+                    if (FJsonValueHelper::TryParseLinearColor(Value, Color))
                     {
                         VectorParam->DefaultValue = Color;
                         VectorParam->PostEditChange();
@@ -1924,11 +1960,17 @@ TResult<void> FMaterialService::StringToProperty(FProperty* Property, void* Cont
     {
         if (ByteProp->Enum)
         {
-            int64 EnumValue = ByteProp->Enum->GetValueByNameString(Value);
+            int64 EnumValue = FindEnumValueFlexible(ByteProp->Enum, Value);
             if (EnumValue == INDEX_NONE)
             {
+                // Build list of valid values for the error message
+                TArray<FString> ValidValues;
+                for (int32 i = 0; i < ByteProp->Enum->NumEnums() - 1; ++i)  // -1 to skip _MAX
+                {
+                    ValidValues.Add(ByteProp->Enum->GetNameStringByIndex(i));
+                }
                 return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
-                    FString::Printf(TEXT("Invalid enum value: %s"), *Value));
+                    FString::Printf(TEXT("Invalid enum value: %s. Valid values: %s"), *Value, *FString::Join(ValidValues, TEXT(", "))));
             }
             ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
         }
@@ -1940,11 +1982,18 @@ TResult<void> FMaterialService::StringToProperty(FProperty* Property, void* Cont
     }
     else if (FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
     {
-        int64 EnumValue = EnumProp->GetEnum()->GetValueByNameString(Value);
+        int64 EnumValue = FindEnumValueFlexible(EnumProp->GetEnum(), Value);
         if (EnumValue == INDEX_NONE)
         {
+            // Build list of valid values for the error message
+            TArray<FString> ValidValues;
+            UEnum* Enum = EnumProp->GetEnum();
+            for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)  // -1 to skip _MAX
+            {
+                ValidValues.Add(Enum->GetNameStringByIndex(i));
+            }
             return TResult<void>::Error(VibeUE::ErrorCodes::PARAM_INVALID, 
-                FString::Printf(TEXT("Invalid enum value: %s"), *Value));
+                FString::Printf(TEXT("Invalid enum value: %s. Valid values: %s"), *Value, *FString::Join(ValidValues, TEXT(", "))));
         }
         EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, EnumValue);
         return TResult<void>::Success();

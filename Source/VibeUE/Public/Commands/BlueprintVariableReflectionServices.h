@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -72,6 +72,8 @@ struct FVariableDefinition
     bool bExposeOnSpawn = false;
     bool bPrivate = false;
     bool bExposeToCinematics = false;
+    bool bBlueprintReadOnly = false; // CPF_BlueprintReadOnly - can be read but not written from BP graphs
+    bool bEditableBlueprint = true;  // BlueprintVisible - can be accessed in BP graphs
     FString Category = TEXT("Default");
     FString Tooltip;
     FString DefaultValueString; // Serialized default value
@@ -317,6 +319,7 @@ public:
 
 private:
     // Action handlers
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSearchTypes(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleCreate(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleModify(const TSharedPtr<FJsonObject>& Params);

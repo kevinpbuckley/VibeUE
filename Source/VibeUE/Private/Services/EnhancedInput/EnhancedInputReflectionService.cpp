@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Services/EnhancedInput/EnhancedInputReflectionService.h"
 #include "Core/ServiceContext.h"

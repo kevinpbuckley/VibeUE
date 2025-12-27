@@ -1,0 +1,101 @@
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "UObject/NoExportTypes.h"
+#include "ToolMetadata.generated.h"
+
+class UFunction;
+class UClass;
+class FProperty;
+
+/**
+ * Metadata for a single tool parameter
+ */
+USTRUCT()
+struct VIBEUE_API FToolParameter
+{
+	GENERATED_BODY()
+
+	/** Parameter name (as exposed to AI) */
+	UPROPERTY()
+	FString Name;
+
+	/** Human-readable description */
+	UPROPERTY()
+	FString Description;
+
+	/** Parameter type: "string", "int", "float", "bool", "object", "array" */
+	UPROPERTY()
+	FString Type;
+
+	/** Whether this parameter is required */
+	UPROPERTY()
+	bool bRequired = false;
+
+	/** Default value (as JSON string) */
+	UPROPERTY()
+	FString DefaultValue;
+
+	/** Allowed values for enum-like parameters */
+	UPROPERTY()
+	TArray<FString> AllowedValues;
+
+	FToolParameter()
+		: bRequired(false)
+	{
+	}
+
+	// Constructor for use with TOOL_PARAM macros
+	FToolParameter(const FString& InName, const FString& InDesc, const FString& InType, bool InRequired, const FString& InDefault = TEXT(""))
+		: Name(InName)
+		, Description(InDesc)
+		, Type(InType)
+		, bRequired(InRequired)
+		, DefaultValue(InDefault)
+	{
+	}
+};
+
+/**
+ * Metadata for a single AI tool
+ */
+USTRUCT()
+struct VIBEUE_API FToolMetadata
+{
+	GENERATED_BODY()
+
+	/** Tool name (as exposed to AI) */
+	UPROPERTY()
+	FString Name;
+
+	/** Human-readable description */
+	UPROPERTY()
+	FString Description;
+
+	/** Tool category for organization */
+	UPROPERTY()
+	FString Category;
+
+	/** Example usage strings */
+	UPROPERTY()
+	TArray<FString> Examples;
+
+	/** Tool parameters */
+	UPROPERTY()
+	TArray<FToolParameter> Parameters;
+
+	/** Reflection function pointer (not serialized) */
+	UFunction* Function = nullptr;
+
+	/** Class containing the tool (not serialized) */
+	UClass* ToolClass = nullptr;
+
+	FToolMetadata()
+		: Function(nullptr)
+		, ToolClass(nullptr)
+	{
+	}
+};
+

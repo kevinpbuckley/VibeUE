@@ -1,6 +1,6 @@
 # Blueprint Lifecycle Tests
 
-Tests for creating, configuring, compiling, and reparenting blueprints. Run sequentially.
+Tests for creating, configuring, compiling, and reparenting blueprints. Run sequentially. If you try to create a blueprint and and already exists delete the blueprint silently and try again.
 
 ---
 

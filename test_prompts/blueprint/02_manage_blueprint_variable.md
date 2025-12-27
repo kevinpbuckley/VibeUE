@@ -6,7 +6,7 @@ Tests for creating and configuring variables with various types. Run sequentiall
 
 ## Setup
 
-Create an actor blueprint called VariableTest in the Blueprints folder.
+Create an actor blueprint called VariableTest in the Blueprints folder. if it already exists delete it and create a new one.
 
 ---
 

@@ -1,4 +1,4 @@
-// Copyright 2025 Vibe AI. All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -45,9 +45,9 @@ struct FLLMUsageStats
 };
 
 /**
- * Delegate called when MCP tools are ready
+ * Delegate called when tools are ready (internal + MCP)
  */
-DECLARE_DELEGATE_TwoParams(FOnMCPToolsReady, bool /* bSuccess */, int32 /* ToolCount */);
+DECLARE_DELEGATE_TwoParams(FOnToolsReady, bool /* bSuccess */, int32 /* ToolCount */);
 
 /**
  * Delegate called when a new message is added to the conversation
@@ -236,10 +236,7 @@ public:
     static void SetAutoSummarizeEnabled(bool bEnabled);
     
     /** Initialize MCP client and discover tools */
-    void InitializeMCP(bool bEngineMode);
-    
-    /** Reinitialize MCP client (shutdown and restart with new mode) */
-    void ReinitializeMCP(bool bEngineMode);
+    void InitializeMCP();
     
     /** Get MCP client */
     TSharedPtr<FMCPClient> GetMCPClient() const { return MCPClient; }
@@ -247,14 +244,20 @@ public:
     /** Get VibeUE API client */
     TSharedPtr<FVibeUEAPIClient> GetVibeUEClient() const { return VibeUEClient; }
     
-    /** Get available MCP tools */
-    const TArray<FMCPTool>& GetAvailableTools() const;
+    /** Get all enabled tools for AI use (merged: internal + MCP, filtered by enabled state) */
+    TArray<FMCPTool> GetAllEnabledTools() const;
     
-    /** Get count of available MCP tools */
-    int32 GetMCPToolCount() const;
+    /** Get count of all enabled tools (internal + MCP) */
+    int32 GetEnabledToolCount() const;
     
     /** Check if MCP is initialized */
     bool IsMCPInitialized() const;
+    
+    /** Initialize internal tools (reflection-based, from ToolRegistry) */
+    void InitializeInternalTools();
+    
+    /** Get internal tools converted to MCP tool format (for API compatibility) */
+    TArray<FMCPTool> GetInternalToolsAsMCP() const;
     
     /** Get usage statistics */
     const FLLMUsageStats& GetUsageStats() const { return UsageStats; }
@@ -305,12 +308,31 @@ public:
     /** Continue tool calls after iteration limit was reached (user chose to continue) */
     void ContinueAfterIterationLimit();
 
+    // ============ MCP Server Settings (expose internal tools via Streamable HTTP) ============
+    
+    /** Get/Set MCP Server enabled state (default: true) */
+    static bool GetMCPServerEnabledFromConfig();
+    static void SaveMCPServerEnabledToConfig(bool bEnabled);
+    
+    /** Get/Set MCP Server port (default: 8080) */
+    static int32 GetMCPServerPortFromConfig();
+    static void SaveMCPServerPortToConfig(int32 Port);
+    
+    /** Get MCP Server API key from config */
+    static FString GetMCPServerApiKeyFromConfig();
+    
+    /** Save MCP Server API key to config */
+    static void SaveMCPServerApiKeyToConfig(const FString& ApiKey);
+    
+    /** Default MCP Server port */
+    static constexpr int32 DefaultMCPServerPort = 8080;
+
     // Delegates
     FOnMessageAdded OnMessageAdded;
     FOnMessageUpdated OnMessageUpdated;
     FOnChatReset OnChatReset;
     FOnChatError OnChatError;
-    FOnMCPToolsReady OnMCPToolsReady;
+    FOnToolsReady OnToolsReady;
     FOnSummarizationStarted OnSummarizationStarted;
     FOnSummarizationComplete OnSummarizationComplete;
     FOnTokenBudgetUpdated OnTokenBudgetUpdated;
@@ -422,7 +444,13 @@ private:
      */
     FString SmartTruncateToolResult(const FString& Content, const FString& ToolName) const;
     
-    /** Strip thinking/reasoning tags from model output.
+    /** Format thinking/reasoning blocks with visual indicator.
+     *  Replaces <think>content</think> with styled format like "💭 **Thinking:** content"
+     *  Keeps thinking content visible but formatted, rather than removing it.
+     */
+    static FString FormatThinkingBlocks(const FString& Text);
+    
+    /** Strip thinking/reasoning tags from model output (removes entirely).
      *  Some models (Qwen3, Claude, etc.) output chain-of-thought in special tags.
      *  This content should not be included in final output.
      */
@@ -451,6 +479,12 @@ private:
     
     /** Whether MCP has been initialized */
     bool bMCPInitialized = false;
+    
+    /** Internal tools cached in MCP format (from ToolRegistry) */
+    mutable TArray<FMCPTool> CachedInternalTools;
+    
+    /** Whether internal tools have been cached */
+    mutable bool bInternalToolsCached = false;
     
     /** Number of tool calls pending completion */
     int32 PendingToolCallCount = 0;

@@ -1,4 +1,4 @@
-// Copyright 2025 Vibe AI. All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Chat/VibeUEAPIClient.h"
 #include "Chat/ChatSession.h"
@@ -162,6 +162,7 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         TArray<TSharedPtr<FJsonValue>> ToolsArray;
         for (const FMCPTool& Tool : Tools)
         {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("  Sending tool to VibeUE: %s"), *Tool.Name);
             ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
@@ -201,8 +202,9 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     // Disable keep-alive to prevent stale connections causing stuck requests
     Request->SetHeader(TEXT("Connection"), TEXT("close"));
     Request->SetContentAsString(RequestBodyString);
-    // Set timeout to 30 seconds to fail fast on stuck connections
-    Request->SetTimeout(30.0f);
+    // Set timeout to 120 seconds - LLM inference with tools and large context can take time
+    // especially with chain-of-thought reasoning enabled
+    Request->SetTimeout(120.0f);
 
     return Request;
 }

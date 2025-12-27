@@ -1,4 +1,4 @@
-// Copyright 2025 Vibe AI. All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Chat/ChatSession.h"
 #include "Chat/VibeUEAPIClient.h"
@@ -8,6 +8,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "Misc/ConfigCacheIni.h"
 #include "UI/SAIChatWindow.h"
+#include "Core/ToolRegistry.h"
+#include "Core/ToolMetadata.h"
+#include "Chat/MCPTypes.h"
+#include "Async/Async.h"
 
 DEFINE_LOG_CATEGORY(LogChatSession);
 
@@ -99,6 +103,9 @@ void FChatSession::Initialize()
     // Apply LLM generation parameters to VibeUE client
     ApplyLLMParametersToClient();
     
+    // Initialize internal tools (reflection-based, from ToolRegistry)
+    InitializeInternalTools();
+    
     // Load max tool call iterations setting
     MaxToolCallIterations = GetMaxToolCallIterationsFromConfig();
     
@@ -113,6 +120,14 @@ void FChatSession::Shutdown()
 {
     CancelRequest();
     SaveHistory();
+    
+    // Shutdown MCP client to stop any subprocess servers
+    if (MCPClient.IsValid())
+    {
+        MCPClient->Shutdown();
+        MCPClient.Reset();
+    }
+    
     UE_LOG(LogChatSession, Log, TEXT("Chat session shutdown"));
 }
 
@@ -169,13 +184,19 @@ void FChatSession::SendMessage(const FString& UserMessage)
     // Build messages for API (includes context management)
     TArray<FChatMessage> ApiMessages = BuildApiMessages();
     
-    // Get available tools
-    TArray<FMCPTool> Tools = GetAvailableTools();
+    // Get all enabled tools (internal + MCP)
+    TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log what we're sending to the LLM
     FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"), 
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
+    
+    // Log the actual tool names being sent
+    for (const FMCPTool& Tool : Tools)
+    {
+        CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
+    }
     
     // Send request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
@@ -245,7 +266,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     {
         FChatMessage& Message = Messages[CurrentStreamingMessageIndex];
         
-        // Extract and log thinking content (model reasoning) before stripping
+        // Extract and log thinking content (model reasoning)
         FString ThinkingContent = ExtractThinkingContent(Message.Content);
         if (!ThinkingContent.IsEmpty())
         {
@@ -256,33 +277,47 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             Message.ThinkingContent = ThinkingContent;
         }
         
-        // Strip thinking tags from visible content - model benefits from reasoning, user sees clean output
-        Message.Content = StripThinkingTags(Message.Content);
+        // Format thinking blocks - replace tags with styled format but keep content visible
+        // During streaming: <think>content</think> (shown as-is)
+        // After complete: 💭 Thinking: content (styled but visible)
+        Message.Content = FormatThinkingBlocks(Message.Content);
         
-        // If the message is empty and has no tool calls, remove it (failed/empty response)
+        // If the message is empty and has no tool calls, try to populate from accumulated response (non-streaming paths)
         if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
         {
-            UE_LOG(LogChatSession, Warning, TEXT("Removing empty assistant message at index %d"), CurrentStreamingMessageIndex);
-            Messages.RemoveAt(CurrentStreamingMessageIndex);
-            // Trigger a rebuild to remove the empty message from UI
-            OnChatReset.ExecuteIfBound();
-            for (int32 i = 0; i < Messages.Num(); i++)
+            FString Accumulated;
+            if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
             {
-                OnMessageAdded.ExecuteIfBound(Messages[i]);
+                Accumulated = VibeUEClient->GetLastAccumulatedResponse();
+            }
+            else if (OpenRouterClient.IsValid())
+            {
+                Accumulated = OpenRouterClient->GetLastAccumulatedResponse();
+            }
+
+            if (!Accumulated.IsEmpty())
+            {
+                UE_LOG(LogChatSession, Log, TEXT("Populating assistant message from accumulated response (%d chars)"), Accumulated.Len());
+                Message.Content = Accumulated;
             }
         }
-        else
+
+        // If still empty after attempting to populate, fall back to a placeholder instead of deleting
+        if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
         {
-            // Log complete assistant response
-            if (!Message.Content.IsEmpty())
-            {
-                CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
-                    Message.Content.Len(), *Message.Content);
-            }
-            
-            Message.bIsStreaming = false;
-            OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
+            UE_LOG(LogChatSession, Warning, TEXT("Assistant response empty; keeping placeholder instead of removing"));
+            Message.Content = TEXT("No response received from the model.");
         }
+
+        // Log complete assistant response
+        if (!Message.Content.IsEmpty())
+        {
+            CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
+                Message.Content.Len(), *Message.Content);
+        }
+        
+        Message.bIsStreaming = false;
+        OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
     }
     
     CurrentStreamingMessageIndex = INDEX_NONE;
@@ -296,6 +331,8 @@ void FChatSession::OnStreamComplete(bool bSuccess)
 
 void FChatSession::OnStreamError(const FString& ErrorMessage)
 {
+    CHAT_SESSION_LOG(Error, TEXT("[STREAM ERROR] %s"), *ErrorMessage);
+    
     // Remove the incomplete assistant message
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
     {
@@ -321,13 +358,9 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
         UE_LOG(LogChatSession, Log, TEXT("Tool call received: %s"), *ToolCall.ToolName);
     }
     
-    if (!MCPClient.IsValid())
-    {
-        UE_LOG(LogChatSession, Error, TEXT("MCP client not available for tool call"));
-        return;
-    }
-    
     // Increment pending tool call count
+    // Note: Don't check MCPClient here - reflection tools work without it
+    // ExecuteNextToolInQueue will route to the appropriate handler
     PendingToolCallCount++;
     UE_LOG(LogChatSession, Log, TEXT("Pending tool calls: %d (queue size: %d)"), PendingToolCallCount, ToolCallQueue.Num() + 1);
     
@@ -370,16 +403,29 @@ void FChatSession::ExecuteNextToolInQueue()
     {
         bIsExecutingTool = false;
         
+        UE_LOG(LogChatSession, Log, TEXT("ExecuteNextToolInQueue: Queue empty, PendingToolCallCount=%d"), PendingToolCallCount);
+        
         // All tools executed - check if we should send follow-up
         if (PendingToolCallCount <= 0)
         {
             PendingToolCallCount = 0; // Safety reset
             
+            UE_LOG(LogChatSession, Log, TEXT("All tool calls completed - checking summarization before follow-up"));
+            
             // Check if summarization is needed after tool results (they can be large)
             TriggerSummarizationIfNeeded();
             
+            // Log summarization state
+            UE_LOG(LogChatSession, Log, TEXT("After TriggerSummarizationIfNeeded: bIsSummarizing=%s, bPendingFollowUpAfterSummarization=%s"), 
+                bIsSummarizing ? TEXT("true") : TEXT("false"),
+                bPendingFollowUpAfterSummarization ? TEXT("true") : TEXT("false"));
+            
             UE_LOG(LogChatSession, Log, TEXT("All tool calls completed, sending follow-up request"));
             SendFollowUpAfterToolCall();
+        }
+        else
+        {
+            UE_LOG(LogChatSession, Warning, TEXT("ExecuteNextToolInQueue: Queue empty but PendingToolCallCount=%d > 0, NOT sending follow-up"), PendingToolCallCount);
         }
         return;
     }
@@ -391,6 +437,187 @@ void FChatSession::ExecuteNextToolInQueue()
     ToolCallQueue.RemoveAt(0);
     
     UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
+    
+    // Check if this is a reflection-based tool first
+    FToolRegistry& Registry = FToolRegistry::Get();
+    const FToolMetadata* ReflectionTool = Registry.FindTool(ToolCall.ToolName);
+    
+    if (ReflectionTool)
+    {
+        // Execute via reflection
+        UE_LOG(LogChatSession, Log, TEXT("Executing reflection tool: %s"), *ToolCall.ToolName);
+        
+        // Convert arguments to parameter map
+        TMap<FString, FString> Parameters;
+        if (ToolCall.Arguments.IsValid())
+        {
+            for (const auto& Pair : ToolCall.Arguments->Values)
+            {
+                FString ValueStr;
+                if (Pair.Value->Type == EJson::String)
+                {
+                    ValueStr = Pair.Value->AsString();
+                }
+                else if (Pair.Value->Type == EJson::Number)
+                {
+                    ValueStr = FString::Printf(TEXT("%f"), Pair.Value->AsNumber());
+                }
+                else if (Pair.Value->Type == EJson::Boolean)
+                {
+                    ValueStr = Pair.Value->AsBool() ? TEXT("true") : TEXT("false");
+                }
+                else if (Pair.Value->Type == EJson::Object)
+                {
+                    // Serialize object directly without wrapping
+                    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(Pair.Value->AsObject().ToSharedRef(), Writer);
+                }
+                else if (Pair.Value->Type == EJson::Array)
+                {
+                    // Serialize array directly
+                    TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(Pair.Value->AsArray(), Writer);
+                }
+                else if (Pair.Value->Type == EJson::Null)
+                {
+                    ValueStr = TEXT("null");
+                }
+                else
+                {
+                    // Fallback - try to serialize as object wrapped (legacy behavior)
+                    TSharedPtr<FJsonObject> TempObj = MakeShared<FJsonObject>();
+                    TempObj->SetField(Pair.Key, Pair.Value);
+                    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ValueStr);
+                    FJsonSerializer::Serialize(TempObj.ToSharedRef(), Writer);
+                }
+                Parameters.Add(Pair.Key, ValueStr);
+            }
+        }
+        
+        // Transform flat arguments into Action + ParamsJson format for tools that expect it
+        // This handles the case where LLM sends {"action": "list", "blueprint_name": "..."} 
+        // but the tool expects {"Action": "list", "ParamsJson": "{\"blueprint_name\":\"...\"}"}
+        if (Parameters.Contains(TEXT("action")) || Parameters.Contains(TEXT("Action")))
+        {
+            FString ActionValue;
+            if (Parameters.Contains(TEXT("action")))
+            {
+                ActionValue = Parameters.FindRef(TEXT("action"));
+                Parameters.Remove(TEXT("action"));
+            }
+            else if (Parameters.Contains(TEXT("Action")))
+            {
+                ActionValue = Parameters.FindRef(TEXT("Action"));
+                Parameters.Remove(TEXT("Action"));
+            }
+            
+            // Check if this is NOT using the ParamsJson pattern already
+            if (!Parameters.Contains(TEXT("ParamsJson")))
+            {
+                // Build ParamsJson from remaining arguments
+                TSharedPtr<FJsonObject> ParamsObj = MakeShared<FJsonObject>();
+                for (const auto& Pair : Parameters)
+                {
+                    // Try to parse as JSON first (for nested objects/arrays)
+                    TSharedPtr<FJsonValue> JsonValue;
+                    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Pair.Value);
+                    if (FJsonSerializer::Deserialize(Reader, JsonValue) && JsonValue.IsValid())
+                    {
+                        ParamsObj->SetField(Pair.Key, JsonValue);
+                    }
+                    else
+                    {
+                        ParamsObj->SetStringField(Pair.Key, Pair.Value);
+                    }
+                }
+                
+                FString ParamsJsonStr;
+                TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer = TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&ParamsJsonStr);
+                FJsonSerializer::Serialize(ParamsObj.ToSharedRef(), Writer);
+                
+                // Replace parameters with Action + ParamsJson
+                Parameters.Empty();
+                Parameters.Add(TEXT("Action"), ActionValue);
+                Parameters.Add(TEXT("ParamsJson"), ParamsJsonStr);
+                
+                UE_LOG(LogChatSession, Log, TEXT("Transformed flat params to Action='%s' ParamsJson='%s'"), *ActionValue, *ParamsJsonStr);
+            }
+            else
+            {
+                // Already has ParamsJson, just ensure Action is capitalized
+                Parameters.Add(TEXT("Action"), ActionValue);
+                UE_LOG(LogChatSession, Log, TEXT("ParamsJson already present, Action='%s', ParamsJson='%s'"), *ActionValue, *Parameters.FindRef(TEXT("ParamsJson")));
+            }
+        }
+        
+        // Debug: Log all parameters before execution
+        UE_LOG(LogChatSession, Log, TEXT("Final parameters for tool %s:"), *ToolCall.ToolName);
+        for (const auto& Pair : Parameters)
+        {
+            UE_LOG(LogChatSession, Log, TEXT("  %s = %s"), *Pair.Key, *Pair.Value);
+        }
+        
+        // Execute tool
+        FString Result = Registry.ExecuteTool(ToolCall.ToolName, Parameters);
+        
+        // Create result
+        FMCPToolResult ToolResult;
+        ToolResult.ToolCallId = ToolCall.Id;
+        ToolResult.bSuccess = true;
+        ToolResult.Content = Result;
+        
+        // Process result (same as MCP path)
+        FString ResultContent = ToolResult.Content;
+        CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: true, Result: %s"), 
+            *ToolCall.ToolName, *ToolCall.Id, *ResultContent);
+        
+        FString TruncatedContent = SmartTruncateToolResult(ResultContent, ToolCall.ToolName);
+        FChatMessage ToolResultMsg(TEXT("tool"), TruncatedContent);
+        ToolResultMsg.ToolCallId = ToolCall.Id;
+        Messages.Add(ToolResultMsg);
+        OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        PendingToolCallCount--;
+        UE_LOG(LogChatSession, Log, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
+        
+        // IMPORTANT: Defer to next tick to ensure the HTTP callback completes cleanly
+        // Internal tools execute synchronously which can cause issues if we immediately
+        // start a new HTTP request while still inside the previous callback's stack
+        UE_LOG(LogChatSession, Log, TEXT("Internal tool: Deferring ExecuteNextToolInQueue to next tick"));
+        
+        // Use a weak pointer to avoid accessing 'this' if session is destroyed
+        TWeakPtr<FChatSession> WeakSession = AsShared();
+        AsyncTask(ENamedThreads::GameThread, [WeakSession]()
+        {
+            if (TSharedPtr<FChatSession> StrongSession = WeakSession.Pin())
+            {
+                UE_LOG(LogChatSession, Log, TEXT("Internal tool: Executing deferred ExecuteNextToolInQueue - PendingToolCallCount=%d, QueueSize=%d"), 
+                    StrongSession->PendingToolCallCount, StrongSession->ToolCallQueue.Num());
+                StrongSession->ExecuteNextToolInQueue();
+            }
+        });
+        return;
+    }
+    
+    // Fall back to MCP if not a reflection tool
+    if (!MCPClient.IsValid())
+    {
+        UE_LOG(LogChatSession, Error, TEXT("Tool %s not found in reflection registry and MCP client not available"), *ToolCall.ToolName);
+        
+        FMCPToolResult ErrorResult;
+        ErrorResult.ToolCallId = ToolCall.Id;
+        ErrorResult.bSuccess = false;
+        ErrorResult.ErrorMessage = FString::Printf(TEXT("Tool '%s' not found"), *ToolCall.ToolName);
+        
+        FChatMessage ToolResultMsg(TEXT("tool"), ErrorResult.ErrorMessage);
+        ToolResultMsg.ToolCallId = ToolCall.Id;
+        Messages.Add(ToolResultMsg);
+        OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        PendingToolCallCount--;
+        ExecuteNextToolInQueue();
+        return;
+    }
     
     // Execute the tool via MCP
     MCPClient->ExecuteTool(ToolCall, FOnToolExecuted::CreateLambda(
@@ -486,8 +713,8 @@ void FChatSession::SendFollowUpAfterToolCall()
         UE_LOG(LogChatSession, Log, TEXT("Built %d API messages for follow-up"), ApiMessages.Num());
     }
     
-    // Get available tools
-    TArray<FMCPTool> Tools = GetAvailableTools();
+    // Get all enabled tools (internal + MCP)
+    TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log follow-up request to LLM
     FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
@@ -1338,7 +1565,7 @@ void FChatSession::SummarizeConversation()
     UE_LOG(LogChatSession, Log, TEXT("Conversation summarization requested (not yet implemented)"));
 }
 
-void FChatSession::InitializeMCP(bool bEngineMode)
+void FChatSession::InitializeMCP()
 {
     if (bMCPInitialized)
     {
@@ -1347,50 +1574,68 @@ void FChatSession::InitializeMCP(bool bEngineMode)
     }
     
     MCPClient = MakeShared<FMCPClient>();
-    MCPClient->Initialize(bEngineMode);
+    MCPClient->Initialize();
     
     // Discover available tools
-    MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& Tools)
+    MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& MCPTools)
     {
         bMCPInitialized = true;
-        UE_LOG(LogChatSession, Log, TEXT("MCP initialized with %d tools"), Tools.Num());
-        OnMCPToolsReady.ExecuteIfBound(bSuccess, Tools.Num());
+        UE_LOG(LogChatSession, Log, TEXT("MCP initialized with %d MCP tools"), MCPTools.Num());
+        
+        // Report TOTAL tool count (internal + MCP), not just MCP
+        int32 TotalToolCount = GetEnabledToolCount();
+        UE_LOG(LogChatSession, Log, TEXT("Total tools available: %d (internal + MCP)"), TotalToolCount);
+        OnToolsReady.ExecuteIfBound(bSuccess || TotalToolCount > 0, TotalToolCount);
     }));
 }
 
-void FChatSession::ReinitializeMCP(bool bEngineMode)
+TArray<FMCPTool> FChatSession::GetAllEnabledTools() const
 {
-    // Shutdown existing MCP if initialized
+    TArray<FMCPTool> MergedTools;
+    FToolRegistry& Registry = FToolRegistry::Get();
+    
+    // Add internal tools first (already filtered by enabled state)
+    TArray<FMCPTool> InternalTools = GetInternalToolsAsMCP();
+    MergedTools.Append(InternalTools);
+    
+    // Add MCP tools (if any) - also filter by enabled state
     if (MCPClient.IsValid())
     {
-        MCPClient->Shutdown();
-        MCPClient.Reset();
+        const TArray<FMCPTool>& MCPTools = MCPClient->GetMCPTools();
+        // Only add MCP tools that don't conflict with internal tools AND are enabled
+        for (const FMCPTool& MCPTool : MCPTools)
+        {
+            // Check if this MCP tool is disabled
+            if (!Registry.IsToolEnabled(MCPTool.Name))
+            {
+                UE_LOG(LogChatSession, Verbose, TEXT("Skipping disabled MCP tool: %s"), *MCPTool.Name);
+                continue;
+            }
+            
+            bool bConflict = false;
+            for (const FMCPTool& InternalTool : MergedTools)
+            {
+                if (InternalTool.Name == MCPTool.Name)
+                {
+                    bConflict = true;
+                    break;
+                }
+            }
+            if (!bConflict)
+            {
+                MergedTools.Add(MCPTool);
+            }
+        }
     }
-    bMCPInitialized = false;
     
-    UE_LOG(LogChatSession, Log, TEXT("Reinitializing MCP in %s mode"), bEngineMode ? TEXT("Engine") : TEXT("Local"));
-    
-    // Now initialize fresh
-    InitializeMCP(bEngineMode);
+    return MergedTools;
 }
 
-const TArray<FMCPTool>& FChatSession::GetAvailableTools() const
+int32 FChatSession::GetEnabledToolCount() const
 {
-    static TArray<FMCPTool> EmptyTools;
-    if (MCPClient.IsValid())
-    {
-        return MCPClient->GetAvailableTools();
-    }
-    return EmptyTools;
-}
-
-int32 FChatSession::GetMCPToolCount() const
-{
-    if (MCPClient.IsValid())
-    {
-        return MCPClient->GetToolCount();
-    }
-    return 0;
+    // Simply return the count of enabled tools (internal + MCP)
+    // GetAllEnabledTools already filters by enabled state
+    return GetAllEnabledTools().Num();
 }
 
 bool FChatSession::IsMCPInitialized() const
@@ -1644,7 +1889,117 @@ void FChatSession::ApplyLLMParametersToClient()
     }
 }
 
+// ============ MCP Server Settings ============
+
+bool FChatSession::GetMCPServerEnabledFromConfig()
+{
+    bool bEnabled = true; // Default to enabled
+    GConfig->GetBool(TEXT("VibeUE.MCPServer"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    return bEnabled;
+}
+
+void FChatSession::SaveMCPServerEnabledToConfig(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE.MCPServer"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FChatSession::GetMCPServerPortFromConfig()
+{
+    int32 Port = DefaultMCPServerPort;
+    GConfig->GetInt(TEXT("VibeUE.MCPServer"), TEXT("Port"), Port, GEditorPerProjectIni);
+    return FMath::Clamp(Port, 1024, 65535); // Valid port range
+}
+
+void FChatSession::SaveMCPServerPortToConfig(int32 Port)
+{
+    Port = FMath::Clamp(Port, 1024, 65535);
+    GConfig->SetInt(TEXT("VibeUE.MCPServer"), TEXT("Port"), Port, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+FString FChatSession::GetMCPServerApiKeyFromConfig()
+{
+    FString ApiKey;
+    GConfig->GetString(TEXT("VibeUE.MCPServer"), TEXT("ApiKey"), ApiKey, GEditorPerProjectIni);
+    return ApiKey;
+}
+
+void FChatSession::SaveMCPServerApiKeyToConfig(const FString& ApiKey)
+{
+    GConfig->SetString(TEXT("VibeUE.MCPServer"), TEXT("ApiKey"), *ApiKey, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 // ============ Thinking Tag Handling ============
+
+FString FChatSession::FormatThinkingBlocks(const FString& Text)
+{
+    FString Result = Text;
+    
+    // Format thinking blocks with visual indicator instead of removing them
+    // Replaces <think>content</think> with: 💭 **Thinking:** content
+    
+    struct FTagPair
+    {
+        const TCHAR* OpenTag;
+        int32 OpenLen;
+        const TCHAR* CloseTag;
+        int32 CloseLen;
+    };
+    
+    static const TArray<FTagPair> TagPairs = {
+        { TEXT("<think>"), 7, TEXT("</think>"), 8 },
+        { TEXT("<thinking>"), 10, TEXT("</thinking>"), 11 },
+        { TEXT("<reasoning>"), 11, TEXT("</reasoning>"), 12 },
+        { TEXT("<thought>"), 9, TEXT("</thought>"), 10 }
+    };
+    
+    for (const FTagPair& Tags : TagPairs)
+    {
+        int32 SearchStart = 0;
+        while (true)
+        {
+            int32 OpenPos = Result.Find(Tags.OpenTag, ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+            if (OpenPos == INDEX_NONE) break;
+            
+            int32 ContentStart = OpenPos + Tags.OpenLen;
+            int32 ClosePos = Result.Find(Tags.CloseTag, ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+            
+            if (ClosePos != INDEX_NONE)
+            {
+                // Extract content between tags
+                FString Content = Result.Mid(ContentStart, ClosePos - ContentStart).TrimStartAndEnd();
+                
+                // Format with visual indicator
+                // Use line breaks to separate thinking from main content
+                FString FormattedThinking = FString::Printf(
+                    TEXT("\n💭 **Thinking:**\n%s\n---\n"),
+                    *Content
+                );
+                
+                // Replace the entire tag block
+                Result = Result.Left(OpenPos) + FormattedThinking + Result.Mid(ClosePos + Tags.CloseLen);
+                
+                // Continue searching after the replacement
+                SearchStart = OpenPos + FormattedThinking.Len();
+            }
+            else
+            {
+                // Unclosed tag - format everything after the open tag as thinking
+                FString Content = Result.Mid(ContentStart).TrimStartAndEnd();
+                FString FormattedThinking = FString::Printf(
+                    TEXT("\n💭 **Thinking:**\n%s"),
+                    *Content
+                );
+                Result = Result.Left(OpenPos) + FormattedThinking;
+                break;
+            }
+        }
+    }
+    
+    return Result.TrimStartAndEnd();
+}
 
 FString FChatSession::StripThinkingTags(const FString& Text)
 {
@@ -1668,6 +2023,23 @@ FString FChatSession::StripThinkingTags(const FString& Text)
             break;
         }
         ThinkStart = Result.Find(TEXT("<think>"), ESearchCase::IgnoreCase);
+    }
+    
+    // Strip <thinking>...</thinking> blocks (Anthropic/Claude style)
+    int32 ThinkingStart = Result.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
+    while (ThinkingStart != INDEX_NONE)
+    {
+        int32 ThinkingEnd = Result.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ThinkingStart);
+        if (ThinkingEnd != INDEX_NONE)
+        {
+            Result.RemoveAt(ThinkingStart, ThinkingEnd + 11 - ThinkingStart); // 11 = len("</thinking>")
+        }
+        else
+        {
+            Result = Result.Left(ThinkingStart);
+            break;
+        }
+        ThinkingStart = Result.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase);
     }
     
     // Strip <reasoning>...</reasoning> blocks
@@ -1730,6 +2102,25 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
         SearchStart = ThinkEnd + 8; // len("</think>")
     }
     
+    // Extract <thinking>...</thinking> blocks (Anthropic/Claude style)
+    SearchStart = 0;
+    while (true)
+    {
+        int32 Start = Text.Find(TEXT("<thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (Start == INDEX_NONE) break;
+        
+        int32 ContentStart = Start + 10; // len("<thinking>")
+        int32 End = Text.Find(TEXT("</thinking>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+        if (End == INDEX_NONE) break;
+        
+        FString Content = Text.Mid(ContentStart, End - ContentStart).TrimStartAndEnd();
+        if (!Content.IsEmpty())
+        {
+            ThinkingParts.Add(Content);
+        }
+        SearchStart = End + 11; // len("</thinking>")
+    }
+    
     // Extract <reasoning>...</reasoning> blocks
     SearchStart = 0;
     while (true)
@@ -1755,3 +2146,136 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
 
 // Loop detection removed - now using prompt-based self-awareness instructions
 // See vibeue.instructions.md for the loop prevention guidelines the model follows
+
+void FChatSession::InitializeInternalTools()
+{
+    // Ensure ToolRegistry is initialized
+    FToolRegistry& Registry = FToolRegistry::Get();
+    if (!Registry.IsInitialized())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Initializing ToolRegistry..."));
+        Registry.Initialize();
+        UE_LOG(LogChatSession, Log, TEXT("ToolRegistry initialized with %d tools"), Registry.GetAllTools().Num());
+    }
+    else
+    {
+        UE_LOG(LogChatSession, Log, TEXT("ToolRegistry already initialized with %d tools"), Registry.GetAllTools().Num());
+    }
+    
+    // Load internal tools (will be cached)
+    TArray<FMCPTool> Tools = GetInternalToolsAsMCP();
+    
+    UE_LOG(LogChatSession, Log, TEXT("Internal tools initialized: %d tools available"), Tools.Num());
+    for (const FMCPTool& Tool : Tools)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("  - %s: %s"), *Tool.Name, *Tool.Description);
+    }
+    
+    // Notify UI that tools are ready (even if count is 0, so UI can update)
+    int32 TotalToolCount = GetEnabledToolCount();
+    OnToolsReady.ExecuteIfBound(true, TotalToolCount);
+    UE_LOG(LogChatSession, Log, TEXT("Notified UI: tools ready, count = %d"), TotalToolCount);
+}
+
+TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
+{
+    // Always rebuild from registry to respect enabled/disabled state
+    // (Caching disabled because users can enable/disable tools at any time)
+    
+    // Load tools from registry
+    FToolRegistry& Registry = FToolRegistry::Get();
+    if (!Registry.IsInitialized())
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("ToolRegistry not initialized, initializing now..."));
+        const_cast<FChatSession*>(this)->InitializeInternalTools();
+    }
+    
+    // Get only ENABLED tools
+    TArray<FToolMetadata> Tools = Registry.GetEnabledTools();
+    UE_LOG(LogChatSession, Verbose, TEXT("GetInternalToolsAsMCP: Registry has %d enabled tools"), Tools.Num());
+    
+    if (Tools.Num() == 0)
+    {
+        UE_LOG(LogChatSession, Verbose, TEXT("No enabled tools in ToolRegistry"));
+        return TArray<FMCPTool>();
+    }
+    
+    UE_LOG(LogChatSession, Verbose, TEXT("Converting %d enabled internal tools to MCP format"), Tools.Num());
+    
+    TArray<FMCPTool> Result;
+    Result.Reserve(Tools.Num());
+    
+    // Convert each internal tool to MCP tool format (for API compatibility)
+    for (const FToolMetadata& Tool : Tools)
+    {
+        FMCPTool MCPTool;
+        MCPTool.Name = Tool.Name;
+        MCPTool.Description = Tool.Description;
+        MCPTool.ServerName = TEXT("Internal"); // Mark as internal tool (from ToolRegistry)
+        
+        // Build input schema (JSON Schema format)
+        TSharedPtr<FJsonObject> InputSchema = MakeShared<FJsonObject>();
+        InputSchema->SetStringField(TEXT("type"), TEXT("object"));
+        
+        TSharedPtr<FJsonObject> Properties = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> RequiredArray;
+        
+        for (const FToolParameter& Param : Tool.Parameters)
+        {
+            TSharedPtr<FJsonObject> ParamSchema = MakeShared<FJsonObject>();
+            ParamSchema->SetStringField(TEXT("type"), Param.Type);
+            ParamSchema->SetStringField(TEXT("description"), Param.Description);
+            
+            if (!Param.DefaultValue.IsEmpty())
+            {
+                // Try to parse default value based on type
+                if (Param.Type == TEXT("string"))
+                {
+                    ParamSchema->SetStringField(TEXT("default"), Param.DefaultValue);
+                }
+                else if (Param.Type == TEXT("int"))
+                {
+                    int32 IntValue = 0;
+                    if (LexTryParseString(IntValue, *Param.DefaultValue))
+                    {
+                        ParamSchema->SetNumberField(TEXT("default"), IntValue);
+                    }
+                }
+                else if (Param.Type == TEXT("float"))
+                {
+                    float FloatValue = 0.0f;
+                    if (LexTryParseString(FloatValue, *Param.DefaultValue))
+                    {
+                        ParamSchema->SetNumberField(TEXT("default"), FloatValue);
+                    }
+                }
+                else if (Param.Type == TEXT("bool"))
+                {
+                    bool BoolValue = (Param.DefaultValue.ToLower() == TEXT("true") || Param.DefaultValue == TEXT("1"));
+                    ParamSchema->SetBoolField(TEXT("default"), BoolValue);
+                }
+            }
+            
+            Properties->SetObjectField(Param.Name, ParamSchema);
+            
+            if (Param.bRequired)
+            {
+                RequiredArray.Add(MakeShared<FJsonValueString>(Param.Name));
+            }
+        }
+        
+        InputSchema->SetObjectField(TEXT("properties"), Properties);
+        
+        if (RequiredArray.Num() > 0)
+        {
+            InputSchema->SetArrayField(TEXT("required"), RequiredArray);
+        }
+        
+        MCPTool.InputSchema = InputSchema;
+        Result.Add(MCPTool);
+    }
+    
+    UE_LOG(LogChatSession, Verbose, TEXT("Returning %d enabled reflection tools"), Result.Num());
+    
+    return Result;
+}

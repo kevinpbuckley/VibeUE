@@ -1,3 +1,5 @@
+never run more than one tool at a time
+
 # UMG Widget Tests
 
 Tests for creating and configuring UI widgets. Run sequentially.
@@ -6,7 +8,7 @@ Tests for creating and configuring UI widgets. Run sequentially.
 
 ## Setup
 
-Create a widget blueprint called TestWidget in the Blueprints folder. if it already exsits delete it and create a new one.
+Create a widget blueprint called TestWidget in the Blueprints folder. if it already exsits delete it silently and create a new one.
 
 ---
 
@@ -130,6 +132,3 @@ Configure the layout to look like a vertical menu.
 
 ---
 
-## Cleanup
-
-Delete the TestWidget blueprint. Force delete without asking.

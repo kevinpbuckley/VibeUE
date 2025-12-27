@@ -1,7 +1,10 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Commands/UMGCommands.h"
 #include "Commands/CommonUtils.h"
+#include "Core/JsonValueHelper.h"
+#include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Services/UMG/WidgetLifecycleService.h"
 #include "Services/UMG/WidgetPropertyService.h"
 #include "Services/UMG/UMGWidgetService.h"
@@ -107,6 +110,85 @@
 #include "Styling/SlateWidgetStyleAsset.h"
 #include "Styling/SlateTypes.h"
 
+// Parameter validation helpers for UMG Widget actions
+namespace UMGParams
+{
+	inline const TArray<FString>& WidgetNameParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("object_path")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& ComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& AddComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_type"),
+			TEXT("component_name"), TEXT("parent_name"), TEXT("slot_index")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& RemoveComponentParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& PropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name"),
+			TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& GetPropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("component_name"),
+			TEXT("property_name")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& SearchTypesParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("search_term"), TEXT("category"), TEXT("max_results")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& CreateWidgetParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("name"), TEXT("path"), TEXT("parent_class")
+		};
+		return Params;
+	}
+
+	inline const TArray<FString>& EventParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("widget_name"), TEXT("widget_path"), TEXT("event_bindings")
+		};
+		return Params;
+	}
+}
+
 FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 {
 	ServiceContext = InServiceContext.IsValid() ? InServiceContext : MakeShared<FServiceContext>();
@@ -128,6 +210,55 @@ FUMGCommands::FUMGCommands(TSharedPtr<FServiceContext> InServiceContext)
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, const TSharedPtr<FJsonObject>& Params)
 {
+	// Check for JSON parse errors (set by ParseParams when invalid JSON is received)
+	if (Params->HasField(TEXT("__json_parse_error__")))
+	{
+		FString RawJson;
+		Params->TryGetStringField(TEXT("__raw_json__"), RawJson);
+		return FCommonUtils::CreateErrorResponse(FString::Printf(
+			TEXT("JSON parse error in ParamsJson - check for malformed escape sequences in nested JSON values. Raw input (truncated): %s"),
+			*RawJson.Left(200)));
+	}
+
+	// Handle multi-action manage_umg_widget command
+	if (CommandName == TEXT("manage_umg_widget"))
+	{
+		FString Action;
+		if (!Params->TryGetStringField(TEXT("action"), Action))
+		{
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'action' parameter for manage_umg_widget"));
+		}
+		
+		// Handle help action
+		if (Action.ToLower() == TEXT("help"))
+		{
+			return HandleHelp(Params);
+		}
+		
+		// Normalize action to lowercase for case-insensitive matching
+		FString NormalizedAction = Action.ToLower();
+		
+		// Route to appropriate command based on action (support both C++ and Python action names)
+		FString RoutedCommand;
+		if (NormalizedAction == TEXT("add_child") || NormalizedAction == TEXT("add_component")) RoutedCommand = TEXT("add_widget_component");
+		else if (NormalizedAction == TEXT("remove_child") || NormalizedAction == TEXT("remove_component")) RoutedCommand = TEXT("remove_umg_component");
+		else if (NormalizedAction == TEXT("set_property")) RoutedCommand = TEXT("set_widget_property");
+		else if (NormalizedAction == TEXT("get_property")) RoutedCommand = TEXT("get_widget_property");
+		else if (NormalizedAction == TEXT("list_components")) RoutedCommand = TEXT("list_widget_components");
+		else if (NormalizedAction == TEXT("get_available_types") || NormalizedAction == TEXT("search_types")) RoutedCommand = TEXT("get_available_widget_types");
+		else if (NormalizedAction == TEXT("validate")) RoutedCommand = TEXT("validate_widget_hierarchy");
+		else if (NormalizedAction == TEXT("get_component_properties")) RoutedCommand = TEXT("get_widget_component_properties");
+		else if (NormalizedAction == TEXT("list_properties")) RoutedCommand = TEXT("list_widget_properties");
+		else if (NormalizedAction == TEXT("get_available_events")) RoutedCommand = TEXT("get_available_events");
+		else if (NormalizedAction == TEXT("bind_events")) RoutedCommand = TEXT("bind_input_events");
+		else
+		{
+			return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Valid actions: list_components, add_component, remove_component, validate, search_types, get_component_properties, get_property, set_property, list_properties, get_available_events, bind_events"), *Action));
+		}
+		
+		return HandleCommand(RoutedCommand, Params);
+	}
+	
 	// Original UMG Commands
 	if (CommandName == TEXT("create_umg_widget_blueprint"))
 	{
@@ -159,7 +290,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 		return HandleValidateWidgetHierarchy(Params);
 	}
 	// UMG Hierarchy Commands
-	else if (CommandName == TEXT("add_child_to_panel"))
+	else if (CommandName == TEXT("add_child_to_panel") || CommandName == TEXT("add_widget_component"))
 	{
 		return HandleAddChildToPanel(Params);
 	}
@@ -186,7 +317,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCommand(const FString& CommandName, 
 		return HandleListWidgetProperties(Params);
 	}
 	// set_widget_transform/set_widget_visibility/set_widget_z_order removed
-	else if (CommandName == TEXT("bind_input_events"))
+	else if (CommandName == TEXT("bind_input_events") || CommandName == TEXT("bind_widget_events"))
 	{
 		return HandleBindInputEvents(Params);
 	}
@@ -207,7 +338,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleCreateUMGWidgetBlueprint(const TShar
 	FString BlueprintName;
 	if (!Params->TryGetStringField(TEXT("name"), BlueprintName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'name' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing 'name' parameter"),
+			UMGParams::CreateWidgetParams());
 	}
 
 	// Get optional parameters
@@ -247,7 +380,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSearchItems(const TSharedPtr<FJsonOb
 	FString SearchTerm;
 	if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'search_term' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing 'search_term' parameter"),
+			UMGParams::SearchTypesParams());
 	}
 
 	FString AssetType;
@@ -467,17 +602,23 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 
 	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetBlueprintName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing widget_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	if (!Params->TryGetStringField(TEXT("component_name"), WidgetName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing component_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing component_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing property_name parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing property_name parameter"),
+			UMGParams::PropertyParams());
 	}
 
 	// Check if this is a slot property - route to slot property handler instead
@@ -504,7 +645,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetProperty(const TSharedPtr<F
 		}
 		else
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing property_value parameter"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing property_value parameter"),
+				UMGParams::PropertyParams());
 		}
 	}
 
@@ -636,7 +779,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetBlueprintInfo(const TShared
 		}
 		if (WidgetName.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter (accepts name or full path)"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
@@ -734,7 +879,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetComponents(const TSharedPt
 		}
 		if (WidgetIdentifier.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter (accepts name or full path)"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter (accepts name or full path)"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
@@ -793,9 +940,17 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetWidgetComponentProperties(const T
 {
 	// Parse parameters
 	FString WidgetName, ComponentName;
-	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName) || !Params->TryGetStringField(TEXT("component_name"), ComponentName))
+	if (!Params->TryGetStringField(TEXT("widget_name"), WidgetName))
 	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' or 'component_name' parameter"));
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing required 'widget_name' parameter"),
+			UMGParams::ComponentParams());
+	}
+	if (!Params->TryGetStringField(TEXT("component_name"), ComponentName))
+	{
+		return ParamValidation::MissingParamsError(
+			TEXT("Missing required 'component_name' parameter - use list_components first to get valid component names"),
+			UMGParams::ComponentParams());
 	}
 
 	if (WidgetName.IsEmpty())
@@ -929,7 +1084,9 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleValidateWidgetHierarchy(const TShare
 		}
 		if (WidgetIdentifier.IsEmpty())
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing 'widget_name' parameter"));
+			return ParamValidation::MissingParamsError(
+				TEXT("Missing 'widget_name' parameter"),
+				UMGParams::WidgetNameParams());
 		}
 	}
 
@@ -1006,26 +1163,57 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleAddChildToPanel(const TSharedPtr<FJs
 		if (!Params->TryGetStringField(TEXT("component_name"), ChildName) &&
 			!Params->TryGetStringField(TEXT("widget_component_name"), ChildName))
 		{
-			return FCommonUtils::CreateErrorResponse(TEXT("Missing child_name parameter"));
+			return FCommonUtils::CreateErrorResponse(TEXT("Missing child_name/component_name parameter"));
 		}
 	}
 
+	// Check if component_type is provided - if so, CREATE a new widget
+	FString ComponentType;
+	const bool bHasComponentType = Params->TryGetStringField(TEXT("component_type"), ComponentType);
+	
 	FString ParentName;
 	const bool bHasParentName = Params->TryGetStringField(TEXT("parent_name"), ParentName) ||
 		Params->TryGetStringField(TEXT("panel_name"), ParentName) ||
 		Params->TryGetStringField(TEXT("parent_component_name"), ParentName);
-
-	FString ParentType = TEXT("CanvasPanel");
-	Params->TryGetStringField(TEXT("parent_type"), ParentType);
-
-	bool bReparentIfExists = true;
-	Params->TryGetBoolField(TEXT("reparent_if_exists"), bReparentIfExists);
 
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
 	{
 		return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Widget Blueprint '%s' not found"), *WidgetBlueprintName));
 	}
+
+	// If component_type is provided, CREATE a new widget component
+	if (bHasComponentType)
+	{
+		bool bIsVariable = false;
+		Params->TryGetBoolField(TEXT("is_variable"), bIsVariable);
+		
+		const auto Result = WidgetService->AddWidgetComponent(WidgetBlueprint, ComponentType, ChildName, bHasParentName ? ParentName : TEXT(""), bIsVariable);
+		if (Result.IsError())
+		{
+			return FCommonUtils::CreateErrorResponse(Result.GetErrorMessage());
+		}
+
+		UWidget* NewWidget = Result.GetValue();
+		
+		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+		Response->SetBoolField(TEXT("success"), true);
+		Response->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
+		Response->SetStringField(TEXT("component_name"), ChildName);
+		Response->SetStringField(TEXT("component_type"), ComponentType);
+		Response->SetStringField(TEXT("parent_name"), bHasParentName ? ParentName : TEXT("(root)"));
+		Response->SetBoolField(TEXT("is_variable"), bIsVariable);
+		Response->SetStringField(TEXT("note"), FString::Printf(TEXT("Created new %s widget '%s'"), *ComponentType, *ChildName));
+		return Response;
+	}
+
+	// Otherwise, MOVE an existing widget to a parent panel
+	FString ParentType = TEXT("CanvasPanel");
+	Params->TryGetStringField(TEXT("parent_type"), ParentType);
+
+	bool bReparentIfExists = true;
+	Params->TryGetBoolField(TEXT("reparent_if_exists"), bReparentIfExists);
+
 	double InsertIndexValue = 0.0;
 	int32 DesiredIndex = INDEX_NONE;
 	if (Params->TryGetNumberField(TEXT("child_index"), InsertIndexValue) ||
@@ -1174,7 +1362,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleRemoveUMGComponent(const TSharedPtr<
 
 
 // ===================================================================
-// UMG Layout Methods Implementation (Stub implementations)
+// UMG Layout Methods Implementation
 // ===================================================================
 
 
@@ -1353,14 +1541,19 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	if (NormalizedProperty == TEXT("alignment") || NormalizedProperty == TEXT("layoutdata.alignment"))
 	{
 		// Alignment expects [x, y] array (0.5, 0.5 = center)
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// First try to get as Vector2D using helper (handles arrays, string arrays, objects)
+		FVector2D Alignment;
+		if (FJsonValueHelper::TryGetVector2D(*PropertyValueField, Alignment))
 		{
-			SlotProperties->SetField(TEXT("alignment"), *PropertyValueField);
+			TArray<TSharedPtr<FJsonValue>> AlignArray;
+			AlignArray.Add(MakeShared<FJsonValueNumber>(Alignment.X));
+			AlignArray.Add(MakeShared<FJsonValueNumber>(Alignment.Y));
+			SlotProperties->SetArrayField(TEXT("alignment"), AlignArray);
 		}
 		else if ((*PropertyValueField)->Type == EJson::String)
 		{
-			// Parse common alignment strings
-			FString AlignStr = (*PropertyValueField)->AsString().ToLower();
+			// Parse common alignment strings like "center", "left", "top", etc.
+			FString AlignStr = (*PropertyValueField)->AsString().TrimStartAndEnd().ToLower();
 			TArray<TSharedPtr<FJsonValue>> AlignArray;
 			
 			if (AlignStr.Contains(TEXT("center")))
@@ -1390,9 +1583,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 			}
 			else
 			{
-				// Default to center
-				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
-				AlignArray.Add(MakeShared<FJsonValueNumber>(0.5));
+				return FCommonUtils::CreateErrorResponse(TEXT("Slot.alignment requires array [x, y] or string like 'center', 'left', 'right', 'top', 'bottom'"));
 			}
 			
 			SlotProperties->SetArrayField(TEXT("alignment"), AlignArray);
@@ -1478,9 +1669,11 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	}
 	else if (NormalizedProperty == TEXT("position") || NormalizedProperty == TEXT("layoutdata.position"))
 	{
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// Use FJsonValueHelper to handle both array and string-encoded array
+		TArray<TSharedPtr<FJsonValue>> ArrayValues;
+		if (FJsonValueHelper::TryGetArray(*PropertyValueField, ArrayValues) && ArrayValues.Num() >= 2)
 		{
-			SlotProperties->SetField(TEXT("position"), *PropertyValueField);
+			SlotProperties->SetArrayField(TEXT("position"), ArrayValues);
 		}
 		else
 		{
@@ -1489,9 +1682,11 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotPropertyFromPath(
 	}
 	else if (NormalizedProperty == TEXT("size") || NormalizedProperty == TEXT("layoutdata.size"))
 	{
-		if ((*PropertyValueField)->Type == EJson::Array)
+		// Use FJsonValueHelper to handle both array and string-encoded array
+		TArray<TSharedPtr<FJsonValue>> ArrayValues;
+		if (FJsonValueHelper::TryGetArray(*PropertyValueField, ArrayValues) && ArrayValues.Num() >= 2)
 		{
-			SlotProperties->SetField(TEXT("size"), *PropertyValueField);
+			SlotProperties->SetArrayField(TEXT("size"), ArrayValues);
 		}
 		else
 		{
@@ -1628,7 +1823,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleSetWidgetSlotProperties(const TShare
 }
 
 // ===================================================================
-// UMG Styling Methods Implementation (Stub implementations)
+// UMG Styling Methods Implementation
 // ===================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPtr<FJsonObject>& Params)
@@ -1706,7 +1901,7 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleListWidgetProperties(const TSharedPt
 
 
 // ===================================================================
-// UMG Event Methods Implementation (Stub implementations)
+// UMG Event Methods Implementation
 // ===================================================================
 
 TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJsonObject>& Params)
@@ -1719,13 +1914,19 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 		return FCommonUtils::CreateErrorResponse(TEXT("Missing widget_name parameter"));
 	}
 	
-	const TArray<TSharedPtr<FJsonValue>>* InputMappingsArray;
-	if (!Params->TryGetArrayField(TEXT("input_mappings"), InputMappingsArray))
-	{
-		return FCommonUtils::CreateErrorResponse(TEXT("Missing input_mappings parameter"));
-	}
+	// Try to get input_mappings as array first
+	const TArray<TSharedPtr<FJsonValue>>* InputMappingsArray = nullptr;
+	bool bHasInputMappingsArray = Params->TryGetArrayField(TEXT("input_mappings"), InputMappingsArray);
 	
-	InputMappings = *InputMappingsArray;
+	// If no array, try to build from flat parameters (event_name + function_name)
+	FString EventName, FunctionName;
+	bool bHasFlatParams = Params->TryGetStringField(TEXT("event_name"), EventName) && 
+	                      Params->TryGetStringField(TEXT("function_name"), FunctionName);
+	
+	if (!bHasInputMappingsArray && !bHasFlatParams)
+	{
+		return FCommonUtils::CreateErrorResponse(TEXT("Missing input_mappings array OR event_name+function_name. Use either: input_mappings: [{\"event_name\": \"OnClicked\", \"function_name\": \"HandleClick\"}] OR flat params: event_name, function_name"));
+	}
 	
 	UWidgetBlueprint* WidgetBlueprint = FCommonUtils::FindWidgetBlueprint(WidgetBlueprintName);
 	if (!WidgetBlueprint)
@@ -1740,17 +1941,30 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 
 	// Convert JSON input mappings to DTOs
 	TArray<FWidgetInputMapping> Mappings;
-	for (const TSharedPtr<FJsonValue>& MappingValue : InputMappings)
+	
+	// If flat params provided, create single mapping from them
+	if (bHasFlatParams)
 	{
-		if (MappingValue->Type == EJson::Object)
+		FWidgetInputMapping Map;
+		Map.EventName = EventName;
+		Map.FunctionName = FunctionName;
+		Mappings.Add(Map);
+	}
+	else if (bHasInputMappingsArray && InputMappingsArray)
+	{
+		// Process array format
+		for (const TSharedPtr<FJsonValue>& MappingValue : *InputMappingsArray)
 		{
-			TSharedPtr<FJsonObject> MappingObj = MappingValue->AsObject();
-			FWidgetInputMapping Map;
-			MappingObj->TryGetStringField(TEXT("event_name"), Map.EventName);
-			MappingObj->TryGetStringField(TEXT("function_name"), Map.FunctionName);
-			if (!Map.EventName.IsEmpty() && !Map.FunctionName.IsEmpty())
+			if (MappingValue->Type == EJson::Object)
 			{
-				Mappings.Add(Map);
+				TSharedPtr<FJsonObject> MappingObj = MappingValue->AsObject();
+				FWidgetInputMapping Map;
+				MappingObj->TryGetStringField(TEXT("event_name"), Map.EventName);
+				MappingObj->TryGetStringField(TEXT("function_name"), Map.FunctionName);
+				if (!Map.EventName.IsEmpty() && !Map.FunctionName.IsEmpty())
+				{
+					Mappings.Add(Map);
+				}
 			}
 		}
 	}
@@ -1762,10 +1976,21 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleBindInputEvents(const TSharedPtr<FJs
 	}
 
 	int32 BoundCount = ResultT.GetValue();
+	
+	// Build output array from the mappings we processed
+	TArray<TSharedPtr<FJsonValue>> BoundMappingsJson;
+	for (const FWidgetInputMapping& Map : Mappings)
+	{
+		TSharedPtr<FJsonObject> MapObj = MakeShared<FJsonObject>();
+		MapObj->SetStringField(TEXT("event_name"), Map.EventName);
+		MapObj->SetStringField(TEXT("function_name"), Map.FunctionName);
+		BoundMappingsJson.Add(MakeShared<FJsonValueObject>(MapObj));
+	}
+	
 	TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
 	Result->SetBoolField(TEXT("success"), true);
 	Result->SetStringField(TEXT("widget_name"), WidgetBlueprintName);
-	Result->SetArrayField(TEXT("input_mappings"), InputMappings);
+	Result->SetArrayField(TEXT("bound_events"), BoundMappingsJson);
 	Result->SetNumberField(TEXT("bindings_count"), BoundCount);
 	Result->SetStringField(TEXT("note"), TEXT("Input events bound to widget functions successfully"));
 	return Result;
@@ -1822,10 +2047,8 @@ TSharedPtr<FJsonObject> FUMGCommands::HandleGetAvailableEvents(const TSharedPtr<
 	return Result;
 }
 
-
-
-
-// ============================================================================
-// NEW BULK OPERATIONS AND IMPROVED FUNCTIONALITY - Added based on Issues Report
-// ============================================================================
+TSharedPtr<FJsonObject> FUMGCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	return FHelpFileReader::HandleHelp(TEXT("manage_umg_widget"), Params);
+}
 
