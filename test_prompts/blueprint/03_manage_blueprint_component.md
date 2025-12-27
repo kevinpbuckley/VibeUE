@@ -82,10 +82,6 @@ Move FillLight under LightRig too.
 
 ---
 
-Reorder the components in LightTest so LightRig is at the top.
-
----
-
 Show me the LightTest hierarchy now.
 
 ---

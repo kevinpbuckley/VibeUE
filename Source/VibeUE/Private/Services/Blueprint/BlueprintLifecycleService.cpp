@@ -1,10 +1,13 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 // Copyright Epic Games, Inc. All Rights Reserved.
 
 #include "Services/Blueprint/BlueprintLifecycleService.h"
 #include "Engine/Blueprint.h"
 #include "Factories/BlueprintFactory.h"
+#include "WidgetBlueprintFactory.h"
+#include "WidgetBlueprint.h"
+#include "Blueprint/UserWidget.h"
 #include "GameFramework/Actor.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -91,18 +94,35 @@ TResult<UBlueprint*> FBlueprintLifecycleService::CreateBlueprint(const FString& 
         SelectedParentClass = AActor::StaticClass();
     }
 
-    // Create the blueprint factory
-    UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
-    Factory->ParentClass = SelectedParentClass;
-
-    // Create the blueprint
+    // Check if parent class is a UserWidget - if so, create a WidgetBlueprint instead
+    const bool bIsWidgetClass = SelectedParentClass->IsChildOf(UUserWidget::StaticClass());
+    
     UPackage* Package = CreatePackage(*FullAssetPath);
-    UBlueprint* NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(
-        UBlueprint::StaticClass(), Package, *AssetName, RF_Standalone | RF_Public, nullptr, GWarn));
+    UBlueprint* NewBlueprint = nullptr;
+    
+    if (bIsWidgetClass)
+    {
+        // Create Widget Blueprint using WidgetBlueprintFactory
+        UWidgetBlueprintFactory* WidgetFactory = NewObject<UWidgetBlueprintFactory>();
+        WidgetFactory->ParentClass = SelectedParentClass;
+        
+        NewBlueprint = Cast<UBlueprint>(WidgetFactory->FactoryCreateNew(
+            UWidgetBlueprint::StaticClass(), Package, *AssetName, RF_Standalone | RF_Public, nullptr, GWarn));
+    }
+    else
+    {
+        // Create regular Blueprint using BlueprintFactory
+        UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
+        Factory->ParentClass = SelectedParentClass;
+        
+        NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(
+            UBlueprint::StaticClass(), Package, *AssetName, RF_Standalone | RF_Public, nullptr, GWarn));
+    }
 
     if (!NewBlueprint)
     {
-        return TResult<UBlueprint*>::Error(VibeUE::ErrorCodes::BLUEPRINT_CREATE_FAILED, TEXT("Failed to create blueprint"));
+        return TResult<UBlueprint*>::Error(VibeUE::ErrorCodes::BLUEPRINT_CREATE_FAILED, 
+            FString::Printf(TEXT("Failed to create %s"), bIsWidgetClass ? TEXT("widget blueprint") : TEXT("blueprint")));
     }
 
     // Notify the asset registry

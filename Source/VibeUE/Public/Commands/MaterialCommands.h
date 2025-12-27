@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -52,6 +52,7 @@ private:
 	TSharedPtr<FJsonObject> HandleSave(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleCompile(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleRefreshEditor(const TSharedPtr<FJsonObject>& Params);
+	TSharedPtr<FJsonObject> HandleOpenInEditor(const TSharedPtr<FJsonObject>& Params);
 
 	// Information actions
 	TSharedPtr<FJsonObject> HandleGetInfo(const TSharedPtr<FJsonObject>& Params);
@@ -84,6 +85,9 @@ private:
 	TSharedPtr<FJsonObject> HandleSetInstanceTextureParameter(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleClearInstanceParameterOverride(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSaveInstance(const TSharedPtr<FJsonObject>& Params);
+
+	// Help action
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
 
 	// Utility
 	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& Code, const FString& Message);

@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -162,9 +162,11 @@ struct VIBEUE_API FActorOperationResult
 	TOptional<FActorInfo> ActorInfo;
 	TArray<FActorInfo> AffectedActors;
 	TSharedPtr<FJsonObject> TransformInfo;  // Phase 2: Optional transform data
+	TSharedPtr<FJsonObject> CustomJson;     // For minimal responses (e.g., set_property)
 	
 	static FActorOperationResult Success(const FActorInfo& Info);
 	static FActorOperationResult Success(const TArray<FActorInfo>& Actors);
+	static FActorOperationResult SuccessWithJson(TSharedPtr<FJsonObject> Json);
 	static FActorOperationResult Error(const FString& Code, const FString& Message);
 	
 	TSharedPtr<FJsonObject> ToJson() const;

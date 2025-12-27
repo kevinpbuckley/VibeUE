@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "MCPServerRunnable.h"
 #include "Bridge.h"
@@ -38,28 +38,98 @@ uint32 FMCPServerRunnable::Run()
 {
     UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Server thread starting..."));
     
+    // Early exit if listener socket is not valid
+    if (!ListenerSocket.IsValid() || ListenerSocket->GetSocketType() == SOCKTYPE_Unknown)
+    {
+        UE_LOG(LogTemp, Error, TEXT("MCPServerRunnable: ListenerSocket is not valid, exiting thread"));
+        return 1;
+    }
+    
     while (bRunning)
     {
-        // UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Waiting for client connection..."));
+        // Check listener socket validity each iteration
+        // Use Get() to access the raw pointer safely
+        FSocket* RawListenerSocket = ListenerSocket.Get();
+        if (!RawListenerSocket || !ListenerSocket.IsValid())
+        {
+            UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: ListenerSocket became invalid, exiting"));
+            break;
+        }
         
+        // Check if socket subsystem is still available
+        ISocketSubsystem* SocketSubsystem = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+        if (!SocketSubsystem)
+        {
+            UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Socket subsystem unavailable, exiting"));
+            break;
+        }
+        
+        // Use simple polling with sleep instead of Wait() which can crash during shutdown
+        FPlatformProcess::Sleep(0.1f);
+        
+        // Recheck socket validity after sleep - IMPORTANT: must re-get the raw pointer
+        if (!bRunning || !ListenerSocket.IsValid())
+        {
+            break;
+        }
+        
+        // Re-acquire raw pointer after sleep since it may have changed
+        RawListenerSocket = ListenerSocket.Get();
+        if (!RawListenerSocket)
+        {
+            UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: ListenerSocket pointer became null after sleep, exiting"));
+            break;
+        }
+        
+        // Additional validation - check socket type to detect destroyed sockets
+        // During shutdown, socket may be destroyed but pointer not nulled
+        if (RawListenerSocket->GetSocketType() == SOCKTYPE_Unknown)
+        {
+            UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Socket type unknown (socket destroyed), exiting"));
+            break;
+        }
+        
+        // Re-verify socket subsystem is still valid before using socket
+        if (!ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM))
+        {
+            UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Socket subsystem gone after sleep, exiting"));
+            break;
+        }
+        
+        // Check for pending connection with try-catch equivalent protection
         bool bPending = false;
-        if (ListenerSocket->HasPendingConnection(bPending) && bPending)
+        if (!RawListenerSocket->HasPendingConnection(bPending))
+        {
+            // HasPendingConnection failed - socket may be invalid
+            continue;
+        }
+        
+        if (bPending)
         {
             UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Client connection pending, accepting..."));
             
-            ClientSocket = MakeShareable(ListenerSocket->Accept(TEXT("MCPClient")));
+            FSocket* AcceptedSocket = RawListenerSocket->Accept(TEXT("MCPClient"));
+            if (!AcceptedSocket)
+            {
+                UE_LOG(LogTemp, Warning, TEXT("MCPServerRunnable: Accept returned null socket"));
+                FPlatformProcess::Sleep(0.01f);
+                continue;
+            }
+            
+            ClientSocket = MakeShareable(AcceptedSocket);
             if (ClientSocket.IsValid())
             {
                 UE_LOG(LogTemp, Display, TEXT("MCPServerRunnable: Client connection accepted"));
                 
                 // Set socket options to improve connection stability
                 ClientSocket->SetNoDelay(true);
+                ClientSocket->SetNonBlocking(true); // Use non-blocking to allow clean shutdown
                 int32 SocketBufferSize = 65536;  // 64KB buffer
                 ClientSocket->SetSendBufferSize(SocketBufferSize, SocketBufferSize);
                 ClientSocket->SetReceiveBufferSize(SocketBufferSize, SocketBufferSize);
                 
                 uint8 Buffer[MCPBufferSize];
-                while (bRunning)
+                while (bRunning && ClientSocket.IsValid() && ClientSocket->GetConnectionState() == SCS_Connected)
                 {
                     int32 BytesRead = 0;
                     if (ClientSocket->Recv(Buffer, sizeof(Buffer), BytesRead))

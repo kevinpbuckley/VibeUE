@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Commands/AssetCommands.h"
 #include "Services/Asset/AssetDiscoveryService.h"
@@ -6,6 +6,10 @@
 #include "Services/Asset/AssetImportService.h"
 #include "Core/ServiceContext.h"
 #include "Core/Result.h"
+#include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
 
 FAssetCommands::FAssetCommands()
 {
@@ -18,7 +22,72 @@ FAssetCommands::FAssetCommands()
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params)
 {
-    if (CommandType == TEXT("import_texture_asset"))
+    // Handle multi-action manage_asset routing
+    if (CommandType == TEXT("manage_asset"))
+    {
+        if (!Params.IsValid())
+        {
+            return CreateErrorResponse(TEXT("Parameters are required"));
+        }
+
+        FString Action;
+        if (!Params->TryGetStringField(TEXT("action"), Action))
+        {
+            return CreateErrorResponse(TEXT("action parameter is required"));
+        }
+
+        Action = Action.ToLower();
+        UE_LOG(LogTemp, Display, TEXT("AssetCommands: Handling action '%s'"), *Action);
+
+        // Help action
+        if (Action == TEXT("help"))
+        {
+            return HandleHelp(Params);
+        }
+        // Route to specific handlers
+        else if (Action == TEXT("search"))
+        {
+            return HandleSearchAssets(Params);
+        }
+        else if (Action == TEXT("import_texture"))
+        {
+            return HandleImportTextureAsset(Params);
+        }
+        else if (Action == TEXT("export_texture"))
+        {
+            return HandleExportTextureForAnalysis(Params);
+        }
+        else if (Action == TEXT("delete"))
+        {
+            return HandleDeleteAsset(Params);
+        }
+        else if (Action == TEXT("duplicate"))
+        {
+            return HandleDuplicateAsset(Params);
+        }
+        else if (Action == TEXT("save"))
+        {
+            return HandleSaveAsset(Params);
+        }
+        else if (Action == TEXT("save_all"))
+        {
+            return HandleSaveAllAssets(Params);
+        }
+        else if (Action == TEXT("list_references"))
+        {
+            return HandleListReferences(Params);
+        }
+        else if (Action == TEXT("open") || Action == TEXT("open_in_editor"))
+        {
+            return HandleOpenAssetInEditor(Params);
+        }
+        else
+        {
+            return CreateErrorResponse(FString::Printf(TEXT("Unknown action: %s. Use action='help' for available actions."), *Action));
+        }
+    }
+    // Legacy direct command routing
+    else if (CommandType == TEXT("import_texture_asset"))
     {
         return HandleImportTextureAsset(Params);
     }
@@ -57,6 +126,17 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleCommand(const FString& CommandType
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("file_path"), TEXT("destination_path"), TEXT("texture_name"),
+        TEXT("replace_existing"), TEXT("save")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("file_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("file_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString SourceFile;
     FString DestinationPath = TEXT("/Game/Textures/Imported");
@@ -102,6 +182,16 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleImportTextureAsset(const TSharedPt
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("export_format"), TEXT("temp_folder"), TEXT("max_size")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("asset_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString AssetPath;
     FString ExportFormat = TEXT("PNG");
@@ -160,6 +250,16 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleExportTextureForAnalysis(const TSh
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr<FJsonObject>& Params)
 {
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("force_open")
+    };
+    
+    if (!ParamValidation::HasStringParam(Params, TEXT("asset_path")))
+    {
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
+    }
+    
     // Extract parameters
     FString AssetPath;
     bool bForceOpen = false;
@@ -196,21 +296,33 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleOpenAssetInEditor(const TSharedPtr
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("force_delete"), TEXT("show_confirmation")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Extract optional parameters
+    // NOTE: bShowConfirmation defaults to false for MCP calls because modal dialogs
+    // can cause deadlocks when MCP is blocking on the game thread
     bool bForceDelete = false;
-    bool bShowConfirmation = true;
+    bool bShowConfirmation = false;
     
     if (Params.IsValid())
     {
         Params->TryGetBoolField(TEXT("force_delete"), bForceDelete);
         Params->TryGetBoolField(TEXT("show_confirmation"), bShowConfirmation);
+    }
+    
+    // Validate LifecycleService is initialized
+    if (!LifecycleService.IsValid())
+    {
+        return CreateErrorResponse(TEXT("LifecycleService not initialized"));
     }
     
     // Delegate to LifecycleService
@@ -234,16 +346,20 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDeleteAsset(const TSharedPtr<FJson
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameters
+    // Validate required parameters
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("destination_path"), TEXT("new_name")
+    };
+    
     FString AssetPath;
     FString DestinationPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'destination_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("destination_path is required"), ValidParams);
     }
     
     // Extract optional parameter
@@ -277,11 +393,15 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleDuplicateAsset(const TSharedPtr<FJ
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAsset(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Delegate to LifecycleService
@@ -327,11 +447,15 @@ TSharedPtr<FJsonObject> FAssetCommands::HandleSaveAllAssets(const TSharedPtr<FJs
 
 TSharedPtr<FJsonObject> FAssetCommands::HandleListReferences(const TSharedPtr<FJsonObject>& Params)
 {
-    // Extract required parameter
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("asset_path"), TEXT("include_referencers"), TEXT("include_dependencies")
+    };
+    
     FString AssetPath;
     if (!Params->TryGetStringField(TEXT("asset_path"), AssetPath))
     {
-        return CreateErrorResponse(TEXT("Missing 'asset_path' parameter"));
+        return ParamValidation::MissingParamsError(TEXT("asset_path is required"), ValidParams);
     }
     
     // Extract optional parameters
@@ -408,5 +532,142 @@ TSharedPtr<FJsonObject> FAssetCommands::CreateErrorResponse(const FString& Error
     TSharedPtr<FJsonObject> Response = MakeShareable(new FJsonObject);
     Response->SetBoolField(TEXT("success"), false);
     Response->SetStringField(TEXT("error"), ErrorMessage);
+    return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+    return FHelpFileReader::HandleHelp(TEXT("manage_asset"), Params);
+}
+
+//-----------------------------------------------------------------------------
+// Search Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FAssetCommands::HandleSearchAssets(const TSharedPtr<FJsonObject>& Params)
+{
+    // Validate required parameter
+    static const TArray<FString> ValidParams = {
+        TEXT("search_term"), TEXT("asset_type"), TEXT("path"),
+        TEXT("case_sensitive"), TEXT("include_engine_content"), TEXT("max_results")
+    };
+    
+    FString SearchTerm;
+    if (!Params->TryGetStringField(TEXT("search_term"), SearchTerm))
+    {
+        return ParamValidation::MissingParamsError(TEXT("search_term is required"), ValidParams);
+    }
+
+    FString AssetType;
+    Params->TryGetStringField(TEXT("asset_type"), AssetType);
+
+    FString Path = TEXT("/Game");
+    Params->TryGetStringField(TEXT("path"), Path);
+
+    bool bCaseSensitive = false;
+    Params->TryGetBoolField(TEXT("case_sensitive"), bCaseSensitive);
+
+    bool bIncludeEngineContent = false;
+    Params->TryGetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
+
+    int32 MaxResults = 100;
+    double MaxResultsValue = 0.0;
+    if (Params->TryGetNumberField(TEXT("max_results"), MaxResultsValue))
+    {
+        MaxResults = FMath::Max(1, static_cast<int32>(MaxResultsValue));
+    }
+
+    // Build asset filter
+    FARFilter Filter;
+    Filter.bRecursivePaths = true;
+    Filter.PackagePaths.Add(*Path);
+    if (bIncludeEngineContent)
+    {
+        Filter.PackagePaths.Add(TEXT("/Engine"));
+    }
+    
+    // Handle asset type filtering
+    if (!AssetType.IsEmpty())
+    {
+        FTopLevelAssetPath AssetClassPath = UClass::TryConvertShortTypeNameToPathName<UClass>(AssetType, ELogVerbosity::NoLogging);
+        if (AssetClassPath.IsNull())
+        {
+            if (AssetType.Contains(TEXT("/")))
+            {
+                AssetClassPath = FTopLevelAssetPath(*AssetType);
+            }
+            else if (UClass* AssetClass = FindFirstObjectSafe<UClass>(*AssetType))
+            {
+                AssetClassPath = AssetClass->GetClassPathName();
+            }
+        }
+
+        if (!AssetClassPath.IsNull())
+        {
+            Filter.ClassPaths.Add(AssetClassPath);
+        }
+    }
+
+    // Get asset registry
+    IAssetRegistry* AssetRegistry = ServiceContext->GetAssetRegistry();
+    if (!AssetRegistry)
+    {
+        return CreateErrorResponse(TEXT("Failed to get Asset Registry"));
+    }
+
+    // Query assets
+    TArray<FAssetData> Assets;
+    AssetRegistry->GetAssets(Filter, Assets);
+
+    // Filter and format results
+    TArray<TSharedPtr<FJsonValue>> ItemArray;
+    const ESearchCase::Type SearchCase = bCaseSensitive ? ESearchCase::CaseSensitive : ESearchCase::IgnoreCase;
+    int32 MatchCount = 0;
+
+    for (const FAssetData& Asset : Assets)
+    {
+        if (MatchCount >= MaxResults)
+        {
+            break;
+        }
+
+        const FString AssetName = Asset.AssetName.ToString();
+        const FString ObjectPath = Asset.GetObjectPathString();
+
+        // Check if search term matches asset name or path
+        if (AssetName.Contains(SearchTerm, SearchCase) || ObjectPath.Contains(SearchTerm, SearchCase))
+        {
+            TSharedPtr<FJsonObject> ItemObj = MakeShared<FJsonObject>();
+            ItemObj->SetStringField(TEXT("asset_name"), AssetName);
+            ItemObj->SetStringField(TEXT("object_path"), ObjectPath);
+            ItemObj->SetStringField(TEXT("package_path"), Asset.PackageName.ToString());
+            ItemObj->SetStringField(TEXT("class_name"), Asset.AssetClassPath.GetAssetName().ToString());
+            
+            ItemArray.Add(MakeShared<FJsonValueObject>(ItemObj));
+            MatchCount++;
+        }
+    }
+
+    // Build response
+    TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+    Response->SetBoolField(TEXT("success"), true);
+    Response->SetArrayField(TEXT("items"), ItemArray);
+    Response->SetNumberField(TEXT("count"), ItemArray.Num());
+
+    // Include search info for debugging
+    TSharedPtr<FJsonObject> SearchInfo = MakeShared<FJsonObject>();
+    SearchInfo->SetStringField(TEXT("search_term"), SearchTerm);
+    SearchInfo->SetStringField(TEXT("asset_type"), AssetType.IsEmpty() ? TEXT("all") : AssetType);
+    SearchInfo->SetStringField(TEXT("path"), Path);
+    SearchInfo->SetBoolField(TEXT("case_sensitive"), bCaseSensitive);
+    SearchInfo->SetBoolField(TEXT("include_engine_content"), bIncludeEngineContent);
+    SearchInfo->SetNumberField(TEXT("max_results"), MaxResults);
+    SearchInfo->SetNumberField(TEXT("total_scanned"), Assets.Num());
+    Response->SetObjectField(TEXT("search_info"), SearchInfo);
+
     return Response;
 }

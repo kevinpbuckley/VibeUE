@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -96,6 +96,9 @@ private:
 	// Material output actions
 	TSharedPtr<FJsonObject> HandleGetOutputProperties(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleGetOutputConnections(const TSharedPtr<FJsonObject>& Params);
+
+	// Help action
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
 
 	// Helper to load material from params
 	class UMaterial* LoadMaterialFromParams(const TSharedPtr<FJsonObject>& Params, TSharedPtr<FJsonObject>& OutError);

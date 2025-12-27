@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 /**
  * @file WidgetPropertyService.cpp
@@ -10,6 +10,7 @@
 
 #include "Services/UMG/WidgetPropertyService.h"
 #include "Core/ErrorCodes.h"
+#include "Core/JsonValueHelper.h"
 #include "Blueprint/WidgetTree.h"
 #include "Components/Border.h"
 #include "Components/Button.h"
@@ -408,63 +409,30 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
         {
             FLinearColor ColorValue;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats (object, array, string-encoded, hex, named colors)
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, ColorValue))
             {
-                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
-                ColorValue.R = ColorObj->GetNumberField(TEXT("R"));
-                ColorValue.G = ColorObj->GetNumberField(TEXT("G"));
-                ColorValue.B = ColorObj->GetNumberField(TEXT("B"));
-                ColorValue.A = ColorObj->GetNumberField(TEXT("A"));
-            }
-            else if (JsonValue->Type == EJson::Array)
-            {
-                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
-                if (ColorArray.Num() >= 3)
-                {
-                    ColorValue.R = ColorArray[0]->AsNumber();
-                    ColorValue.G = ColorArray[1]->AsNumber();
-                    ColorValue.B = ColorArray[2]->AsNumber();
-                    ColorValue.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
-                }
+                Property->SetValue_InContainer(Widget, &ColorValue);
+                return true;
             }
             else
             {
-                ErrorMessage = TEXT("LinearColor must be object {R,G,B,A} or array [R,G,B,A]");
+                ErrorMessage = TEXT("LinearColor must be object {R,G,B,A}, array [R,G,B,A], hex string #RRGGBB, or color name");
                 return false;
             }
-
-            Property->SetValue_InContainer(Widget, &ColorValue);
-            return true;
         }
         else if (StructProperty->Struct == TBaseStructure<FSlateColor>::Get())
         {
-            FSlateColor SlateColorValue;
+            FLinearColor LinearColor;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats
+            if (FJsonValueHelper::TryGetLinearColor(JsonValue, LinearColor))
             {
-                const TSharedPtr<FJsonObject> ColorObj = JsonValue->AsObject();
-                FLinearColor LinearColor;
-                LinearColor.R = ColorObj->GetNumberField(TEXT("R"));
-                LinearColor.G = ColorObj->GetNumberField(TEXT("G"));
-                LinearColor.B = ColorObj->GetNumberField(TEXT("B"));
-                LinearColor.A = ColorObj->GetNumberField(TEXT("A"));
-                SlateColorValue = FSlateColor(LinearColor);
+                FSlateColor SlateColorValue = FSlateColor(LinearColor);
+                Property->SetValue_InContainer(Widget, &SlateColorValue);
+                return true;
             }
-            else if (JsonValue->Type == EJson::Array)
-            {
-                const TArray<TSharedPtr<FJsonValue>> ColorArray = JsonValue->AsArray();
-                if (ColorArray.Num() >= 3)
-                {
-                    FLinearColor LinearColor;
-                    LinearColor.R = ColorArray[0]->AsNumber();
-                    LinearColor.G = ColorArray[1]->AsNumber();
-                    LinearColor.B = ColorArray[2]->AsNumber();
-                    LinearColor.A = ColorArray.Num() > 3 ? ColorArray[3]->AsNumber() : 1.0f;
-                    SlateColorValue = FSlateColor(LinearColor);
-                }
-            }
-
-            Property->SetValue_InContainer(Widget, &SlateColorValue);
+            // If no explicit color provided, leave as default
             return true;
         }
         else if (StructProperty->Struct == TBaseStructure<FMargin>::Get())
@@ -498,24 +466,17 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
         {
             FVector2D VectorValue;
 
-            if (JsonValue->Type == EJson::Object)
+            // Use FJsonValueHelper to handle all formats (object, array, string-encoded)
+            if (FJsonValueHelper::TryGetVector2D(JsonValue, VectorValue))
             {
-                const TSharedPtr<FJsonObject> VectorObj = JsonValue->AsObject();
-                VectorValue.X = VectorObj->GetNumberField(TEXT("X"));
-                VectorValue.Y = VectorObj->GetNumberField(TEXT("Y"));
+                Property->SetValue_InContainer(Widget, &VectorValue);
+                return true;
             }
-            else if (JsonValue->Type == EJson::Array)
+            else
             {
-                const TArray<TSharedPtr<FJsonValue>> VectorArray = JsonValue->AsArray();
-                if (VectorArray.Num() >= 2)
-                {
-                    VectorValue.X = VectorArray[0]->AsNumber();
-                    VectorValue.Y = VectorArray[1]->AsNumber();
-                }
+                ErrorMessage = TEXT("Vector2D must be object {X, Y} or array [X, Y]");
+                return false;
             }
-
-            Property->SetValue_InContainer(Widget, &VectorValue);
-            return true;
         }
         else if (StructProperty->Struct->GetName().Contains(TEXT("SlateBrush")))
         {
@@ -602,29 +563,8 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
                 if (BrushObj->HasField(TEXT("TintColor")))
                 {
                     FLinearColor TintColor;
-                    bool bGotTint = false;
-                    
-                    // Try array format first [R, G, B, A]
-                    const TArray<TSharedPtr<FJsonValue>>* ColorArray;
-                    if (BrushObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
-                    {
-                        TintColor.R = (*ColorArray)[0]->AsNumber();
-                        TintColor.G = (*ColorArray)[1]->AsNumber();
-                        TintColor.B = (*ColorArray)[2]->AsNumber();
-                        TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
-                        bGotTint = true;
-                    }
-                    // Try object format {R:, G:, B:, A:}
-                    else if (const TSharedPtr<FJsonObject>* TintObj; BrushObj->TryGetObjectField(TEXT("TintColor"), TintObj))
-                    {
-                        TintColor.R = (*TintObj)->GetNumberField(TEXT("R"));
-                        TintColor.G = (*TintObj)->GetNumberField(TEXT("G"));
-                        TintColor.B = (*TintObj)->GetNumberField(TEXT("B"));
-                        TintColor.A = (*TintObj)->HasField(TEXT("A")) ? (*TintObj)->GetNumberField(TEXT("A")) : 1.0f;
-                        bGotTint = true;
-                    }
-                    
-                    if (bGotTint)
+                    // Use FJsonValueHelper for robust color parsing (arrays, objects, hex, named colors)
+                    if (FJsonValueHelper::TryGetLinearColorField(BrushObj, TEXT("TintColor"), TintColor))
                     {
                         SlateBrush->TintColor = FSlateColor(TintColor);
                         bModified = true;
@@ -661,95 +601,41 @@ static bool ParseComplexPropertyValue(const TSharedPtr<FJsonValue>& JsonValue, F
 
                 bool bModified = false;
 
-                if (StyleObj->HasField(TEXT("Normal")))
+                // Helper lambda to set TintColor on a button state (Normal/Hovered/Pressed)
+                auto TrySetStateTintColor = [&](const TCHAR* StateName) -> bool
                 {
-                    const TSharedPtr<FJsonObject> NormalObj = StyleObj->GetObjectField(TEXT("Normal"));
-                    if (NormalObj->HasField(TEXT("TintColor")))
+                    if (!StyleObj->HasField(StateName))
                     {
-                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
-                        if (NormalObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
+                        return false;
+                    }
+                    
+                    const TSharedPtr<FJsonObject> StateObj = StyleObj->GetObjectField(StateName);
+                    FLinearColor TintColor;
+                    
+                    // Use FJsonValueHelper for robust color parsing (arrays, objects, hex, named colors)
+                    if (!FJsonValueHelper::TryGetLinearColorField(StateObj, TEXT("TintColor"), TintColor))
+                    {
+                        return false;
+                    }
+                    
+                    if (FProperty* StateProp = StructProperty->Struct->FindPropertyByName(StateName))
+                    {
+                        if (FStructProperty* StateStructProp = CastField<FStructProperty>(StateProp))
                         {
-                            FLinearColor TintColor;
-                            TintColor.R = (*ColorArray)[0]->AsNumber();
-                            TintColor.G = (*ColorArray)[1]->AsNumber();
-                            TintColor.B = (*ColorArray)[2]->AsNumber();
-                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
-
-                            if (FProperty* NormalProp = StructProperty->Struct->FindPropertyByName(TEXT("Normal")))
+                            void* StatePtr = StateStructProp->ContainerPtrToValuePtr<void>(StylePtr);
+                            if (FProperty* TintProp = StateStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
                             {
-                                if (FStructProperty* NormalStructProp = CastField<FStructProperty>(NormalProp))
-                                {
-                                    void* NormalPtr = NormalStructProp->ContainerPtrToValuePtr<void>(StylePtr);
-                                    if (FProperty* TintProp = NormalStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
-                                    {
-                                        TintProp->SetValue_InContainer(NormalPtr, &TintColor);
-                                        bModified = true;
-                                    }
-                                }
+                                TintProp->SetValue_InContainer(StatePtr, &TintColor);
+                                return true;
                             }
                         }
                     }
-                }
+                    return false;
+                };
 
-                if (StyleObj->HasField(TEXT("Hovered")))
-                {
-                    const TSharedPtr<FJsonObject> HoveredObj = StyleObj->GetObjectField(TEXT("Hovered"));
-                    if (HoveredObj->HasField(TEXT("TintColor")))
-                    {
-                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
-                        if (HoveredObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
-                        {
-                            FLinearColor TintColor;
-                            TintColor.R = (*ColorArray)[0]->AsNumber();
-                            TintColor.G = (*ColorArray)[1]->AsNumber();
-                            TintColor.B = (*ColorArray)[2]->AsNumber();
-                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
-
-                            if (FProperty* HoveredProp = StructProperty->Struct->FindPropertyByName(TEXT("Hovered")))
-                            {
-                                if (FStructProperty* HoveredStructProp = CastField<FStructProperty>(HoveredProp))
-                                {
-                                    void* HoveredPtr = HoveredStructProp->ContainerPtrToValuePtr<void>(StylePtr);
-                                    if (FProperty* TintProp = HoveredStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
-                                    {
-                                        TintProp->SetValue_InContainer(HoveredPtr, &TintColor);
-                                        bModified = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                if (StyleObj->HasField(TEXT("Pressed")))
-                {
-                    const TSharedPtr<FJsonObject> PressedObj = StyleObj->GetObjectField(TEXT("Pressed"));
-                    if (PressedObj->HasField(TEXT("TintColor")))
-                    {
-                        const TArray<TSharedPtr<FJsonValue>>* ColorArray;
-                        if (PressedObj->TryGetArrayField(TEXT("TintColor"), ColorArray) && ColorArray->Num() >= 3)
-                        {
-                            FLinearColor TintColor;
-                            TintColor.R = (*ColorArray)[0]->AsNumber();
-                            TintColor.G = (*ColorArray)[1]->AsNumber();
-                            TintColor.B = (*ColorArray)[2]->AsNumber();
-                            TintColor.A = ColorArray->Num() > 3 ? (*ColorArray)[3]->AsNumber() : 1.0f;
-
-                            if (FProperty* PressedProp = StructProperty->Struct->FindPropertyByName(TEXT("Pressed")))
-                            {
-                                if (FStructProperty* PressedStructProp = CastField<FStructProperty>(PressedProp))
-                                {
-                                    void* PressedPtr = PressedStructProp->ContainerPtrToValuePtr<void>(StylePtr);
-                                    if (FProperty* TintProp = PressedStructProp->Struct->FindPropertyByName(TEXT("TintColor")))
-                                    {
-                                        TintProp->SetValue_InContainer(PressedPtr, &TintColor);
-                                        bModified = true;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                bModified |= TrySetStateTintColor(TEXT("Normal"));
+                bModified |= TrySetStateTintColor(TEXT("Hovered"));
+                bModified |= TrySetStateTintColor(TEXT("Pressed"));
 
                 if (bModified)
                 {
@@ -1652,21 +1538,86 @@ TResult<FWidgetPropertySetResult> FWidgetPropertyService::SetWidgetProperty(UWid
         }
         else if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
         {
-            TSharedPtr<FJsonObject> JsonObj;
-            const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StringValue);
-            if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+            // Special handling for color types - try color parsing first before generic JSON
+            if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
             {
-                void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
-                bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
-                if (!bPropertySet)
+                // Create a JSON value from the string for FJsonValueHelper
+                TSharedPtr<FJsonValue> ColorJsonValue;
+                
+                // Try to parse as JSON array first (e.g., "[1.0, 0.5, 0.0, 1.0]")
+                TArray<TSharedPtr<FJsonValue>> ArrayValues;
+                const TSharedRef<TJsonReader<>> ArrayReader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(ArrayReader, ArrayValues))
                 {
-                    TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
-                    bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+                    ColorJsonValue = MakeShareable(new FJsonValueArray(ArrayValues));
+                }
+                else
+                {
+                    // Treat as string (color name, hex, etc.)
+                    ColorJsonValue = MakeShareable(new FJsonValueString(StringValue));
+                }
+                
+                FLinearColor ColorValue;
+                if (FJsonValueHelper::TryGetLinearColor(ColorJsonValue, ColorValue))
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    *static_cast<FLinearColor*>(ValuePtr) = ColorValue;
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid color value for '%s'. Use array [R,G,B,A], hex #RRGGBB, object {R,G,B,A}, or color name"), *Request.PropertyPath);
+                }
+            }
+            else if (StructProperty->Struct == TBaseStructure<FSlateColor>::Get())
+            {
+                // Create a JSON value from the string for FJsonValueHelper
+                TSharedPtr<FJsonValue> ColorJsonValue;
+                
+                // Try to parse as JSON array first
+                TArray<TSharedPtr<FJsonValue>> ArrayValues;
+                const TSharedRef<TJsonReader<>> ArrayReader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(ArrayReader, ArrayValues))
+                {
+                    ColorJsonValue = MakeShareable(new FJsonValueArray(ArrayValues));
+                }
+                else
+                {
+                    // Treat as string (color name, hex, etc.)
+                    ColorJsonValue = MakeShareable(new FJsonValueString(StringValue));
+                }
+                
+                FLinearColor LinearColor;
+                if (FJsonValueHelper::TryGetLinearColor(ColorJsonValue, LinearColor))
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    *static_cast<FSlateColor*>(ValuePtr) = FSlateColor(LinearColor);
+                    bPropertySet = true;
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid color value for '%s'. Use array [R,G,B,A], hex #RRGGBB, object {R,G,B,A}, or color name"), *Request.PropertyPath);
                 }
             }
             else
             {
-                ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *Request.PropertyPath);
+                // Generic struct handling via JSON
+                TSharedPtr<FJsonObject> JsonObj;
+                const TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(StringValue);
+                if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+                {
+                    void* ValuePtr = bUsedResolver ? ContainerPtrForSet : StructProperty->ContainerPtrToValuePtr<void>(ContainerPtrForSet);
+                    bPropertySet = FJsonObjectConverter::JsonObjectToUStruct(JsonObj.ToSharedRef(), StructProperty->Struct, ValuePtr, 0, 0);
+                    if (!bPropertySet)
+                    {
+                        TSharedPtr<FJsonValue> JsonValue = MakeShareable(new FJsonValueObject(JsonObj));
+                        bPropertySet = ParseComplexPropertyValue(JsonValue, Property, FoundWidget, ErrorMessage);
+                    }
+                }
+                else
+                {
+                    ErrorMessage = FString::Printf(TEXT("Invalid JSON for struct property '%s'"), *Request.PropertyPath);
+                }
             }
         }
     }

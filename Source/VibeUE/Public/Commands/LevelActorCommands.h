@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -66,6 +66,9 @@ private:
 	TSharedPtr<FJsonObject> HandleDetach(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleSelect(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleRename(const TSharedPtr<FJsonObject>& Params);
+
+	// Help
+	TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
 
 	// Utility
 	TSharedPtr<FJsonObject> CreateErrorResponse(const FString& Code, const FString& Message);

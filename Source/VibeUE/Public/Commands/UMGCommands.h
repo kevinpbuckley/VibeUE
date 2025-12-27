@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -31,6 +31,13 @@ public:
      * @return JSON response with results or error
      */
     TSharedPtr<FJsonObject> HandleCommand(const FString& CommandType, const TSharedPtr<FJsonObject>& Params);
+
+    /**
+     * Handle help request for manage_umg_widget tool
+     * @param Params - Optional parameters including help_action for specific action help
+     * @return JSON response with all available actions and usage information
+     */
+    TSharedPtr<FJsonObject> HandleHelp(const TSharedPtr<FJsonObject>& Params);
 
 private:
     /**

@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -60,6 +60,7 @@ private:
 	TSharedPtr<FSocket> ListenerSocket;
 	TSharedPtr<FSocket> ConnectionSocket;
 	FRunnableThread* ServerThread;
+	FMCPServerRunnable* ServerRunnable;
 
 	// Server configuration
 	FIPv4Address ServerAddress;

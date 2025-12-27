@@ -1,13 +1,69 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Commands/MaterialCommands.h"
 #include "Services/Material/MaterialService.h"
 #include "Core/ServiceContext.h"
+#include "Core/JsonValueHelper.h"
+#include "Utils/HelpFileReader.h"
+#include "Utils/ParamValidation.h"
 #include "Materials/MaterialInstanceConstant.h"
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogMaterialCommands, Log, All);
+
+// Parameter validation for manage_material actions
+namespace MaterialParams
+{
+	inline const TArray<FString>& CreateParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("destination_path"), TEXT("material_name"), TEXT("initial_properties")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& CreateInstanceParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("parent_material_path"), TEXT("destination_path"), TEXT("instance_name"),
+			TEXT("scalar_parameters"), TEXT("vector_parameters"), TEXT("texture_parameters")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& MaterialPathParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& PropertyParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("property_name"), TEXT("property_value")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& ParameterParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("material_path"), TEXT("parameter_name"), TEXT("default_value")
+		};
+		return Params;
+	}
+	
+	inline const TArray<FString>& InstanceParams()
+	{
+		static const TArray<FString> Params = {
+			TEXT("instance_path"), TEXT("parameter_name"), TEXT("value")
+		};
+		return Params;
+	}
+}
 
 FMaterialCommands::FMaterialCommands()
 {
@@ -60,6 +116,12 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	Action = Action.ToLower();
 	UE_LOG(LogMaterialCommands, Display, TEXT("MaterialCommands: Handling action '%s'"), *Action);
 
+	// Help action
+	if (Action == TEXT("help"))
+	{
+		return HandleHelp(Params);
+	}
+
 	// Lifecycle actions
 	if (Action == TEXT("create"))
 	{
@@ -80,6 +142,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 	else if (Action == TEXT("refresh_editor"))
 	{
 		return HandleRefreshEditor(Params);
+	}
+	else if (Action == TEXT("open") || Action == TEXT("open_in_editor"))
+	{
+		return HandleOpenInEditor(Params);
 	}
 	// Information actions
 	else if (Action == TEXT("get_info"))
@@ -175,11 +241,13 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCommand(const FString& CommandT
 		
 		// Add array of available commands
 		TArray<TSharedPtr<FJsonValue>> AvailableCommands;
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("help")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("create_instance")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("save")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("compile")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("refresh_editor")));
+		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("open")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("get_info")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("summarize")));
 		AvailableCommands.Add(MakeShared<FJsonValueString>(TEXT("list_properties")));
@@ -221,11 +289,15 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCreate(const TSharedPtr<FJsonOb
 
 	if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("destination_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("destination_path is required"),
+			MaterialParams::CreateParams());
 	}
 	if (!Params->TryGetStringField(TEXT("material_name"), MaterialName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_name is required"),
+			MaterialParams::CreateParams());
 	}
 
 	FMaterialCreateParams CreateParams;
@@ -266,15 +338,21 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCreateInstance(const TSharedPtr
 
 	if (!Params->TryGetStringField(TEXT("parent_material_path"), ParentMaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parent_material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("parent_material_path is required"),
+			MaterialParams::CreateInstanceParams());
 	}
 	if (!Params->TryGetStringField(TEXT("destination_path"), DestinationPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("destination_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("destination_path is required"),
+			MaterialParams::CreateInstanceParams());
 	}
 	if (!Params->TryGetStringField(TEXT("instance_name"), InstanceName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("instance_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("instance_name is required"),
+			MaterialParams::CreateInstanceParams());
 	}
 
 	FMaterialInstanceCreateParams CreateParams;
@@ -302,26 +380,11 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCreateInstance(const TSharedPtr
 	{
 		for (const auto& Pair : (*VectorParamsObj)->Values)
 		{
-			// Vector parameters can be arrays [R, G, B, A] or strings "(R=x,G=x,B=x,A=x)"
-			const TArray<TSharedPtr<FJsonValue>>* ArrayValue;
-			FString StringValue;
-			if (Pair.Value->TryGetArray(ArrayValue) && ArrayValue->Num() >= 3)
+			// Use FJsonValueHelper for robust color parsing (arrays, objects, hex, named colors)
+			FLinearColor Color;
+			if (FJsonValueHelper::TryGetLinearColor(Pair.Value, Color))
 			{
-				FLinearColor Color(
-					static_cast<float>((*ArrayValue)[0]->AsNumber()),
-					static_cast<float>((*ArrayValue)[1]->AsNumber()),
-					static_cast<float>((*ArrayValue)[2]->AsNumber()),
-					ArrayValue->Num() >= 4 ? static_cast<float>((*ArrayValue)[3]->AsNumber()) : 1.0f
-				);
 				CreateParams.VectorParameters.Add(Pair.Key, Color);
-			}
-			else if (Pair.Value->TryGetString(StringValue))
-			{
-				FLinearColor Color;
-				if (Color.InitFromString(StringValue))
-				{
-					CreateParams.VectorParameters.Add(Pair.Key, Color);
-				}
 			}
 		}
 	}
@@ -358,7 +421,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSave(const TSharedPtr<FJsonObje
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	auto Result = Service->SaveMaterial(MaterialPath);
@@ -378,7 +443,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleCompile(const TSharedPtr<FJsonO
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	auto Result = Service->CompileMaterial(MaterialPath);
@@ -398,7 +465,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleRefreshEditor(const TSharedPtr<
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	auto Result = Service->RefreshMaterialEditor(MaterialPath);
@@ -413,6 +482,42 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleRefreshEditor(const TSharedPtr<
 	return Response;
 }
 
+TSharedPtr<FJsonObject> FMaterialCommands::HandleOpenInEditor(const TSharedPtr<FJsonObject>& Params)
+{
+	FString MaterialPath;
+	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
+	{
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
+	}
+
+	// Load the material asset
+	UObject* Asset = StaticLoadObject(UMaterial::StaticClass(), nullptr, *MaterialPath);
+	if (!Asset)
+	{
+		// Try loading as material instance
+		Asset = StaticLoadObject(UMaterialInstance::StaticClass(), nullptr, *MaterialPath);
+	}
+	
+	if (!Asset)
+	{
+		return CreateErrorResponse(TEXT("MATERIAL_NOT_FOUND"), 
+			FString::Printf(TEXT("Material not found: %s"), *MaterialPath));
+	}
+
+	// Open in asset editor
+	if (GEditor)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(Asset);
+	}
+
+	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
+	Response->SetStringField(TEXT("material_path"), MaterialPath);
+	Response->SetStringField(TEXT("message"), TEXT("Material opened in editor"));
+	return Response;
+}
+
 //-----------------------------------------------------------------------------
 // Information Actions
 //-----------------------------------------------------------------------------
@@ -422,7 +527,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleGetInfo(const TSharedPtr<FJsonO
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	auto Result = Service->GetMaterialInfo(MaterialPath);
@@ -479,7 +586,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSummarize(const TSharedPtr<FJso
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	auto InfoResult = Service->GetMaterialInfo(MaterialPath);
@@ -652,7 +761,9 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleListProperties(const TSharedPtr
 	FString MaterialPath;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::MaterialPathParams());
 	}
 
 	bool bIncludeAdvanced = false;
@@ -745,11 +856,15 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleGetProperty(const TSharedPtr<FJ
 	FString MaterialPath, PropertyName;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::PropertyParams());
 	}
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("property_name is required"),
+			MaterialParams::PropertyParams());
 	}
 
 	auto Result = Service->GetProperty(MaterialPath, PropertyName);
@@ -770,11 +885,15 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleGetPropertyInfo(const TSharedPt
 	FString MaterialPath, PropertyName;
 	if (!Params->TryGetStringField(TEXT("material_path"), MaterialPath))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("material_path is required"),
+			MaterialParams::PropertyParams());
 	}
 	if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
+		return ParamValidation::MissingParamsError(
+			TEXT("property_name is required"),
+			MaterialParams::PropertyParams());
 	}
 
 	auto Result = Service->GetPropertyInfo(MaterialPath, PropertyName);
@@ -856,22 +975,23 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetProperty(const TSharedPtr<FJ
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters (property_value is the documented parameter)
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
-		// Try to get as other types
+		// Try to get as other types from both parameter names
 		bool bBoolValue;
 		double NumValue;
-		if (Params->TryGetBoolField(TEXT("value"), bBoolValue))
+		if (Params->TryGetBoolField(TEXT("value"), bBoolValue) || Params->TryGetBoolField(TEXT("property_value"), bBoolValue))
 		{
 			Value = bBoolValue ? TEXT("true") : TEXT("false");
 		}
-		else if (Params->TryGetNumberField(TEXT("value"), NumValue))
+		else if (Params->TryGetNumberField(TEXT("value"), NumValue) || Params->TryGetNumberField(TEXT("property_value"), NumValue))
 		{
 			Value = FString::SanitizeFloat(NumValue);
 		}
 		else
 		{
-			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 		}
 	}
 
@@ -914,33 +1034,80 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetProperties(const TSharedPtr<
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("material_path is required"));
 	}
 
-	const TSharedPtr<FJsonObject>* PropsObj;
-	if (!Params->TryGetObjectField(TEXT("properties"), PropsObj))
-	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("properties object is required"));
-	}
-
 	TMap<FString, FString> Properties;
-	for (const auto& Pair : (*PropsObj)->Values)
+	
+	// Try to get properties as an object first: {"properties": {"BlendMode": "Masked", "TwoSided": true}}
+	const TSharedPtr<FJsonObject>* PropsObj;
+	if (Params->TryGetObjectField(TEXT("properties"), PropsObj))
 	{
-		FString Value;
-		if (Pair.Value->TryGetString(Value))
+		for (const auto& Pair : (*PropsObj)->Values)
 		{
-			Properties.Add(Pair.Key, Value);
+			FString Value;
+			if (Pair.Value->TryGetString(Value))
+			{
+				Properties.Add(Pair.Key, Value);
+			}
+			else
+			{
+				bool bBoolValue;
+				double NumValue;
+				if (Pair.Value->TryGetBool(bBoolValue))
+				{
+					Properties.Add(Pair.Key, bBoolValue ? TEXT("true") : TEXT("false"));
+				}
+				else if (Pair.Value->TryGetNumber(NumValue))
+				{
+					Properties.Add(Pair.Key, FString::SanitizeFloat(NumValue));
+				}
+			}
+		}
+	}
+	// Also try array format: {"properties": [{"name": "BlendMode", "value": "Masked"}, ...]}
+	else
+	{
+		const TArray<TSharedPtr<FJsonValue>>* PropsArray;
+		if (Params->TryGetArrayField(TEXT("properties"), PropsArray))
+		{
+			for (const TSharedPtr<FJsonValue>& ArrayItem : *PropsArray)
+			{
+				const TSharedPtr<FJsonObject>* PropObj;
+				if (ArrayItem->TryGetObject(PropObj))
+				{
+					FString PropName, PropValue;
+					if ((*PropObj)->TryGetStringField(TEXT("name"), PropName))
+					{
+						// Get value as string, bool, or number
+						if ((*PropObj)->TryGetStringField(TEXT("value"), PropValue))
+						{
+							Properties.Add(PropName, PropValue);
+						}
+						else
+						{
+							bool bBoolValue;
+							double NumValue;
+							if ((*PropObj)->TryGetBoolField(TEXT("value"), bBoolValue))
+							{
+								Properties.Add(PropName, bBoolValue ? TEXT("true") : TEXT("false"));
+							}
+							else if ((*PropObj)->TryGetNumberField(TEXT("value"), NumValue))
+							{
+								Properties.Add(PropName, FString::SanitizeFloat(NumValue));
+							}
+						}
+					}
+				}
+			}
 		}
 		else
 		{
-			bool bBoolValue;
-			double NumValue;
-			if (Pair.Value->TryGetBool(bBoolValue))
-			{
-				Properties.Add(Pair.Key, bBoolValue ? TEXT("true") : TEXT("false"));
-			}
-			else if (Pair.Value->TryGetNumber(NumValue))
-			{
-				Properties.Add(Pair.Key, FString::SanitizeFloat(NumValue));
-			}
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), 
+				TEXT("properties is required. Accepts object format {\"BlendMode\": \"Masked\"} or array format [{\"name\": \"BlendMode\", \"value\": \"Masked\"}]"));
 		}
+	}
+	
+	if (Properties.Num() == 0)
+	{
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("No valid properties found to set"));
 	}
 
 	auto Result = Service->SetProperties(MaterialPath, Properties);
@@ -1044,16 +1211,17 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetParameterDefault(const TShar
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
 		double NumValue;
-		if (Params->TryGetNumberField(TEXT("value"), NumValue))
+		if (Params->TryGetNumberField(TEXT("value"), NumValue) || Params->TryGetNumberField(TEXT("property_value"), NumValue))
 		{
 			Value = FString::SanitizeFloat(NumValue);
 		}
 		else
 		{
-			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 		}
 	}
 
@@ -1225,9 +1393,10 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceProperty(const TShar
 	{
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("property_name is required"));
 	}
-	if (!Params->TryGetStringField(TEXT("value"), Value))
+	// Try both "value" and "property_value" parameters
+	if (!Params->TryGetStringField(TEXT("value"), Value) && !Params->TryGetStringField(TEXT("property_value"), Value))
 	{
-		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required"));
+		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value or property_value is required"));
 	}
 
 	auto Result = Service->SetInstanceProperty(InstancePath, PropertyName, Value);
@@ -1325,22 +1494,18 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceVectorParameter(cons
 		return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("parameter_name is required"));
 	}
 	
-	// Parse vector value from R, G, B, A fields or from value object
+	// Use FJsonValueHelper for robust color parsing (arrays, objects, hex, named colors)
 	FLinearColor ColorValue = FLinearColor::Black;
 	
-	const TSharedPtr<FJsonObject>* ValueObj;
-	if (Params->TryGetObjectField(TEXT("value"), ValueObj))
+	// Try to get value from 'value' field first
+	TSharedPtr<FJsonValue> ValueField = Params->TryGetField(TEXT("value"));
+	if (ValueField.IsValid() && FJsonValueHelper::TryGetLinearColor(ValueField, ColorValue))
 	{
-		double R, G, B, A;
-		(*ValueObj)->TryGetNumberField(TEXT("r"), R);
-		(*ValueObj)->TryGetNumberField(TEXT("g"), G);
-		(*ValueObj)->TryGetNumberField(TEXT("b"), B);
-		(*ValueObj)->TryGetNumberField(TEXT("a"), A);
-		ColorValue = FLinearColor(R, G, B, A);
+		// Successfully parsed from value field
 	}
 	else
 	{
-		// Try to get individual fields directly
+		// Fallback: Try to get individual R, G, B, A fields directly from params
 		double R, G, B, A = 1.0;
 		if (Params->TryGetNumberField(TEXT("r"), R) && Params->TryGetNumberField(TEXT("g"), G) && Params->TryGetNumberField(TEXT("b"), B))
 		{
@@ -1349,7 +1514,7 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSetInstanceVectorParameter(cons
 		}
 		else
 		{
-			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value object with r,g,b,a fields is required"));
+			return CreateErrorResponse(TEXT("MISSING_PARAM"), TEXT("value is required. Supports: arrays [r,g,b,a], objects {R,G,B,A}, hex '#RRGGBB', or named colors like 'red', 'orange'"));
 		}
 	}
 
@@ -1459,4 +1624,14 @@ TSharedPtr<FJsonObject> FMaterialCommands::HandleSaveInstance(const TSharedPtr<F
 	Response->SetStringField(TEXT("instance_path"), InstancePath);
 	Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Saved material instance: %s"), *InstancePath));
 	return Response;
+}
+
+//-----------------------------------------------------------------------------
+// Help Action
+//-----------------------------------------------------------------------------
+
+TSharedPtr<FJsonObject> FMaterialCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
+{
+	// Use file-based help system
+	return FHelpFileReader::HandleHelp(TEXT("manage_material"), Params);
 }

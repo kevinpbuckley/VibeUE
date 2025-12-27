@@ -1,4 +1,4 @@
-// Copyright 2025 Vibe AI. All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #pragma once
 
@@ -26,12 +26,15 @@ struct FMCPServerState
     /** Server configuration */
     FMCPServerConfig Config;
     
-    /** Process handle if running */
+    /** Process handle if running (stdio only) */
     FProcHandle ProcessHandle;
     
     /** Pipe handles for stdio communication */
     void* ReadPipe = nullptr;
     void* WritePipe = nullptr;
+    
+    /** HTTP session ID for stateful connections */
+    FString SessionId;
     
     /** Whether server is initialized and ready */
     bool bInitialized = false;
@@ -44,6 +47,12 @@ struct FMCPServerState
     
     /** Pending requests awaiting responses */
     TMap<int32, TFunction<void(TSharedPtr<FJsonObject>)>> PendingRequests;
+    
+    /** Check if this is an HTTP server */
+    bool IsHttpServer() const { return Config.Type == TEXT("http"); }
+    
+    /** Check if this is a stdio server */
+    bool IsStdioServer() const { return Config.Type == TEXT("stdio"); }
 };
 
 /**
@@ -60,9 +69,8 @@ public:
     
     /**
      * Initialize the MCP client
-     * @param bEngineMode True for Engine (FAB) install, False for Local (open source) install
      */
-    void Initialize(bool bEngineMode);
+    void Initialize();
     
     /** Shutdown all server connections */
     void Shutdown();
@@ -100,11 +108,11 @@ public:
      */
     void ExecuteTool(const FMCPToolCall& ToolCall, FOnToolExecuted OnComplete);
     
-    /** Get all available tools */
-    const TArray<FMCPTool>& GetAvailableTools() const { return AllTools; }
+    /** Get MCP tools discovered from external servers */
+    const TArray<FMCPTool>& GetMCPTools() const { return MCPTools; }
     
-    /** Get count of available tools */
-    int32 GetToolCount() const { return AllTools.Num(); }
+    /** Get count of MCP tools from external servers */
+    int32 GetMCPToolCount() const { return MCPTools.Num(); }
     
     /** Get count of connected servers */
     int32 GetConnectedServerCount() const;
@@ -115,44 +123,6 @@ public:
     /** Get the loaded configuration */
     const FMCPConfiguration& GetConfiguration() const { return Configuration; }
     
-    /** Get current mode (Engine or Local) */
-    bool IsEngineMode() const { return bEngineMode; }
-    
-    /**
-     * Find the VibeUE plugin folder in the Engine Marketplace directory
-     * FAB installs use random folder names, so we scan for the vibe_ue_server.py file
-     * @param OutFolderName Returns the folder name if found
-     * @return True if VibeUE was found in the Marketplace
-     */
-    static bool FindVibeUEInMarketplace(FString& OutFolderName);
-    
-    /**
-     * Get the full path to the VibeUE Python content folder for Engine mode
-     * @return Full path if found, empty string if not found
-     */
-    static FString GetEngineVibeUEPythonPath();
-    
-    /**
-     * Check if VibeUE is installed in Local mode (Project/Plugins)
-     * @return True if VibeUE is found in project plugins
-     */
-    static bool IsLocalModeAvailable();
-    
-    /**
-     * Check if VibeUE is installed in Engine mode (Engine/Plugins/Marketplace)
-     * @return True if VibeUE is found in engine marketplace
-     */
-    static bool IsEngineModeAvailable();
-    
-    /**
-     * Determine the default mode based on what's installed
-     * Priority: Saved preference > Local mode (if available) > Engine mode
-     * @param bHasSavedPreference Output: true if a saved preference exists
-     * @param bSavedEngineMode Output: the saved preference value (if exists)
-     * @return The recommended default mode
-     */
-    static bool DetermineDefaultMode(bool& bHasSavedPreference, bool& bSavedEngineMode);
-    
 private:
     /** MCP configuration loaded from mcp.json */
     FMCPConfiguration Configuration;
@@ -160,11 +130,8 @@ private:
     /** State for each server */
     TMap<FString, TSharedPtr<FMCPServerState>> ServerStates;
     
-    /** All available tools from all servers */
-    TArray<FMCPTool> AllTools;
-    
-    /** Whether running in Engine mode (FAB install) vs Local mode */
-    bool bEngineMode = false;
+    /** MCP tools discovered from external MCP servers */
+    TArray<FMCPTool> MCPTools;
     
     /** Resolve variable substitutions in config strings */
     FString ResolveConfigVariables(const FString& Input) const;
@@ -172,8 +139,11 @@ private:
     /** Send a JSON-RPC request to a server */
     bool SendRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params = nullptr, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse = nullptr);
     
-    /** Read response from server pipe */
+    /** Read response from server pipe (stdio only) */
     bool ReadResponse(FMCPServerState& State, FString& OutResponse);
+    
+    /** Send HTTP request to MCP server */
+    bool SendHttpRequest(FMCPServerState& State, const FString& Method, TSharedPtr<FJsonObject> Params, TFunction<void(TSharedPtr<FJsonObject>)> OnResponse);
     
     /** Process a JSON-RPC response */
     void ProcessResponse(FMCPServerState& State, const FString& ResponseJson);
