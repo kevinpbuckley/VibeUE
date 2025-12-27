@@ -141,6 +141,9 @@ private:
     /** Flag: currently inside a <tool_call> block (Qwen models output these in text) */
     bool bInToolCallBlock;
 
+    /** Flag: currently inside a <function=...> block (XML-style tool call format) */
+    bool bInFunctionBlock;
+
     /** Flag: currently inside a thinking block (<think>, <thinking>, <reasoning>) */
     bool bInThinkingBlock;
 

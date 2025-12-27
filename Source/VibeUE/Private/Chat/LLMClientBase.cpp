@@ -132,6 +132,7 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
 FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
     , bInToolCallBlock(false)
+    , bInFunctionBlock(false)
 {
 }
 
@@ -147,6 +148,7 @@ void FLLMClientBase::ResetStreamingState()
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInToolCallBlock = false;
+    bInFunctionBlock = false;
     bInThinkingBlock = false;
 }
 
@@ -526,6 +528,9 @@ FString FLLMClientBase::FilterToolCallTags(const FString& Content)
     
     // Filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
     CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
+    
+    // Filter <function=...> XML-style tool call tags (some models output this format)
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<function="), TEXT("</function>"), bInFunctionBlock);
     
     // Filter bracket-style [tool_call: ...] or [Tool call: ...] patterns
     // Use a simple state-based approach for streaming (can't use regex on partial chunks)
