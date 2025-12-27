@@ -32,7 +32,7 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 
 🎯 TWO WAYS TO USE:
 
-• In-Editor Chat: Open the chat window and start creating - no setup needed!
+• In-Editor Chat: Get a free API key at vibeue.com, open chat window, start creating!
 • External MCP: Connect VS Code, Cursor, Claude Desktop via HTTP MCP
 
 

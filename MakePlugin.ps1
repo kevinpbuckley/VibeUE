@@ -79,6 +79,7 @@ $ExcludeDevFiles = @(
     "HANDLER_AUDIT.md", 
     "HANDLER_AUDIT_COMPLETE.md",
     "ISSUE_SUMMARY.md",
+    "BUILD_PLUGIN.md",       # Development documentation not needed by end users
     "BuildPlugin.bat",
     "MCP-Inspector.bat",
     "MakePlugin.ps1",        # Build script not needed by end users
