@@ -1,4 +1,4 @@
-// Copyright Kevin Buckley 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Services/DataAsset/DataAssetLifecycleService.h"
 #include "Services/DataAsset/DataAssetPropertyService.h"

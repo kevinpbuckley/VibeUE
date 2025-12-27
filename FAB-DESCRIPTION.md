@@ -1,44 +1,50 @@
 🚀 VibeUE - AI-Powered Unreal Engine Development
 
-Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE is a Model Context Protocol (MCP) server that enables VS Code, Claude Desktop, Cursor, and Windsurf to control Unreal Engine through natural language commands.
+Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Desktop, Cursor, and Windsurf.
 
 
 ✨ WHAT MAKES VIBEUE SPECIAL:
 
-• 9 Reflection Based Multi-Action Tools with 70+ Combined Actions
+• 🎮 IN-EDITOR AI CHAT - Built-in chat client inside Unreal Engine!
+• 14 Reflection-Based Multi-Action Tools with 173 Combined Actions
+• Native C++ HTTP MCP Server - No Python dependency required
 • Complete Blueprint lifecycle management (create, compile, modify)
-• Blueprint Component, Variable and Graph support. 
-• Advanced UMG widget development with modern UI theming
-• Function and Node Support!
-• Full Feature setting of Properties and Settings.
-• Real-time AI assistant integration via natural language
-• Agentic development - let AI handle the tedious Blueprint work
+• Blueprint Components, Variables, Functions, and Graph Nodes
+• Advanced UMG widget development with property management & events
+• Data Assets & Data Tables - Create and manage game data
+• Enhanced Input System - Actions, Mapping Contexts, Modifiers & Triggers
+• Material & Material Instance editing with node graph support
+• Level Actor management - spawn, transform, query actors
+• FREE AI tier included - Get a free API key at vibeue.com!
 
 
 🛠️ CORE CAPABILITIES:
 
+• In-Editor AI Chat: Chat with AI directly in Unreal - understand, learn, create
 • Blueprint Automation: Node graphs, functions, variables, components
 • UMG Mastery: Widget creation, styling, property management, events
-• Asset Management: Import, export, search, organize your content
-• Development Acceleration: Python-powered MCP server with TCP communication
+• Material Editor: Create materials, add nodes, connect pins, set parameters
+• Data Management: Data Assets & Data Tables with full CRUD operations
+• Enhanced Input: Input Actions, Mapping Contexts, Modifiers, Triggers
+• Asset Management: Import, export, search, save, organize content
+• Level Actors: Spawn, transform, set properties, attach/detach actors
 
 
-🎯 PERFECT FOR:
+🎯 TWO WAYS TO USE:
 
-• Developers who want AI-assisted Blueprint creation
-• Teams looking to accelerate UMG widget development
-• Studios adopting agentic development workflows
-• Anyone tired of repetitive Blueprint tasks
+• In-Editor Chat: Open the chat window and start creating - no setup needed!
+• External MCP: Connect VS Code, Cursor, Claude Desktop via HTTP MCP
 
 
 📚 COMPREHENSIVE RESOURCES:
 
 • Complete Documentation: https://www.vibeue.com/docs
-• Tool Reference Guide: https://www.vibeue.com/tools  
+• Tool Reference Guide: https://www.vibeue.com/tools  
 • Video Tutorials: https://www.vibeue.com/videos
+• Free API Key: https://www.vibeue.com (sign up free!)
 
 
-Transform your Unreal Engine development from manual to magical with VibeUE's AI-powered automation. Experience the future of agentic development today!
+Transform your Unreal Engine development from manual to magical. Understand existing Blueprints, learn how materials work, and create new content through natural conversation!
 
 
-Requirements: Windows,  Unreal Engine 5.7+, EditorScriptingUtilities Plugin
+Requirements: Windows, Unreal Engine 5.7+, EditorScriptingUtilities Plugin
