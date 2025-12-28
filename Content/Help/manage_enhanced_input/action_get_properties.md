@@ -6,7 +6,7 @@ Get the properties and configuration of an Input Action.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| ActionPath | string | Yes | Content path to the Input Action |
+| action_path | string | Yes | Content path to the Input Action (aliases: ActionPath, asset_path) |
 
 ## Examples
 
@@ -14,7 +14,7 @@ Get the properties and configuration of an Input Action.
 ```json
 {
   "Action": "action_get_properties",
-  "ParamsJson": "{\"ActionPath\": \"/Game/Input/IA_Move\"}"
+  "ParamsJson": "{\"action_path\": \"/Game/Input/IA_Move\"}"
 }
 ```
 

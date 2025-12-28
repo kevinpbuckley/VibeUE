@@ -1,19 +1,17 @@
 // Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Utils/HelpFileReader.h"
+#include "Utils/VibeUEPaths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
-#include "Interfaces/IPluginManager.h"
 #include "HAL/FileManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogHelpFileReader, Log, All);
 
 FString FHelpFileReader::GetHelpBasePath()
 {
-	// Get plugin content directory
-	FString PluginDir = FPaths::Combine(FPaths::ProjectPluginsDir(), TEXT("VibeUE"));
-	FString HelpPath = FPaths::Combine(PluginDir, TEXT("Content"), TEXT("Help"));
-	return HelpPath;
+	// Use centralized path utility that handles FAB/marketplace installs
+	return FVibeUEPaths::GetHelpDir();
 }
 
 bool FHelpFileReader::ReadHelpFile(const FString& FilePath, FString& OutContent)
