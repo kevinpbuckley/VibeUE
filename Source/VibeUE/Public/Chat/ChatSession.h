@@ -308,6 +308,9 @@ public:
     /** Continue tool calls after iteration limit was reached (user chose to continue) */
     void ContinueAfterIterationLimit();
 
+    /** Check if session is waiting for user to decide whether to continue after iteration limit */
+    bool IsWaitingForUserToContinue() const { return bWaitingForUserToContinue; }
+
     // ============ MCP Server Settings (expose internal tools via Streamable HTTP) ============
     
     /** Get/Set MCP Server enabled state (default: true) */

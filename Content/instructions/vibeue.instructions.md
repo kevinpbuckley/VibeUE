@@ -64,41 +64,16 @@ Example:
 ## CRITICAL: Error Recovery Pattern
 
 **If ANY VibeUE MCP tool call fails with an error:**
-1. **DO NOT** retry the same command immediately
-2. **IMMEDIATELY** call that tool with `action="help"` to learn the correct parameters
-3. **READ** the help response to understand what went wrong
-4. **FIX** the command based on the help documentation
-5. **THEN** retry with correct parameters
-6. **IF STILL FAILING** after help, ask the user for guidance
-
-### ⚠️ MAXIMUM RETRY LIMIT - PREVENT INFINITE LOOPS
-**You may ONLY retry a failed tool call TWICE maximum.** After that:
-- **STOP** and report the failure to the user
-- **MOVE ON** to the next task or ask the user for guidance
-
-**Do not loop more than 3 times attempting to fix errors from the same tool.** If the third try fails, ask the user for help.
+1. **IMMEDIATELY** call that tool with `action="help"` to learn the correct parameters
+2. **READ** the help response to understand what went wrong
+3. **FIX** the command based on the help documentation
+4. **THEN** retry with correct parameters
+5. **IF STILL FAILING** after help, ask the user for guidance
 
 ### ⚠️ RECOGNIZE UNSUPPORTED PROPERTIES - STOP IMMEDIATELY
 **If a property returns `"editable": false` or `"UnsupportedType"`, DO NOT try to modify it!**
 - These properties CANNOT be changed via the MCP tools
-- **STOP immediately** and explain why to the user
-- Suggest alternatives (e.g., use `bind_events` action for delegate binding instead of `set_property`)
-
-### ⚠️ STOP REPEATING IDENTICAL TOOL CALLS
-**If you call the same tool with the same parameters and get the same result, DO NOT call it again!**
-- The result will not change on subsequent calls
-- If the result doesn't contain what you expected, the tool may not support that query
-- After ONE call, either:
-  - Use the result as-is, OR
-  - Try a different action/approach, OR
-  - Call `action="help"` to learn the correct usage
-
-**When You're Stuck:**
-If you find yourself making the same or similar tool calls repeatedly without success:
-1. Stop and take stock of what you've tried
-2. Summarize your progress to the user
-3. Explain what's blocking you
-4. Ask for guidance or suggest a different approach
+- Explain why to the user and suggest alternatives (e.g., use `bind_events` action for delegate binding instead of `set_property`)
 
 **Remember: ALL VibeUE tools support `action="help"` - use it whenever a tool fails!**
 
@@ -144,20 +119,30 @@ You have access to tools that directly manipulate Unreal Engine:
 
 **For tool-specific guidance, patterns, and common mistakes, call `action="help"` on any tool!**
 
+
+**To delete ANY type of asset (Input Actions, Blueprints, Materials, Data Assets, Widgets, etc.), use the `manage_asset` tool with `action="delete"`.**
+
+
+
+**The `manage_asset` tool is the UNIVERSAL asset manager - use it for:**
+- `delete` - Delete any asset type
+- `search` - Find assets by name/type
+- `save_all` - Save all dirty assets
+- `exists` - Check if an asset exists
+- `get_info` - Get asset metadata
+
 ## Getting Help with Inline Documentation
 
 **EVERY VibeUE MCP tool has built-in help via `action="help"`!** This is the primary way to get guidance and learn about available actions.
 
 ### How to Access Help
 
-```python
+```
 # Get overview of ANY VibeUE tool and see all its actions
-tool(action="help")
-# ... works with ALL VibeUE MCP tools
+tool(Action="help")
 
 # Get detailed help for a specific action
-tool(action="help", help_action="create")
-# ... works with ALL actions in ALL VibeUE MCP tools
+tool(Action="help", ParamsJson="{\"help_action\": \"create\"}")
 ```
 
 ### When to Use Help
@@ -178,8 +163,8 @@ tool(action="help", help_action="create")
 
 ### 3. Use Inline Help When Needed
 Before using an unfamiliar action, check the help:
-```python
-manage_blueprint(action="help", help_action="create")
+```
+manage_blueprint(Action="help", ParamsJson="{\"help_action\": \"create\"}")
 ```
 
 ### 4. Use Full Paths
@@ -189,8 +174,8 @@ Always use full package paths for assets:
 
 ### 5. Save Your Work
 Always save after making changes:
-```python
-manage_asset(action="save_all")  # Save all dirty assets
+```
+manage_asset(Action="save_all")
 ```
 
 ## CRITICAL: Component and Asset Protection Rules
@@ -247,22 +232,15 @@ When you encounter errors:
    - Verify node connections are complete
    - Use `manage_blueprint(action="get_info")` to inspect
 
-4. **CRITICAL: Same error repeating?**
-   - **DO NOT retry the same command multiple times**
-   - **IMMEDIATELY use inline help to learn the correct parameters**
-   - Read the help response carefully for required parameters
-   - **Never repeat a failing command more than once without checking help first**
-
 ## Best Practices
 
 1. **Be Incremental**: Make small changes and compile frequently
-2. **Use Inline Help on Errors**: If a command fails, call `action="help"` immediately to learn correct parameters
-3. **Never Retry Blindly**: Don't repeat the same failing command - get help first, then fix it
-4. **Save Often**: Use `manage_asset(action="save_all")` after changes
-5. **Verify Results**: Use `get_info` actions to confirm changes took effect
-6. **Diagnose Connection Issues Only When Needed**: If tools fail with connection errors, use `check_unreal_connection`
-7. **Follow Patterns**: Start with help to learn established workflows
-8. **Read Error Messages**: They tell you exactly what's wrong (e.g., "actor_class is required")
+2. **Use Inline Help on Errors**: If a command fails, call `action="help"` to learn correct parameters
+3. **Save Often**: Use `manage_asset(action="save_all")` after changes
+4. **Verify Results**: Use `get_info` actions to confirm changes took effect
+5. **Diagnose Connection Issues Only When Needed**: If tools fail with connection errors, use `check_unreal_connection`
+6. **Follow Patterns**: Start with help to learn established workflows
+7. **Read Error Messages**: They tell you exactly what's wrong (e.g., "actor_class is required")
 
 ## Communication Style
 
