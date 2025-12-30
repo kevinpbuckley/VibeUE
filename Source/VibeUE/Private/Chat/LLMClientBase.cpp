@@ -2,6 +2,7 @@
 
 #include "Chat/LLMClientBase.h"
 #include "Chat/ChatSession.h"
+#include "Utils/VibeUEPaths.h"
 #include "HttpModule.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonReader.h"
@@ -38,13 +39,12 @@ FString FLLMClientBase::SanitizeForLLM(const FString& Input)
 FString FLLMClientBase::LoadSystemPromptFromFile()
 {
     // Try to load all instruction .md files from the instructions folder
-    FString InstructionsFolder;
+    FString InstructionsFolder = FVibeUEPaths::GetInstructionsDir();
     FString CombinedInstructions;
     IFileManager& FileManager = IFileManager::Get();
     
-    // Priority 1: Project plugins (local development)
-    InstructionsFolder = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Content") / TEXT("instructions");
-    if (FPaths::DirectoryExists(InstructionsFolder))
+    // Use centralized path utility that handles FAB/marketplace installs
+    if (!InstructionsFolder.IsEmpty() && FPaths::DirectoryExists(InstructionsFolder))
     {
         TArray<FString> FoundFiles;
         FileManager.FindFiles(FoundFiles, *(InstructionsFolder / TEXT("*.md")), true, false);
@@ -74,50 +74,8 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
         }
     }
     
-    // Priority 2: Engine marketplace (FAB install) - scan for VibeUE folder
-    FString EngineMarketplacePath = FPaths::EnginePluginsDir() / TEXT("Marketplace");
-    if (FPaths::DirectoryExists(EngineMarketplacePath))
-    {
-        TArray<FString> Directories;
-        FileManager.FindFiles(Directories, *(EngineMarketplacePath / TEXT("*")), false, true);
-        
-        for (const FString& DirName : Directories)
-        {
-            InstructionsFolder = EngineMarketplacePath / DirName / TEXT("Content") / TEXT("instructions");
-            if (FPaths::DirectoryExists(InstructionsFolder))
-            {
-                TArray<FString> FoundFiles;
-                FileManager.FindFiles(FoundFiles, *(InstructionsFolder / TEXT("*.md")), true, false);
-                
-                if (FoundFiles.Num() > 0)
-                {
-                    for (const FString& FileName : FoundFiles)
-                    {
-                        FString FilePath = InstructionsFolder / FileName;
-                        FString FileContent;
-                        if (FFileHelper::LoadFileToString(FileContent, *FilePath))
-                        {
-                            UE_LOG(LogLLMClientBase, Log, TEXT("Loaded instruction file: %s"), *FilePath);
-                            if (!CombinedInstructions.IsEmpty())
-                            {
-                                CombinedInstructions += TEXT("\n\n---\n\n");
-                            }
-                            CombinedInstructions += FileContent;
-                        }
-                    }
-                    
-                    if (!CombinedInstructions.IsEmpty())
-                    {
-                        UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
-                        return CombinedInstructions;
-                    }
-                }
-            }
-        }
-    }
-    
     // Fallback: Built-in minimal prompt
-    UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load instruction files from instructions folder, using fallback prompt"));
+    UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load instruction files from instructions folder (%s), using fallback prompt"), *InstructionsFolder);
     return TEXT(
         "You are an AI assistant integrated into Unreal Engine via the VibeUE plugin. "
         "You help users with Blueprint development, material creation, asset management, "
@@ -132,6 +90,7 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
 FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
     , bInToolCallBlock(false)
+    , bInFunctionBlock(false)
 {
 }
 
@@ -147,6 +106,7 @@ void FLLMClientBase::ResetStreamingState()
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInToolCallBlock = false;
+    bInFunctionBlock = false;
     bInThinkingBlock = false;
 }
 
@@ -526,6 +486,9 @@ FString FLLMClientBase::FilterToolCallTags(const FString& Content)
     
     // Filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
     CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
+    
+    // Filter <function=...> XML-style tool call tags (some models output this format)
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<function="), TEXT("</function>"), bInFunctionBlock);
     
     // Filter bracket-style [tool_call: ...] or [Tool call: ...] patterns
     // Use a simple state-based approach for streaming (can't use regex on partial chunks)

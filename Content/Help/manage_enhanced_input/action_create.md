@@ -6,9 +6,9 @@ Create a new Input Action asset for the Enhanced Input system.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| Path | string | Yes | Content path for the new Input Action |
-| ValueType | string | Yes | Type of value: "Digital" (bool), "Axis1D" (float), "Axis2D" (Vector2D), "Axis3D" (Vector) |
-| Description | string | No | Description of what this action represents |
+| action_name | string | Yes | Name of the Input Action (e.g., "IA_Jump", "IA_Move") |
+| asset_path | string | Yes | Content folder path where asset will be created (e.g., "/Game/Input/Actions") |
+| value_type | string | No | Type of value: "Digital" (bool), "Axis1D" (float), "Axis2D" (Vector2D), "Axis3D" (Vector). Defaults to Axis1D |
 
 ## Examples
 
@@ -16,7 +16,7 @@ Create a new Input Action asset for the Enhanced Input system.
 ```json
 {
   "Action": "action_create",
-  "ParamsJson": "{\"Path\": \"/Game/Input/IA_Jump\", \"ValueType\": \"Digital\", \"Description\": \"Jump action\"}"
+  "ParamsJson": "{\"action_name\": \"IA_Jump\", \"asset_path\": \"/Game/Input/Actions\", \"value_type\": \"Digital\"}"
 }
 ```
 
@@ -24,7 +24,7 @@ Create a new Input Action asset for the Enhanced Input system.
 ```json
 {
   "Action": "action_create",
-  "ParamsJson": "{\"Path\": \"/Game/Input/IA_Move\", \"ValueType\": \"Axis2D\", \"Description\": \"Character movement\"}"
+  "ParamsJson": "{\"action_name\": \"IA_Move\", \"asset_path\": \"/Game/Input/Actions\", \"value_type\": \"Axis2D\"}"
 }
 ```
 
@@ -32,7 +32,7 @@ Create a new Input Action asset for the Enhanced Input system.
 ```json
 {
   "Action": "action_create",
-  "ParamsJson": "{\"Path\": \"/Game/Input/IA_Throttle\", \"ValueType\": \"Axis1D\", \"Description\": \"Vehicle throttle\"}"
+  "ParamsJson": "{\"action_name\": \"IA_Throttle\", \"asset_path\": \"/Game/Input/Actions\", \"value_type\": \"Axis1D\"}"
 }
 ```
 
@@ -40,7 +40,7 @@ Create a new Input Action asset for the Enhanced Input system.
 ```json
 {
   "Action": "action_create",
-  "ParamsJson": "{\"Path\": \"/Game/Input/IA_Look\", \"ValueType\": \"Axis3D\", \"Description\": \"Camera look direction\"}"
+  "ParamsJson": "{\"action_name\": \"IA_Look\", \"asset_path\": \"/Game/Input/Actions\", \"value_type\": \"Axis3D\"}"
 }
 ```
 
@@ -48,10 +48,12 @@ Create a new Input Action asset for the Enhanced Input system.
 
 ```json
 {
-  "Success": true,
-  "ActionPath": "/Game/Input/IA_Jump",
-  "ValueType": "Digital",
-  "Message": "Input Action created successfully"
+  "success": true,
+  "action": "action_create",
+  "service": "action",
+  "message": "Input action 'IA_Jump' created successfully",
+  "asset_path": "/Game/Input/Actions/IA_Jump.IA_Jump",
+  "usage_hint": "Use this asset_path for mapping_add_key_mapping action_path parameter"
 }
 ```
 
@@ -62,3 +64,4 @@ Create a new Input Action asset for the Enhanced Input system.
 - Use Axis2D for movement and look input (WASD, mouse movement)
 - Use Axis3D for full 3D input (VR controllers)
 - Naming convention: IA_ prefix for Input Actions
+- The returned asset_path includes the full reference path needed for other operations

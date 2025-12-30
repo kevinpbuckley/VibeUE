@@ -1044,7 +1044,8 @@ FReply SAIChatWindow::OnSendClicked()
         InputTextBox->SetText(FText::GetEmpty());
         
         // Check if user typed "continue" to resume after iteration limit
-        if (Message.TrimStartAndEnd().ToLower() == TEXT("continue"))
+        // Only intercept if we're actually waiting - otherwise pass through as normal message
+        if (Message.TrimStartAndEnd().ToLower() == TEXT("continue") && ChatSession->IsWaitingForUserToContinue())
         {
             ChatSession->ContinueAfterIterationLimit();
         }

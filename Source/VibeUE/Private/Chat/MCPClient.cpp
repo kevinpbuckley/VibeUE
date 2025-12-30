@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Chat/MCPClient.h"
+#include "Utils/VibeUEPaths.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
@@ -34,21 +35,19 @@ void FMCPClient::Initialize()
 {
     UE_LOG(LogMCPClient, Log, TEXT("MCP Client initializing"));
     
-    // Always look for vibeue.mcp.json - first in plugin folder, then fallback locations
+    // Always look for vibeue.mcp.json - use centralized path utility
     FString ConfigPath;
     
-    // Priority 1: Plugin Config folder
-    ConfigPath = FPaths::ProjectPluginsDir() / TEXT("VibeUE") / TEXT("Config") / TEXT("vibeue.mcp.json");
-    
-    if (!FPaths::FileExists(ConfigPath))
+    // Priority 1: Plugin Config folder (handles FAB/marketplace installs)
+    FString ConfigDir = FVibeUEPaths::GetConfigDir();
+    if (!ConfigDir.IsEmpty())
     {
-        // Priority 2: Engine plugins (for marketplace installs)
-        ConfigPath = FPaths::EnginePluginsDir() / TEXT("Marketplace") / TEXT("VibeUE") / TEXT("Config") / TEXT("vibeue.mcp.json");
+        ConfigPath = ConfigDir / TEXT("vibeue.mcp.json");
     }
     
-    if (!FPaths::FileExists(ConfigPath))
+    if (ConfigPath.IsEmpty() || !FPaths::FileExists(ConfigPath))
     {
-        // Priority 3: Project saved folder (user override)
+        // Priority 2: Project saved folder (user override)
         ConfigPath = FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("vibeue.mcp.json");
     }
     
@@ -61,7 +60,7 @@ void FMCPClient::Initialize()
     }
     else
     {
-        UE_LOG(LogMCPClient, Warning, TEXT("MCP configuration file not found. Searched: Plugin/Config, Engine/Marketplace, Saved/VibeUE"));
+        UE_LOG(LogMCPClient, Warning, TEXT("MCP configuration file not found. Searched: Plugin/Config (%s), Saved/VibeUE"), *ConfigDir);
     }
 }
 
@@ -114,9 +113,17 @@ FString FMCPClient::ResolveConfigVariables(const FString& Input) const
 {
     FString Result = Input;
     
-    // Replace ${VibeUE_Instance} with project plugins path
-    FString ProjectPluginPath = FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir());
-    Result = Result.Replace(TEXT("${VibeUE_Instance}"), *ProjectPluginPath);
+    // Replace ${VibeUE_Instance} with actual plugin path (handles FAB/marketplace installs)
+    FString PluginPath = FVibeUEPaths::GetPluginDir();
+    if (!PluginPath.IsEmpty())
+    {
+        Result = Result.Replace(TEXT("${VibeUE_Instance}"), *PluginPath);
+    }
+    else
+    {
+        // Fallback to project plugins if centralized lookup fails
+        Result = Result.Replace(TEXT("${VibeUE_Instance}"), *FPaths::ConvertRelativePathToFull(FPaths::ProjectPluginsDir()));
+    }
     
     // Legacy support: Replace ${workspaceFolder} with project directory
     Result = Result.Replace(TEXT("${workspaceFolder}"), *FPaths::ConvertRelativePathToFull(FPaths::ProjectDir()));

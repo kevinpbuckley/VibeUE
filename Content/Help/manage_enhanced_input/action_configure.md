@@ -6,7 +6,7 @@ Configure settings on an Input Action.
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| ActionPath | string | Yes | Content path to the Input Action |
+| action_path | string | Yes | Content path to the Input Action (aliases: ActionPath, asset_path) |
 | ConsumeInput | boolean | No | Whether to consume input and prevent propagation |
 | TriggerWhenPaused | boolean | No | Whether to trigger during game pause |
 | Description | string | No | Update the description |
@@ -17,7 +17,7 @@ Configure settings on an Input Action.
 ```json
 {
   "Action": "action_configure",
-  "ParamsJson": "{\"ActionPath\": \"/Game/Input/IA_Menu\", \"ConsumeInput\": false}"
+  "ParamsJson": "{\"action_path\": \"/Game/Input/IA_Menu\", \"ConsumeInput\": false}"
 }
 ```
 
@@ -25,7 +25,7 @@ Configure settings on an Input Action.
 ```json
 {
   "Action": "action_configure",
-  "ParamsJson": "{\"ActionPath\": \"/Game/Input/IA_Pause\", \"TriggerWhenPaused\": true}"
+  "ParamsJson": "{\"action_path\": \"/Game/Input/IA_Pause\", \"TriggerWhenPaused\": true}"
 }
 ```
 
@@ -33,7 +33,15 @@ Configure settings on an Input Action.
 ```json
 {
   "Action": "action_configure",
-  "ParamsJson": "{\"ActionPath\": \"/Game/Input/IA_Fire\", \"Description\": \"Primary fire action for weapons\"}"
+  "ParamsJson": "{\"action_path\": \"/Game/Input/IA_Fire\", \"Description\": \"Primary fire action for weapons\"}"
+}
+```
+
+### Set Multiple Properties
+```json
+{
+  "Action": "action_configure",
+  "ParamsJson": "{\"action_path\": \"/Game/Input/IA_Interact\", \"ConsumeInput\": true, \"Description\": \"Player object interaction\"}"
 }
 ```
 
@@ -42,9 +50,9 @@ Configure settings on an Input Action.
 ```json
 {
   "Success": true,
-  "ActionPath": "/Game/Input/IA_Menu",
-  "ModifiedSettings": ["ConsumeInput"],
-  "Message": "Input Action configured successfully"
+  "action_path": "/Game/Input/IA_Menu",
+  "modified_settings": ["bConsumeInput"],
+  "message": "Configured 1 property(ies) on Input Action"
 }
 ```
 

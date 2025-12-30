@@ -192,12 +192,41 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleCommand(const FString& Com
 		return HandleHelp(Params);
 	}
 
-	// For non-help actions, require service parameter
+	// Try to get service from params, or auto-derive from action prefix
 	FString Service = Params->GetStringField(TEXT("service"));
 	if (Service.IsEmpty())
 	{
-		UE_LOG(LogTemp, Warning, TEXT("EnhancedInputCommands: Missing 'service' parameter"));
-		return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Missing 'service' parameter. Use action='help' to see available services and actions."));
+		// Auto-derive service from action prefix (e.g., "action_list" -> service="action", action="action_list")
+		if (Action.StartsWith(TEXT("action_")))
+		{
+			Service = TEXT("action");
+		}
+		else if (Action.StartsWith(TEXT("mapping_")))
+		{
+			Service = TEXT("mapping");
+		}
+		else if (Action.StartsWith(TEXT("reflection_")))
+		{
+			Service = TEXT("reflection");
+		}
+		else if (Action.StartsWith(TEXT("modifier_")))
+		{
+			Service = TEXT("modifier");
+		}
+		else if (Action.StartsWith(TEXT("trigger_")))
+		{
+			Service = TEXT("trigger");
+		}
+		else if (Action.StartsWith(TEXT("ai_")))
+		{
+			Service = TEXT("ai");
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("EnhancedInputCommands: Could not derive service from action '%s'"), *Action);
+			return CreateErrorResponse(VibeUE::ErrorCodes::PARAM_MISSING, TEXT("Could not derive service from action name. Use action prefix like 'action_', 'mapping_', 'reflection_' or provide 'service' parameter explicitly."));
+		}
+		UE_LOG(LogTemp, Display, TEXT("EnhancedInputCommands: Auto-derived service='%s' from action='%s'"), *Service, *Action);
 	}
 
 	Service = Service.ToLower();
@@ -396,7 +425,10 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 	}
 	else if (Action == TEXT("action_get_properties"))
 	{
+		// Accept action_path, ActionPath, or asset_path for flexibility
 		FString ActionPath = Params->GetStringField(TEXT("action_path"));
+		if (ActionPath.IsEmpty()) ActionPath = Params->GetStringField(TEXT("ActionPath"));
+		if (ActionPath.IsEmpty()) ActionPath = Params->GetStringField(TEXT("asset_path"));
 
 		if (ActionPath.IsEmpty())
 		{
@@ -434,30 +466,97 @@ TSharedPtr<FJsonObject> FEnhancedInputCommands::HandleActionService(const FStrin
 	}
 	else if (Action == TEXT("action_configure"))
 	{
+		// Accept action_path, ActionPath, or asset_path for flexibility
 		FString ActionPath = Params->GetStringField(TEXT("action_path"));
-		FString PropertyName = Params->GetStringField(TEXT("property_name"));
-		FString PropertyValue = Params->GetStringField(TEXT("property_value"));
+		if (ActionPath.IsEmpty()) ActionPath = Params->GetStringField(TEXT("ActionPath"));
+		if (ActionPath.IsEmpty()) ActionPath = Params->GetStringField(TEXT("asset_path"));
 
-		if (ActionPath.IsEmpty() || PropertyName.IsEmpty())
+		if (ActionPath.IsEmpty())
 		{
 			return ParamValidation::MissingParamsError(
-				TEXT("action_path and property_name required"),
+				TEXT("action_path required"),
 				EnhancedInputParams::ActionConfigureParams());
 		}
 
-		auto Result = ActionService->SetActionProperty(ActionPath, PropertyName, PropertyValue);
+		// Support two modes:
+		// 1. Direct properties: ConsumeInput, TriggerWhenPaused, Description (user-friendly, documented)
+		// 2. Generic: property_name + property_value (legacy/flexible)
+		
+		TArray<TPair<FString, FString>> PropertiesToSet;
+		
+		// Check for direct property parameters
+		if (Params->HasField(TEXT("ConsumeInput")) || Params->HasField(TEXT("consume_input")))
+		{
+			bool bConsume = Params->GetBoolField(TEXT("ConsumeInput"));
+			if (!Params->HasField(TEXT("ConsumeInput"))) bConsume = Params->GetBoolField(TEXT("consume_input"));
+			PropertiesToSet.Add(TPair<FString, FString>(TEXT("bConsumeInput"), bConsume ? TEXT("true") : TEXT("false")));
+		}
+		if (Params->HasField(TEXT("TriggerWhenPaused")) || Params->HasField(TEXT("trigger_when_paused")))
+		{
+			bool bTriggerWhenPaused = Params->GetBoolField(TEXT("TriggerWhenPaused"));
+			if (!Params->HasField(TEXT("TriggerWhenPaused"))) bTriggerWhenPaused = Params->GetBoolField(TEXT("trigger_when_paused"));
+			PropertiesToSet.Add(TPair<FString, FString>(TEXT("bTriggerWhenPaused"), bTriggerWhenPaused ? TEXT("true") : TEXT("false")));
+		}
+		if (Params->HasField(TEXT("Description")) || Params->HasField(TEXT("description")))
+		{
+			FString Description = Params->GetStringField(TEXT("Description"));
+			if (Description.IsEmpty()) Description = Params->GetStringField(TEXT("description"));
+			PropertiesToSet.Add(TPair<FString, FString>(TEXT("ActionDescription"), Description));
+		}
+		
+		// Legacy mode: property_name + property_value
+		FString PropertyName = Params->GetStringField(TEXT("property_name"));
+		if (PropertyName.IsEmpty()) PropertyName = Params->GetStringField(TEXT("PropertyName"));
+		FString PropertyValue = Params->GetStringField(TEXT("property_value"));
+		if (PropertyValue.IsEmpty()) PropertyValue = Params->GetStringField(TEXT("PropertyValue"));
+		
+		if (!PropertyName.IsEmpty())
+		{
+			PropertiesToSet.Add(TPair<FString, FString>(PropertyName, PropertyValue));
+		}
+		
+		if (PropertiesToSet.Num() == 0)
+		{
+			return ParamValidation::MissingParamsError(
+				TEXT("No properties to configure. Use ConsumeInput, TriggerWhenPaused, Description, or property_name/property_value"),
+				EnhancedInputParams::ActionConfigureParams());
+		}
+
+		TArray<FString> ModifiedSettings;
+		FString LastError;
+		
+		for (const auto& PropPair : PropertiesToSet)
+		{
+			auto Result = ActionService->SetActionProperty(ActionPath, PropPair.Key, PropPair.Value);
+			if (Result.IsSuccess())
+			{
+				ModifiedSettings.Add(PropPair.Key);
+			}
+			else
+			{
+				LastError = Result.GetErrorMessage();
+			}
+		}
 		
 		TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
-		if (Result.IsSuccess())
+		if (ModifiedSettings.Num() > 0)
 		{
 			Response->SetBoolField(TEXT("success"), true);
 			Response->SetStringField(TEXT("action"), Action);
 			Response->SetStringField(TEXT("service"), TEXT("action"));
-			Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Property '%s' configured"), *PropertyName));
+			Response->SetStringField(TEXT("action_path"), ActionPath);
+			
+			TArray<TSharedPtr<FJsonValue>> ModifiedArray;
+			for (const FString& Setting : ModifiedSettings)
+			{
+				ModifiedArray.Add(MakeShared<FJsonValueString>(Setting));
+			}
+			Response->SetArrayField(TEXT("modified_settings"), ModifiedArray);
+			Response->SetStringField(TEXT("message"), FString::Printf(TEXT("Configured %d property(ies) on Input Action"), ModifiedSettings.Num()));
 		}
 		else
 		{
-			return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
+			return CreateErrorResponse(VibeUE::ErrorCodes::INTERNAL_ERROR, FString::Printf(TEXT("Failed to configure properties: %s"), *LastError));
 		}
 		
 		return Response;
