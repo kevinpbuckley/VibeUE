@@ -14,8 +14,12 @@ DEFINE_LOG_CATEGORY(LogMCPServer);
 
 TSharedPtr<FMCPServer> FMCPServer::Instance;
 
-// MCP Protocol version we support (spec: 2025-11-25)
-static const FString MCP_PROTOCOL_VERSION = TEXT("2025-11-25");
+// MCP Protocol versions we support (newest first)
+static const TArray<FString> SUPPORTED_PROTOCOL_VERSIONS = {
+    TEXT("2025-11-25"),  // Latest spec
+    TEXT("2025-06-18"),  // Mid-2025 spec
+    TEXT("2024-11-05")   // For compatibility with older clients
+};
 static const FString MCP_SERVER_NAME = TEXT("VibeUE");
 static const FString MCP_SERVER_VERSION = TEXT("1.0.0");
 
@@ -670,6 +674,36 @@ FString FMCPServer::HandleMCPRequest(const FString& JsonBody, FString& InOutSess
 
 FString FMCPServer::HandleInitialize(TSharedPtr<FJsonObject> Params, const FString& RequestId)
 {
+    // Get client's requested protocol version
+    FString RequestedVersion;
+    if (Params.IsValid())
+    {
+        Params->TryGetStringField(TEXT("protocolVersion"), RequestedVersion);
+    }
+    
+    // Negotiate protocol version
+    FString NegotiatedVersion = SUPPORTED_PROTOCOL_VERSIONS[0]; // Default to latest
+    
+    if (!RequestedVersion.IsEmpty())
+    {
+        // Check if we support the client's requested version
+        if (SUPPORTED_PROTOCOL_VERSIONS.Contains(RequestedVersion))
+        {
+            NegotiatedVersion = RequestedVersion;
+            UE_LOG(LogMCPServer, Log, TEXT("MCP Initialize: Client requested %s, using exact match"), *RequestedVersion);
+        }
+        else
+        {
+            // Client requested unsupported version, use our latest
+            UE_LOG(LogMCPServer, Warning, TEXT("MCP Initialize: Client requested unsupported version %s, using %s"), 
+                   *RequestedVersion, *NegotiatedVersion);
+        }
+    }
+    else
+    {
+        UE_LOG(LogMCPServer, Log, TEXT("MCP Initialize: No version requested, using latest %s"), *NegotiatedVersion);
+    }
+    
     // Build capabilities
     TSharedPtr<FJsonObject> Capabilities = MakeShared<FJsonObject>();
     
@@ -684,11 +718,9 @@ FString FMCPServer::HandleInitialize(TSharedPtr<FJsonObject> Params, const FStri
     
     // Build result
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
-    Result->SetStringField(TEXT("protocolVersion"), MCP_PROTOCOL_VERSION);
+    Result->SetStringField(TEXT("protocolVersion"), NegotiatedVersion);
     Result->SetObjectField(TEXT("capabilities"), Capabilities);
     Result->SetObjectField(TEXT("serverInfo"), ServerInfo);
-    
-    UE_LOG(LogMCPServer, Log, TEXT("MCP Initialize"));
     
     // Build response - session ID is added as header by caller
     return BuildJsonRpcResponse(RequestId, Result);
@@ -1212,10 +1244,7 @@ bool FMCPServer::ValidateProtocolVersion(const TMap<FString, FString>& Headers) 
     }
     
     // Check if it's a version we support
-    // We support 2025-11-25 and are backwards compatible with 2024-11-05
-    if (*VersionHeader == TEXT("2025-11-25") || 
-        *VersionHeader == TEXT("2024-11-05") ||
-        *VersionHeader == TEXT("2025-03-26"))
+    if (SUPPORTED_PROTOCOL_VERSIONS.Contains(*VersionHeader))
     {
         return true;
     }
