@@ -190,9 +190,15 @@ public:
     /** Check if current provider supports model selection */
     bool SupportsModelSelection() const;
     
-    /** Get estimated token count for current conversation */
+    /** Get estimated token count for current conversation (uses smart heuristic) */
     int32 GetEstimatedTokenCount() const;
-    
+
+    /** Get accurate token count from API for current conversation (async) */
+    void GetAccurateTokenCount(TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete);
+
+    /** Get accurate token count from API for specific text (async) */
+    void GetAccurateTokenCountForText(const FString& Text, TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete);
+
     /** Get context window utilization percentage */
     float GetContextUtilization() const;
     

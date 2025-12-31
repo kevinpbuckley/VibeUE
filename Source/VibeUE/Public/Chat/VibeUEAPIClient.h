@@ -59,7 +59,13 @@ public:
     
     /** Fetch model info from /v1/models endpoint */
     void FetchModelInfo(TFunction<void(bool bSuccess, int32 ContextLength, const FString& ModelId)> OnComplete);
-    
+
+    /** Count tokens in text using /v1/tokenize endpoint */
+    void CountTokens(const FString& Text, TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete);
+
+    /** Count tokens in messages using /v1/tokenize endpoint */
+    void CountTokensInMessages(const TArray<FChatMessage>& Messages, const FString& ModelId, TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete);
+
     /** Default values (optimized for coding assistants) */
     static constexpr float DefaultTemperature = 0.2f;
     static constexpr float DefaultTopP = 0.95f;

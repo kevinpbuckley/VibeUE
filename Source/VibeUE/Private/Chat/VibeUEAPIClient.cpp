@@ -295,3 +295,200 @@ void FVibeUEAPIClient::FetchModelInfo(TFunction<void(bool bSuccess, int32 Contex
     
     Request->ProcessRequest();
 }
+
+void FVibeUEAPIClient::CountTokens(const FString& Text, TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete)
+{
+    if (!OnComplete)
+    {
+        return;
+    }
+
+    // Build the tokenize endpoint URL from the chat endpoint
+    // e.g., https://llm.vibeue.com/v1/chat/completions -> https://llm.vibeue.com/v1/tokenize
+    FString TokenizeUrl = EndpointUrl;
+    TokenizeUrl.ReplaceInline(TEXT("/v1/chat/completions"), TEXT("/v1/tokenize"));
+
+    UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Counting tokens for text (%d chars) using: %s"), Text.Len(), *TokenizeUrl);
+
+    // Build request body
+    TSharedPtr<FJsonObject> RequestBody = MakeShareable(new FJsonObject());
+    RequestBody->SetStringField(TEXT("text"), Text);
+
+    // Serialize to JSON
+    FString RequestBodyString;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBodyString);
+    FJsonSerializer::Serialize(RequestBody.ToSharedRef(), Writer);
+
+    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(TokenizeUrl);
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
+    // Note: Tokenize endpoint doesn't require authentication
+    Request->SetContentAsString(RequestBodyString);
+    Request->SetTimeout(10.0f);
+
+    Request->OnProcessRequestComplete().BindLambda([OnComplete](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+    {
+        if (!bConnectedSuccessfully || !Response.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to count tokens - connection error"));
+            OnComplete(false, 0);
+            return;
+        }
+
+        int32 ResponseCode = Response->GetResponseCode();
+        if (ResponseCode != 200)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to count tokens - HTTP %d"), ResponseCode);
+            OnComplete(false, 0);
+            return;
+        }
+
+        FString ResponseBody = Response->GetContentAsString();
+
+        // Parse JSON response
+        TSharedPtr<FJsonObject> JsonObject;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+        if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to parse token count JSON"));
+            OnComplete(false, 0);
+            return;
+        }
+
+        // Extract token_count
+        if (!JsonObject->HasField(TEXT("token_count")))
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Missing token_count field in response"));
+            OnComplete(false, 0);
+            return;
+        }
+        int32 TokenCount = JsonObject->GetIntegerField(TEXT("token_count"));
+        UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Token count: %d"), TokenCount);
+        OnComplete(true, TokenCount);
+    });
+
+    Request->ProcessRequest();
+}
+
+void FVibeUEAPIClient::CountTokensInMessages(const TArray<FChatMessage>& Messages, const FString& ModelId, TFunction<void(bool bSuccess, int32 TokenCount)> OnComplete)
+{
+    if (!OnComplete)
+    {
+        return;
+    }
+
+    // Build the tokenize endpoint URL
+    FString TokenizeUrl = EndpointUrl;
+    TokenizeUrl.ReplaceInline(TEXT("/v1/chat/completions"), TEXT("/v1/tokenize"));
+
+    UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Counting tokens for %d messages using: %s"), Messages.Num(), *TokenizeUrl);
+
+    // Build messages array
+    TArray<TSharedPtr<FJsonValue>> MessagesArray;
+    for (const FChatMessage& Msg : Messages)
+    {
+        TSharedPtr<FJsonObject> MsgObj = MakeShareable(new FJsonObject());
+        MsgObj->SetStringField(TEXT("role"), Msg.Role);
+
+        if (!Msg.Content.IsEmpty())
+        {
+            MsgObj->SetStringField(TEXT("content"), Msg.Content);
+        }
+        else
+        {
+            MsgObj->SetField(TEXT("content"), MakeShareable(new FJsonValueNull()));
+        }
+
+        // Include tool_calls if present
+        if (Msg.ToolCalls.Num() > 0)
+        {
+            TArray<TSharedPtr<FJsonValue>> ToolCallsArray;
+            for (const FChatToolCall& ToolCall : Msg.ToolCalls)
+            {
+                TSharedPtr<FJsonObject> ToolCallObj = MakeShareable(new FJsonObject());
+                ToolCallObj->SetStringField(TEXT("id"), ToolCall.Id);
+                ToolCallObj->SetStringField(TEXT("type"), TEXT("function"));
+
+                TSharedPtr<FJsonObject> FunctionObj = MakeShareable(new FJsonObject());
+                FunctionObj->SetStringField(TEXT("name"), ToolCall.Name);
+                FunctionObj->SetStringField(TEXT("arguments"), ToolCall.Arguments);
+                ToolCallObj->SetObjectField(TEXT("function"), FunctionObj);
+
+                ToolCallsArray.Add(MakeShareable(new FJsonValueObject(ToolCallObj)));
+            }
+            MsgObj->SetArrayField(TEXT("tool_calls"), ToolCallsArray);
+        }
+
+        if (!Msg.ToolCallId.IsEmpty())
+        {
+            MsgObj->SetStringField(TEXT("tool_call_id"), Msg.ToolCallId);
+        }
+
+        MessagesArray.Add(MakeShareable(new FJsonValueObject(MsgObj)));
+    }
+
+    // Build request body
+    TSharedPtr<FJsonObject> RequestBody = MakeShareable(new FJsonObject());
+    RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
+
+    if (!ModelId.IsEmpty())
+    {
+        RequestBody->SetStringField(TEXT("model"), ModelId);
+    }
+
+    // Serialize to JSON
+    FString RequestBodyString;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBodyString);
+    FJsonSerializer::Serialize(RequestBody.ToSharedRef(), Writer);
+
+    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(TokenizeUrl);
+    Request->SetVerb(TEXT("POST"));
+    Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
+    Request->SetContentAsString(RequestBodyString);
+    Request->SetTimeout(10.0f);
+
+    Request->OnProcessRequestComplete().BindLambda([OnComplete](FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+    {
+        if (!bConnectedSuccessfully || !Response.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to count message tokens - connection error"));
+            OnComplete(false, 0);
+            return;
+        }
+
+        int32 ResponseCode = Response->GetResponseCode();
+        if (ResponseCode != 200)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to count message tokens - HTTP %d"), ResponseCode);
+            OnComplete(false, 0);
+            return;
+        }
+
+        FString ResponseBody = Response->GetContentAsString();
+
+        // Parse JSON response
+        TSharedPtr<FJsonObject> JsonObject;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+        if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to parse message token count JSON"));
+            OnComplete(false, 0);
+            return;
+        }
+
+        // Extract token_count
+        if (!JsonObject->HasField(TEXT("token_count")))
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Missing token_count field in message response"));
+            OnComplete(false, 0);
+            return;
+        }
+        int32 TokenCount = JsonObject->GetIntegerField(TEXT("token_count"));
+        UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Message token count: %d"), TokenCount);
+        OnComplete(true, TokenCount);
+    });
+
+    Request->ProcessRequest();
+}
