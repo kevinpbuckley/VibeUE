@@ -234,9 +234,9 @@ Edit `Plugins/VibeUE/Config/vibeue.mcp.json`:
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **14 multi-action tools** exposing **173 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **14 multi-action tools** exposing **177 total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (14 tools, 173 actions)
+## 🛠️ Canonical Tools Reference (14 tools, 177 actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
@@ -301,18 +301,23 @@ Node graph operations for Blueprint visual scripting.
 | `recombine` | Collapse split pins back |
 | `refresh_node` | Reconstruct single node |
 
-### 5. `manage_blueprint_function` (7 actions)
-Blueprint function lifecycle and parameter management.
+### 5. `manage_blueprint_function` (11 actions)
+Blueprint function lifecycle, parameter management, and local variables.
 
 | Action | Purpose |
 |--------|---------|
 | `list` | List all functions in Blueprint |
-| `get_info` | Get detailed function information |
+| `get_info` | Get detailed function information including parameters and local variables |
 | `create` | Create new custom function |
 | `delete` | Remove function from Blueprint |
 | `add_input` | Add input parameter |
 | `add_output` | Add output parameter |
 | `remove_param` | Remove parameter from function |
+| `add_local_variable` | Add local variable to function |
+| `remove_local_variable` | Remove local variable from function |
+| `update_local_variable` | Update properties of existing local variable |
+| `list_local_variables` | List all local variables in function |
+| `get_available_local_types` | Get list of available types for local variables |
 
 ### 6. `manage_blueprint_variable` (6 actions)
 Variable creation, inspection, and management.

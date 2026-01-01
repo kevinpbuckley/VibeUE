@@ -31,6 +31,7 @@ Get detailed information about a specific node including all pins and connection
     "NodeId": "K2Node_CallFunction_0",
     "NodeType": "CallFunction",
     "DisplayName": "Print String",
+    "GraphName": "EventGraph",
     "Category": "Utilities|String",
     "Position": {"X": 300, "Y": 0},
     "InputPins": [
@@ -73,3 +74,7 @@ Get detailed information about a specific node including all pins and connection
 - ConnectedTo shows what each pin is wired to
 - Use this to understand node structure before connecting
 - Exec pins handle flow control, data pins transfer values
+- **GraphName field shows which graph the node belongs to**
+  - Verifies the node is in the expected graph
+  - Function nodes show function name (e.g., "CalculateHealth")
+  - Event nodes show "EventGraph"

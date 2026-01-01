@@ -146,6 +146,36 @@ Show me the connections in CalculateHealth to make sure it's wired correctly.
 
 ---
 
+## Verifying Graph Assignment
+
+List all nodes in the CalculateHealth function and show me which graph each node belongs to.
+
+---
+
+List all nodes in the EventGraph and show me which graph each node belongs to.
+
+---
+
+Show me detailed information about the Truncate node including which graph it's in.
+
+---
+
+## Testing EventGraph Nodes
+
+Add a Print String node to the EventGraph at position 300, 100.
+
+---
+
+List the EventGraph nodes again - the Print String should be in EventGraph, not CalculateHealth.
+
+---
+
+## Testing Cross-Graph Connection (Should Fail)
+
+Try to connect the BaseHealth parameter from CalculateHealth to the Print String node in EventGraph. This should fail with a helpful error message.
+
+---
+
 ## Compiling and Testing
 
 Compile the FunctionNodeTest blueprint.
@@ -157,6 +187,15 @@ Check that FunctionNodeTest compiled successfully.
 ---
 
 Run the CalculateHealth function with some test values to verify it works.
+
+---
+
+## Verification Summary
+
+Verify that:
+1. All nodes in CalculateHealth show GraphName: "CalculateHealth"
+2. All nodes in EventGraph show GraphName: "EventGraph"
+3. Cross-graph connections fail with clear DIFFERENT_GRAPHS error showing node types and graph names
 
 ---
 

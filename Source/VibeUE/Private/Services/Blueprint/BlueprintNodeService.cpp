@@ -3526,19 +3526,26 @@ UEdGraphPin* FBlueprintNodeService::FindPinByName(UEdGraphNode* Node, const FStr
 FNodeInfo FBlueprintNodeService::BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNode* Node) const
 {
 	FNodeInfo Info;
-	
+
 	if (!Node)
 	{
 		return Info;
 	}
-	
+
 	Info.NodeId = Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
 	Info.NodeClass = Node->GetClass()->GetName();
 	Info.Title = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
 	Info.PosX = Node->NodePosX;
 	Info.PosY = Node->NodePosY;
 	Info.NodeType = DetermineNodeType(Node);
-	
+
+	// Get the graph name
+	UEdGraph* Graph = Node->GetGraph();
+	if (Graph)
+	{
+		Info.GraphName = Graph->GetName();
+	}
+
 	// Build pin descriptors
 	for (UEdGraphPin* Pin : Node->Pins)
 	{
@@ -3547,23 +3554,30 @@ FNodeInfo FBlueprintNodeService::BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNo
 			Info.Pins.Add(BuildPinDescriptor(Pin));
 		}
 	}
-	
+
 	return Info;
 }
 
 FNodeSummary FBlueprintNodeService::BuildNodeSummary(UBlueprint* Blueprint, UEdGraphNode* Node) const
 {
 	FNodeSummary Summary;
-	
+
 	if (!Node)
 	{
 		return Summary;
 	}
-	
+
 	Summary.NodeId = Node->NodeGuid.ToString(EGuidFormats::DigitsWithHyphensInBraces);
 	Summary.Title = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
 	Summary.NodeType = DetermineNodeType(Node);
-	
+
+	// Get the graph name
+	UEdGraph* Graph = Node->GetGraph();
+	if (Graph)
+	{
+		Summary.GraphName = Graph->GetName();
+	}
+
 	// Build pin descriptors
 	for (UEdGraphPin* Pin : Node->Pins)
 	{
@@ -3572,7 +3586,7 @@ FNodeSummary FBlueprintNodeService::BuildNodeSummary(UBlueprint* Blueprint, UEdG
 			Summary.Pins.Add(BuildPinDescriptor(Pin));
 		}
 	}
-	
+
 	return Summary;
 }
 

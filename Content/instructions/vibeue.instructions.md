@@ -57,6 +57,23 @@ Text: "Editor opened successfully."
   - Recognize when your stated goal doesn't match your action
   - If stuck: summarize what worked, what failed, and report to user
 
+### Git Workflow
+**NEVER commit changes without user approval:**
+- Make code changes and rebuild when asked
+- Tell user what was changed and that it's ready to test
+- ONLY commit to git when explicitly prompted by user
+- User must test all changes before committing
+- Never automatically push commits - wait for user to ask
+
+### Test Prompts
+**Test workflows are in the test_prompts folder:**
+- Location: `E:\az-dev-ops\FPS57\plugins\VibeUE\test_prompts\`
+- Organized by feature: `blueprint/`, `materials/`, `umg/`, etc.
+- Format: Natural language prompts separated by `---`
+- When adding tests, use the existing test files in the correct subfolder
+- NEVER create test files in the `Content/Help/` folder
+- Example: Blueprint tests go in `test_prompts/blueprint/04_manage_blueprint_function_and_nodes.md`
+
 ## Critical Formats
 
 ### Colors (0.0-1.0, not 0-255)

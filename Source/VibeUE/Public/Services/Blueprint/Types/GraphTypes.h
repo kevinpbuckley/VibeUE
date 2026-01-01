@@ -34,8 +34,9 @@ struct VIBEUE_API FNodeSummary
     FString NodeId;
     FString NodeType;
     FString Title;
+    FString GraphName;
     TArray<TSharedPtr<class FJsonObject>> Pins;
-    
+
     FNodeSummary()
     {}
 };
