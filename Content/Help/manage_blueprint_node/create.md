@@ -7,7 +7,7 @@ Create a new node in a Blueprint graph.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | BlueprintPath | string | Yes | Content path to the Blueprint |
-| GraphName | string | Yes | Name of the graph ("EventGraph" or function name) |
+| GraphName | string | Yes | Name of the target graph. Can be "EventGraph" (main event graph), a function graph name (e.g., "TakeDamage"), or a macro graph name. Leave empty to default to EventGraph. |
 | NodeType | string | Yes | Type of node to create (from discover action) |
 | Position | object | No | Position in graph {"X": number, "Y": number} |
 | NodeName | string | No | Custom name/identifier for the node |
@@ -76,3 +76,7 @@ Create a new node in a Blueprint graph.
 - For variable nodes, specify VariableName parameter
 - For function calls, specify FunctionName or use full function reference
 - Compile after creating nodes to validate connections
+- **GraphName works with both Event Graphs and Function Graphs:**
+  - For EventGraph: Use `"GraphName": "EventGraph"` (or leave empty)
+  - For Function Graph: Use `"GraphName": "FunctionName"` (e.g., "TakeDamage")
+  - The system automatically searches event graphs, function graphs, and macro graphs

@@ -282,8 +282,9 @@ void FChatSession::OnStreamComplete(bool bSuccess)
         // After complete: 💭 Thinking: content (styled but visible)
         Message.Content = FormatThinkingBlocks(Message.Content);
         
-        // If the message is empty and has no tool calls, try to populate from accumulated response (non-streaming paths)
-        if (Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
+        // If the message content is empty, try to populate from accumulated response (non-streaming paths)
+        // This can happen even when there are tool calls - the model may provide text before the tool calls
+        if (Message.Content.IsEmpty())
         {
             FString Accumulated;
             if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
@@ -1830,7 +1831,7 @@ void FChatSession::SetDebugModeEnabled(bool bEnabled)
 
 bool FChatSession::IsFileLoggingEnabled()
 {
-    bool bFileLogging = true; // Default to enabled
+    bool bFileLogging = false; // Default to disabled (enable via Debug Mode setting)
     GConfig->GetBool(TEXT("VibeUE"), TEXT("FileLogging"), bFileLogging, GEditorPerProjectIni);
     return bFileLogging;
 }

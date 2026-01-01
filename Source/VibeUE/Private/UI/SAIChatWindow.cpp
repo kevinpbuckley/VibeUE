@@ -524,15 +524,25 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     // Check if this is a tool call (assistant message with tool calls) or tool response
     bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
     bool bIsToolResponse = Message.Role == TEXT("tool");
-    
-    // For tool calls, create paired widgets for each tool call
+
+    // For tool calls, display the message content first (if any), then create tool call widgets
     if (bIsToolCall)
     {
-        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+        // If there's text content before the tool calls, display it first
+        if (!Message.Content.IsEmpty())
         {
-            AddToolCallWidget(Message.ToolCalls[ToolIdx], Index, ToolIdx);
+            // Continue below to create the message widget with the content
+            // Don't return yet - we'll add tool calls after the message
         }
-        return;
+        else
+        {
+            // No text content, just create tool call widgets
+            for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+            {
+                AddToolCallWidget(Message.ToolCalls[ToolIdx], Index, ToolIdx);
+            }
+            return;
+        }
     }
     
     // For tool responses, update the corresponding tool call widget
@@ -671,6 +681,15 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     
     // Store reference for streaming updates
     MessageTextBlocks.Add(Index, ContentTextBlock);
+
+    // If this was a tool call message with content, now add the tool call widgets after the message
+    if (bIsToolCall && !Message.Content.IsEmpty())
+    {
+        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
+        {
+            AddToolCallWidget(Message.ToolCalls[ToolIdx], Index, ToolIdx);
+        }
+    }
 }
 
 void SAIChatWindow::AddSystemNotification(const FString& Message)

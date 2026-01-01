@@ -7,7 +7,7 @@ List all nodes in a Blueprint function or event graph.
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
 | BlueprintPath | string | Yes | Content path to the Blueprint |
-| GraphName | string | Yes | Name of the graph to list ("EventGraph" or function name) |
+| GraphName | string | Yes | Name of the target graph. Can be "EventGraph" (main event graph), a function graph name, or macro graph name. Leave empty to default to EventGraph. |
 
 ## Examples
 
@@ -64,3 +64,5 @@ List all nodes in a Blueprint function or event graph.
 - EventGraph contains event implementations
 - Function names show their specific graph nodes
 - Use `details` action for full information about specific nodes
+- **GraphName works with Event Graphs, Function Graphs, and Macro Graphs**
+  - The system automatically searches all graph types when you provide a name

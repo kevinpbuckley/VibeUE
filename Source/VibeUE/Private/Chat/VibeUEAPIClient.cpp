@@ -181,16 +181,19 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
 
     UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Sending chat request to VibeUE API: %s"), *EndpointUrl);
     
-    // Log raw request to dedicated file for debugging (if file logging enabled)
+    // Log request summary to dedicated file for debugging (if file logging enabled)
     if (FChatSession::IsFileLoggingEnabled())
     {
         FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
-        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\n%s\n"),
+        // Log summary instead of full body to avoid massive log files from tool schemas
+        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nMessages: %d, Tools: %d, Temperature: %.2f\n"),
             *FDateTime::Now().ToString(),
             *EndpointUrl,
-            *RequestBodyString);
+            Messages.Num(),
+            Tools.Num(),
+            Temperature);
         FFileHelper::SaveStringToFile(RequestLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
-        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Raw request logged to: %s"), *RawLogPath);
+        UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Request summary logged to: %s"), *RawLogPath);
     }
 
     // Create HTTP request
