@@ -1,201 +1,149 @@
-# Blueprint Function and Nodes Combined Test
+# Blueprint Function and Nodes Test - Player Damage System
 
-Tests the full workflow of creating functions with nodes and connecting them. Run sequentially.
+Tests creating a realistic player damage system with functions, parameters, local variables, and node connections.
 
 ---
 
 ## Setup
 
-Create an actor blueprint called FunctionNodeTest in the Blueprints folder. If it already exists delete it and create a new one.
+Create an actor blueprint called BP_Player in the Blueprints folder. Delete it first if it already exists.
 
 ---
 
-Add a Health float variable to FunctionNodeTest.
+Add these variables to BP_Player:
+- Health (float, default 100)
+- Armor (float, default 50)
+- IsAlive (bool, default true)
 
 ---
 
-Open FunctionNodeTest in the editor.
+Open BP_Player in the editor.
 
 ---
 
-## Creating the Function
+## Creating the Damage Function
 
-What functions exist in FunctionNodeTest right now?
-
----
-
-Add a function called CalculateHealth to FunctionNodeTest.
+Create a function called ApplyDamage in BP_Player.
 
 ---
 
-Tell me about the CalculateHealth function in FunctionNodeTest.
+Add these parameters to ApplyDamage:
+- Input: DamageAmount (float)
+- Input: IgnoreArmor (bool) 
+- Output: DamageApplied (bool)
 
 ---
 
-Show the function list for FunctionNodeTest again.
+Add a local variable called DamageMultiplier (float) to ApplyDamage.
 
 ---
 
-## Adding Parameters
-
-What parameters does CalculateHealth have?
+Show me the ApplyDamage function info including parameters and local variables.
 
 ---
 
-Add float inputs called BaseHealth and Modifier to the CalculateHealth function.
+## Building the Damage Logic
+
+Add nodes to ApplyDamage that will:
+1. Check if DamageAmount is greater than 0
+2. If IgnoreArmor is false, subtract from Armor first
+3. Any remaining damage goes to Health
+4. Set DamageApplied to true if any damage was dealt
+
+Start by adding a Branch node to check if damage should be applied.
 
 ---
 
-Add a float output called ResultHealth to CalculateHealth.
+Add nodes to get and set the Armor variable.
 
 ---
 
-Show me all parameters on CalculateHealth.
+Add a Clamp node to ensure damage doesn't go negative.
 
 ---
 
-Change the Modifier parameter in CalculateHealth to an integer type instead of float.
+Wire the function entry to the Branch node.
 
 ---
 
-Show me the CalculateHealth parameters again to verify the change.
+Connect the DamageAmount parameter to a Greater Than comparison with 0.
 
 ---
 
-## Local Variables
-
-What local variables are in the CalculateHealth function?
+Show me all the nodes in ApplyDamage now.
 
 ---
 
-Add float local variables called TempResult and Multiplier to CalculateHealth.
+## Connecting the Logic
+
+Wire the nodes so the damage flows through the armor check first, then to health.
 
 ---
 
-Show the local variables in CalculateHealth.
+Connect the final result to DamageApplied output.
 
 ---
 
-Change TempResult to an integer type in CalculateHealth.
+Show the current connections in ApplyDamage.
 
 ---
 
-Remove the Multiplier local variable from CalculateHealth.
+## Adding Death Check Function
+
+Create another function called CheckDeath in BP_Player.
 
 ---
 
-List the local variables in CalculateHealth again to verify.
+Add an output parameter called IsDead (bool) to CheckDeath.
 
 ---
 
-## Finding the Right Nodes
-
-What multiply nodes are available in Unreal? Show me the options.
+Add nodes to CheckDeath that check if Health is less than or equal to 0 and return the result.
 
 ---
 
-How do I get the Health variable from FunctionNodeTest into a graph?
+Wire the CheckDeath function completely.
 
 ---
 
-What print string nodes are available for debugging?
+## Testing in EventGraph
+
+Add a Print String node to the EventGraph.
 
 ---
 
-## Adding Nodes to the Function
-
-What nodes are in the CalculateHealth function graph right now?
+Verify the Print String is in EventGraph, not in any function.
 
 ---
 
-Add a Truncate node (FTrunc - converts float to integer) to CalculateHealth at position 200, 100.
+## Cross-Graph Test (Should Fail)
+
+Try to connect the DamageAmount parameter from ApplyDamage to the Print String in EventGraph. This should fail with a clear error.
 
 ---
 
-Add a multiply node to CalculateHealth at position 400, 100.
+## Compile and Verify
+
+Compile BP_Player.
 
 ---
 
-Show me the nodes in CalculateHealth now.
+List all functions in BP_Player and verify ApplyDamage and CheckDeath exist.
 
 ---
 
-Tell me about the pins on the nodes in CalculateHealth.
+Show the final state of the ApplyDamage function with all nodes and connections.
 
 ---
 
-## Wiring It Up
+## Summary
 
-Connect the BaseHealth parameter to the multiply node's input in CalculateHealth.
-
----
-
-Connect the Modifier parameter to the conversion node input in CalculateHealth.
-
----
-
-Connect the conversion output to the multiply node's B input in CalculateHealth.
-
----
-
-Connect the multiply result to the ResultHealth output in CalculateHealth.
-
----
-
-Show me the connections in CalculateHealth to make sure it's wired correctly.
-
----
-
-## Verifying Graph Assignment
-
-List all nodes in the CalculateHealth function and show me which graph each node belongs to.
-
----
-
-List all nodes in the EventGraph and show me which graph each node belongs to.
-
----
-
-Show me detailed information about the Truncate node including which graph it's in.
-
----
-
-## Testing EventGraph Nodes
-
-Add a Print String node to the EventGraph at position 300, 100.
-
----
-
-List the EventGraph nodes again - the Print String should be in EventGraph, not CalculateHealth.
-
----
-
-## Testing Cross-Graph Connection (Should Fail)
-
-Try to connect the BaseHealth parameter from CalculateHealth to the Print String node in EventGraph. This should fail with a helpful error message.
-
----
-
-## Compiling and Testing
-
-Compile the FunctionNodeTest blueprint.
-
----
-
-Check that FunctionNodeTest compiled successfully.
-
----
-
-Run the CalculateHealth function with some test values to verify it works.
-
----
-
-## Verification Summary
-
-Verify that:
-1. All nodes in CalculateHealth show GraphName: "CalculateHealth"
-2. All nodes in EventGraph show GraphName: "EventGraph"
-3. Cross-graph connections fail with clear DIFFERENT_GRAPHS error showing node types and graph names
+Verify:
+1. BP_Player has Health, Armor, and IsAlive variables
+2. ApplyDamage function has correct parameters and local variable
+3. CheckDeath function works correctly
+4. Cross-graph connections fail with helpful error
+5. Blueprint compiles successfully
 
 ---
 

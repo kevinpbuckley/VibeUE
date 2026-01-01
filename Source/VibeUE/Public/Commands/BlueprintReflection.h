@@ -224,6 +224,7 @@ public:
      * @param CategoryFilter - Optional category filter
      * @param ClassFilter - Optional class filter (e.g., "GameplayStatics")
      * @param MaxResults - Maximum results to return
+     * @param ContextPin - Optional pin for pin-type-sensitive filtering (like Unreal's drag-from-pin context menu)
      * @return Array of complete node descriptors
      */
     static TArray<FNodeSpawnerDescriptor> DiscoverNodesWithDescriptors(
@@ -231,7 +232,8 @@ public:
         const FString& SearchTerm = TEXT(""),
         const FString& CategoryFilter = TEXT(""),
         const FString& ClassFilter = TEXT(""),
-        int32 MaxResults = 100
+        int32 MaxResults = 100,
+        UEdGraphPin* ContextPin = nullptr
     );
     
     /**

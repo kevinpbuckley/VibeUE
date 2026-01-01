@@ -41,21 +41,83 @@ Text: "Editor opened successfully."
 - Always output text BEFORE and AFTER each tool
 - Keep responses brief but informative
 
+### Prerequisite Validation
+
+**Before complex operations, verify prerequisites exist:**
+
+**Examples:**
+- Before adding nodes to a function → verify function exists first
+- Before connecting pins → verify both nodes exist
+- Before modifying a blueprint → verify blueprint exists
+- Before adding components → verify blueprint is open
+
+**Smart Validation Pattern:**
+1. If user says "continue" or references previous work
+2. Check if required assets still exist before proceeding
+3. If missing: ask user before recreating
+
+**When Starting Multi-Step Tasks:**
+- If test/task requires setup (creating assets), do setup first
+- Don't assume assets from previous conversations still exist
+- Validate state before proceeding with operations
+
 ### Error Recovery
-- If tool fails: call `action="help"` ONCE, read it, then fix and retry
-- Don't call help multiple times for same action
-- Max 2 retries, then report failure
-- If `"editable": false`, don't try to modify
+
+**When you receive an error, analyze it BEFORE retrying:**
+
+1. **Asset/Blueprint Not Found Errors:**
+   - ❌ DON'T try different ways to access the same missing resource
+   - ✅ DO check if it needs to be created first
+   - ✅ DO ask user: "Blueprint 'X' doesn't exist. Should I create it?"
+   - ✅ DO list available alternatives if error includes suggestions
+   - **STOP after 2 failed attempts - ask for clarification**
+
+2. **Parameter/Action Errors:**
+   - Call `action="help"` ONCE for that specific action
+   - Read the help response carefully
+   - Fix parameters based on documentation
+   - Max 2 retries total
+
+3. **Permission/Read-only Errors:**
+   - If `"editable": false`, don't try to modify
+   - Report to user and suggest alternatives
+   - Never retry the same modification
+
+**Error Response Analysis:**
+- Check for `suggested_actions` field in error response - follow them!
+- Check for `available_blueprints` or similar lists - use them!
+- If error includes specific guidance, FOLLOW IT instead of guessing
 
 ### Loop Prevention
-**NEVER repeat the same help calls or actions endlessly:**
-- If you got help for an action, USE it - don't ask again
-- If same error occurs twice, STOP and report to user
-- Maximum iteration limit: don't loop more than 3 times on same issue
-- **CRITICAL: If you say "I will do X" but then call a tool that does Y, STOP immediately**
-  - Example BAD: "Let me run the function" → [calls get_info instead]
-  - Recognize when your stated goal doesn't match your action
-  - If stuck: summarize what worked, what failed, and report to user
+
+**CRITICAL: Recognize when you're looping and STOP immediately.**
+
+**Signs you're in a loop:**
+1. Same error message 2+ times in a row
+2. Trying different tools for the same missing resource
+3. Stated intent doesn't match actual tool calls
+4. No new information gained from last 2 tool calls
+
+**When you detect a loop:**
+1. **STOP making tool calls immediately**
+2. Summarize what you tried and what failed
+3. Ask user for guidance or clarification
+4. Example: "I tried to access FunctionNodeTest but it doesn't exist. I attempted:
+   - Getting blueprint info → not found
+   - Opening in editor → not found
+   Should I create this blueprint first, or did you want me to work with a different one?"
+
+**Absolute Limits:**
+- Max 3 attempts at the same operation
+- Max 2 help calls for the same action
+- If no progress after 3 tool calls, report to user
+- Never try >5 different approaches for the same goal without user input
+
+**Before Every Tool Call:**
+- Ask yourself: "Is this different from what I just tried?"
+- Ask yourself: "Does this match what I said I would do?"
+- Ask yourself: "Have I tried this exact thing already?"
+- If answer is NO/NO/YES → STOP and ask user instead
 
 ### Git Workflow
 **NEVER commit changes without user approval:**
@@ -73,6 +135,12 @@ Text: "Editor opened successfully."
 - When adding tests, use the existing test files in the correct subfolder
 - NEVER create test files in the `Content/Help/` folder
 - Example: Blueprint tests go in `test_prompts/blueprint/04_manage_blueprint_function_and_nodes.md`
+
+**IMPORTANT for Test Execution:**
+- ALWAYS read the full test file first to understand setup requirements
+- If test says "Create X if it doesn't exist" → check first, then create
+- If user says "continue" mid-test → validate prerequisites before proceeding
+- Don't skip setup steps (lines 1-20 usually contain critical setup)
 
 ## Critical Formats
 

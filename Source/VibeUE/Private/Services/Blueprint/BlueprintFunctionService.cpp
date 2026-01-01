@@ -786,8 +786,18 @@ FString FBlueprintFunctionService::DescribePinType(const FEdGraphPinType& PinTyp
         }
         if (Category == UEdGraphSchema_K2::PC_Int) return TEXT("int");
         if (Category == UEdGraphSchema_K2::PC_Int64) return TEXT("int64");
+        // Handle legacy PC_Float/PC_Double for backwards compatibility
         if (Category == UEdGraphSchema_K2::PC_Float) return TEXT("float");
         if (Category == UEdGraphSchema_K2::PC_Double) return TEXT("double");
+        // UE5: PC_Real with subcategory determines float vs double
+        if (Category == UEdGraphSchema_K2::PC_Real)
+        {
+            if (SubCategory == UEdGraphSchema_K2::PC_Double)
+            {
+                return TEXT("double");
+            }
+            return TEXT("float"); // Default to float for PC_Real
+        }
         if (Category == UEdGraphSchema_K2::PC_String) return TEXT("string");
         if (Category == UEdGraphSchema_K2::PC_Name) return TEXT("name");
         if (Category == UEdGraphSchema_K2::PC_Text) return TEXT("text");
@@ -853,8 +863,9 @@ bool FBlueprintFunctionService::ParseTypeDescriptor(const FString& TypeDesc, FEd
     if (Lower == TEXT("byte")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Byte; return true; }
     if (Lower == TEXT("int") || Lower == TEXT("int32")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Int; return true; }
     if (Lower == TEXT("int64")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Int64; return true; }
-    if (Lower == TEXT("float")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Float; return true; }
-    if (Lower == TEXT("double")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Double; return true; }
+    // UE5: Use PC_Real with subcategory for float/double for proper pin compatibility
+    if (Lower == TEXT("float")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Real; OutType.PinSubCategory = UEdGraphSchema_K2::PC_Float; return true; }
+    if (Lower == TEXT("double")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Real; OutType.PinSubCategory = UEdGraphSchema_K2::PC_Double; return true; }
     if (Lower == TEXT("string")) { OutType.PinCategory = UEdGraphSchema_K2::PC_String; return true; }
     if (Lower == TEXT("name")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Name; return true; }
     if (Lower == TEXT("text")) { OutType.PinCategory = UEdGraphSchema_K2::PC_Text; return true; }
