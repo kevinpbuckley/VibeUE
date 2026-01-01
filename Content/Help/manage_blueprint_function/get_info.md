@@ -1,13 +1,13 @@
 # get_info
 
-Get detailed information about a specific function in a Blueprint.
+Get detailed information about a specific function in a Blueprint, including parameters and local variables.
 
 ## Parameters
 
 | Name | Type | Required | Description |
 |------|------|----------|-------------|
-| BlueprintPath | string | Yes | Content path to the Blueprint |
-| FunctionName | string | Yes | Name of the function to inspect |
+| blueprint_name | string | Yes | Name of the Blueprint (short name, not full path) |
+| function_name | string | Yes | Name of the function to inspect |
 
 ## Examples
 
@@ -15,50 +15,56 @@ Get detailed information about a specific function in a Blueprint.
 ```json
 {
   "Action": "get_info",
-  "ParamsJson": "{\"BlueprintPath\": \"/Game/Blueprints/BP_Player\", \"FunctionName\": \"CalculateDamage\"}"
+  "ParamsJson": {"blueprint_name": "BP_Player", "function_name": "CalculateDamage"}
 }
 ```
 
 ## Returns
 
+Detailed function information including parameters and local variables:
 ```json
 {
-  "Success": true,
-  "BlueprintPath": "/Game/Blueprints/BP_Player",
-  "Function": {
-    "Name": "CalculateDamage",
-    "Description": "Calculate final damage with modifiers",
-    "Category": "Combat",
-    "IsPure": false,
-    "AccessSpecifier": "Public",
-    "Inputs": [
-      {
-        "Name": "BaseDamage",
-        "Type": "Float"
-      },
-      {
-        "Name": "DamageType",
-        "Type": "EDamageType"
-      }
-    ],
-    "Outputs": [
-      {
-        "Name": "FinalDamage",
-        "Type": "Float"
-      },
-      {
-        "Name": "WasCritical",
-        "Type": "Boolean"
-      }
-    ],
-    "NodeCount": 12
-  }
+  "name": "CalculateDamage",
+  "node_count": 5,
+  "graph_guid": "A1B2C3D4-5678-90AB-CDEF-1234567890AB",
+  "parameters": [
+    {
+      "name": "BaseDamage",
+      "direction": "input",
+      "type": "float"
+    },
+    {
+      "name": "Multiplier",
+      "direction": "input",
+      "type": "int"
+    },
+    {
+      "name": "FinalDamage",
+      "direction": "out",
+      "type": "float"
+    }
+  ],
+  "local_variables": [
+    {
+      "name": "TempResult",
+      "type": "float",
+      "default": "0.0",
+      "is_const": false,
+      "is_reference": false
+    }
+  ]
 }
 ```
 
-## Tips
+## Notes
 
-- Use this to understand function signatures before calling them
-- Shows all input and output parameters with their types
-- NodeCount indicates the complexity of the function's graph
-- Inherited functions will show as part of the function list
+- Returns comprehensive function information including:
+  - Function name
+  - Total node count in the function graph
+  - Graph GUID for internal identification
+  - All input and output parameters with their types
+  - All local variables with their configuration
+- Use this to inspect function structure before modifications
+- Parameters show direction (input/out) and types
+- Local variables show their type, default value, and modifiers
+

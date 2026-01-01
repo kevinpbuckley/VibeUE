@@ -1268,6 +1268,12 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         return HandleFunctionHelp();
     }
 
+    // Handle type discovery (doesn't require blueprint_name)
+    if (NormalizedAction == TEXT("get_available_local_types") || NormalizedAction == TEXT("list_local_types"))
+    {
+        return BuildAvailableLocalVariableTypes();
+    }
+
     FString BlueprintName;
     if (!Params->TryGetStringField(TEXT("blueprint_name"), BlueprintName))
         return FCommonUtils::CreateErrorResponse(TEXT("Missing 'blueprint_name' parameter"));
@@ -1428,7 +1434,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
     }
 
     // Local variable operations
-    if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars"))
+    if (NormalizedAction == TEXT("list_locals") || NormalizedAction == TEXT("locals") || NormalizedAction == TEXT("list_local_vars") || NormalizedAction == TEXT("list_local_variables"))
     {
         FString FunctionName; if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
         {
@@ -1446,7 +1452,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         Response->SetNumberField(TEXT("count"), Locals.Num());
         return Response;
     }
-    if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var"))
+    if (NormalizedAction == TEXT("add_local") || NormalizedAction == TEXT("add_local_var") || NormalizedAction == TEXT("add_local_variable"))
     {
         FString FunctionName;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
@@ -1475,7 +1481,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         }
         return AddFunctionLocalVariable(Blueprint, Graph, LocalName, TypeDesc, Params);
     }
-    if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var"))
+    if (NormalizedAction == TEXT("remove_local") || NormalizedAction == TEXT("remove_local_var") || NormalizedAction == TEXT("remove_local_variable"))
     {
         FString FunctionName;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
@@ -1496,7 +1502,7 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
         }
         return RemoveFunctionLocalVariable(Blueprint, Graph, LocalName);
     }
-    if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var"))
+    if (NormalizedAction == TEXT("update_local") || NormalizedAction == TEXT("update_local_var") || NormalizedAction == TEXT("update_local_variable"))
     {
         FString FunctionName;
         if (!Params->TryGetStringField(TEXT("function_name"), FunctionName))
@@ -1516,10 +1522,6 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::HandleManageBlueprintFunction(co
             return FCommonUtils::CreateErrorResponse(TEXT("Function not found"));
         }
         return UpdateFunctionLocalVariable(Blueprint, Graph, LocalName, Params);
-    }
-    if (NormalizedAction == TEXT("get_available_local_types") || NormalizedAction == TEXT("list_local_types"))
-    {
-        return BuildAvailableLocalVariableTypes();
     }
 
     return FCommonUtils::CreateErrorResponse(FString::Printf(TEXT("Unknown function action: %s"), *Action));
@@ -1682,6 +1684,15 @@ TSharedPtr<FJsonObject> FBlueprintNodeCommands::BuildSingleFunctionInfo(UBluepri
     Info->SetStringField(TEXT("name"), FunctionName);
     Info->SetNumberField(TEXT("node_count"), Graph->Nodes.Num());
     Info->SetStringField(TEXT("graph_guid"), Graph->GraphGuid.ToString());
+    
+    // Add parameters
+    TArray<TSharedPtr<FJsonValue>> ParamsArray = ListFunctionParameters(Blueprint, Graph);
+    Info->SetArrayField(TEXT("parameters"), ParamsArray);
+    
+    // Add local variables
+    TArray<TSharedPtr<FJsonValue>> LocalsArray = ListFunctionLocalVariables(Blueprint, Graph);
+    Info->SetArrayField(TEXT("local_variables"), LocalsArray);
+    
     return Info;
 }
 

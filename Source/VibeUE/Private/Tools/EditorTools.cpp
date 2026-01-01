@@ -337,7 +337,7 @@ REGISTER_VIBEUE_TOOL(manage_blueprint_component,
 
 // 6. manage_blueprint_function
 REGISTER_VIBEUE_TOOL(manage_blueprint_function,
-	"Manage blueprint functions - create, delete, modify functions. Actions: create, delete, get_info, add_input, add_output, remove_param, list",
+	"Manage blueprint functions - create, delete, modify functions. Actions: create, delete, get_info, add_input, add_output, remove_param, list, add_local_variable, remove_local_variable, update_local_variable, list_local_variables, get_available_local_types",
 	"Blueprint",
 	TOOL_PARAMS(
 		TOOL_PARAM("Action", "Action to perform", "string", true),

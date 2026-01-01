@@ -473,6 +473,10 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
             {
                 UE_LOG(LogLLMClientBase, Log, TEXT("Sending chunk: '%s'"), *CleanContent.Left(100));
                 CurrentOnChunk.Execute(CleanContent);
+
+                // Accumulate content so it can be retrieved later via GetLastAccumulatedResponse()
+                // This is critical when messages have both content and tool calls
+                AccumulatedContent += CleanContent;
             }
         }
     }
@@ -1347,17 +1351,18 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response content length=%d, StreamBuffer length=%d"), 
             ResponseContent.Len(), StreamBuffer.Len());
         
-        // Log raw response to dedicated file for debugging (if file logging enabled)
+        // Log response summary to dedicated file for debugging (if file logging enabled)
         if (FChatSession::IsFileLoggingEnabled())
         {
             FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
-            FString ResponseLog = FString::Printf(TEXT("\n========== RESPONSE [%s] ==========\nHTTP %d, Content-Type: %s\n%s\n"),
+            // Log summary instead of full response to avoid massive log files from streaming chunks
+            FString ResponseLog = FString::Printf(TEXT("\n========== RESPONSE [%s] ==========\nHTTP %d, Content-Type: %s, Length: %d bytes\n"),
                 *FDateTime::Now().ToString(),
                 ResponseCode,
                 *ContentType,
-                *ResponseContent);
+                ResponseContent.Len());
             FFileHelper::SaveStringToFile(ResponseLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
-            UE_LOG(LogLLMClientBase, Log, TEXT("Raw response logged to: %s"), *RawLogPath);
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("Response summary logged to: %s"), *RawLogPath);
         }
         
         // Check if we have content that needs processing

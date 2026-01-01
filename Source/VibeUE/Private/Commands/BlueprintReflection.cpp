@@ -3008,21 +3008,51 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
     // Resolve target graph (event or function) using graph scoping
     UEdGraph* TargetGraph = nullptr;
     FString GraphScope;
+    FString FunctionName;
     bool bExplicitFunctionScope = false;
-    if (Params->TryGetStringField(TEXT("graph_scope"), GraphScope) && !GraphScope.IsEmpty())
+
+    // Support both 'graph_name' and 'function_name' parameters
+    // If either is provided and is not "EventGraph", treat it as a function graph
+    if (!Params->TryGetStringField(TEXT("graph_name"), FunctionName))
+    {
+        Params->TryGetStringField(TEXT("function_name"), FunctionName);
+    }
+
+    // Auto-detect function scope if function_name is provided and is not EventGraph
+    if (!FunctionName.IsEmpty() && !FunctionName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+    {
+        bExplicitFunctionScope = true;
+        GraphScope = TEXT("function");
+        UE_LOG(LogVibeUEReflection, Warning, TEXT("Auto-detected function scope from function_name/graph_name: %s"), *FunctionName);
+    }
+    else if (Params->TryGetStringField(TEXT("graph_scope"), GraphScope) && !GraphScope.IsEmpty())
     {
         if (GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
         {
             bExplicitFunctionScope = true;
 
-            FString FunctionName;
-            if (!Params->TryGetStringField(TEXT("function_name"), FunctionName) || FunctionName.IsEmpty())
+            if (FunctionName.IsEmpty())
             {
-                Result->SetBoolField(TEXT("success"), false);
-                Result->SetStringField(TEXT("error"), TEXT("Missing 'function_name' for function scope"));
-                Result->SetStringField(TEXT("usage_hint"), TEXT("Provide the exact function name when graph_scope='function'."));
-                return Result;
+                if (!Params->TryGetStringField(TEXT("function_name"), FunctionName) || FunctionName.IsEmpty())
+                {
+                    Result->SetBoolField(TEXT("success"), false);
+                    Result->SetStringField(TEXT("error"), TEXT("Missing 'function_name' for function scope"));
+                    Result->SetStringField(TEXT("usage_hint"), TEXT("Provide the exact function name when graph_scope='function'."));
+                    return Result;
+                }
             }
+        }
+    }
+
+    if (bExplicitFunctionScope)
+    {
+        if (FunctionName.IsEmpty())
+        {
+            Result->SetBoolField(TEXT("success"), false);
+            Result->SetStringField(TEXT("error"), TEXT("Missing 'function_name' for function scope"));
+            Result->SetStringField(TEXT("usage_hint"), TEXT("Provide the exact function name when targeting a function graph."));
+            return Result;
+        }
 
             const FName FunctionGraphName(*FunctionName);
             TArray<UEdGraph*> AllGraphs;
@@ -3058,13 +3088,12 @@ TSharedPtr<FJsonObject> FBlueprintReflectionCommands::HandleAddBlueprintNode(con
             }
 
             UE_LOG(LogVibeUEReflection, Warning, TEXT("Function graph found: %s"), *TargetGraph->GetName());
-        }
-        else if (!GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase))
-        {
-            Result->SetBoolField(TEXT("success"), false);
-            Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Invalid graph_scope: %s (expected 'event' or 'function')"), *GraphScope));
-            return Result;
-        }
+    }
+    else if (!GraphScope.IsEmpty() && !GraphScope.Equals(TEXT("event"), ESearchCase::IgnoreCase) && !GraphScope.Equals(TEXT("function"), ESearchCase::IgnoreCase))
+    {
+        Result->SetBoolField(TEXT("success"), false);
+        Result->SetStringField(TEXT("error"), FString::Printf(TEXT("Invalid graph_scope: %s (expected 'event' or 'function')"), *GraphScope));
+        return Result;
     }
 
     if (!TargetGraph)
