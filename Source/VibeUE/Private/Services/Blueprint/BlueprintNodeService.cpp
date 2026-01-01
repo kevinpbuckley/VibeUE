@@ -86,6 +86,30 @@ static FString GetSearchSuggestion(const FString& SearchTerm)
 		return TEXT("For integer-to-float conversion, search for: 'Conv_IntToDouble'. The spawner_key is 'KismetMathLibrary::Conv_IntToDouble'.");
 	}
 	
+	// CRITICAL: Type conversion searches (float to real, float to double, etc.)
+	// These DO NOT EXIST as separate nodes in Unreal Engine!
+	if ((LowerSearch.Contains(TEXT("float")) || LowerSearch.Contains(TEXT("real")) || LowerSearch.Contains(TEXT("double"))) &&
+	    (LowerSearch.Contains(TEXT("convert")) || LowerSearch.Contains(TEXT("cast")) || 
+	     LowerSearch.Contains(TEXT("to double")) || LowerSearch.Contains(TEXT("to real")) || 
+	     LowerSearch.Contains(TEXT("to float"))))
+	{
+		return TEXT("STOP: There are NO conversion nodes between float/real/double types in Unreal Engine! "
+		            "Type conversion is AUTOMATIC when you connect pins - Unreal handles implicit conversions transparently. "
+		            "If you're trying to connect a 'float' variable to a 'real' pin, just use the CONNECT action directly - "
+		            "no conversion node needed. DO NOT search for 'cast', 'convert', 'float to real', or 'float to double'. "
+		            "Example: Connect float variable directly to Clamp node's real input - Unreal converts automatically.");
+	}
+	
+	// Clamp searches - especially when looking for exec-compatible nodes
+	if (LowerSearch.Contains(TEXT("clamp")))
+	{
+		return TEXT("For clamping float values, search for: 'Clamp (Float)' or just 'Clamp'. "
+		            "IMPORTANT: Clamp is a PURE FUNCTION with NO execution pins - it doesn't need exec wiring! "
+		            "Just connect its data inputs (Value, Min, Max) and read its ReturnValue output. "
+		            "The spawner_key is 'Clamp_(Float)_Float'. "
+		            "DO NOT try to connect exec pins to Clamp - pure math functions execute automatically when their output is read.");
+	}
+	
 	// Print/debug searches
 	if (LowerSearch.Contains(TEXT("print")) && LowerSearch.Contains(TEXT("string")))
 	{
@@ -1304,19 +1328,71 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 		const ECanCreateConnectionResponse ResponseType = Response.Response;
 		const FString ResponseMessage = Response.Message.ToString();
 
+		// Check if this is a float/real compatibility issue that we can work around
+		// In UE5, PC_Float (single) and PC_Real (double) are compatible at runtime but
+		// CanCreateConnection may return DISALLOW. The bytecode compiler handles conversion.
+		bool bFloatRealWorkaround = false;
 		if (ResponseType == CONNECT_RESPONSE_DISALLOW)
+		{
+			const FName& SourceCat = SourcePin->PinType.PinCategory;
+			const FName& TargetCat = TargetPin->PinType.PinCategory;
+			const FName& SourceSub = SourcePin->PinType.PinSubCategory;
+			const FName& TargetSub = TargetPin->PinType.PinSubCategory;
+			
+			// Detect float/real/double mismatches that are actually compatible
+			const bool bSourceIsFloat = (SourceCat == UEdGraphSchema_K2::PC_Float) || 
+			                            (SourceCat == UEdGraphSchema_K2::PC_Real && SourceSub == UEdGraphSchema_K2::PC_Float);
+			const bool bSourceIsDouble = (SourceCat == UEdGraphSchema_K2::PC_Double) || 
+			                             (SourceCat == UEdGraphSchema_K2::PC_Real && SourceSub == UEdGraphSchema_K2::PC_Double);
+			const bool bSourceIsReal = (SourceCat == UEdGraphSchema_K2::PC_Real);
+			
+			const bool bTargetIsFloat = (TargetCat == UEdGraphSchema_K2::PC_Float) || 
+			                            (TargetCat == UEdGraphSchema_K2::PC_Real && TargetSub == UEdGraphSchema_K2::PC_Float);
+			const bool bTargetIsDouble = (TargetCat == UEdGraphSchema_K2::PC_Double) || 
+			                             (TargetCat == UEdGraphSchema_K2::PC_Real && TargetSub == UEdGraphSchema_K2::PC_Double);
+			const bool bTargetIsReal = (TargetCat == UEdGraphSchema_K2::PC_Real);
+			
+			// All combinations of float/double/real should be compatible
+			const bool bSourceIsNumeric = bSourceIsFloat || bSourceIsDouble || bSourceIsReal;
+			const bool bTargetIsNumeric = bTargetIsFloat || bTargetIsDouble || bTargetIsReal;
+			
+			if (bSourceIsNumeric && bTargetIsNumeric)
+			{
+				bFloatRealWorkaround = true;
+			}
+		}
+
+		if (ResponseType == CONNECT_RESPONSE_DISALLOW && !bFloatRealWorkaround)
 		{
 			TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 			Failure->SetBoolField(TEXT("success"), false);
 			Failure->SetStringField(TEXT("code"), TEXT("CONNECTION_BLOCKED"));
 			
-			// Enhance error message for float/double type mismatch (common in UE5)
+	// Enhance error message for float/double type mismatch (common in UE5)
 			FString EnhancedMessage = ResponseMessage;
 			if (ResponseMessage.Contains(TEXT("single-precision")) && ResponseMessage.Contains(TEXT("double-precision")))
 			{
-				EnhancedMessage = FString::Printf(TEXT("%s HINT: In UE5, Blueprint 'float' variables are single-precision, but math function pins use 'real' (double-precision). "
-				                                       "This is an Unreal type system limitation. Options: 1) Change the variable type in the Blueprint to 'Double', "
-				                                       "2) Use a conversion node, or 3) Redesign the function to avoid this mismatch."), *ResponseMessage);
+				EnhancedMessage = FString::Printf(TEXT("%s STOP: This is a known UE5 limitation. Blueprint 'float' variables are single-precision, but math function pins use 'real' (double-precision). "
+				                                       "Unreal DOES auto-convert these in most cases - try the connection anyway, it often works! "
+				                                       "If it still fails: 1) Use Double variables instead of Float in your Blueprint, "
+				                                       "2) DO NOT search for conversion nodes - they don't exist."), *ResponseMessage);
+			}
+			// Detect exec pin to non-exec pin on pure function (common AI mistake)
+			else if (ResponseMessage.Contains(TEXT("Exec is not compatible")))
+			{
+				EnhancedMessage = FString::Printf(TEXT("%s STOP: You're trying to connect an EXEC pin to a NON-EXEC pin! "
+				                                       "Pure functions like Clamp, Lerp, Add, Multiply have NO exec pins - they execute automatically when their output is read. "
+				                                       "For pure functions: ONLY connect DATA pins (Value, Min, Max, A, B, ReturnValue). "
+				                                       "The exec flow should skip pure functions entirely and go directly to the next impure node."), *ResponseMessage);
+			}
+			// Enhance error message for wildcard/unresolved math operator pins
+			else if (ResponseMessage.Contains(TEXT("No matching")) && (ResponseMessage.Contains(TEXT("Multiply")) || ResponseMessage.Contains(TEXT("Add")) || ResponseMessage.Contains(TEXT("Subtract")) || ResponseMessage.Contains(TEXT("Divide"))))
+			{
+				EnhancedMessage = FString::Printf(TEXT("%s HINT: Math operator nodes have wildcard pins that need type resolution. "
+				                                       "Try using a typed math node instead: "
+				                                       "1) Use 'details' action to check if target pin is 'wildcard' type, "
+				                                       "2) Search for typed versions like 'Multiply_FloatFloat' or 'Add_IntInt', "
+				                                       "3) Or use KismetMathLibrary functions that accept specific types."), *ResponseMessage);
 			}
 			
 			Failure->SetStringField(TEXT("message"), EnhancedMessage.IsEmpty() ? TEXT("Schema disallowed this connection") : EnhancedMessage);
@@ -2304,10 +2380,48 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DiscoverNodesWithDescrip
 	// Compact mode (default: true) returns minimal fields to reduce token usage
 	bool bCompact = true;
 	Params->TryGetBoolField(TEXT("compact"), bCompact);
+	
+	// ═══════════════════════════════════════════════════════════════════════════
+	// PIN-TYPE-SENSITIVE DISCOVERY (optional)
+	// Pass source_node_id + source_pin to filter results to only nodes that can
+	// connect to that pin - like Unreal's "drag from pin" context menu
+	// ═══════════════════════════════════════════════════════════════════════════
+	UEdGraphPin* ContextPin = nullptr;
+	FString SourceNodeId, SourcePinName;
+	if (Params->TryGetStringField(TEXT("source_node_id"), SourceNodeId) &&
+	    Params->TryGetStringField(TEXT("source_pin"), SourcePinName))
+	{
+		// Get candidate graphs for node lookup
+		TArray<UEdGraph*> CandidateGraphs;
+		GatherCandidateGraphs(Blueprint, nullptr, CandidateGraphs);
+		
+		// Find the source node
+		UEdGraphNode* SourceNode = FindNodeByGuid(CandidateGraphs, SourceNodeId);
+		if (SourceNode)
+		{
+			// Find the pin on the node
+			ContextPin = FindPinByName(SourceNode, SourcePinName);
+			if (ContextPin)
+			{
+				UE_LOG(LogTemp, Log, TEXT("DiscoverNodesWithDescriptors: Using pin '%s' (type: %s) for context-sensitive filtering"),
+				       *SourcePinName, *ContextPin->PinType.PinCategory.ToString());
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("DiscoverNodesWithDescriptors: Pin '%s' not found on node '%s' - ignoring pin context"),
+				       *SourcePinName, *SourceNodeId);
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("DiscoverNodesWithDescriptors: Node '%s' not found - ignoring pin context"),
+			       *SourceNodeId);
+		}
+	}
 
-	// Call descriptor-based discovery system
+	// Call descriptor-based discovery system with optional pin context
 	TArray<FBlueprintReflection::FNodeSpawnerDescriptor> Descriptors = 
-		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults);
+		FBlueprintReflection::DiscoverNodesWithDescriptors(Blueprint, SearchTerm, CategoryFilter, ClassFilter, MaxResults, ContextPin);
 
 	// Convert descriptors to JSON (compact or full), filtering out invalid entries
 	TArray<TSharedPtr<FJsonValue>> DescriptorJsonArray;
@@ -2329,16 +2443,101 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DiscoverNodesWithDescrip
 	Result->SetNumberField(TEXT("count"), DescriptorJsonArray.Num());
 	Result->SetStringField(TEXT("blueprint_name"), Blueprint->GetName());
 	
+	// Indicate if pin filtering was used
+	if (ContextPin)
+	{
+		Result->SetBoolField(TEXT("pin_filtered"), true);
+		Result->SetStringField(TEXT("context_pin"), SourcePinName);
+		Result->SetStringField(TEXT("context_pin_type"), ContextPin->PinType.PinCategory.ToString());
+	}
+	
 	// Add hints to guide AI - ALWAYS check for suggestions even when results are found
 	// This is important because searches like "multiply" return Power/MultiplyByPi but NOT basic multiplication
+	
+	// PRIORITY: Warn if searching for pure functions with exec pin filtering
+	if (ContextPin && ContextPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec && !SearchTerm.IsEmpty())
+	{
+		FString LowerSearchTerm = SearchTerm.ToLower();
+		
+		// Detect if searching for known pure functions
+		if (LowerSearchTerm.Contains(TEXT("clamp")) || LowerSearchTerm.Contains(TEXT("lerp")) ||
+		    LowerSearchTerm.Contains(TEXT("multiply")) || LowerSearchTerm.Contains(TEXT("add")) ||
+		    LowerSearchTerm.Contains(TEXT("subtract")) || LowerSearchTerm.Contains(TEXT("divide")) ||
+		    LowerSearchTerm.Contains(TEXT("min")) || LowerSearchTerm.Contains(TEXT("max")) ||
+		    LowerSearchTerm.Contains(TEXT("abs")) || LowerSearchTerm.Contains(TEXT("sqrt")) ||
+		    LowerSearchTerm.Contains(TEXT("pow")) || LowerSearchTerm.Contains(TEXT("sin")) ||
+		    LowerSearchTerm.Contains(TEXT("cos")) || LowerSearchTerm.Contains(TEXT("tan")))
+		{
+			Result->SetStringField(TEXT("hint"), FString::Printf(
+				TEXT("STOP: You're filtering by EXEC pin but '%s' is likely a PURE FUNCTION with NO exec pins! "
+				     "Pure math/utility functions execute automatically when their output is read - they don't need execution wiring. "
+				     "Remove source_node_id/source_pin parameters and search again WITHOUT pin filtering to find the actual '%s' node."),
+				*SearchTerm, *SearchTerm));
+		}
+	}
+	
+	// General search suggestions
 	FString Suggestion = GetSearchSuggestion(SearchTerm);
-	if (!Suggestion.IsEmpty())
+	if (!Suggestion.IsEmpty() && !Result->HasField(TEXT("hint")))
 	{
 		Result->SetStringField(TEXT("hint"), Suggestion);
 	}
 	else if (DescriptorJsonArray.Num() == 0 && !SearchTerm.IsEmpty())
 	{
-		Result->SetStringField(TEXT("hint"), TEXT("No nodes found. Try broader search terms or check category_filter."));
+		if (ContextPin)
+		{
+			// Special hint for exec pin filtering with pure function searches
+			if (ContextPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec && 
+			    (SearchTerm.ToLower().Contains(TEXT("clamp")) || SearchTerm.ToLower().Contains(TEXT("lerp")) ||
+			     SearchTerm.ToLower().Contains(TEXT("multiply")) || SearchTerm.ToLower().Contains(TEXT("add")) ||
+			     SearchTerm.ToLower().Contains(TEXT("math")) || SearchTerm.ToLower().Contains(TEXT("float"))))
+			{
+				Result->SetStringField(TEXT("hint"), FString::Printf(
+					TEXT("STOP: You're searching for '%s' with an EXEC pin filter (from pin '%s'), but math/utility functions like Clamp, Lerp, Multiply are PURE FUNCTIONS with NO exec pins! "
+					     "Pure functions don't need execution wiring - they execute automatically when their output is read. "
+					     "Remove source_node_id/source_pin parameters and search WITHOUT pin filtering to find the actual node. "
+					     "Then connect ONLY data pins (Value, Min, Max, etc.) - NOT exec pins."),
+					*SearchTerm, *SourcePinName));
+			}
+			else
+			{
+				Result->SetStringField(TEXT("hint"), FString::Printf(TEXT("No nodes found that can connect to pin '%s' (type: %s). Try a different search term or remove source_node_id/source_pin to search all nodes."), 
+				                                                     *SourcePinName, *ContextPin->PinType.PinCategory.ToString()));
+			}
+		}
+		else
+		{
+			Result->SetStringField(TEXT("hint"), TEXT("No nodes found. Try broader search terms or check category_filter."));
+		}
+	}
+	// Warn if results look wrong (all "Set members" struct nodes when searching for functions)
+	else if (ContextPin && ContextPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec && 
+	         DescriptorJsonArray.Num() > 0 && !SearchTerm.IsEmpty())
+	{
+		// Check if ALL results are "Set members" nodes (indicates wrong search)
+		bool bAllSetMembers = true;
+		for (const TSharedPtr<FJsonValue>& Val : DescriptorJsonArray)
+		{
+			if (TSharedPtr<FJsonObject> Obj = Val->AsObject())
+			{
+				FString DisplayName = Obj->GetStringField(TEXT("display_name"));
+				if (!DisplayName.StartsWith(TEXT("Set members")))
+				{
+					bAllSetMembers = false;
+					break;
+				}
+			}
+		}
+		
+		if (bAllSetMembers && (SearchTerm.ToLower().Contains(TEXT("clamp")) || SearchTerm.ToLower().Contains(TEXT("lerp")) ||
+		                       SearchTerm.ToLower().Contains(TEXT("multiply")) || SearchTerm.ToLower().Contains(TEXT("add"))))
+		{
+			Result->SetStringField(TEXT("hint"), FString::Printf(
+				TEXT("WARNING: All results are 'Set members' struct nodes, not the '%s' function you need! "
+				     "You're filtering by EXEC pin but '%s' is a PURE FUNCTION with NO exec pins. "
+				     "Remove source_node_id/source_pin and search again WITHOUT pin filtering."),
+				*SearchTerm, *SearchTerm));
+		}
 	}
 	else if (SearchTerm.IsEmpty() && CategoryFilter.IsEmpty())
 	{

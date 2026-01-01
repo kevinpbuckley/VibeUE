@@ -4008,7 +4008,8 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
     const FString& SearchTerm,
     const FString& CategoryFilter,
     const FString& ClassFilter,
-    int32 MaxResults)
+    int32 MaxResults,
+    UEdGraphPin* ContextPin)
 {
     TArray<FNodeSpawnerDescriptor> Descriptors;
     
@@ -4018,8 +4019,8 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
         return Descriptors;
     }
     
-    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Search='%s', Category='%s', Class='%s', Max=%d"),
-           *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults);
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Search='%s', Category='%s', Class='%s', Max=%d, ContextPin=%s"),
+           *SearchTerm, *CategoryFilter, *ClassFilter, MaxResults, ContextPin ? *ContextPin->PinName.ToString() : TEXT("none"));
     
     // ═══════════════════════════════════════════════════════════════════════════
     // CONTEXT-SENSITIVE NODE DISCOVERY
@@ -4052,6 +4053,20 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
     Context.Blueprints.Add(Blueprint);
     Context.Graphs.Add(TargetGraph);
     
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PIN-TYPE-SENSITIVE DISCOVERY (like Unreal's "drag from pin" context menu)
+    // When a ContextPin is provided, this filters to only nodes that can connect
+    // to that pin type - matching Unreal's behavior when dragging off a pin
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (ContextPin)
+    {
+        Context.Pins.Add(ContextPin);
+        UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Added context pin '%s' (type: %s, direction: %s) for pin-type-sensitive filtering"),
+               *ContextPin->PinName.ToString(),
+               *ContextPin->PinType.PinCategory.ToString(),
+               ContextPin->Direction == EGPD_Output ? TEXT("Output") : TEXT("Input"));
+    }
+    
     // Enable context sensitivity - this is the key! Same as the UI checkbox
     const bool bIsContextSensitive = true;
     const uint32 ContextTargetMask = BuildDefaultContextTargetMask();
@@ -4061,7 +4076,9 @@ TArray<FBlueprintReflection::FNodeSpawnerDescriptor> FBlueprintReflection::Disco
     FBlueprintActionMenuUtils::MakeContextMenu(Context, bIsContextSensitive, ContextTargetMask, MenuBuilder);
     
     const int32 NumContextActions = MenuBuilder.GetNumActions();
-    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Context-sensitive menu returned %d actions"), NumContextActions);
+    UE_LOG(LogVibeUEReflection, Log, TEXT("DiscoverNodesWithDescriptors: Context-sensitive menu returned %d actions%s"), 
+           NumContextActions,
+           ContextPin ? TEXT(" (filtered by pin type)") : TEXT(""));
     
     // ═══════════════════════════════════════════════════════════════════════════
     // IMPORTANT: Collect ALL matching results first, then sort by relevance, then truncate
