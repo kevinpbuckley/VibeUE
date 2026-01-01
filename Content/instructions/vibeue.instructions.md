@@ -52,6 +52,10 @@ Text: "Editor opened successfully."
 - If you got help for an action, USE it - don't ask again
 - If same error occurs twice, STOP and report to user
 - Maximum iteration limit: don't loop more than 3 times on same issue
+- **CRITICAL: If you say "I will do X" but then call a tool that does Y, STOP immediately**
+  - Example BAD: "Let me run the function" → [calls get_info instead]
+  - Recognize when your stated goal doesn't match your action
+  - If stuck: summarize what worked, what failed, and report to user
 
 ## Critical Formats
 

@@ -1250,10 +1250,19 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 		// Validate pins are in same graph
 		if (SourceNode->GetGraph() != TargetNode->GetGraph())
 		{
+			// Get graph names for debugging
+			FString SourceGraphName = SourceNode->GetGraph() ? SourceNode->GetGraph()->GetName() : TEXT("NULL");
+			FString TargetGraphName = TargetNode->GetGraph() ? TargetNode->GetGraph()->GetName() : TEXT("NULL");
+			FString SourceNodeClass = SourceNode->GetClass()->GetName();
+			FString TargetNodeClass = TargetNode->GetClass()->GetName();
+
 			TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 			Failure->SetBoolField(TEXT("success"), false);
 			Failure->SetStringField(TEXT("code"), TEXT("DIFFERENT_GRAPHS"));
-			Failure->SetStringField(TEXT("message"), TEXT("Source and target pins are not in the same graph"));
+			Failure->SetStringField(TEXT("message"), FString::Printf(
+				TEXT("Source and target pins are not in the same graph. Source: %s (%s) in graph '%s', Target: %s (%s) in graph '%s'"),
+				*SourceNodeId, *SourceNodeClass, *SourceGraphName,
+				*TargetNodeId, *TargetNodeClass, *TargetGraphName));
 			Failure->SetNumberField(TEXT("index"), Index);
 			Failure->SetObjectField(TEXT("request"), ConnectionObj);
 			Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -1840,10 +1849,19 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DisconnectPinsAdvanced(U
 			// Validate pins are in same graph
 			if (SourceNode->GetGraph() != TargetNode->GetGraph())
 			{
+				// Get graph names for debugging
+				FString SourceGraphName = SourceNode->GetGraph() ? SourceNode->GetGraph()->GetName() : TEXT("NULL");
+				FString TargetGraphName = TargetNode->GetGraph() ? TargetNode->GetGraph()->GetName() : TEXT("NULL");
+				FString SourceNodeClass = SourceNode->GetClass()->GetName();
+				FString TargetNodeClass = TargetNode->GetClass()->GetName();
+
 				TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 				Failure->SetBoolField(TEXT("success"), false);
 				Failure->SetStringField(TEXT("code"), TEXT("DIFFERENT_GRAPHS"));
-				Failure->SetStringField(TEXT("message"), TEXT("Pins are not in the same graph"));
+				Failure->SetStringField(TEXT("message"), FString::Printf(
+					TEXT("Pins are not in the same graph. Source: %s (%s) in graph '%s', Target: %s (%s) in graph '%s'"),
+					*SourceNodeId, *SourceNodeClass, *SourceGraphName,
+					*TargetNodeId, *TargetNodeClass, *TargetGraphName));
 				Failure->SetNumberField(TEXT("index"), Index);
 				Failure->SetObjectField(TEXT("request"), RequestObj);
 				Failures.Add(MakeShared<FJsonValueObject>(Failure));
