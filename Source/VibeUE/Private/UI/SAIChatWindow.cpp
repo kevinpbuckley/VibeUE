@@ -8,6 +8,8 @@
 #include "Core/ToolRegistry.h"
 #include "Chat/ILLMClient.h"
 #include "Chat/VibeUEAPIClient.h"
+#include "Speech/SpeechToTextService.h"
+#include "Speech/ElevenLabsSpeechProvider.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -132,7 +134,13 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnToolIterationLimitReached.BindSP(this, &SAIChatWindow::HandleToolIterationLimitReached);
     ChatSession->OnThinkingStatusChanged.BindSP(this, &SAIChatWindow::HandleThinkingStatusChanged);
     ChatSession->OnToolPreparing.BindSP(this, &SAIChatWindow::HandleToolPreparing);
-    
+
+    // Voice input delegates
+    ChatSession->OnVoiceInputStarted.BindSP(this, &SAIChatWindow::OnVoiceInputStarted);
+    ChatSession->OnVoiceInputText.BindSP(this, &SAIChatWindow::OnVoiceInputText);
+    ChatSession->OnVoiceInputStopped.BindSP(this, &SAIChatWindow::OnVoiceInputStopped);
+    ChatSession->OnVoiceInputAutoSent.BindSP(this, &SAIChatWindow::OnVoiceInputAutoSent);
+
     // Build UI with VibeUE branding
     ChildSlot
     [
@@ -304,7 +312,25 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                         ]
                     ]
                 ]
-                
+
+                // Microphone button for voice input (push-to-talk)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(4, 0, 0, 0)
+                .VAlign(VAlign_Center)
+                [
+                    SNew(SBox)
+                    [
+                        SAssignNew(MicrophoneButton, SButton)
+                        .Text(this, &SAIChatWindow::GetMicrophoneButtonText)
+                        .ToolTipText(this, &SAIChatWindow::GetMicrophoneTooltip)
+                        .IsEnabled(this, &SAIChatWindow::IsMicrophoneEnabled)
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .OnPressed(this, &SAIChatWindow::OnMicrophonePressed)
+                        .OnReleased(this, &SAIChatWindow::OnMicrophoneReleased)
+                    ]
+                ]
+
                 // Stop button (only visible when request in progress)
                 + SHorizontalBox::Slot()
                 .AutoWidth()
@@ -345,6 +371,11 @@ SAIChatWindow::~SAIChatWindow()
     {
         ChatSession->Shutdown();
     }
+}
+
+void SAIChatWindow::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
+{
+    SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 }
 
 void SAIChatWindow::OpenWindow()
@@ -646,9 +677,18 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
                 SNew(SButton)
                 .Text(FText::FromString(TEXT("Copy")))
                 .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                .OnClicked_Lambda([this, Index]() -> FReply
+                .OnClicked_Lambda([this, Index, MessageContent = Message.Content]() -> FReply
                 {
-                    CopyMessageToClipboard(Index);
+                    // For system notifications (negative index), copy the captured content
+                    // For regular messages, use the message index to get current content
+                    if (Index < 0)
+                    {
+                        FPlatformApplicationMisc::ClipboardCopy(*MessageContent);
+                    }
+                    else
+                    {
+                        CopyMessageToClipboard(Index);
+                    }
                     return FReply::Handled();
                 })
             ]
@@ -1724,6 +1764,97 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
             ]
         ]
+
+        // ============ Voice Input Settings ============
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 16, 8, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Voice Input Settings:")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+        ]
+
+        // Enable voice input checkbox
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(VoiceInputEnabledCheckBox, SCheckBox)
+                .IsChecked(FSpeechToTextService::GetVoiceInputEnabledFromConfig()
+                    ? ECheckBoxState::Checked
+                    : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Enable Voice Input")))
+            ]
+        ]
+
+        // Auto-send after recording checkbox
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(AutoSendAfterRecordingCheckBox, SCheckBox)
+                .IsChecked(ChatSession.IsValid() && ChatSession->IsAutoSendAfterRecordingEnabled()
+                    ? ECheckBoxState::Checked
+                    : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Auto Send After Recording")))
+                .ToolTipText(FText::FromString(TEXT("Automatically send transcribed text to AI without review")))
+            ]
+        ]
+
+        // ElevenLabs API Key
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("ElevenLabs API Key:")))
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 0)
+        [
+            SAssignNew(ElevenLabsApiKeyInput, SEditableTextBox)
+            .Text(FText::FromString(FElevenLabsSpeechProvider::GetApiKeyFromConfig()))
+            .IsPassword(true)
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 4, 8, 0)
+        [
+            SNew(SButton)
+            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+            .OnClicked_Lambda([]() -> FReply {
+                FPlatformProcess::LaunchURL(TEXT("https://elevenlabs.io/app/settings/api-keys"), nullptr, nullptr);
+                return FReply::Handled();
+            })
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Get ElevenLabs API key at elevenlabs.io")))
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
+            ]
+        ]
+
         // ============ LLM Generation Parameters (VibeUE only) ============
         + SVerticalBox::Slot()
         .AutoHeight()
@@ -2010,7 +2141,37 @@ FReply SAIChatWindow::OnSettingsClicked()
                 {
                     MCPServer.StopServer();
                 }
-                
+
+                // Save Voice Input settings
+                bool bNewVoiceInputEnabled = VoiceInputEnabledCheckBox->IsChecked();
+                bool bNewAutoSendAfterRecording = AutoSendAfterRecordingCheckBox->IsChecked();
+                FString NewElevenLabsApiKey = ElevenLabsApiKeyInput->GetText().ToString();
+
+                FSpeechToTextService::SaveVoiceInputEnabledToConfig(bNewVoiceInputEnabled);
+                if (ChatSession.IsValid())
+                {
+                    ChatSession->SetAutoSendAfterRecordingEnabled(bNewAutoSendAfterRecording);
+                }
+                FElevenLabsSpeechProvider::SaveApiKeyToConfig(NewElevenLabsApiKey);
+
+                // Update the provider with the new API key immediately
+                if (ChatSession.IsValid())
+                {
+                    TSharedPtr<FSpeechToTextService> SpeechService = ChatSession->GetSpeechService();
+                    if (SpeechService.IsValid())
+                    {
+                        TSharedPtr<ISpeechProvider> Provider = SpeechService->GetActiveProvider();
+                        if (Provider.IsValid())
+                        {
+                            TSharedPtr<FElevenLabsSpeechProvider> ElevenLabsProvider = StaticCastSharedPtr<FElevenLabsSpeechProvider>(Provider);
+                            if (ElevenLabsProvider.IsValid())
+                            {
+                                ElevenLabsProvider->SetApiKey(NewElevenLabsApiKey);
+                            }
+                        }
+                    }
+                }
+
                 GConfig->Flush(false, GEditorPerProjectIni);
                 
                 // Update the model dropdown based on new provider
@@ -2569,4 +2730,105 @@ void SAIChatWindow::CopyMessageToClipboard(int32 MessageIndex)
         FPlatformApplicationMisc::ClipboardCopy(*Messages[MessageIndex].Content);
         // Transient clipboard notification not needed - user knows they copied
     }
+}
+
+// ============================================================================
+// Voice Input Handlers
+// ============================================================================
+
+void SAIChatWindow::OnMicrophonePressed()
+{
+    if (!ChatSession.IsValid())
+    {
+        return;
+    }
+
+    // Start recording when button is pressed down
+    double CurrentTime = FPlatformTime::Seconds();
+    UE_LOG(LogTemp, Warning, TEXT("[VOICE DEBUG] Microphone button PRESSED at time %.3f"), CurrentTime);
+    ChatSession->StartVoiceInput();
+}
+
+void SAIChatWindow::OnMicrophoneReleased()
+{
+    if (!ChatSession.IsValid())
+    {
+        return;
+    }
+
+    // Stop recording when button is released
+    double CurrentTime = FPlatformTime::Seconds();
+    UE_LOG(LogTemp, Warning, TEXT("[VOICE DEBUG] Microphone button RELEASED at time %.3f"), CurrentTime);
+    ChatSession->StopVoiceInput();
+}
+
+FText SAIChatWindow::GetMicrophoneButtonText() const
+{
+    if (bIsVoiceInputActive)
+    {
+        // Red circle (recording)
+        return FText::FromString(TEXT("\U0001F534"));
+    }
+    else
+    {
+        // Microphone emoji
+        return FText::FromString(TEXT("\U0001F3A4"));
+    }
+}
+
+FText SAIChatWindow::GetMicrophoneTooltip() const
+{
+    if (!ChatSession.IsValid() || !ChatSession->IsVoiceInputAvailable())
+    {
+        return FText::FromString(TEXT("Voice input not configured. Add ElevenLabs API key in settings."));
+    }
+
+    if (bIsVoiceInputActive)
+    {
+        return FText::FromString(TEXT("Recording... (release to stop)"));
+    }
+    else
+    {
+        return FText::FromString(TEXT("Hold to record voice input"));
+    }
+}
+
+bool SAIChatWindow::IsMicrophoneEnabled() const
+{
+    return ChatSession.IsValid() && ChatSession->IsVoiceInputAvailable();
+}
+
+void SAIChatWindow::OnVoiceInputStarted(bool bSuccess)
+{
+    bIsVoiceInputActive = bSuccess;
+    if (bSuccess)
+    {
+        InputTextBox->SetText(FText::FromString(TEXT("Listening...")));
+    }
+}
+
+void SAIChatWindow::OnVoiceInputText(const FString& Text, bool bIsFinal)
+{
+    if (bIsFinal)
+    {
+        // Final transcript - set in input box for user to edit/send
+        InputTextBox->SetText(FText::FromString(Text));
+        bIsVoiceInputActive = false;
+    }
+    else
+    {
+        // Partial transcript - show as preview
+        InputTextBox->SetText(FText::FromString(Text));
+    }
+}
+
+void SAIChatWindow::OnVoiceInputStopped()
+{
+    bIsVoiceInputActive = false;
+}
+
+void SAIChatWindow::OnVoiceInputAutoSent()
+{
+    // Clear input box after auto-sending
+    InputTextBox->SetText(FText::FromString(TEXT("")));
 }

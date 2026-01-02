@@ -8,6 +8,7 @@
 #include "Chat/OpenRouterClient.h"
 #include "Chat/VibeUEAPIClient.h"
 #include "Chat/MCPClient.h"
+#include "Speech/SpeechTypes.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogChatSession, Log, All);
 
@@ -349,6 +350,50 @@ public:
     FOnThinkingStatusChanged OnThinkingStatusChanged;
     FOnToolPreparing OnToolPreparing;
 
+    // ============ Voice Input ============
+
+    /** Start voice input */
+    void StartVoiceInput();
+
+    /** Stop voice input */
+    void StopVoiceInput();
+
+    /** Check if voice input is active */
+    bool IsVoiceInputActive() const;
+
+    /** Check if voice input is available (configured) */
+    bool IsVoiceInputAvailable() const;
+
+    /** Get speech service (lazy initialization) */
+    TSharedPtr<class FSpeechToTextService> GetSpeechService();
+
+    // Voice input delegates
+
+    /** Fired when voice input starts or fails to start */
+    DECLARE_DELEGATE_OneParam(FOnVoiceInputStarted, bool /* bSuccess */);
+
+    /** Fired when transcription text is available (partial or final) */
+    DECLARE_DELEGATE_TwoParams(FOnVoiceInputText, const FString& /* Text */, bool /* bIsFinal */);
+
+    /** Fired when voice input stops */
+    DECLARE_DELEGATE(FOnVoiceInputStopped);
+
+    /** Fired when auto-sending transcribed text to clear input UI */
+    DECLARE_DELEGATE(FOnVoiceInputAutoSent);
+
+    FOnVoiceInputStarted OnVoiceInputStarted;
+    FOnVoiceInputText OnVoiceInputText;
+    FOnVoiceInputStopped OnVoiceInputStopped;
+    FOnVoiceInputAutoSent OnVoiceInputAutoSent;
+
+    // Voice input configuration
+
+    /** Check if auto-send after recording is enabled */
+    bool IsAutoSendAfterRecordingEnabled();
+
+    /** Enable/disable auto-send after recording */
+    void SetAutoSendAfterRecordingEnabled(bool bEnabled);
+
 private:
     /** OpenRouter HTTP client */
     TSharedPtr<FOpenRouterClient> OpenRouterClient;
@@ -521,7 +566,24 @@ private:
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;
-    
+
     // Loop detection is handled via prompt-based self-awareness instructions
     // See vibeue.instructions.md for details
+
+    // ============ Voice Input (Private) ============
+
+    /** Speech-to-text service (lazy initialized) */
+    TSharedPtr<class FSpeechToTextService> SpeechService;
+
+    /** Initialize speech service on first use */
+    void InitializeSpeechService();
+
+    /** Speech event handlers */
+    void OnSpeechStatusChanged(ESpeechToTextStatus Status, const FString& Text);
+    void OnSpeechPartialTranscript(const FString& Text);
+    void OnSpeechFinalTranscript(const FString& Text);
+    void OnSpeechError(const FString& Error);
+
+    /** Current partial transcript during voice input */
+    FString CurrentPartialTranscript;
 };
