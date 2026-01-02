@@ -36,6 +36,10 @@
 		{
 			"Name": "EnhancedInput",
 			"Enabled": true
+		},
+		{
+			"Name": "AudioCapture",
+			"Enabled": true
 		}
 	]
 } 

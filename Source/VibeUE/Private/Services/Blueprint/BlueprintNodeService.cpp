@@ -38,40 +38,36 @@ static FString GetSearchSuggestion(const FString& SearchTerm)
 	    LowerSearch.Contains(TEXT("*")) || LowerSearch.Contains(TEXT("float*float")) ||
 	    LowerSearch.Contains(TEXT("multiply_float")))
 	{
-		return TEXT("STOP: Basic multiplication (float * float) is NOT available through node discovery. "
-		            "In Unreal Engine, basic math operators (+, -, *, /) use special internal nodes (K2Node_CommutativeAssociativeBinaryOperator) "
-		            "that cannot be created programmatically. "
-		            "ALTERNATIVES: 1) Use 'MultiplyByPi' (spawner_key: 'KismetMathLibrary::MultiplyByPi') to multiply by Pi, "
-		            "2) Use function parameters directly and calculate in C++, "
-		            "3) For power/exponent use 'Power' (spawner_key: 'KismetMathLibrary::MultiplyMultiply_FloatFloat'). "
-		            "DO NOT keep searching for 'multiply float' - it does not exist as a discoverable node.");
+		return TEXT("✅ SUPPORTED: Math operations are available! Create math nodes from KismetMathLibrary functions. "
+		            "Try 'Multiply' or 'Multiply (Float)' - these will create working math nodes. "
+		            "Spawner keys: 'Multiply (Float)' or similar library functions.");
 	}
 	
 	// Add/plus searches
 	if (LowerSearch.Contains(TEXT("add")) && LowerSearch.Contains(TEXT("float")) ||
 	    LowerSearch.Contains(TEXT("+")) || LowerSearch.Contains(TEXT("plus")))
 	{
-		return TEXT("STOP: Basic addition (float + float) is NOT available through node discovery. "
-		            "Basic math operators use special internal nodes that cannot be created programmatically. "
-		            "DO NOT keep searching for 'add float' - it does not exist as a discoverable node.");
+		return TEXT("✅ SUPPORTED: Addition is available from KismetMathLibrary! "
+		            "Create 'Add' or 'Add (Float)' nodes - these will work properly. "
+		            "Math nodes ARE supported and CAN be created!");
 	}
 	
 	// Subtract/minus searches
 	if (LowerSearch.Contains(TEXT("subtract")) || LowerSearch.Contains(TEXT("minus")) ||
 	    LowerSearch.Contains(TEXT("-")) && LowerSearch.Contains(TEXT("float")))
 	{
-		return TEXT("STOP: Basic subtraction (float - float) is NOT available through node discovery. "
-		            "Basic math operators use special internal nodes that cannot be created programmatically. "
-		            "DO NOT keep searching for 'subtract float' - it does not exist as a discoverable node.");
+		return TEXT("✅ SUPPORTED: Subtraction is available from KismetMathLibrary! "
+		            "Create 'Subtract' or 'Subtract (Float)' nodes - these will work properly. "
+		            "Math nodes ARE supported and CAN be created!");
 	}
 	
 	// Divide searches
 	if (LowerSearch.Contains(TEXT("divid")) || LowerSearch.Contains(TEXT("/")) ||
 	    LowerSearch.Contains(TEXT("divide_float")))
 	{
-		return TEXT("STOP: Basic division (float / float) is NOT available through node discovery. "
-		            "Basic math operators use special internal nodes that cannot be created programmatically. "
-		            "DO NOT keep searching for 'divide float' - it does not exist as a discoverable node.");
+		return TEXT("✅ SUPPORTED: Division is available from KismetMathLibrary! "
+		            "Create 'Divide' or 'Divide (Float)' nodes - these will work properly. "
+		            "Math nodes ARE supported and CAN be created!");
 	}
 	
 	// Common float/int conversion searches - in UE these are FTrunc, FFloor, FCeil, Round
@@ -116,10 +112,10 @@ static FString GetSearchSuggestion(const FString& SearchTerm)
 		return TEXT("For debugging output, search for: 'PrintString' or 'Print String'. The spawner_key is 'KismetSystemLibrary::PrintString'.");
 	}
 	
-	// Branch/if searches
+	// Branch/if searches - SUPPORTED!
 	if (LowerSearch.Contains(TEXT("if")) || LowerSearch.Contains(TEXT("branch")))
 	{
-		return TEXT("For conditional branching, search for: 'Branch'. The spawner_key is 'Branch'.");
+		return TEXT("✅ SUPPORTED: For conditional branching, use 'Branch' node. The spawner_key is 'Branch'. You CAN create this node!");
 	}
 	
 	// For loop searches
