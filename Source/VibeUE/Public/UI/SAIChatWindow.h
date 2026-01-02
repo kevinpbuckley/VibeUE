@@ -40,6 +40,9 @@ public:
     
     /** Destructor */
     virtual ~SAIChatWindow();
+
+    /** Override Tick to handle microphone button state */
+    virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
     
     /** Static method to open the chat window */
     static void OpenWindow();
@@ -86,7 +89,24 @@ private:
     
     /** Map of message index to text block for streaming updates */
     TMap<int32, TSharedPtr<STextBlock>> MessageTextBlocks;
-    
+
+    // ============ Voice Input UI Components ============
+
+    /** Microphone button for voice input */
+    TSharedPtr<SButton> MicrophoneButton;
+
+    /** Voice input enabled checkbox (for settings) */
+    TSharedPtr<SCheckBox> VoiceInputEnabledCheckBox;
+
+    /** Auto-send after recording checkbox (for settings) */
+    TSharedPtr<SCheckBox> AutoSendAfterRecordingCheckBox;
+
+    /** ElevenLabs API key input (for settings) */
+    TSharedPtr<SEditableTextBox> ElevenLabsApiKeyInput;
+
+    /** Voice input active state */
+    bool bIsVoiceInputActive = false;
+
     /** Widget components for compact Copilot-style tool call display */
     struct FToolCallWidgetData
     {
@@ -214,7 +234,36 @@ private:
     
     /** Handle tool preparing (tool name detected before full args) */
     void HandleToolPreparing(const FString& ToolName);
-    
+
+    // ============ Voice Input Handlers ============
+
+    /** Handle microphone button pressed (start recording) */
+    void OnMicrophonePressed();
+
+    /** Handle microphone button released (stop recording) */
+    void OnMicrophoneReleased();
+
+    /** Get microphone button text (emoji) */
+    FText GetMicrophoneButtonText() const;
+
+    /** Get microphone tooltip */
+    FText GetMicrophoneTooltip() const;
+
+    /** Check if microphone is enabled */
+    bool IsMicrophoneEnabled() const;
+
+    /** Handle voice input started */
+    void OnVoiceInputStarted(bool bSuccess);
+
+    /** Handle voice input text (partial or final) */
+    void OnVoiceInputText(const FString& Text, bool bIsFinal);
+
+    /** Handle voice input stopped */
+    void OnVoiceInputStopped();
+
+    /** Handle voice input auto-sent (clear input) */
+    void OnVoiceInputAutoSent();
+
     /** Update the token budget display */
     void UpdateTokenBudgetDisplay();
     

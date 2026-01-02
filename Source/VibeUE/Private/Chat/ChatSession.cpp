@@ -12,6 +12,8 @@
 #include "Core/ToolMetadata.h"
 #include "Chat/MCPTypes.h"
 #include "Async/Async.h"
+#include "Speech/SpeechToTextService.h"
+#include "Speech/ElevenLabsSpeechProvider.h"
 
 DEFINE_LOG_CATEGORY(LogChatSession);
 
@@ -105,6 +107,10 @@ void FChatSession::Initialize()
     
     // Initialize internal tools (reflection-based, from ToolRegistry)
     InitializeInternalTools();
+    
+    // Initialize speech service if ElevenLabs API key is configured
+    // This allows the voice input button to be enabled on startup
+    InitializeSpeechService();
     
     // Load max tool call iterations setting
     MaxToolCallIterations = GetMaxToolCallIterationsFromConfig();
@@ -2436,6 +2442,164 @@ TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
     }
     
     UE_LOG(LogChatSession, Verbose, TEXT("Returning %d enabled reflection tools"), Result.Num());
-    
+
     return Result;
+}
+
+// ============================================================================
+// Voice Input Configuration Settings
+// ============================================================================
+
+bool FChatSession::IsAutoSendAfterRecordingEnabled()
+{
+    bool bAutoSend = false;
+    GConfig->GetBool(TEXT("VibeUE.VoiceInput"), TEXT("AutoSendAfterRecording"), bAutoSend, GEditorPerProjectIni);
+    return bAutoSend;
+}
+
+void FChatSession::SetAutoSendAfterRecordingEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE.VoiceInput"), TEXT("AutoSendAfterRecording"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+// ============================================================================
+// Voice Input Implementation
+// ============================================================================
+
+void FChatSession::InitializeSpeechService()
+{
+    if (!SpeechService.IsValid())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Initializing speech service"));
+
+        SpeechService = MakeShared<FSpeechToTextService>();
+        SpeechService->Initialize();
+
+        // Register ElevenLabs provider
+        TSharedPtr<FElevenLabsSpeechProvider> ElevenLabsProvider = MakeShared<FElevenLabsSpeechProvider>();
+        ElevenLabsProvider->SetApiKey(FElevenLabsSpeechProvider::GetApiKeyFromConfig());
+        SpeechService->RegisterProvider(TEXT("elevenlabs"), ElevenLabsProvider);
+        SpeechService->SetActiveProvider(TEXT("elevenlabs"));
+
+        // Bind event handlers
+        SpeechService->OnStatusChanged.BindSP(this, &FChatSession::OnSpeechStatusChanged);
+        SpeechService->OnPartialTranscript.BindSP(this, &FChatSession::OnSpeechPartialTranscript);
+        SpeechService->OnFinalTranscript.BindSP(this, &FChatSession::OnSpeechFinalTranscript);
+        SpeechService->OnError.BindSP(this, &FChatSession::OnSpeechError);
+
+        UE_LOG(LogChatSession, Log, TEXT("Speech service initialized successfully"));
+    }
+}
+
+void FChatSession::StartVoiceInput()
+{
+    InitializeSpeechService();
+
+    if (!SpeechService->HasSpeechProvider())
+    {
+        OnVoiceInputStarted.ExecuteIfBound(false);
+        UE_LOG(LogChatSession, Warning, TEXT("Voice input not available - no API key configured"));
+        return;
+    }
+
+    // Build session options from config
+    FSpeechSessionOptions Options;
+    Options.LanguageCode = FSpeechToTextService::GetDefaultLanguageFromConfig();
+    Options.SampleRate = 48000;  // Match system default audio capture rate
+    Options.CommitStrategy = TEXT("vad");
+    Options.VADSilenceThreshold = 1.5f;
+
+    // Add recent context from conversation (last 2 messages)
+    if (Messages.Num() > 0)
+    {
+        int32 ContextStart = FMath::Max(0, Messages.Num() - 2);
+        for (int32 i = ContextStart; i < Messages.Num(); i++)
+        {
+            Options.PreviousContext += Messages[i].Content + TEXT(" ");
+        }
+    }
+
+    UE_LOG(LogChatSession, Log, TEXT("Starting voice input"));
+    SpeechService->StartSession(Options);
+    CurrentPartialTranscript.Empty();
+}
+
+void FChatSession::StopVoiceInput()
+{
+    if (SpeechService.IsValid())
+    {
+        double CurrentTime = FPlatformTime::Seconds();
+        UE_LOG(LogChatSession, Warning, TEXT("[VOICE DEBUG] StopVoiceInput() called at time %.3f"), CurrentTime);
+        UE_LOG(LogChatSession, Warning, TEXT("[VOICE DEBUG] Call stack: %s"), *FFrame::GetScriptCallstack());
+        SpeechService->StopSession();
+        CurrentPartialTranscript.Empty();
+    }
+}
+
+bool FChatSession::IsVoiceInputActive() const
+{
+    return SpeechService.IsValid() && SpeechService->IsSessionActive();
+}
+
+bool FChatSession::IsVoiceInputAvailable() const
+{
+    return SpeechService.IsValid() && SpeechService->HasSpeechProvider();
+}
+
+TSharedPtr<FSpeechToTextService> FChatSession::GetSpeechService()
+{
+    InitializeSpeechService();
+    return SpeechService;
+}
+
+// Speech event handlers
+
+void FChatSession::OnSpeechStatusChanged(ESpeechToTextStatus Status, const FString& Text)
+{
+    UE_LOG(LogChatSession, Log, TEXT("Speech status changed: %d"), (int32)Status);
+
+    if (Status == ESpeechToTextStatus::Started)
+    {
+        OnVoiceInputStarted.ExecuteIfBound(true);
+    }
+    else if (Status == ESpeechToTextStatus::Stopped)
+    {
+        OnVoiceInputStopped.ExecuteIfBound();
+        CurrentPartialTranscript.Empty();
+    }
+}
+
+void FChatSession::OnSpeechPartialTranscript(const FString& Text)
+{
+    UE_LOG(LogChatSession, Verbose, TEXT("Partial transcript: %s"), *Text);
+
+    CurrentPartialTranscript = Text;
+    OnVoiceInputText.ExecuteIfBound(Text, false);
+}
+
+void FChatSession::OnSpeechFinalTranscript(const FString& Text)
+{
+    UE_LOG(LogChatSession, Log, TEXT("Final transcript: %s"), *Text);
+
+    OnVoiceInputText.ExecuteIfBound(Text, true);
+    CurrentPartialTranscript.Empty();
+
+    // Check if auto-send is enabled
+    if (IsAutoSendAfterRecordingEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Auto-sending transcribed text to LLM"));
+        SendMessage(Text);
+        
+        // Fire event to clear the input UI
+        OnVoiceInputAutoSent.ExecuteIfBound();
+    }
+}
+
+void FChatSession::OnSpeechError(const FString& Error)
+{
+    UE_LOG(LogChatSession, Error, TEXT("Speech error: %s"), *Error);
+
+    OnChatError.ExecuteIfBound(FString::Printf(TEXT("Voice input error: %s"), *Error));
+    OnVoiceInputStopped.ExecuteIfBound();
 }

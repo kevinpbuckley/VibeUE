@@ -45,7 +45,8 @@ public class VibeUE : ModuleRules
 				"Json",
 				"JsonUtilities",
 				"DeveloperSettings",
-				"ApplicationCore"       // For FPlatformApplicationMisc (clipboard, etc.)
+				"ApplicationCore",      // For FPlatformApplicationMisc (clipboard, etc.)
+				"WebSockets"            // For ElevenLabs WebSocket connection
 			}
 		);
 		
@@ -68,7 +69,9 @@ public class VibeUE : ModuleRules
 				"AssetTools",
 				"PropertyEditor",         // For property reflection
 				"EnhancedInput",          // For Enhanced Input System support
-				"InputCore"               // For input types
+				"InputCore",              // For input types
+				"AudioCapture",           // For microphone input
+				"AudioCaptureCore"        // For FAudioCaptureSynth
 			}
 		);
 		
