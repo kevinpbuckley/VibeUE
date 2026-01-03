@@ -1,6 +1,8 @@
 # get_info
 
-Get detailed information about a specific variable in a Blueprint.
+Get complete information about a specific variable in a Blueprint. This action returns ALL properties that can be modified using the `modify` action.
+
+**Use this action first** to discover what properties are available and their current values before making modifications.
 
 ## Parameters
 
@@ -44,7 +46,8 @@ Get detailed information about a specific variable in a Blueprint.
 
 ## Tips
 
-- Shows all configuration options for the variable
-- Use this to understand variable setup before modifying
-- Category helps organize variables in the Blueprint editor
-- Check ReplicationCondition for multiplayer Blueprints
+- **Discovery pattern:** Always use `get_info` before `modify` to see all available properties
+- Shows ALL configuration options including: replication_condition, is_blueprint_read_only, is_editable_in_details, is_private, is_expose_on_spawn, is_expose_to_cinematics, tooltip, category, and metadata
+- Any field returned in the Variable object can be changed using the `modify` action
+- Useful for understanding variable setup before making changes
+- Check replication_condition for multiplayer Blueprints (None/Replicated/RepNotify)

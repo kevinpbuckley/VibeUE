@@ -168,6 +168,14 @@ manage_asset(Action="help", ParamsJson="{\"help_action\": \"create\"}")
 3. Save often: `manage_asset(action="save_all")`
 4. Use full package paths
 
+### Blueprint Variable Property Discovery
+**ALWAYS use `get_info` before modifying blueprint variables:**
+- `get_info` returns ALL modifiable properties: replication_condition, is_blueprint_read_only, is_editable_in_details, is_private, is_expose_on_spawn, is_expose_to_cinematics, tooltip, category, metadata
+- Any field returned by `get_info` can be changed with `modify`
+- **Use `get_property_options` to discover valid values:** When you need to set a property but don't know valid values (e.g., replication_condition), call `get_property_options(property_name="replication_condition")` to see available options
+- Pattern: `get_info` (discover properties) → `get_property_options` (discover valid values) → `modify` (change)
+- Example: To change replication, first call `get_property_options(property_name="replication_condition")` to see options ["None", "Replicated", "RepNotify"], then `modify` with chosen value
+
 ## manage_asset Universal Actions
 - `delete` - Delete any asset type
 - `search` - Find assets by name/type
