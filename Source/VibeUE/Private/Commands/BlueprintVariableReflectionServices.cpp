@@ -2628,8 +2628,20 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_to_cinematics"), bTmp)) Def.bExposeToCinematics = bTmp;
     
     // Handle replication_condition as string (None/Replicated/RepNotify)
+    // Support both direct format: {"replication_condition": "RepNotify"} 
+    // AND property_name/property_value format: {"property_name": "replication_condition", "property_value": "RepNotify"}
     FString ReplicationConditionStr;
-    if ((*VariableConfigObj)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    if (!(*VariableConfigObj)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    {
+        // Try property_name/property_value format
+        FString PropertyName;
+        if ((*VariableConfigObj)->TryGetStringField(TEXT("property_name"), PropertyName) && 
+            PropertyName.Equals(TEXT("replication_condition"), ESearchCase::IgnoreCase))
+        {
+            (*VariableConfigObj)->TryGetStringField(TEXT("property_value"), ReplicationConditionStr);
+        }
+    }
+    if (!ReplicationConditionStr.IsEmpty())
     {
         ReplicationConditionStr = ReplicationConditionStr.TrimStartAndEnd();
         if (ReplicationConditionStr.Equals(TEXT("RepNotify"), ESearchCase::IgnoreCase))
