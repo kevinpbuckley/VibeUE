@@ -118,6 +118,7 @@ Text: "Editor opened successfully."
 - Ask yourself: "Does this match what I said I would do?"
 - Ask yourself: "Have I tried this exact thing already?"
 - If answer is NO/NO/YES → STOP and ask user instead
+ - If you don't know where a file, asset, tool, or documentation lives, try using the `search` tool (or `manage_asset(action="search")`) to locate it before guessing or making assumptions
 
 ### Git Workflow
 **NEVER commit changes without user approval:**
