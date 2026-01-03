@@ -281,7 +281,8 @@ private:
 	void GatherCandidateGraphs(UBlueprint* Blueprint, UEdGraph* PreferredGraph, TArray<UEdGraph*>& OutGraphs) const;
 	UEdGraphNode* FindNodeByGuid(const TArray<UEdGraph*>& Graphs, const FString& NodeGuid) const;
 	UEdGraphPin* FindPinByName(UEdGraphNode* Node, const FString& PinName) const;
-	
+	FString GetAvailablePinNames(UEdGraphNode* Node, bool bInputsOnly = false, bool bOutputsOnly = false) const;
+
 	// Helper methods for node info construction
 	FNodeInfo BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNode* Node) const;
 	FNodeSummary BuildNodeSummary(UBlueprint* Blueprint, UEdGraphNode* Node) const;
