@@ -666,6 +666,33 @@ bool FVariableDefinitionService::CreateOrUpdateVariable(UBlueprint* Blueprint, c
         {
             Var->SetMetaData(TEXT("ExposeOnSpawn"), TEXT("true"));
         }
+        
+        // Apply replication flags
+        if (Definition.bReplicated)
+        {
+            Var->PropertyFlags |= CPF_Net;
+        }
+        else
+        {
+            Var->PropertyFlags &= ~CPF_Net;
+        }
+        if (Definition.bRepNotify)
+        {
+            Var->PropertyFlags |= CPF_RepNotify;
+        }
+        else
+        {
+            Var->PropertyFlags &= ~CPF_RepNotify;
+        }
+        if (Definition.bExposeToCinematics)
+        {
+            Var->PropertyFlags |= CPF_Interp;
+        }
+        else
+        {
+            Var->PropertyFlags &= ~CPF_Interp;
+        }
+        
         // Persist metadata map (reset existing and re-apply)
         Var->MetaDataArray.Reset();
         for (const auto& Kvp : Definition.MetadataMap)
@@ -813,6 +840,13 @@ FVariableDefinition FVariableDefinitionService::BPVariableToDefinition(const FBP
     // Extract property flags for read-only and visibility
     Def.bBlueprintReadOnly = (BPVar.PropertyFlags & CPF_BlueprintReadOnly) != 0;
     Def.bEditableBlueprint = (BPVar.PropertyFlags & CPF_DisableEditOnInstance) == 0; // If DisableEditOnInstance is NOT set, it's editable
+    Def.bExposeOnSpawn = (BPVar.PropertyFlags & CPF_ExposeOnSpawn) != 0;
+    Def.bPrivate = (BPVar.PropertyFlags & CPF_DisableEditOnInstance) != 0;
+    Def.bExposeToCinematics = (BPVar.PropertyFlags & CPF_Interp) != 0;
+    
+    // Extract replication flags
+    Def.bReplicated = (BPVar.PropertyFlags & CPF_Net) != 0;
+    Def.bRepNotify = (BPVar.PropertyFlags & CPF_RepNotify) != 0;
     
     // Copy metadata out
     Def.MetadataMap.Reset();
@@ -1857,6 +1891,31 @@ TSharedPtr<FJsonObject> FResponseSerializer::SerializeVariableDefinition(const F
     Obj->SetBoolField(TEXT("is_editable_in_details"), Definition.bEditableBlueprint);
     Obj->SetBoolField(TEXT("is_private"), Definition.bPrivate);
     Obj->SetBoolField(TEXT("is_expose_on_spawn"), Definition.bExposeOnSpawn);
+    
+    // Include replication condition for LLM visibility
+    FString ReplicationCondition = TEXT("None");
+    if (Definition.bRepNotify)
+    {
+        ReplicationCondition = TEXT("RepNotify");
+    }
+    else if (Definition.bReplicated)
+    {
+        ReplicationCondition = TEXT("Replicated");
+    }
+    Obj->SetStringField(TEXT("replication_condition"), ReplicationCondition);
+    Obj->SetBoolField(TEXT("is_expose_to_cinematics"), Definition.bExposeToCinematics);
+    
+    // Include metadata map if not empty
+    if (Definition.MetadataMap.Num() > 0)
+    {
+        TSharedPtr<FJsonObject> MetadataObj = MakeShared<FJsonObject>();
+        for (const auto& Pair : Definition.MetadataMap)
+        {
+            MetadataObj->SetStringField(Pair.Key, Pair.Value);
+        }
+        Obj->SetObjectField(TEXT("metadata"), MetadataObj);
+    }
+    
     return Obj;
 }
 
@@ -2023,6 +2082,10 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::ExecuteCommand(const F
     if (Normalized.Equals(TEXT("modify"), ESearchCase::IgnoreCase))
     {
         return HandleModify(Params);
+    }
+    if (Normalized.Equals(TEXT("get_property_options"), ESearchCase::IgnoreCase))
+    {
+        return HandleGetPropertyOptions(Params);
     }
     return FResponseSerializer::CreateErrorResponse(TEXT("ACTION_UNSUPPORTED"), FString::Printf(TEXT("Action '%s' not implemented in reflection path"), *Action));
 }
@@ -2562,6 +2625,29 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_on_spawn"), bTmp)) Def.bExposeOnSpawn = bTmp;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_blueprint_read_only"), bTmp)) Def.bBlueprintReadOnly = bTmp;
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_editable_in_details"), bTmp)) Def.bEditableBlueprint = bTmp;
+    if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_to_cinematics"), bTmp)) Def.bExposeToCinematics = bTmp;
+    
+    // Handle replication_condition as string (None/Replicated/RepNotify)
+    FString ReplicationConditionStr;
+    if ((*VariableConfigObj)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    {
+        ReplicationConditionStr = ReplicationConditionStr.TrimStartAndEnd();
+        if (ReplicationConditionStr.Equals(TEXT("RepNotify"), ESearchCase::IgnoreCase))
+        {
+            Def.bReplicated = true;
+            Def.bRepNotify = true;
+        }
+        else if (ReplicationConditionStr.Equals(TEXT("Replicated"), ESearchCase::IgnoreCase))
+        {
+            Def.bReplicated = true;
+            Def.bRepNotify = false;
+        }
+        else if (ReplicationConditionStr.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+        {
+            Def.bReplicated = false;
+            Def.bRepNotify = false;
+        }
+    }
 
     if (!VariableService.CreateOrUpdateVariable(BP, Def, Err))
     {
@@ -2667,6 +2753,50 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleDiagnostics(cons
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("stats"), CatalogService.GetCacheStats());
     return FResponseSerializer::CreateSuccessResponse(Data);
+}
+
+TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleGetPropertyOptions(const TSharedPtr<FJsonObject>& Params)
+{
+    // Get property name to discover options for
+    FString PropertyName;
+    if (!Params->TryGetStringField(TEXT("property_name"), PropertyName))
+    {
+        return FResponseSerializer::CreateErrorResponse(TEXT("MISSING_PARAMETER"), TEXT("Missing 'property_name' parameter"));
+    }
+
+    TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
+    Data->SetStringField(TEXT("property_name"), PropertyName);
+
+    // Handle replication_condition specifically
+    if (PropertyName.Equals(TEXT("replication_condition"), ESearchCase::IgnoreCase))
+    {
+        TArray<TSharedPtr<FJsonValue>> OptionsArray;
+        OptionsArray.Add(MakeShared<FJsonValueString>(TEXT("None")));
+        OptionsArray.Add(MakeShared<FJsonValueString>(TEXT("Replicated")));
+        OptionsArray.Add(MakeShared<FJsonValueString>(TEXT("RepNotify")));
+        
+        Data->SetArrayField(TEXT("options"), OptionsArray);
+        Data->SetStringField(TEXT("description"), TEXT("Replication condition controls how the variable is synchronized in multiplayer. None = not replicated, Replicated = always synchronized, RepNotify = synchronized with notification callback."));
+        
+        return FResponseSerializer::CreateSuccessResponse(Data);
+    }
+
+    // For boolean properties, return true/false options
+    if (PropertyName.StartsWith(TEXT("is_")) || PropertyName.Equals(TEXT("bReplicated")) || PropertyName.Equals(TEXT("bRepNotify")))
+    {
+        TArray<TSharedPtr<FJsonValue>> OptionsArray;
+        OptionsArray.Add(MakeShared<FJsonValueBoolean>(true));
+        OptionsArray.Add(MakeShared<FJsonValueBoolean>(false));
+        
+        Data->SetArrayField(TEXT("options"), OptionsArray);
+        Data->SetStringField(TEXT("description"), TEXT("Boolean property - accepts true or false"));
+        
+        return FResponseSerializer::CreateSuccessResponse(Data);
+    }
+
+    // Unknown property
+    return FResponseSerializer::CreateErrorResponse(TEXT("UNKNOWN_PROPERTY"), 
+        FString::Printf(TEXT("Property '%s' not recognized. Known properties: replication_condition, is_blueprint_read_only, is_editable_in_details, is_private, is_expose_on_spawn, is_expose_to_cinematics, category, tooltip, default_value"), *PropertyName));
 }
 
 UBlueprint* FBlueprintVariableCommandContext::FindBlueprint(const FString& BlueprintName, FString& OutError)

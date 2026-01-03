@@ -16,6 +16,7 @@
 #include "K2Node_Timeline.h"
 #include "K2Node_MacroInstance.h"
 #include "K2Node_CustomEvent.h"
+#include "K2Node_FunctionEntry.h"
 #include "K2Node_InputAction.h"
 #include "K2Node_Knot.h"
 #include "Kismet2/BlueprintEditorUtils.h"
@@ -1231,8 +1232,28 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 		{
 			TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 			Failure->SetBoolField(TEXT("success"), false);
-			Failure->SetStringField(TEXT("code"), TEXT("SOURCE_PIN_NOT_FOUND"));
-			Failure->SetStringField(TEXT("message"), FString::Printf(TEXT("Source pin '%s' not found on node '%s'"), *SourcePinName, *SourceNodeId));
+
+			// Provide helpful error message with available pins
+			FString ErrorMessage;
+			if (!SourceNode)
+			{
+				ErrorMessage = FString::Printf(
+					TEXT("Source node '%s' not found. Use action 'list' with function_name to get valid node IDs and pin names."),
+					*SourceNodeId
+				);
+				Failure->SetStringField(TEXT("code"), TEXT("SOURCE_NODE_NOT_FOUND"));
+			}
+			else
+			{
+				FString AvailablePins = GetAvailablePinNames(SourceNode, false, true);  // Only outputs
+				ErrorMessage = FString::Printf(
+					TEXT("Source pin '%s' not found on node '%s'. Available output pins: %s. Use action 'info' to see all pins."),
+					*SourcePinName, *SourceNodeId, *AvailablePins
+				);
+				Failure->SetStringField(TEXT("code"), TEXT("SOURCE_PIN_NOT_FOUND"));
+			}
+
+			Failure->SetStringField(TEXT("message"), ErrorMessage);
 			Failure->SetNumberField(TEXT("index"), Index);
 			Failure->SetObjectField(TEXT("request"), ConnectionObj);
 			Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -1258,8 +1279,28 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::ConnectPinsAdvanced(UBlu
 		{
 			TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 			Failure->SetBoolField(TEXT("success"), false);
-			Failure->SetStringField(TEXT("code"), TEXT("TARGET_PIN_NOT_FOUND"));
-			Failure->SetStringField(TEXT("message"), FString::Printf(TEXT("Target pin '%s' not found on node '%s'"), *TargetPinName, *TargetNodeId));
+
+			// Provide helpful error message with available pins
+			FString ErrorMessage;
+			if (!TargetNode)
+			{
+				ErrorMessage = FString::Printf(
+					TEXT("Target node '%s' not found. Use action 'list' with function_name to get valid node IDs and pin names."),
+					*TargetNodeId
+				);
+				Failure->SetStringField(TEXT("code"), TEXT("TARGET_NODE_NOT_FOUND"));
+			}
+			else
+			{
+				FString AvailablePins = GetAvailablePinNames(TargetNode, true, false);  // Only inputs
+				ErrorMessage = FString::Printf(
+					TEXT("Target pin '%s' not found on node '%s'. Available input pins: %s. Use action 'info' to see all pins."),
+					*TargetPinName, *TargetNodeId, *AvailablePins
+				);
+				Failure->SetStringField(TEXT("code"), TEXT("TARGET_PIN_NOT_FOUND"));
+			}
+
+			Failure->SetStringField(TEXT("message"), ErrorMessage);
 			Failure->SetNumberField(TEXT("index"), Index);
 			Failure->SetObjectField(TEXT("request"), ConnectionObj);
 			Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -1883,8 +1924,28 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DisconnectPinsAdvanced(U
 			{
 				TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 				Failure->SetBoolField(TEXT("success"), false);
-				Failure->SetStringField(TEXT("code"), TEXT("SOURCE_PIN_NOT_FOUND"));
-				Failure->SetStringField(TEXT("message"), FString::Printf(TEXT("Source pin '%s' not found on node '%s'"), *SourcePinName, *SourceNodeId));
+
+				// Provide helpful error message with available pins
+				FString ErrorMessage;
+				if (!SourceNode)
+				{
+					ErrorMessage = FString::Printf(
+						TEXT("Source node '%s' not found. Use action 'list' with function_name to get valid node IDs and pin names."),
+						*SourceNodeId
+					);
+					Failure->SetStringField(TEXT("code"), TEXT("SOURCE_NODE_NOT_FOUND"));
+				}
+				else
+				{
+					FString AvailablePins = GetAvailablePinNames(SourceNode);
+					ErrorMessage = FString::Printf(
+						TEXT("Source pin '%s' not found on node '%s'. Available pins: %s"),
+						*SourcePinName, *SourceNodeId, *AvailablePins
+					);
+					Failure->SetStringField(TEXT("code"), TEXT("SOURCE_PIN_NOT_FOUND"));
+				}
+
+				Failure->SetStringField(TEXT("message"), ErrorMessage);
 				Failure->SetNumberField(TEXT("index"), Index);
 				Failure->SetObjectField(TEXT("request"), RequestObj);
 				Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -1909,8 +1970,28 @@ TResult<TSharedPtr<FJsonObject>> FBlueprintNodeService::DisconnectPinsAdvanced(U
 			{
 				TSharedPtr<FJsonObject> Failure = MakeShared<FJsonObject>();
 				Failure->SetBoolField(TEXT("success"), false);
-				Failure->SetStringField(TEXT("code"), TEXT("TARGET_PIN_NOT_FOUND"));
-				Failure->SetStringField(TEXT("message"), FString::Printf(TEXT("Target pin '%s' not found on node '%s'"), *TargetPinName, *TargetNodeId));
+
+				// Provide helpful error message with available pins
+				FString ErrorMessage;
+				if (!TargetNode)
+				{
+					ErrorMessage = FString::Printf(
+						TEXT("Target node '%s' not found. Use action 'list' with function_name to get valid node IDs and pin names."),
+						*TargetNodeId
+					);
+					Failure->SetStringField(TEXT("code"), TEXT("TARGET_NODE_NOT_FOUND"));
+				}
+				else
+				{
+					FString AvailablePins = GetAvailablePinNames(TargetNode);
+					ErrorMessage = FString::Printf(
+						TEXT("Target pin '%s' not found on node '%s'. Available pins: %s"),
+						*TargetPinName, *TargetNodeId, *AvailablePins
+					);
+					Failure->SetStringField(TEXT("code"), TEXT("TARGET_PIN_NOT_FOUND"));
+				}
+
+				Failure->SetStringField(TEXT("message"), ErrorMessage);
 				Failure->SetNumberField(TEXT("index"), Index);
 				Failure->SetObjectField(TEXT("request"), RequestObj);
 				Failures.Add(MakeShared<FJsonValueObject>(Failure));
@@ -3675,28 +3756,70 @@ void FBlueprintNodeService::GatherCandidateGraphs(UBlueprint* Blueprint, UEdGrap
 
 UEdGraphNode* FBlueprintNodeService::FindNodeByGuid(const TArray<UEdGraph*>& Graphs, const FString& NodeGuid) const
 {
+	// First, try to find by GUID
 	FGuid Guid;
-	if (!FGuid::Parse(NodeGuid, Guid))
+	if (FGuid::Parse(NodeGuid, Guid))
 	{
-		return nullptr;
+		for (UEdGraph* Graph : Graphs)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+
+			for (UEdGraphNode* Node : Graph->Nodes)
+			{
+				if (Node && Node->NodeGuid == Guid)
+				{
+					return Node;
+				}
+			}
+		}
 	}
-	
+
+	// Fallback: Try to find by node name/title (case-insensitive)
+	// This helps when AI uses function names like "ApplyDamage" instead of GUIDs
 	for (UEdGraph* Graph : Graphs)
 	{
 		if (!Graph)
 		{
 			continue;
 		}
-		
+
 		for (UEdGraphNode* Node : Graph->Nodes)
 		{
-			if (Node && Node->NodeGuid == Guid)
+			if (!Node)
+			{
+				continue;
+			}
+
+			// Check if node title matches
+			FString NodeTitle = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+			if (NodeTitle.Equals(NodeGuid, ESearchCase::IgnoreCase))
 			{
 				return Node;
 			}
+
+			// For function entry nodes, also check the function name
+			if (UK2Node_FunctionEntry* FunctionEntry = Cast<UK2Node_FunctionEntry>(Node))
+			{
+				if (Graph->GetName().Equals(NodeGuid, ESearchCase::IgnoreCase))
+				{
+					return Node;
+				}
+			}
+
+			// For custom events, check event name
+			if (UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node))
+			{
+				if (CustomEvent->CustomFunctionName.ToString().Equals(NodeGuid, ESearchCase::IgnoreCase))
+				{
+					return Node;
+				}
+			}
 		}
 	}
-	
+
 	return nullptr;
 }
 
@@ -3706,7 +3829,7 @@ UEdGraphPin* FBlueprintNodeService::FindPinByName(UEdGraphNode* Node, const FStr
 	{
 		return nullptr;
 	}
-	
+
 	for (UEdGraphPin* Pin : Node->Pins)
 	{
 		if (Pin && Pin->PinName.ToString().Equals(PinName, ESearchCase::IgnoreCase))
@@ -3714,8 +3837,54 @@ UEdGraphPin* FBlueprintNodeService::FindPinByName(UEdGraphNode* Node, const FStr
 			return Pin;
 		}
 	}
-	
+
 	return nullptr;
+}
+
+FString FBlueprintNodeService::GetAvailablePinNames(UEdGraphNode* Node, bool bInputsOnly, bool bOutputsOnly) const
+{
+	if (!Node)
+	{
+		return TEXT("(node is null)");
+	}
+
+	TArray<FString> InputPins;
+	TArray<FString> OutputPins;
+
+	for (UEdGraphPin* Pin : Node->Pins)
+	{
+		if (!Pin || Pin->bHidden)
+		{
+			continue;
+		}
+
+		FString PinName = Pin->PinName.ToString();
+		if (Pin->Direction == EGPD_Input)
+		{
+			InputPins.Add(PinName);
+		}
+		else
+		{
+			OutputPins.Add(PinName);
+		}
+	}
+
+	TArray<FString> Result;
+	if (!bOutputsOnly && InputPins.Num() > 0)
+	{
+		Result.Add(FString::Printf(TEXT("Inputs: [%s]"), *FString::Join(InputPins, TEXT(", "))));
+	}
+	if (!bInputsOnly && OutputPins.Num() > 0)
+	{
+		Result.Add(FString::Printf(TEXT("Outputs: [%s]"), *FString::Join(OutputPins, TEXT(", "))));
+	}
+
+	if (Result.Num() == 0)
+	{
+		return TEXT("(no visible pins)");
+	}
+
+	return FString::Join(Result, TEXT("; "));
 }
 
 FNodeInfo FBlueprintNodeService::BuildNodeInfo(UBlueprint* Blueprint, UEdGraphNode* Node) const

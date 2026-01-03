@@ -319,7 +319,7 @@ Blueprint function lifecycle, parameter management, and local variables.
 | `list_local_variables` | List all local variables in function |
 | `get_available_local_types` | Get list of available types for local variables |
 
-### 6. `manage_blueprint_variable` (6 actions)
+### 6. `manage_blueprint_variable` (7 actions)
 Variable creation, inspection, and management.
 
 | Action | Purpose |
@@ -329,6 +329,7 @@ Variable creation, inspection, and management.
 | `delete` | Remove variable with reference check |
 | `list` | List all variables in Blueprint |
 | `get_info` | Get detailed variable information |
+| `get_property_options` | Discover valid values for a specific property (e.g., replication_condition) |
 | `modify` | Modify variable properties |
 
 ### 7. `manage_umg_widget` (11 actions)

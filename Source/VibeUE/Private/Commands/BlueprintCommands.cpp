@@ -4244,7 +4244,35 @@ TSharedPtr<FJsonObject> FBlueprintCommands::HandleModifyVariableOperation(const 
         TrackChange(TEXT("is_private"));
     }
 
-    if ((*VariableConfig)->TryGetBoolField(TEXT("replicated"), bTempBool))
+    // Handle replication_condition as string (None/Replicated/RepNotify) - preferred method
+    FString ReplicationConditionStr;
+    if ((*VariableConfig)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    {
+        ReplicationConditionStr = ReplicationConditionStr.TrimStartAndEnd();
+        if (ReplicationConditionStr.Equals(TEXT("RepNotify"), ESearchCase::IgnoreCase))
+        {
+            VarDesc->PropertyFlags |= CPF_Net;
+            VarDesc->PropertyFlags |= CPF_RepNotify;
+            bAnyChanges = true;
+            TrackChange(TEXT("replication_condition"));
+        }
+        else if (ReplicationConditionStr.Equals(TEXT("Replicated"), ESearchCase::IgnoreCase))
+        {
+            VarDesc->PropertyFlags |= CPF_Net;
+            VarDesc->PropertyFlags &= ~CPF_RepNotify;
+            bAnyChanges = true;
+            TrackChange(TEXT("replication_condition"));
+        }
+        else if (ReplicationConditionStr.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+        {
+            VarDesc->PropertyFlags &= ~CPF_Net;
+            VarDesc->PropertyFlags &= ~CPF_RepNotify;
+            bAnyChanges = true;
+            TrackChange(TEXT("replication_condition"));
+        }
+    }
+    // Legacy: Handle replicated as boolean for backwards compatibility
+    else if ((*VariableConfig)->TryGetBoolField(TEXT("replicated"), bTempBool))
     {
         SetFlag(CPF_Net, bTempBool);
         bAnyChanges = true;

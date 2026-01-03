@@ -173,7 +173,11 @@ void FBlueprintPropertyService::PopulatePropertyInfo(FProperty* Property, UObjec
     OutInfo.bIsBlueprintReadOnly = Property->HasAnyPropertyFlags(CPF_BlueprintReadOnly);
     
     // Get current value from CDO
-    void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject);
+    // Ensure we use the property's owner class CDO to avoid assertion failures
+    UClass* PropertyOwnerClass = Property->GetOwner<UClass>();
+    UObject* PropertyContainer = PropertyOwnerClass ? PropertyOwnerClass->GetDefaultObject() : DefaultObject;
+    
+    void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(PropertyContainer);
     if (PropertyValuePtr)
     {
         // Export the property value to a string
@@ -182,9 +186,9 @@ void FBlueprintPropertyService::PopulatePropertyInfo(FProperty* Property, UObjec
         OutInfo.CurrentValue = ValueString;
         
         // Try to get default value from archetype
-        if (DefaultObject->GetArchetype())
+        if (PropertyContainer->GetArchetype())
         {
-            void* ArchetypeValuePtr = Property->ContainerPtrToValuePtr<void>(DefaultObject->GetArchetype());
+            void* ArchetypeValuePtr = Property->ContainerPtrToValuePtr<void>(PropertyContainer->GetArchetype());
             if (ArchetypeValuePtr)
             {
                 FString ArchetypeValueString;

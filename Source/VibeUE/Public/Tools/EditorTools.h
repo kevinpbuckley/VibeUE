@@ -159,17 +159,21 @@ public:
 	static FString ManageBlueprintNode(const FString& Action, const FString& ParamsJson);
 
 	/**
-	 * Manage blueprint variables - add, modify, delete blueprint variables
+	 * Manage blueprint variables - create, inspect, modify, and delete blueprint variables.
+	 * 
+	 * IMPORTANT: Use get_info action to discover ALL modifiable properties (replication settings, 
+	 * instance editability, tooltips, categories, etc.), then use modify to change any of them.
+	 * Use get_property_options to discover valid values for enum properties like replication_condition.
 	 * 
 	 * Actions:
-	 * - add: Add variable to blueprint
+	 * - help: Get help information about variable management
+	 * - search_types: Search for available variable types  
+	 * - create: Create new variable in blueprint
 	 * - delete: Remove variable from blueprint
-	 * - get: Get variable value/info
-	 * - set: Set variable default value
-	 * - get_property: Get variable metadata property
-	 * - set_property: Set variable metadata property
-	 * - list: List all variables
-	 * - get_available_types: Get available variable types
+	 * - get_info: Get complete variable information (returns ALL modifiable properties)
+	 * - get_property_options: Discover valid values for a property (e.g., replication_condition options)
+	 * - list: List all variables in blueprint
+	 * - modify: Modify any property returned by get_info (replication, default value, tooltip, etc.)
 	 */
 	UFUNCTION()
 	static FString ManageBlueprintVariable(const FString& Action, const FString& ParamsJson);

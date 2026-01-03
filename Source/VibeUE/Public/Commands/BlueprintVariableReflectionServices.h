@@ -74,6 +74,8 @@ struct FVariableDefinition
     bool bExposeToCinematics = false;
     bool bBlueprintReadOnly = false; // CPF_BlueprintReadOnly - can be read but not written from BP graphs
     bool bEditableBlueprint = true;  // BlueprintVisible - can be accessed in BP graphs
+    bool bReplicated = false;        // CPF_Net - replicated across network
+    bool bRepNotify = false;         // CPF_RepNotify - calls OnRep function when replicated
     FString Category = TEXT("Default");
     FString Tooltip;
     FString DefaultValueString; // Serialized default value
@@ -331,6 +333,7 @@ private:
     TSharedPtr<FJsonObject> HandleGetPropertyMetadata(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleSetPropertyMetadata(const TSharedPtr<FJsonObject>& Params);
     TSharedPtr<FJsonObject> HandleDiagnostics(const TSharedPtr<FJsonObject>& Params);
+    TSharedPtr<FJsonObject> HandleGetPropertyOptions(const TSharedPtr<FJsonObject>& Params);
 
     // Utilities
     UBlueprint* FindBlueprint(const FString& BlueprintName, FString& OutError);
