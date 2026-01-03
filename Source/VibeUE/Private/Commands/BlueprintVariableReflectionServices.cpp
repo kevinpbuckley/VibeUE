@@ -2628,8 +2628,20 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
     if ((*VariableConfigObj)->TryGetBoolField(TEXT("is_expose_to_cinematics"), bTmp)) Def.bExposeToCinematics = bTmp;
     
     // Handle replication_condition as string (None/Replicated/RepNotify)
+    // Support both direct format: {"replication_condition": "RepNotify"} 
+    // AND property_name/property_value format: {"property_name": "replication_condition", "property_value": "RepNotify"}
     FString ReplicationConditionStr;
-    if ((*VariableConfigObj)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    if (!(*VariableConfigObj)->TryGetStringField(TEXT("replication_condition"), ReplicationConditionStr))
+    {
+        // Try property_name/property_value format
+        FString PropertyName;
+        if ((*VariableConfigObj)->TryGetStringField(TEXT("property_name"), PropertyName) && 
+            PropertyName.Equals(TEXT("replication_condition"), ESearchCase::IgnoreCase))
+        {
+            (*VariableConfigObj)->TryGetStringField(TEXT("property_value"), ReplicationConditionStr);
+        }
+    }
+    if (!ReplicationConditionStr.IsEmpty())
     {
         ReplicationConditionStr = ReplicationConditionStr.TrimStartAndEnd();
         if (ReplicationConditionStr.Equals(TEXT("RepNotify"), ESearchCase::IgnoreCase))
@@ -2654,9 +2666,19 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
         if (Err.IsEmpty()) { Err = TEXT("Failed to modify variable"); }
         return FResponseSerializer::CreateErrorResponse(TEXT("MODIFY_FAILED"), Err);
     }
+    
+    // CRITICAL: Re-read the variable from the blueprint to get the actual updated state
+    // Do NOT return the Definition object we passed in - it may not reflect what was actually applied
+    FVariableDefinition UpdatedDef;
+    if (!VariableService.GetVariableInfo(BP, FName(*VarNameStr), UpdatedDef, Err))
+    {
+        // Fallback to the definition we tried to apply if we can't read it back
+        UpdatedDef = Def;
+    }
+    
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Data->SetObjectField(TEXT("variable"), FResponseSerializer::SerializeVariableDefinition(Def));
+    Data->SetObjectField(TEXT("variable"), FResponseSerializer::SerializeVariableDefinition(UpdatedDef));
     return FResponseSerializer::CreateSuccessResponse(Data);
 }
 
