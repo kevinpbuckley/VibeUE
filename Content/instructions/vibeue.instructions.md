@@ -51,6 +51,36 @@ Text: "Editor opened successfully."
 - Before modifying a blueprint → verify blueprint exists
 - Before adding components → verify blueprint is open
 
+**⚠️ CRITICAL: Use Search to Locate Unknown Assets**
+
+**BEFORE attempting to access or modify any asset you're unsure about:**
+1. **ALWAYS use `manage_asset(action="search", ParamsJson='{"search_term":"AssetName"}')` to locate it first**
+2. **DO NOT guess asset paths** - search returns the exact path
+3. **DO NOT assume an asset exists** - verify with search before operations
+4. **DO NOT ask the user for the asset name if they already mentioned it** - extract keywords and search
+5. If search returns nothing, ask user if asset should be created
+
+**Examples:**
+- User mentions "BP_Player" but you don't know the path → **search first**
+- User asks to modify "MainMenu widget" → **search for MainMenu first**
+- User references "M_Metal material" → **search before attempting to open**
+- User says "the horror character blueprint" → **search for "horror character"** (don't ask what the name is!)
+- User says "the player's health variable" → **search for "player"** to find the blueprint first
+
+**Pattern: Extract → Search → Act**
+1. Extract asset name/keywords from user's message
+2. Search using those keywords
+3. If found, proceed with the task
+4. If not found, **try a simpler/broader search** (e.g., "horror character" → "horror")
+5. If still not found, then ask for clarification or offer to create
+
+**Fallback Search Strategy:**
+- First search fails? Try removing words or using simpler terms
+- Example: "horror character blueprint" fails → try "horror" 
+- Example: "main menu widget" fails → try "menu"
+- Example: "player health system" fails → try "player"
+- **ALWAYS try at least 2 search variations before asking user**
+
 **Smart Validation Pattern:**
 1. If user says "continue" or references previous work
 2. Check if required assets still exist before proceeding
@@ -88,6 +118,14 @@ Text: "Editor opened successfully."
 - Check for `available_blueprints` or similar lists - use them!
 - If error includes specific guidance, FOLLOW IT instead of guessing
 
+**Success But No Change Pattern:**
+- If tool returns `"success": true` but the value didn't actually change
+- **Stop after 2 attempts** and analyze:
+  1. Call `action="help"` to verify you're using correct parameters
+  2. Check if returned data shows the expected change
+  3. If success=true but value unchanged after 2 tries, report: "The modify operation reports success but the value isn't changing. This may be a tool limitation or the property might not be modifiable in this context."
+- **Don't retry the same operation >2 times if value doesn't change**
+
 ### Loop Prevention
 
 **CRITICAL: Recognize when you're looping and STOP immediately.**
@@ -118,7 +156,6 @@ Text: "Editor opened successfully."
 - Ask yourself: "Does this match what I said I would do?"
 - Ask yourself: "Have I tried this exact thing already?"
 - If answer is NO/NO/YES → STOP and ask user instead
- - If you don't know where a file, asset, tool, or documentation lives, try using the `search` tool (or `manage_asset(action="search")`) to locate it before guessing or making assumptions
 
 ### Git Workflow
 **NEVER commit changes without user approval:**

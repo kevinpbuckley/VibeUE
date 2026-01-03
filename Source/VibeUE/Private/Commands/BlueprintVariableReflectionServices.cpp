@@ -2654,9 +2654,19 @@ TSharedPtr<FJsonObject> FBlueprintVariableCommandContext::HandleModify(const TSh
         if (Err.IsEmpty()) { Err = TEXT("Failed to modify variable"); }
         return FResponseSerializer::CreateErrorResponse(TEXT("MODIFY_FAILED"), Err);
     }
+    
+    // CRITICAL: Re-read the variable from the blueprint to get the actual updated state
+    // Do NOT return the Definition object we passed in - it may not reflect what was actually applied
+    FVariableDefinition UpdatedDef;
+    if (!VariableService.GetVariableInfo(BP, FName(*VarNameStr), UpdatedDef, Err))
+    {
+        // Fallback to the definition we tried to apply if we can't read it back
+        UpdatedDef = Def;
+    }
+    
     TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
     Data->SetStringField(TEXT("blueprint_name"), BlueprintName);
-    Data->SetObjectField(TEXT("variable"), FResponseSerializer::SerializeVariableDefinition(Def));
+    Data->SetObjectField(TEXT("variable"), FResponseSerializer::SerializeVariableDefinition(UpdatedDef));
     return FResponseSerializer::CreateSuccessResponse(Data);
 }
 
