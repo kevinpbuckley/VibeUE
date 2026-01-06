@@ -175,9 +175,24 @@ void FBlueprintPropertyService::PopulatePropertyInfo(FProperty* Property, UObjec
     // Get current value from CDO
     // Ensure we use the property's owner class CDO to avoid assertion failures
     UClass* PropertyOwnerClass = Property->GetOwner<UClass>();
-    UObject* PropertyContainer = PropertyOwnerClass ? PropertyOwnerClass->GetDefaultObject() : DefaultObject;
+    if (!PropertyOwnerClass)
+    {
+        // Fallback to the class we're querying if property owner is not set
+        PropertyOwnerClass = DefaultObject->GetClass();
+    }
     
-    void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(PropertyContainer);
+    UObject* PropertyContainer = PropertyOwnerClass->GetDefaultObject();
+    if (!PropertyContainer)
+    {
+        PropertyContainer = DefaultObject;
+    }
+    
+    // Only try to get the value if the property actually belongs to this object's class hierarchy
+    void* PropertyValuePtr = nullptr;
+    if (PropertyContainer->IsA(PropertyOwnerClass))
+    {
+        PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(PropertyContainer);
+    }
     if (PropertyValuePtr)
     {
         // Export the property value to a string
@@ -186,7 +201,7 @@ void FBlueprintPropertyService::PopulatePropertyInfo(FProperty* Property, UObjec
         OutInfo.CurrentValue = ValueString;
         
         // Try to get default value from archetype
-        if (PropertyContainer->GetArchetype())
+        if (PropertyContainer && PropertyContainer->IsA(PropertyOwnerClass) && PropertyContainer->GetArchetype())
         {
             void* ArchetypeValuePtr = Property->ContainerPtrToValuePtr<void>(PropertyContainer->GetArchetype());
             if (ArchetypeValuePtr)
