@@ -47,7 +47,7 @@ public class VibeUE : ModuleRules
 				"DeveloperSettings",
 				"ApplicationCore",      // For FPlatformApplicationMisc (clipboard, etc.)
 			"WebSockets",           // For ElevenLabs WebSocket connection
-			"PythonScriptPlugin"    // For Python code execution
+			"PythonScriptPlugin",   // For Python code execution
 				"Slate",
 				"SlateCore",
 				"UMG",
