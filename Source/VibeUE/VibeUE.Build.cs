@@ -46,8 +46,17 @@ public class VibeUE : ModuleRules
 				"JsonUtilities",
 				"DeveloperSettings",
 				"ApplicationCore",      // For FPlatformApplicationMisc (clipboard, etc.)
-			"WebSockets",           // For ElevenLabs WebSocket connection
-			"PythonScriptPlugin",   // For Python code execution
+				"WebSockets"            // For ElevenLabs WebSocket connection
+			}
+		);
+
+		PrivateDependencyModuleNames.AddRange(
+			new string[]
+			{
+				"UnrealEd",
+				"EditorScriptingUtilities",
+				"EditorSubsystem",
+				"PythonScriptPlugin",   // For Python code execution
 				"Slate",
 				"SlateCore",
 				"UMG",
