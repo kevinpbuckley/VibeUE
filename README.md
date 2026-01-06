@@ -18,7 +18,7 @@ Use AI to create UI widgets, modify Blueprints, manage materials, and control le
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Engine's editor
-- **14 Built-in Tools** - Comprehensive control over Blueprints, Materials, Widgets, Actors, and more
+- **27 Built-in Tools** - Comprehensive control over Blueprints, Materials, Widgets, Actors, Python, and Filesystem
 - **Custom Instructions** - Add project-specific context via the Instructions folder
 - **Extend via MCP** - Connect external MCP servers to add more AI capabilities
 - **Expose to External IDEs** - Let VS Code, Claude Desktop, Cursor, and Windsurf control Unreal via MCP
@@ -234,9 +234,9 @@ Edit `Plugins/VibeUE/Config/vibeue.mcp.json`:
 
 ## 🌟 Overview
 
-VibeUE provides comprehensive AI-powered control over Unreal Engine through **14 multi-action tools** exposing **177 total actions** organized into these major categories:
+VibeUE provides comprehensive AI-powered control over Unreal Engine through **27 individual tools** (14 multi-action tool groups + Python tools + Filesystem tools) exposing **200+ total actions** organized into these major categories:
 
-## 🛠️ Canonical Tools Reference (14 tools, 177 actions)
+## 🔧 Canonical Tools Reference (27 tools, 200+ actions)
 
 The running MCP server exposes multi-action tools that consolidate related operations. For full parameter documentation and examples, call `get_help()`.
 
@@ -499,9 +499,34 @@ DataTable management for structured game data.
 ### 14. `check_unreal_connection` (1 action)
 Test connection to Unreal Engine and verify plugin status.
 
+### 15. `manage_python_execution` (8 actions)
+Python code execution with runtime API discovery and introspection.
+
+| Action | Purpose |
+|--------|---------|
+| `discover_module` | Introspect Python module contents and available classes/functions |
+| `discover_class` | Get detailed class information - methods, properties, inheritance |
+| `discover_function` | Get function signature, parameters, return type, and docstring |
+| `list_subsystems` | List all available Unreal Engine editor subsystems |
+| `execute_code` | Execute Python code in Unreal Engine context with output capture |
+| `evaluate_expression` | Evaluate Python expression and return result |
+| `get_examples` | Get curated Python code examples for common operations |
+| `get_help` | Get comprehensive help documentation for Python tools |
+
+### 16. File System Operations (5 actions)
+Comprehensive file reading, searching, and navigation capabilities.
+
+| Action | Purpose |
+|--------|---------|
+| `read_file` | Read file contents with line range support (like VSCode) |
+| `list_dir` | List directory contents - files and subdirectories |
+| `file_search` | Find files matching glob patterns across workspace |
+| `grep_search` | Search for text/regex patterns in files with context |
+| `get_directories` | Get important project directories (game, plugin, Python paths) |
+
 ---
 
-All capabilities are accessible through natural language commands via AI assistants, enabling rapid prototyping, automated UI generation, and intelligent asset management workflows.
+All capabilities are accessible through natural language commands via AI assistants, enabling rapid prototyping, automated UI generation, intelligent asset management, and Python-powered automation workflows.
 
 ## 🧩 Components
 
@@ -514,10 +539,12 @@ All capabilities are accessible through natural language commands via AI assista
 - Asset management with import/export capabilities
 - Real-time property inspection and modification
 - Advanced node graph manipulation and analysis
+- **Python code execution** with runtime API discovery
+- **Filesystem operations** - read, search, and navigate project files
 - Robust error handling and connection management
 
 ### MCP Server (Built-in)
-- Exposes all 14 VibeUE tools to external AI clients
+- Exposes all 27 VibeUE tools to external AI clients
 - **Streamable HTTP transport** - connects via HTTP POST to `/mcp` endpoint
 - Configurable port (default: 8088) and API key authentication
 - Compatible with VS Code, Claude Desktop, Cursor, Windsurf, and other MCP clients
@@ -581,7 +608,7 @@ If you prefer to build the plugin manually:
 
 ## 🌐 Expose VibeUE to External AI IDEs
 
-Want to use VS Code, Claude Desktop, Cursor, or Windsurf to control Unreal? VibeUE includes a built-in MCP server that exposes all 14 tools to external clients.
+Want to use VS Code, Claude Desktop, Cursor, or Windsurf to control Unreal? VibeUE includes a built-in MCP server that exposes all 27 tools to external clients.
 
 ### Enable the MCP Server
 
