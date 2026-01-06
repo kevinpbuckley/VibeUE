@@ -49,13 +49,14 @@ public class VibeUE : ModuleRules
 				"WebSockets"            // For ElevenLabs WebSocket connection
 			}
 		);
-		
+
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"UnrealEd",
 				"EditorScriptingUtilities",
 				"EditorSubsystem",
+				"PythonScriptPlugin",   // For Python code execution
 				"Slate",
 				"SlateCore",
 				"UMG",

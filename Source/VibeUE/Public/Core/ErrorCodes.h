@@ -489,5 +489,55 @@ namespace ErrorCodes
 	/** @brief Required subsystem is not available */
 	constexpr const TCHAR* SUBSYSTEM_NOT_AVAILABLE = TEXT("SUBSYSTEM_NOT_AVAILABLE");
 
+	// ============================================================================
+	// Python Errors (9100-9199)
+	// ============================================================================
+
+	/** @brief Python is not available or not initialized */
+	constexpr const TCHAR* PYTHON_NOT_AVAILABLE = TEXT("PYTHON_NOT_AVAILABLE");
+
+	/** @brief Python syntax error in code */
+	constexpr const TCHAR* PYTHON_SYNTAX_ERROR = TEXT("PYTHON_SYNTAX_ERROR");
+
+	/** @brief Python runtime error or exception */
+	constexpr const TCHAR* PYTHON_RUNTIME_ERROR = TEXT("PYTHON_RUNTIME_ERROR");
+
+	/** @brief Python execution exceeded timeout */
+	constexpr const TCHAR* PYTHON_EXECUTION_TIMEOUT = TEXT("PYTHON_EXECUTION_TIMEOUT");
+
+	/** @brief Python module not found */
+	constexpr const TCHAR* PYTHON_MODULE_NOT_FOUND = TEXT("PYTHON_MODULE_NOT_FOUND");
+
+	/** @brief Python class not found in module */
+	constexpr const TCHAR* PYTHON_CLASS_NOT_FOUND = TEXT("PYTHON_CLASS_NOT_FOUND");
+
+	/** @brief Python function not found in module */
+	constexpr const TCHAR* PYTHON_FUNCTION_NOT_FOUND = TEXT("PYTHON_FUNCTION_NOT_FOUND");
+
+	/** @brief Python introspection failed */
+	constexpr const TCHAR* PYTHON_INTROSPECTION_FAILED = TEXT("PYTHON_INTROSPECTION_FAILED");
+
+	/** @brief Unsafe Python code detected */
+	constexpr const TCHAR* PYTHON_UNSAFE_CODE = TEXT("PYTHON_UNSAFE_CODE");
+
+	/** @brief Invalid Python expression */
+	constexpr const TCHAR* PYTHON_INVALID_EXPRESSION = TEXT("PYTHON_INVALID_EXPRESSION");
+
+	// ============================================================================
+	// Filesystem Errors (10000-10099)
+	// ============================================================================
+
+	/** @brief File not found at specified path */
+	constexpr const TCHAR* FILE_NOT_FOUND = TEXT("FILE_NOT_FOUND");
+
+	/** @brief Failed to read file contents */
+	constexpr const TCHAR* FILE_READ_ERROR = TEXT("FILE_READ_ERROR");
+
+	/** @brief Failed to write to file */
+	constexpr const TCHAR* FILE_WRITE_ERROR = TEXT("FILE_WRITE_ERROR");
+
+	/** @brief Path is outside allowed directories */
+	constexpr const TCHAR* FILE_ACCESS_DENIED = TEXT("FILE_ACCESS_DENIED");
+
 } // namespace ErrorCodes
 } // namespace VibeUE
