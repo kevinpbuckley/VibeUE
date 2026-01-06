@@ -69,18 +69,6 @@ TSharedPtr<FJsonObject> FPythonCommands::HandleCommand(
 	{
 		return HandleGetExamples(Params);
 	}
-	else if (Action.Equals(TEXT("read_source_file"), ESearchCase::IgnoreCase))
-	{
-		return HandleReadSourceFile(Params);
-	}
-	else if (Action.Equals(TEXT("search_source_files"), ESearchCase::IgnoreCase))
-	{
-		return HandleSearchSourceFiles(Params);
-	}
-	else if (Action.Equals(TEXT("list_source_files"), ESearchCase::IgnoreCase))
-	{
-		return HandleListSourceFiles(Params);
-	}
 	else if (Action.Equals(TEXT("help"), ESearchCase::IgnoreCase))
 	{
 		return HandleHelp(Params);
@@ -263,100 +251,6 @@ TSharedPtr<FJsonObject> FPythonCommands::HandleGetExamples(const TSharedPtr<FJso
 	return Response;
 }
 
-TSharedPtr<FJsonObject> FPythonCommands::HandleReadSourceFile(const TSharedPtr<FJsonObject>& Params)
-{
-	FString FilePath;
-	if (!Params->TryGetStringField(TEXT("file_path"), FilePath))
-	{
-		return CreateErrorResponse(ErrorCodes::PARAM_MISSING, TEXT("Missing file_path parameter"));
-	}
-
-	int32 StartLine = 0;
-	int32 MaxLines = 1000;
-	Params->TryGetNumberField(TEXT("start_line"), StartLine);
-	Params->TryGetNumberField(TEXT("max_lines"), MaxLines);
-
-	auto Result = DiscoveryService->ReadSourceFile(FilePath, StartLine, MaxLines);
-
-	if (Result.IsError())
-	{
-		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
-
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetStringField(TEXT("file_path"), FilePath);
-	Data->SetStringField(TEXT("content"), Result.GetValue());
-	Response->SetObjectField(TEXT("data"), Data);
-
-	return Response;
-}
-
-TSharedPtr<FJsonObject> FPythonCommands::HandleSearchSourceFiles(const TSharedPtr<FJsonObject>& Params)
-{
-	FString Pattern;
-	if (!Params->TryGetStringField(TEXT("pattern"), Pattern))
-	{
-		return CreateErrorResponse(ErrorCodes::PARAM_MISSING, TEXT("Missing pattern parameter"));
-	}
-
-	FString FilePattern = TEXT("*.h,*.cpp,*.py");
-	int32 ContextLines = 3;
-	Params->TryGetStringField(TEXT("file_pattern"), FilePattern);
-	Params->TryGetNumberField(TEXT("context_lines"), ContextLines);
-
-	auto Result = DiscoveryService->SearchSourceFiles(Pattern, FilePattern, ContextLines);
-
-	if (Result.IsError())
-	{
-		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
-
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-
-	TArray<TSharedPtr<FJsonValue>> ResultsArray;
-	for (const FSourceSearchResult& SearchResult : Result.GetValue())
-	{
-		ResultsArray.Add(MakeShared<FJsonValueObject>(ConvertSearchResultToJson(SearchResult)));
-	}
-
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetArrayField(TEXT("results"), ResultsArray);
-	Response->SetObjectField(TEXT("data"), Data);
-
-	return Response;
-}
-
-TSharedPtr<FJsonObject> FPythonCommands::HandleListSourceFiles(const TSharedPtr<FJsonObject>& Params)
-{
-	FString Directory;
-	FString FilePattern = TEXT("*");
-
-	Params->TryGetStringField(TEXT("directory"), Directory);
-	Params->TryGetStringField(TEXT("pattern"), FilePattern);
-
-	auto Result = DiscoveryService->ListSourceFiles(Directory, FilePattern);
-
-	if (Result.IsError())
-	{
-		return CreateErrorResponse(Result.GetErrorCode(), Result.GetErrorMessage());
-	}
-
-	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
-
-	TArray<TSharedPtr<FJsonValue>> FilesArray;
-	for (const FString& File : Result.GetValue())
-	{
-		FilesArray.Add(MakeShared<FJsonValueString>(File));
-	}
-
-	TSharedPtr<FJsonObject> Data = MakeShared<FJsonObject>();
-	Data->SetArrayField(TEXT("files"), FilesArray);
-	Response->SetObjectField(TEXT("data"), Data);
-
-	return Response;
-}
-
 TSharedPtr<FJsonObject> FPythonCommands::HandleHelp(const TSharedPtr<FJsonObject>& Params)
 {
 	TSharedPtr<FJsonObject> Response = CreateSuccessResponse();
@@ -376,9 +270,6 @@ TSharedPtr<FJsonObject> FPythonCommands::HandleHelp(const TSharedPtr<FJsonObject
 		{TEXT("execute_code"), TEXT("Execute Python code string with output capture")},
 		{TEXT("evaluate_expression"), TEXT("Evaluate Python expression and return result")},
 		{TEXT("get_examples"), TEXT("Return curated example scripts for common tasks")},
-		{TEXT("read_source_file"), TEXT("Read a specific source file from UE Python plugin")},
-		{TEXT("search_source_files"), TEXT("Search for patterns in UE Python plugin source")},
-		{TEXT("list_source_files"), TEXT("List available source files in UE Python plugin")},
 		{TEXT("help"), TEXT("Get help documentation for available actions")}
 	};
 
@@ -532,31 +423,6 @@ TSharedPtr<FJsonObject> FPythonCommands::ConvertExampleToJson(const FPythonExamp
 		TagsArray.Add(MakeShared<FJsonValueString>(Tag));
 	}
 	Obj->SetArrayField(TEXT("tags"), TagsArray);
-
-	return Obj;
-}
-
-TSharedPtr<FJsonObject> FPythonCommands::ConvertSearchResultToJson(const FSourceSearchResult& Result)
-{
-	TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
-
-	Obj->SetStringField(TEXT("file_path"), Result.FilePath);
-	Obj->SetNumberField(TEXT("line_number"), Result.LineNumber);
-	Obj->SetStringField(TEXT("line_content"), Result.LineContent);
-
-	TArray<TSharedPtr<FJsonValue>> BeforeArray;
-	for (const FString& Line : Result.ContextBefore)
-	{
-		BeforeArray.Add(MakeShared<FJsonValueString>(Line));
-	}
-	Obj->SetArrayField(TEXT("context_before"), BeforeArray);
-
-	TArray<TSharedPtr<FJsonValue>> AfterArray;
-	for (const FString& Line : Result.ContextAfter)
-	{
-		AfterArray.Add(MakeShared<FJsonValueString>(Line));
-	}
-	Obj->SetArrayField(TEXT("context_after"), AfterArray);
 
 	return Obj;
 }

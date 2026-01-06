@@ -523,5 +523,21 @@ namespace ErrorCodes
 	/** @brief Invalid Python expression */
 	constexpr const TCHAR* PYTHON_INVALID_EXPRESSION = TEXT("PYTHON_INVALID_EXPRESSION");
 
+	// ============================================================================
+	// Filesystem Errors (10000-10099)
+	// ============================================================================
+
+	/** @brief File not found at specified path */
+	constexpr const TCHAR* FILE_NOT_FOUND = TEXT("FILE_NOT_FOUND");
+
+	/** @brief Failed to read file contents */
+	constexpr const TCHAR* FILE_READ_ERROR = TEXT("FILE_READ_ERROR");
+
+	/** @brief Failed to write to file */
+	constexpr const TCHAR* FILE_WRITE_ERROR = TEXT("FILE_WRITE_ERROR");
+
+	/** @brief Path is outside allowed directories */
+	constexpr const TCHAR* FILE_ACCESS_DENIED = TEXT("FILE_ACCESS_DENIED");
+
 } // namespace ErrorCodes
 } // namespace VibeUE

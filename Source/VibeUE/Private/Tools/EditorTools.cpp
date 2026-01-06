@@ -14,6 +14,7 @@
 #include "Commands/DataAssetCommands.h"
 #include "Commands/DataTableCommands.h"
 #include "Commands/PythonCommands.h"
+#include "Commands/FileSystemCommands.h"
 #include "Core/ServiceContext.h"
 #include "Json.h"
 #include "JsonUtilities.h"
@@ -34,6 +35,7 @@ static TSharedPtr<FEnhancedInputCommands> EnhancedInputCommandsInstance;
 static TSharedPtr<FDataAssetCommands> DataAssetCommandsInstance;
 static TSharedPtr<FDataTableCommands> DataTableCommandsInstance;
 static TSharedPtr<VibeUE::FPythonCommands> PythonCommandsInstance;
+static TSharedPtr<FFileSystemCommands> FileSystemCommandsInstance;
 static TSharedPtr<FServiceContext> SharedServiceContext;
 
 static void EnsureCommandHandlersInitialized()
@@ -89,6 +91,10 @@ static void EnsureCommandHandlersInitialized()
 	if (!PythonCommandsInstance.IsValid())
 	{
 		PythonCommandsInstance = MakeShared<VibeUE::FPythonCommands>();
+	}
+	if (!FileSystemCommandsInstance.IsValid())
+	{
+		FileSystemCommandsInstance = MakeShared<FFileSystemCommands>();
 	}
 }
 
@@ -246,12 +252,108 @@ FString UEditorTools::ManageUMGWidget(const FString& Action, const FString& Para
 	return SerializeResult(UMGCommandsInstance->HandleCommand(TEXT("manage_umg_widget"), Params));
 }
 
-FString UEditorTools::ManagePythonExecution(const FString& Action, const FString& ParamsJson)
+// Python Execution - Individual Tool Functions
+FString UEditorTools::DiscoverPythonModule(const FString& ParamsJson)
 {
 	EnsureCommandHandlersInitialized();
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
-	Params->SetStringField(TEXT("action"), Action);
+	Params->SetStringField(TEXT("action"), TEXT("discover_module"));
 	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::DiscoverPythonClass(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("discover_class"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::DiscoverPythonFunction(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("discover_function"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::ListPythonSubsystems(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("list_subsystems"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::ExecutePythonCode(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("execute_code"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::EvaluatePythonExpression(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("evaluate_expression"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::GetPythonExamples(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("get_examples"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+FString UEditorTools::GetPythonHelp(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), TEXT("help"));
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
+}
+
+//=============================================================================
+// FILESYSTEM TOOLS
+//=============================================================================
+
+FString UEditorTools::ReadFile(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	return SerializeResult(FileSystemCommandsInstance->HandleCommand(TEXT("read_file"), Params));
+}
+
+FString UEditorTools::ListDir(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	return SerializeResult(FileSystemCommandsInstance->HandleCommand(TEXT("list_dir"), Params));
+}
+
+FString UEditorTools::FileSearch(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	return SerializeResult(FileSystemCommandsInstance->HandleCommand(TEXT("file_search"), Params));
+}
+
+FString UEditorTools::GrepSearch(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	return SerializeResult(FileSystemCommandsInstance->HandleCommand(TEXT("grep_search"), Params));
+}
+
+FString UEditorTools::GetDirectories(const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	return SerializeResult(FileSystemCommandsInstance->HandleCommand(TEXT("get_directories"), Params));
 }
 
 //=============================================================================
@@ -477,17 +579,187 @@ REGISTER_VIBEUE_TOOL(manage_umg_widget,
 	}
 );
 
-// 14. manage_python_execution
-REGISTER_VIBEUE_TOOL(manage_python_execution,
-	"Execute Python code and introspect Python modules, classes, and functions in Unreal Engine. Actions: discover_module (introspect module), discover_class (get class members/methods), discover_function (get signature), list_subsystems (list Unreal subsystems), execute_code (run Python code), evaluate_expression (evaluate expression), get_examples (usage examples), read_source_file (read Python source), search_source_files (search with pattern/context), list_source_files (list available sources), help (get action help). ParamsJson params vary by action: module_name, class_name, function_name, code, expression, timeout, file_path, search_pattern, max_results, context_lines.",
+// 14. discover_python_module
+REGISTER_VIBEUE_TOOL(discover_python_module,
+	"Introspect and discover a Python/Unreal module's contents (functions, classes, constants). Returns detailed module structure. CRITICAL: Use this BEFORE working with unfamiliar modules to understand available APIs. ParamsJson params: module_name (required, e.g., 'unreal', 'unreal_engine'), max_items (optional, default 100).",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("Action", "Action to perform", "string", true),
-		TOOL_PARAM_DEFAULT("ParamsJson", "Action parameters as JSON", "string", "{}")
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with module_name (required)", "string", "{}")
 	),
 	{
-		return UEditorTools::ManagePythonExecution(
-			Params.FindRef(TEXT("Action")),
+		return UEditorTools::DiscoverPythonModule(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 15. discover_python_class
+REGISTER_VIBEUE_TOOL(discover_python_class,
+	"Discover a Python/Unreal class structure - methods, properties, inheritance, docstrings. **CRITICAL: ALWAYS use this BEFORE accessing unfamiliar classes.** Returns complete class API. On AttributeError: call this immediately to learn correct API. ParamsJson params: class_name (required, e.g., 'unreal.EditorAssetLibrary', 'BlueprintFactory'), include_inherited (optional bool, default true), include_private (optional bool, default false).",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with class_name (required)", "string", "{}")
+	),
+	{
+		return UEditorTools::DiscoverPythonClass(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 16. discover_python_function
+REGISTER_VIBEUE_TOOL(discover_python_function,
+	"Get detailed function signature, parameters, return type, and docstring. Use BEFORE calling unfamiliar functions to learn correct parameter names and types. ParamsJson params: function_path (required, e.g., 'unreal.EditorAssetLibrary.load_asset', 'MyClass.my_method').",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with function_path (required)", "string", "{}")
+	),
+	{
+		return UEditorTools::DiscoverPythonFunction(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 17. list_python_subsystems
+REGISTER_VIBEUE_TOOL(list_python_subsystems,
+	"List all available Unreal Engine editor subsystems (EditorActorSubsystem, EditorAssetSubsystem, etc.). Returns subsystem names and brief descriptions. Use to discover what editor functionality is available via Python. No parameters required.",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "Empty JSON object", "string", "{}")
+	),
+	{
+		return UEditorTools::ListPythonSubsystems(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 18. execute_python_code
+REGISTER_VIBEUE_TOOL(execute_python_code,
+	"Execute Python code in Unreal Engine context. **USE LAST after discovery tools.** Has access to 'unreal' module and all editor APIs. Returns stdout/stderr output and any errors. **NEVER modify CDOs (Class Default Objects) - causes crashes.** ParamsJson params: code (required, Python code string), timeout (optional, milliseconds, default 5000), capture_output (optional bool, default true).",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with code (required)", "string", "{}")
+	),
+	{
+		return UEditorTools::ExecutePythonCode(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 19. evaluate_python_expression
+REGISTER_VIBEUE_TOOL(evaluate_python_expression,
+	"Evaluate a Python expression and return its value (converted to string). Useful for quick queries and inspecting objects. Safer than execute_code for simple expressions. ParamsJson params: expression (required, Python expression string), timeout (optional, milliseconds, default 5000).",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with expression (required)", "string", "{}")
+	),
+	{
+		return UEditorTools::EvaluatePythonExpression(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 20. get_python_examples
+REGISTER_VIBEUE_TOOL(get_python_examples,
+	"Get working code examples from the plugin's examples/ folder. Returns example code with explanations for common tasks (blueprint operations, asset management, material editing, etc.). Use to learn patterns BEFORE implementing. ParamsJson params: category (optional, filter by category: 'blueprint', 'asset', 'material', 'common', 'level'), search_term (optional, search example titles/descriptions), tags (optional array, filter by tags).",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "Optional filter params as JSON", "string", "{}")
+	),
+	{
+		return UEditorTools::GetPythonExamples(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 21. get_python_help
+REGISTER_VIBEUE_TOOL(get_python_help,
+	"Get comprehensive help documentation for Python tools. Returns detailed usage information, parameter descriptions, examples, and common patterns. Use when unsure how to use Python tools or need workflow guidance. ParamsJson params: topic (optional, specific action/topic name for detailed help, omit for general overview).",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "Optional topic parameter as JSON", "string", "{}")
+	),
+	{
+		return UEditorTools::GetPythonHelp(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+//=============================================================================
+// FILESYSTEM TOOLS
+//=============================================================================
+
+// 22. read_file
+REGISTER_VIBEUE_TOOL(read_file,
+	"Read file contents with line range support (like VSCode read_file). Supports any text file in project. ParamsJson params: filePath (required, absolute or relative path), startLine (optional, default 1, 1-indexed), endLine (optional, default -1 for EOF).",
+	"Filesystem",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with filePath (required), startLine (optional), endLine (optional)", "string", "{}")
+	),
+	{
+		return UEditorTools::ReadFile(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 23. list_dir
+REGISTER_VIBEUE_TOOL(list_dir,
+	"List directory contents - files and subdirectories. ParamsJson params: path (required, directory path).",
+	"Filesystem",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with path (required)", "string", "{}")
+	),
+	{
+		return UEditorTools::ListDir(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 24. file_search
+REGISTER_VIBEUE_TOOL(file_search,
+	"Find files matching glob patterns (like VSCode file_search). Searches from project root. ParamsJson params: query (required, glob pattern like '**/*.cpp', '**/*.h', 'Source/**'), maxResults (optional, default 100).",
+	"Filesystem",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with query (required), maxResults (optional)", "string", "{}")
+	),
+	{
+		return UEditorTools::FileSearch(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 25. grep_search
+REGISTER_VIBEUE_TOOL(grep_search,
+	"Search for text/regex patterns in files (like VSCode grep_search). Fast code search across workspace. ParamsJson params: query (required, search pattern), isRegexp (optional bool, default false), includePattern (optional, file glob to search in), includeIgnoredFiles (optional bool, default false, search build directories), maxResults (optional, default 50).",
+	"Filesystem",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "JSON with query (required), isRegexp, includePattern, includeIgnoredFiles, maxResults (all optional)", "string", "{}")
+	),
+	{
+		return UEditorTools::GrepSearch(
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
+// 26. get_directories
+REGISTER_VIBEUE_TOOL(get_directories,
+	"Get important project directories: game directory (project root), VibeUE plugin directory, and Unreal Engine's Python API installation directories (include, lib, site-packages). Returns platform-specific paths (Windows/Mac/Linux) for locating project files, plugin source, and UE Python API. Use with read_file, list_dir, or grep_search to explore these directories. No parameters required.",
+	"Filesystem",
+	TOOL_PARAMS(
+		TOOL_PARAM_DEFAULT("ParamsJson", "Empty JSON object", "string", "{}")
+	),
+	{
+		return UEditorTools::GetDirectories(
 			Params.FindRef(TEXT("ParamsJson"))
 		);
 	}
@@ -512,6 +784,7 @@ void UEditorTools::CleanupCommandHandlers()
 	DataAssetCommandsInstance.Reset();
 	DataTableCommandsInstance.Reset();
 	PythonCommandsInstance.Reset();
+	FileSystemCommandsInstance.Reset();
 	SharedServiceContext.Reset();
 	
 	UE_LOG(LogTemp, Display, TEXT("EditorTools: Command handlers cleaned up"));

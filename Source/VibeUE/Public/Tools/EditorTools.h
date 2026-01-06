@@ -282,23 +282,114 @@ public:
 	//========================================================================
 	
 	/**
-	 * Execute Python code in Unreal Engine
-	 * 
-	 * Actions:
-	 * - discover_module: Discover Python module contents
-	 * - discover_class: Discover Python class members
-	 * - discover_function: Discover function signature
-	 * - list_subsystems: List available Unreal subsystems
-	 * - execute_code: Execute Python code
-	 * - evaluate_expression: Evaluate Python expression
-	 * - get_examples: Get usage examples
-	 * - read_source_file: Read Python source file
-	 * - search_source_files: Search Python source files
-	 * - list_source_files: List Python source files
-	 * - help: Get help for actions
+	 * Discover Python module contents - introspect what classes/functions are in a module
+	 * ParamsJson: {"module_name": "unreal"}
 	 */
 	UFUNCTION()
-	static FString ManagePythonExecution(const FString& Action, const FString& ParamsJson);
+	static FString DiscoverPythonModule(const FString& ParamsJson);
+	
+	/**
+	 * Discover Python class structure - get all methods and properties of a class
+	 * USE THIS before accessing unfamiliar classes to avoid AttributeErrors
+	 * ParamsJson: {"class_name": "BlueprintEditorLibrary"}
+	 */
+	UFUNCTION()
+	static FString DiscoverPythonClass(const FString& ParamsJson);
+	
+	/**
+	 * Discover function signature and parameters
+	 * ParamsJson: {"function_path": "unreal.BlueprintEditorLibrary.compile_blueprint"}
+	 */
+	UFUNCTION()
+	static FString DiscoverPythonFunction(const FString& ParamsJson);
+	
+	/**
+	 * List available Unreal Engine editor subsystems
+	 * ParamsJson: {}
+	 */
+	UFUNCTION()
+	static FString ListPythonSubsystems(const FString& ParamsJson);
+	
+	/**
+	 * Execute Python code in Unreal Engine - use AFTER discovering APIs
+	 * ParamsJson: {"code": "import unreal\\nprint('hello')"}
+	 */
+	UFUNCTION()
+	static FString ExecutePythonCode(const FString& ParamsJson);
+	
+	/**
+	 * Evaluate a Python expression and return the result
+	 * ParamsJson: {"expression": "2 + 2"}
+	 */
+	UFUNCTION()
+	static FString EvaluatePythonExpression(const FString& ParamsJson);
+	
+	/**
+	 * Get Python code examples for common operations
+	 * Searches the examples folder for relevant code samples
+	 * ParamsJson: {"pattern": "blueprint"} or {"category": "asset"}
+	 */
+	UFUNCTION()
+	static FString GetPythonExamples(const FString& ParamsJson);
+	
+	/**
+	 * Get help documentation for Python tools
+	 * ParamsJson: {"topic": "execute_code"} or {}
+	 */
+	UFUNCTION()
+	static FString GetPythonHelp(const FString& ParamsJson);
+
+	//========================================================================
+	// FILESYSTEM TOOLS
+	//========================================================================
+	
+	/**
+	 * Read file contents with line range support (like VSCode read_file)
+	 * ParamsJson: {filePath: path/to/file, startLine: 1, endLine: 100}
+	 * - filePath: string (required) - absolute or relative path
+	 * - startLine: integer (default: 1) - start line (1-indexed)
+	 * - endLine: integer (default: -1) - end line (-1 = end of file)
+	 */
+	UFUNCTION()
+	static FString ReadFile(const FString& ParamsJson);
+	
+	/**
+	 * List directory contents
+	 * ParamsJson: {path: path/to/directory}
+	 * - path: string (required) - directory path
+	 */
+	UFUNCTION()
+	static FString ListDir(const FString& ParamsJson);
+	
+	/**
+	 * Find files matching glob patterns (like VSCode file_search)
+	 * ParamsJson: {query: pattern, maxResults: 100}
+	 * - query: string (required) - glob pattern
+	 * - maxResults: integer (default: 100)
+	 */
+	UFUNCTION()
+	static FString FileSearch(const FString& ParamsJson);
+	
+	/**
+	 * Search for text/regex patterns in files (like VSCode grep_search)
+	 * ParamsJson: {query: pattern, isRegexp: false, includePattern: pattern, maxResults: 50}
+	 * - query: string (required) - search pattern
+	 * - isRegexp: bool (default: false) - treat as regex
+	 * - includePattern: string (optional) - file glob pattern to search in
+	 * - includeIgnoredFiles: bool (default: false) - search in ignored directories
+	 * - maxResults: integer (default: 50)
+	 */
+	UFUNCTION()
+	static FString GrepSearch(const FString& ParamsJson);
+	
+	/**
+	 * Get important project directories
+	 * Returns game directory, plugin directory, and UE Python API paths
+	 * Use this to locate project root, VibeUE plugin, and Python API directories
+	 * ParamsJson: {}
+	 */
+	UFUNCTION()
+	static FString GetDirectories(const FString& ParamsJson);
 
 	/**
 	 * Cleanup all static command handler instances

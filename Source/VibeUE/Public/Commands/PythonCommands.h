@@ -46,9 +46,6 @@ private:
 	TSharedPtr<FJsonObject> HandleExecuteCode(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleEvaluateExpression(const TSharedPtr<FJsonObject>& Params);
 	TSharedPtr<FJsonObject> HandleGetExamples(const TSharedPtr<FJsonObject>& Params);
-	TSharedPtr<FJsonObject> HandleReadSourceFile(const TSharedPtr<FJsonObject>& Params);
-	TSharedPtr<FJsonObject> HandleSearchSourceFiles(const TSharedPtr<FJsonObject>& Params);
-	TSharedPtr<FJsonObject> HandleListSourceFiles(const TSharedPtr<FJsonObject>& Params);
 
 	// Helper methods
 	TSharedPtr<FJsonObject> CreateSuccessResponse() const;
@@ -63,7 +60,6 @@ private:
 	TSharedPtr<FJsonObject> ConvertFunctionInfoToJson(const struct FPythonFunctionInfo& Info);
 	TSharedPtr<FJsonObject> ConvertExecutionResultToJson(const struct FPythonExecutionResult& Result);
 	TSharedPtr<FJsonObject> ConvertExampleToJson(const struct FPythonExampleScript& Example);
-	TSharedPtr<FJsonObject> ConvertSearchResultToJson(const struct FSourceSearchResult& Result);
 
 	// Service instances
 	TSharedPtr<FPythonDiscoveryService> DiscoveryService;

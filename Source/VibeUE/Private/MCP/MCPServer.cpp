@@ -865,22 +865,33 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     
     // Execute tool on game thread - REQUIRED because many UE operations are not thread-safe
     FString ToolResult;
-    FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
     
-    AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent]()
+    // Check if we're already on the game thread
+    if (IsInGameThread())
     {
+        // Execute directly - no need to defer
         ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
-        CompletionEvent->Trigger();
-    });
-    
-    // Wait for completion with timeout (30 seconds max for tool execution)
-    bool bCompleted = CompletionEvent->Wait(FTimespan::FromSeconds(30.0));
-    FPlatformProcess::ReturnSynchEventToPool(CompletionEvent);
-    
-    if (!bCompleted)
+    }
+    else
     {
-        UE_LOG(LogMCPServer, Error, TEXT("Tool execution timed out: %s"), *ToolName);
-        return BuildJsonRpcError(RequestId, -32000, TEXT("Tool execution timed out"));
+        // We're on a background thread, need to marshal to game thread
+        FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
+        
+        AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent]()
+        {
+            ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
+            CompletionEvent->Trigger();
+        });
+        
+        // Wait for completion with timeout (30 seconds max for tool execution)
+        bool bCompleted = CompletionEvent->Wait(FTimespan::FromSeconds(30.0));
+        FPlatformProcess::ReturnSynchEventToPool(CompletionEvent);
+        
+        if (!bCompleted)
+        {
+            UE_LOG(LogMCPServer, Error, TEXT("Tool execution timed out: %s"), *ToolName);
+            return BuildJsonRpcError(RequestId, -32000, TEXT("Tool execution timed out"));
+        }
     }
     
     // Build MCP result

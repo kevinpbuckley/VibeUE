@@ -412,7 +412,21 @@ TResult<bool> FAssetLifecycleService::DeleteAsset(
     }
     
     // 5. Perform deletion
-    bool bSuccess = UEditorAssetLibrary::DeleteAsset(NormalizedPath);
+    // Load the asset first to ensure we can delete it properly
+    UObject* Asset = UEditorAssetLibrary::LoadAsset(NormalizedPath);
+    bool bSuccess = false;
+    
+    if (Asset)
+    {
+        // Use DeleteLoadedAsset which is safer for blueprints and handles null GeneratedClass
+        bSuccess = UEditorAssetLibrary::DeleteLoadedAsset(Asset);
+    }
+    else
+    {
+        // Asset couldn't be loaded, try direct deletion anyway
+        bSuccess = UEditorAssetLibrary::DeleteAsset(NormalizedPath);
+    }
+    
     if (!bSuccess)
     {
         return TResult<bool>::Error(

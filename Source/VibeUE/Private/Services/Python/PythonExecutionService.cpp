@@ -53,7 +53,15 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	{
 		// For now, we execute synchronously but with error handling
 		// TODO: Implement proper async execution with thread interruption
-		bSuccess = IPythonScriptPlugin::Get()->ExecPythonCommandEx(Command);
+		IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
+		if (!PythonPlugin)
+		{
+			return TResult<FPythonExecutionResult>::Error(
+				ErrorCodes::PYTHON_NOT_AVAILABLE,
+				TEXT("Python plugin is not initialized")
+			);
+		}
+		bSuccess = PythonPlugin->ExecPythonCommandEx(Command);
 	}
 	catch (...)
 	{
@@ -120,7 +128,15 @@ TResult<FPythonExecutionResult> FPythonExecutionService::EvaluateExpression(cons
 
 	// Execute with timing
 	double StartTime = FPlatformTime::Seconds();
-	bool bSuccess = IPythonScriptPlugin::Get()->ExecPythonCommandEx(Command);
+	IPythonScriptPlugin* PythonPlugin = IPythonScriptPlugin::Get();
+	if (!PythonPlugin)
+	{
+		return TResult<FPythonExecutionResult>::Error(
+			ErrorCodes::PYTHON_NOT_AVAILABLE,
+			TEXT("Python plugin is not initialized")
+		);
+	}
+	bool bSuccess = PythonPlugin->ExecPythonCommandEx(Command);
 	double ExecutionTimeMs = (FPlatformTime::Seconds() - StartTime) * 1000.0;
 
 	// Convert result
