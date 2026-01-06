@@ -277,6 +277,29 @@ public:
 	UFUNCTION()
 	static FString ManageUMGWidget(const FString& Action, const FString& ParamsJson);
 
+	//========================================================================
+	// PYTHON EXECUTION TOOLS
+	//========================================================================
+	
+	/**
+	 * Execute Python code in Unreal Engine
+	 * 
+	 * Actions:
+	 * - discover_module: Discover Python module contents
+	 * - discover_class: Discover Python class members
+	 * - discover_function: Discover function signature
+	 * - list_subsystems: List available Unreal subsystems
+	 * - execute_code: Execute Python code
+	 * - evaluate_expression: Evaluate Python expression
+	 * - get_examples: Get usage examples
+	 * - read_source_file: Read Python source file
+	 * - search_source_files: Search Python source files
+	 * - list_source_files: List Python source files
+	 * - help: Get help for actions
+	 */
+	UFUNCTION()
+	static FString ManagePythonExecution(const FString& Action, const FString& ParamsJson);
+
 	/**
 	 * Cleanup all static command handler instances
 	 * Called during module shutdown to ensure proper cleanup

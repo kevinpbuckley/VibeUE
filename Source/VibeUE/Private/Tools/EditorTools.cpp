@@ -13,6 +13,7 @@
 #include "Commands/EnhancedInputCommands.h"
 #include "Commands/DataAssetCommands.h"
 #include "Commands/DataTableCommands.h"
+#include "Commands/PythonCommands.h"
 #include "Core/ServiceContext.h"
 #include "Json.h"
 #include "JsonUtilities.h"
@@ -32,6 +33,7 @@ static TSharedPtr<FAssetCommands> AssetCommandsInstance;
 static TSharedPtr<FEnhancedInputCommands> EnhancedInputCommandsInstance;
 static TSharedPtr<FDataAssetCommands> DataAssetCommandsInstance;
 static TSharedPtr<FDataTableCommands> DataTableCommandsInstance;
+static TSharedPtr<VibeUE::FPythonCommands> PythonCommandsInstance;
 static TSharedPtr<FServiceContext> SharedServiceContext;
 
 static void EnsureCommandHandlersInitialized()
@@ -83,6 +85,10 @@ static void EnsureCommandHandlersInitialized()
 	if (!DataTableCommandsInstance.IsValid())
 	{
 		DataTableCommandsInstance = MakeShared<FDataTableCommands>();
+	}
+	if (!PythonCommandsInstance.IsValid())
+	{
+		PythonCommandsInstance = MakeShared<VibeUE::FPythonCommands>();
 	}
 }
 
@@ -238,6 +244,14 @@ FString UEditorTools::ManageUMGWidget(const FString& Action, const FString& Para
 	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
 	Params->SetStringField(TEXT("action"), Action);
 	return SerializeResult(UMGCommandsInstance->HandleCommand(TEXT("manage_umg_widget"), Params));
+}
+
+FString UEditorTools::ManagePythonExecution(const FString& Action, const FString& ParamsJson)
+{
+	EnsureCommandHandlersInitialized();
+	TSharedPtr<FJsonObject> Params = ParseParams(ParamsJson);
+	Params->SetStringField(TEXT("action"), Action);
+	return SerializeResult(PythonCommandsInstance->HandleCommand(TEXT("manage_python_execution"), Params));
 }
 
 //=============================================================================
@@ -463,6 +477,22 @@ REGISTER_VIBEUE_TOOL(manage_umg_widget,
 	}
 );
 
+// 14. manage_python_execution
+REGISTER_VIBEUE_TOOL(manage_python_execution,
+	"Execute Python code and introspect Python modules, classes, and functions in Unreal Engine. Actions: discover_module (introspect module), discover_class (get class members/methods), discover_function (get signature), list_subsystems (list Unreal subsystems), execute_code (run Python code), evaluate_expression (evaluate expression), get_examples (usage examples), read_source_file (read Python source), search_source_files (search with pattern/context), list_source_files (list available sources), help (get action help). ParamsJson params vary by action: module_name, class_name, function_name, code, expression, timeout, file_path, search_pattern, max_results, context_lines.",
+	"Python",
+	TOOL_PARAMS(
+		TOOL_PARAM("Action", "Action to perform", "string", true),
+		TOOL_PARAM_DEFAULT("ParamsJson", "Action parameters as JSON", "string", "{}")
+	),
+	{
+		return UEditorTools::ManagePythonExecution(
+			Params.FindRef(TEXT("Action")),
+			Params.FindRef(TEXT("ParamsJson"))
+		);
+	}
+);
+
 //=============================================================================
 // CLEANUP
 //=============================================================================
@@ -481,6 +511,7 @@ void UEditorTools::CleanupCommandHandlers()
 	EnhancedInputCommandsInstance.Reset();
 	DataAssetCommandsInstance.Reset();
 	DataTableCommandsInstance.Reset();
+	PythonCommandsInstance.Reset();
 	SharedServiceContext.Reset();
 	
 	UE_LOG(LogTemp, Display, TEXT("EditorTools: Command handlers cleaned up"));
