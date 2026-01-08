@@ -280,10 +280,16 @@ public:
     
     /** Check if file logging is enabled (chat and raw LLM logs) */
     static bool IsFileLoggingEnabled();
-    
+
     /** Set file logging enabled */
     static void SetFileLoggingEnabled(bool bEnabled);
-    
+
+    /** Check if auto-save before Python execution is enabled */
+    static bool IsAutoSaveBeforePythonExecutionEnabled();
+
+    /** Set auto-save before Python execution enabled */
+    static void SetAutoSaveBeforePythonExecutionEnabled(bool bEnabled);
+
     // ============ LLM Generation Parameters ============
     
     /** Get/Set temperature (0.0-2.0, lower = more deterministic) */

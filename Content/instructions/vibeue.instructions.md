@@ -208,19 +208,51 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 ### DataTableService
 `discover_python_class("unreal.DataTableService")`
 
-- `list_data_tables(row_struct_filter)` - List all DataTable assets
-- `get_table_info(path)` - Get table info with row structure
-- `get_row_names(path)` - Get all row names
-- `get_row_as_json(path, row_name)` - Get row data as JSON
+**Discovery Methods:**
+- `search_row_types(search_filter)` - Search for row struct types available for DataTables
+- `list_data_tables(row_struct_filter, path_filter)` - List all DataTable assets
+
+**Lifecycle:**
+- `create_data_table(row_struct_name, asset_path, asset_name)` - Create new DataTable asset
+
+**Info Methods:**
+- `get_info(table_path)` - Get detailed table info with columns JSON
+- `get_row_struct(table_path_or_struct_name)` - Get row struct schema (column definitions)
+
+**Row Operations:**
+- `list_rows(table_path)` - List all row names in a DataTable
+- `get_row(table_path, row_name)` - Get single row as JSON
+- `add_row(table_path, row_name, data_json)` - Add a new row
+- `add_rows(table_path, rows_json)` - Add multiple rows at once (bulk)
+- `update_row(table_path, row_name, data_json)` - Update existing row (partial update)
+- `remove_row(table_path, row_name)` - Remove a row
+- `rename_row(table_path, old_name, new_name)` - Rename a row
+- `clear_rows(table_path)` - Remove all rows from a DataTable
 
 ---
 
 ### DataAssetService
 `discover_python_class("unreal.DataAssetService")`
 
-- `search_types(filter)` - Search for DataAsset subclasses
-- `list_data_assets(class_name)` - List DataAssets of a type
-- `get_properties_as_json(path)` - Get all properties as JSON
+**Discovery Methods:**
+- `search_types(filter)` - Search for DataAsset subclasses matching filter
+- `list_data_assets(class_name, path_filter)` - List DataAssets of a type in path
+- `get_class_info(class_name, include_inherited)` - Get class schema with all properties
+
+**Lifecycle:**
+- `create_data_asset(class_name, path, name)` - Create new DataAsset instance
+
+**Instance Info:**
+- `get_info(asset_path)` - Get detailed instance info with properties JSON
+- `list_properties(asset_path, category_filter, editable_only)` - List all editable properties
+
+**Property Access:**
+- `get_property(asset_path, property_name)` - Get single property value as string
+- `set_property(asset_path, property_name, value)` - Set single property value
+- `set_properties(asset_path, properties_json)` - Set multiple properties at once
+
+**Legacy:**
+- `get_properties_as_json(path)` - Get all properties as JSON (legacy method)
 
 ---
 

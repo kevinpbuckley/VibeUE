@@ -68,15 +68,23 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
             
             if (!CombinedInstructions.IsEmpty())
             {
+                // Append directory information automatically
+                FString DirectoryInfo = GetProjectDirectoryInfo();
+                if (!DirectoryInfo.IsEmpty())
+                {
+                    CombinedInstructions += TEXT("\n\n---\n\n");
+                    CombinedInstructions += DirectoryInfo;
+                }
+                
                 UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
                 return CombinedInstructions;
             }
         }
     }
     
-    // Fallback: Built-in minimal prompt
+    // Fallback: Built-in minimal prompt (also append directory info)
     UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load instruction files from instructions folder (%s), using fallback prompt"), *InstructionsFolder);
-    return TEXT(
+    FString FallbackPrompt = TEXT(
         "You are an AI assistant integrated into Unreal Engine via the VibeUE plugin. "
         "You help users with Blueprint development, material creation, asset management, "
         "UMG widget design, Enhanced Input setup, and general Unreal Engine questions.\n\n"
@@ -85,6 +93,62 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
         "Be concise and provide actionable guidance. When suggesting code or Blueprint "
         "logic, be specific about node names and connections."
     );
+    
+    // Append directory info even to fallback
+    FString DirectoryInfo = GetProjectDirectoryInfo();
+    if (!DirectoryInfo.IsEmpty())
+    {
+        FallbackPrompt += TEXT("\n\n---\n\n");
+        FallbackPrompt += DirectoryInfo;
+    }
+    
+    return FallbackPrompt;
+}
+
+FString FLLMClientBase::GetProjectDirectoryInfo()
+{
+    // Get important project and engine directories (same as get_directories tool)
+    FString EngineDir = FPaths::ConvertRelativePathToFull(FPaths::EngineDir());
+    FString GameDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    FString PluginDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(GameDir, TEXT("Plugins"), TEXT("VibeUE")));
+    
+    // Normalize paths
+    FPaths::NormalizeDirectoryName(EngineDir);
+    FPaths::NormalizeDirectoryName(GameDir);
+    FPaths::NormalizeDirectoryName(PluginDir);
+    
+    // Determine platform
+#if PLATFORM_WINDOWS
+    FString PlatformDir = TEXT("Win64");
+#elif PLATFORM_MAC
+    FString PlatformDir = TEXT("Mac");
+#elif PLATFORM_LINUX
+    FString PlatformDir = TEXT("Linux");
+#else
+    FString PlatformDir = TEXT("Win64");
+#endif
+
+    // Build Python paths
+    FString PythonIncludeDir = FPaths::Combine(EngineDir, TEXT("Source"), TEXT("ThirdParty"), TEXT("Python3"), PlatformDir, TEXT("include"));
+    FString PythonLibDir = FPaths::Combine(EngineDir, TEXT("Source"), TEXT("ThirdParty"), TEXT("Python3"), PlatformDir, TEXT("Lib"));
+    FString PythonSitePackagesDir = FPaths::Combine(EngineDir, TEXT("Plugins"), TEXT("Experimental"), TEXT("PythonScriptPlugin"), TEXT("Content"), TEXT("Python"));
+    
+    // Build formatted directory information
+    FString DirectoryInfo = TEXT("## Project Directory Information\n\n");
+    DirectoryInfo += TEXT("These directories are automatically available for file operations:\n\n");
+    DirectoryInfo += FString::Printf(TEXT("- **Game Directory**: `%s`\n"), *GameDir);
+    DirectoryInfo += FString::Printf(TEXT("- **VibeUE Plugin Directory**: `%s`\n"), *PluginDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Engine Directory**: `%s`\n"), *EngineDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Include Directory**: `%s`\n"), *PythonIncludeDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Lib Directory**: `%s`\n"), *PythonLibDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Site-Packages Directory**: `%s`\n"), *PythonSitePackagesDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Platform**: %s\n\n"), *PlatformDir);
+    DirectoryInfo += TEXT("**Note**: When using `read_file`, `list_dir`, or `file_search` tools, you can reference:\n");
+    DirectoryInfo += TEXT("- Plugin examples: Use paths relative to the plugin directory or game directory\n");
+    DirectoryInfo += TEXT("- Absolute paths are supported and preferred\n");
+    DirectoryInfo += TEXT("- No need to call `get_directories` - this information is always available\n");
+    
+    return DirectoryInfo;
 }
 
 FLLMClientBase::FLLMClientBase()

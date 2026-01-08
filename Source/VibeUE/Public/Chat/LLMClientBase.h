@@ -161,7 +161,15 @@ public:
      * Load system prompt from vibeue.instructions.md file
      * Searches in multiple locations (project plugins, engine marketplace)
      * Falls back to built-in prompt if file not found
+     * Automatically appends project directory information
      * @return The system prompt content
      */
     static FString LoadSystemPromptFromFile();
+    
+    /**
+     * Get formatted project directory information for system prompt
+     * Returns game dir, plugin dir, engine dir, Python paths, and platform
+     * @return Formatted directory information string
+     */
+    static FString GetProjectDirectoryInfo();
 };

@@ -1,7 +1,6 @@
 // Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "Module.h"
-#include "Bridge.h"
 #include "Modules/ModuleManager.h"
 #include "EditorSubsystem.h"
 #include "Editor.h"
@@ -10,7 +9,6 @@
 #include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "Tools/ExampleTools.h"
-#include "Tools/EditorTools.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -162,10 +160,7 @@ void FModule::ShutdownModule()
 	
 	// Shutdown AI Chat commands
 	FAIChatCommands::Shutdown();
-	
-	// Cleanup static command handler instances
-	UEditorTools::CleanupCommandHandlers();
-	
+
 	// Shutdown Tool Registry
 	FToolRegistry::Get().Shutdown();
 	
