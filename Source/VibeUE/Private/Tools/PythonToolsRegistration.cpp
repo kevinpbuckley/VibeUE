@@ -69,10 +69,10 @@ static int32 ExtractIntParam(const TMap<FString, FString>& Params, const FString
 
 // Register execute_python_code tool
 REGISTER_VIBEUE_TOOL(execute_python_code,
-	"Execute Python code in Unreal Engine. Returns stdout, stderr, and execution status.",
+	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status.",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("code", "Python code to execute", "string", true)
+		TOOL_PARAM("code", "Python code to execute. Must start with 'import unreal' (lowercase). For editor subsystems use unreal.get_editor_subsystem()", "string", true)
 	),
 	{
 		FString Code = ExtractParamFromJson(Params, TEXT("code"));
@@ -95,10 +95,10 @@ REGISTER_VIBEUE_TOOL(evaluate_python_expression,
 
 // Register discover_python_module tool
 REGISTER_VIBEUE_TOOL(discover_python_module,
-	"Discover contents of a Python module with optional filtering to reduce context size.",
+	"Discover contents of a Python module. IMPORTANT: The module name is 'unreal' (lowercase, not 'Unreal'). Use this before execute_python_code to find available classes/functions.",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("module_name", "Name of the Python module (e.g. 'unreal')", "string", true),
+		TOOL_PARAM("module_name", "Name of the Python module. Use 'unreal' (lowercase) for Unreal Engine APIs", "string", true),
 		TOOL_PARAM("name_filter", "Filter results by name substring (case-insensitive). E.g. 'Blueprint' to find Blueprint-related items", "string", false),
 		TOOL_PARAM("max_items", "Maximum items to return (default 100, 0 = unlimited). Use lower values to prevent context blowout", "number", false),
 		TOOL_PARAM("include_classes", "Include classes in results (default true)", "boolean", false),
@@ -211,7 +211,7 @@ REGISTER_VIBEUE_TOOL(discover_python_function,
 
 // Register list_python_subsystems tool
 REGISTER_VIBEUE_TOOL(list_python_subsystems,
-	"List all Unreal Engine subsystems accessible from Python.",
+	"List all Unreal Engine editor subsystems. Access via: unreal.get_editor_subsystem(unreal.SubsystemName). Example: subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)",
 	"Python",
 	TOOL_PARAMS(),
 	{
