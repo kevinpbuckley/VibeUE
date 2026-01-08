@@ -3,9 +3,8 @@
 These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Create any required assets if they don't exist. This is an exhaustive test of all data table capabilities.
 
 **Important Notes:**
-- These are natural language prompts designed for the AI assistant. The AI will translate them into appropriate `manage_data_table` tool calls.
 - **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.
-- Data tables require a **row struct** type to define their schema. Always use `search_row_types` to discover available structs first.
+- Data tables require a **row struct** type to define their schema. Always discover available struct types first before creating tables.
 - If trying to create a table that already exists, delete it and try again.
 
 ---
@@ -511,7 +510,7 @@ Get full info.
 
 ---
 
-Use manage_asset to delete the table.
+Delete the table.
 
 ---
 
@@ -521,7 +520,7 @@ Verify it's gone by trying to get info.
 
 ### Duplicate Table
 
-Use manage_asset to duplicate DT_TestItems to DT_TestItems_Copy.
+Duplicate DT_TestItems to DT_TestItems_Copy.
 
 ---
 

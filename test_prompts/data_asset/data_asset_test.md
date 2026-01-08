@@ -3,11 +3,10 @@
 These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Create any required assets if they don't exist. This is an exhaustive test of all data asset capabilities.
 
 **Important Notes:**
-- These are natural language prompts designed for the AI assistant. The AI will translate them into appropriate `manage_data_asset` tool calls.
 - **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.
-- Many base data asset classes (like PrimaryDataAsset) have **no editable properties**. Always use `list_properties` before trying to get/set properties.
+- Many base data asset classes (like PrimaryDataAsset) have **no editable properties**. Always check what properties are available before trying to get/set them.
 - If a data asset class has no properties, skip property operations and move to the next test.
-IF Tyring to create an asset and it already exists, delete the asset try again.
+- If trying to create an asset and it already exists, delete the asset and try again.
 
 ---
 
@@ -400,7 +399,7 @@ For each asset type we successfully created, read back and display all non-defau
 
 ---
 
-Save all dirty assets using manage_asset save_all.
+Save all dirty assets.
 
 ---
 
