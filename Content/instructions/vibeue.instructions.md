@@ -125,9 +125,83 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 ### MaterialService
 `discover_python_class("unreal.MaterialService")`
 
-- `get_material_info(path)` - Get material info including all parameters
-- `list_parameters(path)` - List all parameters in a material
-- `get_parameter_value(path, param_name)` - Get specific parameter value
+**Lifecycle:**
+- `create_material(name, path)` - Create a new material asset
+- `create_instance(parent_path, name, dest_path)` - Create material instance from parent
+- `save_material(path)` - Save material to disk
+- `compile_material(path)` - Compile/rebuild material shaders
+- `refresh_editor(path)` - Refresh open Material Editor
+- `open_in_editor(path)` - Open material in Material Editor
+
+**Information:**
+- `get_material_info(path)` - Get comprehensive material info (domain, blend mode, shading model, parameters)
+- `summarize(path)` - Get AI-friendly material summary
+- `list_properties(path, include_advanced)` - List all editable properties
+- `get_property(path, property_name)` - Get a property value as string
+- `get_property_info(path, property_name)` - Get detailed property metadata
+
+**Property Management:**
+- `set_property(path, property_name, value)` - Set a material property
+- `set_properties(path, properties_map)` - Set multiple properties at once
+
+**Parameter Management:**
+- `list_parameters(path)` - List all material parameters (scalar, vector, texture)
+- `get_parameter(path, param_name)` - Get parameter value and info
+- `set_parameter_default(path, param_name, value)` - Set parameter default value
+
+**Instance Information:**
+- `get_instance_info(path)` - Get material instance details (parent, parameter overrides)
+- `list_instance_properties(path, include_advanced)` - List instance editable properties
+- `get_instance_property(path, property_name)` - Get instance property value
+- `set_instance_property(path, property_name, value)` - Set instance property
+
+**Instance Parameters:**
+- `list_instance_parameters(path)` - List parameter overrides with status
+- `set_instance_scalar_parameter(path, name, value)` - Set scalar override
+- `set_instance_vector_parameter(path, name, r, g, b, a)` - Set vector/color override
+- `set_instance_texture_parameter(path, name, texture_path)` - Set texture override
+- `clear_instance_parameter_override(path, name)` - Clear parameter override
+- `save_instance(path)` - Save material instance to disk
+
+---
+
+### MaterialNodeService
+`discover_python_class("unreal.MaterialNodeService")`
+
+**Discovery:**
+- `discover_types(category, search_term, max_results)` - Find available material expression types
+- `get_categories()` - Get all expression categories
+
+**Lifecycle:**
+- `create_expression(material_path, expression_class, pos_x, pos_y)` - Create a new expression
+- `delete_expression(material_path, expression_id)` - Delete an expression
+- `move_expression(material_path, expression_id, pos_x, pos_y)` - Move expression position
+
+**Information:**
+- `list_expressions(material_path)` - List all expressions in material
+- `get_expression_details(material_path, expression_id)` - Get detailed expression info
+- `get_expression_pins(material_path, expression_id)` - Get all pins (inputs/outputs)
+
+**Connections:**
+- `connect_expressions(material_path, source_id, source_output, target_id, target_input)` - Connect two expressions
+- `disconnect_input(material_path, expression_id, input_name)` - Disconnect an input
+- `list_connections(material_path)` - List all connections in material
+- `connect_to_output(material_path, expression_id, output_name, material_property)` - Connect to material output (BaseColor, etc.)
+- `disconnect_output(material_path, material_property)` - Disconnect material output
+
+**Properties:**
+- `get_expression_property(material_path, expression_id, property_name)` - Get property value
+- `set_expression_property(material_path, expression_id, property_name, value)` - Set property value
+- `list_expression_properties(material_path, expression_id)` - List all editable properties
+
+**Parameters:**
+- `create_parameter(material_path, parameter_type, parameter_name, group_name, default_value, pos_x, pos_y)` - Create parameter expression
+- `promote_to_parameter(material_path, expression_id, parameter_name, group_name)` - Promote constant to parameter
+- `set_parameter_metadata(material_path, expression_id, group_name, sort_priority)` - Set parameter group/priority
+
+**Material Outputs:**
+- `get_output_properties(material_path)` - Get available material output properties
+- `get_output_connections(material_path)` - Get current output connections
 
 ---
 
@@ -162,19 +236,64 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 ### WidgetService
 `discover_python_class("unreal.WidgetService")`
 
-- `list_widget_blueprints(path_filter)` - List all Widget Blueprints
-- `get_hierarchy(path)` - Get widget hierarchy
+**Discovery Methods:**
+- `list_widget_blueprints(path_filter)` - List all Widget Blueprint assets
+- `get_hierarchy(path)` - Get widget hierarchy for a Widget Blueprint
 - `get_root_widget(path)` - Get root widget name
+- `list_components(path)` - List all widget components (action="list_components")
+- `search_types(filter)` - Get available widget types (action="search_types")
+- `get_component_properties(path, component)` - Get component properties (action="get_component_properties")
+
+**Component Management:**
+- `add_component(path, type, name, parent, is_variable)` - Add widget component (action="add_component")
+- `remove_component(path, name, remove_children)` - Remove widget component (action="remove_component")
+
+**Validation:**
+- `validate(path)` - Validate widget hierarchy (action="validate")
+
+**Property Access:**
+- `get_property(path, component, property)` - Get property value (action="get_property")
+- `set_property(path, component, property, value)` - Set property value (action="set_property")
+- `list_properties(path, component, editable_only)` - List properties (action="list_properties")
+
+**Event Handling:**
+- `get_available_events(path, component, type)` - Get available events (action="get_available_events")
+- `bind_event(path, event, function)` - Bind event to function (action="bind_events")
 
 ---
 
 ### InputService
 `discover_python_class("unreal.InputService")`
 
+**Reflection & Discovery:**
+- `discover_types()` - Discover all available types (action value types, modifier types, trigger types)
+
+**Input Action Management:**
+- `create_action(name, path, value_type)` - Create new Input Action asset
 - `list_input_actions()` - List all Input Action assets
+- `get_input_action_info(path)` - Get detailed Input Action info (type, consumption, pause, description)
+- `configure_action(path, consume_input, trigger_when_paused, description)` - Configure action properties
+
+**Mapping Context Management:**
+- `create_mapping_context(name, path, priority)` - Create new Input Mapping Context
 - `list_mapping_contexts()` - List all Mapping Context assets
-- `get_input_action_info(path)` - Get Input Action details
-- `get_mapping_context_info(path)` - Get Mapping Context with mappings
+- `get_mapping_context_info(path)` - Get Mapping Context details with priority
+- `get_mappings(context_path)` - Get all key mappings in a context (action, key, modifiers, triggers)
+- `add_key_mapping(context_path, action_path, key_name)` - Add key mapping to context
+- `remove_mapping(context_path, mapping_index)` - Remove mapping by index
+- `get_available_keys(filter)` - Get available key names (filtered, e.g., "Mouse", "Gamepad")
+
+**Modifier Management:**
+- `add_modifier(context_path, mapping_index, modifier_type)` - Add modifier to mapping
+- `remove_modifier(context_path, mapping_index, modifier_index)` - Remove modifier from mapping
+- `get_modifiers(context_path, mapping_index)` - Get all modifiers on a mapping
+- `get_available_modifier_types()` - List all available modifier types
+
+**Trigger Management:**
+- `add_trigger(context_path, mapping_index, trigger_type)` - Add trigger to mapping
+- `remove_trigger(context_path, mapping_index, trigger_index)` - Remove trigger from mapping
+- `get_triggers(context_path, mapping_index)` - Get all triggers on a mapping
+- `get_available_trigger_types()` - List all available trigger types
 
 ---
 
@@ -295,6 +414,29 @@ These tools help you explore APIs before using them:
 4. get_parameter_value(path, param)          → Get specific value
 ```
 
+### Workflow: Build Material Graph (MaterialNodeService)
+```
+# Create material and add expressions
+1. MaterialService.create_material(name, path)           → Create base material
+2. MaterialNodeService.discover_types("", "Constant")    → Find available types
+3. MaterialNodeService.create_expression(path, "Constant3Vector", -300, 0) → Create constant
+4. MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "", -500, 0) → Create parameter
+
+# Connect nodes
+5. MaterialNodeService.connect_expressions(path, source_id, "", target_id, "A") → Wire nodes
+6. MaterialNodeService.connect_to_output(path, expr_id, "", "BaseColor") → Connect to material output
+
+# Inspect graph
+7. MaterialNodeService.list_expressions(path)            → Get all expressions
+8. MaterialNodeService.list_connections(path)            → Get all wiring
+9. MaterialNodeService.get_expression_pins(path, id)     → Get inputs/outputs
+
+# Modify properties
+10. MaterialNodeService.list_expression_properties(path, id) → Available properties
+11. MaterialNodeService.set_expression_property(path, id, "Constant", "0.5") → Set values
+12. MaterialService.compile_material(path)               → Rebuild shaders
+```
+
 ### Workflow: Work with DataTable
 ```
 1. list_data_tables(row_struct)              → Find tables
@@ -368,10 +510,38 @@ These tools help you explore APIs before using them:
 
 ### Workflow: Work with Enhanced Input
 ```
-1. list_input_actions()                      → Find actions
-2. list_mapping_contexts()                   → Find contexts
+# Discover available types first
+1. discover_types()                          → Get value types, modifiers, triggers
+
+# Create Input Actions
+1. create_action("IA_Jump", "/Game/Input", "Boolean")
+2. configure_action(path, consume=True, pause=False, desc="Jump action")
+
+# Create Mapping Context with bindings
+1. create_mapping_context("IMC_Default", "/Game/Input", 0)
+2. add_key_mapping(context_path, action_path, "SpaceBar")
+3. get_mappings(context_path)                → Verify mappings
+
+# Add modifiers to a mapping
+1. get_available_modifier_types()            → List available modifiers
+2. add_modifier(context_path, 0, "DeadZone") → Add to first mapping
+3. get_modifiers(context_path, 0)            → List modifiers on mapping
+
+# Add triggers to a mapping
+1. get_available_trigger_types()             → List available triggers
+2. add_trigger(context_path, 0, "Pressed")   → Add to first mapping
+3. get_triggers(context_path, 0)             → List triggers on mapping
+
+# Find available keys
+1. get_available_keys("")                    → All keys
+2. get_available_keys("Gamepad")             → Gamepad keys only
+3. get_available_keys("Mouse")               → Mouse keys only
+
+# Inspect existing assets
+1. list_input_actions()                      → Find all actions
+2. list_mapping_contexts()                   → Find all contexts
 3. get_input_action_info(path)               → Action details
-4. get_mapping_context_info(path)            → Context mappings
+4. get_mapping_context_info(path)            → Context with mappings
 ```
 
 ---
@@ -464,3 +634,6 @@ Always use full paths: `/Game/Blueprints/BP_Name` (not `BP_Name`)
 - Make changes and rebuild when asked
 - ONLY commit when explicitly prompted
 - Never auto-push commits
+
+#Common Mistakes
+The Editor Scripting Utilities Plugin is deprecated - Use the function in Level Editor Subsystem
