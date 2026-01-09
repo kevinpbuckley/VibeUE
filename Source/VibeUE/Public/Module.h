@@ -12,6 +12,9 @@ public:
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
 
+	/** Called before engine exit to cleanup Python references */
+	void OnPreExit();
+
 	static inline FModule& Get()
 	{
 		return FModuleManager::LoadModuleChecked<FModule>("VibeUE");

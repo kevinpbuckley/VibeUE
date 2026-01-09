@@ -533,9 +533,23 @@ bool UBlueprintService::RemoveComponent(
 		return false;
 	}
 	
-	// If not removing children, reparent them first
-	if (!bRemoveChildren)
+	// If removing children, recursively remove them first
+	if (bRemoveChildren)
 	{
+		TArray<USCS_Node*> ChildNodes = NodeToRemove->GetChildNodes();
+		for (USCS_Node* Child : ChildNodes)
+		{
+			if (Child)
+			{
+				FString ChildName = Child->GetVariableName().ToString();
+				// Recursively remove each child with its descendants
+				RemoveComponent(BlueprintPath, ChildName, true);
+			}
+		}
+	}
+	else
+	{
+		// If not removing children, reparent them first
 		TArray<USCS_Node*> ChildNodes = NodeToRemove->GetChildNodes();
 		USCS_Node* ParentNode = nullptr;
 		
