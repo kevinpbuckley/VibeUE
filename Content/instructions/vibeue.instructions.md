@@ -88,9 +88,9 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 - `create_blueprint(name, parent_class, path)` - Create a new blueprint (returns full path)
 - `compile_blueprint(path)` - Compile the blueprint
 - `reparent_blueprint(path, new_parent_class)` - Change blueprint parent class
-- `get_property(path, property_name)` - Get CDO property value (returns success, value)
+- `get_property(path, property_name)` - Get CDO property value (returns str or None)
 - `set_property(path, property_name, value)` - Set CDO property value
-- `diff_blueprints(path_a, path_b)` - Compare blueprints (returns has_diff, diff_text)
+- `diff_blueprints(path_a, path_b)` - Compare blueprints (returns str or None with diff text)
 
 **Blueprint Info & Variables:**
 - `get_blueprint_info(path)` - Get comprehensive blueprint information
@@ -103,16 +103,16 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 - `add_variable(...)` - Add a new variable
 - `remove_variable(path, name)` - Remove a variable
 - `set_variable_default_value(path, name, value)` - Set variable default
-- `get_variable_info(path, var_name)` - Get detailed variable info (type, category, replication, etc.)
+- `get_variable_info(path, var_name)` - Get detailed variable info (returns BlueprintVariableDetailedInfo or None)
 - `modify_variable(...)` - Modify variable properties (rename, category, tooltip, replication, etc.)
 - `search_variable_types(search_term, category, max_results)` - Search available variable types
 
 **Component Management:**
 - `get_available_components(search_filter, max_results)` - Search available component types
-- `get_component_info(component_type)` - Get detailed info about a component type
+- `get_component_info(component_type)` - Get detailed info about a component type (returns ComponentDetailedInfo or None)
 - `add_component(path, component_type, name, parent_name)` - Add component to blueprint
 - `remove_component(path, name, remove_children)` - Remove component from blueprint
-- `get_component_property(path, comp_name, prop_name)` - Get component property value
+- `get_component_property(path, comp_name, prop_name)` - Get component property value (returns str or None)
 - `set_component_property(path, comp_name, prop_name, value)` - Set component property
 - `get_all_component_properties(path, comp_name, include_inherited)` - Get all component properties
 - `reparent_component(path, comp_name, new_parent)` - Change component's parent in hierarchy
@@ -120,7 +120,7 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 **Functions:**
 - `create_function(path, name, is_pure)` - Create a new function
 - `delete_function(path, func_name)` - Delete a function from the blueprint
-- `get_function_info(path, func_name)` - Get detailed function info (returns success, info with params/locals)
+- `get_function_info(path, func_name)` - Get detailed function info (returns BlueprintFunctionDetailedInfo or None)
 - `get_function_parameters(path, func_name)` - Get function parameters
 - `add_function_parameter(...)` - Add parameter to function (input or output)
 - `add_function_input(path, func_name, param_name, type)` - Add input parameter (convenience)
@@ -143,7 +143,7 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 **Nodes - Graph Operations:**
 - `get_nodes_in_graph(path, graph)` - Get all nodes with IDs and pins
 - `get_node_pins(path, graph, node_id)` - Get detailed pin info for a node
-- `get_node_details(path, graph, node_id)` - Get comprehensive node info with all pins and connections
+- `get_node_details(path, graph, node_id)` - Get comprehensive node info (returns BlueprintNodeDetailedInfo or None)
 - `connect_nodes(path, graph, src_id, src_pin, tgt_id, tgt_pin)` - Connect two nodes
 - `get_connections(path, graph)` - Get all connections in a graph
 - `disconnect_pin(path, graph, node_id, pin_name)` - Disconnect a pin
@@ -408,6 +408,21 @@ These tools help you explore APIs before using them:
 2. add_variable(path, name, type, default)  → Add each variable
 3. compile_blueprint(path)                   → REQUIRED before variable nodes
 4. EditorAssetLibrary.save_asset(path)
+```
+
+### Workflow: Get Property Values
+```python
+import unreal
+
+# Get property returns str or None directly (NOT a tuple)
+value = unreal.BlueprintService.get_property("/Game/BP_Player", "Health")
+if value:
+    print(f"Health: {value}")
+
+# Get variable info returns struct or None
+info = unreal.BlueprintService.get_variable_info("/Game/BP_Player", "Health")
+if info:
+    print(f"Type: {info.variable_type}, Category: {info.category}")
 ```
 
 ### Workflow: Create Function with Logic

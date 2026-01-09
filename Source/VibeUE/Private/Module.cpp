@@ -9,6 +9,7 @@
 #include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "Tools/ExampleTools.h"
+#include "IPythonScriptPlugin.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -151,10 +152,16 @@ void FModule::StartupModule()
 	
 	// Initialize MCP Server (auto-starts if enabled in config)
 	FMCPServer::Get().Initialize();
+	
+	// Register PreExit callback to cleanup Python references before Unreal GC
+	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
 }
 
 void FModule::ShutdownModule()
 {
+	// Unregister PreExit callback
+	FCoreDelegates::OnPreExit.RemoveAll(this);
+	
 	// Shutdown MCP Server
 	FMCPServer::Get().Shutdown();
 	
@@ -165,6 +172,45 @@ void FModule::ShutdownModule()
 	FToolRegistry::Get().Shutdown();
 	
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
+}
+
+void FModule::OnPreExit()
+{
+	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - forcing Python garbage collection"));
+	
+	// Force Python to garbage collect and release any UObject references
+	// This must happen BEFORE Unreal's garbage collector runs
+	IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>("PythonScriptPlugin");
+	if (PythonPlugin)
+	{
+		// Execute Python GC to release all cached UObject references
+		const TCHAR* PythonCode = TEXT(
+			"import gc\n"
+			"import sys\n"
+			"# Clear all module caches that might hold UObject references\n"
+			"if 'unreal' in sys.modules:\n"
+			"    import unreal\n"
+			"    # Clear any cached service instances\n"
+			"    for attr_name in dir(unreal):\n"
+			"        try:\n"
+			"            attr = getattr(unreal, attr_name)\n"
+			"            if hasattr(attr, '__dict__'):\n"
+			"                attr.__dict__.clear()\n"
+			"        except:\n"
+			"            pass\n"
+			"# Force garbage collection\n"
+			"gc.collect()\n"
+			"gc.collect()\n"
+			"gc.collect()\n"
+		);
+		
+		PythonPlugin->ExecPythonCommand(PythonCode);
+		UE_LOG(LogTemp, Display, TEXT("Python garbage collection completed"));
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("Python plugin not loaded, skipping GC"));
+	}
 }
 
 #undef LOCTEXT_NAMESPACE
