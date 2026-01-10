@@ -1,11 +1,10 @@
 # Data Table Management Tests - Comprehensive Stress Test
 
-These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Create any required assets if they don't exist. This is an exhaustive test of all data table capabilities.
+These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Check to see if assets exist before creating them. Delete them if they already exist, then create them if needed.
 
 **Important Notes:**
-- These are natural language prompts designed for the AI assistant. The AI will translate them into appropriate `manage_data_table` tool calls.
 - **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.
-- Data tables require a **row struct** type to define their schema. Always use `search_row_types` to discover available structs first.
+- Data tables require a **row struct** type to define their schema. Always discover available struct types first before creating tables.
 - If trying to create a table that already exists, delete it and try again.
 
 ---
@@ -100,10 +99,6 @@ List all rows in DT_TestItems.
 
 ---
 
-List rows with a limit of 2.
-
----
-
 ### Get Single Row
 
 Get the "Sword" row from DT_TestItems.
@@ -168,7 +163,7 @@ Try to get the removed row - it should fail.
 
 ### Add Multiple Rows at Once
 
-Add 5 rows at once to DT_TestItems using add_rows:
+Add 5 rows at once to DT_TestItems:
 - Row_Bulk_01
 - Row_Bulk_02
 - Row_Bulk_03
@@ -205,38 +200,25 @@ Get info to confirm row count is 0.
 
 ---
 
-## Part 6: Import/Export JSON
+## Part 6: Export/Import Pattern
 
-### Export to JSON
+### Export Pattern
 
-Export DT_TestItems to JSON format.
+Export all rows from DT_TestItems by iterating through each row and collecting the data.
 
 ---
 
-### Import from JSON
+### Import Pattern
 
 Create a new table DT_ImportTest in /Game/Data/Test/Tables.
 
 ---
 
-Import JSON data into DT_ImportTest with this structure:
-```json
-{
-  "ImportRow1": {"PropertyName": "Value1"},
-  "ImportRow2": {"PropertyName": "Value2"},
-  "ImportRow3": {"PropertyName": "Value3"}
-}
-```
-
-**Note:** Adjust property names based on the actual row struct schema.
+Import 3 rows with different mesh references into DT_ImportTest.
 
 ---
 
 List rows to verify import worked.
-
----
-
-Export DT_ImportTest to JSON and compare with original.
 
 ---
 
@@ -334,7 +316,7 @@ Find a row struct with nested struct properties.
 
 ---
 
-Add rows with nested struct data as JSON objects.
+Add rows with nested struct data.
 
 ---
 
@@ -447,7 +429,7 @@ Try to create a table in an invalid path.
 
 Create an empty table and try to:
 - List rows (should return empty)
-- Export JSON (should return empty object)
+- Export data (should return empty)
 - Clear rows (should succeed even if empty)
 
 ---
@@ -511,7 +493,7 @@ Get full info.
 
 ---
 
-Use manage_asset to delete the table.
+Delete the table.
 
 ---
 
@@ -521,7 +503,7 @@ Verify it's gone by trying to get info.
 
 ### Duplicate Table
 
-Use manage_asset to duplicate DT_TestItems to DT_TestItems_Copy.
+Duplicate DT_TestItems to DT_TestItems_Copy.
 
 ---
 
@@ -552,7 +534,7 @@ For each table created:
 
 ---
 
-Save all dirty assets using manage_asset save_all.
+Save all dirty assets.
 
 ---
 
@@ -576,28 +558,5 @@ Give me a final summary of:
 5. Which operations failed and why
 6. Any limitations or issues discovered
 7. Performance observations for bulk operations
-
----
-
-## Quick Reference - Available Actions
-
-| Action | Description | Required Params |
-|--------|-------------|-----------------|
-| `help` | Get help for this tool or a specific action | - |
-| `search_row_types` | Find available row struct types | - |
-| `list` | List data tables | - |
-| `create` | Create a new data table | `table_path`, `row_struct` |
-| `get_info` | Get table structure and row info | `table_path` |
-| `get_row_struct` | Get row struct column definitions | `table_path` or `struct_name` |
-| `list_rows` | List all rows in a table | `table_path` |
-| `get_row` | Get a specific row | `table_path`, `row_name` |
-| `add_row` | Add a new row | `table_path`, `row_name`, `data` |
-| `update_row` | Update an existing row | `table_path`, `row_name`, `data` |
-| `remove_row` | Remove a row | `table_path`, `row_name` |
-| `rename_row` | Rename a row | `table_path`, `row_name`, `new_name` |
-| `add_rows` | Bulk add multiple rows | `table_path`, `rows` |
-| `clear_rows` | Remove all rows from table | `table_path` |
-| `import_json` | Import rows from JSON | `table_path`, `json_data` |
-| `export_json` | Export rows to JSON | `table_path` |
 
 ---

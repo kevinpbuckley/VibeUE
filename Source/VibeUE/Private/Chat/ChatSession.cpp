@@ -1848,6 +1848,19 @@ void FChatSession::SetFileLoggingEnabled(bool bEnabled)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
+bool FChatSession::IsAutoSaveBeforePythonExecutionEnabled()
+{
+    bool bAutoSave = true; // Default to enabled for safety
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("AutoSaveBeforePythonExecution"), bAutoSave, GEditorPerProjectIni);
+    return bAutoSave;
+}
+
+void FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("AutoSaveBeforePythonExecution"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 FString FChatSession::GetVibeUEApiKeyFromConfig()
 {
     FString ApiKey;

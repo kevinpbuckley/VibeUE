@@ -1579,12 +1579,13 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
+    TSharedPtr<SCheckBox> AutoSaveBeforePythonCheckBox;
     TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
     TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
     TSharedPtr<SSpinBox<float>> TopPSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxToolIterationsSpinBox;
-    
+
     // MCP Server settings widgets
     TSharedPtr<SCheckBox> MCPServerEnabledCheckBox;
     TSharedPtr<SSpinBox<int32>> MCPServerPortSpinBox;
@@ -1596,11 +1597,14 @@ FReply SAIChatWindow::OnSettingsClicked()
     int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
     bool bCurrentParallelToolCalls = FChatSession::GetParallelToolCallsFromConfig();
     int32 CurrentMaxToolIterations = FChatSession::GetMaxToolCallIterationsFromConfig();
-    
+
     // Load current MCP Server settings
     bool bMCPServerEnabled = FMCPServer::GetEnabledFromConfig();
     int32 MCPServerPort = FMCPServer::GetPortFromConfig();
     FString MCPServerApiKey = FMCPServer::GetApiKeyFromConfig();
+
+    // Load current auto-save setting
+    bool bCurrentAutoSaveBeforePython = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -1762,6 +1766,28 @@ FReply SAIChatWindow::OnSettingsClicked()
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Debug Mode")))
                 .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
+            ]
+        ]
+
+        // Auto-save before Python execution
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(AutoSaveBeforePythonCheckBox, SCheckBox)
+                .IsChecked(bCurrentAutoSaveBeforePython ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Auto Save Before Python Execution")))
+                .ToolTipText(FText::FromString(TEXT("Automatically save all dirty packages before executing Python code to protect against crashes.")))
             ]
         ]
 
@@ -2086,7 +2112,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, AutoSaveBeforePythonCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -2107,7 +2133,11 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Save debug mode
                 bool bNewDebugMode = DebugModeCheckBox->IsChecked();
                 FChatSession::SetDebugModeEnabled(bNewDebugMode);
-                
+
+                // Save auto-save before Python execution setting
+                bool bNewAutoSaveBeforePython = AutoSaveBeforePythonCheckBox->IsChecked();
+                FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bNewAutoSaveBeforePython);
+
                 // Save LLM generation parameters
                 FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
                 FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());

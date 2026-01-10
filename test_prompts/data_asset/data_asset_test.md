@@ -1,13 +1,14 @@
 # Data Asset Management Tests - Comprehensive Stress Test
 
-These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Create any required assets if they don't exist. This is an exhaustive test of all data asset capabilities.
+These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. check to see if assets exists before creating them Delete them silently if they already exist. This is an exhaustive test of all data asset capabilities. 
 
 **Important Notes:**
-- These are natural language prompts designed for the AI assistant. The AI will translate them into appropriate `manage_data_asset` tool calls.
 - **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.
-- Many base data asset classes (like PrimaryDataAsset) have **no editable properties**. Always use `list_properties` before trying to get/set properties.
+- The `search_types` method automatically filters to only **concrete, non-abstract DataAsset classes** that can be instantiated. Abstract base classes like `DataAsset` and `PrimaryDataAsset` will not appear or cannot be created.
+- Many base data asset classes have **no editable properties**. Always check what properties are available before trying to get/set them.
 - If a data asset class has no properties, skip property operations and move to the next test.
-IF Tyring to create an asset and it already exists, delete the asset try again.
+- If trying to create an asset and it already exists, delete the asset and try again.
+- **Complex properties** (structs, arrays) require Unreal string format, not JSON.
 
 ---
 
@@ -49,19 +50,9 @@ Get detailed class info for PrimaryDataAsset - show me the full inheritance chai
 
 ---
 
-## Part 2: Primary Data Assets
+## Part 2: Primary Data Assets (SKIP - Abstract Base Class)
 
-Create DA_TestPrimary1 in /Game/Data/Test/Primary using PrimaryDataAsset.
-
----
-
-Get complete info on DA_TestPrimary1.
-
----
-
-List all properties available on this asset.
-
-**Note:** PrimaryDataAsset is a base class with no exposed properties. If list_properties returns an empty list, that's expected. Skip to Part 5 to work with data assets that have actual properties (like InputAction, BlackboardData, etc.).
+**Note:** `PrimaryDataAsset` is an abstract base class and cannot be directly instantiated. The `search_types` method filters out abstract classes automatically. Only concrete subclasses like `PrimaryAssetLabel` or `PlayerMappableInputConfig` can be created. Skip to Part 5 to work with concrete data asset types that have actual properties (like InputAction, BlackboardData, etc.).
 
 ---
 
@@ -251,6 +242,16 @@ Verify the changes by reading back the Settings property.
 
 ### Blackboard Keys Array
 
+**Important Note on Complex Property Formats:**
+When setting complex properties like arrays of structs, you must use **Unreal's string format (T3D-like syntax)**, not JSON. Example:
+```python
+# Complex struct array format:
+keys_str = '((EntryName="Key1"),(EntryName="Key2",EntryCategory="Combat"))'
+unreal.DataAssetService.set_property(path, "Keys", keys_str)
+```
+
+---
+
 Get the BB_ComplexEnemy blackboard and read its Keys array.
 
 ---
@@ -400,7 +401,7 @@ For each asset type we successfully created, read back and display all non-defau
 
 ---
 
-Save all dirty assets using manage_asset save_all.
+Save all dirty assets.
 
 ---
 
