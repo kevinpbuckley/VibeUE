@@ -7,7 +7,16 @@
 #include "UInputService.generated.h"
 
 /**
- * Information about an Input Action
+ * Information about an Input Action.
+ * Python access: info = unreal.InputService.get_input_action_info(path)
+ * 
+ * Properties:
+ * - action_name (str): Name of the action (e.g., "IA_Jump")
+ * - action_path (str): Full asset path (e.g., "/Game/Input/IA_Jump")
+ * - value_type (str): "Boolean", "Axis1D", "Axis2D", or "Axis3D"
+ * - consume_input (bool): Whether the action consumes input
+ * - trigger_when_paused (bool): Whether triggers when game is paused
+ * - description (str): Description text for the action
  */
 USTRUCT(BlueprintType)
 struct FInputActionDetailedInfo
@@ -34,7 +43,14 @@ struct FInputActionDetailedInfo
 };
 
 /**
- * Information about a Mapping Context
+ * Information about a Mapping Context.
+ * Python access: info = unreal.InputService.get_mapping_context_info(path)
+ * 
+ * Properties:
+ * - context_name (str): Name of the context (e.g., "IMC_Default")
+ * - context_path (str): Full asset path (e.g., "/Game/Input/IMC_Default")
+ * - mapped_actions (Array[str]): Paths of all mapped actions
+ * - priority (int): Context priority (higher = processed first)
  */
 USTRUCT(BlueprintType)
 struct FMappingContextDetailedInfo
@@ -55,7 +71,16 @@ struct FMappingContextDetailedInfo
 };
 
 /**
- * Information about a key mapping in a context
+ * Information about a key mapping in a context.
+ * Python access: mappings = unreal.InputService.get_mappings(context_path)
+ * 
+ * Properties:
+ * - mapping_index (int): Index in the mapping context (0, 1, 2...)
+ * - action_name (str): Name of the action (e.g., "IA_Jump")
+ * - action_path (str): Full path to the action
+ * - key_name (str): Key name (e.g., "SpaceBar", "Gamepad_RightTrigger")
+ * - modifier_count (int): Number of modifiers on this mapping
+ * - trigger_count (int): Number of triggers on this mapping
  */
 USTRUCT(BlueprintType)
 struct FKeyMappingInfo
@@ -82,7 +107,13 @@ struct FKeyMappingInfo
 };
 
 /**
- * Information about a modifier on a mapping
+ * Information about a modifier on a mapping.
+ * Python access: mods = unreal.InputService.get_modifiers(context_path, mapping_index)
+ * 
+ * Properties:
+ * - modifier_index (int): Index in the modifier array (0, 1, 2...)
+ * - type_name (str): Modifier class name (e.g., "InputModifierNegate", "InputModifierDeadZone")
+ * - display_name (str): Human-readable display name
  */
 USTRUCT(BlueprintType)
 struct FInputModifierInfo
@@ -100,7 +131,13 @@ struct FInputModifierInfo
 };
 
 /**
- * Information about a trigger on a mapping
+ * Information about a trigger on a mapping.
+ * Python access: trigs = unreal.InputService.get_triggers(context_path, mapping_index)
+ * 
+ * Properties:
+ * - trigger_index (int): Index in the trigger array (0, 1, 2...)
+ * - type_name (str): Trigger class name (e.g., "InputTriggerPressed", "InputTriggerHold")
+ * - display_name (str): Human-readable display name
  */
 USTRUCT(BlueprintType)
 struct FInputTriggerInfo
@@ -118,7 +155,15 @@ struct FInputTriggerInfo
 };
 
 /**
- * Result of creating an input action or mapping context
+ * Result of creating an input action or mapping context.
+ * Python access: result = unreal.InputService.create_action(...)
+ * 
+ * Properties:
+ * - success (bool): True if asset was created successfully
+ * - asset_path (str): Full path to created asset (e.g., "/Game/Input/IA_Jump")
+ * - error_message (str): Error message if failed (empty if success)
+ * 
+ * IMPORTANT: This is a struct, not a string. Use result.asset_path to get the path.
  */
 USTRUCT(BlueprintType)
 struct FInputCreateResult
@@ -136,7 +181,15 @@ struct FInputCreateResult
 };
 
 /**
- * Information about discovered input types
+ * Information about discovered input types.
+ * Python access: types = unreal.InputService.discover_types()
+ * 
+ * Properties:
+ * - action_value_types (Array[str]): Available value types: "Boolean", "Axis1D", "Axis2D", "Axis3D"
+ * - modifier_types (Array[str]): Available modifiers: "Negate", "DeadZone", "Scalar", etc.
+ * - trigger_types (Array[str]): Available triggers: "Pressed", "Released", "Hold", "Tap", etc.
+ * 
+ * NOTE: Use action_value_types, NOT value_types!
  */
 USTRUCT(BlueprintType)
 struct FInputTypeDiscoveryResult

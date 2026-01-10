@@ -271,25 +271,104 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 `discover_python_class("unreal.DataTableService")`
 
 **Discovery Methods:**
-- `search_row_types(search_filter)` - Search for row struct types available for DataTables
-- `list_data_tables(row_struct_filter, path_filter)` - List all DataTable assets
+- `search_row_types(search_filter)` - Returns `Array[RowStructTypeInfo]` with properties: `.name`, `.path`, `.module`, `.parent_struct`, `.is_native`, `.property_names`
+- `list_data_tables(row_struct_filter, path_filter)` - Returns `Array[DataTableInfo]` with properties: `.name`, `.path`, `.row_struct`, `.row_struct_path`, `.row_count`
 
 **Lifecycle:**
-- `create_data_table(row_struct_name, asset_path, asset_name)` - Create new DataTable asset
+- `create_data_table(row_struct_name, asset_path, asset_name)` - Returns asset path string
 
 **Info Methods:**
-- `get_info(table_path)` - Get detailed table info with columns JSON
-- `get_row_struct(table_path_or_struct_name)` - Get row struct schema (column definitions)
+- `get_info(table_path)` - Returns `DataTableDetailedInfo` or None. Properties: `.name`, `.path`, `.row_struct`, `.row_struct_path`, `.row_count`, `.row_names`, `.columns_json`
+- `get_row_struct(table_path_or_struct_name)` - Returns `Array[RowStructColumnInfo]` with properties: `.name`, `.type`, `.cpp_type`, `.category`, `.tooltip`, `.editable`
 
 **Row Operations:**
-- `list_rows(table_path)` - List all row names in a DataTable
-- `get_row(table_path, row_name)` - Get single row as JSON
-- `add_row(table_path, row_name, data_json)` - Add a new row
-- `add_rows(table_path, rows_json)` - Add multiple rows at once (bulk)
-- `update_row(table_path, row_name, data_json)` - Update existing row (partial update)
-- `remove_row(table_path, row_name)` - Remove a row
-- `rename_row(table_path, old_name, new_name)` - Rename a row
-- `clear_rows(table_path)` - Remove all rows from a DataTable
+- `list_rows(table_path)` - Returns `Array[str]` of row names (no pagination/limit parameter)
+- `get_row(table_path, row_name)` - Returns JSON string (empty string if not found)
+- `add_row(table_path, row_name, data_json)` - Returns bool
+- `add_rows(table_path, rows_json)` - Returns `BulkRowOperationResult` with `.succeeded_rows`, `.failed_rows`, `.failed_reasons`
+- `update_row(table_path, row_name, data_json)` - Returns bool
+- `remove_row(table_path, row_name)` - Returns bool
+- `rename_row(table_path, old_name, new_name)` - Returns bool
+- `clear_rows(table_path)` - Returns int (count of removed rows)
+
+**⚠️ CRITICAL: Return Types Are Structs**
+
+`list_data_tables()` and `search_row_types()` return arrays of **struct objects**, not strings.
+You must access `.path` or `.name` properties:
+
+```python
+import unreal
+
+# CORRECT - access .path property to get the table path string
+tables = unreal.DataTableService.list_data_tables(path_filter="/Game")
+for table_info in tables:
+    print(f"Table: {table_info.name}, Path: {table_info.path}, Rows: {table_info.row_count}")
+    
+    # Use .path to call get_info
+    detailed = unreal.DataTableService.get_info(table_info.path)
+    if detailed:
+        print(f"Columns: {detailed.columns_json}")
+
+# WRONG - will cause "Cannot nativize" error
+# for t in tables:
+#     info = unreal.DataTableService.get_info(t)  # t is struct, not string!
+```
+
+**⚠️ IMPORTANT: JSON Data Format**
+
+Row data parameters (`data_json`, `rows_json`) must be **JSON strings**, not Python dicts.
+Always use `json.dumps()` to convert Python dicts to JSON strings:
+
+```python
+import unreal
+import json
+
+# CORRECT - use json.dumps() for row data
+data = {"StaticMesh": "/Engine/BasicShapes/Cube.Cube", "Health": 100, "IsActive": True}
+unreal.DataTableService.add_row("/Game/Data/DT_Test", "Row1", json.dumps(data))
+
+# CORRECT - bulk add with json.dumps()
+rows = {
+    "Sword": {"Damage": 50, "Name": "Iron Sword"},
+    "Shield": {"Defense": 30, "Name": "Wooden Shield"}
+}
+unreal.DataTableService.add_rows("/Game/Data/DT_Items", json.dumps(rows))
+
+# CORRECT - partial update
+updates = {"Health": 200}  # Only update Health property
+unreal.DataTableService.update_row("/Game/Data/DT_Test", "Row1", json.dumps(updates))
+
+# WRONG - passing raw dict (will fail)
+# unreal.DataTableService.add_row(path, "Row1", {"Health": 100})  # TypeError!
+```
+
+**Supported Property Types in JSON:**
+- Strings: `"Name": "Value"`
+- Numbers (int/float): `"Health": 100`, `"Speed": 1.5`
+- Booleans: `"IsActive": true` (lowercase in JSON)
+- Asset paths: `"Mesh": "/Game/Meshes/Cube.Cube"`
+- Enums: `"Type": "EnumValueName"` (use enum name string)
+- Arrays: `"Tags": ["Combat", "Melee"]`
+- Nested structs: `"Location": {"X": 0, "Y": 0, "Z": 0}`
+
+**Simulating Export/Import:**
+There is no dedicated export_json/import_json. To export all rows, iterate:
+```python
+import unreal
+import json
+
+# "Export" all rows
+table_path = "/Game/Data/DT_Test"
+export_data = {}
+for row_name in unreal.DataTableService.list_rows(table_path):
+    row_json = unreal.DataTableService.get_row(table_path, row_name)
+    if row_json:
+        export_data[row_name] = json.loads(row_json)
+
+# "Import" to another table  
+for row_name, row_data in export_data.items():
+    unreal.DataTableService.add_row(dest_path, row_name, json.dumps(row_data))
+```
 
 ---
 
@@ -297,7 +376,7 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 `discover_python_class("unreal.DataAssetService")`
 
 **Discovery Methods:**
-- `search_types(filter)` - Search for DataAsset subclasses matching filter
+- `search_types(filter)` - Search for DataAsset subclasses matching filter (excludes abstract classes)
 - `list_data_assets(class_name, path_filter)` - List DataAssets of a type in path
 - `get_class_info(class_name, include_inherited)` - Get class schema with all properties
 
@@ -310,11 +389,47 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 
 **Property Access:**
 - `get_property(asset_path, property_name)` - Get single property value as string
-- `set_property(asset_path, property_name, value)` - Set single property value
+- `set_property(asset_path, property_name, value)` - Set single property value (use Unreal format for structs)
 - `set_properties(asset_path, properties_json)` - Set multiple properties at once
 
 **Legacy:**
 - `get_properties_as_json(path)` - Get all properties as JSON (legacy method)
+
+**Example Usage - Return Struct Access:**
+```python
+import unreal
+
+# DataAssetClassInfo struct has these properties:
+info = unreal.DataAssetService.get_class_info("InputAction")
+print(f"Name: {info.name}")  # NOT info.class_name
+print(f"Path: {info.path}")
+print(f"Is Abstract: {info.is_abstract}")
+print(f"Parent Chain: {list(info.parent_classes)}")  # Array, NOT info.parent_class
+for prop in info.properties:
+    print(f"  - {prop.name} ({prop.type})")
+
+# DataAssetInstanceInfo struct:
+instance = unreal.DataAssetService.get_info("/Game/Data/MyAsset")
+print(f"Class: {instance.class_name}")
+print(f"Properties JSON: {instance.properties_json}")
+
+# DataAssetSetPropertiesResult struct:
+result = unreal.DataAssetService.set_properties(path, props_json)
+print(f"Success: {list(result.success_properties)}")
+print(f"Failed: {list(result.failed_properties)}")
+```
+
+**Complex Property Formats:**
+For complex properties (structs, arrays), use Unreal's string format:
+```python
+# Array of structs (e.g., Blackboard Keys):
+keys_str = '((EntryName="Key1",EntryCategory="AI"),(EntryName="Key2"))'
+unreal.DataAssetService.set_property(bb_path, "Keys", keys_str)
+
+# Simple properties can use plain strings:
+unreal.DataAssetService.set_property(path, "bConsumeInput", "true")
+unreal.DataAssetService.set_property(path, "ActionDescription", "My Action")
+```
 
 ---
 
@@ -351,34 +466,154 @@ All methods below are callable via `unreal.<ServiceName>.<method_name>(...)`.
 `discover_python_class("unreal.InputService")`
 
 **Reflection & Discovery:**
-- `discover_types()` - Discover all available types (action value types, modifier types, trigger types)
+- `discover_types()` - Returns `InputTypeDiscoveryResult` with available types
 
 **Input Action Management:**
-- `create_action(name, path, value_type)` - Create new Input Action asset
-- `list_input_actions()` - List all Input Action assets
-- `get_input_action_info(path)` - Get detailed Input Action info (type, consumption, pause, description)
-- `configure_action(path, consume_input, trigger_when_paused, description)` - Configure action properties
+- `create_action(name, path, value_type)` - Returns `InputCreateResult` with asset path
+- `list_input_actions()` - Returns `Array[str]` of Input Action paths
+- `get_input_action_info(path)` - Returns `InputActionDetailedInfo` or None
+- `configure_action(path, consume_input, trigger_when_paused, description)` - Returns bool
 
 **Mapping Context Management:**
-- `create_mapping_context(name, path, priority)` - Create new Input Mapping Context
-- `list_mapping_contexts()` - List all Mapping Context assets
-- `get_mapping_context_info(path)` - Get Mapping Context details with priority
-- `get_mappings(context_path)` - Get all key mappings in a context (action, key, modifiers, triggers)
-- `add_key_mapping(context_path, action_path, key_name)` - Add key mapping to context
-- `remove_mapping(context_path, mapping_index)` - Remove mapping by index
-- `get_available_keys(filter)` - Get available key names (filtered, e.g., "Mouse", "Gamepad")
+- `create_mapping_context(name, path, priority)` - Returns `InputCreateResult` with asset path
+- `list_mapping_contexts()` - Returns `Array[str]` of Mapping Context paths
+- `get_mapping_context_info(path)` - Returns `MappingContextDetailedInfo` or None
+- `get_mappings(context_path)` - Returns `Array[KeyMappingInfo]`
+- `add_key_mapping(context_path, action_path, key_name)` - Returns bool
+- `remove_mapping(context_path, mapping_index)` - Returns bool
+- `get_available_keys(filter)` - Returns `Array[str]` of key names
 
 **Modifier Management:**
-- `add_modifier(context_path, mapping_index, modifier_type)` - Add modifier to mapping
-- `remove_modifier(context_path, mapping_index, modifier_index)` - Remove modifier from mapping
-- `get_modifiers(context_path, mapping_index)` - Get all modifiers on a mapping
-- `get_available_modifier_types()` - List all available modifier types
+- `add_modifier(context_path, mapping_index, modifier_type)` - Returns bool
+- `remove_modifier(context_path, mapping_index, modifier_index)` - Returns bool
+- `get_modifiers(context_path, mapping_index)` - Returns `Array[InputModifierInfo]`
+- `get_available_modifier_types()` - Returns `Array[str]` of modifier type names
 
 **Trigger Management:**
-- `add_trigger(context_path, mapping_index, trigger_type)` - Add trigger to mapping
-- `remove_trigger(context_path, mapping_index, trigger_index)` - Remove trigger from mapping
-- `get_triggers(context_path, mapping_index)` - Get all triggers on a mapping
-- `get_available_trigger_types()` - List all available trigger types
+- `add_trigger(context_path, mapping_index, trigger_type)` - Returns bool
+- `remove_trigger(context_path, mapping_index, trigger_index)` - Returns bool
+- `get_triggers(context_path, mapping_index)` - Returns `Array[InputTriggerInfo]`
+- `get_available_trigger_types()` - Returns `Array[str]` of trigger type names
+
+**⚠️ CRITICAL: Return Type Struct Properties**
+
+These are the EXACT property names on each return type. DO NOT guess property names!
+
+**InputTypeDiscoveryResult** (from `discover_types()`):
+```python
+types = unreal.InputService.discover_types()
+print(types.action_value_types)  # Array[str]: "Boolean", "Axis1D", "Axis2D", "Axis3D"
+print(types.modifier_types)      # Array[str]: "Negate", "DeadZone", "Scalar", etc.
+print(types.trigger_types)       # Array[str]: "Pressed", "Released", "Hold", "Tap", etc.
+```
+
+**InputCreateResult** (from `create_action()`, `create_mapping_context()`):
+```python
+result = unreal.InputService.create_action("IA_Jump", "/Game/Input", "Boolean")
+print(result.success)        # bool: True if created successfully
+print(result.asset_path)     # str: "/Game/Input/IA_Jump" (full path to asset)
+print(result.error_message)  # str: Error message if failed (empty if success)
+```
+
+**InputActionDetailedInfo** (from `get_input_action_info()`):
+```python
+info = unreal.InputService.get_input_action_info("/Game/Input/IA_Jump")
+if info:
+    print(info.action_name)        # str: "IA_Jump"
+    print(info.action_path)        # str: "/Game/Input/IA_Jump"
+    print(info.value_type)         # str: "Boolean", "Axis1D", "Axis2D", or "Axis3D"
+    print(info.consume_input)      # bool: Whether action consumes input
+    print(info.trigger_when_paused)  # bool: Whether triggers when game paused
+    print(info.description)        # str: Action description text
+```
+
+**MappingContextDetailedInfo** (from `get_mapping_context_info()`):
+```python
+info = unreal.InputService.get_mapping_context_info("/Game/Input/IMC_Default")
+if info:
+    print(info.context_name)   # str: "IMC_Default"
+    print(info.context_path)   # str: "/Game/Input/IMC_Default"
+    print(info.priority)       # int: Context priority (higher = processed first)
+    print(info.mapped_actions) # Array[str]: Paths of mapped actions
+```
+
+**KeyMappingInfo** (from `get_mappings()`):
+```python
+mappings = unreal.InputService.get_mappings("/Game/Input/IMC_Default")
+for m in mappings:
+    print(m.mapping_index)   # int: Index in mapping context (0, 1, 2...)
+    print(m.action_name)     # str: "IA_Jump" (action name)
+    print(m.action_path)     # str: "/Game/Input/IA_Jump" (full path)
+    print(m.key_name)        # str: "SpaceBar", "E", "Gamepad_RightTrigger"
+    print(m.modifier_count)  # int: Number of modifiers on this mapping
+    print(m.trigger_count)   # int: Number of triggers on this mapping
+```
+
+**InputModifierInfo** (from `get_modifiers()`):
+```python
+mods = unreal.InputService.get_modifiers("/Game/Input/IMC_Default", 0)
+for m in mods:
+    print(m.modifier_index)  # int: Index in modifier array (0, 1, 2...)
+    print(m.type_name)       # str: "InputModifierNegate", "InputModifierDeadZone", etc.
+    print(m.display_name)    # str: Human-readable name
+```
+
+**InputTriggerInfo** (from `get_triggers()`):
+```python
+trigs = unreal.InputService.get_triggers("/Game/Input/IMC_Default", 0)
+for t in trigs:
+    print(t.trigger_index)   # int: Index in trigger array (0, 1, 2...)
+    print(t.type_name)       # str: "InputTriggerPressed", "InputTriggerHold", etc.
+    print(t.display_name)    # str: Human-readable name
+```
+
+**⚠️ Common Mistakes to Avoid:**
+```python
+# WRONG - property names that don't exist:
+# types.value_types           # Use types.action_value_types
+# info.action_description     # Use info.description
+# m.modifier_type             # Use m.type_name
+# t.trigger_type              # Use t.type_name
+
+# WRONG - using InputCreateResult as string:
+# result = create_mapping_context(...)
+# get_mappings(result)        # Error! result is struct, not string
+# get_mappings(result.asset_path)  # CORRECT!
+```
+
+**⚠️ Safe Iteration Patterns:**
+```python
+# WRONG - next() without default causes StopIteration crash:
+# idx = next(i for i, m in enumerate(mappings) if m.action_name == "ReloadAction")
+
+# CORRECT - use next() with default, or use a loop:
+idx = next((i for i, m in enumerate(mappings) if m.action_name == "ReloadAction"), None)
+if idx is not None:
+    unreal.InputService.add_trigger(context_path, idx, "Pressed")
+
+# Or use explicit loop for clarity:
+for i, m in enumerate(mappings):
+    if m.action_name == "ReloadAction":
+        unreal.InputService.add_trigger(context_path, i, "Pressed")
+        break
+```
+
+**⚠️ Valid Key Names for Gamepad Axes:**
+```python
+# For 2D axis inputs (movement, look):
+# WRONG: "Gamepad_LeftStick_2D"  # This is not a valid key name!
+# CORRECT: Use individual axis keys or discover valid keys first
+
+# Always verify key names with get_available_keys():
+keys = unreal.InputService.get_available_keys("Gamepad")
+print([k for k in keys if "Stick" in k])  # See what's actually available
+
+# Common valid gamepad keys:
+# - Gamepad_LeftX, Gamepad_LeftY (individual axes)
+# - Gamepad_RightX, Gamepad_RightY
+# - Gamepad_LeftTriggerAxis, Gamepad_RightTriggerAxis
+# - Gamepad_FaceButton_Bottom (A), _Right (B), _Left (X), _Top (Y)
+```
 
 ---
 
