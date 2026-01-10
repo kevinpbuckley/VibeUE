@@ -577,14 +577,19 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
         return;
     }
     
+    // Convert body to UTF-8 FIRST to get accurate byte length for Content-Length header
+    // Using Body.Len() is incorrect because UTF-8 can have more bytes than characters
+    FTCHARToUTF8 BodyConverter(*Body);
+    int32 BodyByteLength = BodyConverter.Length();
+    
     FString Response = FString::Printf(TEXT("HTTP/1.1 %d %s\r\n"), StatusCode, *StatusText);
     
     if (!ContentType.IsEmpty())
     {
-        Response += FString::Printf(TEXT("Content-Type: %s\r\n"), *ContentType);
+        Response += FString::Printf(TEXT("Content-Type: %s; charset=utf-8\r\n"), *ContentType);
     }
     
-    Response += FString::Printf(TEXT("Content-Length: %d\r\n"), Body.Len());
+    Response += FString::Printf(TEXT("Content-Length: %d\r\n"), BodyByteLength);
     Response += TEXT("Connection: close\r\n");
     
     // Add extra headers
@@ -594,20 +599,28 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
     }
     
     Response += TEXT("\r\n");
-    Response += Body;
     
-    FTCHARToUTF8 Converter(*Response);
+    // Convert headers to UTF-8 and send separately, then send body bytes
+    FTCHARToUTF8 HeaderConverter(*Response);
+    
+    // Combine headers and body into one buffer for atomic send
+    TArray<uint8> SendBuffer;
+    SendBuffer.SetNumUninitialized(HeaderConverter.Length() + BodyByteLength);
+    FMemory::Memcpy(SendBuffer.GetData(), HeaderConverter.Get(), HeaderConverter.Length());
+    FMemory::Memcpy(SendBuffer.GetData() + HeaderConverter.Length(), BodyConverter.Get(), BodyByteLength);
+    
     int32 BytesSent = 0;
-    bool bSendSuccess = Socket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
+    bool bSendSuccess = Socket->Send(SendBuffer.GetData(), SendBuffer.Num(), BytesSent);
     
-    if (!bSendSuccess || BytesSent != Converter.Length())
+    if (!bSendSuccess || BytesSent != SendBuffer.Num())
     {
         UE_LOG(LogMCPServer, Warning, TEXT("SendHttpResponse: Send incomplete/failed - sent %d of %d bytes"), 
-            BytesSent, Converter.Length());
+            BytesSent, SendBuffer.Num());
     }
     else
     {
-        UE_LOG(LogMCPServer, Verbose, TEXT("SendHttpResponse: %d %s - %d bytes"), StatusCode, *StatusText, BytesSent);
+        UE_LOG(LogMCPServer, Verbose, TEXT("SendHttpResponse: %d %s - %d bytes (body: %d bytes)"), 
+            StatusCode, *StatusText, BytesSent, BodyByteLength);
     }
 }
 
