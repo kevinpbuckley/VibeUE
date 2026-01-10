@@ -250,43 +250,99 @@ TResult<FPythonFunctionInfo> FPythonDiscoveryService::DiscoverFunction(const FSt
 		NormalizedName = FunctionPath.RightChop(7);
 	}
 
-	// Build introspection script
-	FString IntrospectionCode = FString::Printf(TEXT(
-		"import unreal\n"
-		"import inspect\n"
-		"import json\n"
-		"\n"
-		"try:\n"
-		"    func = getattr(unreal, '%s')\n"
-		"    if not (inspect.isfunction(func) or inspect.isbuiltin(func)):\n"
-		"        raise ValueError('Not a function')\n"
-		"\n"
-		"    result = {\n"
-		"        'name': '%s',\n"
-		"        'docstring': inspect.getdoc(func) or '',\n"
-		"        'is_method': False,\n"
-		"        'is_static': False,\n"
-		"        'is_class_method': False\n"
-		"    }\n"
-		"\n"
-		"    try:\n"
-		"        sig = inspect.signature(func)\n"
-		"        result['signature'] = str(sig)\n"
-		"        result['parameters'] = [p.name for p in sig.parameters.values()]\n"
-		"        result['param_types'] = [str(p.annotation) if p.annotation != inspect.Parameter.empty else 'Any' for p in sig.parameters.values()]\n"
-		"        result['return_type'] = str(sig.return_annotation) if sig.return_annotation != inspect.Signature.empty else 'Any'\n"
-		"    except:\n"
-		"        result['signature'] = '(...)'\n"
-		"        result['parameters'] = []\n"
-		"        result['param_types'] = []\n"
-		"        result['return_type'] = 'Any'\n"
-		"\n"
-		"    print(json.dumps(result))\n"
-		"except AttributeError:\n"
-		"    print(json.dumps({'error': 'Function not found'}))\n"
-		"except Exception as e:\n"
-		"    print(json.dumps({'error': str(e)}))\n"
-	), *NormalizedName, *NormalizedName);
+	// Check if this is a class method (contains a dot, e.g., "InputService.discover_types")
+	int32 DotIndex;
+	bool bIsClassMethod = NormalizedName.FindChar(TEXT('.'), DotIndex);
+
+	FString IntrospectionCode;
+
+	if (bIsClassMethod)
+	{
+		// Split into class name and method name
+		FString ClassName = NormalizedName.Left(DotIndex);
+		FString MethodName = NormalizedName.Mid(DotIndex + 1);
+
+		// Build introspection script for class method
+		IntrospectionCode = FString::Printf(TEXT(
+			"import unreal\n"
+			"import inspect\n"
+			"import json\n"
+			"\n"
+			"try:\n"
+			"    cls = getattr(unreal, '%s')\n"
+			"    if not inspect.isclass(cls):\n"
+			"        raise ValueError('Not a class')\n"
+			"    func = getattr(cls, '%s')\n"
+			"    if func is None:\n"
+			"        raise AttributeError('Method not found')\n"
+			"\n"
+			"    result = {\n"
+			"        'name': '%s.%s',\n"
+			"        'docstring': inspect.getdoc(func) or '',\n"
+			"        'is_method': True,\n"
+			"        'is_static': isinstance(inspect.getattr_static(cls, '%s'), staticmethod),\n"
+			"        'is_class_method': isinstance(inspect.getattr_static(cls, '%s'), classmethod)\n"
+			"    }\n"
+			"\n"
+			"    try:\n"
+			"        sig = inspect.signature(func)\n"
+			"        result['signature'] = str(sig)\n"
+			"        result['parameters'] = [p.name for p in sig.parameters.values()]\n"
+			"        result['param_types'] = [str(p.annotation) if p.annotation != inspect.Parameter.empty else 'Any' for p in sig.parameters.values()]\n"
+			"        result['return_type'] = str(sig.return_annotation) if sig.return_annotation != inspect.Signature.empty else 'Any'\n"
+			"    except:\n"
+			"        result['signature'] = '(...)'\n"
+			"        result['parameters'] = []\n"
+			"        result['param_types'] = []\n"
+			"        result['return_type'] = 'Any'\n"
+			"\n"
+			"    print(json.dumps(result))\n"
+			"except AttributeError:\n"
+			"    print(json.dumps({'error': 'Method not found on class'}))\n"
+			"except Exception as e:\n"
+			"    print(json.dumps({'error': str(e)}))\n"
+		), *ClassName, *MethodName, *ClassName, *MethodName, *MethodName, *MethodName);
+	}
+	else
+	{
+		// Build introspection script for module-level function
+		IntrospectionCode = FString::Printf(TEXT(
+			"import unreal\n"
+			"import inspect\n"
+			"import json\n"
+			"\n"
+			"try:\n"
+			"    func = getattr(unreal, '%s')\n"
+			"    if not (inspect.isfunction(func) or inspect.isbuiltin(func)):\n"
+			"        raise ValueError('Not a function')\n"
+			"\n"
+			"    result = {\n"
+			"        'name': '%s',\n"
+			"        'docstring': inspect.getdoc(func) or '',\n"
+			"        'is_method': False,\n"
+			"        'is_static': False,\n"
+			"        'is_class_method': False\n"
+			"    }\n"
+			"\n"
+			"    try:\n"
+			"        sig = inspect.signature(func)\n"
+			"        result['signature'] = str(sig)\n"
+			"        result['parameters'] = [p.name for p in sig.parameters.values()]\n"
+			"        result['param_types'] = [str(p.annotation) if p.annotation != inspect.Parameter.empty else 'Any' for p in sig.parameters.values()]\n"
+			"        result['return_type'] = str(sig.return_annotation) if sig.return_annotation != inspect.Signature.empty else 'Any'\n"
+			"    except:\n"
+			"        result['signature'] = '(...)'\n"
+			"        result['parameters'] = []\n"
+			"        result['param_types'] = []\n"
+			"        result['return_type'] = 'Any'\n"
+			"\n"
+			"    print(json.dumps(result))\n"
+			"except AttributeError:\n"
+			"    print(json.dumps({'error': 'Function not found'}))\n"
+			"except Exception as e:\n"
+			"    print(json.dumps({'error': str(e)}))\n"
+		), *NormalizedName, *NormalizedName);
+	}
 
 	// Execute introspection
 	auto ExecResult = ExecuteIntrospectionScript(IntrospectionCode);

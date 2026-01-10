@@ -921,21 +921,29 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 		return MakeShared<FJsonValueNull>();
 	}
 
+	// Get the value pointer from the container
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Container);
+	return ValuePtrToJson(Property, ValuePtr);
+}
+
+TSharedPtr<FJsonValue> UDataTableService::ValuePtrToJson(FProperty* Property, void* ValuePtr)
+{
+	if (!Property || !ValuePtr)
+	{
+		return MakeShared<FJsonValueNull>();
+	}
 
 	// Numeric types
 	if (FNumericProperty* NumericProp = CastField<FNumericProperty>(Property))
 	{
 		if (NumericProp->IsFloatingPoint())
 		{
-			double Value = 0.0;
-			NumericProp->GetValue_InContainer(Container, &Value);
+			double Value = NumericProp->GetFloatingPointPropertyValue(ValuePtr);
 			return MakeShared<FJsonValueNumber>(Value);
 		}
 		else
 		{
-			int64 Value = 0;
-			NumericProp->GetValue_InContainer(Container, &Value);
+			int64 Value = NumericProp->GetSignedIntPropertyValue(ValuePtr);
 			return MakeShared<FJsonValueNumber>(static_cast<double>(Value));
 		}
 	}
@@ -1004,7 +1012,7 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 		return MakeShared<FJsonValueString>(SoftPtr->ToString());
 	}
 
-	// Array
+	// Array - use ValuePtrToJson for elements (they ARE the value, not a container)
 	if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
 	{
 		TArray<TSharedPtr<FJsonValue>> JsonArray;
@@ -1013,14 +1021,14 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 		for (int32 i = 0; i < ArrayHelper.Num(); ++i)
 		{
 			void* ElementPtr = ArrayHelper.GetRawPtr(i);
-			TSharedPtr<FJsonValue> ElementValue = PropertyToJson(ArrayProp->Inner, ElementPtr);
+			TSharedPtr<FJsonValue> ElementValue = ValuePtrToJson(ArrayProp->Inner, ElementPtr);
 			JsonArray.Add(ElementValue);
 		}
 
 		return MakeShared<FJsonValueArray>(JsonArray);
 	}
 
-	// Struct
+	// Struct - ValuePtr IS the struct base, so inner properties use it as container
 	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
 		TSharedPtr<FJsonObject> StructObj = MakeShared<FJsonObject>();
@@ -1029,6 +1037,7 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 		for (TFieldIterator<FProperty> It(Struct); It; ++It)
 		{
 			FProperty* InnerProp = *It;
+			// ValuePtr is the struct base, so use PropertyToJson which computes offset
 			TSharedPtr<FJsonValue> InnerValue = PropertyToJson(InnerProp, ValuePtr);
 			StructObj->SetField(InnerProp->GetName(), InnerValue);
 		}
@@ -1036,7 +1045,7 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 		return MakeShared<FJsonValueObject>(StructObj);
 	}
 
-	// Map
+	// Map - use ValuePtrToJson for values (they ARE the value, not a container)
 	if (FMapProperty* MapProp = CastField<FMapProperty>(Property))
 	{
 		TSharedPtr<FJsonObject> MapObj = MakeShared<FJsonObject>();
@@ -1052,7 +1061,7 @@ TSharedPtr<FJsonValue> UDataTableService::PropertyToJson(FProperty* Property, vo
 				FString KeyStr;
 				MapProp->KeyProp->ExportTextItem_Direct(KeyStr, KeyPtr, nullptr, nullptr, PPF_None);
 
-				TSharedPtr<FJsonValue> Value = PropertyToJson(MapProp->ValueProp, ValPtr);
+				TSharedPtr<FJsonValue> Value = ValuePtrToJson(MapProp->ValueProp, ValPtr);
 				MapObj->SetField(KeyStr, Value);
 			}
 		}
@@ -1079,6 +1088,20 @@ bool UDataTableService::JsonToProperty(
 	}
 
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Container);
+	return JsonToValuePtr(Property, ValuePtr, Value, OutError);
+}
+
+bool UDataTableService::JsonToValuePtr(
+	FProperty* Property,
+	void* ValuePtr,
+	const TSharedPtr<FJsonValue>& Value,
+	FString& OutError)
+{
+	if (!Property || !ValuePtr || !Value.IsValid())
+	{
+		OutError = TEXT("Invalid parameters");
+		return false;
+	}
 
 	// Numeric types
 	if (FNumericProperty* NumericProp = CastField<FNumericProperty>(Property))
@@ -1221,7 +1244,7 @@ bool UDataTableService::JsonToProperty(
 		return true;
 	}
 
-	// Array
+	// Array - use JsonToValuePtr for elements (they ARE the value, not a container)
 	if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
 	{
 		const TArray<TSharedPtr<FJsonValue>>* JsonArray;
@@ -1240,7 +1263,7 @@ bool UDataTableService::JsonToProperty(
 			FString ElementError;
 			void* ElementPtr = ArrayHelper.GetRawPtr(i);
 
-			if (!JsonToProperty(ArrayProp->Inner, ElementPtr, (*JsonArray)[i], ElementError))
+			if (!JsonToValuePtr(ArrayProp->Inner, ElementPtr, (*JsonArray)[i], ElementError))
 			{
 				OutError = FString::Printf(TEXT("Array element %d: %s"), i, *ElementError);
 				return false;
@@ -1249,7 +1272,7 @@ bool UDataTableService::JsonToProperty(
 		return true;
 	}
 
-	// Struct
+	// Struct - ValuePtr IS the struct base, so inner properties use JsonToProperty
 	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
 		const TSharedPtr<FJsonObject>* JsonObj;
@@ -1263,6 +1286,7 @@ bool UDataTableService::JsonToProperty(
 				if (InnerProp)
 				{
 					FString InnerError;
+					// ValuePtr is the struct base, use JsonToProperty which computes offset
 					if (!JsonToProperty(InnerProp, ValuePtr, Pair.Value, InnerError))
 					{
 						UE_LOG(LogDataTableService, Warning, TEXT("Failed to set struct member %s: %s"), *Pair.Key, *InnerError);

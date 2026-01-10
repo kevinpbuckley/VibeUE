@@ -348,7 +348,11 @@ private:
 	// Helper to deserialize JSON to row
 	static bool JsonToRow(const UScriptStruct* RowStruct, void* RowData, const TSharedPtr<FJsonObject>& JsonObj, FString& OutError);
 
-	// Helper property serialization
+	// Helper property serialization - Container is the struct base, computes ValuePtr internally
 	static TSharedPtr<FJsonValue> PropertyToJson(FProperty* Property, void* Container);
 	static bool JsonToProperty(FProperty* Property, void* Container, const TSharedPtr<FJsonValue>& Value, FString& OutError);
+
+	// Helper for direct value pointer access (used in recursive calls for arrays/maps)
+	static TSharedPtr<FJsonValue> ValuePtrToJson(FProperty* Property, void* ValuePtr);
+	static bool JsonToValuePtr(FProperty* Property, void* ValuePtr, const TSharedPtr<FJsonValue>& Value, FString& OutError);
 };
