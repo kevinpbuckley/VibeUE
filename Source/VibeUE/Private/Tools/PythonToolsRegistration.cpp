@@ -8,8 +8,20 @@
 // Helper function to extract a field from ParamsJson
 static FString ExtractParamFromJson(const TMap<FString, FString>& Params, const FString& FieldName)
 {
-	// First check if parameter exists directly
+	// First check if parameter exists directly (case-insensitive check for action/Action)
 	const FString* DirectParam = Params.Find(FieldName);
+	if (DirectParam)
+	{
+		return *DirectParam;
+	}
+	
+	// Also check capitalized version (MCP server capitalizes 'action' to 'Action')
+	FString CapitalizedField = FieldName;
+	if (CapitalizedField.Len() > 0)
+	{
+		CapitalizedField[0] = FChar::ToUpper(CapitalizedField[0]);
+	}
+	DirectParam = Params.Find(CapitalizedField);
 	if (DirectParam)
 	{
 		return *DirectParam;

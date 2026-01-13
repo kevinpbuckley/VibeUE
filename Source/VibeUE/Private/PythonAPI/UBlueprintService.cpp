@@ -477,6 +477,9 @@ bool UBlueprintService::AddComponent(
 		if (ParentNode)
 		{
 			ParentNode->AddChildNode(NewNode);
+			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
+			// AddChildNode only manages the ChildNodes array, it does NOT set the parent reference
+			NewNode->SetParent(ParentNode);
 		}
 		else
 		{
@@ -758,6 +761,244 @@ TArray<FComponentPropertyInfo> UBlueprintService::GetAllComponentProperties(
 	return Results;
 }
 
+TArray<FComponentPropertyInfo> UBlueprintService::ListComponentProperties(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	bool bIncludeInherited)
+{
+	// This is an alias for GetAllComponentProperties with a more intuitive name
+	return GetAllComponentProperties(BlueprintPath, ComponentName, bIncludeInherited);
+}
+
+bool UBlueprintService::SetRootComponent(
+	const FString& BlueprintPath,
+	const FString& ComponentName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetRootComponent: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+	
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetRootComponent: Blueprint has no SCS: %s"), *BlueprintPath);
+		return false;
+	}
+	
+	// Find the component node to make root
+	USCS_Node* NewRootNode = nullptr;
+	USCS_Node* CurrentRootNode = SCS->GetDefaultSceneRootNode();
+	
+	for (USCS_Node* Node : SCS->GetAllNodes())
+	{
+		if (Node && Node->GetVariableName().ToString() == ComponentName)
+		{
+			NewRootNode = Node;
+			break;
+		}
+	}
+	
+	if (!NewRootNode)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetRootComponent: Component '%s' not found"), *ComponentName);
+		return false;
+	}
+	
+	// Check if it's already the root
+	if (NewRootNode == CurrentRootNode)
+	{
+		UE_LOG(LogTemp, Log, TEXT("SetRootComponent: '%s' is already the root component"), *ComponentName);
+		return true;
+	}
+	
+	// Ensure the new root is a SceneComponent
+	if (!NewRootNode->ComponentTemplate || !NewRootNode->ComponentTemplate->IsA<USceneComponent>())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetRootComponent: '%s' is not a SceneComponent and cannot be root"), *ComponentName);
+		return false;
+	}
+	
+	// Store children of the current root (if any) to reparent them
+	TArray<USCS_Node*> ChildrenToReparent;
+	if (CurrentRootNode)
+	{
+		ChildrenToReparent = CurrentRootNode->GetChildNodes();
+	}
+	
+	// Find and remove the new root from its current parent
+	USCS_Node* NewRootCurrentParent = nullptr;
+	for (USCS_Node* Node : SCS->GetAllNodes())
+	{
+		if (Node)
+		{
+			for (USCS_Node* Child : Node->GetChildNodes())
+			{
+				if (Child == NewRootNode)
+				{
+					NewRootCurrentParent = Node;
+					break;
+				}
+			}
+			if (NewRootCurrentParent)
+			{
+				break;
+			}
+		}
+	}
+	
+	// Mark blueprint as modifying
+	Blueprint->Modify();
+	
+	// Remove new root from its current parent
+	if (NewRootCurrentParent)
+	{
+		NewRootCurrentParent->RemoveChildNode(NewRootNode);
+	}
+	else
+	{
+		// It might be a root node itself, remove it from root nodes
+		SCS->RemoveNode(NewRootNode);
+	}
+	
+	// If there was a current root, we need to handle it
+	if (CurrentRootNode && CurrentRootNode != NewRootNode)
+	{
+		// Remove children from current root first (we'll add them to new root)
+		for (USCS_Node* Child : ChildrenToReparent)
+		{
+			if (Child && Child != NewRootNode)
+			{
+				CurrentRootNode->RemoveChildNode(Child);
+			}
+		}
+		
+		// Detach the current root from being THE root  
+		// Make the old root a child of the new root
+		SCS->RemoveNode(CurrentRootNode);
+		NewRootNode->AddChildNode(CurrentRootNode);
+		// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
+		CurrentRootNode->SetParent(NewRootNode);
+	}
+	
+	// Add new root as a root node
+	SCS->AddNode(NewRootNode);
+	
+	// Reparent the old children (except the new root) to the new root
+	for (USCS_Node* Child : ChildrenToReparent)
+	{
+		if (Child && Child != NewRootNode && Child != CurrentRootNode)
+		{
+			NewRootNode->AddChildNode(Child);
+			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
+			Child->SetParent(NewRootNode);
+		}
+	}
+	
+	// Mark blueprint as structurally modified
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	
+	UE_LOG(LogTemp, Log, TEXT("SetRootComponent: Set '%s' as root component in %s"), *ComponentName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::CompareComponents(
+	const FString& BlueprintPathA,
+	const FString& ComponentNameA,
+	const FString& BlueprintPathB,
+	const FString& ComponentNameB,
+	FString& OutDifferences)
+{
+	// Get properties from both components
+	TArray<FComponentPropertyInfo> PropsA = GetAllComponentProperties(BlueprintPathA, ComponentNameA, true);
+	TArray<FComponentPropertyInfo> PropsB = GetAllComponentProperties(BlueprintPathB, ComponentNameB, true);
+	
+	if (PropsA.Num() == 0)
+	{
+		OutDifferences = FString::Printf(TEXT("Component '%s' not found in blueprint A or has no properties"), *ComponentNameA);
+		return false;
+	}
+	
+	if (PropsB.Num() == 0)
+	{
+		OutDifferences = FString::Printf(TEXT("Component '%s' not found in blueprint B or has no properties"), *ComponentNameB);
+		return false;
+	}
+	
+	TArray<FString> Differences;
+	
+	// Build map of properties from A
+	TMap<FString, FComponentPropertyInfo> MapA;
+	for (const FComponentPropertyInfo& Prop : PropsA)
+	{
+		MapA.Add(Prop.PropertyName, Prop);
+	}
+	
+	// Build map of properties from B
+	TMap<FString, FComponentPropertyInfo> MapB;
+	for (const FComponentPropertyInfo& Prop : PropsB)
+	{
+		MapB.Add(Prop.PropertyName, Prop);
+	}
+	
+	// Find properties only in A
+	for (const auto& Pair : MapA)
+	{
+		if (!MapB.Contains(Pair.Key))
+		{
+			Differences.Add(FString::Printf(TEXT("Property '%s' only in A (%s)"), *Pair.Key, *Pair.Value.PropertyType));
+		}
+	}
+	
+	// Find properties only in B
+	for (const auto& Pair : MapB)
+	{
+		if (!MapA.Contains(Pair.Key))
+		{
+			Differences.Add(FString::Printf(TEXT("Property '%s' only in B (%s)"), *Pair.Key, *Pair.Value.PropertyType));
+		}
+	}
+	
+	// Compare matching properties
+	for (const auto& PairA : MapA)
+	{
+		if (MapB.Contains(PairA.Key))
+		{
+			const FComponentPropertyInfo& PropA = PairA.Value;
+			const FComponentPropertyInfo& PropB = MapB[PairA.Key];
+			
+			// Check type difference
+			if (PropA.PropertyType != PropB.PropertyType)
+			{
+				Differences.Add(FString::Printf(TEXT("Property '%s' type differs: '%s' vs '%s'"), 
+					*PairA.Key, *PropA.PropertyType, *PropB.PropertyType));
+			}
+			// Check value difference (only for same types)
+			else if (PropA.Value != PropB.Value)
+			{
+				// Truncate long values
+				FString ValA = PropA.Value.Len() > 50 ? PropA.Value.Left(47) + TEXT("...") : PropA.Value;
+				FString ValB = PropB.Value.Len() > 50 ? PropB.Value.Left(47) + TEXT("...") : PropB.Value;
+				Differences.Add(FString::Printf(TEXT("Property '%s' value differs: '%s' vs '%s'"), 
+					*PairA.Key, *ValA, *ValB));
+			}
+		}
+	}
+	
+	if (Differences.Num() == 0)
+	{
+		OutDifferences = TEXT("Components are identical");
+	}
+	else
+	{
+		OutDifferences = FString::Join(Differences, TEXT("\n"));
+	}
+	
+	return true;
+}
+
 bool UBlueprintService::ReparentComponent(
 	const FString& BlueprintPath,
 	const FString& ComponentName,
@@ -864,6 +1105,10 @@ bool UBlueprintService::ReparentComponent(
 	
 	// Add to new parent
 	NewParent->AddChildNode(NodeToReparent);
+	
+	// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
+	// AddChildNode only manages the ChildNodes array, it does NOT set the parent reference
+	NodeToReparent->SetParent(NewParent);
 	
 	// Mark blueprint as modified
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
@@ -2966,6 +3211,44 @@ bool UBlueprintService::DeleteNode(
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
 	UE_LOG(LogTemp, Log, TEXT("DeleteNode: Deleted node '%s' from graph '%s'"), *NodeId, *GraphName);
+	return true;
+}
+
+bool UBlueprintService::SetNodePosition(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetNodePosition: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetNodePosition: Graph '%s' not found"), *GraphName);
+		return false;
+	}
+
+	UEdGraphNode* Node = FindNodeById(Graph, NodeId);
+	if (!Node)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetNodePosition: Node '%s' not found"), *NodeId);
+		return false;
+	}
+
+	// Set the position
+	Node->NodePosX = static_cast<int32>(PosX);
+	Node->NodePosY = static_cast<int32>(PosY);
+	
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("SetNodePosition: Moved node '%s' to (%d, %d)"), *NodeId, Node->NodePosX, Node->NodePosY);
 	return true;
 }
 

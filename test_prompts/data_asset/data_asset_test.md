@@ -1,6 +1,6 @@
 # Data Asset Management Tests - Comprehensive Stress Test
 
-These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. check to see if assets exists before creating them Delete them silently if they already exist. This is an exhaustive test of all data asset capabilities. 
+These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. check to see if assets exists before creating them. Delete them silently if they already exist. DO NOT TRY TO CREATE ASSETS THAT ALREADY EXIST! This is an exhaustive test of all data asset capabilities. 
 
 **Important Notes:**
 - **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.

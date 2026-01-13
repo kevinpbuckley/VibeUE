@@ -2,6 +2,9 @@
 
 #include "Core/ToolRegistry.h"
 #include "Utils/VibeUEPaths.h"
+#include "Tools/PythonTools.h"
+#include "Tools/PythonDiscoveryService.h"
+#include "Tools/PythonTypes.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
@@ -14,8 +17,20 @@ DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 // Helper function to extract a field from ParamsJson
 static FString ExtractParamFromJson(const TMap<FString, FString>& Params, const FString& FieldName)
 {
-	// First check if parameter exists directly
+	// First check if parameter exists directly (case-insensitive check for action/Action)
 	const FString* DirectParam = Params.Find(FieldName);
+	if (DirectParam)
+	{
+		return *DirectParam;
+	}
+	
+	// Also check capitalized version (MCP server capitalizes 'action' to 'Action')
+	FString CapitalizedField = FieldName;
+	if (CapitalizedField.Len() > 0)
+	{
+		CapitalizedField[0] = FChar::ToUpper(CapitalizedField[0]);
+	}
+	DirectParam = Params.Find(CapitalizedField);
 	if (DirectParam)
 	{
 		return *DirectParam;
@@ -138,6 +153,113 @@ static TSharedPtr<FJsonObject> ParseYAMLFrontmatter(const FString& MarkdownConte
 }
 
 /**
+ * Format a Python class info as a JSON object for the response
+ */
+static TSharedPtr<FJsonObject> FormatClassInfoAsJson(const VibeUE::FPythonClassInfo& ClassInfo)
+{
+	TSharedPtr<FJsonObject> ClassObj = MakeShared<FJsonObject>();
+	ClassObj->SetStringField(TEXT("name"), ClassInfo.Name);
+	ClassObj->SetStringField(TEXT("full_path"), ClassInfo.FullPath);
+	ClassObj->SetStringField(TEXT("docstring"), ClassInfo.Docstring);
+	ClassObj->SetBoolField(TEXT("is_abstract"), ClassInfo.bIsAbstract);
+
+	// Base classes
+	TArray<TSharedPtr<FJsonValue>> BaseClassesArray;
+	for (const FString& BaseClass : ClassInfo.BaseClasses)
+	{
+		BaseClassesArray.Add(MakeShared<FJsonValueString>(BaseClass));
+	}
+	ClassObj->SetArrayField(TEXT("base_classes"), BaseClassesArray);
+
+	// Methods
+	TArray<TSharedPtr<FJsonValue>> MethodsArray;
+	for (const VibeUE::FPythonFunctionInfo& Method : ClassInfo.Methods)
+	{
+		TSharedPtr<FJsonObject> MethodObj = MakeShared<FJsonObject>();
+		MethodObj->SetStringField(TEXT("name"), Method.Name);
+		MethodObj->SetStringField(TEXT("signature"), Method.Signature);
+		MethodObj->SetStringField(TEXT("docstring"), Method.Docstring);
+		MethodObj->SetStringField(TEXT("return_type"), Method.ReturnType);
+		MethodObj->SetBoolField(TEXT("is_static"), Method.bIsStatic);
+
+		// Parameters
+		TArray<TSharedPtr<FJsonValue>> ParamsArray;
+		for (int32 i = 0; i < Method.Parameters.Num(); i++)
+		{
+			TSharedPtr<FJsonObject> ParamObj = MakeShared<FJsonObject>();
+			ParamObj->SetStringField(TEXT("name"), Method.Parameters[i]);
+			if (i < Method.ParamTypes.Num())
+			{
+				ParamObj->SetStringField(TEXT("type"), Method.ParamTypes[i]);
+			}
+			ParamsArray.Add(MakeShared<FJsonValueObject>(ParamObj));
+		}
+		MethodObj->SetArrayField(TEXT("parameters"), ParamsArray);
+
+		MethodsArray.Add(MakeShared<FJsonValueObject>(MethodObj));
+	}
+	ClassObj->SetArrayField(TEXT("methods"), MethodsArray);
+
+	// Properties
+	TArray<TSharedPtr<FJsonValue>> PropertiesArray;
+	for (const FString& Property : ClassInfo.Properties)
+	{
+		PropertiesArray.Add(MakeShared<FJsonValueString>(Property));
+	}
+	ClassObj->SetArrayField(TEXT("properties"), PropertiesArray);
+
+	return ClassObj;
+}
+
+/**
+ * Discover all services for a skill and return as JSON array
+ */
+static TArray<TSharedPtr<FJsonValue>> DiscoverServicesForSkill(const TArray<FString>& ServiceNames)
+{
+	TArray<TSharedPtr<FJsonValue>> DiscoveryResults;
+
+	auto DiscoveryService = UPythonTools::GetDiscoveryService();
+	if (!DiscoveryService.IsValid())
+	{
+		UE_LOG(LogSkillsTools, Warning, TEXT("PythonDiscoveryService not available"));
+		return DiscoveryResults;
+	}
+
+	for (const FString& ServiceName : ServiceNames)
+	{
+		UE_LOG(LogSkillsTools, Log, TEXT("Discovering service: %s"), *ServiceName);
+
+		// Try with unreal. prefix first
+		FString FullClassName = FString::Printf(TEXT("unreal.%s"), *ServiceName);
+		auto Result = DiscoveryService->DiscoverClass(FullClassName);
+
+		if (Result.IsError())
+		{
+			// Try without prefix
+			Result = DiscoveryService->DiscoverClass(ServiceName);
+		}
+
+		if (Result.IsSuccess())
+		{
+			TSharedPtr<FJsonObject> ClassJson = FormatClassInfoAsJson(Result.GetValue());
+			DiscoveryResults.Add(MakeShared<FJsonValueObject>(ClassJson));
+			UE_LOG(LogSkillsTools, Log, TEXT("  Discovered %d methods for %s"), Result.GetValue().Methods.Num(), *ServiceName);
+		}
+		else
+		{
+			UE_LOG(LogSkillsTools, Warning, TEXT("  Failed to discover service %s: %s"), *ServiceName, *Result.GetErrorMessage());
+			// Add error entry
+			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+			ErrorObj->SetStringField(TEXT("name"), ServiceName);
+			ErrorObj->SetStringField(TEXT("error"), Result.GetErrorMessage());
+			DiscoveryResults.Add(MakeShared<FJsonValueObject>(ErrorObj));
+		}
+	}
+
+	return DiscoveryResults;
+}
+
+/**
  * Scan Skills directory and return metadata for all skills
  */
 static FString ListSkills()
@@ -153,8 +275,9 @@ static FString ListSkills()
 	{
 		UE_LOG(LogSkillsTools, Warning, TEXT("Skills directory does not exist: %s"), *SkillsDir);
 
-		// Return empty array
+		// Return empty array with success
 		TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+		ResultObj->SetBoolField(TEXT("success"), true);
 		ResultObj->SetArrayField(TEXT("skills"), TArray<TSharedPtr<FJsonValue>>());
 
 		FString ResultJson;
@@ -238,6 +361,7 @@ static FString ListSkills()
 
 	// Build result JSON
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
 	ResultObj->SetArrayField(TEXT("skills"), SkillsArray);
 
 	FString ResultJson;
@@ -329,7 +453,7 @@ static FString ResolveSkillDirectory(const FString& SkillName)
 }
 
 /**
- * Load all markdown files from a skill directory and concatenate
+ * Load all markdown files from a skill directory, run discovery for services, and return combined result
  */
 static FString LoadSkill(const FString& SkillName)
 {
@@ -340,6 +464,7 @@ static FString LoadSkill(const FString& SkillName)
 	if (SkillDir.IsEmpty())
 	{
 		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error"), FString::Printf(TEXT("Skill not found: %s"), *SkillName));
 
 		FString ErrorJson;
@@ -349,6 +474,51 @@ static FString LoadSkill(const FString& SkillName)
 	}
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+
+	// First, read skill.md to get the class lists
+	FString SkillMdPath = SkillDir / TEXT("skill.md");
+	TArray<FString> VibeUEClassNames;
+	TArray<FString> UnrealClassNames;
+	TSharedPtr<FJsonObject> SkillFrontmatter;
+
+	if (PlatformFile.FileExists(*SkillMdPath))
+	{
+		FString SkillMdContent;
+		if (FFileHelper::LoadFileToString(SkillMdContent, *SkillMdPath))
+		{
+			SkillFrontmatter = ParseYAMLFrontmatter(SkillMdContent);
+			if (SkillFrontmatter.IsValid())
+			{
+				// Extract vibeue_classes array (primary - VibeUE services)
+				const TArray<TSharedPtr<FJsonValue>>* VibeUEArray = nullptr;
+				if (SkillFrontmatter->TryGetArrayField(TEXT("vibeue_classes"), VibeUEArray) && VibeUEArray)
+				{
+					for (const TSharedPtr<FJsonValue>& ClassValue : *VibeUEArray)
+					{
+						FString ClassName;
+						if (ClassValue->TryGetString(ClassName))
+						{
+							VibeUEClassNames.Add(ClassName);
+						}
+					}
+				}
+
+				// Extract unreal_classes array (fallback - native UE classes)
+				const TArray<TSharedPtr<FJsonValue>>* UnrealArray = nullptr;
+				if (SkillFrontmatter->TryGetArrayField(TEXT("unreal_classes"), UnrealArray) && UnrealArray)
+				{
+					for (const TSharedPtr<FJsonValue>& ClassValue : *UnrealArray)
+					{
+						FString ClassName;
+						if (ClassValue->TryGetString(ClassName))
+						{
+							UnrealClassNames.Add(ClassName);
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Collect all .md files in the skill directory
 	TArray<FString> MarkdownFiles;
@@ -403,8 +573,25 @@ static FString LoadSkill(const FString& SkillName)
 	// Get skill name from directory
 	FString ActualSkillName = FPaths::GetCleanFilename(SkillDir);
 
+	// Run discovery for VibeUE classes first (primary APIs)
+	TArray<TSharedPtr<FJsonValue>> VibeUEDiscoveryResults;
+	if (VibeUEClassNames.Num() > 0)
+	{
+		UE_LOG(LogSkillsTools, Log, TEXT("Running discovery for %d VibeUE classes..."), VibeUEClassNames.Num());
+		VibeUEDiscoveryResults = DiscoverServicesForSkill(VibeUEClassNames);
+	}
+
+	// Run discovery for Unreal classes (fallback/advanced)
+	TArray<TSharedPtr<FJsonValue>> UnrealDiscoveryResults;
+	if (UnrealClassNames.Num() > 0)
+	{
+		UE_LOG(LogSkillsTools, Log, TEXT("Running discovery for %d Unreal classes..."), UnrealClassNames.Num());
+		UnrealDiscoveryResults = DiscoverServicesForSkill(UnrealClassNames);
+	}
+
 	// Build result JSON
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
 	ResultObj->SetStringField(TEXT("skill_name"), ActualSkillName);
 	ResultObj->SetStringField(TEXT("content"), ConcatenatedContent);
 
@@ -415,6 +602,28 @@ static FString LoadSkill(const FString& SkillName)
 	}
 	ResultObj->SetArrayField(TEXT("files_loaded"), FilesArray);
 
+	// Add VibeUE classes list (primary)
+	TArray<TSharedPtr<FJsonValue>> VibeUEClassesArray;
+	for (const FString& ClassName : VibeUEClassNames)
+	{
+		VibeUEClassesArray.Add(MakeShared<FJsonValueString>(ClassName));
+	}
+	ResultObj->SetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray);
+
+	// Add VibeUE discovery results (the actual API info - USE THESE FIRST)
+	ResultObj->SetArrayField(TEXT("vibeue_apis"), VibeUEDiscoveryResults);
+
+	// Add Unreal classes list (fallback)
+	TArray<TSharedPtr<FJsonValue>> UnrealClassesArray;
+	for (const FString& ClassName : UnrealClassNames)
+	{
+		UnrealClassesArray.Add(MakeShared<FJsonValueString>(ClassName));
+	}
+	ResultObj->SetArrayField(TEXT("unreal_classes"), UnrealClassesArray);
+
+	// Add Unreal discovery results (fallback APIs - only use when VibeUE doesn't cover)
+	ResultObj->SetArrayField(TEXT("unreal_apis"), UnrealDiscoveryResults);
+
 	// Rough token count estimate (1 token ≈ 4 characters)
 	int32 TokenCount = ConcatenatedContent.Len() / 4;
 	ResultObj->SetNumberField(TEXT("token_count"), TokenCount);
@@ -423,7 +632,8 @@ static FString LoadSkill(const FString& SkillName)
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultJson);
 	FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
 
-	UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill '%s': %d files, ~%d tokens"), *ActualSkillName, FilesLoaded.Num(), TokenCount);
+	UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill '%s': %d files, ~%d tokens, %d VibeUE + %d Unreal classes discovered"), 
+		*ActualSkillName, FilesLoaded.Num(), TokenCount, VibeUEDiscoveryResults.Num(), UnrealDiscoveryResults.Num());
 
 	return ResultJson;
 }
@@ -449,6 +659,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 			if (SkillName.IsEmpty())
 			{
 				TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+				ErrorObj->SetBoolField(TEXT("success"), false);
 				ErrorObj->SetStringField(TEXT("error"), TEXT("skill_name parameter required for 'load' action"));
 
 				FString ErrorJson;
@@ -462,6 +673,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		else
 		{
 			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+			ErrorObj->SetBoolField(TEXT("success"), false);
 			ErrorObj->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s. Must be 'list' or 'load'"), *Action));
 
 			FString ErrorJson;

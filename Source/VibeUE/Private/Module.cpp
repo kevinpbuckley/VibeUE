@@ -9,6 +9,7 @@
 #include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "Tools/ExampleTools.h"
+#include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
@@ -176,6 +177,13 @@ void FModule::ShutdownModule()
 
 void FModule::OnPreExit()
 {
+	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	
+	// FIRST: Release all C++ Python service instances BEFORE running Python GC
+	// This prevents access violations when Python tries to garbage collect objects
+	// that the C++ side is still holding references to
+	UPythonTools::Shutdown();
+	
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - forcing Python garbage collection"));
 	
 	// Force Python to garbage collect and release any UObject references

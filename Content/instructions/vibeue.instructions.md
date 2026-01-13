@@ -18,9 +18,14 @@ All functionality is accessed through Python code via `execute_python_code`.
 
 ---
 
-## 🎯 Skills System (NEW)
+## 🎯 Skills System (Workflows + Gotchas)
 
-VibeUE uses a **lazy-loading skills system** to provide domain-specific knowledge on demand.
+VibeUE uses a **lazy-loading skills system** to provide:
+- **Workflows** - Step-by-step patterns for common tasks
+- **Gotchas** - Critical rules that discovery can't tell you
+- **Property formats** - Unreal string syntax for values
+
+**⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do, discovery tells you HOW (exact method signatures).
 
 ### Available Skills
 
@@ -66,25 +71,64 @@ User: "Create BP_Enemy with a Health variable"
 
 ---
 
-## ⚠️ CRITICAL: Discover Services FIRST
+## ⚠️ Skills Auto-Discover API - No Manual Discovery Needed
 
-**For ANY Unreal operation, your FIRST step MUST be:**
-1. Identify which domain/skill covers this operation
-2. Load the skill if needed: `manage_skills(action="load", skill_name="...")`
-3. Call `discover_python_class("unreal.<ServiceName>")` to get parameter details
-4. **ALSO discover return types** before accessing their properties
-5. Use the service via `execute_python_code`
+**When you load a skill, the API is automatically discovered and returned.**
 
-**NEVER guess at API methods OR return type properties.** Use discovery tools.
+### How It Works
 
-### Common Return Type Mistakes (See Skills for Full List)
-```python
-# WRONG guesses → Correct properties
-info.inputs          → info.input_parameters
-node.node_name       → node.node_title
-pin.is_linked        → pin.is_connected
-var.name             → var.variable_name
 ```
+1. Load skill: manage_skills(action="load", skill_name="...")
+2. Response includes "service_apis" with FULL method signatures
+3. Execute with correct parameters from the response
+```
+
+### What You Get
+
+The `manage_skills` response includes:
+- **content**: Workflows and gotchas
+- **service_apis**: Full API with methods, parameters, return types
+
+### Example Response
+
+```json
+{
+  "success": true,
+  "skill_name": "asset-management",
+  "content": "...(workflows and rules)...",
+  "service_apis": [
+    {
+      "name": "AssetDiscoveryService",
+      "methods": [
+        {"name": "search_assets", "docstring": "..."},
+        {"name": "find_asset_by_path", "docstring": "..."}
+      ]
+    }
+  ]
+}
+```
+
+**DO NOT guess method names - if unsure, check skill documentation first, then use discovery.**
+
+---
+
+## ⚠️ CRITICAL: No Guessing Method Names
+
+**NEVER guess method names. The VibeUE API uses inconsistent naming.**
+
+### Common Wrong Guesses (These WILL fail)
+
+| WRONG (AttributeError) | CORRECT |
+|------------------------|---------|
+| `list_nodes(path, graph)` | `get_nodes_in_graph(path, graph)` |
+| `list_graph_nodes(path, graph)` | `get_nodes_in_graph(path, graph)` |
+| `get_blueprint_properties(path)` | `get_property(path, prop_name)` |
+| `unreal.get_default_object(class)` | BLOCKED - use `get_property()` instead |
+
+### Method Naming Patterns
+- `list_*` methods exist: `list_variables`, `list_functions`, `list_components`
+- BUT for nodes: `get_nodes_in_graph` (NOT `list_nodes`)
+- When in doubt: Check skill documentation OR call `discover_python_class`
 
 ---
 
@@ -133,29 +177,16 @@ json_str = json.dumps(data)
 
 ---
 
-## 🔍 MCP Discovery Tools
+## 🔍 MCP Discovery Tools Reference
 
-Use these to explore APIs before calling them:
+| Tool | Purpose |
+|------|---------|
+| `discover_python_class(class_name)` | **USE THIS** - Get class methods and properties |
+| `discover_python_module(module_name)` | List module contents |
+| `discover_python_function(function_path)` | Get function signature |
+| `list_python_subsystems()` | List UE editor subsystems |
 
-- `discover_python_module(module_name)` - Discover module contents
-- `discover_python_class(class_name)` - Get class methods and properties (ALWAYS USE THIS)
-- `discover_python_function(function_path)` - Get function signature
-- `list_python_subsystems()` - List available UE subsystems
-
-**Pattern:**
-```python
-# 1. Load the relevant skill for documentation
-manage_skills(action="load", skill_name="blueprints")
-
-# 2. Discover API parameters
-discover_python_class("unreal.BlueprintService")
-
-# 3. Execute with correct parameters
-execute_python_code('''
-import unreal
-path = unreal.BlueprintService.create_blueprint("Enemy", "Character", "/Game/")
-print(f"Created: {path}")
-''')
+**Always call `discover_python_class("unreal.<ServiceName>")` before using any service.**
 ```
 
 ---
@@ -200,6 +231,15 @@ Never guess paths. Load "asset-management" skill for AssetDiscoveryService detai
 # After adding variables, functions, components, or changing structure:
 unreal.BlueprintService.compile_blueprint(path)  # REQUIRED!
 ```
+
+### Blueprint Node Layout
+When adding nodes to graphs, use consistent positioning for readable layouts:
+- **Execution flow**: Left to right (X increases: 200, 400, 600...)
+- **Data nodes**: Above execution row (negative Y: -150 for getters, -75 for math)
+- **Branch paths**: True stays at current Y, False offsets down (+150)
+- **Grid spacing**: 200px horizontal, 150px vertical
+
+Load the `blueprints` skill for the full `03-node-layout.md` guide.
 
 ### Error Recovery
 - Max 3 attempts at same operation
@@ -250,10 +290,13 @@ Always use full paths: `/Game/Blueprints/BP_Name` (not `BP_Name`)
 1. **User asks to do something** (e.g., "Create BP_Enemy")
 2. **Identify domain** → Blueprints
 3. **Load skill:** `manage_skills(action="load", skill_name="blueprints")`
-4. **Check if exists:** Use AssetDiscoveryService to verify
-5. **Discover API:** `discover_python_class("unreal.BlueprintService")`
-6. **Execute:** Use `execute_python_code` with correct parameters
-7. **Report result:** Concise status message
+4. **⚠️ DISCOVER API:** `discover_python_class("unreal.BlueprintService")` ← NEVER SKIP
+5. **Discover return types:** If using return data, discover those types too
+6. **Check if exists:** Use AssetDiscoveryService to verify asset doesn't exist
+7. **Execute:** Use `execute_python_code` with parameters FROM DISCOVERY (not from memory)
+8. **Report result:** Concise status message
+
+**CRITICAL:** Steps 4-5 (discovery) are MANDATORY. Do not proceed without them.
 
 ---
 

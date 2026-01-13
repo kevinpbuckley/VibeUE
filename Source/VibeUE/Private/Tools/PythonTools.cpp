@@ -72,6 +72,20 @@ TSharedPtr<FPythonSchemaService> UPythonTools::GetSchemaService()
 	return SchemaServiceInstance;
 }
 
+void UPythonTools::Shutdown()
+{
+	UE_LOG(LogPythonTools, Log, TEXT("UPythonTools::Shutdown - Releasing Python service instances"));
+	
+	// Release all Python service instances BEFORE Python shuts down
+	// Order matters - discovery depends on execution
+	SchemaServiceInstance.Reset();
+	DiscoveryServiceInstance.Reset();
+	ExecutionServiceInstance.Reset();
+	ServiceContextInstance.Reset();
+	
+	UE_LOG(LogPythonTools, Log, TEXT("UPythonTools::Shutdown - All service instances released"));
+}
+
 FString UPythonTools::ExecutePythonCode(const FString& Code)
 {
 	// Auto-save all dirty packages before executing Python code if enabled
