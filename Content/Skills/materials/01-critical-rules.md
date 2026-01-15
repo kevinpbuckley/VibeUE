@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover all Material services with module search:
+
+```python
+# Use discover_python_module to find Material services
+discover_python_module(module_name="unreal", name_filter="Material", include_classes=True)
+# Returns: MaterialService, MaterialNodeService, and Material-related classes
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.MaterialService")
+```
+
+---
+
 ## ⚠️ CRITICAL: Two Services
 
 - **MaterialService** - Create materials, instances, manage properties

@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover Widget services with module search:
+
+```python
+# Use discover_python_module to find Widget services
+discover_python_module(module_name="unreal", name_filter="WidgetService", include_classes=True)
+# Returns: WidgetService
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.WidgetService")
+```
+
+---
+
 ## Creating Widget Blueprints
 
 ⚠️ **WidgetService does NOT create widgets.** Use BlueprintService:

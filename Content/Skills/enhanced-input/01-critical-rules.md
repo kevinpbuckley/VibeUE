@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover Input services with module search:
+
+```python
+# Use discover_python_module to find Input services
+discover_python_module(module_name="unreal", name_filter="InputService", include_classes=True)
+# Returns: InputService
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.InputService")
+```
+
+---
+
 ## ⚠️ CRITICAL: Value Types
 
 Input Actions have specific value types:

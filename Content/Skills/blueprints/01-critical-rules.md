@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover all VibeUE services with module search:
+
+```python
+# Use discover_python_module to find all services
+discover_python_module(module_name="unreal", name_filter="Service", include_classes=True)
+# Returns: BlueprintService, DataAssetService, InputService, MaterialService, WidgetService, ActorService, etc.
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.BlueprintService")
+```
+
+---
+
 ## ⚠️ CRITICAL: Method Name Gotchas
 
 The AI frequently guesses wrong method names. **ALWAYS use `discover_python_class` before guessing!**

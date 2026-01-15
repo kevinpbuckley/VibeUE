@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover DataTable services with module search:
+
+```python
+# Use discover_python_module to find DataTable services
+discover_python_module(module_name="unreal", name_filter="DataTable", include_classes=True)
+# Returns: DataTableService
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.DataTableService")
+```
+
+---
+
 ## ⚠️ CRITICAL: All Values Are JSON Strings
 
 Row data must be JSON. Use `json.dumps()`:

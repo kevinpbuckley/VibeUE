@@ -34,7 +34,7 @@ import unreal
 # 1. Find available DataAsset classes
 types = unreal.DataAssetService.search_types("Item")
 for t in types:
-    print(f"{t.name}: {t.base_class}")
+    print(f"{t.name}: {t.parent_class}")
 
 # 2. Get class schema (properties)
 info = unreal.DataAssetService.get_class_info("InputAction", True)
@@ -72,7 +72,7 @@ path = "/Game/Data/DA_Item"
 # Get info with all properties
 info = unreal.DataAssetService.get_info(path)
 print(f"Asset: {info.name}")
-print(f"Class: {info.asset_class}")
+print(f"Class: {info.class_name}")
 print(f"Properties: {info.properties_json}")
 
 # Or list properties individually  
@@ -92,15 +92,11 @@ import json
 
 path = "/Game/Data/DA_Item"
 
-# Read struct property
-stats_json = unreal.DataAssetService.get_struct_property(path, "Stats")
-stats = json.loads(stats_json) if stats_json else {}
+# Read struct property (ExportText string)
+stats_text = unreal.DataAssetService.get_property(path, "Stats")
 
-# Modify
-stats["Damage"] = stats.get("Damage", 0) + 10
-
-# Write back
-unreal.DataAssetService.set_struct_property(path, "Stats", json.dumps(stats))
+# Modify by providing a new ExportText string
+unreal.DataAssetService.set_property(path, "Stats", "(Attack=85,Defense=50,CritChance=0.15)")
 unreal.EditorAssetLibrary.save_asset(path)
 ```
 
@@ -122,7 +118,7 @@ properties = {
 }
 
 result = unreal.DataAssetService.set_properties(path, json.dumps(properties))
-# result.successful_properties - list of properties that were set
+# result.success_properties - list of properties that were set
 # result.failed_properties - list of properties that failed
 ```
 

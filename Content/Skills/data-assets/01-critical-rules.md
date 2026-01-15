@@ -4,6 +4,58 @@ This file contains gotchas and rules that API discovery doesn't tell you.
 
 ---
 
+## 📋 Return Type Structures
+
+Discover all DataAsset types with module search:
+
+```python
+# Use discover_python_module to find all DataAsset-related classes
+discover_python_module(module_name="unreal", name_filter="DataAsset", include_classes=True)
+# Returns: DataAsset, DataAssetService, DataAssetTypeInfo, DataAssetInstanceInfo, DataAssetPropertyInfo, etc.
+
+# Then discover specific return type structure:
+discover_python_class(class_name="unreal.DataAssetTypeInfo")
+```
+
+Quick reference for common return type properties:
+
+### DataAssetTypeInfo
+```python
+type_info.name          # str - Class name (e.g., "InputAction")
+type_info.parent_class  # str - Parent class name
+```
+
+### DataAssetInstanceInfo  
+```python
+info.name         # str - Asset name
+info.path         # str - Full asset path
+info.class_name   # str - Asset's class name
+info.properties   # Array[DataAssetPropertyInfo]
+```
+
+### DataAssetPropertyInfo
+```python
+prop.name       # str - Property name
+prop.type       # str - Property type
+prop.value      # str - Current value (Unreal text format)
+```
+
+### DataAssetSetPropertiesResult
+```python
+result.success_properties  # Array[str] - Properties that succeeded
+result.failed_properties   # Array[str] - Properties that failed
+# NOTE: No 'success' boolean flag
+```
+
+### DataAssetClassInfo
+```python
+class_info.class_name   # str - Class name
+class_info.parent_class # str - Parent class
+class_info.properties   # Array[DataAssetPropertyInfo]
+```
+
+---
+
 ## ⚠️ Property Values Are ALWAYS Strings
 
 All property values must be passed as strings, even for numbers and booleans.
@@ -33,7 +85,19 @@ keys_str = '((EntryName="Key1"),(EntryName="Key2"))'
 unreal.DataAssetService.set_property(path, "Keys", keys_str)
 ```
 
-Simple arrays CAN use JSON when using set_array_property (if available).
+The DataAssetService exposes only `set_property` and `set_properties`. Use Unreal text format for structs, arrays, and maps.
+
+---
+
+## ⚠️ `create_data_asset` Signature + Return Value
+
+`create_data_asset` takes **class name first**, then path, then name, and returns the **asset path string** (empty on failure):
+
+```python
+path = unreal.DataAssetService.create_data_asset("InputAction", "/Game/Data", "IA_Test")
+if not path:
+    print("Create failed")
+```
 
 ---
 
@@ -67,8 +131,14 @@ print(info["name"])  # ERROR!
 
 # CORRECT - access as properties
 print(info.name)
-print(info.asset_class)
+print(info.class_name)
 ```
+
+---
+
+## ⚠️ `set_properties` Result Fields
+
+The result has `success_properties` and `failed_properties` (no `success` flag).
 
 ---
 

@@ -2,6 +2,21 @@
 
 ---
 
+## 📋 Service Discovery
+
+Discover Actor services with module search:
+
+```python
+# Use discover_python_module to find Actor services
+discover_python_module(module_name="unreal", name_filter="ActorService", include_classes=True)
+# Returns: ActorService
+
+# Then discover specific service methods:
+discover_python_class(class_name="unreal.ActorService")
+```
+
+---
+
 ## ⚠️ CRITICAL: Get Subsystem Instance First
 
 Editor subsystems require getting an instance via `get_editor_subsystem()`:

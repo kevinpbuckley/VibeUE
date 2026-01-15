@@ -54,51 +54,43 @@ unreal.DataAssetService.set_property(path, "Type", "EItemType::Weapon")
 
 ---
 
-## Structs (via JSON)
+## Structs (Unreal Text Format)
 
-Use JSON for struct properties:
+Use Unreal text format for struct properties (ExportText/ImportText format):
 
 ```python
-import json
-
 # FVector
-location = {"X": 100.0, "Y": 200.0, "Z": 50.0}
-unreal.DataAssetService.set_struct_property(path, "Location", json.dumps(location))
+unreal.DataAssetService.set_property(path, "Location", "(X=100.0,Y=200.0,Z=50.0)")
 
-# FRotator  
-rotation = {"Pitch": 0.0, "Yaw": 90.0, "Roll": 0.0}
+# FRotator
+unreal.DataAssetService.set_property(path, "Rotation", "(Pitch=0.0,Yaw=90.0,Roll=0.0)")
 
 # FLinearColor
-color = {"R": 1.0, "G": 0.5, "B": 0.0, "A": 1.0}
+unreal.DataAssetService.set_property(path, "Color", "(R=1.0,G=0.5,B=0.0,A=1.0)")
 
 # Custom struct
-stats = {"Attack": 75, "Defense": 50, "CritChance": 0.15}
-unreal.DataAssetService.set_struct_property(path, "Stats", json.dumps(stats))
+unreal.DataAssetService.set_property(path, "Stats", "(Attack=75,Defense=50,CritChance=0.15)")
 ```
 
 ---
 
-## Arrays (via JSON)
+## Arrays (Unreal Text Format)
 
-Simple arrays use JSON:
+Arrays use Unreal text format:
 
 ```python
-import json
-
 # Strings
-tags = ["Weapon", "Melee", "Sword"]
-unreal.DataAssetService.set_array_property(path, "Tags", json.dumps(tags))
+unreal.DataAssetService.set_property(path, "Tags", "(\"Weapon\",\"Melee\",\"Sword\")")
 
 # Numbers
-damage_levels = [10, 20, 30, 40, 50]
-unreal.DataAssetService.set_array_property(path, "DamageLevels", json.dumps(damage_levels))
+unreal.DataAssetService.set_property(path, "DamageLevels", "(10,20,30,40,50)")
 
 # Asset references
-materials = [
-    "/Game/Materials/M_Metal.M_Metal",
-    "/Game/Materials/M_Wood.M_Wood"
-]
-unreal.DataAssetService.set_array_property(path, "Materials", json.dumps(materials))
+unreal.DataAssetService.set_property(
+    path,
+    "Materials",
+    "(\"/Game/Materials/M_Metal.M_Metal\",\"/Game/Materials/M_Wood.M_Wood\")"
+)
 ```
 
 ---
@@ -132,61 +124,43 @@ Format rules for Unreal string syntax:
 
 ## Maps (TMap)
 
-Maps are JSON objects:
+Maps use Unreal text format. The exact format depends on key/value types, so use
+`get_property` or `get_info` to see the correct ExportText string for that property.
 
 ```python
-import json
-
-stat_bonuses = {
-    "Strength": 10,
-    "Dexterity": 5,
-    "Intelligence": 8
-}
-unreal.DataAssetService.set_property(path, "StatBonuses", json.dumps(stat_bonuses))
+unreal.DataAssetService.set_property(
+    path,
+    "StatBonuses",
+    "(\"Strength\"=10,\"Dexterity\"=5,\"Intelligence\"=8)"
+)
 ```
 
 ---
 
 ## Nested Structs
 
-Nest JSON objects for complex structs:
+Nest structs using Unreal text format. Use `get_property` first to copy the exact field names:
 
 ```python
-import json
-
-character = {
-    "Name": "Hero",
-    "Level": 10,
-    "Stats": {
-        "Health": 100,
-        "Mana": 50
-    },
-    "Equipment": {
-        "Weapon": "/Game/Data/DA_Sword.DA_Sword",
-        "Armor": "/Game/Data/DA_Plate.DA_Plate"
-    }
-}
-unreal.DataAssetService.set_struct_property(path, "CharacterData", json.dumps(character))
+unreal.DataAssetService.set_property(
+    path,
+    "CharacterData",
+    "(Name=\"Hero\",Level=10,Stats=(Health=100,Mana=50),Equipment=(Weapon=\"/Game/Data/DA_Sword.DA_Sword\",Armor=\"/Game/Data/DA_Plate.DA_Plate\"))"
+)
 ```
 
 ---
 
 ## Reading Values
 
-Get values and parse if needed:
+Get values and parse if needed (values are ExportText strings):
 
 ```python
-import json
-
 # Simple property - returns string
 damage = unreal.DataAssetService.get_property(path, "Damage")
 damage_int = int(damage)
 
-# Struct - returns JSON string
-stats_json = unreal.DataAssetService.get_struct_property(path, "Stats")
-stats = json.loads(stats_json) if stats_json else {}
-
-# Array - returns JSON string  
-tags_json = unreal.DataAssetService.get_array_property(path, "Tags")
-tags = json.loads(tags_json) if tags_json else []
+# Struct/Array/Map - returns Unreal text format string
+stats_text = unreal.DataAssetService.get_property(path, "Stats")
+tags_text = unreal.DataAssetService.get_property(path, "Tags")
 ```

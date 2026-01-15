@@ -71,44 +71,76 @@ User: "Create BP_Enemy with a Health variable"
 
 ---
 
-## ⚠️ Skills Auto-Discover API - No Manual Discovery Needed
+## ⚠️ CRITICAL: Always Discover After Loading Skills
 
-**When you load a skill, the API is automatically discovered and returned.**
-
-### How It Works
+**MANDATORY WORKFLOW:**
 
 ```
 1. Load skill: manage_skills(action="load", skill_name="...")
-2. Response includes "service_apis" with FULL method signatures
-3. Execute with correct parameters from the response
+2. IMMEDIATELY call discover_python_class() on each service in the skill
+3. THEN execute Python code using the discovered methods
 ```
 
-### What You Get
+### Why Discovery is Required
 
-The `manage_skills` response includes:
-- **content**: Workflows and gotchas
-- **service_apis**: Full API with methods, parameters, return types
+**Skills provide documentation, NOT guaranteed method signatures.**
+- Skills may be out of sync with latest code
+- Return types and property names change between UE versions
+- Discovery shows ACTUAL runtime API (source of truth)
 
-### Example Response
+### Correct Pattern
 
-```json
-{
-  "success": true,
-  "skill_name": "asset-management",
-  "content": "...(workflows and rules)...",
-  "service_apis": [
-    {
-      "name": "AssetDiscoveryService",
-      "methods": [
-        {"name": "search_assets", "docstring": "..."},
-        {"name": "find_asset_by_path", "docstring": "..."}
-      ]
-    }
-  ]
-}
+```python
+# 1. Load skill
+manage_skills(action="load", skill_name="data-tables")
+
+# 2. DISCOVER the service class (REQUIRED!)
+discover_python_class(class_name="unreal.DataTableService")
+
+# 3. DISCOVER return types if needed
+discover_python_class(class_name="unreal.RowStructTypeInfo")
+discover_python_class(class_name="unreal.DataTableDetailedInfo")
+
+# 4. NOW execute code using discovered method/property names
+execute_python_code(code="""
+import unreal
+structs = unreal.DataTableService.search_row_types("")
+for s in structs:
+    print(f"{s.name}: {s.path}")  # Uses discovered property names
+""")
 ```
 
-**DO NOT guess method names - if unsure, check skill documentation first, then use discovery.**
+### Common Mistakes
+
+❌ **WRONG - Skipping discovery:**
+```python
+# Load skill
+manage_skills(action="load", skill_name="data-tables")
+
+# Immediately execute - will fail if property names changed!
+execute_python_code(code="""
+structs = unreal.DataTableService.search_row_types("")
+print(structs[0].struct_name)  # AttributeError!
+""")
+```
+
+✅ **CORRECT - Discover first:**
+```python
+# Load skill
+manage_skills(action="load", skill_name="data-tables")
+
+# Discover to get real property names
+discover_python_class(class_name="unreal.RowStructTypeInfo")
+# Shows: properties = ["name", "path", "module", ...] ← Use THESE
+
+# Now execute with correct names
+execute_python_code(code="""
+structs = unreal.DataTableService.search_row_types("")
+print(structs[0].name)  # Correct!
+""")
+```
+
+**Rule: Never trust skill docs alone - always discover before executing.**
 
 ---
 
