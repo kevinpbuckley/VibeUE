@@ -11,7 +11,7 @@ import unreal
 # 1. Find available row struct types
 structs = unreal.DataTableService.search_row_types("Item")
 for s in structs:
-    print(f"{s.name}: {s.path}")
+    print(f"{s.name}: {s.path}")  # Use .name not .struct_name
 
 # 2. Create table with chosen struct
 table_path = unreal.DataTableService.create_data_table(
@@ -37,7 +37,7 @@ table_path = "/Game/Data/DT_Items"
 # Get row struct schema first
 columns = unreal.DataTableService.get_row_struct(table_path)
 for col in columns:
-    print(f"{col.name}: {col.type}")
+    print(f"{col.column_name}: {col.column_type}")  # Use .column_name not .name
 
 # Add row with correct properties
 data = {
@@ -81,17 +81,39 @@ unreal.EditorAssetLibrary.save_asset("/Game/DT_Items")
 
 ```python
 import unreal
+import json
 
-# Get table info
+# Get table info (returns DataTableDetailedInfo)
 info = unreal.DataTableService.get_info("/Game/DT_Items")
 print(f"Table: {info.name}")
 print(f"Row count: {info.row_count}")
 print(f"Rows: {list(info.row_names)}")
 
-# Get all rows
-all_rows = unreal.DataTableService.get_all_rows("/Game/DT_Items")
-for row in all_rows:
-    print(f"{row.row_name}: {row.data_json}")
+# Parse columns_json (it's a JSON string, not a list!)
+columns = json.loads(info.columns_json)
+for col in columns:
+    print(f"  Column: {col['name']} ({col['type']})")
+
+# List rows (returns Array[str])
+row_names = unreal.DataTableService.list_rows("/Game/DT_Items")
+for name in row_names:
+    # Get each row as JSON string
+    row_data = unreal.DataTableService.get_row("/Game/DT_Items", name)
+    print(f"{name}: {row_data}")
+```
+
+---
+
+## List Data Tables
+
+```python
+import unreal
+
+# List all tables in /Game (returns Array[DataTableInfo])
+tables = unreal.DataTableService.list_data_tables("", "/Game")
+for t in tables:
+    print(f"{t.name}: {t.path} (Struct: {t.row_struct})")  # Use .name not .asset_name
+    print(f"  Row Count: {t.row_count}")
 ```
 
 ---

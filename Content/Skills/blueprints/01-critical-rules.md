@@ -1,25 +1,32 @@
 # Blueprint Critical Rules
 
+**⚠️ STOP: Check `vibeue_apis` above FIRST - it has method signatures. Only call `discover_python_*` if vibeue_apis doesn't cover what you need.**
+
 ---
 
-## 📋 Service Discovery
+## ⚠️ CRITICAL: create_blueprint() Signature
 
-Discover all VibeUE services with module search:
+**This is the #1 most common mistake!**
 
 ```python
-# Use discover_python_module to find all services
-discover_python_module(module_name="unreal", name_filter="Service", include_classes=True)
-# Returns: BlueprintService, DataAssetService, InputService, MaterialService, WidgetService, ActorService, etc.
+# CORRECT - Three separate arguments:
+unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
+#                                         ^name         ^parent  ^folder
 
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.BlueprintService")
+# WRONG - Path as first argument:
+unreal.BlueprintService.create_blueprint("/Game/Blueprints/BP_MyActor", "Actor")  # NO!
+
+# WRONG - Missing folder:
+unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor")  # NO! Missing 3rd arg
 ```
+
+**Returns**: Full asset path like `/Game/Blueprints/BP_MyActor.BP_MyActor`
 
 ---
 
 ## ⚠️ CRITICAL: Method Name Gotchas
 
-The AI frequently guesses wrong method names. **ALWAYS use `discover_python_class` before guessing!**
+Common wrong method guesses - **check `vibeue_apis` for correct names!**
 
 ### Common Wrong Method Guesses
 
@@ -30,7 +37,20 @@ The AI frequently guesses wrong method names. **ALWAYS use `discover_python_clas
 | `list_nodes(path, graph)` | `get_nodes_in_graph(path, graph)` |
 | `list_graph_nodes(path, graph)` | `get_nodes_in_graph(path, graph)` |
 | `get_blueprint_properties(path)` | `get_property(path, prop_name)` |
+| `get_component_info(path, name)` | `get_component_info(type)` - takes ONLY component type, NOT blueprint path! |
 | `unreal.get_default_object(class)` | BLOCKED - use `get_property()` instead |
+
+### get_component_info vs get_component_property
+```python
+# get_component_info - describes a COMPONENT TYPE (1 arg)
+info = unreal.BlueprintService.get_component_info("SpotLightComponent")
+
+# get_component_property - reads a PROPERTY VALUE from a component instance (3 args)
+value = unreal.BlueprintService.get_component_property("/Game/BP", "MyLight", "Intensity")
+
+# set_component_property - sets a property value (4 args)
+unreal.BlueprintService.set_component_property("/Game/BP", "MyLight", "Intensity", "5000.0")
+```
 
 ### Pattern: "create_" vs "add_"
 - `create_function(path, name)` ✓ - Creates a new function

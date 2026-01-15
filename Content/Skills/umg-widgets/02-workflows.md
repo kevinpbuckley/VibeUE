@@ -7,16 +7,18 @@
 ```python
 import unreal
 
-# Widget Blueprints are created via BlueprintService
-widget_path = unreal.BlueprintService.create_blueprint(
-    "MainMenu",
-    "UserWidget",    # Parent class for widgets
-    "/Game/UI/"
-)
+# Widget Blueprints must be created via WidgetBlueprintFactory
+factory = unreal.WidgetBlueprintFactory()
+factory.set_editor_property("parent_class", unreal.UserWidget)
 
-# Verify it's a widget
-is_widget = unreal.BlueprintService.is_widget_blueprint(widget_path)
-print(f"Is Widget: {is_widget}")
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+widget_asset = asset_tools.create_asset("MainMenu", "/Game/UI", unreal.WidgetBlueprint, factory)
+
+if widget_asset:
+    widget_path = "/Game/UI/MainMenu"
+    print(f"Created WidgetBlueprint: {widget_path}")
+else:
+    print("Failed to create WidgetBlueprint")
 ```
 
 ---
@@ -134,21 +136,23 @@ unreal.EditorAssetLibrary.save_asset(path)
 ```python
 import unreal
 
-# Get widget details
-info = unreal.WidgetService.get_info("/Game/UI/WBP_Menu")
-if info:
-    print(f"Widget: {info.name}")
-    print(f"Root: {info.root_widget}")
-    print(f"Components: {info.component_count}")
-
-# Get hierarchy as text
+# Get hierarchy (returns Array[WidgetInfo])
 hierarchy = unreal.WidgetService.get_hierarchy("/Game/UI/WBP_Menu")
-print(hierarchy)
+for widget in hierarchy:
+    # Use widget_name, widget_class, parent_widget (NOT name, type, parent_name)
+    print(f"{widget.widget_name} ({widget.widget_class})")
+    print(f"  Parent: {widget.parent_widget}")
+    print(f"  Is Root: {widget.is_root_widget}")
+    print(f"  Is Variable: {widget.is_variable}")
 
-# List all components
+# Get just the root widget name
+root = unreal.WidgetService.get_root_widget("/Game/UI/WBP_Menu")
+print(f"Root widget: {root}")
+
+# List components (same as get_hierarchy)
 components = unreal.WidgetService.list_components("/Game/UI/WBP_Menu")
 for comp in components:
-    print(f"{comp.name}: {comp.type}")
+    print(f"{comp.widget_name}: {comp.widget_class}")
 ```
 
 ---

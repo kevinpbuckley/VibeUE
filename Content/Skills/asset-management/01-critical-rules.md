@@ -1,19 +1,6 @@
 # Asset Discovery Critical Rules
 
----
-
-## 📋 Service Discovery
-
-Discover Asset services with module search:
-
-```python
-# Use discover_python_module to find Asset services
-discover_python_module(module_name="unreal", name_filter="AssetDiscoveryService", include_classes=True)
-# Returns: AssetDiscoveryService
-
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.AssetDiscoveryService")
-```
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
 
 ---
 

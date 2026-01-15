@@ -172,7 +172,7 @@ Get all key mappings in a context.
 ```python
 mappings = unreal.InputService.get_mappings("/Game/Input/IMC_Default")
 for i, mapping in enumerate(mappings):
-    print(f"[{i}] Key: {mapping.key}, Action: {mapping.action_name}")
+    print(f"[{i}] Key: {mapping.key_name}, Action: {mapping.action_name}")
 ```
 
 ---
@@ -378,7 +378,7 @@ target_key = "SpaceBar"
 
 mappings = unreal.InputService.get_mappings(context_path)
 for i, mapping in enumerate(mappings):
-    if mapping.action_name == target_action and mapping.key == target_key:
+    if mapping.action_name == target_action and mapping.key_name == target_key:
         print(f"Found mapping at index {i}")
         # Now you can add/remove modifiers/triggers using index i
         unreal.InputService.add_trigger(context_path, i, "Pressed")

@@ -1,6 +1,12 @@
 # Enhanced Input System Tests
 
-These tests should be run sequentially. Each test builds on the previous ones. create any required assets if they don't exist not found.
+**INSTRUCTIONS FOR AI:** 
+- Execute ALL tasks below sequentially in a single session
+- DO NOT ask for user confirmation between tasks
+- DO NOT stop after completing one section - continue to the next
+- Create any required assets if they don't exist
+- Each `---` separator marks a new task to execute, NOT a place to stop
+- Complete ALL 42 tasks from Discovery through Complete Input Setups
 
 ---
 

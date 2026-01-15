@@ -35,7 +35,6 @@ Lightweight MCP tools for exploring and executing Python:
 | `discover_python_class` | Get class methods, properties, and inheritance |
 | `discover_python_function` | Get function signatures and docstrings |
 | `execute_python_code` | Run Python code in Unreal Editor context |
-| `evaluate_python_expression` | Evaluate Python expressions and return results |
 | `list_python_subsystems` | List available UE editor subsystems |
 
 ### 2. VibeUE Python API Services (10 services, 150+ methods)
