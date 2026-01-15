@@ -116,6 +116,12 @@ public:
 
 	// Helper to get or create service instances
 	static TSharedPtr<VibeUE::FPythonDiscoveryService> GetDiscoveryService();
+	
+	/**
+	 * Clean up all static service instances.
+	 * Must be called before Python shuts down to avoid access violations.
+	 */
+	static void Shutdown();
 
 private:
 	static TSharedPtr<VibeUE::FPythonExecutionService> GetExecutionService();

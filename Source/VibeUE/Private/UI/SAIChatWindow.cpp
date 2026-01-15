@@ -1,6 +1,8 @@
 // Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "UI/SAIChatWindow.h"
+#include "UI/ChatRichTextStyles.h"
+#include "UI/MarkdownToRichText.h"
 #include "Chat/AIChatCommands.h"
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
@@ -106,8 +108,8 @@ namespace VibeUEColors
     const FLinearColor TextCode(0.72f, 0.82f, 0.72f, 1.0f);        // Code/JSON text - slight green tint
     
     // Message background colors  
-    const FLinearColor UserMessage(0.14f, 0.14f, 0.16f, 1.0f);     // User messages - neutral dark gray
-    const FLinearColor AssistantMessage(0.10f, 0.12f, 0.18f, 1.0f);// Assistant - dark blue tint
+    const FLinearColor UserMessage(0.055f, 0.094f, 0.102f, 1.0f);  // User messages - #0E181A
+    const FLinearColor AssistantMessage(0.0f, 0.0f, 0.0f, 0.0f);   // Assistant - transparent (no background)
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
     const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
     
@@ -598,12 +600,12 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     if (Message.Role == TEXT("user"))
     {
         BackgroundColor = VibeUEColors::UserMessage;
-        BorderColor = VibeUEColors::Gray;
+        BorderColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);  // Transparent - no accent line
     }
     else if (Message.Role == TEXT("assistant"))
     {
         BackgroundColor = VibeUEColors::AssistantMessage;
-        BorderColor = VibeUEColors::Blue;
+        BorderColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);  // Transparent - no accent line
     }
     else
     {
@@ -628,19 +630,22 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     {
         DisplayText = TEXT("...");
     }
-    
-    // Create the message content text block and store reference for streaming updates
-    TSharedPtr<STextBlock> ContentTextBlock;
-    
+
+    // Convert markdown to rich text format
+    FString RichText = FMarkdownToRichText::Convert(DisplayText, Message.bIsStreaming);
+
+    // Create the message content rich text block and store reference for streaming updates
+    TSharedPtr<SRichTextBlock> ContentRichTextBlock;
+
     // Create the message bubble with rounded corners
-    TSharedRef<SWidget> MessageContent = 
+    TSharedRef<SWidget> MessageContent =
         SNew(SBorder)
         .BorderImage(&RoundedBrush)
         .BorderBackgroundColor(BackgroundColor)
-        .Padding(FMargin(8, 4, 8, 4))
+        .Padding(FMargin(12, 10, 12, 10))
         [
             SNew(SHorizontalBox)
-            
+
             // Colored accent line (left side)
             + SHorizontalBox::Slot()
             .AutoWidth()
@@ -655,17 +660,19 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
                     .Size(FVector2D(0, 0))
                 ]
             ]
-            
-            // Message content - fills available space
+
+            // Message content - fills available space with markdown rendering
             + SHorizontalBox::Slot()
             .FillWidth(1.0f)
             .VAlign(VAlign_Center)
             [
-                SAssignNew(ContentTextBlock, STextBlock)
-                .Text(FText::FromString(DisplayText))
+                SAssignNew(ContentRichTextBlock, SRichTextBlock)
+                .Text(FText::FromString(RichText))
                 .AutoWrapText(true)
-                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
-                .ColorAndOpacity(FSlateColor(TextColor))
+                .DecoratorStyleSet(&FChatRichTextStyles::Get())
+                .TextStyle(&FChatRichTextStyles::Get(), FChatRichTextStyles::Style_Default)
+                .LineHeightPercentage(1.5f)  // 50% more line height for readability
+                + SRichTextBlock::HyperlinkDecorator(TEXT("a"), FSlateHyperlinkRun::FOnClick::CreateSP(this, &SAIChatWindow::HandleHyperlinkClicked))
             ]
             
             // Copy button - on same line, right side
@@ -699,7 +706,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     if (Message.Role == TEXT("user"))
     {
         MessageScrollBox->AddSlot()
-        .Padding(2)
+        .Padding(10)
         .HAlign(HAlign_Right)
         [
             SNew(SBox)
@@ -713,14 +720,14 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     {
         // Assistant/system messages fill width
         MessageScrollBox->AddSlot()
-        .Padding(2)
+        .Padding(10)
         [
             MessageContent
         ];
     }
     
     // Store reference for streaming updates
-    MessageTextBlocks.Add(Index, ContentTextBlock);
+    MessageTextBlocks.Add(Index, ContentRichTextBlock);
 
     // If this was a tool call message with content, now add the tool call widgets after the message
     if (bIsToolCall && !Message.Content.IsEmpty())
@@ -789,9 +796,6 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
     WidgetData.CallJson = ToolCall.Arguments;
     WidgetData.bResponseReceived = false;
     
-    // Truncate JSON for display
-    FString TruncatedCallJson = WidgetData.CallJson.Len() > 1000 ? WidgetData.CallJson.Left(1000) + TEXT("\n...") : WidgetData.CallJson;
-    
     // Capture for copy lambdas
     FString CapturedCallJson = ToolCall.Arguments;
     TSharedPtr<FString> CapturedResponseJson = MakeShared<FString>();
@@ -845,7 +849,7 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
                     .Padding(4)
                     [
                         SAssignNew(WidgetData.CallJsonText, STextBlock)
-                        .Text(FText::FromString(TruncatedCallJson))
+                        .Text(FText::FromString(WidgetData.CallJson))
                         .AutoWrapText(true)
                         .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::TextCode))
@@ -1039,10 +1043,9 @@ void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const 
     // Update response JSON text in the details section
     if (WidgetData->ResponseJsonText.IsValid())
     {
-        FString TruncatedJson = ResponseJson.Len() > 1000 ? ResponseJson.Left(1000) + TEXT("\n...") : ResponseJson;
         FLinearColor TextColor = bSuccess ? VibeUEColors::Green : VibeUEColors::Red;
         
-        WidgetData->ResponseJsonText->SetText(FText::FromString(TruncatedJson));
+        WidgetData->ResponseJsonText->SetText(FText::FromString(ResponseJson));
         WidgetData->ResponseJsonText->SetColorAndOpacity(FSlateColor(TextColor));
     }
     
@@ -1064,16 +1067,18 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
         return;
     }
     
-    // Try to update just the text block instead of rebuilding
-    TSharedPtr<STextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
-    if (TextBlockPtr && TextBlockPtr->IsValid())
+    // Try to update just the rich text block instead of rebuilding
+    TSharedPtr<SRichTextBlock>* RichTextBlockPtr = MessageTextBlocks.Find(Index);
+    if (RichTextBlockPtr && RichTextBlockPtr->IsValid())
     {
         FString DisplayText = Message.Content;
         if (Message.bIsStreaming && DisplayText.IsEmpty())
         {
             DisplayText = TEXT("...");
         }
-        (*TextBlockPtr)->SetText(FText::FromString(DisplayText));
+        // Convert markdown to rich text format
+        FString RichText = FMarkdownToRichText::Convert(DisplayText, Message.bIsStreaming);
+        (*RichTextBlockPtr)->SetText(FText::FromString(RichText));
     }
     else
     {
@@ -2367,7 +2372,7 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
     }
     
     // Check if this message has a widget yet (it may have been skipped as empty streaming)
-    TSharedPtr<STextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
+    TSharedPtr<SRichTextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
     if (!TextBlockPtr)
     {
         // Widget doesn't exist - add it now that we have content
@@ -2861,4 +2866,14 @@ void SAIChatWindow::OnVoiceInputAutoSent()
 {
     // Clear input box after auto-sending
     InputTextBox->SetText(FText::FromString(TEXT("")));
+}
+
+void SAIChatWindow::HandleHyperlinkClicked(const FSlateHyperlinkRun::FMetadata& Metadata)
+{
+    // Get URL from the "id" attribute we set in markdown conversion
+    const FString* URL = Metadata.Find(TEXT("id"));
+    if (URL && !URL->IsEmpty())
+    {
+        FPlatformProcess::LaunchURL(**URL, nullptr, nullptr);
+    }
 }

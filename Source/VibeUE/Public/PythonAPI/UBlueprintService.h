@@ -1713,6 +1713,37 @@ public:
 		const FString& NodeId
 	);
 
+	/**
+	 * Set the position of a node in a graph.
+	 * Use this to reposition Entry/Result nodes for clean layouts.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param NodeId - GUID of the node to reposition
+	 * @param PosX - New X position in the graph
+	 * @param PosY - New Y position in the graph
+	 * @return True if successful
+	 *
+	 * Example - Reposition Result node to end of function:
+	 *   unreal.BlueprintService.set_node_position("/Game/BP_Player", "ApplyDamage", result_id, 800, 0)
+	 *
+	 * Example - Separate stacked Entry/Result nodes:
+	 *   nodes = unreal.BlueprintService.get_nodes_in_graph(path, func)
+	 *   for node in nodes:
+	 *       if "FunctionEntry" in node.node_type:
+	 *           unreal.BlueprintService.set_node_position(path, func, node.node_id, 0, 0)
+	 *       elif "FunctionResult" in node.node_type:
+	 *           unreal.BlueprintService.set_node_position(path, func, node.node_id, 800, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool SetNodePosition(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
 	// ============================================================================
 	// LIFECYCLE & PROPERTY MANAGEMENT (Missing manage_blueprint Actions)
 	// ============================================================================
@@ -2006,6 +2037,76 @@ public:
 		const FString& SpawnerKey,
 		float PosX = 0.0f,
 		float PosY = 0.0f
+	);
+
+	// ============================================================================
+	// COMPONENT OPERATIONS - Extended API
+	// ============================================================================
+
+	/**
+	 * List all properties of a component in a blueprint.
+	 * This is an alias for GetAllComponentProperties with a more intuitive name.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param ComponentName - Name of the component
+	 * @param bIncludeInherited - Whether to include inherited properties (default: true)
+	 * @return Array of property information
+	 *
+	 * Example:
+	 *   props = unreal.BlueprintService.list_component_properties("/Game/BP_Player", "Mesh")
+	 *   for prop in props:
+	 *       print(f"{prop.property_name}: {prop.property_type} = {prop.value}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
+	static TArray<FComponentPropertyInfo> ListComponentProperties(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		bool bIncludeInherited = true
+	);
+
+	/**
+	 * Set a component as the root component of the blueprint.
+	 * The component must be a SceneComponent and must exist in the blueprint.
+	 * The previous root's children will be reparented to the new root.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param ComponentName - Name of the component to make root
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.set_root_component("/Game/BP_Player", "MyNewRoot")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
+	static bool SetRootComponent(
+		const FString& BlueprintPath,
+		const FString& ComponentName
+	);
+
+	/**
+	 * Compare properties of two components and return the differences.
+	 * Components can be in the same or different blueprints.
+	 *
+	 * @param BlueprintPathA - Full path to the first blueprint
+	 * @param ComponentNameA - Name of the first component
+	 * @param BlueprintPathB - Full path to the second blueprint (or same as A)
+	 * @param ComponentNameB - Name of the second component
+	 * @param OutDifferences - String containing the differences
+	 * @return True if comparison succeeded (even if no differences)
+	 *
+	 * Example:
+	 *   success, diff = unreal.BlueprintService.compare_components(
+	 *       "/Game/BP_Player", "Mesh",
+	 *       "/Game/BP_Enemy", "Mesh"
+	 *   )
+	 *   print(diff)  # Shows property differences
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
+	static bool CompareComponents(
+		const FString& BlueprintPathA,
+		const FString& ComponentNameA,
+		const FString& BlueprintPathB,
+		const FString& ComponentNameB,
+		FString& OutDifferences
 	);
 
 private:

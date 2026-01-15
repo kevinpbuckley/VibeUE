@@ -9,7 +9,9 @@
 #include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "Tools/ExampleTools.h"
+#include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
+#include "UI/ChatRichTextStyles.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -143,16 +145,19 @@ static FAutoConsoleCommandWithArgsAndOutputDevice TestToolCommand(
 void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
-	
+
+	// Initialize Chat Rich Text Styles (for markdown rendering)
+	FChatRichTextStyles::Initialize();
+
 	// Initialize Tool Registry (reflection-based tools)
 	FToolRegistry::Get().Initialize();
-	
+
 	// Initialize AI Chat commands
 	FAIChatCommands::Initialize();
-	
+
 	// Initialize MCP Server (auto-starts if enabled in config)
 	FMCPServer::Get().Initialize();
-	
+
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
 }
@@ -161,21 +166,31 @@ void FModule::ShutdownModule()
 {
 	// Unregister PreExit callback
 	FCoreDelegates::OnPreExit.RemoveAll(this);
-	
+
 	// Shutdown MCP Server
 	FMCPServer::Get().Shutdown();
-	
+
 	// Shutdown AI Chat commands
 	FAIChatCommands::Shutdown();
 
 	// Shutdown Tool Registry
 	FToolRegistry::Get().Shutdown();
-	
+
+	// Shutdown Chat Rich Text Styles
+	FChatRichTextStyles::Shutdown();
+
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
 }
 
 void FModule::OnPreExit()
 {
+	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
+	
+	// FIRST: Release all C++ Python service instances BEFORE running Python GC
+	// This prevents access violations when Python tries to garbage collect objects
+	// that the C++ side is still holding references to
+	UPythonTools::Shutdown();
+	
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - forcing Python garbage collection"));
 	
 	// Force Python to garbage collect and release any UObject references

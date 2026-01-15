@@ -4,6 +4,7 @@
 #include "Core/ErrorCodes.h"
 #include "Misc/DateTime.h"
 #include "HAL/PlatformMisc.h"
+#include "Internationalization/Regex.h"
 
 // For SEH exception handling on Windows
 #if PLATFORM_WINDOWS
@@ -56,7 +57,11 @@ static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, F
 	}
 	
 	// input() blocks the editor indefinitely
-	if (Code.Contains(TEXT("input(")) && !Code.Contains(TEXT("#")) && !Code.Contains(TEXT("Enhanced")))
+	// Use regex to match standalone input( calls, not method names like add_function_input(
+	// Pattern matches: input(, =input(, (input(, but NOT _input( or identifier_input(
+	static FRegexPattern InputPattern(TEXT("(?:^|[^_a-zA-Z0-9])input\\s*\\("));
+	FRegexMatcher InputMatcher(InputPattern, Code);
+	if (InputMatcher.FindNext() && !Code.Contains(TEXT("#")) && !Code.Contains(TEXT("Enhanced")))
 	{
 		OutPattern = TEXT("input()");
 		OutReason = TEXT("input() blocks the editor. Use a different approach for user interaction.");
