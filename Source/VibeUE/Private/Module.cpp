@@ -11,6 +11,7 @@
 #include "Tools/ExampleTools.h"
 #include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
+#include "UI/ChatRichTextStyles.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -144,16 +145,19 @@ static FAutoConsoleCommandWithArgsAndOutputDevice TestToolCommand(
 void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
-	
+
+	// Initialize Chat Rich Text Styles (for markdown rendering)
+	FChatRichTextStyles::Initialize();
+
 	// Initialize Tool Registry (reflection-based tools)
 	FToolRegistry::Get().Initialize();
-	
+
 	// Initialize AI Chat commands
 	FAIChatCommands::Initialize();
-	
+
 	// Initialize MCP Server (auto-starts if enabled in config)
 	FMCPServer::Get().Initialize();
-	
+
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
 }
@@ -162,16 +166,19 @@ void FModule::ShutdownModule()
 {
 	// Unregister PreExit callback
 	FCoreDelegates::OnPreExit.RemoveAll(this);
-	
+
 	// Shutdown MCP Server
 	FMCPServer::Get().Shutdown();
-	
+
 	// Shutdown AI Chat commands
 	FAIChatCommands::Shutdown();
 
 	// Shutdown Tool Registry
 	FToolRegistry::Get().Shutdown();
-	
+
+	// Shutdown Chat Rich Text Styles
+	FChatRichTextStyles::Shutdown();
+
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
 }
 
