@@ -64,11 +64,18 @@ import unreal
 context_path = "/Game/Input/IMC_Default"
 action_path = "/Game/Input/IA_Fire"
 
-# Add trigger
-unreal.InputService.add_trigger(context_path, action_path, "LeftMouseButton", "Pressed")
+# First add the key mapping
+unreal.InputService.add_key_mapping(context_path, action_path, "LeftMouseButton")
 
-# Add modifier (for analog inputs)
-unreal.InputService.add_modifier(context_path, action_path, "Gamepad_RightTrigger", "DeadZone")
+# Get mappings to find the index
+mappings = unreal.InputService.get_mappings(context_path)
+mapping_index = len(mappings) - 1  # Last added mapping
+
+# Add trigger using mapping index
+unreal.InputService.add_trigger(context_path, mapping_index, "Pressed")
+
+# Add modifier using mapping index
+unreal.InputService.add_modifier(context_path, mapping_index, "DeadZone")
 
 # Save
 unreal.EditorAssetLibrary.save_asset(context_path)
@@ -86,8 +93,8 @@ mappings = unreal.InputService.get_mappings("/Game/Input/IMC_Default")
 for m in mappings:
     print(f"Action: {m.action_name}, Key: {m.key}")
 
-# Get action info
-info = unreal.InputService.get_action_info("/Game/Input/IA_Jump")
+# Get action info - use get_input_action_info
+info = unreal.InputService.get_input_action_info("/Game/Input/IA_Jump")
 if info:
     print(f"Action: {info.name}, ValueType: {info.value_type}")
 ```
@@ -104,13 +111,13 @@ keys = unreal.InputService.get_available_keys()
 for k in keys[:20]:
     print(k)
 
-# List triggers
-triggers = unreal.InputService.get_available_triggers()
-for t in triggers:
-    print(t)
+# Discover types to get triggers and modifiers
+types = unreal.InputService.discover_types()
+print(f"Value Types: {types.action_value_types}")
+print(f"Modifiers: {types.modifier_types}")
+print(f"Triggers: {types.trigger_types}")
 
-# List modifiers
-modifiers = unreal.InputService.get_available_modifiers()
-for m in modifiers:
-    print(m)
+# Alternative: get from direct methods
+modifiers = unreal.InputService.get_available_modifier_types()
+triggers = unreal.InputService.get_available_trigger_types()
 ```

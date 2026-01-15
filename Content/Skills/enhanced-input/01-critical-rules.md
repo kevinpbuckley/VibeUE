@@ -87,11 +87,13 @@ context_path = "/Game/Input/IMC_Default"  # Mapping Context
 - `SwizzleInputAxisValues` - Swap X/Y axes
 
 ```python
-# Add trigger to mapping
-unreal.InputService.add_trigger(context_path, action_path, "Gamepad_FaceButton_Bottom", "Hold")
+# Add trigger to mapping (requires mapping_index, not action_path)
+context_path = "/Game/Input/IMC_Default"
+mapping_index = 0  # Get from get_mappings() first
+unreal.InputService.add_trigger(context_path, mapping_index, "Hold")
 
-# Add modifier
-unreal.InputService.add_modifier(context_path, action_path, "Gamepad_LeftThumbstick", "DeadZone")
+# Add modifier (requires mapping_index, not action_path)
+unreal.InputService.add_modifier(context_path, mapping_index, "DeadZone")
 ```
 
 ---

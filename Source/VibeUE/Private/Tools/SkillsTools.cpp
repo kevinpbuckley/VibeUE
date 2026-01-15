@@ -593,14 +593,10 @@ static FString LoadSkill(const FString& SkillName)
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
 	ResultObj->SetBoolField(TEXT("success"), true);
 	ResultObj->SetStringField(TEXT("skill_name"), ActualSkillName);
-	ResultObj->SetStringField(TEXT("content"), ConcatenatedContent);
-
-	TArray<TSharedPtr<FJsonValue>> FilesArray;
-	for (const FString& File : FilesLoaded)
-	{
-		FilesArray.Add(MakeShared<FJsonValueString>(File));
-	}
-	ResultObj->SetArrayField(TEXT("files_loaded"), FilesArray);
+	
+	// Add critical instruction FIRST so AI sees it
+	ResultObj->SetStringField(TEXT("IMPORTANT"), 
+		TEXT("Use method signatures from 'vibeue_apis' below - NOT from 'content'. The content shows workflows/gotchas only. For exact method names and parameters, ONLY use vibeue_apis."));
 
 	// Add VibeUE classes list (primary)
 	TArray<TSharedPtr<FJsonValue>> VibeUEClassesArray;
@@ -610,7 +606,7 @@ static FString LoadSkill(const FString& SkillName)
 	}
 	ResultObj->SetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray);
 
-	// Add VibeUE discovery results (the actual API info - USE THESE FIRST)
+	// Add VibeUE discovery results BEFORE content (the actual API info - USE THESE)
 	ResultObj->SetArrayField(TEXT("vibeue_apis"), VibeUEDiscoveryResults);
 
 	// Add Unreal classes list (fallback)
@@ -623,6 +619,16 @@ static FString LoadSkill(const FString& SkillName)
 
 	// Add Unreal discovery results (fallback APIs - only use when VibeUE doesn't cover)
 	ResultObj->SetArrayField(TEXT("unreal_apis"), UnrealDiscoveryResults);
+
+	// Content LAST - workflows and gotchas only, not method signatures
+	ResultObj->SetStringField(TEXT("content"), ConcatenatedContent);
+
+	TArray<TSharedPtr<FJsonValue>> FilesArray;
+	for (const FString& File : FilesLoaded)
+	{
+		FilesArray.Add(MakeShared<FJsonValueString>(File));
+	}
+	ResultObj->SetArrayField(TEXT("files_loaded"), FilesArray);
 
 	// Rough token count estimate (1 token ≈ 4 characters)
 	int32 TokenCount = ConcatenatedContent.Len() / 4;
