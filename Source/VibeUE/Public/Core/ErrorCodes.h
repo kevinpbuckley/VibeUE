@@ -502,6 +502,9 @@ namespace ErrorCodes
 	/** @brief Python runtime error or exception */
 	constexpr const TCHAR* PYTHON_RUNTIME_ERROR = TEXT("PYTHON_RUNTIME_ERROR");
 
+	/** @brief Python code contains patterns known to crash the editor */
+	constexpr const TCHAR* PYTHON_UNSAFE_CODE = TEXT("PYTHON_UNSAFE_CODE");
+
 	/** @brief Python execution exceeded timeout */
 	constexpr const TCHAR* PYTHON_EXECUTION_TIMEOUT = TEXT("PYTHON_EXECUTION_TIMEOUT");
 
@@ -516,9 +519,6 @@ namespace ErrorCodes
 
 	/** @brief Python introspection failed */
 	constexpr const TCHAR* PYTHON_INTROSPECTION_FAILED = TEXT("PYTHON_INTROSPECTION_FAILED");
-
-	/** @brief Unsafe Python code detected */
-	constexpr const TCHAR* PYTHON_UNSAFE_CODE = TEXT("PYTHON_UNSAFE_CODE");
 
 	/** @brief Invalid Python expression */
 	constexpr const TCHAR* PYTHON_INVALID_EXPRESSION = TEXT("PYTHON_INVALID_EXPRESSION");

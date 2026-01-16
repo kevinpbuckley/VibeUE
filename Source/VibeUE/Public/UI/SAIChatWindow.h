@@ -6,6 +6,7 @@
 #include "Widgets/SCompoundWidget.h"
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Input/SComboBox.h"
+#include "Widgets/Text/SRichTextBlock.h"
 #include "Chat/ChatSession.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAIChatWindow, Log, All);
@@ -87,8 +88,8 @@ private:
     /** Empty state container shown when no messages */
     TSharedPtr<SWidget> EmptyStateWidget;
     
-    /** Map of message index to text block for streaming updates */
-    TMap<int32, TSharedPtr<STextBlock>> MessageTextBlocks;
+    /** Map of message index to rich text block for streaming updates */
+    TMap<int32, TSharedPtr<SRichTextBlock>> MessageTextBlocks;
 
     // ============ Voice Input UI Components ============
 
@@ -284,7 +285,10 @@ private:
     
     /** Copy message content to clipboard */
     void CopyMessageToClipboard(int32 MessageIndex);
-    
+
+    /** Handle hyperlink clicked in rich text */
+    void HandleHyperlinkClicked(const FSlateHyperlinkRun::FMetadata& Metadata);
+
     /** Static window instance */
     static TWeakPtr<SWindow> WindowInstance;
     

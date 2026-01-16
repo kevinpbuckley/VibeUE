@@ -1,6 +1,8 @@
 // Copyright Buckley Builds LLC 2025 All Rights Reserved.
 
 #include "UI/SAIChatWindow.h"
+#include "UI/ChatRichTextStyles.h"
+#include "UI/MarkdownToRichText.h"
 #include "Chat/AIChatCommands.h"
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
@@ -106,8 +108,8 @@ namespace VibeUEColors
     const FLinearColor TextCode(0.72f, 0.82f, 0.72f, 1.0f);        // Code/JSON text - slight green tint
     
     // Message background colors  
-    const FLinearColor UserMessage(0.14f, 0.14f, 0.16f, 1.0f);     // User messages - neutral dark gray
-    const FLinearColor AssistantMessage(0.10f, 0.12f, 0.18f, 1.0f);// Assistant - dark blue tint
+    const FLinearColor UserMessage(0.055f, 0.094f, 0.102f, 1.0f);  // User messages - #0E181A
+    const FLinearColor AssistantMessage(0.0f, 0.0f, 0.0f, 0.0f);   // Assistant - transparent (no background)
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
     const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
     
@@ -598,12 +600,12 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     if (Message.Role == TEXT("user"))
     {
         BackgroundColor = VibeUEColors::UserMessage;
-        BorderColor = VibeUEColors::Gray;
+        BorderColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);  // Transparent - no accent line
     }
     else if (Message.Role == TEXT("assistant"))
     {
         BackgroundColor = VibeUEColors::AssistantMessage;
-        BorderColor = VibeUEColors::Blue;
+        BorderColor = FLinearColor(0.0f, 0.0f, 0.0f, 0.0f);  // Transparent - no accent line
     }
     else
     {
@@ -628,19 +630,22 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     {
         DisplayText = TEXT("...");
     }
-    
-    // Create the message content text block and store reference for streaming updates
-    TSharedPtr<STextBlock> ContentTextBlock;
-    
+
+    // Convert markdown to rich text format
+    FString RichText = FMarkdownToRichText::Convert(DisplayText, Message.bIsStreaming);
+
+    // Create the message content rich text block and store reference for streaming updates
+    TSharedPtr<SRichTextBlock> ContentRichTextBlock;
+
     // Create the message bubble with rounded corners
-    TSharedRef<SWidget> MessageContent = 
+    TSharedRef<SWidget> MessageContent =
         SNew(SBorder)
         .BorderImage(&RoundedBrush)
         .BorderBackgroundColor(BackgroundColor)
-        .Padding(FMargin(8, 4, 8, 4))
+        .Padding(FMargin(12, 10, 12, 10))
         [
             SNew(SHorizontalBox)
-            
+
             // Colored accent line (left side)
             + SHorizontalBox::Slot()
             .AutoWidth()
@@ -655,17 +660,19 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
                     .Size(FVector2D(0, 0))
                 ]
             ]
-            
-            // Message content - fills available space
+
+            // Message content - fills available space with markdown rendering
             + SHorizontalBox::Slot()
             .FillWidth(1.0f)
             .VAlign(VAlign_Center)
             [
-                SAssignNew(ContentTextBlock, STextBlock)
-                .Text(FText::FromString(DisplayText))
+                SAssignNew(ContentRichTextBlock, SRichTextBlock)
+                .Text(FText::FromString(RichText))
                 .AutoWrapText(true)
-                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
-                .ColorAndOpacity(FSlateColor(TextColor))
+                .DecoratorStyleSet(&FChatRichTextStyles::Get())
+                .TextStyle(&FChatRichTextStyles::Get(), FChatRichTextStyles::Style_Default)
+                .LineHeightPercentage(1.5f)  // 50% more line height for readability
+                + SRichTextBlock::HyperlinkDecorator(TEXT("a"), FSlateHyperlinkRun::FOnClick::CreateSP(this, &SAIChatWindow::HandleHyperlinkClicked))
             ]
             
             // Copy button - on same line, right side
@@ -699,7 +706,7 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     if (Message.Role == TEXT("user"))
     {
         MessageScrollBox->AddSlot()
-        .Padding(2)
+        .Padding(10)
         .HAlign(HAlign_Right)
         [
             SNew(SBox)
@@ -713,14 +720,14 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
     {
         // Assistant/system messages fill width
         MessageScrollBox->AddSlot()
-        .Padding(2)
+        .Padding(10)
         [
             MessageContent
         ];
     }
     
     // Store reference for streaming updates
-    MessageTextBlocks.Add(Index, ContentTextBlock);
+    MessageTextBlocks.Add(Index, ContentRichTextBlock);
 
     // If this was a tool call message with content, now add the tool call widgets after the message
     if (bIsToolCall && !Message.Content.IsEmpty())
@@ -789,9 +796,6 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
     WidgetData.CallJson = ToolCall.Arguments;
     WidgetData.bResponseReceived = false;
     
-    // Truncate JSON for display
-    FString TruncatedCallJson = WidgetData.CallJson.Len() > 1000 ? WidgetData.CallJson.Left(1000) + TEXT("\n...") : WidgetData.CallJson;
-    
     // Capture for copy lambdas
     FString CapturedCallJson = ToolCall.Arguments;
     TSharedPtr<FString> CapturedResponseJson = MakeShared<FString>();
@@ -845,7 +849,7 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
                     .Padding(4)
                     [
                         SAssignNew(WidgetData.CallJsonText, STextBlock)
-                        .Text(FText::FromString(TruncatedCallJson))
+                        .Text(FText::FromString(WidgetData.CallJson))
                         .AutoWrapText(true)
                         .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
                         .ColorAndOpacity(FSlateColor(VibeUEColors::TextCode))
@@ -987,6 +991,10 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
         CompactWidget
     ];
     
+    // Force Slate to invalidate and redraw the widget immediately
+    // This ensures the yellow arrow (→) is visible before tool execution completes
+    CompactWidget->Invalidate(EInvalidateWidgetReason::Paint);
+    
     ScrollToBottom();
 }
 
@@ -1034,15 +1042,17 @@ void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const 
         
         WidgetData->StatusText->SetText(FText::FromString(StatusIcon));
         WidgetData->StatusText->SetColorAndOpacity(FSlateColor(StatusColor));
+        
+        // Force immediate repaint to show the status change
+        WidgetData->StatusText->Invalidate(EInvalidateWidgetReason::Paint);
     }
     
     // Update response JSON text in the details section
     if (WidgetData->ResponseJsonText.IsValid())
     {
-        FString TruncatedJson = ResponseJson.Len() > 1000 ? ResponseJson.Left(1000) + TEXT("\n...") : ResponseJson;
         FLinearColor TextColor = bSuccess ? VibeUEColors::Green : VibeUEColors::Red;
         
-        WidgetData->ResponseJsonText->SetText(FText::FromString(TruncatedJson));
+        WidgetData->ResponseJsonText->SetText(FText::FromString(ResponseJson));
         WidgetData->ResponseJsonText->SetColorAndOpacity(FSlateColor(TextColor));
     }
     
@@ -1064,16 +1074,18 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
         return;
     }
     
-    // Try to update just the text block instead of rebuilding
-    TSharedPtr<STextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
-    if (TextBlockPtr && TextBlockPtr->IsValid())
+    // Try to update just the rich text block instead of rebuilding
+    TSharedPtr<SRichTextBlock>* RichTextBlockPtr = MessageTextBlocks.Find(Index);
+    if (RichTextBlockPtr && RichTextBlockPtr->IsValid())
     {
         FString DisplayText = Message.Content;
         if (Message.bIsStreaming && DisplayText.IsEmpty())
         {
             DisplayText = TEXT("...");
         }
-        (*TextBlockPtr)->SetText(FText::FromString(DisplayText));
+        // Convert markdown to rich text format
+        FString RichText = FMarkdownToRichText::Convert(DisplayText, Message.bIsStreaming);
+        (*RichTextBlockPtr)->SetText(FText::FromString(RichText));
     }
     else
     {
@@ -1579,12 +1591,13 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
+    TSharedPtr<SCheckBox> AutoSaveBeforePythonCheckBox;
     TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
     TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
     TSharedPtr<SSpinBox<float>> TopPSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
     TSharedPtr<SSpinBox<int32>> MaxToolIterationsSpinBox;
-    
+
     // MCP Server settings widgets
     TSharedPtr<SCheckBox> MCPServerEnabledCheckBox;
     TSharedPtr<SSpinBox<int32>> MCPServerPortSpinBox;
@@ -1596,11 +1609,14 @@ FReply SAIChatWindow::OnSettingsClicked()
     int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
     bool bCurrentParallelToolCalls = FChatSession::GetParallelToolCallsFromConfig();
     int32 CurrentMaxToolIterations = FChatSession::GetMaxToolCallIterationsFromConfig();
-    
+
     // Load current MCP Server settings
     bool bMCPServerEnabled = FMCPServer::GetEnabledFromConfig();
     int32 MCPServerPort = FMCPServer::GetPortFromConfig();
     FString MCPServerApiKey = FMCPServer::GetApiKeyFromConfig();
+
+    // Load current auto-save setting
+    bool bCurrentAutoSaveBeforePython = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -1762,6 +1778,28 @@ FReply SAIChatWindow::OnSettingsClicked()
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Debug Mode")))
                 .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
+            ]
+        ]
+
+        // Auto-save before Python execution
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(AutoSaveBeforePythonCheckBox, SCheckBox)
+                .IsChecked(bCurrentAutoSaveBeforePython ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Auto Save Before Python Execution")))
+                .ToolTipText(FText::FromString(TEXT("Automatically save all dirty packages before executing Python code to protect against crashes.")))
             ]
         ]
 
@@ -2086,7 +2124,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, AutoSaveBeforePythonCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -2107,7 +2145,11 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Save debug mode
                 bool bNewDebugMode = DebugModeCheckBox->IsChecked();
                 FChatSession::SetDebugModeEnabled(bNewDebugMode);
-                
+
+                // Save auto-save before Python execution setting
+                bool bNewAutoSaveBeforePython = AutoSaveBeforePythonCheckBox->IsChecked();
+                FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bNewAutoSaveBeforePython);
+
                 // Save LLM generation parameters
                 FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
                 FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
@@ -2296,6 +2338,24 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
     bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
     if (bIsToolCall)
     {
+        // FIRST: Handle any text content the assistant provided alongside tool calls
+        // The AI often explains what it's doing before/after tool calls
+        if (!Message.Content.IsEmpty())
+        {
+            TSharedPtr<SRichTextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
+            if (!TextBlockPtr)
+            {
+                // Widget doesn't exist yet - add it for the content
+                AddMessageWidget(Message, Index);
+            }
+            else
+            {
+                // Widget exists - update the content
+                UpdateMessageWidget(Index, Message);
+            }
+        }
+        
+        // THEN: Handle tool call widgets
         // Check if any of the tool calls already have widgets (using unique key)
         bool bAllToolsHaveWidgets = true;
         for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
@@ -2309,20 +2369,17 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
             }
         }
         
-        if (bAllToolsHaveWidgets)
+        if (!bAllToolsHaveWidgets)
         {
-            // All tools already have widgets, nothing to do
-            return;
-        }
-        
-        // Some tools don't have widgets yet - add them
-        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
-        {
-            const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
-            FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
-            if (!ToolCallWidgets.Contains(UniqueKey))
+            // Some tools don't have widgets yet - add them
+            for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
             {
-                AddToolCallWidget(ToolCall, Index, ToolIdx);
+                const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
+                FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
+                if (!ToolCallWidgets.Contains(UniqueKey))
+                {
+                    AddToolCallWidget(ToolCall, Index, ToolIdx);
+                }
             }
         }
         return;
@@ -2337,7 +2394,7 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
     }
     
     // Check if this message has a widget yet (it may have been skipped as empty streaming)
-    TSharedPtr<STextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
+    TSharedPtr<SRichTextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
     if (!TextBlockPtr)
     {
         // Widget doesn't exist - add it now that we have content
@@ -2831,4 +2888,14 @@ void SAIChatWindow::OnVoiceInputAutoSent()
 {
     // Clear input box after auto-sending
     InputTextBox->SetText(FText::FromString(TEXT("")));
+}
+
+void SAIChatWindow::HandleHyperlinkClicked(const FSlateHyperlinkRun::FMetadata& Metadata)
+{
+    // Get URL from the "id" attribute we set in markdown conversion
+    const FString* URL = Metadata.Find(TEXT("id"));
+    if (URL && !URL->IsEmpty())
+    {
+        FPlatformProcess::LaunchURL(**URL, nullptr, nullptr);
+    }
 }

@@ -180,10 +180,36 @@ bool FToolRegistry::ValidateParameters(
 	// Check required parameters
 	for (const FToolParameter& Param : Tool.Parameters)
 	{
-		if (Param.bRequired && !Parameters.Contains(Param.Name))
+		if (Param.bRequired)
 		{
-			OutError = FString::Printf(TEXT("Missing required parameter: %s"), *Param.Name);
-			return false;
+			// First check if parameter exists directly
+			if (Parameters.Contains(Param.Name))
+			{
+				continue;
+			}
+
+			// If not found directly, check if it's in ParamsJson
+			const FString* ParamsJsonStr = Parameters.Find(TEXT("ParamsJson"));
+			bool bFoundInJson = false;
+			
+			if (ParamsJsonStr)
+			{
+				TSharedPtr<FJsonObject> JsonObj;
+				TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(*ParamsJsonStr);
+				if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+				{
+					if (JsonObj->HasField(*Param.Name))
+					{
+						bFoundInJson = true;
+					}
+				}
+			}
+
+			if (!bFoundInJson)
+			{
+				OutError = FString::Printf(TEXT("Missing required parameter: %s"), *Param.Name);
+				return false;
+			}
 		}
 	}
 	return true;

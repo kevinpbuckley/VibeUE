@@ -75,6 +75,7 @@ $ExcludeFiles = @(
 
 # Development-only files that shouldn't be in marketplace submission
 $ExcludeDevFiles = @(
+    "CLAUDE.md",             # Claude AI context (development only)
     "DEAD_HANDLERS_DELETED.md",
     "HANDLER_AUDIT.md", 
     "HANDLER_AUDIT_COMPLETE.md",

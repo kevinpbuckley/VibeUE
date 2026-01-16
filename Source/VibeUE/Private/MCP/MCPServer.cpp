@@ -239,7 +239,9 @@ uint32 FMCPServer::Run()
                 FSocket* ClientSocket = ListenerSocket->Accept(TEXT("MCP Client"));
                 if (ClientSocket)
                 {
+                    UE_LOG(LogMCPServer, Log, TEXT("MCP: New connection accepted"));
                     HandleConnection(ClientSocket);
+                    UE_LOG(LogMCPServer, Log, TEXT("MCP: Connection handling completed"));
                 }
             }
         }
@@ -320,9 +322,14 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
     // Handle different HTTP methods per MCP spec
     if (Method == TEXT("POST"))
     {
+        UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Processing JSON-RPC request"));
+        
         // Process JSON-RPC request (SessionId already retrieved above)
         bool bIsNotification = false;
         FString Response = HandleMCPRequest(Body, SessionId, bIsNotification);
+        
+        UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Request processed, notification=%d, response length=%d"), 
+            bIsNotification, Response.Len());
         
         if (bIsNotification)
         {
@@ -359,7 +366,9 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
             }
             else
             {
+                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Sending HTTP response"));
                 SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
+                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Response sent"));
             }
         }
     }
@@ -431,16 +440,26 @@ bool FMCPServer::ParseHttpRequest(FSocket* Socket, FString& OutMethod, FString& 
     // Read in chunks until we have the full request
     int32 TotalRead = 0;
     const int32 MaxSize = 1024 * 1024; // 1MB max request
+    int32 EmptyReadCount = 0;
+    const int32 MaxEmptyReads = 3; // Give up after 3 empty reads (15 seconds total)
     
-    while (TotalRead < MaxSize)
+    while (TotalRead < MaxSize && EmptyReadCount < MaxEmptyReads)
     {
-        Socket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0));
+        bool bHadData = Socket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0));
+        
+        if (!bHadData)
+        {
+            EmptyReadCount++;
+            UE_LOG(LogMCPServer, Warning, TEXT("ParseHttpRequest: No data after wait (attempt %d/%d)"), EmptyReadCount, MaxEmptyReads);
+            continue;
+        }
         
         BytesRead = 0;
         if (Socket->Recv(Buffer.GetData(), Buffer.Num() - 1, BytesRead))
         {
             if (BytesRead > 0)
             {
+                EmptyReadCount = 0; // Reset counter on successful read
                 Buffer[BytesRead] = 0;
                 RequestData += UTF8_TO_TCHAR(reinterpret_cast<const char*>(Buffer.GetData()));
                 TotalRead += BytesRead;
@@ -479,17 +498,25 @@ bool FMCPServer::ParseHttpRequest(FSocket* Socket, FString& OutMethod, FString& 
             else
             {
                 // Connection closed or no more data
+                UE_LOG(LogMCPServer, Log, TEXT("ParseHttpRequest: Connection closed (0 bytes read)"));
                 break;
             }
         }
         else
         {
+            UE_LOG(LogMCPServer, Warning, TEXT("ParseHttpRequest: Recv() failed"));
             break;
         }
     }
     
+    if (EmptyReadCount >= MaxEmptyReads)
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("ParseHttpRequest: Timeout waiting for data"));
+    }
+    
     if (RequestData.IsEmpty())
     {
+        UE_LOG(LogMCPServer, Warning, TEXT("ParseHttpRequest: No request data received"));
         return false;
     }
     
@@ -546,17 +573,23 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
 {
     if (!Socket)
     {
+        UE_LOG(LogMCPServer, Warning, TEXT("SendHttpResponse called with null socket"));
         return;
     }
+    
+    // Convert body to UTF-8 FIRST to get accurate byte length for Content-Length header
+    // Using Body.Len() is incorrect because UTF-8 can have more bytes than characters
+    FTCHARToUTF8 BodyConverter(*Body);
+    int32 BodyByteLength = BodyConverter.Length();
     
     FString Response = FString::Printf(TEXT("HTTP/1.1 %d %s\r\n"), StatusCode, *StatusText);
     
     if (!ContentType.IsEmpty())
     {
-        Response += FString::Printf(TEXT("Content-Type: %s\r\n"), *ContentType);
+        Response += FString::Printf(TEXT("Content-Type: %s; charset=utf-8\r\n"), *ContentType);
     }
     
-    Response += FString::Printf(TEXT("Content-Length: %d\r\n"), Body.Len());
+    Response += FString::Printf(TEXT("Content-Length: %d\r\n"), BodyByteLength);
     Response += TEXT("Connection: close\r\n");
     
     // Add extra headers
@@ -566,11 +599,29 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
     }
     
     Response += TEXT("\r\n");
-    Response += Body;
     
-    FTCHARToUTF8 Converter(*Response);
+    // Convert headers to UTF-8 and send separately, then send body bytes
+    FTCHARToUTF8 HeaderConverter(*Response);
+    
+    // Combine headers and body into one buffer for atomic send
+    TArray<uint8> SendBuffer;
+    SendBuffer.SetNumUninitialized(HeaderConverter.Length() + BodyByteLength);
+    FMemory::Memcpy(SendBuffer.GetData(), HeaderConverter.Get(), HeaderConverter.Length());
+    FMemory::Memcpy(SendBuffer.GetData() + HeaderConverter.Length(), BodyConverter.Get(), BodyByteLength);
+    
     int32 BytesSent = 0;
-    Socket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
+    bool bSendSuccess = Socket->Send(SendBuffer.GetData(), SendBuffer.Num(), BytesSent);
+    
+    if (!bSendSuccess || BytesSent != SendBuffer.Num())
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("SendHttpResponse: Send incomplete/failed - sent %d of %d bytes"), 
+            BytesSent, SendBuffer.Num());
+    }
+    else
+    {
+        UE_LOG(LogMCPServer, Verbose, TEXT("SendHttpResponse: %d %s - %d bytes (body: %d bytes)"), 
+            StatusCode, *StatusText, BytesSent, BodyByteLength);
+    }
 }
 
 // ============ MCP Protocol Handling ============
@@ -800,7 +851,12 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
         }
     }
     
-    UE_LOG(LogMCPServer, Log, TEXT("MCP tools/call - Tool: %s"), *ToolName);
+    UE_LOG(LogMCPServer, Log, TEXT("MCP tools/call - Tool: %s (RequestId: %s), Arguments received: %d"), *ToolName, *RequestId, Arguments.Num());
+    for (const auto& Pair : Arguments)
+    {
+        UE_LOG(LogMCPServer, Log, TEXT("  Arg: %s = %s"), *Pair.Key, *Pair.Value);
+    }
+    double ToolStartTime = FPlatformTime::Seconds();
     
     // Transform flat arguments into Action + ParamsJson format for tools that expect it
     // This handles the case where MCP clients send {"action": "list", "blueprint_name": "..."} 
@@ -870,29 +926,53 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     if (IsInGameThread())
     {
         // Execute directly - no need to defer
+        UE_LOG(LogMCPServer, Log, TEXT("Executing tool %s directly on game thread"), *ToolName);
         ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
     }
     else
     {
         // We're on a background thread, need to marshal to game thread
-        FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
+        UE_LOG(LogMCPServer, Log, TEXT("Marshaling tool %s to game thread from socket thread"), *ToolName);
         
-        AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent]()
+        FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
+        TAtomic<bool> bExecutionStarted(false);
+        
+        AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent, &bExecutionStarted]()
         {
+            bExecutionStarted = true;
+            UE_LOG(LogMCPServer, Log, TEXT("Tool %s execution starting on game thread"), *ToolName);
             ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
+            UE_LOG(LogMCPServer, Log, TEXT("Tool %s execution completed on game thread"), *ToolName);
             CompletionEvent->Trigger();
         });
         
-        // Wait for completion with timeout (30 seconds max for tool execution)
-        bool bCompleted = CompletionEvent->Wait(FTimespan::FromSeconds(30.0));
+        // Wait for completion with timeout (60 seconds for MCP tool execution)
+        // Python scripts and complex operations may need more time
+        const double TimeoutSeconds = 60.0;
+        bool bCompleted = CompletionEvent->Wait(FTimespan::FromSeconds(TimeoutSeconds));
         FPlatformProcess::ReturnSynchEventToPool(CompletionEvent);
         
         if (!bCompleted)
         {
-            UE_LOG(LogMCPServer, Error, TEXT("Tool execution timed out: %s"), *ToolName);
-            return BuildJsonRpcError(RequestId, -32000, TEXT("Tool execution timed out"));
+            if (!bExecutionStarted)
+            {
+                UE_LOG(LogMCPServer, Error, TEXT("Tool %s execution never started (game thread blocked?) - timed out after %.1fs"), 
+                    *ToolName, TimeoutSeconds);
+                return BuildJsonRpcError(RequestId, -32000, 
+                    TEXT("Tool execution timed out - game thread may be blocked. Try again or restart the editor."));
+            }
+            else
+            {
+                UE_LOG(LogMCPServer, Error, TEXT("Tool %s execution started but didn't complete - timed out after %.1fs"), 
+                    *ToolName, TimeoutSeconds);
+                return BuildJsonRpcError(RequestId, -32000, 
+                    TEXT("Tool execution timed out while running. The operation may still be in progress."));
+            }
         }
     }
+    
+    double ToolEndTime = FPlatformTime::Seconds();
+    UE_LOG(LogMCPServer, Log, TEXT("Tool %s completed in %.2fms"), *ToolName, (ToolEndTime - ToolStartTime) * 1000.0);
     
     // Build MCP result
     TArray<TSharedPtr<FJsonValue>> ContentArray;
@@ -902,9 +982,28 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     TextContent->SetStringField(TEXT("text"), ToolResult);
     ContentArray.Add(MakeShared<FJsonValueObject>(TextContent));
     
+    // Check if result indicates an error by parsing the JSON
+    bool bIsError = false;
+    TSharedPtr<FJsonObject> ResultJson;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ToolResult);
+    if (FJsonSerializer::Deserialize(Reader, ResultJson) && ResultJson.IsValid())
+    {
+        // Check if success field is false, or if error field has content
+        bool bSuccess = ResultJson->GetBoolField(TEXT("success"));
+        FString ErrorMsg = ResultJson->GetStringField(TEXT("error"));
+        bIsError = !bSuccess || !ErrorMsg.IsEmpty();
+    }
+    else
+    {
+        // If we can't parse JSON, fall back to string check for actual error content
+        bIsError = ToolResult.Contains(TEXT("\"error\":")) && 
+                   !ToolResult.Contains(TEXT("\"error\":\"\"")) &&
+                   !ToolResult.Contains(TEXT("\"error\": \"\""));
+    }
+    
     TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
     Result->SetArrayField(TEXT("content"), ContentArray);
-    Result->SetBoolField(TEXT("isError"), ToolResult.Contains(TEXT("\"error\"")));
+    Result->SetBoolField(TEXT("isError"), bIsError);
     
     return BuildJsonRpcResponse(RequestId, Result);
 }

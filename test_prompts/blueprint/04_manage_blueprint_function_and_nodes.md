@@ -6,24 +6,24 @@ Tests creating a realistic player damage system with functions, parameters, loca
 
 ## Setup
 
-Create an actor blueprint called BP_Player in the Blueprints folder. Delete it first if it already exists.
+Create an actor blueprint called BP_Player_Test in the Blueprints folder. Delete it first if it already exists.
 
 ---
 
-Add these variables to BP_Player:
+Add these variables to BP_Player_Test:
 - Health (float, default 100)
 - Armor (float, default 50)
 - IsAlive (bool, default true)
 
 ---
 
-Open BP_Player in the editor.
+Open BP_Player_Test in the editor.
 
 ---
 
 ## Creating the Damage Function
 
-Create a function called ApplyDamage in BP_Player.
+Create a function called ApplyDamage in BP_Player_Test.
 
 ---
 
@@ -90,7 +90,7 @@ Show the current connections in ApplyDamage.
 
 ## Adding Death Check Function
 
-Create another function called CheckDeath in BP_Player.
+Create another function called CheckDeath in BP_Player_Test.
 
 ---
 
@@ -124,11 +124,11 @@ Try to connect the DamageAmount parameter from ApplyDamage to the Print String i
 
 ## Compile and Verify
 
-Compile BP_Player.
+Compile BP_Player_Test.
 
 ---
 
-List all functions in BP_Player and verify ApplyDamage and CheckDeath exist.
+List all functions in BP_Player_Test and verify ApplyDamage and CheckDeath exist.
 
 ---
 
@@ -139,7 +139,7 @@ Show the final state of the ApplyDamage function with all nodes and connections.
 ## Summary
 
 Verify:
-1. BP_Player has Health, Armor, and IsAlive variables
+1. BP_Player_Test has Health, Armor, and IsAlive variables
 2. ApplyDamage function has correct parameters and local variable
 3. CheckDeath function works correctly
 4. Cross-graph connections fail with helpful error
