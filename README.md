@@ -208,15 +208,11 @@ Each skill includes:
 - **Common Mistakes** - Things to avoid (wrong property names, etc.)
 - **Property Formats** - How to format values in Unreal string syntax
 
-**8 Domain Skills:**
-- `blueprints` - Blueprint lifecycle, variables, functions, components, nodes
-- `materials` - Material creation and graph editing
-- `enhanced-input` - Input Actions, Mapping Contexts, Modifiers, Triggers
-- `data-tables` - Data Table creation and row management
-- `data-assets` - Data Asset instances and properties
-- `umg-widgets` - Widget Blueprint creation and styling
-- `level-actors` - Level actor manipulation
-- `asset-management` - Asset search, import/export, references
+**Domain Skills** (dynamically discovered from `Content/Skills/*/skill.md`):
+
+Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
+
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`
 
 ### Using Skills
 
@@ -507,7 +503,7 @@ Create `.vscode/mcp.json`:
 
 ## 📝 Custom Instructions
 
-Add project-specific context in `Plugins/VibeUE/Config/Instructions/`:
+Add project-specific context in `Plugins/VibeUE/Content/instructions/`:
 
 ```markdown
 # Project: My Game
@@ -518,7 +514,48 @@ Add project-specific context in `Plugins/VibeUE/Config/Instructions/`:
 - Materials: M_<Surface>_<Variant>
 ```
 
-All `.md` files are automatically included as AI context.
+All `.md` files in this directory are automatically concatenated and loaded as AI context.
+
+### Dynamic Token Replacement
+
+The system prompt supports dynamic token replacement. When the instructions are loaded, certain tokens are replaced with dynamically generated content:
+
+| Token | Replacement | Source |
+|-------|-------------|--------|
+| `{SKILLS}` | Skills table with names, descriptions, and services | Scanned from `Content/Skills/*/skill.md` frontmatter |
+
+**Example usage in `vibeue.instructions.md`:**
+
+```markdown
+## Available Skills
+
+Load skills using `manage_skills(action="load", skill_name="<name>")`:
+
+{SKILLS}
+```
+
+**Generated output:**
+
+```markdown
+| Skill | Description | Services |
+|-------|-------------|----------|
+| `blueprints` | Create and modify Blueprint assets... | BlueprintService, AssetDiscoveryService |
+| `materials` | Create and edit materials... | MaterialService, MaterialNodeService |
+...
+```
+
+This allows the skills list to stay in sync automatically when skills are added, removed, or modified. Each skill's metadata is defined in its `skill.md` YAML frontmatter:
+
+```yaml
+---
+name: blueprints
+display_name: Blueprint System
+description: Create and modify Blueprint assets, variables, functions, components, and node graphs
+vibeue_classes:
+  - BlueprintService
+  - AssetDiscoveryService
+---
+```
 
 ---
 

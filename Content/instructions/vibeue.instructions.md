@@ -122,34 +122,75 @@ json_str = json.dumps(data)
 
 ---
 
-## 📚 Quick Service Overview
+## 📚 Available Skills
 
-**Load the appropriate skill for detailed documentation:**
+**Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:**
 
-- **BlueprintService** → Load `blueprints` skill
-  - Create blueprints, variables, functions, components, nodes
-
-- **MaterialService / MaterialNodeService** → Load `materials` skill
-  - Create materials, instances, edit material graphs
-
-- **InputService** → Load `enhanced-input` skill
-  - Create Input Actions, Mapping Contexts, configure triggers/modifiers
-
-- **DataTableService** → Load `data-tables` skill
-  - Create/modify Data Tables, add/update/remove rows
-
-- **DataAssetService** → Load `data-assets` skill
-  - Create/modify Primary Data Assets
-
-- **WidgetService** → Load `umg-widgets` skill
-  - Create/modify Widget Blueprints (UI)
-
-- **AssetDiscoveryService** → Load `asset-management` skill
-  - Search, find, open, save, delete, import, export assets
+{SKILLS}
 
 ---
 
 ## ⚠️ Critical Rules
+
+### Transactional Python Scripts (Cleanup on Failure)
+
+**CRITICAL:** Python execution has NO automatic rollback. If your script fails midway, any assets created before the failure remain as orphans. **ALWAYS write transactional scripts that clean up after themselves.**
+
+**Pattern - Track created assets and delete on failure:**
+```python
+import unreal
+
+# Track all assets created during this operation
+created_assets = []
+
+try:
+    # Step 1: Create blueprint
+    bp_path = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
+    if bp_path:
+        created_assets.append(bp_path)
+    else:
+        raise Exception("Failed to create blueprint")
+
+    # Step 2: Add variable (may fail)
+    result = unreal.BlueprintService.add_variable(bp_path, "Health", "float")
+    if not result:
+        raise Exception("Failed to add Health variable")
+
+    # Step 3: Compile (may fail)
+    if not unreal.BlueprintService.compile_blueprint(bp_path):
+        raise Exception("Blueprint compilation failed")
+
+    print(f"SUCCESS: Created {bp_path}")
+
+except Exception as e:
+    # CLEANUP: Delete any assets we created before the failure
+    for asset_path in created_assets:
+        try:
+            unreal.AssetDiscoveryService.delete_asset(asset_path)
+            print(f"Cleaned up: {asset_path}")
+        except:
+            print(f"WARNING: Could not clean up {asset_path}")
+
+    print(f"FAILED: {e}")
+    raise  # Re-raise so VibeUE reports the error
+```
+
+**Rules for transactional scripts:**
+1. **Initialize `created_assets = []` at the start** of any script that creates assets
+2. **Append to list immediately** after each successful asset creation
+3. **Wrap ALL operations in try/except** - not just the risky ones
+4. **In except block: iterate and delete** all tracked assets
+5. **Re-raise the exception** so the error is reported to the user
+
+**When to use this pattern:**
+- Creating new Blueprints, Materials, Widgets, Data Tables, Data Assets
+- Any multi-step operation where later steps might fail
+- Operations that create multiple related assets
+
+**When NOT needed:**
+- Read-only operations (get_blueprint_info, search_assets, etc.)
+- Single atomic operations that can't partially fail
+- Modifying existing assets (use Ctrl+Z in editor if needed)
 
 ### Always Search Before Accessing
 ```
