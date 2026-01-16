@@ -2,13 +2,6 @@
 
 These tests should be run sequentially through the VibeUE chat interface in Unreal Engine. Each test builds on the previous ones. Check to see if assets exist before creating them. Delete them if they already exist, then create them if needed.
 
-**Important Notes:**
-- **Run these tests ONE PART AT A TIME**, not all at once. Paste each section individually into the VibeUE chat.
-- Data tables require a **row struct** type to define their schema. Always discover available struct types first before creating tables.
-- If trying to create a table that already exists, delete it and try again.
-
----
-
 ## Part 1: Row Struct Discovery
 
 Show me ALL available row struct types in this project. I want the complete list.

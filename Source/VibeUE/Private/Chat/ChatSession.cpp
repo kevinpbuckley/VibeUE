@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Chat/ChatSession.h"
 #include "Chat/VibeUEAPIClient.h"
@@ -65,42 +65,6 @@ void FChatSession::Initialize()
     {
         VibeUEClient->SetEndpointUrl(VibeUEEndpoint);
     }
-    
-    // Set up thinking and tool preparing callbacks for both clients
-    // These forward status changes to the UI
-    TWeakPtr<FChatSession> WeakSelf = AsShared();
-    
-    VibeUEClient->SetThinkingStatusCallback(FOnLLMThinkingStatus::CreateLambda([WeakSelf](bool bIsThinking)
-    {
-        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
-        {
-            Session->OnThinkingStatusChanged.ExecuteIfBound(bIsThinking);
-        }
-    }));
-    
-    VibeUEClient->SetToolPreparingCallback(FOnLLMToolPreparing::CreateLambda([WeakSelf](const FString& ToolName)
-    {
-        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
-        {
-            Session->OnToolPreparing.ExecuteIfBound(ToolName);
-        }
-    }));
-    
-    OpenRouterClient->SetThinkingStatusCallback(FOnLLMThinkingStatus::CreateLambda([WeakSelf](bool bIsThinking)
-    {
-        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
-        {
-            Session->OnThinkingStatusChanged.ExecuteIfBound(bIsThinking);
-        }
-    }));
-    
-    OpenRouterClient->SetToolPreparingCallback(FOnLLMToolPreparing::CreateLambda([WeakSelf](const FString& ToolName)
-    {
-        if (TSharedPtr<FChatSession> Session = WeakSelf.Pin())
-        {
-            Session->OnToolPreparing.ExecuteIfBound(ToolName);
-        }
-    }));
     
     // Apply LLM generation parameters to VibeUE client
     ApplyLLMParametersToClient();
@@ -203,7 +167,10 @@ void FChatSession::SendMessage(const FString& UserMessage)
     {
         CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
     }
-    
+
+    // Notify UI that LLM thinking has started
+    OnLLMThinkingStarted.ExecuteIfBound();
+
     // Send request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
     {
@@ -328,7 +295,10 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     }
     
     CurrentStreamingMessageIndex = INDEX_NONE;
-    
+
+    // Notify UI that LLM thinking has completed
+    OnLLMThinkingComplete.ExecuteIfBound();
+
     if (bSuccess)
     {
         SaveHistory();
@@ -339,14 +309,17 @@ void FChatSession::OnStreamComplete(bool bSuccess)
 void FChatSession::OnStreamError(const FString& ErrorMessage)
 {
     CHAT_SESSION_LOG(Error, TEXT("[STREAM ERROR] %s"), *ErrorMessage);
-    
+
+    // Notify UI that LLM thinking has completed (due to error)
+    OnLLMThinkingComplete.ExecuteIfBound();
+
     // Remove the incomplete assistant message
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
     {
         Messages.RemoveAt(CurrentStreamingMessageIndex);
     }
     CurrentStreamingMessageIndex = INDEX_NONE;
-    
+
     OnChatError.ExecuteIfBound(ErrorMessage);
 }
 
@@ -725,9 +698,12 @@ void FChatSession::SendFollowUpAfterToolCall()
     
     // Log follow-up request to LLM
     FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
-    CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] (Follow-up after tool) Provider: %s, Model: %s, Messages count: %d, Tools count: %d, Iteration: %d/%d"), 
+    CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] (Follow-up after tool) Provider: %s, Model: %s, Messages count: %d, Tools count: %d, Iteration: %d/%d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num(), ToolCallIterationCount, MaxToolCallIterations);
-    
+
+    // Notify UI that LLM thinking has started (follow-up after tool)
+    OnLLMThinkingStarted.ExecuteIfBound();
+
     // Send follow-up request using the appropriate client based on provider
     if (CurrentProvider == ELLMProvider::VibeUE)
     {

@@ -6,10 +6,6 @@ Run through these prompts sequentially to verify basic functionality. Assets wil
 
 ## Getting Started
 
-I want to make sure everything is working. Is Unreal connected?
-
----
-
 I need a basic actor blueprint for testing. Put it in the MCP_Test folder and call it QuickTest.
 
 ---

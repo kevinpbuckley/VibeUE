@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -38,7 +38,7 @@ public:
 	 * @param Code - Python code to execute
 	 * @return Execution result including output, errors, and success status
 	 */
-	UFUNCTION(BlueprintCallable, meta=(
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="execute_python_code",
 		ToolDescription="Execute Python code in Unreal Engine. Returns stdout, stderr, and execution status.",
 		ParamDescription_Code="Python code to execute"
@@ -51,7 +51,7 @@ public:
 	 * @param ModuleName - Name of the module to discover (e.g. "unreal")
 	 * @return JSON string with module information including classes, functions, and attributes
 	 */
-	UFUNCTION(BlueprintCallable, meta=(
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="discover_python_module",
 		ToolDescription="Discover contents of a Python module. Returns classes, functions, and attributes.",
 		ParamDescription_ModuleName="Name of the Python module (e.g. 'unreal', 'unreal.BlueprintEditorLibrary')"
@@ -64,7 +64,7 @@ public:
 	 * @param ClassName - Fully qualified class name (e.g. "unreal.BlueprintFactory")
 	 * @return JSON string with class information including methods, properties, and docstrings
 	 */
-	UFUNCTION(BlueprintCallable, meta=(
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="discover_python_class",
 		ToolDescription="Discover methods and attributes of a Python class.",
 		ParamDescription_ClassName="Fully qualified class name (e.g. 'unreal.BlueprintFactory')"
@@ -77,7 +77,7 @@ public:
 	 * @param FunctionName - Fully qualified function name (e.g. "unreal.load_asset")
 	 * @return JSON string with function signature, parameters, and docstring
 	 */
-	UFUNCTION(BlueprintCallable, meta=(
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="discover_python_function",
 		ToolDescription="Get signature and documentation for a Python function.",
 		ParamDescription_FunctionName="Fully qualified function name (e.g. 'unreal.load_asset')"
@@ -89,7 +89,7 @@ public:
 	 *
 	 * @return JSON array of subsystem names and descriptions
 	 */
-	UFUNCTION(BlueprintCallable, meta=(
+	UFUNCTION(BlueprintCallable, Category="VibeUE|Python", meta=(
 		ToolName="list_python_subsystems",
 		ToolDescription="List all Unreal Engine subsystems accessible from Python."
 	))

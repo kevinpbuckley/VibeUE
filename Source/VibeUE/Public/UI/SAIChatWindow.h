@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -41,9 +41,6 @@ public:
     
     /** Destructor */
     virtual ~SAIChatWindow();
-
-    /** Override Tick to handle microphone button state */
-    virtual void Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime) override;
     
     /** Static method to open the chat window */
     static void OpenWindow();
@@ -108,6 +105,44 @@ private:
     /** Voice input active state */
     bool bIsVoiceInputActive = false;
 
+    // ============ Thinking Indicator (Phase 1) ============
+
+    /** Container widget for the thinking indicator */
+    TSharedPtr<SWidget> ThinkingIndicatorWidget;
+
+    /** Text block for animated thinking text */
+    TSharedPtr<STextBlock> ThinkingTextBlock;
+
+    /** Timer handle for thinking indicator animation */
+    FTimerHandle ThinkingAnimationTimerHandle;
+
+    /** Current animation frame for thinking indicator */
+    int32 ThinkingAnimationFrame = 0;
+
+    /** Whether thinking indicator is currently visible in scroll box */
+    bool bThinkingIndicatorVisible = false;
+
+    /** Current vibing word for the thinking indicator (randomly selected) */
+    FString CurrentVibingWord;
+
+    /** Get vibing words from config (or defaults) */
+    static TArray<FString> GetVibingWordsFromConfig();
+
+    /** Save vibing words to config */
+    static void SaveVibingWordsToConfig(const TArray<FString>& Words);
+
+    /** Handle LLM thinking started */
+    void HandleLLMThinkingStarted();
+
+    /** Handle LLM thinking complete */
+    void HandleLLMThinkingComplete();
+
+    /** Show/hide the thinking indicator */
+    void ShowThinkingIndicator(bool bShow);
+
+    /** Animate the thinking indicator (called by timer) */
+    void AnimateThinkingIndicator();
+
     /** Widget components for compact Copilot-style tool call display */
     struct FToolCallWidgetData
     {
@@ -122,6 +157,8 @@ private:
         FString ResponseJson;                       // Cached response JSON for copy
         TSharedPtr<FString> ResponseJsonPtr;        // Shared pointer for copy lambda
         bool bResponseReceived = false;             // Track if response arrived
+        FTimerHandle StatusAnimationTimer;          // Timer handle for status animation (Phase 2)
+        int32 AnimationFrame = 0;                   // Current animation frame for status spinner
     };
     
     /** Map of unique key (MessageIndex_ToolIndex_ToolCallId) to widget data */
@@ -141,7 +178,13 @@ private:
     
     /** Update an existing tool widget with its response */
     void UpdateToolCallWithResponse(const FString& ToolCallId, const FString& ResponseJson, bool bSuccess);
-    
+
+    /** Start animated spinner for tool status (Phase 2) */
+    void StartToolStatusAnimation(const FString& UniqueKey);
+
+    /** Stop animated spinner for tool status (Phase 2) */
+    void StopToolStatusAnimation(const FString& UniqueKey);
+
     /** Update a message widget (for streaming) */
     void UpdateMessageWidget(int32 Index, const FChatMessage& Message);
     
@@ -229,12 +272,6 @@ private:
     
     /** Handle tool iteration limit reached callback */
     void HandleToolIterationLimitReached(int32 CurrentIteration, int32 MaxIterations);
-    
-    /** Handle thinking status changed (model is reasoning) */
-    void HandleThinkingStatusChanged(bool bIsThinking);
-    
-    /** Handle tool preparing (tool name detected before full args) */
-    void HandleToolPreparing(const FString& ToolName);
 
     // ============ Voice Input Handlers ============
 

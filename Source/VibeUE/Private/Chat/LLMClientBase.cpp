@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Chat/LLMClientBase.h"
 #include "Chat/ChatSession.h"
@@ -68,6 +68,14 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
             
             if (!CombinedInstructions.IsEmpty())
             {
+                // Replace {SKILLS} placeholder with dynamically generated skills table
+                if (CombinedInstructions.Contains(TEXT("{SKILLS}")))
+                {
+                    FString SkillsSection = GenerateSkillsSection();
+                    CombinedInstructions = CombinedInstructions.Replace(TEXT("{SKILLS}"), *SkillsSection);
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Replaced {SKILLS} placeholder with generated skills table"));
+                }
+
                 // Append directory information automatically
                 FString DirectoryInfo = GetProjectDirectoryInfo();
                 if (!DirectoryInfo.IsEmpty())
@@ -75,7 +83,7 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
                     CombinedInstructions += TEXT("\n\n---\n\n");
                     CombinedInstructions += DirectoryInfo;
                 }
-                
+
                 UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
                 return CombinedInstructions;
             }
@@ -149,6 +157,108 @@ FString FLLMClientBase::GetProjectDirectoryInfo()
     DirectoryInfo += TEXT("- No need to call `get_directories` - this information is always available\n");
     
     return DirectoryInfo;
+}
+
+FString FLLMClientBase::GenerateSkillsSection()
+{
+    // Get the skills directory
+    FString SkillsDir = FVibeUEPaths::GetPluginContentDir() / TEXT("Skills");
+
+    if (!FPaths::DirectoryExists(SkillsDir))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("Skills directory not found: %s"), *SkillsDir);
+        return TEXT("| Skill | Description | Services |\n|-------|-------------|----------|\n| *No skills found* | | |\n");
+    }
+
+    // Find all skill directories
+    IFileManager& FileManager = IFileManager::Get();
+    TArray<FString> SkillDirs;
+    FileManager.FindFiles(SkillDirs, *(SkillsDir / TEXT("*")), false, true);
+
+    if (SkillDirs.Num() == 0)
+    {
+        return TEXT("| Skill | Description | Services |\n|-------|-------------|----------|\n| *No skills found* | | |\n");
+    }
+
+    // Build markdown table
+    FString SkillsTable = TEXT("| Skill | Description | Services |\n");
+    SkillsTable += TEXT("|-------|-------------|----------|\n");
+
+    for (const FString& SkillDirName : SkillDirs)
+    {
+        FString SkillMdPath = SkillsDir / SkillDirName / TEXT("skill.md");
+
+        if (!FPaths::FileExists(SkillMdPath))
+        {
+            continue;
+        }
+
+        FString SkillContent;
+        if (!FFileHelper::LoadFileToString(SkillContent, *SkillMdPath))
+        {
+            continue;
+        }
+
+        // Parse YAML frontmatter (between --- markers)
+        FString SkillName = SkillDirName;
+        FString Description;
+        TArray<FString> Services;
+
+        int32 FirstDelim = SkillContent.Find(TEXT("---"));
+        if (FirstDelim != INDEX_NONE)
+        {
+            int32 SecondDelim = SkillContent.Find(TEXT("---"), ESearchCase::IgnoreCase, ESearchDir::FromStart, FirstDelim + 3);
+            if (SecondDelim != INDEX_NONE)
+            {
+                FString Frontmatter = SkillContent.Mid(FirstDelim + 3, SecondDelim - FirstDelim - 3);
+
+                // Parse line by line
+                TArray<FString> Lines;
+                Frontmatter.ParseIntoArrayLines(Lines);
+
+                bool bInVibeUEClasses = false;
+
+                for (const FString& Line : Lines)
+                {
+                    FString TrimmedLine = Line.TrimStartAndEnd();
+
+                    if (TrimmedLine.StartsWith(TEXT("name:")))
+                    {
+                        SkillName = TrimmedLine.Mid(5).TrimStartAndEnd();
+                        bInVibeUEClasses = false;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("description:")))
+                    {
+                        Description = TrimmedLine.Mid(12).TrimStartAndEnd();
+                        bInVibeUEClasses = false;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("vibeue_classes:")))
+                    {
+                        bInVibeUEClasses = true;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("-")) && bInVibeUEClasses)
+                    {
+                        FString ServiceName = TrimmedLine.Mid(1).TrimStartAndEnd();
+                        if (!ServiceName.IsEmpty())
+                        {
+                            Services.Add(ServiceName);
+                        }
+                    }
+                    else if (!TrimmedLine.StartsWith(TEXT("-")) && !TrimmedLine.IsEmpty())
+                    {
+                        // New key, no longer in vibeue_classes
+                        bInVibeUEClasses = false;
+                    }
+                }
+            }
+        }
+
+        // Build table row
+        FString ServicesStr = FString::Join(Services, TEXT(", "));
+        SkillsTable += FString::Printf(TEXT("| `%s` | %s | %s |\n"), *SkillName, *Description, *ServicesStr);
+    }
+
+    return SkillsTable;
 }
 
 FLLMClientBase::FLLMClientBase()
@@ -499,11 +609,6 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
                 FString FunctionName;
                 if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
                 {
-                    // Fire preparing callback when we first get the tool name
-                    if (bIsNewToolCall && !FunctionName.IsEmpty() && CurrentOnToolPreparing.IsBound())
-                    {
-                        CurrentOnToolPreparing.Execute(FunctionName);
-                    }
                     ToolCall.ToolName = FunctionName;
                 }
 
@@ -656,13 +761,6 @@ void FLLMClientBase::DetectThinkingBlocks(const FString& Content)
             bInThinkingBlock = false;
             break;
         }
-    }
-    
-    // Fire callback if state changed
-    if (bWasInThinkingBlock != bInThinkingBlock && CurrentOnThinkingStatus.IsBound())
-    {
-        UE_LOG(LogLLMClientBase, Log, TEXT("[THINKING] Status changed: %s"), bInThinkingBlock ? TEXT("started") : TEXT("ended"));
-        CurrentOnThinkingStatus.Execute(bInThinkingBlock);
     }
 }
 
