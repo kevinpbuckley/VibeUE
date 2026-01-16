@@ -1082,36 +1082,39 @@ int32 FChatSession::EstimateTokenCount(const FString& Text)
 
 FString FChatSession::SmartTruncateToolResult(const FString& Content, const FString& ToolName) const
 {
-    // Copilot-style smart truncation:
-    // - Use 50% of context window as max for ALL tool results combined
-    // - Per-tool result limit: ~2000 tokens (8000 chars) for most tools
-    // - Larger limit for certain tools that need more context
-    // - Keep 40% from beginning, 60% from end (end often has important results/errors)
+    // Tool response limits - set very high to avoid truncation
+    // Modern models have large context windows (100k+), so we can be generous
+    // This ensures AI gets complete tool outputs without information loss
     
     const int32 ContextLength = GetCurrentModelContextLength();
     
     // Calculate per-tool-result token budget
     // Total tool result budget = 50% of context
-    // Individual tool results get a fraction of that
+    // Individual tool results get a generous portion
     const float MaxToolResponsePct = 0.5f;
     const int32 TotalToolResultBudget = FMath::FloorToInt(ContextLength * MaxToolResponsePct);
     
-    // Per-tool limits - some tools naturally produce larger outputs
-    int32 MaxTokensForTool = 2000;  // Default: ~8000 chars
+    // Per-tool limits - set high to avoid truncation issues
+    int32 MaxTokensForTool = 20000;  // Default: ~80000 chars - high enough for most complete outputs
     
+    // Skills system needs to load comprehensive documentation
+    if (ToolName.Contains(TEXT("manage_skills")))
+    {
+        MaxTokensForTool = 20000;  // ~80000 chars for full skill content
+    }
     // Tools that benefit from larger outputs
-    if (ToolName.Contains(TEXT("list")) || 
+    else if (ToolName.Contains(TEXT("list")) || 
         ToolName.Contains(TEXT("search")) ||
         ToolName.Contains(TEXT("discover")) ||
         ToolName.Contains(TEXT("get_all")))
     {
-        MaxTokensForTool = 3000;  // ~12000 chars for list/search results
+        MaxTokensForTool = 20000;  // ~80000 chars for complete list/search results
     }
     else if (ToolName.Contains(TEXT("summarize")) ||
              ToolName.Contains(TEXT("info")) ||
              ToolName.Contains(TEXT("details")))
     {
-        MaxTokensForTool = 4000;  // ~16000 chars for detailed info
+        MaxTokensForTool = 20000;  // ~80000 chars for complete detailed info
     }
     
     // Convert token limit to approximate character limit

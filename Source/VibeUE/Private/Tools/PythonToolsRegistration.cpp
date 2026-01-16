@@ -92,19 +92,6 @@ REGISTER_VIBEUE_TOOL(execute_python_code,
 	}
 );
 
-// Register evaluate_python_expression tool
-REGISTER_VIBEUE_TOOL(evaluate_python_expression,
-	"Evaluate a Python expression and return its result as a string.",
-	"Python",
-	TOOL_PARAMS(
-		TOOL_PARAM("expression", "Python expression to evaluate (e.g. 'len(dir(unreal))')", "string", true)
-	),
-	{
-		FString Expression = ExtractParamFromJson(Params, TEXT("expression"));
-		return UPythonTools::EvaluatePythonExpression(Expression);
-	}
-);
-
 // Register discover_python_module tool
 REGISTER_VIBEUE_TOOL(discover_python_module,
 	"Discover contents of a Python module. IMPORTANT: The module name is 'unreal' (lowercase, not 'Unreal'). Use this before execute_python_code to find available classes/functions.",
@@ -163,14 +150,14 @@ REGISTER_VIBEUE_TOOL(discover_python_class,
 		TOOL_PARAM("class_name", "Fully qualified class name (e.g. 'unreal.BlueprintService')", "string", true),
 		TOOL_PARAM("method_filter", "Filter methods by name substring (case-insensitive). E.g. 'variable' to find variable-related methods", "string", false),
 		TOOL_PARAM("max_methods", "Maximum methods to return (default 0 = unlimited). Use to limit large class results", "number", false),
-		TOOL_PARAM("include_inherited", "Include inherited methods (default true). Set false for class-only methods", "boolean", false),
+		TOOL_PARAM("include_inherited", "Include inherited methods (default false). Set true for all methods including base class", "boolean", false),
 		TOOL_PARAM("include_private", "Include private methods starting with _ (default false)", "boolean", false)
 	),
 	{
 		FString ClassName = ExtractParamFromJson(Params, TEXT("class_name"));
 		FString MethodFilter = ExtractParamWithDefault(Params, TEXT("method_filter"), TEXT(""));
 		int32 MaxMethods = ExtractIntParam(Params, TEXT("max_methods"), 0);
-		bool IncludeInherited = ExtractBoolParam(Params, TEXT("include_inherited"), true);
+		bool IncludeInherited = ExtractBoolParam(Params, TEXT("include_inherited"), false);
 		bool IncludePrivate = ExtractBoolParam(Params, TEXT("include_private"), false);
 		
 		auto Service = UPythonTools::GetDiscoveryService();

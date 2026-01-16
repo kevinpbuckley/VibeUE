@@ -46,19 +46,6 @@ public:
 	static FString ExecutePythonCode(const FString& Code);
 
 	/**
-	 * Evaluate a Python expression and return its result
-	 *
-	 * @param Expression - Python expression to evaluate
-	 * @return String representation of the expression result
-	 */
-	UFUNCTION(BlueprintCallable, meta=(
-		ToolName="evaluate_python_expression",
-		ToolDescription="Evaluate a Python expression and return its result as a string.",
-		ParamDescription_Expression="Python expression to evaluate (e.g. 'len(dir(unreal))')"
-	))
-	static FString EvaluatePythonExpression(const FString& Expression);
-
-	/**
 	 * Discover a Python module and list its contents
 	 *
 	 * @param ModuleName - Name of the module to discover (e.g. "unreal")

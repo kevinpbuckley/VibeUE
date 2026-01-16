@@ -162,38 +162,6 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	return ConvertExecutionResultToJson(Result.GetValue());
 }
 
-FString UPythonTools::EvaluatePythonExpression(const FString& Expression)
-{
-	auto Service = GetExecutionService();
-	if (!Service.IsValid())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-		ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python execution service is not available"));
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-
-	auto Result = Service->EvaluateExpression(Expression);
-
-	if (Result.IsError())
-	{
-		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-		ErrorObj->SetBoolField(TEXT("success"), false);
-		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-		ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-		FString JsonString;
-		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-		return JsonString;
-	}
-	
-	return ConvertExecutionResultToJson(Result.GetValue());
-}
-
 FString UPythonTools::DiscoverPythonModule(const FString& ModuleName)
 {
 	auto Service = GetDiscoveryService();

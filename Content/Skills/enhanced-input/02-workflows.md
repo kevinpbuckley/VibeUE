@@ -91,12 +91,12 @@ import unreal
 # Get all mappings in context
 mappings = unreal.InputService.get_mappings("/Game/Input/IMC_Default")
 for m in mappings:
-    print(f"Action: {m.action_name}, Key: {m.key}")
+    print(f"Action: {m.action_name}, Key: {m.key_name}")
 
 # Get action info - use get_input_action_info
 info = unreal.InputService.get_input_action_info("/Game/Input/IA_Jump")
 if info:
-    print(f"Action: {info.name}, ValueType: {info.value_type}")
+    print(f"Action: {info.action_name}, ValueType: {info.value_type}")
 ```
 
 ---
@@ -120,4 +120,14 @@ print(f"Triggers: {types.trigger_types}")
 # Alternative: get from direct methods
 modifiers = unreal.InputService.get_available_modifier_types()
 triggers = unreal.InputService.get_available_trigger_types()
+
+# Get modifiers on a mapping (use type_name or display_name)
+mods = unreal.InputService.get_modifiers(context_path, 0)
+for mod in mods:
+    print(f"Modifier: {mod.type_name} ({mod.display_name})")
+
+# Get triggers on a mapping (use type_name or display_name)
+trigs = unreal.InputService.get_triggers(context_path, 0)
+for trig in trigs:
+    print(f"Trigger: {trig.type_name} ({trig.display_name})")
 ```

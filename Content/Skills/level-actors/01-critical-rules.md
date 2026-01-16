@@ -1,19 +1,6 @@
 # Level Actors Critical Rules
 
----
-
-## 📋 Service Discovery
-
-Discover Actor services with module search:
-
-```python
-# Use discover_python_module to find Actor services
-discover_python_module(module_name="unreal", name_filter="ActorService", include_classes=True)
-# Returns: ActorService
-
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.ActorService")
-```
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
 
 ---
 

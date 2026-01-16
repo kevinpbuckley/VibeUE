@@ -991,6 +991,10 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
         CompactWidget
     ];
     
+    // Force Slate to invalidate and redraw the widget immediately
+    // This ensures the yellow arrow (→) is visible before tool execution completes
+    CompactWidget->Invalidate(EInvalidateWidgetReason::Paint);
+    
     ScrollToBottom();
 }
 
@@ -1038,6 +1042,9 @@ void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const 
         
         WidgetData->StatusText->SetText(FText::FromString(StatusIcon));
         WidgetData->StatusText->SetColorAndOpacity(FSlateColor(StatusColor));
+        
+        // Force immediate repaint to show the status change
+        WidgetData->StatusText->Invalidate(EInvalidateWidgetReason::Paint);
     }
     
     // Update response JSON text in the details section
@@ -2331,6 +2338,24 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
     bool bIsToolCall = Message.Role == TEXT("assistant") && Message.ToolCalls.Num() > 0;
     if (bIsToolCall)
     {
+        // FIRST: Handle any text content the assistant provided alongside tool calls
+        // The AI often explains what it's doing before/after tool calls
+        if (!Message.Content.IsEmpty())
+        {
+            TSharedPtr<SRichTextBlock>* TextBlockPtr = MessageTextBlocks.Find(Index);
+            if (!TextBlockPtr)
+            {
+                // Widget doesn't exist yet - add it for the content
+                AddMessageWidget(Message, Index);
+            }
+            else
+            {
+                // Widget exists - update the content
+                UpdateMessageWidget(Index, Message);
+            }
+        }
+        
+        // THEN: Handle tool call widgets
         // Check if any of the tool calls already have widgets (using unique key)
         bool bAllToolsHaveWidgets = true;
         for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
@@ -2344,20 +2369,17 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
             }
         }
         
-        if (bAllToolsHaveWidgets)
+        if (!bAllToolsHaveWidgets)
         {
-            // All tools already have widgets, nothing to do
-            return;
-        }
-        
-        // Some tools don't have widgets yet - add them
-        for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
-        {
-            const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
-            FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
-            if (!ToolCallWidgets.Contains(UniqueKey))
+            // Some tools don't have widgets yet - add them
+            for (int32 ToolIdx = 0; ToolIdx < Message.ToolCalls.Num(); ToolIdx++)
             {
-                AddToolCallWidget(ToolCall, Index, ToolIdx);
+                const FChatToolCall& ToolCall = Message.ToolCalls[ToolIdx];
+                FString UniqueKey = FString::Printf(TEXT("%d_%d_%s"), Index, ToolIdx, *ToolCall.Id);
+                if (!ToolCallWidgets.Contains(UniqueKey))
+                {
+                    AddToolCallWidget(ToolCall, Index, ToolIdx);
+                }
             }
         }
         return;

@@ -1,18 +1,38 @@
 # Enhanced Input Critical Rules
 
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
+
 ---
 
-## 📋 Service Discovery
+## ⚠️ CRITICAL: Property Names on Info Structs
 
-Discover Input services with module search:
+**ALWAYS use the correct property names or you'll get AttributeError:**
 
 ```python
-# Use discover_python_module to find Input services
-discover_python_module(module_name="unreal", name_filter="InputService", include_classes=True)
-# Returns: InputService
+# ✅ InputTypeDiscoveryResult - Use action_value_types (NOT value_types)
+types = unreal.InputService.discover_types()
+print(types.action_value_types)  # ✅ CORRECT
+print(types.value_types)  # ❌ AttributeError!
 
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.InputService")
+# ✅ KeyMappingInfo - Use key_name (NOT key)
+mappings = unreal.InputService.get_mappings(context_path)
+for m in mappings:
+    print(m.key_name)  # ✅ CORRECT
+    print(m.key)  # ❌ AttributeError!
+
+# ✅ InputModifierInfo - Use type_name or display_name (NOT modifier_type)
+mods = unreal.InputService.get_modifiers(context_path, 0)
+for mod in mods:
+    print(mod.type_name)  # ✅ CORRECT (e.g., "InputModifierNegate")
+    print(mod.display_name)  # ✅ CORRECT (e.g., "Negate")
+    print(mod.modifier_type)  # ❌ AttributeError!
+
+# ✅ InputTriggerInfo - Use type_name or display_name (NOT trigger_type)
+trigs = unreal.InputService.get_triggers(context_path, 0)
+for trig in trigs:
+    print(trig.type_name)  # ✅ CORRECT (e.g., "InputTriggerPressed")
+    print(trig.display_name)  # ✅ CORRECT (e.g., "Pressed")
+    print(trig.trigger_type)  # ❌ AttributeError!
 ```
 
 ---

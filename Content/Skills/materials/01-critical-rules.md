@@ -1,19 +1,31 @@
 # Material Critical Rules
 
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
+
 ---
 
-## 📋 Service Discovery
+## ⚠️ CRITICAL: Always Use discover_python_class() First
 
-Discover all Material services with module search:
+**BEFORE accessing struct properties**, discover the class to see actual property names:
 
 ```python
-# Use discover_python_module to find Material services
-discover_python_module(module_name="unreal", name_filter="Material", include_classes=True)
-# Returns: MaterialService, MaterialNodeService, and Material-related classes
+import unreal
 
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.MaterialService")
+# WRONG - guessing property names leads to AttributeError
+for node in nodes:
+    print(node.name)  # AttributeError: no attribute 'name'
+
+# CORRECT - discover first, then use actual property names
+# Use: discover_python_class('unreal.MaterialExpressionInfo')
+# Result shows actual properties: display_name, class_name, id, etc.
+for node in nodes:
+    print(node.display_name)  # Works!
 ```
+
+**Common property mistakes:**
+- `MaterialExpressionTypeInfo` uses `display_name`, NOT `name`
+- `MaterialOutputConnectionInfo` uses `connected_expression_id`, NOT `expression_id`
+- Always check discovery tool output for exact property names
 
 ---
 
@@ -31,7 +43,7 @@ import unreal
 
 # Make graph changes
 unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", ...)
-unreal.MaterialNodeService.connect_to_material(path, node_id, "BaseColor")
+unreal.MaterialNodeService.connect_to_output(path, node_id, "", "BaseColor")
 
 # MUST compile
 unreal.MaterialService.compile_material(path)
@@ -55,7 +67,7 @@ unreal.EditorAssetLibrary.save_asset(path)
 
 ## ⚠️ CRITICAL: Material Outputs
 
-Common material output names for `connect_to_material()`:
+Common material output names for `connect_to_output()`:
 
 - `BaseColor` - Albedo/diffuse color
 - `Metallic` - Metallic factor (0-1)
@@ -114,6 +126,30 @@ instance_path = unreal.MaterialService.create_instance(
 
 ---
 
+## ⚠️ CRITICAL: Check Node Existence
+
+Always verify nodes exist before operations to avoid NoneType errors:
+
+```python
+import unreal
+
+mat_path = "/Game/Materials/M_Test"
+nodes = unreal.MaterialNodeService.list_expressions(mat_path)
+
+# WRONG - crashes if node doesn't exist
+add_node = next((n for n in nodes if "Add" in n.display_name))
+unreal.MaterialNodeService.get_expression_pins(mat_path, add_node.id)  # NoneType error!
+
+# CORRECT - use default value and check
+add_node = next((n for n in nodes if "Add" in n.display_name), None)
+if add_node:
+    pins = unreal.MaterialNodeService.get_expression_pins(mat_path, add_node.id)
+else:
+    print("Add node not found - create it first")
+```
+
+---
+
 ## ⚠️ CRITICAL: Set Instance Parameters
 
 Use type-specific methods:
@@ -128,3 +164,17 @@ unreal.MaterialService.set_vector_parameter(instance_path, "BaseColor", "(R=1,G=
 # Texture
 unreal.MaterialService.set_texture_parameter(instance_path, "Diffuse", "/Game/T_Tex.T_Tex")
 ```
+
+---
+
+## ⚠️ CRITICAL: Correct Method Names
+
+**Common mistakes from documentation:**
+
+| WRONG (old docs) | CORRECT (actual API) |
+|------------------|----------------------|
+| `MaterialService.open_material()` | `MaterialService.open_in_editor()` |
+| `MaterialNodeService.connect_to_material()` | `MaterialNodeService.connect_to_output()` |
+| `MaterialService.save()` | `MaterialService.save_material()` |
+
+**Always use `discover_python_class()` to verify method names!**

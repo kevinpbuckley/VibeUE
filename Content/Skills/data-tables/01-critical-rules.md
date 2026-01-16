@@ -1,19 +1,6 @@
 # Data Table Critical Rules
 
----
-
-## 📋 Service Discovery
-
-Discover DataTable services with module search:
-
-```python
-# Use discover_python_module to find DataTable services
-discover_python_module(module_name="unreal", name_filter="DataTable", include_classes=True)
-# Returns: DataTableService
-
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.DataTableService")
-```
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
 
 ---
 
@@ -126,3 +113,62 @@ columns = unreal.DataTableService.get_row_struct("/Game/DT_Items")
 for col in columns:
     print(f"{col.name}: {col.type}")
 ```
+
+---
+
+## ⚠️ CRITICAL: Return Type Property Names
+
+**ALWAYS call `discover_python_class` FIRST to get correct property names!**
+
+The DataTable service returns special types. Their properties are:
+
+### RowStructTypeInfo (from search_row_types)
+```python
+# CORRECT properties:
+info.name              # NOT struct_name
+info.path              
+info.module            # NOT module_name
+info.parent_struct     
+info.is_native         
+info.property_names    # Array[str]
+```
+
+### DataTableInfo (from list_data_tables)
+```python
+# CORRECT properties:
+info.name              # NOT asset_name
+info.path              # NOT package_path
+info.row_struct        # NOT row_struct_name
+info.row_struct_path   
+info.row_count         
+```
+
+### DataTableDetailedInfo (from get_info)
+```python
+# CORRECT properties:
+info.name              
+info.path              
+info.row_struct        
+info.row_struct_path   
+info.row_count         
+info.row_names         # Array[str]
+info.columns_json      # NOT columns - It's a JSON string!
+
+# Parse columns_json:
+import json
+columns = json.loads(info.columns_json)
+for col in columns:
+    print(f"{col['name']}: {col['type']}")
+```
+
+### RowStructColumnInfo (from get_row_struct)
+```python
+# CORRECT properties:
+col.column_name        # NOT name
+col.column_type        # NOT type
+col.cpp_type           
+col.category           
+col.is_editable        
+```
+
+**Pattern: If you get AttributeError, call `discover_python_class('unreal.TypeName')` to check properties!**

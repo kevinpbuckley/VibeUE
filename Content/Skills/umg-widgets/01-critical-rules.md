@@ -1,33 +1,29 @@
 # UMG Widget Critical Rules
 
----
-
-## 📋 Service Discovery
-
-Discover Widget services with module search:
-
-```python
-# Use discover_python_module to find Widget services
-discover_python_module(module_name="unreal", name_filter="WidgetService", include_classes=True)
-# Returns: WidgetService
-
-# Then discover specific service methods:
-discover_python_class(class_name="unreal.WidgetService")
-```
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
 
 ---
 
 ## Creating Widget Blueprints
 
-⚠️ **WidgetService does NOT create widgets.** Use BlueprintService:
+⚠️ **WidgetService does NOT create widgets.** Use `WidgetBlueprintFactory`:
 
 ```python
-# CORRECT - Use BlueprintService with "UserWidget" parent
-widget_path = unreal.BlueprintService.create_blueprint(
-    "MainMenu",       # Name
-    "UserWidget",     # Parent class makes it a Widget Blueprint
-    "/Game/UI/"       # Folder
-)
+# CORRECT - Use WidgetBlueprintFactory to create a proper WidgetBlueprint asset
+import unreal
+
+factory = unreal.WidgetBlueprintFactory()
+factory.set_editor_property("parent_class", unreal.UserWidget)
+
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+widget_asset = asset_tools.create_asset("MainMenu", "/Game/UI", unreal.WidgetBlueprint, factory)
+
+if widget_asset:
+    widget_path = "/Game/UI/MainMenu"
+    # Now you can use WidgetService methods on this path
+
+# WRONG - BlueprintService.create_blueprint creates Blueprint, not WidgetBlueprint
+widget_path = unreal.BlueprintService.create_blueprint("MainMenu", "UserWidget", "/Game/UI/")  # ❌ Wrong asset type
 
 # WRONG - WidgetService has no create method
 widget_path = unreal.WidgetService.create_widget(...)  # ❌ Does not exist
@@ -66,6 +62,21 @@ unreal.WidgetService.set_property(path, "Text", "Font.Size", 24)
 
 # CORRECT
 unreal.WidgetService.set_property(path, "Text", "Font.Size", "24")
+```
+
+---
+
+## WidgetPropertyInfo Correct Field Names
+
+When using `list_properties()` or `get_component_properties()`, use these fields:
+```python
+props = unreal.WidgetService.list_properties(path, "MyButton")
+for p in props:
+    print(f"Name: {p.property_name}")       # NOT p.name
+    print(f"Type: {p.property_type}")       # NOT p.type  
+    print(f"Value: {p.current_value}")      # NOT p.property_value
+    print(f"Category: {p.category}")
+    print(f"Editable: {p.is_editable}")
 ```
 
 ---

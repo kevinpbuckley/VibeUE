@@ -31,16 +31,48 @@ modifiers = unreal.InputService.get_available_modifier_types()
 
 ### Don't use:
 ```python
-# ❌ WRONG
+# ❌ WRONG - InputTypeDiscoveryResult
 types = unreal.InputService.discover_types()
-print(types.value_types)  # AttributeError!
+print(types.value_types)  # AttributeError! Should be action_value_types
+
+# ❌ WRONG - KeyMappingInfo
+mappings = unreal.InputService.get_mappings(context_path)
+for m in mappings:
+    print(m.key)  # AttributeError! Should be key_name
+
+# ❌ WRONG - InputModifierInfo
+mods = unreal.InputService.get_modifiers(context_path, 0)
+for mod in mods:
+    print(mod.modifier_type)  # AttributeError! Should be type_name or display_name
+
+# ❌ WRONG - InputTriggerInfo
+trigs = unreal.InputService.get_triggers(context_path, 0)
+for trig in trigs:
+    print(trig.trigger_type)  # AttributeError! Should be type_name or display_name
 ```
 
-### ✅ Use correct property:
+### ✅ Use correct properties:
 ```python
-# ✅ CORRECT
+# ✅ CORRECT - InputTypeDiscoveryResult
 types = unreal.InputService.discover_types()
-print(types.action_value_types)  # Correct property name
+print(types.action_value_types)  # Correct!
+print(types.modifier_types)  # Correct!
+print(types.trigger_types)  # Correct!
+
+# ✅ CORRECT - KeyMappingInfo
+mappings = unreal.InputService.get_mappings(context_path)
+for m in mappings:
+    print(f"{m.action_name}: {m.key_name}")  # Correct!
+
+# ✅ CORRECT - InputModifierInfo
+mods = unreal.InputService.get_modifiers(context_path, 0)
+for mod in mods:
+    print(f"{mod.display_name} ({mod.type_name})")  # Both work!
+
+# ✅ CORRECT - InputTriggerInfo
+trigs = unreal.InputService.get_triggers(context_path, 0)
+for trig in trigs:
+    print(f"{trig.display_name} ({trig.type_name})")  # Both work!
 ```
 
 ---
@@ -116,7 +148,7 @@ target_key = "SpaceBar"
 
 mappings = unreal.InputService.get_mappings(context_path)
 for i, mapping in enumerate(mappings):
-    if mapping.action_name == target_action and mapping.key == target_key:
+    if mapping.action_name == target_action and mapping.key_name == target_key:
         # Found it! Now modify it
         unreal.InputService.add_trigger(context_path, i, "Pressed")
         break

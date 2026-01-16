@@ -1,21 +1,10 @@
-# DataAssetService - Critical Rules
+# DataAsset Critical Rules
 
-This file contains gotchas and rules that API discovery doesn't tell you.
+**Note:** Method signatures are in `vibeue_apis` from skill loader. This file contains gotchas that discovery can't tell you.
 
 ---
 
-## 📋 Return Type Structures
-
-Discover all DataAsset types with module search:
-
-```python
-# Use discover_python_module to find all DataAsset-related classes
-discover_python_module(module_name="unreal", name_filter="DataAsset", include_classes=True)
-# Returns: DataAsset, DataAssetService, DataAssetTypeInfo, DataAssetInstanceInfo, DataAssetPropertyInfo, etc.
-
-# Then discover specific return type structure:
-discover_python_class(class_name="unreal.DataAssetTypeInfo")
-```
+## 📋 Return Type Properties
 
 Quick reference for common return type properties:
 
