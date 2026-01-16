@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "UI/SAIChatWindow.h"
 #include "UI/ChatRichTextStyles.h"
@@ -35,6 +35,7 @@
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
 #include "HAL/PlatformTime.h"
+#include "Editor.h"
 
 DEFINE_LOG_CATEGORY(LogAIChatWindow);
 
@@ -134,8 +135,8 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnSummarizationComplete.BindSP(this, &SAIChatWindow::HandleSummarizationComplete);
     ChatSession->OnTokenBudgetUpdated.BindSP(this, &SAIChatWindow::HandleTokenBudgetUpdated);
     ChatSession->OnToolIterationLimitReached.BindSP(this, &SAIChatWindow::HandleToolIterationLimitReached);
-    ChatSession->OnThinkingStatusChanged.BindSP(this, &SAIChatWindow::HandleThinkingStatusChanged);
-    ChatSession->OnToolPreparing.BindSP(this, &SAIChatWindow::HandleToolPreparing);
+    ChatSession->OnLLMThinkingStarted.BindSP(this, &SAIChatWindow::HandleLLMThinkingStarted);
+    ChatSession->OnLLMThinkingComplete.BindSP(this, &SAIChatWindow::HandleLLMThinkingComplete);
 
     // Voice input delegates
     ChatSession->OnVoiceInputStarted.BindSP(this, &SAIChatWindow::OnVoiceInputStarted);
@@ -373,11 +374,6 @@ SAIChatWindow::~SAIChatWindow()
     {
         ChatSession->Shutdown();
     }
-}
-
-void SAIChatWindow::Tick(const FGeometry& AllottedGeometry, const double InCurrentTime, const float InDeltaTime)
-{
-    SCompoundWidget::Tick(AllottedGeometry, InCurrentTime, InDeltaTime);
 }
 
 void SAIChatWindow::OpenWindow()
@@ -994,7 +990,10 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
     // Force Slate to invalidate and redraw the widget immediately
     // This ensures the yellow arrow (→) is visible before tool execution completes
     CompactWidget->Invalidate(EInvalidateWidgetReason::Paint);
-    
+
+    // Start the rotating arrow animation for this tool call (Phase 2)
+    StartToolStatusAnimation(UniqueKey);
+
     ScrollToBottom();
 }
 
@@ -1025,7 +1024,10 @@ void SAIChatWindow::UpdateToolCallWithResponse(const FString& ToolCallId, const 
     {
         return;
     }
-    
+
+    // Stop the rotating arrow animation (Phase 2)
+    StopToolStatusAnimation(UniqueKey);
+
     // Mark response received and store JSON for copy button
     WidgetData->bResponseReceived = true;
     WidgetData->ResponseJson = ResponseJson;
@@ -1096,6 +1098,18 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
 
 void SAIChatWindow::ScrollToBottom()
 {
+    // If thinking indicator is visible, move it to the bottom
+    // This ensures it always appears below the latest content
+    if (bThinkingIndicatorVisible && ThinkingIndicatorWidget.IsValid())
+    {
+        MessageScrollBox->RemoveSlot(ThinkingIndicatorWidget.ToSharedRef());
+        MessageScrollBox->AddSlot()
+        .Padding(FMargin(2, 4))
+        [
+            ThinkingIndicatorWidget.ToSharedRef()
+        ];
+    }
+
     MessageScrollBox->ScrollToEnd();
 }
 
@@ -1119,10 +1133,12 @@ FReply SAIChatWindow::OnSendClicked()
         if (Message.TrimStartAndEnd().ToLower() == TEXT("continue") && ChatSession->IsWaitingForUserToContinue())
         {
             ChatSession->ContinueAfterIterationLimit();
+            // Status animation will start when user message is added to UI
         }
         else
         {
             ChatSession->SendMessage(Message);
+            // Status animation will start when user message is added to UI
         }
     }
     return FReply::Handled();
@@ -2301,11 +2317,12 @@ FText SAIChatWindow::GetSelectedModelText() const
 
 void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
 {
-    // Don't add empty streaming assistant messages - wait for content or tool call
-    // This prevents the "..." flash before tool calls
+    UE_LOG(LogAIChatWindow, Log, TEXT("[HandleMessageAdded] Role: %s, Content length: %d"), *Message.Role, Message.Content.Len());
+    
+    // Don't process empty streaming assistant messages - they're just placeholders
     if (Message.Role == TEXT("assistant") && Message.bIsStreaming && Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
     {
-        // Skip adding - HandleMessageUpdated will add it when content arrives
+        // Skip - HandleMessageUpdated will handle it when content arrives
         return;
     }
     
@@ -2328,6 +2345,7 @@ void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
     }
     
     AddMessageWidget(Message, MessageIndex);
+    
     ScrollToBottom();
     UpdateUIState();
 }
@@ -2442,7 +2460,7 @@ void SAIChatWindow::HandleChatReset()
 
 void SAIChatWindow::HandleChatError(const FString& ErrorMessage)
 {
-    // Add error message to chat window instead of status bar
+    // Add error message to chat window
     AddSystemNotification(FString::Printf(TEXT("❌ Error: %s"), *ErrorMessage));
     UpdateUIState();
 }
@@ -2720,19 +2738,6 @@ void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int3
     }
 }
 
-void SAIChatWindow::HandleThinkingStatusChanged(bool bIsThinking)
-{
-    if (bIsThinking)
-    {
-        AddSystemNotification(TEXT("💭 AI is thinking..."));
-    }
-}
-
-void SAIChatWindow::HandleToolPreparing(const FString& ToolName)
-{
-    // Tool preparation shown in tool call widget, no need for status bar
-}
-
 void SAIChatWindow::UpdateTokenBudgetDisplay()
 {
     if (!ChatSession.IsValid()) return;
@@ -2774,6 +2779,7 @@ FText SAIChatWindow::GetInputHintText() const
 {
     if (ChatSession.IsValid() && ChatSession->IsRequestInProgress())
     {
+        // Status animation now shows in chat, keep input hint simple
         return FText::FromString(TEXT("Waiting for AI response..."));
     }
     return FText::FromString(TEXT("Type a message... (Enter to send, Shift+Enter for new line)"));
@@ -2897,5 +2903,260 @@ void SAIChatWindow::HandleHyperlinkClicked(const FSlateHyperlinkRun::FMetadata& 
     if (URL && !URL->IsEmpty())
     {
         FPlatformProcess::LaunchURL(**URL, nullptr, nullptr);
+    }
+}
+
+// ============================================================================
+// Phase 1: Thinking Indicator
+// ============================================================================
+
+void SAIChatWindow::HandleLLMThinkingStarted()
+{
+    ShowThinkingIndicator(true);
+}
+
+void SAIChatWindow::HandleLLMThinkingComplete()
+{
+    ShowThinkingIndicator(false);
+}
+
+void SAIChatWindow::ShowThinkingIndicator(bool bShow)
+{
+    if (bShow)
+    {
+        // Select a random vibing word for this thinking session
+        TArray<FString> VibingWords = GetVibingWordsFromConfig();
+        if (VibingWords.Num() > 0)
+        {
+            int32 RandomIndex = FMath::RandRange(0, VibingWords.Num() - 1);
+            CurrentVibingWord = VibingWords[RandomIndex];
+        }
+        else
+        {
+            CurrentVibingWord = TEXT("Vibing");
+        }
+
+        // Create the thinking indicator widget if it doesn't exist
+        if (!ThinkingIndicatorWidget.IsValid())
+        {
+            ThinkingIndicatorWidget =
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot()
+                .AutoWidth()
+                .Padding(8, 4)
+                [
+                    SAssignNew(ThinkingTextBlock, STextBlock)
+                    .Text(FText::FromString(FString::Printf(TEXT("● %s·"), *CurrentVibingWord)))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                ];
+        }
+        else
+        {
+            // Update the text with the new vibing word
+            ThinkingTextBlock->SetText(FText::FromString(FString::Printf(TEXT("● %s·"), *CurrentVibingWord)));
+        }
+
+        // Remove first if already visible (to re-add at bottom)
+        if (bThinkingIndicatorVisible)
+        {
+            MessageScrollBox->RemoveSlot(ThinkingIndicatorWidget.ToSharedRef());
+        }
+
+        // Add to scroll box at the bottom
+        MessageScrollBox->AddSlot()
+        .Padding(FMargin(2, 4))
+        [
+            ThinkingIndicatorWidget.ToSharedRef()
+        ];
+
+        bThinkingIndicatorVisible = true;
+
+        // Start the animation timer (only if not already running)
+        if (!ThinkingAnimationTimerHandle.IsValid())
+        {
+            ThinkingAnimationFrame = 0;
+            if (GEditor)
+            {
+                GEditor->GetTimerManager()->SetTimer(
+                    ThinkingAnimationTimerHandle,
+                    FTimerDelegate::CreateSP(this, &SAIChatWindow::AnimateThinkingIndicator),
+                    0.3f,  // 300ms per frame for subtle animation
+                    true   // Loop
+                );
+            }
+        }
+
+        // Note: Don't call ScrollToBottom() here to avoid recursion
+        MessageScrollBox->ScrollToEnd();
+    }
+    else
+    {
+        // Stop the animation timer
+        if (GEditor)
+        {
+            GEditor->GetTimerManager()->ClearTimer(ThinkingAnimationTimerHandle);
+        }
+
+        // Remove the thinking indicator from scroll box
+        if (ThinkingIndicatorWidget.IsValid() && bThinkingIndicatorVisible)
+        {
+            MessageScrollBox->RemoveSlot(ThinkingIndicatorWidget.ToSharedRef());
+            bThinkingIndicatorVisible = false;
+        }
+    }
+}
+
+void SAIChatWindow::AnimateThinkingIndicator()
+{
+    if (!ThinkingTextBlock.IsValid())
+    {
+        return;
+    }
+
+    // Animate with growing/shrinking dots: ·  ··  ···  ··
+    static const TCHAR* ThinkingFrames[] = { TEXT("·"), TEXT("··"), TEXT("···"), TEXT("··") };
+    ThinkingAnimationFrame = (ThinkingAnimationFrame + 1) % 4;
+
+    // Use the current vibing word (selected when thinking started)
+    FString Word = CurrentVibingWord.IsEmpty() ? TEXT("Vibing") : CurrentVibingWord;
+    FString AnimatedText = FString::Printf(TEXT("● %s%s"), *Word, ThinkingFrames[ThinkingAnimationFrame]);
+    ThinkingTextBlock->SetText(FText::FromString(AnimatedText));
+}
+
+TArray<FString> SAIChatWindow::GetVibingWordsFromConfig()
+{
+    TArray<FString> Words;
+
+    // Try to load from config
+    FString WordsString;
+    GConfig->GetString(TEXT("VibeUE.UI"), TEXT("VibingWords"), WordsString, GEditorPerProjectIni);
+
+    if (!WordsString.IsEmpty())
+    {
+        WordsString.ParseIntoArray(Words, TEXT(","), true);
+        // Trim whitespace from each word
+        for (FString& Word : Words)
+        {
+            Word.TrimStartAndEndInline();
+        }
+    }
+
+    // If no config or empty, use defaults (33 vibing-related words)
+    if (Words.Num() == 0)
+    {
+        Words = {
+            TEXT("Vibing"),
+            TEXT("Grooving"),
+            TEXT("Flowing"),
+            TEXT("Syncing"),
+            TEXT("Tuning"),
+            TEXT("Jamming"),
+            TEXT("Chilling"),
+            TEXT("Cruising"),
+            TEXT("Gliding"),
+            TEXT("Drifting"),
+            TEXT("Floating"),
+            TEXT("Buzzing"),
+            TEXT("Humming"),
+            TEXT("Pulsing"),
+            TEXT("Resonating"),
+            TEXT("Harmonizing"),
+            TEXT("Radiating"),
+            TEXT("Channeling"),
+            TEXT("Aligning"),
+            TEXT("Synergizing"),
+            TEXT("Manifesting"),
+            TEXT("Cultivating"),
+            TEXT("Nurturing"),
+            TEXT("Brewing"),
+            TEXT("Conjuring"),
+            TEXT("Crafting"),
+            TEXT("Weaving"),
+            TEXT("Spinning"),
+            TEXT("Cooking"),
+            TEXT("Stirring"),
+            TEXT("Mixing"),
+            TEXT("Blending"),
+            TEXT("Composing")
+        };
+
+        // Save defaults to config for user customization
+        SaveVibingWordsToConfig(Words);
+    }
+
+    return Words;
+}
+
+void SAIChatWindow::SaveVibingWordsToConfig(const TArray<FString>& Words)
+{
+    FString WordsString = FString::Join(Words, TEXT(","));
+    GConfig->SetString(TEXT("VibeUE.UI"), TEXT("VibingWords"), *WordsString, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+// ============================================================================
+// Phase 2: Tool Status Animation (Rotating Arrow Spinner)
+// ============================================================================
+
+void SAIChatWindow::StartToolStatusAnimation(const FString& UniqueKey)
+{
+    FToolCallWidgetData* WidgetData = ToolCallWidgets.Find(UniqueKey);
+    if (!WidgetData)
+    {
+        return;
+    }
+
+    // Don't start if already completed
+    if (WidgetData->bResponseReceived)
+    {
+        return;
+    }
+
+    // Use editor timer manager for animation
+    if (GEditor)
+    {
+        GEditor->GetTimerManager()->SetTimer(
+            WidgetData->StatusAnimationTimer,
+            FTimerDelegate::CreateLambda([this, UniqueKey]()
+            {
+                FToolCallWidgetData* Data = ToolCallWidgets.Find(UniqueKey);
+                if (!Data || Data->bResponseReceived)
+                {
+                    // Stop animation if completed or widget gone
+                    StopToolStatusAnimation(UniqueKey);
+                    return;
+                }
+
+                // Rotating arrow spinner frames
+                static const TCHAR* SpinnerFrames[] = {
+                    TEXT("→"), TEXT("↗"), TEXT("↑"), TEXT("↖"),
+                    TEXT("←"), TEXT("↙"), TEXT("↓"), TEXT("↘")
+                };
+
+                Data->AnimationFrame = (Data->AnimationFrame + 1) % 8;
+
+                if (Data->StatusText.IsValid())
+                {
+                    Data->StatusText->SetText(FText::FromString(SpinnerFrames[Data->AnimationFrame]));
+                }
+            }),
+            0.1f,  // 100ms per frame for smooth rotation
+            true   // Loop
+        );
+    }
+}
+
+void SAIChatWindow::StopToolStatusAnimation(const FString& UniqueKey)
+{
+    FToolCallWidgetData* WidgetData = ToolCallWidgets.Find(UniqueKey);
+    if (!WidgetData)
+    {
+        return;
+    }
+
+    if (GEditor)
+    {
+        GEditor->GetTimerManager()->ClearTimer(WidgetData->StatusAnimationTimer);
     }
 }

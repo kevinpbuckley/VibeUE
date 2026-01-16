@@ -10,7 +10,7 @@ Is there already a MaterialTest material somewhere? Search for it.
 
 ---
 
-If not, create one in /Game/Materials/test.
+If not, create it
 
 ---
 

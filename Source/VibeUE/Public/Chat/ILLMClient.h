@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -15,8 +15,6 @@ DECLARE_DELEGATE_OneParam(FOnLLMStreamError, const FString& /* ErrorMessage */);
 DECLARE_DELEGATE_OneParam(FOnLLMToolCall, const FMCPToolCall& /* ToolCall */);
 DECLARE_DELEGATE_TwoParams(FOnLLMUsageReceived, int32 /* PromptTokens */, int32 /* CompletionTokens */);
 DECLARE_DELEGATE_TwoParams(FOnLLMModelsFetched, bool /* bSuccess */, const TArray<FOpenRouterModel>& /* Models */);
-DECLARE_DELEGATE_OneParam(FOnLLMThinkingStatus, bool /* bIsThinking */);
-DECLARE_DELEGATE_OneParam(FOnLLMToolPreparing, const FString& /* ToolName */);  // Called when tool call name detected (before args)
 
 /**
  * Information about an LLM provider

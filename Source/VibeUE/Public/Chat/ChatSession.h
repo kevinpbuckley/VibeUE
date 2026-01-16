@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -92,14 +92,14 @@ DECLARE_DELEGATE_ThreeParams(FOnTokenBudgetUpdated, int32 /* CurrentTokens */, i
 DECLARE_DELEGATE_TwoParams(FOnToolIterationLimitReached, int32 /* CurrentIteration */, int32 /* MaxIterations */);
 
 /**
- * Delegate called when thinking state changes (model is reasoning)
+ * Delegate called when LLM response starts streaming (thinking state begins)
  */
-DECLARE_DELEGATE_OneParam(FOnThinkingStatusChanged, bool /* bIsThinking */);
+DECLARE_DELEGATE(FOnLLMThinkingStarted);
 
 /**
- * Delegate called when a tool is being prepared (name detected, args still streaming)
+ * Delegate called when LLM response completes or errors (thinking state ends)
  */
-DECLARE_DELEGATE_OneParam(FOnToolPreparing, const FString& /* ToolName */);
+DECLARE_DELEGATE(FOnLLMThinkingComplete);
 
 /**
  * Manages conversation state, message history, and persistence
@@ -353,8 +353,8 @@ public:
     FOnSummarizationComplete OnSummarizationComplete;
     FOnTokenBudgetUpdated OnTokenBudgetUpdated;
     FOnToolIterationLimitReached OnToolIterationLimitReached;
-    FOnThinkingStatusChanged OnThinkingStatusChanged;
-    FOnToolPreparing OnToolPreparing;
+    FOnLLMThinkingStarted OnLLMThinkingStarted;
+    FOnLLMThinkingComplete OnLLMThinkingComplete;
 
     // ============ Voice Input ============
 

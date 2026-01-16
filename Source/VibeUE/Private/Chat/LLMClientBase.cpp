@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Chat/LLMClientBase.h"
 #include "Chat/ChatSession.h"
@@ -499,11 +499,6 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
                 FString FunctionName;
                 if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
                 {
-                    // Fire preparing callback when we first get the tool name
-                    if (bIsNewToolCall && !FunctionName.IsEmpty() && CurrentOnToolPreparing.IsBound())
-                    {
-                        CurrentOnToolPreparing.Execute(FunctionName);
-                    }
                     ToolCall.ToolName = FunctionName;
                 }
 
@@ -656,13 +651,6 @@ void FLLMClientBase::DetectThinkingBlocks(const FString& Content)
             bInThinkingBlock = false;
             break;
         }
-    }
-    
-    // Fire callback if state changed
-    if (bWasInThinkingBlock != bInThinkingBlock && CurrentOnThinkingStatus.IsBound())
-    {
-        UE_LOG(LogLLMClientBase, Log, TEXT("[THINKING] Status changed: %s"), bInThinkingBlock ? TEXT("started") : TEXT("ended"));
-        CurrentOnThinkingStatus.Execute(bInThinkingBlock);
     }
 }
 

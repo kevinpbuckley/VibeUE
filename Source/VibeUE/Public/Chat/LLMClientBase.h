@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2025 All Rights Reserved.
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -82,15 +82,6 @@ protected:
     FOnLLMStreamError CurrentOnError;
     FOnLLMToolCall CurrentOnToolCall;
     FOnLLMUsageReceived CurrentOnUsage;
-    FOnLLMThinkingStatus CurrentOnThinkingStatus;
-    FOnLLMToolPreparing CurrentOnToolPreparing;
-    
-public:
-    /** Set optional thinking status callback (called when <thinking> blocks start/end) */
-    void SetThinkingStatusCallback(FOnLLMThinkingStatus InCallback) { CurrentOnThinkingStatus = InCallback; }
-    
-    /** Set optional tool preparing callback (called when tool name detected before full args) */
-    void SetToolPreparingCallback(FOnLLMToolPreparing InCallback) { CurrentOnToolPreparing = InCallback; }
 
 private:
     /** Handle HTTP request progress (streaming data) */

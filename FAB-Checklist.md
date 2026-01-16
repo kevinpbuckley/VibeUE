@@ -45,7 +45,7 @@
 
 ### Copyright & Source Code
 - [x] All source and header files (86 files) contain copyright notice ✅
-  - Format: `// Copyright Buckley Builds LLC 2025 All Rights Reserved.`
+  - Format: `// Copyright Buckley Builds LLC 2026 All Rights Reserved.`
 
 ### File Structure
 - [x] Plugin folder contains no unused or local folders in packaged distribution ✅
