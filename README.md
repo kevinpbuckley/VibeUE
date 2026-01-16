@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 10 specialized services with 150+ methods for Blueprints, Materials, Widgets, and more
+- **Python API Services** - 9 specialized services with 203 methods for Blueprints, Materials, Widgets, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -37,20 +37,20 @@ Lightweight MCP tools for exploring and executing Python:
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
 
-### 2. VibeUE Python API Services (10 services, 150+ methods)
+### 2. VibeUE Python API Services (9 services, 203 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
-| `BlueprintService` | 48 | Blueprint lifecycle, variables, functions, components, nodes |
+| `BlueprintService` | 64 | Blueprint lifecycle, variables, functions, components, nodes |
 | `MaterialService` | 26 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
-| `WidgetService` | 15 | UMG widget blueprints and components |
-| `InputService` | 19 | Enhanced Input actions, contexts, modifiers, triggers |
+| `WidgetService` | 14 | UMG widget blueprints and components |
+| `InputService` | 20 | Enhanced Input actions, contexts, modifiers, triggers |
 | `AssetDiscoveryService` | 13 | Asset search, import/export, references |
-| `DataAssetService` | 9 | UDataAsset instances and properties |
+| `DataAssetService` | 10 | UDataAsset instances and properties |
 | `DataTableService` | 13 | DataTable rows and structure |
-| `ActorService` | 3 | Level actor management |
+| `ActorService` | 22 | Level actor management |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -98,6 +98,17 @@ Plugins/VibeUE/BuildPlugin.bat
 
 ---
 
+## 🔧 Plugin Dependencies
+
+VibeUE automatically enables these required plugins during installation:
+
+| Plugin | Purpose |
+|--------|---------|| **PythonScriptPlugin** | Python runtime and Unreal Engine Python API || **EditorScriptingUtilities** | Blueprint and asset manipulation APIs |
+| **EnhancedInput** | Input system discovery and configuration |
+| **AudioCapture** | Speech-to-text input for in-editor chat |
+
+---
+
 ## 💬 In-Editor AI Chat
 
 The built-in chat interface runs directly in Unreal Editor:
@@ -116,7 +127,152 @@ The built-in chat interface runs directly in Unreal Editor:
 
 ---
 
-## 📚 Python API Reference
+## 🧠 Using VibeUE with External AI Agents
+
+When using VibeUE's MCP server with external AI agents (Claude, GitHub Copilot, Cursor, etc.), **you must include the VibeUE instructions** in your AI system prompt or context.
+
+### Why This Matters
+
+The `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` file contains:
+- Critical API rules and gotchas (e.g., "compile before variable nodes")
+- Skills system documentation (lazy-loaded knowledge domains)
+- Common method naming mistakes to avoid
+- Property format requirements for different services
+- Essential safety rules (never block the editor, use full asset paths, etc.)
+
+**Without these instructions, AI agents will make incorrect assumptions about the API and encounter failures.**
+
+### Claude (Claude Desktop, Cursor, Windsurf)
+
+1. Copy `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` content
+2. Add it to your Claude context with instructions like:
+
+```markdown
+# VibeUE API System Prompt
+
+Include the full contents of vibeue.instructions.md here.
+```
+
+Or use Claude's **context window feature** to load the file directly.
+
+### GitHub Copilot
+
+1. Include VibeUE instructions in your workspace settings
+2. Create `.github/copilot-instructions.md` and reference the VibeUE instructions
+3. Add to your project's README or documentation
+
+### VS Code + Custom LLM
+
+If using VS Code with a custom LLM provider:
+
+1. Add `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` to your `.vscode/settings.json`:
+
+```json
+{
+  "llm.systemPrompt": "Include contents of Plugins/VibeUE/Content/instructions/vibeue.instructions.md"
+}
+```
+
+### Quick Reference: Essential Rules
+
+The AI **must know**:
+- ✅ Always use `discover_python_class()` before calling service methods
+- ✅ Compile blueprints before adding variable nodes
+- ✅ Use full asset paths (`/Game/Path/Asset`, not `Asset`)
+- ✅ Property values are strings, not Python types
+- ✅ Load skills with `manage_skills` for domain-specific knowledge
+- ❌ Never guess method names - discover first
+- ❌ Never use modal dialogs or blocking operations
+- ❌ Never assume service counts or method availability
+
+---
+
+## 🎯 Skills System - Lazy-Loaded Domain Knowledge
+
+VibeUE uses a **Skills System** to dramatically reduce AI context overhead while providing domain-specific guidance.
+
+### How It Works
+
+Instead of loading all documentation at once, skills are lazy-loaded on demand:
+
+1. **AI detects the task** (e.g., "Create a blueprint with variables")
+2. **Skill is automatically or manually loaded** via `manage_skills` tool
+3. **Skill contains**: Critical rules, workflows, common mistakes, property formats
+4. **AI uses skill knowledge** combined with live discovery via `discover_python_class`
+
+### Available Skills
+
+Each skill includes:
+- **Critical Rules** - Gotchas that discovery can't tell you (e.g., method name mistakes)
+- **Workflows** - Step-by-step patterns for common tasks
+- **Common Mistakes** - Things to avoid (wrong property names, etc.)
+- **Property Formats** - How to format values in Unreal string syntax
+
+**8 Domain Skills:**
+- `blueprints` - Blueprint lifecycle, variables, functions, components, nodes
+- `materials` - Material creation and graph editing
+- `enhanced-input` - Input Actions, Mapping Contexts, Modifiers, Triggers
+- `data-tables` - Data Table creation and row management
+- `data-assets` - Data Asset instances and properties
+- `umg-widgets` - Widget Blueprint creation and styling
+- `level-actors` - Level actor manipulation
+- `asset-management` - Asset search, import/export, references
+
+### Using Skills
+
+**In-Editor Chat** - Skills auto-load based on keywords
+
+**External AI** - Manually load with `manage_skills` tool:
+
+```python
+# List all available skills
+manage_skills(action="list")
+
+# Load a specific skill
+manage_skills(action="load", skill_name="blueprints")
+
+# Load multiple skills together (deduplicated discovery)
+manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
+```
+
+Skill response includes:
+- `vibeue_classes` - Services to discover (e.g., BlueprintService)
+- `unreal_classes` - Native UE classes (e.g., EditorAssetLibrary)
+- `content` - Markdown with workflows and critical rules
+- `COMMON_MISTAKES` - Quick reference for frequent errors
+
+### Workflow with Skills
+
+The recommended pattern:
+
+```python
+import unreal
+
+# 1. Load relevant skill for domain knowledge
+manage_skills(action="load", skill_name="blueprints")
+# ↓ Skill response tells you about BlueprintService methods and critical rules
+
+# 2. Discover exact method signatures BEFORE calling
+unreal.BlueprintService  # Already know this from skill
+discover_python_class("unreal.BlueprintService", method_filter="variable")
+# ↓ Discovery returns: add_variable, remove_variable, list_variables, ...
+
+# 3. Use discovered signatures with parameters from skill
+path = unreal.BlueprintService.create_blueprint("BP_Player", "Actor", "/Game/Blueprints")
+unreal.BlueprintService.add_variable(path, "Health", "Float", "100.0")
+unreal.BlueprintService.compile_blueprint(path)  # Critical rule from skill!
+```
+
+### Token Efficiency
+
+**Before Skills:** 13,000 tokens of all docs loaded every conversation
+
+**After Skills:** 2,500 base + domain skills on demand
+- Blueprint task: 2.5k + 3.2k = 5.7k (56% reduction)
+- Material task: 2.5k + 2.2k = 4.7k (64% reduction)
+- Multi-domain: Load only what's needed (50-65% average)
+
+---
 
 All services are available via `unreal.<ServiceName>.<method>()`.
 
@@ -130,7 +286,7 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (48 methods)
+### BlueprintService (64 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
@@ -189,7 +345,7 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `connect_to_output(path, expr, output, property)` - Connect to material output
 - `create_parameter(...)` - Create parameter expression
 
-### WidgetService (15 methods)
+### WidgetService (14 methods)
 
 - `list_widget_blueprints(path)` - Find widget blueprints
 - `add_component(path, type, name, parent)` - Add widget
@@ -197,7 +353,7 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `get_hierarchy(path)` - Get widget tree
 - `bind_event(path, event, function)` - Bind events
 
-### InputService (19 methods)
+### InputService (20 methods)
 
 - `create_action(name, path, value_type)` - Create Input Action
 - `create_mapping_context(name, path, priority)` - Create context
@@ -213,7 +369,7 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `export_texture(asset, file)` - Export texture
 - `get_asset_dependencies/referencers(path)` - References
 
-### DataAssetService (9 methods)
+### DataAssetService (10 methods)
 
 - `search_types(filter)` - Find DataAsset subclasses
 - `create_data_asset(class, path, name)` - Create instance
@@ -228,11 +384,15 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `get_row/update_row/remove_row(...)` - Row operations
 - `get_row_struct(path)` - Get column schema
 
-### ActorService (3 methods)
+### ActorService (22 methods)
 
-- `list_level_actors(class_filter)` - List actors
-- `find_actors_by_class(class)` - Find by class
-- `get_actor_info(name)` - Get actor details
+ActorService provides comprehensive level actor manipulation:
+- Actor discovery and queries
+- Transform operations (position, rotation, scale)
+- Selection management
+- Spawning and destruction
+- Property access
+- And more
 
 ---
 
