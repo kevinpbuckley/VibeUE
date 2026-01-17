@@ -8,6 +8,77 @@
 #include "ChatTypes.generated.h"
 
 /**
+ * Content part for multimodal messages (vision support)
+ * Represents a single part of a message that can be text or an image
+ */
+USTRUCT(BlueprintType)
+struct VIBEUE_API FContentPart
+{
+    GENERATED_BODY()
+    
+    /** Type of content: "text" or "image_url" */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString Type;
+    
+    /** Text content (when Type="text") */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString Text;
+    
+    /** Image URL (when Type="image_url") - can be data URL (base64) or HTTP(S) URL */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString ImageUrl;
+    
+    /** Image detail level: "auto", "low", or "high" (optional) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString ImageDetail;
+    
+    FContentPart() : Type(TEXT("text")) {}
+    
+    /** Create a text content part */
+    static FContentPart MakeText(const FString& InText)
+    {
+        FContentPart Part;
+        Part.Type = TEXT("text");
+        Part.Text = InText;
+        return Part;
+    }
+    
+    /** Create an image_url content part */
+    static FContentPart MakeImage(const FString& InImageUrl, const FString& InDetail = TEXT("auto"))
+    {
+        FContentPart Part;
+        Part.Type = TEXT("image_url");
+        Part.ImageUrl = InImageUrl;
+        Part.ImageDetail = InDetail;
+        return Part;
+    }
+    
+    /** Convert to JSON for API requests */
+    TSharedPtr<FJsonObject> ToJson() const
+    {
+        TSharedPtr<FJsonObject> JsonObject = MakeShared<FJsonObject>();
+        JsonObject->SetStringField(TEXT("type"), Type);
+        
+        if (Type == TEXT("text"))
+        {
+            JsonObject->SetStringField(TEXT("text"), Text);
+        }
+        else if (Type == TEXT("image_url"))
+        {
+            TSharedPtr<FJsonObject> ImageUrlObj = MakeShared<FJsonObject>();
+            ImageUrlObj->SetStringField(TEXT("url"), ImageUrl);
+            if (!ImageDetail.IsEmpty())
+            {
+                ImageUrlObj->SetStringField(TEXT("detail"), ImageDetail);
+            }
+            JsonObject->SetObjectField(TEXT("image_url"), ImageUrlObj);
+        }
+        
+        return JsonObject;
+    }
+};
+
+/**
  * Represents a tool call made by the assistant
  */
 USTRUCT(BlueprintType)
@@ -49,6 +120,12 @@ struct VIBEUE_API FChatMessage
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FString Content;
     
+    /** Multimodal content parts (for vision/image support)
+     * If this array is non-empty, it takes precedence over Content field
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    TArray<FContentPart> ContentParts;
+    
     /** Chain-of-thought reasoning content (from <think> tags, not shown to user) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FString ThinkingContent;
@@ -82,6 +159,25 @@ struct VIBEUE_API FChatMessage
         , Timestamp(FDateTime::Now())
         , bIsStreaming(false)
     {}
+    
+    /** Check if this message uses multimodal content (has content parts) */
+    bool IsMultimodal() const
+    {
+        return ContentParts.Num() > 0;
+    }
+    
+    /** Check if this message contains vision content (images) */
+    bool HasVisionContent() const
+    {
+        for (const FContentPart& Part : ContentParts)
+        {
+            if (Part.Type == TEXT("image_url"))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
     
     /** Create a JSON object for API requests */
     TSharedPtr<FJsonObject> ToJson() const
@@ -120,6 +216,17 @@ struct VIBEUE_API FChatMessage
             }
             JsonObject->SetArrayField(TEXT("tool_calls"), ToolCallsArray);
         }
+        // Multimodal content (vision support) - use content parts array
+        else if (IsMultimodal())
+        {
+            TArray<TSharedPtr<FJsonValue>> ContentArray;
+            for (const FContentPart& Part : ContentParts)
+            {
+                ContentArray.Add(MakeShared<FJsonValueObject>(Part.ToJson()));
+            }
+            JsonObject->SetArrayField(TEXT("content"), ContentArray);
+        }
+        // Standard text content (backwards compatible)
         else
         {
             JsonObject->SetStringField(TEXT("content"), Content);

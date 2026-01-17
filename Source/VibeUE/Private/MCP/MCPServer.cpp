@@ -1174,6 +1174,14 @@ TArray<FMCPTool> FMCPServer::GetInternalTools() const
             ParamSchema->SetStringField(TEXT("type"), Param.Type);
             ParamSchema->SetStringField(TEXT("description"), Param.Description);
             
+            // For array types, add items schema (required by JSON Schema spec)
+            if (Param.Type == TEXT("array"))
+            {
+                TSharedPtr<FJsonObject> ItemsSchema = MakeShared<FJsonObject>();
+                ItemsSchema->SetStringField(TEXT("type"), TEXT("string")); // Default to string items
+                ParamSchema->SetObjectField(TEXT("items"), ItemsSchema);
+            }
+            
             Properties->SetObjectField(Param.Name, ParamSchema);
             
             if (Param.bRequired)
