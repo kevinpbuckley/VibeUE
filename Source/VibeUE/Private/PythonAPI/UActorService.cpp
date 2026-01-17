@@ -915,3 +915,42 @@ bool UActorService::DeselectAll()
 	GEditor->SelectNone(true, true, false);
 	return true;
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// Existence Checks
+// ═══════════════════════════════════════════════════════════════════
+
+bool UActorService::ActorExists(const FString& ActorLabel)
+{
+	if (ActorLabel.IsEmpty())
+	{
+		return false;
+	}
+	return FindActorByIdentifier(ActorLabel) != nullptr;
+}
+
+bool UActorService::ActorExistsByTag(const FString& Tag)
+{
+	if (Tag.IsEmpty())
+	{
+		return false;
+	}
+
+	UWorld* World = GetEditorWorld();
+	if (!World)
+	{
+		return false;
+	}
+
+	FName TagName(*Tag);
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		AActor* Actor = *It;
+		if (Actor && Actor->ActorHasTag(TagName))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}

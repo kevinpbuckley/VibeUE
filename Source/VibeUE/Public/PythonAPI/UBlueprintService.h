@@ -2109,6 +2109,122 @@ public:
 		FString& OutDifferences
 	);
 
+	// ============================================================================
+	// EXISTENCE CHECKS - Fast boolean checks before creation (Idempotency)
+	// ============================================================================
+
+	/**
+	 * Check if a blueprint exists at the given path.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player")
+	 * @return True if blueprint exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
+	 *       unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool BlueprintExists(const FString& BlueprintPath);
+
+	/**
+	 * Check if a variable exists in a blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param VariableName - Name of the variable (case-insensitive)
+	 * @return True if variable exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.variable_exists(bp_path, "Health"):
+	 *       unreal.BlueprintService.add_variable(bp_path, "Health", "float")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool VariableExists(const FString& BlueprintPath, const FString& VariableName);
+
+	/**
+	 * Check if a function exists in a blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param FunctionName - Name of the function (case-insensitive)
+	 * @return True if function exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.function_exists(bp_path, "ApplyDamage"):
+	 *       unreal.BlueprintService.create_function(bp_path, "ApplyDamage")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool FunctionExists(const FString& BlueprintPath, const FString& FunctionName);
+
+	/**
+	 * Check if a component exists in a blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param ComponentName - Name of the component (case-insensitive)
+	 * @return True if component exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.component_exists(bp_path, "Mesh"):
+	 *       unreal.BlueprintService.add_component(bp_path, "StaticMeshComponent", "Mesh")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool ComponentExists(const FString& BlueprintPath, const FString& ComponentName);
+
+	/**
+	 * Check if a local variable exists in a function.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param FunctionName - Name of the function
+	 * @param VariableName - Name of the local variable (case-insensitive)
+	 * @return True if local variable exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.local_variable_exists(bp_path, "ApplyDamage", "TempValue"):
+	 *       unreal.BlueprintService.add_function_local_variable(bp_path, "ApplyDamage", "TempValue", "float")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool LocalVariableExists(
+		const FString& BlueprintPath,
+		const FString& FunctionName,
+		const FString& VariableName
+	);
+
+	/**
+	 * Check if a node with the given title exists in a graph.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph ("EventGraph", function name, etc.)
+	 * @param NodeTitle - Node title to search for (case-insensitive)
+	 * @return True if a node with matching title exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.node_exists(bp_path, "EventGraph", "Event BeginPlay"):
+	 *       # Add BeginPlay event
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool NodeExists(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeTitle
+	);
+
+	/**
+	 * Check if a function call node exists in a graph (calls a specific function).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param FunctionName - Function name being called (case-insensitive)
+	 * @return True if a call to that function exists
+	 *
+	 * Example:
+	 *   if not unreal.BlueprintService.function_call_exists(bp_path, "EventGraph", "PrintString"):
+	 *       unreal.BlueprintService.add_print_string_node(bp_path, "EventGraph", 400, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Exists")
+	static bool FunctionCallExists(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& FunctionName
+	);
+
 private:
 	/** Helper to load blueprint from path */
 	static UBlueprint* LoadBlueprint(const FString& BlueprintPath);

@@ -342,6 +342,23 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
 	static FString GetPropertiesAsJson(const FString& AssetPath);
 
+	// =================================================================
+	// Existence Checks
+	// =================================================================
+
+	/**
+	 * Check if a DataAsset exists at the given path.
+	 *
+	 * @param AssetPath - Full path to the DataAsset
+	 * @return True if DataAsset exists
+	 *
+	 * Example:
+	 *   if not unreal.DataAssetService.data_asset_exists("/Game/Data/DA_Sword"):
+	 *       unreal.DataAssetService.create_data_asset("ItemDataAsset", "/Game/Data", "DA_Sword")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets|Exists")
+	static bool DataAssetExists(const FString& AssetPath);
+
 private:
 	// Helper to find DataAsset class by name
 	static UClass* FindDataAssetClass(const FString& ClassName);

@@ -4329,3 +4329,242 @@ FString UBlueprintService::CreateNodeByKey(
 
 	return FString();
 }
+
+// ============================================================================
+// EXISTENCE CHECKS - Fast boolean checks before creation (Idempotency)
+// ============================================================================
+
+bool UBlueprintService::BlueprintExists(const FString& BlueprintPath)
+{
+	if (BlueprintPath.IsEmpty())
+	{
+		return false;
+	}
+
+	// Fast path: use DoesAssetExist which doesn't load the asset
+	return UEditorAssetLibrary::DoesAssetExist(BlueprintPath);
+}
+
+bool UBlueprintService::VariableExists(const FString& BlueprintPath, const FString& VariableName)
+{
+	if (VariableName.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName.ToString().Equals(VariableName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UBlueprintService::FunctionExists(const FString& BlueprintPath, const FString& FunctionName)
+{
+	if (FunctionName.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	// Check function graphs
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetFName().ToString().Equals(FunctionName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	// Also check generated class for functions (including inherited/overridden)
+	if (UClass* GeneratedClass = Blueprint->GeneratedClass)
+	{
+		if (GeneratedClass->FindFunctionByName(FName(*FunctionName)))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UBlueprintService::ComponentExists(const FString& BlueprintPath, const FString& ComponentName)
+{
+	if (ComponentName.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	USimpleConstructionScript* SCS = Blueprint->SimpleConstructionScript;
+	if (!SCS)
+	{
+		return false;
+	}
+
+	const TArray<USCS_Node*>& AllNodes = SCS->GetAllNodes();
+	for (USCS_Node* Node : AllNodes)
+	{
+		if (Node && Node->GetVariableName().ToString().Equals(ComponentName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UBlueprintService::LocalVariableExists(
+	const FString& BlueprintPath,
+	const FString& FunctionName,
+	const FString& VariableName)
+{
+	if (FunctionName.IsEmpty() || VariableName.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	// Find the function graph
+	UEdGraph* FunctionGraph = nullptr;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetFName().ToString().Equals(FunctionName, ESearchCase::IgnoreCase))
+		{
+			FunctionGraph = Graph;
+			break;
+		}
+	}
+
+	if (!FunctionGraph)
+	{
+		return false;
+	}
+
+	// Get the entry node which contains local variables
+	for (UEdGraphNode* Node : FunctionGraph->Nodes)
+	{
+		if (UK2Node_FunctionEntry* EntryNode = Cast<UK2Node_FunctionEntry>(Node))
+		{
+			for (const FBPVariableDescription& LocalVar : EntryNode->LocalVariables)
+			{
+				if (LocalVar.VarName.ToString().Equals(VariableName, ESearchCase::IgnoreCase))
+				{
+					return true;
+				}
+			}
+			break;
+		}
+	}
+
+	return false;
+}
+
+bool UBlueprintService::NodeExists(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeTitle)
+{
+	if (GraphName.IsEmpty() || NodeTitle.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		return false;
+	}
+
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (!Node)
+		{
+			continue;
+		}
+
+		// Check full title
+		FString FullTitle = Node->GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+		if (FullTitle.Equals(NodeTitle, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		// Also check compact title (shorter version)
+		FString CompactTitle = Node->GetNodeTitle(ENodeTitleType::ListView).ToString();
+		if (CompactTitle.Equals(NodeTitle, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+bool UBlueprintService::FunctionCallExists(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& FunctionName)
+{
+	if (GraphName.IsEmpty() || FunctionName.IsEmpty())
+	{
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		return false;
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		return false;
+	}
+
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (UK2Node_CallFunction* CallNode = Cast<UK2Node_CallFunction>(Node))
+		{
+			FName FuncName = CallNode->FunctionReference.GetMemberName();
+			if (FuncName.ToString().Equals(FunctionName, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}

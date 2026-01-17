@@ -755,6 +755,19 @@ FString UDataAssetService::GetPropertiesAsJson(const FString& AssetPath)
 	
 	JsonWriter->WriteObjectEnd();
 	JsonWriter->Close();
-	
+
 	return JsonString;
+}
+
+// =================================================================
+// Existence Checks
+// =================================================================
+
+bool UDataAssetService::DataAssetExists(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(AssetPath);
 }

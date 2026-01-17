@@ -1087,3 +1087,79 @@ bool UMaterialService::SaveInstance(const FString& InstancePath)
 {
 	return UEditorAssetLibrary::SaveAsset(InstancePath, false);
 }
+
+// =================================================================
+// Existence Checks
+// =================================================================
+
+bool UMaterialService::MaterialExists(const FString& MaterialPath)
+{
+	if (MaterialPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(MaterialPath);
+}
+
+bool UMaterialService::MaterialInstanceExists(const FString& InstancePath)
+{
+	if (InstancePath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(InstancePath);
+}
+
+bool UMaterialService::ParameterExists(const FString& MaterialPath, const FString& ParameterName)
+{
+	if (MaterialPath.IsEmpty() || ParameterName.IsEmpty())
+	{
+		return false;
+	}
+
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return false;
+	}
+
+	// Get all parameters and check if any match
+	TArray<FMaterialParameterInfo> ParameterInfos;
+	TArray<FGuid> ParameterGuids;
+
+	// Check scalar parameters
+	Material->GetAllScalarParameterInfo(ParameterInfos, ParameterGuids);
+	for (const FMaterialParameterInfo& Info : ParameterInfos)
+	{
+		if (Info.Name.ToString().Equals(ParameterName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	// Check vector parameters
+	ParameterInfos.Empty();
+	ParameterGuids.Empty();
+	Material->GetAllVectorParameterInfo(ParameterInfos, ParameterGuids);
+	for (const FMaterialParameterInfo& Info : ParameterInfos)
+	{
+		if (Info.Name.ToString().Equals(ParameterName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	// Check texture parameters
+	ParameterInfos.Empty();
+	ParameterGuids.Empty();
+	Material->GetAllTextureParameterInfo(ParameterInfos, ParameterGuids);
+	for (const FMaterialParameterInfo& Info : ParameterInfos)
+	{
+		if (Info.Name.ToString().Equals(ParameterName, ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}

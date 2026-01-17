@@ -487,7 +487,18 @@ bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FStri
 	AssetsToExport.Add(Texture);
 	
 	AssetTools.ExportAssets(AssetsToExport, ExportDir);
-	
+
 	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ExportTexture: Exported texture to %s"), *ExportDir);
 	return true;
+}
+
+// ========== Existence Checks ==========
+
+bool UAssetDiscoveryService::AssetExists(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(AssetPath);
 }

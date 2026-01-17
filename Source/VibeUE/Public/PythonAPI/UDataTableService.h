@@ -329,6 +329,37 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataTables")
 	static int32 ClearRows(const FString& TablePath);
 
+	// ============================================
+	// Existence Checks
+	// ============================================
+
+	/**
+	 * Check if a DataTable exists at the given path.
+	 *
+	 * @param TablePath - Full path to the DataTable
+	 * @return True if DataTable exists
+	 *
+	 * Example:
+	 *   if not unreal.DataTableService.data_table_exists("/Game/Data/DT_Items"):
+	 *       unreal.DataTableService.create_data_table("FItemRow", "/Game/Data", "DT_Items")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataTables|Exists")
+	static bool DataTableExists(const FString& TablePath);
+
+	/**
+	 * Check if a row exists in a DataTable.
+	 *
+	 * @param TablePath - Full path to the DataTable
+	 * @param RowName - Name of the row
+	 * @return True if row exists
+	 *
+	 * Example:
+	 *   if not unreal.DataTableService.row_exists("/Game/Data/DT_Items", "Sword"):
+	 *       unreal.DataTableService.add_row("/Game/Data/DT_Items", "Sword", '{"Name":"Sword"}')
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataTables|Exists")
+	static bool RowExists(const FString& TablePath, const FString& RowName);
+
 private:
 	// Helper to load a DataTable by path
 	static UDataTable* LoadDataTable(const FString& TablePath);

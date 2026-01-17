@@ -856,6 +856,35 @@ int32 UDataTableService::ClearRows(const FString& TablePath)
 }
 
 // ============================================
+// Existence Checks
+// ============================================
+
+bool UDataTableService::DataTableExists(const FString& TablePath)
+{
+	if (TablePath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(TablePath);
+}
+
+bool UDataTableService::RowExists(const FString& TablePath, const FString& RowName)
+{
+	if (TablePath.IsEmpty() || RowName.IsEmpty())
+	{
+		return false;
+	}
+
+	UDataTable* DataTable = LoadDataTable(TablePath);
+	if (!DataTable)
+	{
+		return false;
+	}
+
+	return DataTable->FindRowUnchecked(FName(*RowName)) != nullptr;
+}
+
+// ============================================
 // JSON Serialization Helpers
 // ============================================
 

@@ -530,6 +530,50 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")
 	static TArray<FString> GetAvailableTriggerTypes();
 
+	// =================================================================
+	// Existence Checks
+	// =================================================================
+
+	/**
+	 * Check if an Input Action exists at the given path.
+	 *
+	 * @param ActionPath - Full path to the Input Action
+	 * @return True if Input Action exists
+	 *
+	 * Example:
+	 *   if not unreal.InputService.input_action_exists("/Game/Input/IA_Jump"):
+	 *       unreal.InputService.create_action("IA_Jump", "/Game/Input", "Axis1D")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	static bool InputActionExists(const FString& ActionPath);
+
+	/**
+	 * Check if a Mapping Context exists at the given path.
+	 *
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @return True if Mapping Context exists
+	 *
+	 * Example:
+	 *   if not unreal.InputService.mapping_context_exists("/Game/Input/IMC_Default"):
+	 *       unreal.InputService.create_mapping_context("IMC_Default", "/Game/Input")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	static bool MappingContextExists(const FString& ContextPath);
+
+	/**
+	 * Check if a key mapping for a specific action exists in a context.
+	 *
+	 * @param ContextPath - Full path to the Mapping Context
+	 * @param ActionPath - Full path to the Input Action
+	 * @return True if a mapping for this action exists
+	 *
+	 * Example:
+	 *   if not unreal.InputService.key_mapping_exists("/Game/Input/IMC_Default", "/Game/Input/IA_Jump"):
+	 *       unreal.InputService.add_key_mapping("/Game/Input/IMC_Default", "/Game/Input/IA_Jump", "SpaceBar")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input|Exists")
+	static bool KeyMappingExists(const FString& ContextPath, const FString& ActionPath);
+
 private:
 	/** Helper to load an Input Action */
 	static class UInputAction* LoadInputAction(const FString& ActionPath);

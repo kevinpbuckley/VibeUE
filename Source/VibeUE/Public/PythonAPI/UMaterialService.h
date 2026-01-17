@@ -613,6 +613,50 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Save Material Instance"))
 	static bool SaveInstance(const FString& InstancePath);
 
+	// =================================================================
+	// Existence Checks
+	// =================================================================
+
+	/**
+	 * Check if a material exists at the given path.
+	 *
+	 * @param MaterialPath - Full path to the material
+	 * @return True if material exists
+	 *
+	 * Example:
+	 *   if not unreal.MaterialService.material_exists("/Game/Materials/M_Base"):
+	 *       unreal.MaterialService.create_material("M_Base", "/Game/Materials")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	static bool MaterialExists(const FString& MaterialPath);
+
+	/**
+	 * Check if a material instance exists at the given path.
+	 *
+	 * @param InstancePath - Full path to the material instance
+	 * @return True if material instance exists
+	 *
+	 * Example:
+	 *   if not unreal.MaterialService.material_instance_exists("/Game/Materials/MI_Red"):
+	 *       unreal.MaterialService.create_instance("/Game/Materials/M_Base", "MI_Red", "/Game/Materials")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	static bool MaterialInstanceExists(const FString& InstancePath);
+
+	/**
+	 * Check if a parameter exists in a material.
+	 *
+	 * @param MaterialPath - Full path to the material
+	 * @param ParameterName - Name of the parameter (case-insensitive)
+	 * @return True if parameter exists
+	 *
+	 * Example:
+	 *   if not unreal.MaterialService.parameter_exists("/Game/Materials/M_Base", "BaseColor"):
+	 *       # Add the parameter node
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	static bool ParameterExists(const FString& MaterialPath, const FString& ParameterName);
+
 private:
 	// Helper methods
 	static class UMaterial* LoadMaterialAsset(const FString& MaterialPath);
