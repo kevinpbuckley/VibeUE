@@ -431,6 +431,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
 	static bool DeselectAll();
 
+	// ═══════════════════════════════════════════════════════════════════
+	// Existence Checks
+	// ═══════════════════════════════════════════════════════════════════
+
+	/**
+	 * Check if an actor with the given label exists in the current level.
+	 *
+	 * @param ActorLabel - Display label of the actor
+	 * @return True if actor exists
+	 *
+	 * Example:
+	 *   if not unreal.ActorService.actor_exists("TargetDummy_01"):
+	 *       unreal.ActorService.add_actor("StaticMeshActor", (100, 200, 0), (0, 0, 0), (1, 1, 1), "TargetDummy_01")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors|Exists")
+	static bool ActorExists(const FString& ActorLabel);
+
+	/**
+	 * Check if any actor with the given tag exists in the current level.
+	 *
+	 * @param Tag - Actor tag to search for
+	 * @return True if any actor with this tag exists
+	 *
+	 * Example:
+	 *   if not unreal.ActorService.actor_exists_by_tag("Enemy"):
+	 *       # Spawn enemies
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors|Exists")
+	static bool ActorExistsByTag(const FString& Tag);
+
 private:
 	/** Helper: Find actor by name or label */
 	static AActor* FindActorByIdentifier(const FString& NameOrLabel);

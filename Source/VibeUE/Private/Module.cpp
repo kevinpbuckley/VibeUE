@@ -8,10 +8,13 @@
 #include "Core/ToolRegistry.h"
 #include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
-#include "Tools/ExampleTools.h"
+#include "HAL/PlatformFileManager.h"
 #include "Tools/PythonTools.h"
+#include "Tools/VisionTools.h"
 #include "IPythonScriptPlugin.h"
 #include "UI/ChatRichTextStyles.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
 
 #define LOCTEXT_NAMESPACE "FModule"
 
@@ -105,22 +108,22 @@ static FAutoConsoleCommand RefreshToolsCommand(
 // Console command to test metadata directly
 static void TestMetadata()
 {
-	UClass* ExampleToolsClass = UExampleTools::StaticClass();
-	if (!ExampleToolsClass)
+	UClass* VisionToolsClass = UVisionTools::StaticClass();
+	if (!VisionToolsClass)
 	{
-		UE_LOG(LogTemp, Error, TEXT("UExampleTools::StaticClass() returned nullptr!"));
+		UE_LOG(LogTemp, Error, TEXT("UVisionTools::StaticClass() returned nullptr!"));
 		return;
 	}
 	
-	UE_LOG(LogTemp, Display, TEXT("=== Testing UExampleTools Metadata ==="));
-	UE_LOG(LogTemp, Display, TEXT("Class: %s"), *ExampleToolsClass->GetName());
+	UE_LOG(LogTemp, Display, TEXT("=== Testing UVisionTools Metadata ==="));
+	UE_LOG(LogTemp, Display, TEXT("Class: %s"), *VisionToolsClass->GetName());
 	
-	FString Category = ExampleToolsClass->GetMetaData(TEXT("ToolCategory"));
+	FString Category = VisionToolsClass->GetMetaData(TEXT("ToolCategory"));
 	UE_LOG(LogTemp, Display, TEXT("ToolCategory metadata: '%s' (empty=%d)"), *Category, Category.IsEmpty());
 	
 	UE_LOG(LogTemp, Display, TEXT("Functions in class:"));
 	int32 FuncCount = 0;
-	for (TFieldIterator<UFunction> FuncIt(ExampleToolsClass); FuncIt; ++FuncIt)
+	for (TFieldIterator<UFunction> FuncIt(VisionToolsClass); FuncIt; ++FuncIt)
 	{
 		UFunction* Func = *FuncIt;
 		FuncCount++;
@@ -132,7 +135,7 @@ static void TestMetadata()
 
 static FAutoConsoleCommand TestMetadataCommand(
 	TEXT("VibeUE.TestMetadata"),
-	TEXT("Test metadata extraction from UExampleTools"),
+	TEXT("Test metadata extraction from UVisionTools"),
 	FConsoleCommandDelegate::CreateStatic(TestMetadata)
 );
 
@@ -142,9 +145,72 @@ static FAutoConsoleCommandWithArgsAndOutputDevice TestToolCommand(
 	FConsoleCommandWithArgsAndOutputDeviceDelegate::CreateStatic(TestVibeUETool)
 );
 
+// Helper function to clean up screenshots folder on startup
+static void CleanupScreenshotsFolder()
+{
+	// Clean up both possible screenshot locations
+	TArray<FString> ScreenshotDirs;
+	
+	// VibeUE specific screenshots folder
+	ScreenshotDirs.Add(FPaths::ProjectSavedDir() / TEXT("Screenshots") / TEXT("VibeUE"));
+	
+	// Standard Unreal screenshots folder (Windows platform subfolder)
+	ScreenshotDirs.Add(FPaths::ProjectSavedDir() / TEXT("Screenshots") / TEXT("Windows"));
+	
+	// Also clean the base Screenshots folder (in case files are saved there directly)
+	ScreenshotDirs.Add(FPaths::ProjectSavedDir() / TEXT("Screenshots"));
+	
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	int32 TotalDeleted = 0;
+	
+	for (const FString& ScreenshotsDir : ScreenshotDirs)
+	{
+		if (!PlatformFile.DirectoryExists(*ScreenshotsDir))
+		{
+			continue;
+		}
+		
+		// Find and delete all PNG and JPEG files in the screenshots directory
+		TArray<FString> FilesToDelete;
+		PlatformFile.FindFiles(FilesToDelete, *ScreenshotsDir, TEXT(".png"));
+		
+		TArray<FString> JpegFiles;
+		PlatformFile.FindFiles(JpegFiles, *ScreenshotsDir, TEXT(".jpg"));
+		FilesToDelete.Append(JpegFiles);
+		
+		TArray<FString> JpegFiles2;
+		PlatformFile.FindFiles(JpegFiles2, *ScreenshotsDir, TEXT(".jpeg"));
+		FilesToDelete.Append(JpegFiles2);
+		
+		for (const FString& FilePath : FilesToDelete)
+		{
+			if (PlatformFile.DeleteFile(*FilePath))
+			{
+				TotalDeleted++;
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("VibeUE: Failed to delete screenshot: %s"), *FilePath);
+			}
+		}
+	}
+	
+	if (TotalDeleted > 0)
+	{
+		UE_LOG(LogTemp, Display, TEXT("VibeUE: Cleaned up %d screenshot(s) on startup"), TotalDeleted);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Display, TEXT("VibeUE: No screenshots to clean up"));
+	}
+}
+
 void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
+
+	// Clean up old screenshots from previous sessions
+	CleanupScreenshotsFolder();
 
 	// Initialize Chat Rich Text Styles (for markdown rendering)
 	FChatRichTextStyles::Initialize();

@@ -391,6 +391,37 @@ public:
 		const FString& EventName,
 		const FString& FunctionName);
 
+	// =================================================================
+	// Existence Checks
+	// =================================================================
+
+	/**
+	 * Check if a Widget Blueprint exists at the given path.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @return True if Widget Blueprint exists
+	 *
+	 * Example:
+	 *   if not unreal.WidgetService.widget_blueprint_exists("/Game/UI/WBP_MainMenu"):
+	 *       # Create the widget blueprint
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Exists")
+	static bool WidgetBlueprintExists(const FString& WidgetPath);
+
+	/**
+	 * Check if a widget component exists in a Widget Blueprint.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the widget component
+	 * @return True if component exists
+	 *
+	 * Example:
+	 *   if not unreal.WidgetService.widget_exists("/Game/UI/WBP_MainMenu", "StartButton"):
+	 *       unreal.WidgetService.add_component("/Game/UI/WBP_MainMenu", "Button", "StartButton", "CanvasPanel_0")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Exists")
+	static bool WidgetExists(const FString& WidgetPath, const FString& ComponentName);
+
 private:
 	/** Helper to load and validate a Widget Blueprint */
 	static class UWidgetBlueprint* LoadWidgetBlueprint(const FString& WidgetPath);

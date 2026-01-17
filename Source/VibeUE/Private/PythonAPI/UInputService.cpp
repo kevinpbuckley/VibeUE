@@ -773,7 +773,7 @@ TArray<FInputTriggerInfo> UInputService::GetTriggers(
 TArray<FString> UInputService::GetAvailableTriggerTypes()
 {
 	TArray<FString> Types;
-	
+
 	for (TObjectIterator<UClass> It; It; ++It)
 	{
 		UClass* Class = *It;
@@ -787,6 +787,57 @@ TArray<FString> UInputService::GetAvailableTriggerTypes()
 			}
 		}
 	}
-	
+
 	return Types;
+}
+
+// =================================================================
+// Existence Checks
+// =================================================================
+
+bool UInputService::InputActionExists(const FString& ActionPath)
+{
+	if (ActionPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(ActionPath);
+}
+
+bool UInputService::MappingContextExists(const FString& ContextPath)
+{
+	if (ContextPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(ContextPath);
+}
+
+bool UInputService::KeyMappingExists(const FString& ContextPath, const FString& ActionPath)
+{
+	if (ContextPath.IsEmpty() || ActionPath.IsEmpty())
+	{
+		return false;
+	}
+
+	UInputMappingContext* MappingContext = LoadMappingContext(ContextPath);
+	if (!MappingContext)
+	{
+		return false;
+	}
+
+	const TArray<FEnhancedActionKeyMapping>& Mappings = MappingContext->GetMappings();
+	for (const FEnhancedActionKeyMapping& Mapping : Mappings)
+	{
+		if (Mapping.Action)
+		{
+			FString MappedActionPath = Mapping.Action->GetPathName();
+			if (MappedActionPath.Equals(ActionPath, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
 }

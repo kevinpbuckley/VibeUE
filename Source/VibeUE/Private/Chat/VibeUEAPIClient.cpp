@@ -84,55 +84,12 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Msg : Messages)
     {
-        TSharedPtr<FJsonObject> MsgObj = MakeShareable(new FJsonObject());
-        MsgObj->SetStringField(TEXT("role"), Msg.Role);
-
-        // Sanitize content to remove NUL characters and other problematic bytes
-        FString SanitizedContent = SanitizeForLLM(Msg.Content);
-
-        // Handle content - could be string or array for tool results
-        if (Msg.Role == TEXT("tool"))
-        {
-            MsgObj->SetStringField(TEXT("content"), SanitizedContent);
-            if (!Msg.ToolCallId.IsEmpty())
-            {
-                MsgObj->SetStringField(TEXT("tool_call_id"), Msg.ToolCallId);
-            }
-        }
-        else if (Msg.Role == TEXT("assistant") && Msg.ToolCalls.Num() > 0)
-        {
-            // Assistant message with tool calls
-            if (!SanitizedContent.IsEmpty())
-            {
-                MsgObj->SetStringField(TEXT("content"), SanitizedContent);
-            }
-            else
-            {
-                MsgObj->SetField(TEXT("content"), MakeShareable(new FJsonValueNull()));
-            }
-
-            TArray<TSharedPtr<FJsonValue>> ToolCallsArray;
-            for (const FChatToolCall& ToolCall : Msg.ToolCalls)
-            {
-                TSharedPtr<FJsonObject> ToolCallObj = MakeShareable(new FJsonObject());
-                ToolCallObj->SetStringField(TEXT("id"), ToolCall.Id);
-                ToolCallObj->SetStringField(TEXT("type"), TEXT("function"));
-
-                TSharedPtr<FJsonObject> FunctionObj = MakeShareable(new FJsonObject());
-                FunctionObj->SetStringField(TEXT("name"), ToolCall.Name);
-                FunctionObj->SetStringField(TEXT("arguments"), SanitizeForLLM(ToolCall.Arguments));
-                ToolCallObj->SetObjectField(TEXT("function"), FunctionObj);
-
-                ToolCallsArray.Add(MakeShareable(new FJsonValueObject(ToolCallObj)));
-            }
-            MsgObj->SetArrayField(TEXT("tool_calls"), ToolCallsArray);
-        }
-        else
-        {
-            MsgObj->SetStringField(TEXT("content"), SanitizedContent);
-        }
-
-        MessagesArray.Add(MakeShareable(new FJsonValueObject(MsgObj)));
+        // Sanitize message content before serialization
+        FChatMessage SanitizedMessage = Msg;
+        SanitizedMessage.Content = SanitizeForLLM(Msg.Content);
+        
+        // Use ToJson() for consistent serialization (supports multimodal content)
+        MessagesArray.Add(MakeShared<FJsonValueObject>(SanitizedMessage.ToJson()));
     }
 
     // Build request body

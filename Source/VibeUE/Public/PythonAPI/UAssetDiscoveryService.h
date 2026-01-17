@@ -210,4 +210,19 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
 	static bool ExportTexture(const FString& AssetPath, const FString& ExportFilePath);
+
+	// ========== Existence Checks ==========
+
+	/**
+	 * Check if any asset exists at the given path. Generic fallback for all asset types.
+	 *
+	 * @param AssetPath - Full path to the asset
+	 * @return True if asset exists
+	 *
+	 * Example:
+	 *   if not unreal.AssetDiscoveryService.asset_exists("/Game/Materials/M_Base"):
+	 *       # Create the material
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Exists")
+	static bool AssetExists(const FString& AssetPath);
 };

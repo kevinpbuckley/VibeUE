@@ -132,70 +132,66 @@ json_str = json.dumps(data)
 
 ## ⚠️ Critical Rules
 
-### Transactional Python Scripts (Cleanup on Failure)
+### Logging for Rollback on Failure
 
-**CRITICAL:** Python execution has NO automatic rollback. If your script fails midway, any assets created before the failure remain as orphans. **ALWAYS write transactional scripts that clean up after themselves.**
+**CRITICAL:** Python execution has NO automatic rollback. If your script fails midway, assets created before the failure remain. **ALWAYS print what you create/modify** so the AI can help undo changes if needed.
 
-**Pattern - Track created assets and delete on failure:**
+**Pattern - Log all changes:**
 ```python
 import unreal
 
-# Track all assets created during this operation
-created_assets = []
+# Step 1: Create blueprint
+bp_path = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
+print(f"CREATED: {bp_path}")
 
-try:
-    # Step 1: Create blueprint
-    bp_path = unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
-    if bp_path:
-        created_assets.append(bp_path)
-    else:
-        raise Exception("Failed to create blueprint")
+# Step 2: Add variable
+unreal.BlueprintService.add_variable(bp_path, "Health", "float")
+print(f"ADDED: Variable 'Health' to {bp_path}")
 
-    # Step 2: Add variable (may fail)
-    result = unreal.BlueprintService.add_variable(bp_path, "Health", "float")
-    if not result:
-        raise Exception("Failed to add Health variable")
-
-    # Step 3: Compile (may fail)
-    if not unreal.BlueprintService.compile_blueprint(bp_path):
-        raise Exception("Blueprint compilation failed")
-
-    print(f"SUCCESS: Created {bp_path}")
-
-except Exception as e:
-    # CLEANUP: Delete any assets we created before the failure
-    for asset_path in created_assets:
-        try:
-            unreal.AssetDiscoveryService.delete_asset(asset_path)
-            print(f"Cleaned up: {asset_path}")
-        except:
-            print(f"WARNING: Could not clean up {asset_path}")
-
-    print(f"FAILED: {e}")
-    raise  # Re-raise so VibeUE reports the error
+# Step 3: Compile
+unreal.BlueprintService.compile_blueprint(bp_path)
+print(f"COMPILED: {bp_path}")
 ```
 
-**Rules for transactional scripts:**
-1. **Initialize `created_assets = []` at the start** of any script that creates assets
-2. **Append to list immediately** after each successful asset creation
-3. **Wrap ALL operations in try/except** - not just the risky ones
-4. **In except block: iterate and delete** all tracked assets
-5. **Re-raise the exception** so the error is reported to the user
+If the script fails at step 3, output shows what was done:
+```
+CREATED: /Game/Blueprints/BP_Enemy
+ADDED: Variable 'Health' to /Game/Blueprints/BP_Enemy
+Error: Blueprint compilation failed...
+```
 
-**When to use this pattern:**
-- Creating new Blueprints, Materials, Widgets, Data Tables, Data Assets
-- Any multi-step operation where later steps might fail
-- Operations that create multiple related assets
+The AI can then offer to undo: delete BP_Enemy or remove the variable.
 
-**When NOT needed:**
-- Read-only operations (get_blueprint_info, search_assets, etc.)
-- Single atomic operations that can't partially fail
-- Modifying existing assets (use Ctrl+Z in editor if needed)
+**Rules:**
+1. Print immediately after each create/modify operation
+2. Use clear prefixes: `CREATED:`, `ADDED:`, `MODIFIED:`, `DELETED:`
+3. Include the full asset path in the message
+4. On failure, AI reads output and offers rollback options
 
 ### Always Search Before Accessing
 ```
 User says "BP_Player_Test" → search_assets("BP_Player_Test", "Blueprint") FIRST
 Never guess paths. Load "asset-management" skill for AssetDiscoveryService details.
+```
+
+### Idempotent Operations (Check Before Create)
+Always use `*_exists()` methods before creating to avoid duplicates:
+```python
+# Blueprints
+if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
+    unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
+if not unreal.BlueprintService.variable_exists(bp_path, "Health"):
+    unreal.BlueprintService.add_variable(bp_path, "Health", "float")
+if not unreal.BlueprintService.component_exists(bp_path, "Mesh"):
+    unreal.BlueprintService.add_component(bp_path, "StaticMeshComponent", "Mesh")
+
+# Other Services - same pattern
+unreal.DataTableService.data_table_exists(path)
+unreal.DataTableService.row_exists(table_path, "RowName")
+unreal.MaterialService.material_exists(path)
+unreal.WidgetService.widget_exists(path, "ButtonName")
+unreal.ActorService.actor_exists("ActorLabel")
+unreal.InputService.input_action_exists(action_path)
 ```
 
 ### Compile After Structure Changes

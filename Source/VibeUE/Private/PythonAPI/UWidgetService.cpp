@@ -841,3 +841,32 @@ bool UWidgetService::BindEvent(
 
 	return true;
 }
+
+// =================================================================
+// Existence Checks
+// =================================================================
+
+bool UWidgetService::WidgetBlueprintExists(const FString& WidgetPath)
+{
+	if (WidgetPath.IsEmpty())
+	{
+		return false;
+	}
+	return UEditorAssetLibrary::DoesAssetExist(WidgetPath);
+}
+
+bool UWidgetService::WidgetExists(const FString& WidgetPath, const FString& ComponentName)
+{
+	if (WidgetPath.IsEmpty() || ComponentName.IsEmpty())
+	{
+		return false;
+	}
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	return FindWidgetByName(WidgetBP, ComponentName) != nullptr;
+}
