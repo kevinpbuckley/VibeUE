@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 9 specialized services with 203 methods for Blueprints, Materials, Widgets, and more
+- **Python API Services** - 10 specialized services with 209 methods for Blueprints, Materials, Widgets, Screenshots, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -37,7 +37,7 @@ Lightweight MCP tools for exploring and executing Python:
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
 
-### 2. VibeUE Python API Services (9 services, 203 methods)
+### 2. VibeUE Python API Services (10 services, 209 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -51,6 +51,7 @@ High-level services exposed to Python for common game development tasks:
 | `DataAssetService` | 10 | UDataAsset instances and properties |
 | `DataTableService` | 13 | DataTable rows and structure |
 | `ActorService` | 22 | Level actor management |
+| `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -212,7 +213,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`
 
 ### Using Skills
 
@@ -389,6 +390,16 @@ ActorService provides comprehensive level actor manipulation:
 - Spawning and destruction
 - Property access
 - And more
+
+### ScreenshotService (6 methods)
+
+ScreenshotService enables AI vision by capturing editor content:
+- `capture_editor_window(path)` - Capture entire editor window (works for blueprints, materials, etc.)
+- `capture_viewport(path, width, height)` - Capture level viewport
+- `capture_active_window(path)` - Capture foreground window
+- `get_open_editor_tabs()` - List open editor tabs with asset info
+- `get_active_window_title()` - Get focused window title
+- `is_editor_window_active()` - Check if editor is in focus
 
 ---
 
