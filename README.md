@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 10 specialized services with 209 methods for Blueprints, Materials, Widgets, Screenshots, and more
+- **Python API Services** - 12 specialized services with 280+ methods for Blueprints, Materials, Widgets, Niagara, Screenshots, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -26,7 +26,7 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Discovery & Execution Tools (6 tools)
+### 1. MCP Discovery & Execution Tools (7 tools)
 Lightweight MCP tools for exploring and executing Python:
 
 | Tool | Purpose |
@@ -36,8 +36,57 @@ Lightweight MCP tools for exploring and executing Python:
 | `discover_python_function` | Get function signatures and docstrings |
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
+| `read_logs` | Read and filter Unreal Engine log files with regex support |
 
-### 2. VibeUE Python API Services (10 services, 209 methods)
+**Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
+
+### Log Reader Tool (`read_logs`)
+
+The `read_logs` MCP tool provides comprehensive log file access with filtering and analysis capabilities:
+
+**Actions:**
+- `list` - Browse available log files by category (System, Blueprint, Niagara, VibeUE)
+- `info` - Get file metadata (size, line count, last modified)
+- `read` - Read file with pagination (default 2000 lines, offset support)
+- `tail` - Get last N lines (like PowerShell's `Get-Content -Tail`)
+- `head` - Get first N lines
+- `filter` - Regex search with context lines and match limit
+- `errors` - Find error messages
+- `warnings` - Find warning messages
+- `since` - Get new content since last read (by line number)
+- `help` - Get detailed documentation
+
+**File Aliases:**
+- `main` or `system` → Main project log (FPS57.log)
+- `chat` or `vibeue` → VibeUE chat history log
+- `llm` → Raw LLM API request/response log
+- Or use full file paths
+
+**Examples:**
+```python
+# List all logs
+read_logs(action="list")
+
+# Filter by category
+read_logs(action="list", category="Niagara")
+
+# Get last 50 lines of main log
+read_logs(action="tail", file="main", lines=50)
+
+# Search for errors with context
+read_logs(action="filter", file="main", pattern="ERROR|EXCEPTION", context_lines=5)
+
+# Find compilation errors
+read_logs(action="errors", file="main", max_matches=20)
+
+# Read specific range
+read_logs(action="read", file="chat", offset=1000, limit=500)
+
+# Check for new content since line 2500
+read_logs(action="since", file="main", last_line=2500)
+```
+
+### 2. VibeUE Python API Services (12 services, 280+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -52,6 +101,8 @@ High-level services exposed to Python for common game development tasks:
 | `DataTableService` | 13 | DataTable rows and structure |
 | `ActorService` | 22 | Level actor management |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
+| `NiagaraService` | 38 | Niagara system lifecycle, emitters, parameters, rapid iteration |
+| `NiagaraEmitterService` | 19 | Niagara emitter modules, renderers, properties |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -213,7 +264,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`
 
 ### Using Skills
 
@@ -391,6 +442,74 @@ ActorService provides comprehensive level actor manipulation:
 - Property access
 - And more
 
+### NiagaraService (38 methods)
+
+**Lifecycle:**
+- `create_system(name, path, template)` - Create new Niagara system
+- `compile_system(path)` / `compile_with_results(path)` - Compile with error messages
+- `save_system(path)` - Save to disk
+- `open_in_editor(path)` - Open in Niagara Editor
+
+**Information:**
+- `get_system_info(path)` - Comprehensive system information
+- `get_system_properties(path)` - Effect type, determinism, warmup, bounds
+- `summarize(path)` - AI-friendly system summary
+- `list_emitters(path)` - List all emitters
+
+**Emitter Management:**
+- `add_emitter(system, emitter_asset, name)` - Add emitter to system
+- `copy_emitter(src_system, src_emitter, target_system, new_name)` - Copy between systems
+- `duplicate_emitter(system, source, new_name)` - Duplicate within system
+- `remove_emitter(system, emitter)` - Remove emitter
+- `rename_emitter(system, current, new)` - Rename emitter
+- `enable_emitter(system, emitter, enabled)` - Enable/disable
+- `move_emitter(system, emitter, index)` - Reorder emitter
+
+**Parameter Management:**
+- `list_parameters(path)` - List user-exposed parameters
+- `get/set_parameter(path, name, value)` - Parameter access
+- `add/remove_user_parameter(...)` - Add/remove parameters
+- `list_rapid_iteration_params(system, emitter)` - List module parameters
+- `set_rapid_iteration_param(system, emitter, name, value)` - Set module values (color, spawn rate, etc.)
+- `set_rapid_iteration_param_by_stage(...)` - Set parameter in specific script stage
+
+**Search & Utilities:**
+- `search_systems(path, filter)` - Find Niagara systems
+- `search_emitter_assets(path, filter)` - Find emitter assets
+- `list_emitter_templates(path, filter)` - List available emitter templates
+- `compare_systems(source, target)` - Compare two systems
+- `copy_system_properties(target, source)` - Copy system settings
+- `debug_activation(path)` - Debug why system isn't playing
+
+### NiagaraEmitterService (19 methods)
+
+**Module Management:**
+- `list_modules(system, emitter, type)` - List all modules
+- `get_module_info(system, emitter, module)` - Get module details
+- `add_module(system, emitter, script, type)` - Add module
+- `remove_module(system, emitter, module)` - Remove module
+- `enable_module(system, emitter, module, enabled)` - Enable/disable module
+- `set_module_input(system, emitter, module, input, value)` - Set module input
+- `get_module_input(system, emitter, module, input)` - Get module input value
+- `reorder_module(system, emitter, module, index)` - Reorder module
+
+**Renderer Management:**
+- `list_renderers(system, emitter)` - List renderers
+- `get_renderer_details(system, emitter, index)` - Get renderer details
+- `add_renderer(system, emitter, type)` - Add renderer (Sprite, Mesh, Ribbon, Light, Component)
+- `remove_renderer(system, emitter, index)` - Remove renderer
+- `enable_renderer(system, emitter, index, enabled)` - Enable/disable renderer
+- `set_renderer_property(system, emitter, index, property, value)` - Set renderer property
+
+**Script Discovery:**
+- `search_module_scripts(filter, type)` - Find module scripts
+- `list_builtin_modules(type)` - List built-in modules
+- `get_script_info(path)` - Get script asset info
+
+**Emitter Properties:**
+- `get_emitter_properties(system, emitter)` - Get lifecycle and property info
+- `get_rapid_iteration_parameters(system, emitter, type)` - Get rapid iteration parameters
+
 ### ScreenshotService (6 methods)
 
 ScreenshotService enables AI vision by capturing editor content:
@@ -456,6 +575,43 @@ unreal.DataTableService.add_row("/Game/Data/DT_Characters", "Hero",
 
 # 4. Query rows
 row = unreal.DataTableService.get_row("/Game/Data/DT_Characters", "Hero")
+```
+
+### Build Niagara VFX System
+
+```python
+# 1. Create system
+result = unreal.NiagaraService.create_system("NS_Fire", "/Game/VFX")
+path = result.asset_path
+
+# 2. Add emitters
+unreal.NiagaraService.add_emitter(path, "minimal", "Flames")
+unreal.NiagaraService.add_emitter(path, "minimal", "Smoke")
+
+# 3. Get available modules
+modules = unreal.NiagaraEmitterService.search_module_scripts("Color", "Update")
+
+# 4. Add color module to emitter
+unreal.NiagaraEmitterService.add_module(path, "Flames", modules[0], "Update")
+
+# 5. Set rapid iteration parameters (like spawn rate, color, lifetime)
+params = unreal.NiagaraService.list_rapid_iteration_params(path, "Flames")
+unreal.NiagaraService.set_rapid_iteration_param(
+    path, "Flames", 
+    "Constants.Flames.SpawnRate.SpawnRate", 
+    "500.0"
+)
+
+# 6. Set emitter colors via rapid iteration params
+unreal.NiagaraService.set_rapid_iteration_param(
+    path, "Flames",
+    "Constants.Flames.Color.Scale Color",
+    "(3.0, 0.5, 0.0)"  # Orange fire
+)
+
+# 7. Compile and save
+unreal.NiagaraService.compile_system(path)
+unreal.NiagaraService.save_system(path)
 ```
 
 ---
