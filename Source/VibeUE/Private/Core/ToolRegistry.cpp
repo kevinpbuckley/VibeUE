@@ -127,13 +127,15 @@ void FToolRegistry::ProcessPendingRegistrations()
 		Metadata.Description = Registration.Description;
 		Metadata.Category = Registration.Category;
 		Metadata.Parameters = Registration.Parameters;
+		Metadata.bInternalOnly = Registration.bInternalOnly;
 
 		// Add tool
 		int32 Index = Tools.Add(Metadata);
 		ToolNameToIndex.Add(Registration.Name, Index);
 		ToolExecuteFuncs.Add(Registration.Name, Registration.ExecuteFunc);
 
-		UE_LOG(LogToolRegistry, Log, TEXT("Registered tool: %s (Category: %s)"), *Registration.Name, *Registration.Category);
+		UE_LOG(LogToolRegistry, Log, TEXT("Registered tool: %s (Category: %s, InternalOnly: %s)"), 
+			*Registration.Name, *Registration.Category, Registration.bInternalOnly ? TEXT("Yes") : TEXT("No"));
 	}
 	
 	PendingRegistrations.Empty();

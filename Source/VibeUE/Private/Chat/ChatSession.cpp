@@ -17,6 +17,9 @@
 
 DEFINE_LOG_CATEGORY(LogChatSession);
 
+// Static member initialization
+FString FChatSession::PendingImageDataUrl;
+
 // Macro to log to both UE output and dedicated chat log file
 #define CHAT_SESSION_LOG(Level, Format, ...) \
     do { \
@@ -205,6 +208,131 @@ void FChatSession::SendMessage(const FString& UserMessage)
         );
     }
     
+    // Increment request count
+    UsageStats.RequestCount++;
+}
+
+void FChatSession::SendMessageWithImage(const FString& UserMessage, const FString& ImageDataUrl)
+{
+    if (UserMessage.IsEmpty() && ImageDataUrl.IsEmpty())
+    {
+        return;
+    }
+
+    if (!HasApiKey())
+    {
+        FLLMProviderInfo ProviderInfo = GetCurrentProviderInfo();
+        OnChatError.ExecuteIfBound(FString::Printf(TEXT("Please set your %s API key in the settings"), *ProviderInfo.DisplayName));
+        return;
+    }
+
+    if (IsRequestInProgress())
+    {
+        OnChatError.ExecuteIfBound(TEXT("Please wait for the current response to complete"));
+        return;
+    }
+
+    // Check if summarization is needed BEFORE adding new message
+    TriggerSummarizationIfNeeded();
+
+    // Reset tool call iteration counter for new user message
+    ToolCallIterationCount = 0;
+    bWaitingForUserToContinue = false;
+
+    // Create user message with multimodal content
+    FChatMessage UserMsg;
+    UserMsg.Role = TEXT("user");
+
+    // Add text content part if there's text
+    if (!UserMessage.IsEmpty())
+    {
+        UserMsg.ContentParts.Add(FContentPart::MakeText(UserMessage));
+    }
+
+    // Add image content part
+    if (!ImageDataUrl.IsEmpty())
+    {
+        UserMsg.ContentParts.Add(FContentPart::MakeImage(ImageDataUrl, TEXT("high")));
+    }
+
+    // Set Content for logging/display purposes
+    UserMsg.Content = UserMessage.IsEmpty() ? TEXT("[Image]") : UserMessage;
+
+    Messages.Add(UserMsg);
+
+    // Log user message content
+    CHAT_SESSION_LOG(Log, TEXT("[USER MESSAGE WITH IMAGE] %s"), *UserMsg.Content);
+
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageAdded (user with image): %s"), *UserMsg.Content.Left(100));
+    }
+    OnMessageAdded.ExecuteIfBound(UserMsg);
+
+    // Create assistant message placeholder
+    FChatMessage AssistantMsg(TEXT("assistant"), TEXT(""));
+    AssistantMsg.bIsStreaming = true;
+    CurrentStreamingMessageIndex = Messages.Add(AssistantMsg);
+    if (IsDebugModeEnabled())
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[EVENT] OnMessageAdded (assistant placeholder) at index %d"), CurrentStreamingMessageIndex);
+    }
+    OnMessageAdded.ExecuteIfBound(AssistantMsg);
+
+    // Build messages for API (includes context management)
+    TArray<FChatMessage> ApiMessages = BuildApiMessages();
+
+    // Get all enabled tools (internal + MCP)
+    TArray<FMCPTool> Tools = GetAllEnabledTools();
+
+    // Log what we're sending to the LLM
+    FString ProviderName = (CurrentProvider == ELLMProvider::VibeUE) ? TEXT("VibeUE") : TEXT("OpenRouter");
+    CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM WITH IMAGE] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"),
+        *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
+
+    // Log the actual tool names being sent
+    for (const FMCPTool& Tool : Tools)
+    {
+        CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
+    }
+
+    // Notify UI that LLM thinking has started
+    OnLLMThinkingStarted.ExecuteIfBound();
+
+    // Send request using the appropriate client based on provider
+    if (CurrentProvider == ELLMProvider::VibeUE)
+    {
+        VibeUEClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
+    else
+    {
+        OpenRouterClient->SendChatRequest(
+            ApiMessages,
+            CurrentModelId,
+            Tools,
+            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+            FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+            {
+                UpdateUsageStats(PromptTokens, CompletionTokens);
+            })
+        );
+    }
+
     // Increment request count
     UsageStats.RequestCount++;
 }
@@ -548,8 +676,35 @@ void FChatSession::ExecuteNextToolInQueue()
         
         // Process result (same as MCP path)
         FString ResultContent = ToolResult.Content;
+        
+        // Log result with truncation for large data (e.g., base64 images)
+        FString LogContent = ResultContent;
+        if (ResultContent.Contains(TEXT("data:image/")))
+        {
+            // For image data, log summary instead of full base64
+            int32 ImageDataStart = ResultContent.Find(TEXT("data:image/"));
+            int32 CommaAfterImage = ResultContent.Find(TEXT(","), ESearchCase::IgnoreCase, ESearchDir::FromStart, ImageDataStart);
+            if (CommaAfterImage != INDEX_NONE)
+            {
+                int32 Base64Start = CommaAfterImage + 1;
+                int32 Base64End = ResultContent.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Base64Start);
+                if (Base64End == INDEX_NONE) Base64End = ResultContent.Len();
+                int32 Base64Length = Base64End - Base64Start;
+                
+                // Replace base64 data with summary
+                LogContent = ResultContent.Left(Base64Start) + 
+                    FString::Printf(TEXT("[BASE64_IMAGE_DATA: %d chars]"), Base64Length) + 
+                    ResultContent.RightChop(Base64End);
+            }
+        }
+        else if (LogContent.Len() > 2000)
+        {
+            // For other large results, truncate log
+            LogContent = LogContent.Left(2000) + TEXT("... [truncated for logging, full result sent to LLM]");
+        }
+        
         CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: true, Result: %s"), 
-            *ToolCall.ToolName, *ToolCall.Id, *ResultContent);
+            *ToolCall.ToolName, *ToolCall.Id, *LogContent);
         
         FString TruncatedContent = SmartTruncateToolResult(ResultContent, ToolCall.ToolName);
         FChatMessage ToolResultMsg(TEXT("tool"), TruncatedContent);
@@ -605,9 +760,36 @@ void FChatSession::ExecuteNextToolInQueue()
         {
             // Log tool result with full content
             FString ResultContent = bSuccess ? Result.Content : Result.ErrorMessage;
+            
+            // Log result with truncation for large data (e.g., base64 images)
+            FString LogContent = ResultContent;
+            if (ResultContent.Contains(TEXT("data:image/")))
+            {
+                // For image data, log summary instead of full base64
+                int32 ImageDataStart = ResultContent.Find(TEXT("data:image/"));
+                int32 CommaAfterImage = ResultContent.Find(TEXT(","), ESearchCase::IgnoreCase, ESearchDir::FromStart, ImageDataStart);
+                if (CommaAfterImage != INDEX_NONE)
+                {
+                    int32 Base64Start = CommaAfterImage + 1;
+                    int32 Base64End = ResultContent.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Base64Start);
+                    if (Base64End == INDEX_NONE) Base64End = ResultContent.Len();
+                    int32 Base64Length = Base64End - Base64Start;
+                    
+                    // Replace base64 data with summary
+                    LogContent = ResultContent.Left(Base64Start) + 
+                        FString::Printf(TEXT("[BASE64_IMAGE_DATA: %d chars]"), Base64Length) + 
+                        ResultContent.RightChop(Base64End);
+                }
+            }
+            else if (LogContent.Len() > 2000)
+            {
+                // For other large results, truncate log
+                LogContent = LogContent.Left(2000) + TEXT("... [truncated for logging, full result sent to LLM]");
+            }
+            
             CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: %s, Result: %s"), 
                 *ToolCallCopy.ToolName, *ToolCallCopy.Id, 
-                bSuccess ? TEXT("true") : TEXT("false"), *ResultContent);
+                bSuccess ? TEXT("true") : TEXT("false"), *LogContent);
             
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
@@ -635,16 +817,11 @@ void FChatSession::ExecuteNextToolInQueue()
             TruncatedContent = SmartTruncateToolResult(TruncatedContent, ToolCallCopy.ToolName);
             
             // Add tool result as a separate "tool" message
-            FChatMessage ToolResultMsg(TEXT("tool"), TruncatedContent);
+            FChatMessage ToolResultMsg;
+            ToolResultMsg.Role = TEXT("tool");
             ToolResultMsg.ToolCallId = ToolCallCopy.Id;
-            Messages.Add(ToolResultMsg);
-            OnMessageAdded.ExecuteIfBound(ToolResultMsg);
-            
-            // Decrement pending tool call count
-            PendingToolCallCount--;
-            UE_LOG(LogChatSession, Log, TEXT("Tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
-            
-            // Execute next tool in queue (sequential execution)
+            ToolResultMsg.Content = TruncatedContent;
+			
             ExecuteNextToolInQueue();
         }));
 }
@@ -687,6 +864,26 @@ void FChatSession::SendFollowUpAfterToolCall()
     
     // Build messages for API (includes the tool result)
     TArray<FChatMessage> ApiMessages = BuildApiMessages();
+    
+    // Check if AI tool has queued a pending image for analysis
+    if (HasPendingImage())
+    {
+        FString PendingImage = ConsumePendingImage();
+        
+        // Create a user message with the image content for the API only
+        // This is NOT added to the visible message history - the tool call widget
+        // already shows that an image was attached
+        FChatMessage ImageMsg;
+        ImageMsg.Role = TEXT("user");
+        ImageMsg.Content = TEXT("[Image attached by AI for analysis]");
+        ImageMsg.ContentParts.Add(FContentPart::MakeText(TEXT("Analyze this image that was just captured:")));
+        ImageMsg.ContentParts.Add(FContentPart::MakeImage(PendingImage, TEXT("high")));
+        
+        // Add to API messages only (NOT to visible message history)
+        ApiMessages.Add(ImageMsg);
+        
+        CHAT_SESSION_LOG(Log, TEXT("[PENDING IMAGE] Injected pending image into follow-up request"));
+    }
     
     if (IsDebugModeEnabled())
     {
@@ -884,6 +1081,30 @@ void FChatSession::SaveApiKeyToConfig(const FString& ApiKey)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
+// ============ Pending Image for AI Tool Use ============
+
+void FChatSession::SetPendingImageForNextRequest(const FString& ImageDataUrl)
+{
+    PendingImageDataUrl = ImageDataUrl;
+    CHAT_SESSION_LOG(Log, TEXT("[PENDING IMAGE] Set pending image for next request (size: %d bytes)"), ImageDataUrl.Len());
+}
+
+bool FChatSession::HasPendingImage()
+{
+    return !PendingImageDataUrl.IsEmpty();
+}
+
+FString FChatSession::ConsumePendingImage()
+{
+    FString ImageDataUrl = PendingImageDataUrl;
+    PendingImageDataUrl.Empty();
+    if (!ImageDataUrl.IsEmpty())
+    {
+        CHAT_SESSION_LOG(Log, TEXT("[PENDING IMAGE] Consuming pending image for LLM request (size: %d bytes)"), ImageDataUrl.Len());
+    }
+    return ImageDataUrl;
+}
+
 FString FChatSession::GetHistoryFilePath() const
 {
     return FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("ChatHistory.json");
@@ -1073,6 +1294,14 @@ FString FChatSession::SmartTruncateToolResult(const FString& Content, const FStr
     // Per-tool limits - set high to avoid truncation issues
     int32 MaxTokensForTool = 20000;  // Default: ~80000 chars - high enough for most complete outputs
     
+    // Base64 image data MUST NOT be truncated - image data is invalid if truncated
+    if (Content.Contains(TEXT("data:image/")))
+    {
+        // No truncation for image data - return full content
+        UE_LOG(LogChatSession, Log, TEXT("SmartTruncate: Skipping truncation for '%s' (contains base64 image data)"), *ToolName);
+        return Content;
+    }
+    
     // Skills system needs to load comprehensive documentation
     if (ToolName.Contains(TEXT("manage_skills")))
     {
@@ -1179,6 +1408,10 @@ int32 FChatSession::GetCurrentModelContextLength() const
     else if (CurrentModelId.Contains(TEXT("gpt-4")))
     {
         return 128000; // 128K for GPT-4
+    }
+    else if (CurrentModelId.Contains(TEXT("gemini")))
+    {
+        return 1048576; // 1024K for Gemini 2.5 Flash Lite and other Gemini models
     }
     
     return 8192; // Conservative default
@@ -2383,7 +2616,15 @@ TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
             TSharedPtr<FJsonObject> ParamSchema = MakeShared<FJsonObject>();
             ParamSchema->SetStringField(TEXT("type"), Param.Type);
             ParamSchema->SetStringField(TEXT("description"), Param.Description);
-            
+
+            // For array types, add the items field (required by Google/Gemini)
+            if (Param.Type == TEXT("array"))
+            {
+                TSharedPtr<FJsonObject> ItemsSchema = MakeShared<FJsonObject>();
+                ItemsSchema->SetStringField(TEXT("type"), Param.ArrayItemType.IsEmpty() ? TEXT("string") : Param.ArrayItemType);
+                ParamSchema->SetObjectField(TEXT("items"), ItemsSchema);
+            }
+
             if (!Param.DefaultValue.IsEmpty())
             {
                 // Try to parse default value based on type
@@ -2413,7 +2654,7 @@ TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
                     ParamSchema->SetBoolField(TEXT("default"), BoolValue);
                 }
             }
-            
+
             Properties->SetObjectField(Param.Name, ParamSchema);
             
             if (Param.bRequired)

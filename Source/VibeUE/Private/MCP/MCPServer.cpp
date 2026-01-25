@@ -1156,6 +1156,13 @@ TArray<FMCPTool> FMCPServer::GetInternalTools() const
     
     for (const FToolMetadata& Tool : EnabledTools)
     {
+        // Skip internal-only tools - they are not exposed via MCP to external clients
+        if (Tool.bInternalOnly)
+        {
+            UE_LOG(LogMCPServer, Verbose, TEXT("Skipping internal-only tool for MCP: %s"), *Tool.Name);
+            continue;
+        }
+        
         FMCPTool MCPTool;
         MCPTool.Name = Tool.Name;
         MCPTool.Description = Tool.Description;

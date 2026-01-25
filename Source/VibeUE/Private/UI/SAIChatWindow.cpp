@@ -34,8 +34,19 @@
 #include "Serialization/JsonSerializer.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
+#include "Misc/Base64.h"
 #include "HAL/PlatformTime.h"
 #include "Editor.h"
+#include "DesktopPlatformModule.h"
+#include "IImageWrapperModule.h"
+#include "IImageWrapper.h"
+#include "Engine/Texture2D.h"
+
+#if PLATFORM_WINDOWS
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <Windows.h>
+#include "Windows/HideWindowsPlatformTypes.h"
+#endif
 
 DEFINE_LOG_CATEGORY(LogAIChatWindow);
 
@@ -292,60 +303,133 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
             .AutoHeight()
             .Padding(8, 4, 8, 8)
             [
-                SNew(SHorizontalBox)
-                
-                // Text input (multi-line, 3 lines visible)
-                + SHorizontalBox::Slot()
-                .FillWidth(1.0f)
+                SNew(SVerticalBox)
+
+                // Image preview (shown when image is attached)
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 0, 0, 4)
                 [
-                    SNew(SBorder)
-                    .BorderBackgroundColor(VibeUEColors::Border)
-                    .Padding(4)
+                    SAssignNew(ImagePreviewContainer, SBox)
+                    .Visibility(EVisibility::Collapsed)
                     [
-                        // Press Enter to send, Shift+Enter for new line
-                        SNew(SBox)
-                        .MinDesiredHeight(54.0f)  // ~3 lines at default font size
-                        .MaxDesiredHeight(54.0f)
+                        SNew(SBorder)
+                        .BorderBackgroundColor(VibeUEColors::Border)
+                        .Padding(4)
                         [
-                            SAssignNew(InputTextBox, SMultiLineEditableTextBox)
-                            .HintText(this, &SAIChatWindow::GetInputHintText)
-                            .AutoWrapText(true)
-                            .IsReadOnly(this, &SAIChatWindow::IsInputReadOnly)
-                            .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
+                            SNew(SHorizontalBox)
+
+                            // Image thumbnail
+                            + SHorizontalBox::Slot()
+                            .AutoWidth()
+                            [
+                                SNew(SBox)
+                                .WidthOverride(64.0f)
+                                .HeightOverride(64.0f)
+                                [
+                                    SAssignNew(ImagePreviewWidget, SImage)
+                                ]
+                            ]
+
+                            // "Image attached" label
+                            + SHorizontalBox::Slot()
+                            .FillWidth(1.0f)
+                            .VAlign(VAlign_Center)
+                            .Padding(8, 0, 0, 0)
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("Image attached")))
+                                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                                .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                            ]
+
+                            // Remove button (X)
+                            + SHorizontalBox::Slot()
+                            .AutoWidth()
+                            .VAlign(VAlign_Top)
+                            [
+                                SAssignNew(RemoveAttachmentButton, SButton)
+                                .Text(FText::FromString(TEXT("✕")))
+                                .ToolTipText(FText::FromString(TEXT("Remove attached image")))
+                                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                                .OnClicked(this, &SAIChatWindow::OnRemoveAttachmentClicked)
+                            ]
                         ]
                     ]
                 ]
 
-                // Microphone button for voice input (push-to-talk)
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .Padding(4, 0, 0, 0)
-                .VAlign(VAlign_Center)
+                // Input row
+                + SVerticalBox::Slot()
+                .AutoHeight()
                 [
-                    SNew(SBox)
-                    [
-                        SAssignNew(MicrophoneButton, SButton)
-                        .Text(this, &SAIChatWindow::GetMicrophoneButtonText)
-                        .ToolTipText(this, &SAIChatWindow::GetMicrophoneTooltip)
-                        .IsEnabled(this, &SAIChatWindow::IsMicrophoneEnabled)
-                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                        .OnPressed(this, &SAIChatWindow::OnMicrophonePressed)
-                        .OnReleased(this, &SAIChatWindow::OnMicrophoneReleased)
-                    ]
-                ]
+                    SNew(SHorizontalBox)
 
-                // Stop button (only visible when request in progress)
-                + SHorizontalBox::Slot()
-                .AutoWidth()
-                .Padding(4, 0, 0, 0)
-                .VAlign(VAlign_Center)
-                [
-                    SNew(SButton)
-                    .Text(FText::FromString(TEXT("Stop")))
-                    .ToolTipText(FText::FromString(TEXT("Stop the current AI response")))
-                    .Visibility(this, &SAIChatWindow::GetStopButtonVisibility)
-                    .OnClicked(this, &SAIChatWindow::OnStopClicked)
-                    .ButtonColorAndOpacity(FLinearColor(0.8f, 0.2f, 0.2f, 1.0f))
+                    // Attachment button (paperclip)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(0, 0, 4, 0)
+                    .VAlign(VAlign_Center)
+                    [
+                        SAssignNew(AttachmentButton, SButton)
+                        .Text(FText::FromString(TEXT("📎")))
+                        .ToolTipText(FText::FromString(TEXT("Attach an image (or paste with Ctrl+V)")))
+                        .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                        .OnClicked(this, &SAIChatWindow::OnAttachmentClicked)
+                    ]
+
+                    // Text input (multi-line, 3 lines visible)
+                    + SHorizontalBox::Slot()
+                    .FillWidth(1.0f)
+                    [
+                        SNew(SBorder)
+                        .BorderBackgroundColor(VibeUEColors::Border)
+                        .Padding(4)
+                        [
+                            // Press Enter to send, Shift+Enter for new line
+                            SNew(SBox)
+                            .MinDesiredHeight(54.0f)  // ~3 lines at default font size
+                            .MaxDesiredHeight(54.0f)
+                            [
+                                SAssignNew(InputTextBox, SMultiLineEditableTextBox)
+                                .HintText(this, &SAIChatWindow::GetInputHintText)
+                                .AutoWrapText(true)
+                                .IsReadOnly(this, &SAIChatWindow::IsInputReadOnly)
+                                .OnKeyDownHandler(this, &SAIChatWindow::OnInputKeyDown)
+                            ]
+                        ]
+                    ]
+
+                    // Microphone button for voice input (push-to-talk)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SBox)
+                        [
+                            SAssignNew(MicrophoneButton, SButton)
+                            .Text(this, &SAIChatWindow::GetMicrophoneButtonText)
+                            .ToolTipText(this, &SAIChatWindow::GetMicrophoneTooltip)
+                            .IsEnabled(this, &SAIChatWindow::IsMicrophoneEnabled)
+                            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                            .OnPressed(this, &SAIChatWindow::OnMicrophonePressed)
+                            .OnReleased(this, &SAIChatWindow::OnMicrophoneReleased)
+                        ]
+                    ]
+
+                    // Stop button (only visible when request in progress)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .Padding(4, 0, 0, 0)
+                    .VAlign(VAlign_Center)
+                    [
+                        SNew(SButton)
+                        .Text(FText::FromString(TEXT("Stop")))
+                        .ToolTipText(FText::FromString(TEXT("Stop the current AI response")))
+                        .Visibility(this, &SAIChatWindow::GetStopButtonVisibility)
+                        .OnClicked(this, &SAIChatWindow::OnStopClicked)
+                        .ButtonColorAndOpacity(FLinearColor(0.8f, 0.2f, 0.2f, 1.0f))
+                    ]
                 ]
             ]
         ]
@@ -440,6 +524,51 @@ void SAIChatWindow::ToggleWindow()
 bool SAIChatWindow::IsWindowOpen()
 {
     return WindowInstance.IsValid() && WindowInstance.Pin().IsValid();
+}
+
+bool SAIChatWindow::AttachImageFromPath(const FString& FilePath)
+{
+    if (!WidgetInstance.IsValid())
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Cannot attach image - chat window not open"));
+        return false;
+    }
+
+    // Verify file exists
+    if (!FPaths::FileExists(FilePath))
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Cannot attach image - file not found: %s"), *FilePath);
+        return false;
+    }
+
+    // Verify it's a supported image format
+    FString Extension = FPaths::GetExtension(FilePath).ToLower();
+    if (Extension != TEXT("png") && Extension != TEXT("jpg") && Extension != TEXT("jpeg") && Extension != TEXT("bmp"))
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Cannot attach image - unsupported format: %s"), *Extension);
+        return false;
+    }
+
+    // Attach the image
+    WidgetInstance->AttachImageFromFile(FilePath);
+    return WidgetInstance->HasAttachedImage();
+}
+
+bool SAIChatWindow::HasImageAttached()
+{
+    if (!WidgetInstance.IsValid())
+    {
+        return false;
+    }
+    return WidgetInstance->HasAttachedImage();
+}
+
+void SAIChatWindow::ClearImageAttachment()
+{
+    if (WidgetInstance.IsValid())
+    {
+        WidgetInstance->ClearAttachedImage();
+    }
 }
 
 void SAIChatWindow::RebuildMessageList()
@@ -1116,23 +1245,34 @@ void SAIChatWindow::ScrollToBottom()
 FReply SAIChatWindow::OnSendClicked()
 {
     FString Message = InputTextBox->GetText().ToString();
-    if (!Message.IsEmpty())
+    bool bHasImage = HasAttachedImage();
+
+    // Allow sending if there's text OR an attached image
+    if (!Message.IsEmpty() || bHasImage)
     {
         if (FChatSession::IsDebugModeEnabled())
         {
-            CHAT_LOG(Log, TEXT("[UI EVENT] Send button clicked - Message: %s"), *Message.Left(100));
+            CHAT_LOG(Log, TEXT("[UI EVENT] Send button clicked - Message: %s, HasImage: %s"),
+                *Message.Left(100), bHasImage ? TEXT("Yes") : TEXT("No"));
         }
-        
+
         // Clear any previous error message before sending new request
         // Status now shown via streaming indicator in chat
-        
+
         InputTextBox->SetText(FText::GetEmpty());
-        
+
         // Check if user typed "continue" to resume after iteration limit
         // Only intercept if we're actually waiting - otherwise pass through as normal message
         if (Message.TrimStartAndEnd().ToLower() == TEXT("continue") && ChatSession->IsWaitingForUserToContinue())
         {
             ChatSession->ContinueAfterIterationLimit();
+            // Status animation will start when user message is added to UI
+        }
+        else if (bHasImage)
+        {
+            // Send message with attached image
+            ChatSession->SendMessageWithImage(Message, AttachedImageDataUrl);
+            ClearAttachedImage();
             // Status animation will start when user message is added to UI
         }
         else
@@ -2271,7 +2411,15 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
         }
         return FReply::Handled(); // Consume the key press but don't do anything
     }
-    
+
+    // Ctrl+V - check for image in clipboard
+    if (InKeyEvent.GetKey() == EKeys::V && InKeyEvent.IsControlDown())
+    {
+        // Try to paste image from clipboard
+        AttachImageFromClipboard();
+        // Don't return Handled - let the text paste continue if there's no image
+    }
+
     // Enter without Shift sends the message
     // Shift+Enter inserts a new line (default behavior)
     if (InKeyEvent.GetKey() == EKeys::Enter && !InKeyEvent.IsShiftDown())
@@ -2283,7 +2431,7 @@ FReply SAIChatWindow::OnInputKeyDown(const FGeometry& MyGeometry, const FKeyEven
         OnSendClicked();
         return FReply::Handled();
     }
-    
+
     return FReply::Unhandled();
 }
 
@@ -2683,9 +2831,9 @@ void SAIChatWindow::HandleTokenBudgetUpdated(int32 CurrentTokens, int32 MaxToken
     // Format the display: "Context: 12.5K / 117K (10%)"
     auto FormatTokens = [](int32 Tokens) -> FString
     {
-        if (Tokens >= 1000)
+        if (Tokens >= 1024)
         {
-            return FString::Printf(TEXT("%.1fK"), Tokens / 1000.0f);
+            return FString::Printf(TEXT("%.1fK"), Tokens / 1024.0f);
         }
         return FString::Printf(TEXT("%d"), Tokens);
     };
@@ -3159,4 +3307,271 @@ void SAIChatWindow::StopToolStatusAnimation(const FString& UniqueKey)
     {
         GEditor->GetTimerManager()->ClearTimer(WidgetData->StatusAnimationTimer);
     }
+}
+
+// ============================================================================
+// Image Attachment
+// ============================================================================
+
+FReply SAIChatWindow::OnAttachmentClicked()
+{
+    OpenImageFileDialog();
+    return FReply::Handled();
+}
+
+FReply SAIChatWindow::OnRemoveAttachmentClicked()
+{
+    ClearAttachedImage();
+    return FReply::Handled();
+}
+
+void SAIChatWindow::OpenImageFileDialog()
+{
+    IDesktopPlatform* DesktopPlatform = FDesktopPlatformModule::Get();
+    if (!DesktopPlatform)
+    {
+        return;
+    }
+
+    TArray<FString> OutFiles;
+    const FString FileTypes = TEXT("Image Files (*.png;*.jpg;*.jpeg;*.bmp)|*.png;*.jpg;*.jpeg;*.bmp");
+
+    bool bOpened = DesktopPlatform->OpenFileDialog(
+        FSlateApplication::Get().FindBestParentWindowHandleForDialogs(nullptr),
+        TEXT("Select Image"),
+        FPaths::ProjectDir(),
+        TEXT(""),
+        FileTypes,
+        EFileDialogFlags::None,
+        OutFiles
+    );
+
+    if (bOpened && OutFiles.Num() > 0)
+    {
+        AttachImageFromFile(OutFiles[0]);
+    }
+}
+
+void SAIChatWindow::AttachImageFromFile(const FString& FilePath)
+{
+    // Load the image file
+    TArray<uint8> ImageData;
+    if (!FFileHelper::LoadFileToArray(ImageData, *FilePath))
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Failed to load image file: %s"), *FilePath);
+        return;
+    }
+
+    // Determine MIME type from extension
+    FString Extension = FPaths::GetExtension(FilePath).ToLower();
+    FString MimeType;
+    if (Extension == TEXT("png"))
+    {
+        MimeType = TEXT("image/png");
+    }
+    else if (Extension == TEXT("jpg") || Extension == TEXT("jpeg"))
+    {
+        MimeType = TEXT("image/jpeg");
+    }
+    else if (Extension == TEXT("bmp"))
+    {
+        MimeType = TEXT("image/bmp");
+    }
+    else
+    {
+        UE_LOG(LogAIChatWindow, Warning, TEXT("Unsupported image format: %s"), *Extension);
+        return;
+    }
+
+    SetAttachedImagePreview(ImageData, MimeType);
+}
+
+void SAIChatWindow::AttachImageFromClipboard()
+{
+    // Try to get image from Windows clipboard
+    // Note: Slate's clipboard API is text-only, so we need to use platform-specific code
+#if PLATFORM_WINDOWS
+    if (!OpenClipboard(nullptr))
+    {
+        return;
+    }
+
+    // Check if clipboard contains a bitmap
+    if (IsClipboardFormatAvailable(CF_DIB) || IsClipboardFormatAvailable(CF_DIBV5))
+    {
+        HANDLE hData = GetClipboardData(CF_DIB);
+        if (hData)
+        {
+            BITMAPINFO* pBMI = (BITMAPINFO*)GlobalLock(hData);
+            if (pBMI)
+            {
+                int32 Width = pBMI->bmiHeader.biWidth;
+                int32 Height = FMath::Abs(pBMI->bmiHeader.biHeight);
+                int32 BitCount = pBMI->bmiHeader.biBitCount;
+
+                // Get pointer to pixel data
+                uint8* pPixels = (uint8*)pBMI + pBMI->bmiHeader.biSize;
+                if (pBMI->bmiHeader.biCompression == BI_BITFIELDS)
+                {
+                    pPixels += 12; // Skip color masks
+                }
+
+                // Convert to PNG using ImageWrapper
+                IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+
+                // Create raw BGRA data
+                TArray<uint8> RawData;
+                int32 RowPitch = ((Width * BitCount + 31) / 32) * 4;
+                RawData.SetNum(Width * Height * 4);
+
+                bool bBottomUp = pBMI->bmiHeader.biHeight > 0;
+
+                for (int32 y = 0; y < Height; ++y)
+                {
+                    int32 SrcY = bBottomUp ? (Height - 1 - y) : y;
+                    uint8* SrcRow = pPixels + SrcY * RowPitch;
+                    uint8* DstRow = RawData.GetData() + y * Width * 4;
+
+                    for (int32 x = 0; x < Width; ++x)
+                    {
+                        if (BitCount == 32)
+                        {
+                            DstRow[x * 4 + 0] = SrcRow[x * 4 + 2]; // R
+                            DstRow[x * 4 + 1] = SrcRow[x * 4 + 1]; // G
+                            DstRow[x * 4 + 2] = SrcRow[x * 4 + 0]; // B
+                            DstRow[x * 4 + 3] = SrcRow[x * 4 + 3]; // A
+                        }
+                        else if (BitCount == 24)
+                        {
+                            DstRow[x * 4 + 0] = SrcRow[x * 3 + 2]; // R
+                            DstRow[x * 4 + 1] = SrcRow[x * 3 + 1]; // G
+                            DstRow[x * 4 + 2] = SrcRow[x * 3 + 0]; // B
+                            DstRow[x * 4 + 3] = 255;               // A
+                        }
+                    }
+                }
+
+                GlobalUnlock(hData);
+                CloseClipboard();
+
+                // Convert to PNG for storage
+                TSharedPtr<IImageWrapper> PngWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+                if (PngWrapper->SetRaw(RawData.GetData(), RawData.Num(), Width, Height, ERGBFormat::RGBA, 8))
+                {
+                    TArray64<uint8> CompressedPng = PngWrapper->GetCompressed(90);
+                    if (CompressedPng.Num() > 0)
+                    {
+                        TArray<uint8> PngArray;
+                        PngArray.Append(CompressedPng.GetData(), CompressedPng.Num());
+                        SetAttachedImagePreview(PngArray, TEXT("image/png"));
+                        return;
+                    }
+                }
+
+                return;
+            }
+            GlobalUnlock(hData);
+        }
+    }
+
+    CloseClipboard();
+#endif
+}
+
+void SAIChatWindow::SetAttachedImagePreview(const TArray<uint8>& ImageData, const FString& MimeType)
+{
+    // Encode to base64 data URL
+    FString Base64Data = FBase64::Encode(ImageData);
+    AttachedImageDataUrl = FString::Printf(TEXT("data:%s;base64,%s"), *MimeType, *Base64Data);
+
+    // Create texture for preview
+    IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+    EImageFormat ImageFormat = EImageFormat::PNG;
+    if (MimeType.Contains(TEXT("jpeg")) || MimeType.Contains(TEXT("jpg")))
+    {
+        ImageFormat = EImageFormat::JPEG;
+    }
+    else if (MimeType.Contains(TEXT("bmp")))
+    {
+        ImageFormat = EImageFormat::BMP;
+    }
+
+    TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(ImageFormat);
+    if (ImageWrapper->SetCompressed(ImageData.GetData(), ImageData.Num()))
+    {
+        TArray64<uint8> RawData;
+        if (ImageWrapper->GetRaw(ERGBFormat::BGRA, 8, RawData))
+        {
+            int32 Width = ImageWrapper->GetWidth();
+            int32 Height = ImageWrapper->GetHeight();
+
+            // Clean up old texture
+            if (AttachedImageTexture)
+            {
+                AttachedImageTexture->RemoveFromRoot();
+                AttachedImageTexture = nullptr;
+            }
+
+            // Create new texture
+            AttachedImageTexture = UTexture2D::CreateTransient(Width, Height, PF_B8G8R8A8);
+            if (AttachedImageTexture)
+            {
+                AttachedImageTexture->AddToRoot(); // Prevent GC
+
+                // Copy data to texture
+                void* TextureData = AttachedImageTexture->GetPlatformData()->Mips[0].BulkData.Lock(LOCK_READ_WRITE);
+                FMemory::Memcpy(TextureData, RawData.GetData(), RawData.Num());
+                AttachedImageTexture->GetPlatformData()->Mips[0].BulkData.Unlock();
+                AttachedImageTexture->UpdateResource();
+
+                // Create brush
+                AttachedImageBrush = MakeShared<FSlateBrush>();
+                AttachedImageBrush->SetResourceObject(AttachedImageTexture);
+                AttachedImageBrush->ImageSize = FVector2D(64, 64);
+
+                // Set the image
+                if (ImagePreviewWidget.IsValid())
+                {
+                    ImagePreviewWidget->SetImage(AttachedImageBrush.Get());
+                }
+            }
+        }
+    }
+
+    // Show the preview container
+    if (ImagePreviewContainer.IsValid())
+    {
+        ImagePreviewContainer->SetVisibility(EVisibility::Visible);
+    }
+
+    UE_LOG(LogAIChatWindow, Log, TEXT("Image attached: %s, size: %d bytes"), *MimeType, ImageData.Num());
+}
+
+void SAIChatWindow::ClearAttachedImage()
+{
+    AttachedImageDataUrl.Empty();
+
+    // Hide the preview container
+    if (ImagePreviewContainer.IsValid())
+    {
+        ImagePreviewContainer->SetVisibility(EVisibility::Collapsed);
+    }
+
+    // Clear the image widget
+    if (ImagePreviewWidget.IsValid())
+    {
+        ImagePreviewWidget->SetImage(nullptr);
+    }
+
+    // Clean up brush
+    AttachedImageBrush.Reset();
+
+    // Clean up texture
+    if (AttachedImageTexture)
+    {
+        AttachedImageTexture->RemoveFromRoot();
+        AttachedImageTexture = nullptr;
+    }
+
+    UE_LOG(LogAIChatWindow, Log, TEXT("Attached image cleared"));
 }

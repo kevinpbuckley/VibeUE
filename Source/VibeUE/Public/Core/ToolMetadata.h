@@ -42,6 +42,10 @@ struct VIBEUE_API FToolParameter
 	UPROPERTY()
 	TArray<FString> AllowedValues;
 
+	/** Item type for array parameters (required for Google/Gemini compatibility) */
+	UPROPERTY()
+	FString ArrayItemType;
+
 	FToolParameter()
 		: bRequired(false)
 	{
@@ -54,6 +58,22 @@ struct VIBEUE_API FToolParameter
 		, Type(InType)
 		, bRequired(InRequired)
 		, DefaultValue(InDefault)
+	{
+		// Default array item type to string if not specified
+		if (Type == TEXT("array"))
+		{
+			ArrayItemType = TEXT("string");
+		}
+	}
+
+	// Constructor for array parameters with explicit item type
+	FToolParameter(const FString& InName, const FString& InDesc, const FString& InType, bool InRequired, const FString& InDefault, const FString& InArrayItemType)
+		: Name(InName)
+		, Description(InDesc)
+		, Type(InType)
+		, bRequired(InRequired)
+		, DefaultValue(InDefault)
+		, ArrayItemType(InArrayItemType)
 	{
 	}
 };
@@ -86,6 +106,14 @@ struct VIBEUE_API FToolMetadata
 	UPROPERTY()
 	TArray<FToolParameter> Parameters;
 
+	/** 
+	 * If true, this tool is only available to VibeUE internal chat.
+	 * It will NOT be exposed via MCP to external clients (e.g., VS Code Copilot).
+	 * Use for tools that need direct access to chat session state (e.g., attach_image).
+	 */
+	UPROPERTY()
+	bool bInternalOnly = false;
+
 	/** Reflection function pointer (not serialized) */
 	UFunction* Function = nullptr;
 
@@ -93,7 +121,8 @@ struct VIBEUE_API FToolMetadata
 	UClass* ToolClass = nullptr;
 
 	FToolMetadata()
-		: Function(nullptr)
+		: bInternalOnly(false)
+		, Function(nullptr)
 		, ToolClass(nullptr)
 	{
 	}

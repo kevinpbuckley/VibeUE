@@ -72,7 +72,11 @@ public class VibeUE : ModuleRules
 				"EnhancedInput",          // For Enhanced Input System support
 				"InputCore",              // For input types
 				"AudioCapture",           // For microphone input
-				"AudioCaptureCore"        // For FAudioCaptureSynth
+				"AudioCaptureCore",       // For FAudioCaptureSynth
+				"ImageWrapper",           // For image encoding/decoding
+				"DesktopPlatform",        // For file dialogs
+				"Niagara",                // For Niagara VFX runtime classes
+				"NiagaraEditor"           // For Niagara editor utilities and factories
 			}
 		);
 		

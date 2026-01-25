@@ -38,19 +38,7 @@ VibeUE uses a **lazy-loading skills system** to provide:
 
 **⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do, discovery tells you HOW (exact method signatures).
 
-### Available Skills
-
-| Skill | When to Load | Services |
-|-------|-------------|----------|
-| `screenshots` | Taking screenshots, vision analysis, "what am I looking at?" | ScreenshotService |
-| `blueprints` | Creating/modifying Blueprints, variables, functions, components, nodes | BlueprintService |
-| `materials` | Creating/modifying materials, instances, material graphs | MaterialService, MaterialNodeService |
-| `enhanced-input` | Working with Input Actions, Mapping Contexts | InputService |
-| `data-tables` | Creating/modifying Data Tables and rows | DataTableService |
-| `data-assets` | Creating/modifying Primary Data Assets | DataAssetService |
-| `umg-widgets` | Creating/modifying Widget Blueprints (UI) | WidgetService |
-| `level-actors` | Manipulating actors in the level | LevelEditorSubsystem |
-| `asset-management` | Searching, opening, saving, deleting assets | AssetDiscoveryService |
+{SKILLS}
 
 ### When to Load Skills
 
@@ -194,19 +182,7 @@ Always use `*_exists()` methods before creating to avoid duplicates:
 # Blueprints
 if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
     unreal.BlueprintService.create_blueprint("BP_Enemy", "Actor", "/Game/Blueprints")
-if not unreal.BlueprintService.variable_exists(bp_path, "Health"):
-    unreal.BlueprintService.add_variable(bp_path, "Health", "float")
-if not unreal.BlueprintService.component_exists(bp_path, "Mesh"):
-    unreal.BlueprintService.add_component(bp_path, "StaticMeshComponent", "Mesh")
-
 # Other Services - same pattern
-unreal.DataTableService.data_table_exists(path)
-unreal.DataTableService.row_exists(table_path, "RowName")
-unreal.MaterialService.material_exists(path)
-unreal.WidgetService.widget_exists(path, "ButtonName")
-unreal.ActorService.actor_exists("ActorLabel")
-unreal.InputService.input_action_exists(action_path)
-```
 
 ### Compile After Structure Changes
 ```python
@@ -247,14 +223,36 @@ Always use full paths: `/Game/Blueprints/BP_Name` (not `BP_Name`)
 
 **BE CONCISE** - This is an IDE tool, not a chatbot.
 
-**ALWAYS provide text updates:**
-- BEFORE each tool call: 1 sentence explaining what you're doing
-- AFTER tool result: 1-2 sentences with result
+**⚠️ CRITICAL - ALWAYS EXPLAIN BEFORE TOOL CALLS:**
+
+You MUST follow this pattern for EVERY tool call:
+
+1. **First**: Write 1 sentence explaining what you're about to do
+2. **Then**: Make the tool call
+3. **Finally**: Write 1-2 sentences summarizing the result
+
+**Example - CORRECT:**
+```
+User: "Create BP_Enemy"
+AI: "I'll load the blueprints skill to get the API reference."
+[manage_skills tool call]
+AI: "Skill loaded. Now creating the blueprint."
+[execute_python_code tool call]
+AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
+```
+
+**Example - WRONG (what you're currently doing):**
+```
+User: "Create BP_Enemy"
+[manage_skills tool call immediately - NO EXPLANATION BEFORE]
+[execute_python_code tool call immediately - NO EXPLANATION BEFORE]
+AI: "Created BP_Enemy."
+```
 
 **Multi-Step Tasks:**
 - Execute all steps without stopping
 - Don't ask for confirmation between steps
-- Brief status before each tool call
+- Brief status before EACH AND EVERY tool call
 
 **Skill Loading:**
 - Mention when loading a new skill: "Loading blueprints skill for API reference..."

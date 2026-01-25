@@ -389,6 +389,200 @@ static FString ListSkills()
 }
 
 /**
+ * Suggest skills based on a query string matching against keywords
+ * Returns skills sorted by relevance (number of keyword matches)
+ */
+static FString SuggestSkills(const FString& Query)
+{
+	FString SkillsDir = FVibeUEPaths::GetPluginContentDir() / TEXT("Skills");
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+
+	if (!PlatformFile.DirectoryExists(*SkillsDir))
+	{
+		TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+		ResultObj->SetBoolField(TEXT("success"), true);
+		ResultObj->SetArrayField(TEXT("suggested_skills"), TArray<TSharedPtr<FJsonValue>>());
+
+		FString ResultJson;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultJson);
+		FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+		return ResultJson;
+	}
+
+	// Tokenize query into lowercase words
+	TArray<FString> QueryWords;
+	Query.ToLower().ParseIntoArray(QueryWords, TEXT(" "), true);
+
+	// Store skill matches with scores
+	TArray<TPair<int32, TSharedPtr<FJsonObject>>> ScoredSkills;
+
+	PlatformFile.IterateDirectory(*SkillsDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (!bIsDirectory)
+		{
+			return true;
+		}
+
+		FString SkillDirPath = FString(FilenameOrDirectory);
+		FString SkillName = FPaths::GetCleanFilename(SkillDirPath);
+		FString SkillMdPath = SkillDirPath / TEXT("skill.md");
+
+		if (!PlatformFile.FileExists(*SkillMdPath))
+		{
+			return true;
+		}
+
+		FString SkillMdContent;
+		if (!FFileHelper::LoadFileToString(SkillMdContent, *SkillMdPath))
+		{
+			return true;
+		}
+
+		TSharedPtr<FJsonObject> Frontmatter = ParseYAMLFrontmatter(SkillMdContent);
+		if (!Frontmatter.IsValid())
+		{
+			return true;
+		}
+
+		// Collect all keywords from the skill
+		TArray<FString> AllKeywords;
+
+		// Add name and display_name as implicit keywords
+		FString Name, DisplayName, Description;
+		if (Frontmatter->TryGetStringField(TEXT("name"), Name))
+		{
+			AllKeywords.Add(Name.ToLower());
+		}
+		if (Frontmatter->TryGetStringField(TEXT("display_name"), DisplayName))
+		{
+			// Split display name into words
+			TArray<FString> DisplayWords;
+			DisplayName.ToLower().ParseIntoArray(DisplayWords, TEXT(" "), true);
+			AllKeywords.Append(DisplayWords);
+		}
+		if (Frontmatter->TryGetStringField(TEXT("description"), Description))
+		{
+			// Split description into words
+			TArray<FString> DescWords;
+			Description.ToLower().ParseIntoArray(DescWords, TEXT(" "), true);
+			AllKeywords.Append(DescWords);
+		}
+
+		// Add explicit keywords
+		const TArray<TSharedPtr<FJsonValue>>* KeywordsArray = nullptr;
+		if (Frontmatter->TryGetArrayField(TEXT("keywords"), KeywordsArray) && KeywordsArray)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *KeywordsArray)
+			{
+				FString Keyword;
+				if (Value->TryGetString(Keyword))
+				{
+					AllKeywords.Add(Keyword.ToLower());
+				}
+			}
+		}
+
+		// Add vibeue_classes and unreal_classes as keywords
+		const TArray<TSharedPtr<FJsonValue>>* ClassesArray = nullptr;
+		if (Frontmatter->TryGetArrayField(TEXT("vibeue_classes"), ClassesArray) && ClassesArray)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *ClassesArray)
+			{
+				FString ClassName;
+				if (Value->TryGetString(ClassName))
+				{
+					AllKeywords.Add(ClassName.ToLower());
+				}
+			}
+		}
+		if (Frontmatter->TryGetArrayField(TEXT("unreal_classes"), ClassesArray) && ClassesArray)
+		{
+			for (const TSharedPtr<FJsonValue>& Value : *ClassesArray)
+			{
+				FString ClassName;
+				if (Value->TryGetString(ClassName))
+				{
+					AllKeywords.Add(ClassName.ToLower());
+				}
+			}
+		}
+
+		// Calculate match score
+		int32 Score = 0;
+		for (const FString& QueryWord : QueryWords)
+		{
+			for (const FString& Keyword : AllKeywords)
+			{
+				// Exact match worth 3 points
+				if (Keyword.Equals(QueryWord))
+				{
+					Score += 3;
+				}
+				// Contains match worth 1 point
+				else if (Keyword.Contains(QueryWord) || QueryWord.Contains(Keyword))
+				{
+					Score += 1;
+				}
+			}
+		}
+
+		if (Score > 0)
+		{
+			TSharedPtr<FJsonObject> SkillInfo = MakeShared<FJsonObject>();
+			SkillInfo->SetStringField(TEXT("name"), Name.IsEmpty() ? SkillName : Name);
+			if (!DisplayName.IsEmpty())
+			{
+				SkillInfo->SetStringField(TEXT("display_name"), DisplayName);
+			}
+			if (!Description.IsEmpty())
+			{
+				SkillInfo->SetStringField(TEXT("description"), Description);
+			}
+			SkillInfo->SetNumberField(TEXT("relevance_score"), Score);
+
+			ScoredSkills.Add(TPair<int32, TSharedPtr<FJsonObject>>(Score, SkillInfo));
+		}
+
+		return true;
+	});
+
+	// Sort by score descending
+	ScoredSkills.Sort([](const TPair<int32, TSharedPtr<FJsonObject>>& A, const TPair<int32, TSharedPtr<FJsonObject>>& B)
+	{
+		return A.Key > B.Key;
+	});
+
+	// Build result
+	TArray<TSharedPtr<FJsonValue>> SuggestedArray;
+	for (const auto& ScoredSkill : ScoredSkills)
+	{
+		SuggestedArray.Add(MakeShared<FJsonValueObject>(ScoredSkill.Value));
+	}
+
+	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
+	ResultObj->SetBoolField(TEXT("success"), true);
+	ResultObj->SetStringField(TEXT("query"), Query);
+	ResultObj->SetArrayField(TEXT("suggested_skills"), SuggestedArray);
+
+	if (SuggestedArray.Num() > 0)
+	{
+		ResultObj->SetStringField(TEXT("hint"), TEXT("Use manage_skills(action='load', skill_name='<name>') to load a skill"));
+	}
+	else
+	{
+		ResultObj->SetStringField(TEXT("hint"), TEXT("No matching skills found. Use manage_skills(action='list') to see all available skills"));
+	}
+
+	FString ResultJson;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultJson);
+	FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
+
+	UE_LOG(LogSkillsTools, Log, TEXT("Suggested %d skills for query '%s'"), SuggestedArray.Num(), *Query);
+
+	return ResultJson;
+}
+
+/**
  * Resolve skill name to directory path
  * Supports: directory name, `name` field, or `display_name` field (case-insensitive)
  */
@@ -952,10 +1146,11 @@ static TArray<FString> ExtractSkillNamesArray(const TMap<FString, FString>& Para
 
 // Register manage_skills tool
 REGISTER_VIBEUE_TOOL(manage_skills,
-	"Discover and load domain-specific knowledge skills. Use 'list' to see available skills, 'load' to load a skill by name or display_name. Use 'skill_names' array to load multiple skills with deduplicated discovery.",
+	"Discover and load domain-specific knowledge skills. Use 'list' to see available skills, 'suggest' to find skills matching a query, 'load' to load a skill by name or display_name. Use 'skill_names' array to load multiple skills with deduplicated discovery.",
 	"Skills",
 	TOOL_PARAMS(
-		TOOL_PARAM("action", "Action to perform: 'list' or 'load'", "string", true),
+		TOOL_PARAM("action", "Action to perform: 'list', 'suggest', or 'load'", "string", true),
+		TOOL_PARAM("query", "Query string to match against skill keywords (for 'suggest' action)", "string", false),
 		TOOL_PARAM("skill_name", "Name of a single skill to load (for 'load' action). Can be directory name, 'name' field, or 'display_name' field from skill.md", "string", false),
 		TOOL_PARAM("skill_names", "Array of skill names to load together with deduplicated discovery (for 'load' action). More efficient when loading multiple related skills.", "array", false)
 	),
@@ -965,6 +1160,22 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		if (Action.Equals(TEXT("list"), ESearchCase::IgnoreCase))
 		{
 			return ListSkills();
+		}
+		else if (Action.Equals(TEXT("suggest"), ESearchCase::IgnoreCase))
+		{
+			FString Query = ExtractParamFromJson(Params, TEXT("query"));
+			if (Query.IsEmpty())
+			{
+				TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+				ErrorObj->SetBoolField(TEXT("success"), false);
+				ErrorObj->SetStringField(TEXT("error"), TEXT("'query' parameter required for 'suggest' action"));
+
+				FString ErrorJson;
+				TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ErrorJson);
+				FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
+				return ErrorJson;
+			}
+			return SuggestSkills(Query);
 		}
 		else if (Action.Equals(TEXT("load"), ESearchCase::IgnoreCase))
 		{
@@ -999,7 +1210,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		{
 			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
 			ErrorObj->SetBoolField(TEXT("success"), false);
-			ErrorObj->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s. Must be 'list' or 'load'"), *Action));
+			ErrorObj->SetStringField(TEXT("error"), FString::Printf(TEXT("Unknown action: %s. Must be 'list', 'suggest', or 'load'"), *Action));
 
 			FString ErrorJson;
 			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ErrorJson);
