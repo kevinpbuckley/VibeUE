@@ -383,3 +383,99 @@ project_config = {
 result = setup_new_project(project_config)
 print(f"Setup complete. Modified: {len(result['modified'])}, Failed: {len(result['failed'])}")
 ```
+
+---
+
+## Workflow 10: Configure Editor Appearance (EditorStyleSettings)
+
+Modify editor UI appearance including toolbar icons, UI scale, and colors.
+
+**Category ID:** `editorstylesettings` (lowercase, no spaces)
+
+**Common Settings:**
+| Key | Type | Description |
+|-----|------|-------------|
+| `ApplicationScale` | float | UI scale multiplier (1.0 = 100%) |
+| `bUseSmallToolBarIcons` | bool | Use smaller toolbar icons |
+| `bEnableHighDPIAwareness` | bool | High DPI support |
+| `SelectionColor` | LinearColor | Selection highlight color |
+| `XAxisColor`, `YAxisColor`, `ZAxisColor` | LinearColor | Gizmo axis colors |
+| `bShowFriendlyNames` | bool | Show friendly names in details panel |
+
+```python
+import unreal
+
+# List all editor style settings
+print("=== Editor Style Settings ===")
+settings = unreal.ProjectSettingsService.list_settings("editorstylesettings")
+for s in settings:
+    print(f"  {s.key} = {s.value}")
+
+# Get current UI scale
+scale = unreal.ProjectSettingsService.get_setting("editorstylesettings", "ApplicationScale")
+print(f"Current UI scale: {scale}")
+
+# Set UI scale to 125%
+result = unreal.ProjectSettingsService.set_setting(
+    "editorstylesettings",
+    "ApplicationScale", 
+    "1.25"
+)
+if result.success:
+    print("UI scale updated - effect is immediate")
+
+# Enable small toolbar icons
+result = unreal.ProjectSettingsService.set_setting(
+    "editorstylesettings",
+    "bUseSmallToolBarIcons",
+    "True"
+)
+if result.success:
+    print("Small toolbar icons enabled")
+
+# Change selection color to bright green
+result = unreal.ProjectSettingsService.set_setting(
+    "editorstylesettings",
+    "SelectionColor",
+    "(R=0.0,G=1.0,B=0.0,A=1.0)"
+)
+```
+
+**Important Notes:**
+- Changes apply immediately (no restart needed for most settings)
+- The service uses `PostEditChangeProperty` internally for proper side effects
+- Settings are saved to `EditorPerProjectUserSettings.ini`
+
+---
+
+## Workflow 11: Discover Available Settings Categories
+
+Find all available settings categories before accessing them.
+
+```python
+import unreal
+
+# List ALL available categories (100+ in a typical project)
+categories = unreal.ProjectSettingsService.list_categories()
+print(f"Found {len(categories)} settings categories:\n")
+
+for cat in categories:
+    print(f"{cat.category_id}: {cat.display_name} ({cat.setting_count} settings)")
+
+# Search for editor-related categories
+print("\n=== Editor-Related Categories ===")
+for cat in categories:
+    if "editor" in cat.category_id.lower() or "editor" in cat.display_name.lower():
+        print(f"  {cat.category_id}: {cat.display_name}")
+```
+
+**Key Categories for Editor Preferences:**
+| Category ID | Description |
+|------------|-------------|
+| `editorstylesettings` | UI appearance, colors, scale |
+| `editorperprojectusersettings` | Per-user editor behavior |
+| `blueprinteditorsettings` | Blueprint editor preferences |
+| `leveleditorviewportsettings` | Viewport camera, grid settings |
+| `leveleditorplaysettings` | PIE settings |
+| `grapheditorsettings` | Blueprint graph editor |
+| `materialeditorettings` | Material editor preferences |

@@ -695,6 +695,11 @@ FProjectSettingResult UProjectSettingsService::SetSetting(const FString& Categor
 		return Result;
 	}
 
+#if WITH_EDITOR
+	// Notify before change - this is what the editor does
+	SettingsObj->PreEditChange(Property);
+#endif
+
 	FString Error;
 	if (!StringToPropertyValue(Property, SettingsObj, Value, Error))
 	{
@@ -702,11 +707,18 @@ FProjectSettingResult UProjectSettingsService::SetSetting(const FString& Categor
 		return Result;
 	}
 
-	// Mark object as modified
-	SettingsObj->MarkPackageDirty();
-
-	// Try to save config
+#if WITH_EDITOR
+	// Notify after change - this triggers PostEditChangeProperty which:
+	// 1. Applies any runtime effects (like ApplicationScale -> FSlateApplication::SetApplicationScale)
+	// 2. Broadcasts change events so listeners can react
+	// 3. Calls SaveConfig() to persist the change
+	// This is exactly what the editor's property panel does.
+	FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
+	SettingsObj->PostEditChangeProperty(PropertyChangedEvent);
+#else
+	// In non-editor builds, fall back to manual save
 	SettingsObj->SaveConfig();
+#endif
 
 	Result.bSuccess = true;
 	Result.ModifiedSettings.Add(FString::Printf(TEXT("%s.%s"), *CategoryId, *Key));

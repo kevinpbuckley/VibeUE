@@ -431,6 +431,77 @@ void FChatSession::OnStreamComplete(bool bSuccess)
     {
         SaveHistory();
         BroadcastTokenBudgetUpdate();
+        
+        // Check if response was incomplete and auto-continue
+        bool bWasIncomplete = false;
+        if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+        {
+            bWasIncomplete = VibeUEClient->WasResponseIncomplete();
+        }
+        else if (OpenRouterClient.IsValid())
+        {
+            bWasIncomplete = OpenRouterClient->WasResponseIncomplete();
+        }
+        
+        if (bWasIncomplete && ToolCallIterationCount < MaxToolCallIterations)
+        {
+            UE_LOG(LogChatSession, Log, TEXT("[AUTO-CONTINUE] Detected incomplete response - sending follow-up to continue"));
+            
+            // Increment iteration counter to prevent infinite loops
+            ToolCallIterationCount++;
+            
+            // Add a synthetic user message to prompt continuation
+            FChatMessage ContinueMsg(TEXT("user"), TEXT("Please continue with the tool call you mentioned."));
+            Messages.Add(ContinueMsg);
+            
+            // Create new streaming message for response
+            FChatMessage AssistantMsg(TEXT("assistant"), TEXT(""));
+            AssistantMsg.bIsStreaming = true;
+            CurrentStreamingMessageIndex = Messages.Add(AssistantMsg);
+            OnMessageAdded.ExecuteIfBound(AssistantMsg);
+            
+            // Build messages and send request
+            TArray<FChatMessage> ApiMessages = BuildApiMessages();
+            TArray<FMCPTool> Tools = GetAllEnabledTools();
+            
+            // Notify UI that LLM thinking has started again
+            OnLLMThinkingStarted.ExecuteIfBound();
+            
+            if (CurrentProvider == ELLMProvider::VibeUE)
+            {
+                VibeUEClient->SendChatRequest(
+                    ApiMessages,
+                    CurrentModelId,
+                    Tools,
+                    FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+                    FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+                    FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+                    FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+                    FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+                    {
+                        UpdateUsageStats(PromptTokens, CompletionTokens);
+                    })
+                );
+            }
+            else
+            {
+                OpenRouterClient->SendChatRequest(
+                    ApiMessages,
+                    CurrentModelId,
+                    Tools,
+                    FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
+                    FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
+                    FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
+                    FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
+                    FOnLLMUsageReceived::CreateLambda([this](int32 PromptTokens, int32 CompletionTokens)
+                    {
+                        UpdateUsageStats(PromptTokens, CompletionTokens);
+                    })
+                );
+            }
+            
+            UsageStats.RequestCount++;
+        }
     }
 }
 

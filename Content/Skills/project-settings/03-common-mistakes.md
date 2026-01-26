@@ -2,31 +2,41 @@
 
 ---
 
-## ❌ MISTAKE 1: Forgetting to Save Changes
+## ❌ MISTAKE 1: Using Folder Path Instead of Map Asset Path
 
 **Wrong:**
 ```python
 import unreal
 
-# Set project name
-unreal.ProjectSettingsService.set_setting("general", "ProjectName", "My Game")
-# Changes not saved! Will be lost on editor restart
+# search_assets returns the folder, not the map file!
+results = unreal.AssetDiscoveryService.search_assets("horror", "World")
+map_path = results[0].package_path  # "/Game/Variant_Horror" - THIS IS THE FOLDER!
+
+unreal.ProjectSettingsService.set_setting("maps", "EditorStartupMap", f"{map_path}.{map_path.split('/')[-1]}")
+# Sets to "/Game/Variant_Horror.Variant_Horror" - WRONG! Asset doesn't exist
 ```
 
 **Correct:**
 ```python
 import unreal
 
-# Set project name
-result = unreal.ProjectSettingsService.set_setting("general", "ProjectName", "My Game")
-
-if result.success:
-    # MUST save to persist changes
-    unreal.ProjectSettingsService.save_all_config()
-    print("Changes saved successfully")
+# Find the actual map file, not the folder
+results = unreal.AssetDiscoveryService.search_assets("Lvl_Horror", "World")
+for r in results:
+    # Verify the asset actually exists before using it
+    if unreal.EditorAssetLibrary.does_asset_exist(r.package_path):
+        map_path = f"{r.package_path}.{r.asset_name}"
+        unreal.ProjectSettingsService.set_setting("maps", "EditorStartupMap", map_path)
+        print(f"Set to: {map_path}")
+        break
 ```
 
-**Why:** Settings are cached in memory. You must explicitly save to write to disk.
+**Why:** Map folders and map files have different paths. Always verify with `does_asset_exist()` before setting.
+
+**Common map path patterns:**
+- `/Game/FirstPerson/Lvl_FirstPerson.Lvl_FirstPerson` ✓
+- `/Game/Variant_Horror/Lvl_Horror.Lvl_Horror` ✓
+- `/Game/Variant_Horror.Variant_Horror` ❌ (folder, not map)
 
 ---
 
@@ -61,7 +71,7 @@ for cat in categories:
 
 ---
 
-## ❌ MISTAKE 3: Not Checking Operation Results
+## ❌ MISTAKE 2: Not Checking Operation Results
 
 **Wrong:**
 ```python
@@ -89,7 +99,7 @@ else:
 
 ---
 
-## ❌ MISTAKE 4: Ignoring Restart Requirements
+## ❌ MISTAKE 3: Ignoring Restart Requirements
 
 **Wrong:**
 ```python
@@ -97,7 +107,6 @@ import unreal
 
 # Some settings require restart
 result = unreal.ProjectSettingsService.set_setting("maps", "GameDefaultMap", "/Game/Maps/Main.Main")
-unreal.ProjectSettingsService.save_all_config()
 # Expecting immediate effect
 ```
 
@@ -108,8 +117,7 @@ import unreal
 result = unreal.ProjectSettingsService.set_setting("maps", "GameDefaultMap", "/Game/Maps/Main.Main")
 
 if result.success:
-    unreal.ProjectSettingsService.save_all_config()
-    
+    # Changes are auto-saved, but may need restart
     if result.requires_restart:
         print("⚠️ Editor restart required for changes to take effect")
     else:
@@ -120,7 +128,7 @@ if result.success:
 
 ---
 
-## ❌ MISTAKE 5: Using Incorrect INI Section Format
+## ❌ MISTAKE 4: Using Incorrect INI Section Format
 
 **Wrong:**
 ```python
@@ -150,7 +158,7 @@ value = unreal.ProjectSettingsService.get_ini_value(
 
 ---
 
-## ❌ MISTAKE 6: Wrong Config File Name
+## ❌ MISTAKE 5: Wrong Config File Name
 
 **Wrong:**
 ```python
@@ -187,7 +195,7 @@ value = unreal.ProjectSettingsService.get_setting("general", "ProjectName")
 
 ---
 
-## ❌ MISTAKE 7: Not Handling Array Values Correctly
+## ❌ MISTAKE 6: Not Handling Array Values Correctly
 
 **Wrong:**
 ```python
@@ -224,7 +232,7 @@ result = unreal.ProjectSettingsService.set_ini_array(
 
 ---
 
-## ❌ MISTAKE 8: Assuming Setting Exists
+## ❌ MISTAKE 7: Assuming Setting Exists
 
 **Wrong:**
 ```python
@@ -255,7 +263,7 @@ else:
 
 ---
 
-## ❌ MISTAKE 9: Invalid JSON for Batch Updates
+## ❌ MISTAKE 8: Invalid JSON for Batch Updates
 
 **Wrong:**
 ```python
@@ -291,7 +299,7 @@ result = unreal.ProjectSettingsService.set_category_settings_from_json(
 
 ---
 
-## ❌ MISTAKE 10: Modifying Read-Only Settings
+## ❌ MISTAKE 9: Modifying Read-Only Settings
 
 **Wrong:**
 ```python
@@ -321,7 +329,7 @@ if found:
 
 ---
 
-## ❌ MISTAKE 11: Using discover_python_class on Wrong Type
+## ❌ MISTAKE 10: Using discover_python_class on Wrong Type
 
 **Wrong:**
 ```python
@@ -349,7 +357,7 @@ categories = unreal.ProjectSettingsService.list_categories()
 
 ---
 
-## ❌ MISTAKE 12: Not Understanding Category Discovery
+## ❌ MISTAKE 11: Not Understanding Category Discovery
 
 **Wrong:**
 ```python
