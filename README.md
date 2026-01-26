@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 12 specialized services with 280+ methods for Blueprints, Materials, Widgets, Niagara, Screenshots, and more
+- **Python API Services** - 14 specialized services with 300+ methods for Blueprints, Materials, Widgets, Niagara, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -86,7 +86,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (12 services, 280+ methods)
+### 2. VibeUE Python API Services (14 services, 300+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -103,6 +103,8 @@ High-level services exposed to Python for common game development tasks:
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `NiagaraService` | 38 | Niagara system lifecycle, emitters, parameters, rapid iteration |
 | `NiagaraEmitterService` | 19 | Niagara emitter modules, renderers, properties |
+| `ProjectSettingsService` | 10+ | Project settings, editor preferences, UI configuration |
+| `EngineSettingsService` | 15+ | Engine settings, rendering, physics, audio, cvars, scalability |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -520,6 +522,51 @@ ScreenshotService enables AI vision by capturing editor content:
 - `get_active_window_title()` - Get focused window title
 - `is_editor_window_active()` - Check if editor is in focus
 
+### ProjectSettingsService (10+ methods)
+
+ProjectSettingsService provides access to project configuration and editor preferences:
+- `list_settings_categories()` - List all available settings categories
+- `list_settings(category)` - List settings in a category
+- `get_setting(category, setting)` - Get current setting value
+- `set_setting(category, setting, value)` - Modify setting value
+- `get_editor_style()` - Get editor UI appearance settings (toolbar icons, scale, colors)
+- `set_editor_style(property, value)` - Modify editor appearance (SmallToolBarIcons, ApplicationScale, etc.)
+- `get_project_info()` - Get project metadata (name, version, description)
+- `set_project_info(property, value)` - Update project metadata
+- `get_default_maps()` - Get editor/game startup map settings
+- `set_default_maps(editor_map, game_map)` - Configure startup maps
+
+### EngineSettingsService (15+ methods)
+
+EngineSettingsService controls core engine configuration across multiple domains:
+
+**Rendering Settings:**
+- `get/set_rendering_setting(setting, value)` - Configure rendering options
+- `list_rendering_settings()` - List available rendering settings
+
+**Physics Settings:**
+- `get/set_physics_setting(setting, value)` - Configure physics simulation
+- `list_physics_settings()` - List available physics settings
+
+**Audio Settings:**
+- `get/set_audio_setting(setting, value)` - Configure audio system
+- `list_audio_settings()` - List available audio settings
+
+**Console Variables (CVars):**
+- `get_cvar(name)` - Get console variable value
+- `set_cvar(name, value)` - Set console variable (runtime changes)
+- `list_cvars(filter)` - Search available console variables
+
+**Scalability Settings:**
+- `get_scalability_level(category)` - Get quality level (ViewDistance, AntiAliasing, etc.)
+- `set_scalability_level(category, level)` - Set quality level (0-4: Low to Epic)
+- `get_scalability_settings()` - Get all current scalability levels
+- `apply_scalability_preset(preset)` - Apply preset (Low, Medium, High, Epic, Cinematic)
+
+**Garbage Collection:**
+- `get/set_gc_setting(setting, value)` - Configure garbage collection behavior
+- `list_gc_settings()` - List available GC settings
+
 ---
 
 ## 🔧 Common Workflows
@@ -568,6 +615,46 @@ types = unreal.DataTableService.search_row_types("Character")
 
 # 2. Create table
 unreal.DataTableService.create_data_table("CharacterStats", "/Game/Data", "DT_Characters")
+
+### Configure Project and Engine Settings
+
+```python
+# Configure Editor UI Appearance
+unreal.ProjectSettingsService.set_editor_style("SmallToolBarIcons", "true")
+unreal.ProjectSettingsService.set_editor_style("ApplicationScale", "1.2")
+
+# Set Project Metadata
+unreal.ProjectSettingsService.set_project_info("ProjectName", "My Awesome Game")
+unreal.ProjectSettingsService.set_project_info("Description", "An epic adventure")
+
+# Configure Startup Maps
+unreal.ProjectSettingsService.set_default_maps(
+    editor_map="/Game/Levels/EditorLevel",
+    game_map="/Game/Levels/MainMenu"
+)
+
+# Configure Rendering Settings
+unreal.EngineSettingsService.set_rendering_setting("bDefaultFeatureLevelES31", "true")
+unreal.EngineSettingsService.set_rendering_setting("DefaultGraphicsRHI", "DefaultGraphicsRHI_DX12")
+
+# Adjust Graphics Quality via Scalability
+unreal.EngineSettingsService.apply_scalability_preset("High")
+# Or set individual categories
+unreal.EngineSettingsService.set_scalability_level("ViewDistance", 3)  # 0-4: Low to Epic
+unreal.EngineSettingsService.set_scalability_level("AntiAliasing", 4)
+
+# Configure Physics Settings
+unreal.EngineSettingsService.set_physics_setting("bEnableStabilization", "true")
+unreal.EngineSettingsService.set_physics_setting("MaxSubsteps", "6")
+
+# Set Console Variables (CVars) for runtime changes
+unreal.EngineSettingsService.set_cvar("r.ScreenPercentage", "100")
+unreal.EngineSettingsService.set_cvar("r.Bloom", "1")
+
+# Configure Garbage Collection
+unreal.EngineSettingsService.set_gc_setting("gc.MaxObjectsInGame", "2097152")
+unreal.EngineSettingsService.set_gc_setting("gc.TimeBetweenPurgingPendingKillObjects", "60.0")
+```
 
 # 3. Add rows
 unreal.DataTableService.add_row("/Game/Data/DT_Characters", "Hero", 
