@@ -10,6 +10,8 @@
 #include "IAssetTools.h"
 #include "Engine/Texture2D.h"
 #include "HAL/PlatformFileManager.h"
+#include "ContentBrowserModule.h"
+#include "IContentBrowserSingleton.h"
 
 namespace
 {
@@ -501,4 +503,199 @@ bool UAssetDiscoveryService::AssetExists(const FString& AssetPath)
 		return false;
 	}
 	return UEditorAssetLibrary::DoesAssetExist(AssetPath);
+}
+
+// ========== Open Assets & Content Browser ==========
+
+bool UAssetDiscoveryService::GetActiveAsset(FAssetData& OutAsset)
+{
+	if (!GEditor)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetActiveAsset: GEditor is null"));
+		return false;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetActiveAsset: Failed to get AssetEditorSubsystem"));
+		return false;
+	}
+
+	// Get all open editors and find the most recently activated one
+	TArray<IAssetEditorInstance*> OpenEditors = AssetEditorSubsystem->GetAllOpenEditors();
+	if (OpenEditors.Num() == 0)
+	{
+		// No active editor, return false
+		return false;
+	}
+
+	// Find editor with most recent activation time
+	IAssetEditorInstance* ActiveEditor = nullptr;
+	double MostRecentTime = -1.0;
+	for (IAssetEditorInstance* Editor : OpenEditors)
+	{
+		if (Editor)
+		{
+			double ActivationTime = Editor->GetLastActivationTime();
+			if (ActivationTime > MostRecentTime)
+			{
+				MostRecentTime = ActivationTime;
+				ActiveEditor = Editor;
+			}
+		}
+	}
+
+	if (!ActiveEditor)
+	{
+		return false;
+	}
+
+	// Get edited assets via the subsystem - find assets that this editor is handling
+	TArray<UObject*> AllEditedAssets = AssetEditorSubsystem->GetAllEditedAssets();
+	UObject* EditedAsset = nullptr;
+
+	// Find an asset that this editor is associated with
+	for (UObject* Asset : AllEditedAssets)
+	{
+		TArray<IAssetEditorInstance*> EditorsForAsset = AssetEditorSubsystem->FindEditorsForAsset(Asset);
+		if (EditorsForAsset.Contains(ActiveEditor))
+		{
+			EditedAsset = Asset;
+			break;
+		}
+	}
+
+	if (!EditedAsset)
+	{
+		return false;
+	}
+
+	IAssetRegistry* AssetRegistry = GetAssetRegistry();
+	if (!AssetRegistry)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetActiveAsset: Failed to access Asset Registry"));
+		return false;
+	}
+
+	// Convert to FAssetData
+	OutAsset = AssetRegistry->GetAssetByObjectPath(FSoftObjectPath(EditedAsset));
+	if (OutAsset.IsValid())
+	{
+		UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetActiveAsset: %s"), *OutAsset.AssetName.ToString());
+		return true;
+	}
+
+	return false;
+}
+
+TArray<FAssetData> UAssetDiscoveryService::GetOpenAssets()
+{
+	TArray<FAssetData> OpenAssets;
+
+	if (!GEditor)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetOpenAssets: GEditor is null"));
+		return OpenAssets;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetOpenAssets: Failed to get AssetEditorSubsystem"));
+		return OpenAssets;
+	}
+
+	// Get all currently edited assets
+	TArray<UObject*> EditedAssets = AssetEditorSubsystem->GetAllEditedAssets();
+
+	IAssetRegistry* AssetRegistry = GetAssetRegistry();
+	if (!AssetRegistry)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::GetOpenAssets: Failed to access Asset Registry"));
+		return OpenAssets;
+	}
+
+	// Convert UObject* to FAssetData
+	for (UObject* Asset : EditedAssets)
+	{
+		if (Asset)
+		{
+			FAssetData AssetData = AssetRegistry->GetAssetByObjectPath(FSoftObjectPath(Asset));
+			if (AssetData.IsValid())
+			{
+				OpenAssets.Add(AssetData);
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetOpenAssets: Found %d open assets"), OpenAssets.Num());
+	return OpenAssets;
+}
+
+TArray<FAssetData> UAssetDiscoveryService::GetContentBrowserSelections()
+{
+	TArray<FAssetData> SelectedAssets;
+
+	// Get the content browser module
+	FContentBrowserModule& ContentBrowserModule = FModuleManager::LoadModuleChecked<FContentBrowserModule>("ContentBrowser");
+	IContentBrowserSingleton& ContentBrowser = ContentBrowserModule.Get();
+
+	// Get selected assets
+	ContentBrowser.GetSelectedAssets(SelectedAssets);
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetContentBrowserSelections: Found %d selected assets"), SelectedAssets.Num());
+	return SelectedAssets;
+}
+
+bool UAssetDiscoveryService::GetPrimaryContentBrowserSelection(FAssetData& OutAsset)
+{
+	TArray<FAssetData> SelectedAssets = GetContentBrowserSelections();
+	
+	if (SelectedAssets.Num() > 0)
+	{
+		OutAsset = SelectedAssets[0];
+		UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetPrimaryContentBrowserSelection: %s"), *OutAsset.AssetName.ToString());
+		return true;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::GetPrimaryContentBrowserSelection: No assets selected"));
+	return false;
+}
+
+bool UAssetDiscoveryService::IsAssetOpen(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::IsAssetOpen: AssetPath is empty"));
+		return false;
+	}
+
+	if (!GEditor)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::IsAssetOpen: GEditor is null"));
+		return false;
+	}
+
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Error, TEXT("UAssetDiscoveryService::IsAssetOpen: Failed to get AssetEditorSubsystem"));
+		return false;
+	}
+
+	// Load the asset to get its UObject
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::IsAssetOpen: Asset not found: %s"), *AssetPath);
+		return false;
+	}
+
+	// Check if any editor is open for this asset
+	TArray<IAssetEditorInstance*> Editors = AssetEditorSubsystem->FindEditorsForAsset(Asset);
+	bool bIsOpen = Editors.Num() > 0;
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::IsAssetOpen: %s is %s"), *AssetPath, bIsOpen ? TEXT("open") : TEXT("closed"));
+	return bIsOpen;
 }

@@ -91,7 +91,8 @@ public class VibeUE : ModuleRules
 					"UMGEditor",           // For WidgetBlueprint.h and other UMG editor functionality
 					"MaterialEditor",      // For material editor integration
 					"LevelEditor",         // For global keyboard shortcuts
-					"StatusBar"            // For panel drawer integration
+					"StatusBar",           // For panel drawer integration
+					"ContentBrowser"       // For content browser selection queries
 				}
 			);
 		}

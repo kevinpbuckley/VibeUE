@@ -126,7 +126,7 @@ json_str = json.dumps(data)
 
 ## 📚 Available Skills
 
-**Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:**
+*ALWAYS*Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:**
 
 {SKILLS}
 
