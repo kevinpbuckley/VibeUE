@@ -13,10 +13,13 @@
 #include "Engine/PointLight.h"
 #include "Engine/SpotLight.h"
 #include "Engine/DirectionalLight.h"
+#include "Engine/StaticMesh.h"
+#include "Materials/MaterialInterface.h"
 #include "Components/StaticMeshComponent.h"
 #include "Components/LightComponent.h"
 #include "ScopedTransaction.h"
 #include "UObject/PropertyIterator.h"
+#include "EditorAssetLibrary.h"
 
 // ═══════════════════════════════════════════════════════════════════
 // Helper Functions
@@ -575,7 +578,25 @@ bool UActorService::GetProperty(
 
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
-			if (Comp && Comp->GetName() == ComponentName)
+			if (!Comp) continue;
+			
+			// Try exact match first
+			if (Comp->GetName() == ComponentName)
+			{
+				TargetObject = Comp;
+				break;
+			}
+			
+			// Try prefix match (e.g., "StaticMeshComponent" matches "StaticMeshComponent0")
+			if (Comp->GetName().StartsWith(ComponentName))
+			{
+				TargetObject = Comp;
+				break;
+			}
+			
+			// Try class name match (e.g., "StaticMeshComponent" matches class UStaticMeshComponent)
+			FString ClassName = Comp->GetClass()->GetName();
+			if (ClassName == ComponentName || ClassName == (ComponentName + TEXT("Component")))
 			{
 				TargetObject = Comp;
 				break;
@@ -637,7 +658,25 @@ bool UActorService::SetProperty(
 
 		for (UActorComponent* Comp : Actor->GetComponents())
 		{
-			if (Comp && Comp->GetName() == ComponentName)
+			if (!Comp) continue;
+			
+			// Try exact match first
+			if (Comp->GetName() == ComponentName)
+			{
+				TargetObject = Comp;
+				break;
+			}
+			
+			// Try prefix match (e.g., "StaticMeshComponent" matches "StaticMeshComponent0")
+			if (Comp->GetName().StartsWith(ComponentName))
+			{
+				TargetObject = Comp;
+				break;
+			}
+			
+			// Try class name match (e.g., "StaticMeshComponent" matches class UStaticMeshComponent)
+			FString ClassName = Comp->GetClass()->GetName();
+			if (ClassName == ComponentName || ClassName == (ComponentName + TEXT("Component")))
 			{
 				TargetObject = Comp;
 				break;
@@ -687,7 +726,43 @@ bool UActorService::SetProperty(
 	TargetObject->Modify();
 
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(TargetObject);
-	if (!Property->ImportText_Direct(*Value, ValuePtr, TargetObject, PPF_None))
+	bool bSuccess = false;
+
+	// Check if this is an object property (like StaticMesh, Material, etc.)
+	FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property);
+	if (ObjectProperty && Value.StartsWith(TEXT("/")))
+	{
+		// Value looks like an asset path - try to load the asset
+		UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(Value);
+		if (LoadedAsset)
+		{
+			// Verify the loaded asset is compatible with the property type
+			if (LoadedAsset->IsA(ObjectProperty->PropertyClass))
+			{
+				ObjectProperty->SetObjectPropertyValue(ValuePtr, LoadedAsset);
+				bSuccess = true;
+				UE_LOG(LogTemp, Log, TEXT("SetProperty: Loaded asset '%s' for property '%s'"), *Value, *PropertyName);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("SetProperty: Asset '%s' is not compatible with property '%s' (expected %s, got %s)"),
+					*Value, *PropertyName, *ObjectProperty->PropertyClass->GetName(), *LoadedAsset->GetClass()->GetName());
+			}
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetProperty: Failed to load asset '%s'"), *Value);
+		}
+	}
+	
+	// Fall back to ImportText for non-object properties or if asset loading failed
+	if (!bSuccess)
+	{
+		const TCHAR* ImportResult = Property->ImportText_Direct(*Value, ValuePtr, TargetObject, PPF_None);
+		bSuccess = (ImportResult != nullptr);
+	}
+
+	if (!bSuccess)
 	{
 		EndTransaction();
 		UE_LOG(LogTemp, Warning, TEXT("SetProperty: Failed to set property '%s' to '%s'"), *PropertyName, *Value);

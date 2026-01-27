@@ -285,24 +285,6 @@ unreal.NiagaraService.set_rapid_iteration_param_by_stage(
 )
 ```
 
-### ColorFromCurve Module Warning
-
-Many Niagara systems include a **ColorFromCurve** module in ParticleUpdate that drives color from a curve over lifetime. This can override your Scale Color settings!
-
-**To check if ColorFromCurve exists:**
-```python
-modules = unreal.NiagaraEmitterService.list_modules(path, emitter)
-curve_mods = [m for m in modules if "ColorFromCurve" in m.module_name]
-if curve_mods:
-    print(f"Warning: ColorFromCurve module found (enabled={curve_mods[0].is_enabled})")
-    print("This module may override your color settings with a curve over lifetime")
-```
-
-**Options when ColorFromCurve is present:**
-1. **Keep it**: Your Scale Color values will be multiplied with the curve values
-2. **Set strong Scale Color values**: Use values >1 (e.g., `(0, 3, 0)`) to overpower the curve
-3. **Remove it**: Use `remove_module(path, emitter, "ColorFromCurve", "ParticleUpdate")`
-
 ---
 
 ## 6. Verify Emitter Has Required Components

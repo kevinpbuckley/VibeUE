@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UNiagaraEmitterService.h"
+#include "PythonAPI/UNiagaraService.h"
 #include "NiagaraSystem.h"
 #include "NiagaraEmitter.h"
 #include "NiagaraEmitterHandle.h"
@@ -982,6 +983,62 @@ bool UNiagaraEmitterService::ReorderModule(
 		"The required NiagaraEditor APIs (GetOrderedModuleNodes, MoveModule) are not exported. "
 		"Please reorder modules manually in the Niagara Editor UI."));
 	return false;
+}
+
+bool UNiagaraEmitterService::SetColorTint(
+	const FString& SystemPath,
+	const FString& EmitterName,
+	const FString& RGB,
+	float Alpha)
+{
+	// Check if ScaleColor module exists
+	TArray<FNiagaraModuleInfo_Custom> Modules = ListModules(SystemPath, EmitterName, TEXT("Update"));
+	bool bHasScaleColor = false;
+	for (const FNiagaraModuleInfo_Custom& Module : Modules)
+	{
+		if (Module.ModuleName.Contains(TEXT("ScaleColor")))
+		{
+			bHasScaleColor = true;
+			break;
+		}
+	}
+
+	// Add ScaleColor module if not present
+	if (!bHasScaleColor)
+	{
+		bool bAdded = AddModule(
+			SystemPath,
+			EmitterName,
+			TEXT("/Niagara/Modules/Update/Color/ScaleColor.ScaleColor"),
+			TEXT("Update")
+		);
+		if (!bAdded)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UNiagaraEmitterService::SetColorTint - Failed to add ScaleColor module to %s"), *EmitterName);
+			return false;
+		}
+		UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::SetColorTint - Added ScaleColor module to %s"), *EmitterName);
+	}
+
+	// Set Scale RGB via rapid iteration params
+	FString RGBParamName = FString::Printf(TEXT("Constants.%s.ScaleColor.Scale RGB"), *EmitterName);
+	bool bRGBSet = UNiagaraService::SetRapidIterationParam(SystemPath, EmitterName, RGBParamName, RGB);
+
+	// Set Scale Alpha if not default
+	bool bAlphaSet = true;
+	if (Alpha != 1.0f)
+	{
+		FString AlphaParamName = FString::Printf(TEXT("Constants.%s.ScaleColor.Scale Alpha"), *EmitterName);
+		FString AlphaStr = FString::Printf(TEXT("%.6f"), Alpha);
+		bAlphaSet = UNiagaraService::SetRapidIterationParam(SystemPath, EmitterName, AlphaParamName, AlphaStr);
+	}
+
+	if (bRGBSet)
+	{
+		UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::SetColorTint - Set %s color tint to %s (alpha: %.2f)"), *EmitterName, *RGB, Alpha);
+	}
+
+	return bRGBSet && bAlphaSet;
 }
 
 // =================================================================

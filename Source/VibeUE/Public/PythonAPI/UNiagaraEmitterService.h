@@ -215,7 +215,7 @@ struct FNiagaraScriptInfo_Custom
 /**
  * Niagara Emitter Service - Python API for module-level emitter manipulation
  *
- * Provides 16 module and renderer management actions:
+ * Provides 17 module and renderer management actions:
  *
  * Module Management:
  * - list_modules: List all modules in an emitter
@@ -226,6 +226,7 @@ struct FNiagaraScriptInfo_Custom
  * - set_module_input: Set a module input value
  * - get_module_input: Get a module input value
  * - reorder_module: Reorder a module within its stack
+ * - set_color_tint: Set color tint (handles ColorFromCurve automatically)
  *
  * Renderer Management:
  * - list_renderers: List all renderers in an emitter
@@ -249,9 +250,8 @@ struct FNiagaraScriptInfo_Custom
  *   unreal.NiagaraEmitterService.add_module("/Game/VFX/NS_Fire", "Sparks",
  *       "/Niagara/Modules/Update/Size/ScaleSpriteSize", "Update")
  *
- *   # Set module input
- *   unreal.NiagaraEmitterService.set_module_input("/Game/VFX/NS_Fire", "Sparks",
- *       "Scale Sprite Size", "Scale Factor", "(X=2,Y=2)")
+ *   # Set color tint (works even with ColorFromCurve)
+ *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Flames", "(0.0, 3.0, 0.0)")
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UNiagaraEmitterService : public UObject
@@ -415,6 +415,32 @@ public:
 		const FString& EmitterName,
 		const FString& ModuleName,
 		int32 NewIndex);
+
+	/**
+	 * Set a color tint on an emitter, handling ColorFromCurve modules automatically.
+	 *
+	 * This method adds a ScaleColor module (if needed) and sets its Scale RGB value.
+	 * Works even when ColorFromCurve is present - the tint multiplies with the curve output.
+	 *
+	 * @param SystemPath - Full path to the Niagara system
+	 * @param EmitterName - Name of the emitter
+	 * @param RGB - Color as "(R, G, B)" string. Values >1 make colors brighter.
+	 * @param Alpha - Optional alpha scale (default 1.0)
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   # Make fire green (works even with ColorFromCurve)
+	 *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Flames", "(0.0, 3.0, 0.0)")
+	 *
+	 *   # Make smoke purple with 50% alpha
+	 *   unreal.NiagaraEmitterService.set_color_tint("/Game/VFX/NS_Fire", "Smoke", "(2.0, 0.0, 2.0)", 0.5)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (DisplayName = "Set Color Tint"))
+	static bool SetColorTint(
+		const FString& SystemPath,
+		const FString& EmitterName,
+		const FString& RGB,
+		float Alpha = 1.0f);
 
 	// =================================================================
 	// Renderer Management Actions

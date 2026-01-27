@@ -1512,16 +1512,9 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         
         if (bSuggestsToolIntent)
         {
-            UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Incomplete response detected - AI stated intent to use tool but no tool call received"));
+            UE_LOG(LogLLMClientBase, Log, TEXT("[AUTO-CONTINUE] Incomplete response detected - AI stated intent to use tool but no tool call received. Continuing silently..."));
             bResponseIncomplete = true;
-            
-            // Append a message to inform the user
-            FString ContinueMsg = TEXT("\n\n⚠️ *Response was cut off. Continuing automatically...*");
-            if (CurrentOnChunk.IsBound())
-            {
-                CurrentOnChunk.Execute(ContinueMsg);
-            }
-            AccumulatedContent += ContinueMsg;
+            // Auto-continue will be handled by ChatSession - no need to show message to user
         }
     }
 }

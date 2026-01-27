@@ -71,13 +71,18 @@ Common built-in module scripts and their purposes.
 | `/Niagara/Modules/Update/Forces/Vortex` | Spin around an axis |
 | `/Niagara/Modules/Update/Forces/CurlNoiseForce` | Turbulent movement |
 
-### Visual
+### Visual - Color Modules
+
 | Path | Description |
 |------|-------------|
 | `/Niagara/Modules/Update/Color/ColorFromCurve` | Color over lifetime |
 | `/Niagara/Modules/Update/Color/ColorByLife` | Change color over lifetime |
 | `/Niagara/Modules/Update/Color/ColorBySpeed` | Change color based on speed |
 | `/Niagara/Modules/Update/Color/ScaleColor` | Multiply color values |
+
+### Visual - Size Modules
+| Path | Description |
+|------|-------------|
 | `/Niagara/Modules/Update/Size/ScaleSpriteSize` | Scale sprite size |
 | `/Niagara/Modules/Update/Size/ScaleSpriteBySpeed` | Scale based on speed |
 | `/Niagara/Modules/Update/Size/ScaleMeshSize` | Scale mesh size |
