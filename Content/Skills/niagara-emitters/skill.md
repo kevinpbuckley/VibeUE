@@ -84,86 +84,217 @@ Many VFX emitters use a **ColorFromCurve** module that animates color over parti
 
 **ColorFromCurve uses curve data (keyframes) that CANNOT be modified via rapid iteration parameters.** The curve stores actual keyframe data, not simple scalar values.
 
-#### RECOMMENDED: Use set_color_tint (Handles ColorFromCurve Automatically)
+#### Detecting Which Color System an Emitter Uses
 
 ```python
 import unreal
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+# Check if emitter has ColorFromCurve (curve-based color)
+keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, emitter_name)
+if len(keys) > 0:
+    print("Uses ColorFromCurve - must use shift_color_hue or set_color_curve_keys")
+else:
+    print("Uses Scale Color/InitializeParticle - can use set_rapid_iteration_param")
+```
 
-# This works even when ColorFromCurve is present!
-# Automatically adds ScaleColor module and sets tint
-unreal.NiagaraEmitterService.set_color_tint(path, emitter, "(0.0, 3.0, 0.0)")
+---
 
-# With custom alpha
-unreal.NiagaraEmitterService.set_color_tint(path, emitter, "(2.0, 0.0, 2.0)", 0.5)
+## ⚠️⚠️ CRITICAL: Choosing the Right Color Change Method
+
+### The Problem with Color Multiplication (set_color_tint / Scale Color)
+
+`set_color_tint` and Scale Color **MULTIPLY** existing colors by your RGB values:
+- **RGB values of 0 ELIMINATE those color channels entirely**
+- **RGB values < 1 dim those channels**
+- **RGB values > 1 brighten those channels**
+
+This **destroys color gradients** when you use 0 values because multiplication removes that channel.
+
+### When to Use Each Method
+
+| Goal | Method | Preserves Detail? |
+|------|--------|-------------------|
+| **Change hue** (recolor effect) | `shift_color_hue()` | ✅ Yes - BEST |
+| **Custom curve manipulation** | `get/set_color_curve_keys()` | ✅ Yes |
+| **Brighten/dim uniformly** | `set_color_tint()` with equal RGB | ✅ Yes |
+| **Tint toward a color** | `set_color_tint()` with non-zero RGB | ⚠️ Partial |
+| **Quick test** (accept detail loss) | `set_color_tint()` with zeros | ❌ No |
+
+---
+
+## ✅ RECOMMENDED: shift_color_hue (For Recoloring Effects)
+
+Use `shift_color_hue` when you want to **change the color** of an effect while preserving all artistic detail.
+
+```python
+import unreal
+
+# Shift hue by degrees (color wheel rotation)
+# Common shifts:
+#   120° = shift toward green
+#   180° = shift toward cyan/opposite
+#   240° = shift toward blue/purple
+#   -60° = shift toward red
+
+unreal.NiagaraEmitterService.shift_color_hue(system_path, emitter_name, 120.0)
+
+# Apply to multiple emitters
+emitters = unreal.NiagaraService.list_emitters(system_path)
+for e in emitters:
+    keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, e.emitter_name)
+    if len(keys) > 0:
+        unreal.NiagaraEmitterService.shift_color_hue(system_path, e.emitter_name, 120.0)
+
+# Always compile and save after changes
+unreal.NiagaraService.compile_with_results(system_path)
+unreal.EditorAssetLibrary.save_asset(system_path)
+```
+
+### How shift_color_hue Works
+
+1. Reads all ColorFromCurve keyframes
+2. Converts each RGB value to HSV (Hue, Saturation, Value)
+3. Rotates the hue by specified degrees
+4. Converts back to RGB
+5. Writes modified keyframes back
+
+**Preserves:** gradients, intensity variations, saturation, alpha, all artistic detail.
+
+---
+
+## Reading/Writing Color Curve Keys Directly
+
+For custom color manipulation beyond hue shifting:
+
+```python
+import unreal
+
+# Read all keyframes from ColorFromCurve
+keys = unreal.NiagaraEmitterService.get_color_curve_keys(system_path, emitter_name)
+
+print(f"Found {len(keys)} keyframes:")
+for key in keys:
+    print(f"  Time {key.time:.2f}: R={key.r:.2f}, G={key.g:.2f}, B={key.b:.2f}, A={key.a:.2f}")
+
+# Modify keys (example: invert colors)
+for key in keys:
+    key.r = 1.0 - key.r
+    key.g = 1.0 - key.g  
+    key.b = 1.0 - key.b
+
+# Write modified keys back
+unreal.NiagaraEmitterService.set_color_curve_keys(system_path, emitter_name, keys)
 
 # Compile after changes
-unreal.NiagaraService.compile_with_results(path)
+unreal.NiagaraService.compile_with_results(system_path)
 ```
 
-#### Manual Strategies (If Not Using set_color_tint)
+---
 
-##### Detecting ColorFromCurve
+## Using set_color_tint (Quick Tinting)
+
+Use for quick color adjustments. **Understand the multiplication behavior!**
 
 ```python
 import unreal
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+# ✅ GOOD: Brighten all channels equally (preserves gradients)
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(2.0, 2.0, 2.0)")
 
-# Check for ColorFromCurve modules
-modules = unreal.NiagaraEmitterService.list_modules(path, emitter, "Update")
-curve_mods = [m for m in modules if "ColorFromCurve" in m.module_name]
+# ✅ GOOD: Slight tint toward green (preserves most detail)
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(0.5, 1.5, 0.5)")
 
-if curve_mods:
-    print("⚠️ ColorFromCurve found - it will OVERRIDE Scale Color settings!")
-    for m in curve_mods:
-        print(f"  Module: {m.module_name} at index {m.module_index}")
+# ⚠️ CAUTION: Strong tint (loses some red/blue detail)
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(0.2, 2.0, 0.2)")
+
+# ❌ DESTRUCTIVE: Zero values eliminate channels entirely
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(0.0, 2.0, 0.0)")
+
+# With custom alpha multiplier
+unreal.NiagaraEmitterService.set_color_tint(system_path, emitter_name, "(1.5, 1.5, 1.5)", 0.8)
 ```
 
-##### Strategy 1: Remove ColorFromCurve (Simple Color Change)
+---
 
-If you just want a solid/simple color, **remove the ColorFromCurve module** and the Scale Color will work:
+## Scale Color via Rapid Iteration Parameters
+
+For emitters **without** ColorFromCurve, use Scale Color directly:
 
 ```python
 import unreal
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+# ⚠️ Scale Color often exists in BOTH stages - they multiply together!
+# Use set_rapid_iteration_param to set ALL matching stages at once
 
-# Remove ColorFromCurve to allow Scale Color to work
-unreal.NiagaraEmitterService.remove_module(path, emitter, "ColorFromCurve")
+# First, list params to get exact names
+params = unreal.NiagaraService.list_rapid_iteration_params(system_path, emitter_name)
+for p in params:
+    if "Color" in p.parameter_name:
+        print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 
-# Now set your desired color
+# Set Scale Color (updates ALL stages where it exists)
 unreal.NiagaraService.set_rapid_iteration_param(
-    path, emitter, f"Constants.{emitter}.Color.Scale Color", "(0.0, 3.0, 0.0)"
+    system_path, emitter_name,
+    f"Constants.{emitter_name}.Color.Scale Color",
+    "(0.0, 2.0, 0.0)"  # RGB format
 )
 
-# Compile and save
-result = unreal.NiagaraService.compile_with_results(path)
-if result.success:
-    unreal.EditorAssetLibrary.save_asset(path)
+# Set InitializeParticle Color (RGBA format)
+unreal.NiagaraService.set_rapid_iteration_param(
+    system_path, emitter_name,
+    f"Constants.{emitter_name}.InitializeParticle001.Color",
+    "(0.0, 1.0, 0.0, 1.0)"
+)
 ```
 
-**⚠️ DOWNSIDE:** This removes the color animation over lifetime. Particles will be a solid color.
-
-##### Strategy 2: Add ScaleColor Module (Tint Existing Curve)
-
-**NOTE:** `set_color_tint()` does this automatically. Use manual approach only if you need more control.
-
-If you want to **keep the curve animation but tint it**, add a ScaleColor module AFTER ColorFromCurve:
+### Setting Different Colors Per Stage (Fade Effects)
 
 ```python
-import unreal
+# Particles start one color...
+unreal.NiagaraService.set_rapid_iteration_param_by_stage(
+    system_path, emitter_name,
+    "ParticleSpawn",
+    f"Constants.{emitter_name}.Color.Scale Color",
+    "(0.0, 1.0, 0.0)"  # Green at spawn
+)
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+# ...and transition to another over lifetime
+unreal.NiagaraService.set_rapid_iteration_param_by_stage(
+    system_path, emitter_name,
+    "ParticleUpdate", 
+    f"Constants.{emitter_name}.Color.Scale Color",
+    "(1.0, 0.0, 0.0)"  # Red over time
+)
+```
 
+---
+
+## Managing ColorFromCurve Modules
+
+### Strategy 1: Remove ColorFromCurve (For Simple Solid Colors)
+
+```python
+# Remove curve to allow Scale Color to work
+unreal.NiagaraEmitterService.remove_module(system_path, emitter_name, "ColorFromCurve")
+
+# Now set Scale Color directly
+unreal.NiagaraService.set_rapid_iteration_param(
+    system_path, emitter_name,
+    f"Constants.{emitter_name}.Color.Scale Color",
+    "(0.0, 2.0, 0.0)"
+)
+```
+
+**⚠️ DOWNSIDE:** Removes color animation over lifetime.
+
+### Strategy 2: Add ScaleColor Module After ColorFromCurve
+
+To **keep the curve animation but tint it**:
+
+```python
 # Add ScaleColor module to ParticleUpdate (after ColorFromCurve)
 unreal.NiagaraEmitterService.add_module(
-    path, emitter,
+    system_path, emitter_name,
     "/Niagara/Modules/Update/Color/ScaleColor.ScaleColor",
     "Update"
 )
@@ -188,15 +319,15 @@ If you want to temporarily disable the curve without removing it:
 ```python
 import unreal
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+system_path = "/Game/Path/To/NS_YourSystem"  # Your Niagara system
+emitter_name = "YourEmitter"                  # Target emitter
 
 # Disable instead of remove (can re-enable later)
-unreal.NiagaraEmitterService.enable_module(path, emitter, "ColorFromCurve", False)
+unreal.NiagaraEmitterService.enable_module(system_path, emitter_name, "ColorFromCurve", False)
 
 # Now Scale Color will work
 unreal.NiagaraService.set_rapid_iteration_param(
-    path, emitter, f"Constants.{emitter}.Color.Scale Color", "(0.0, 3.0, 0.0)"
+    system_path, emitter_name, f"Constants.{emitter_name}.Color.Scale Color", "(0.0, 3.0, 0.0)"
 )
 ```
 
@@ -218,8 +349,9 @@ Modules in ParticleUpdate execute in order. Later modules can override earlier o
 ```python
 import unreal
 
-path = "/Game/VFX/NS_Fire"
-emitter = "Flames"
+# Generic variable pattern - replace with your actual paths
+system_path = "/Game/Path/To/NS_YourSystem"
+emitter_name = "YourEmitter"
 
 # === MODULES ===
 # List available module scripts
@@ -227,21 +359,21 @@ scripts = unreal.NiagaraEmitterService.list_available_scripts("Sprite", "")
 
 # Add module to emitter
 unreal.NiagaraEmitterService.add_module(
-    path, emitter,
+    system_path, emitter_name,
     "/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity",
     "ParticleUpdate",
     "Velocity"
 )
 
 # List modules in emitter
-modules = unreal.NiagaraEmitterService.list_modules(path, emitter)
+modules = unreal.NiagaraEmitterService.list_modules(system_path, emitter_name)
 for m in modules:
     print(f"{m.script_type}: {m.module_name}")
 
 # === RENDERERS ===
 # Add sprite renderer
 unreal.NiagaraEmitterService.add_renderer(
-    path, emitter,
+    system_path, emitter_name,
     "SpriteRenderer",
     "MySprite",
     {"Material": "/Game/Materials/M_Smoke"}
@@ -251,35 +383,35 @@ unreal.NiagaraEmitterService.add_renderer(
 
 # === RAPID ITERATION PARAMETERS ===
 # List all params (shows which stage they're in)
-params = unreal.NiagaraService.list_rapid_iteration_params(path, emitter)
+params = unreal.NiagaraService.list_rapid_iteration_params(system_path, emitter_name)
 for p in params:
     print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 
 # OR use NiagaraEmitterService.get_rapid_iteration_parameters for more detail
-params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters(path, emitter)
+params = unreal.NiagaraEmitterService.get_rapid_iteration_parameters(system_path, emitter_name)
 for p in params:
     print(f"[{p.script_type}] {p.input_name}: {p.current_value}")
 
 # Set param in ALL matching stages (recommended for color)
-# Use full param name from list output (e.g., "Constants.Flames.Color.Scale Color")
+# Use full param name from list output (e.g., "Constants.YourEmitter.Color.Scale Color")
 unreal.NiagaraService.set_rapid_iteration_param(
-    path, emitter,
-    f"Constants.{emitter}.Color.Scale Color",
+    system_path, emitter_name,
+    f"Constants.{emitter_name}.Color.Scale Color",
     "(0.0, 3.0, 0.0)"  # RGB - bright green
 )
 
 # Set param in SPECIFIC stage (for precise control)
 unreal.NiagaraService.set_rapid_iteration_param_by_stage(
-    path, emitter,
+    system_path, emitter_name,
     "ParticleUpdate",  # Stage name comes BEFORE param name
-    f"Constants.{emitter}.Color.Scale Color",
+    f"Constants.{emitter_name}.Color.Scale Color",
     "(0.0, 3.0, 0.0)"
 )
 
 # === GRAPH POSITIONING ===
 # Move emitter in Niagara editor graph
-pos = unreal.NiagaraService.get_emitter_graph_position(path, emitter)
-unreal.NiagaraService.set_emitter_graph_position(path, emitter, pos.x + 250, pos.y)
+pos = unreal.NiagaraService.get_emitter_graph_position(system_path, emitter_name)
+unreal.NiagaraService.set_emitter_graph_position(system_path, emitter_name, pos.x + 250, pos.y)
 ```
 
 ---
@@ -318,28 +450,30 @@ Minimal emitter needs:
 ```python
 import unreal
 
+system_path = "/Game/Path/To/NS_YourSystem"  # Your Niagara system
+
 # Create empty emitter
-unreal.NiagaraService.add_emitter(path, "minimal", "MySparks")
+unreal.NiagaraService.add_emitter(system_path, "minimal", "MySparks")
 
 # Add spawn
 unreal.NiagaraEmitterService.add_module(
-    path, "MySparks",
+    system_path, "MySparks",
     "/Niagara/Modules/Emitter/SpawnRate.SpawnRate",
     "EmitterUpdate", "SpawnRate"
 )
 
 # Add renderer
 unreal.NiagaraEmitterService.add_renderer(
-    path, "MySparks",
+    system_path, "MySparks",
     "SpriteRenderer", "Sprite", {}
 )
 
 # Configure spawn rate
 unreal.NiagaraEmitterService.set_rapid_iteration_param(
-    path, "MySparks",
+    system_path, "MySparks",
     "SpawnRate", "25"
 )
 
 # Compile to apply
-unreal.NiagaraService.compile_system(path)
+unreal.NiagaraService.compile_system(system_path)
 ```

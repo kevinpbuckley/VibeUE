@@ -21,8 +21,6 @@ turn out the rest of the lights in our level
 
 VibeUE
 
-duplicate NS_Fire_Big_2 niagara system into our vfx folder as NS_Fire_Demo
+duplicate NS_Fire_Big_2 niagara system into our vfx folder as NS_Fire_Demo then open it in the editor.
 
-open it
-
-can you give our fire and smoke an incredible hulk theme?
+give our niagara system an incredible hulk theme
