@@ -150,7 +150,47 @@ unreal.NiagaraService.remove_emitter(path, "SmallFlames")
 
 ---
 
-## 6. Working with User Parameters
+## 6. Discover ALL Editable Settings
+
+**ALWAYS use this first when modifying an existing system:**
+
+```python
+import unreal
+
+path = "/Game/VFX/NS_TeslaCoil"
+
+# Get ALL settings across the entire system
+settings = unreal.NiagaraService.get_all_editable_settings(path)
+
+print(f"System: {settings.system_name}")
+print(f"Total settings: {settings.total_settings_count}")
+
+# 1. USER PARAMETERS (top priority - system-level exposed)
+print("\n=== User Parameters ===")
+for p in settings.user_parameters:
+    print(f"  {p.setting_path} ({p.value_type}): {p.current_value}")
+
+# 2. SYSTEM SCRIPT SETTINGS (check before emitters!)
+print("\n=== System Script Settings ===")
+for p in settings.rapid_iteration_parameters:
+    if p.emitter_name == "SYSTEM":
+        print(f"  [{p.script_stage}] {p.setting_path}: {p.current_value}")
+
+# 3. EMITTER SCRIPT SETTINGS
+print("\n=== Emitter Settings ===")
+for p in settings.rapid_iteration_parameters:
+    if p.emitter_name != "SYSTEM":
+        print(f"  [{p.emitter_name}] {p.setting_path}: {p.current_value}")
+```
+
+**Parameter Discovery Order:**
+1. **User Parameters** - User.Color, User.SpawnRate (exposed to Blueprints/instances)
+2. **System Script Settings** - System.Color in SystemSpawn/SystemUpdate
+3. **Emitter Script Settings** - Per-emitter rapid iteration params
+
+---
+
+## 7. Working with User Parameters
 
 ```python
 import unreal
@@ -160,7 +200,7 @@ path = "/Game/VFX/NS_Fire"
 # List all user parameters
 params = unreal.NiagaraService.list_parameters(path)
 for p in params:
-    print(f"{p.name}: {p.value} ({p.type_name})")
+    print(f"{p.parameter_name}: {p.current_value} ({p.parameter_type})")
 
 # Get specific parameter
 param = unreal.NiagaraService.get_parameter(path, "User.SpawnRate")
@@ -177,7 +217,35 @@ unreal.NiagaraService.remove_user_parameter(path, "ParticleSize")
 
 ---
 
-## 7. Spawn Niagara Actor in Level
+## 8. Working with System Script Settings
+
+System scripts (SystemSpawn/SystemUpdate) contain settings like `System.Color`:
+
+```python
+import unreal
+
+path = "/Game/VFX/NS_TeslaCoil"
+
+# Read System.Color (searches User → System scripts → Emitter scripts)
+param = unreal.NiagaraService.get_parameter(path, "System.Color")
+print(f"Current: {param.current_value}")
+
+# Set System.Color to green
+result = unreal.NiagaraService.set_parameter(path, "System.Color", "(R=0,G=5,B=0,A=1)")
+print(f"Set result: {result}")
+
+# Save changes
+unreal.NiagaraService.save_system(path)
+```
+
+**Note:** `get_parameter` and `set_parameter` automatically search in order:
+1. User Parameters
+2. System Script rapid iteration params (SystemSpawn/SystemUpdate)
+3. Emitter Script rapid iteration params
+
+---
+
+## 9. Spawn Niagara Actor in Level
 
 ```python
 import unreal
@@ -206,7 +274,7 @@ level_subsys.editor_invalidate_viewports()
 
 ---
 
-## 8. Inspect System Details
+## 10. Inspect System Details
 
 ```python
 import unreal

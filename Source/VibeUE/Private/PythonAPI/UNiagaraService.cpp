@@ -1308,6 +1308,21 @@ TArray<FNiagaraParameterInfo_Custom> UNiagaraService::ListParameters(const FStri
 			bool Val = UserParamStore.GetParameterValue<bool>(Param);
 			ParamInfo.CurrentValue = Val ? TEXT("true") : TEXT("false");
 		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+		{
+			FLinearColor Val = UserParamStore.GetParameterValue<FLinearColor>(Param);
+			ParamInfo.CurrentValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+		{
+			FVector3f Val = UserParamStore.GetParameterValue<FVector3f>(Param);
+			ParamInfo.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Val.X, Val.Y, Val.Z);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+		{
+			FVector4f Val = UserParamStore.GetParameterValue<FVector4f>(Param);
+			ParamInfo.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f,W=%f)"), Val.X, Val.Y, Val.Z, Val.W);
+		}
 		else
 		{
 			ParamInfo.CurrentValue = NiagaraVariableToString(Param);
@@ -1330,6 +1345,92 @@ bool UNiagaraService::GetParameter(
 		return false;
 	}
 
+	// Helper lambda to read RI param value from a store
+	auto ReadRIParamValue = [](const FNiagaraParameterStore& Store, const FNiagaraVariable& Param) -> FString
+	{
+		const FNiagaraTypeDefinition& TypeDef = Param.GetType();
+		int32 Offset = Store.IndexOf(Param);
+		if (Offset == INDEX_NONE)
+		{
+			return TEXT("(not found)");
+		}
+
+		const uint8* Data = Store.GetParameterData(Offset, TypeDef);
+		int32 Size = TypeDef.GetSize();
+		if (!Data || Size <= 0)
+		{
+			return TEXT("(no data)");
+		}
+
+		if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+		{
+			float Val;
+			FMemory::Memcpy(&Val, Data, sizeof(float));
+			return FString::Printf(TEXT("%f"), Val);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+		{
+			int32 Val;
+			FMemory::Memcpy(&Val, Data, sizeof(int32));
+			return FString::Printf(TEXT("%d"), Val);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+		{
+			bool Val = (*Data) != 0;
+			return Val ? TEXT("true") : TEXT("false");
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+		{
+			FLinearColor Val;
+			FMemory::Memcpy(&Val, Data, sizeof(FLinearColor));
+			return FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+		{
+			FVector3f Val;
+			FMemory::Memcpy(&Val, Data, sizeof(FVector3f));
+			return FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Val.X, Val.Y, Val.Z);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+		{
+			FVector4f Val;
+			FMemory::Memcpy(&Val, Data, sizeof(FVector4f));
+			return FString::Printf(TEXT("(X=%f,Y=%f,Z=%f,W=%f)"), Val.X, Val.Y, Val.Z, Val.W);
+		}
+		return FString::Printf(TEXT("(raw %d bytes)"), Size);
+	};
+
+	// Helper lambda to search RI params in a script
+	auto SearchRIParam = [&](UNiagaraScript* Script, const FString& ScriptStage, const FString& EmitterName) -> bool
+	{
+		if (!Script)
+		{
+			return false;
+		}
+
+		const FNiagaraParameterStore& Store = Script->RapidIterationParameters;
+		TArray<FNiagaraVariable> Params;
+		Store.GetParameters(Params);
+
+		for (const FNiagaraVariable& Param : Params)
+		{
+			FString ParamFullName = Param.GetName().ToString();
+			if (ParamFullName.Equals(ParameterName, ESearchCase::IgnoreCase) ||
+				ParamFullName.EndsWith(ParameterName, ESearchCase::IgnoreCase) ||
+				ParamFullName.Contains(ParameterName, ESearchCase::IgnoreCase))
+			{
+				OutInfo.ParameterName = ParamFullName;
+				OutInfo.ParameterType = NiagaraTypeToString(Param.GetType());
+				OutInfo.Namespace = EmitterName.IsEmpty() ? TEXT("System") : EmitterName;
+				OutInfo.bIsUserExposed = false;
+				OutInfo.CurrentValue = ReadRIParamValue(Store, Param);
+				return true;
+			}
+		}
+		return false;
+	};
+
+	// 1. First try User Parameters
 	const FNiagaraUserRedirectionParameterStore& UserParamStore = System->GetExposedParameters();
 	TArray<FNiagaraVariable> UserParams;
 	UserParamStore.GetParameters(UserParams);
@@ -1344,7 +1445,72 @@ bool UNiagaraService::GetParameter(
 			OutInfo.ParameterType = NiagaraTypeToString(Param.GetType());
 			OutInfo.Namespace = TEXT("User");
 			OutInfo.bIsUserExposed = true;
-			OutInfo.CurrentValue = NiagaraVariableToString(Param);
+			
+			// Read value from parameter store for proper types
+			const FNiagaraTypeDefinition& TypeDef = Param.GetType();
+			if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+			{
+				float Val = UserParamStore.GetParameterValue<float>(Param);
+				OutInfo.CurrentValue = FString::Printf(TEXT("%f"), Val);
+			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+			{
+				int32 Val = UserParamStore.GetParameterValue<int32>(Param);
+				OutInfo.CurrentValue = FString::Printf(TEXT("%d"), Val);
+			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+			{
+				bool Val = UserParamStore.GetParameterValue<bool>(Param);
+				OutInfo.CurrentValue = Val ? TEXT("true") : TEXT("false");
+			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+			{
+				FLinearColor Val = UserParamStore.GetParameterValue<FLinearColor>(Param);
+				OutInfo.CurrentValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+			{
+				FVector3f Val = UserParamStore.GetParameterValue<FVector3f>(Param);
+				OutInfo.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Val.X, Val.Y, Val.Z);
+			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+			{
+				FVector4f Val = UserParamStore.GetParameterValue<FVector4f>(Param);
+				OutInfo.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f,W=%f)"), Val.X, Val.Y, Val.Z, Val.W);
+			}
+			else
+			{
+				OutInfo.CurrentValue = NiagaraVariableToString(Param);
+			}
+			return true;
+		}
+	}
+
+	// 2. Try System Scripts
+	if (SearchRIParam(System->GetSystemSpawnScript(), TEXT("SystemSpawn"), TEXT("")))
+	{
+		return true;
+	}
+	if (SearchRIParam(System->GetSystemUpdateScript(), TEXT("SystemUpdate"), TEXT("")))
+	{
+		return true;
+	}
+
+	// 3. Try Emitter Scripts
+	for (const FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		FString EmitterName = Handle.GetName().ToString();
+		FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+		if (!EmitterData)
+		{
+			continue;
+		}
+
+		if (SearchRIParam(EmitterData->EmitterSpawnScriptProps.Script, TEXT("EmitterSpawn"), EmitterName) ||
+			SearchRIParam(EmitterData->EmitterUpdateScriptProps.Script, TEXT("EmitterUpdate"), EmitterName) ||
+			SearchRIParam(EmitterData->SpawnScriptProps.Script, TEXT("ParticleSpawn"), EmitterName) ||
+			SearchRIParam(EmitterData->UpdateScriptProps.Script, TEXT("ParticleUpdate"), EmitterName))
+		{
 			return true;
 		}
 	}
@@ -1363,6 +1529,106 @@ bool UNiagaraService::SetParameter(
 		return false;
 	}
 
+	// Helper lambda to set RI parameter value in a store
+	auto SetRIParamValue = [&Value](FNiagaraParameterStore& Store, FNiagaraVariable& Param) -> bool
+	{
+		const FNiagaraTypeDefinition& TypeDef = Param.GetType();
+		int32 Offset = Store.IndexOf(Param);
+		if (Offset == INDEX_NONE)
+		{
+			return false;
+		}
+
+		if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+		{
+			float Val = FCString::Atof(*Value);
+			Store.SetParameterValue(Val, Param);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+		{
+			int32 Val = FCString::Atoi(*Value);
+			Store.SetParameterValue(Val, Param);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+		{
+			bool Val = Value.ToBool() || Value.Equals(TEXT("true"), ESearchCase::IgnoreCase) || Value.Equals(TEXT("1"));
+			Store.SetParameterValue(Val, Param);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+		{
+			FLinearColor Color;
+			Color.InitFromString(Value);
+			Store.SetParameterValue(Color, Param);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+		{
+			FVector3f Vec;
+			FString TrimmedValue = Value.TrimStartAndEnd();
+			TrimmedValue.RemoveFromStart(TEXT("("));
+			TrimmedValue.RemoveFromEnd(TEXT(")"));
+			TArray<FString> Components;
+			TrimmedValue.ParseIntoArray(Components, TEXT(","));
+			if (Components.Num() >= 3)
+			{
+				Vec.X = FCString::Atof(*Components[0].TrimStartAndEnd());
+				Vec.Y = FCString::Atof(*Components[1].TrimStartAndEnd());
+				Vec.Z = FCString::Atof(*Components[2].TrimStartAndEnd());
+			}
+			Store.SetParameterValue(Vec, Param);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+		{
+			FVector4f Vec;
+			FString TrimmedValue = Value.TrimStartAndEnd();
+			TrimmedValue.RemoveFromStart(TEXT("("));
+			TrimmedValue.RemoveFromEnd(TEXT(")"));
+			TArray<FString> Components;
+			TrimmedValue.ParseIntoArray(Components, TEXT(","));
+			if (Components.Num() >= 4)
+			{
+				Vec.X = FCString::Atof(*Components[0].TrimStartAndEnd());
+				Vec.Y = FCString::Atof(*Components[1].TrimStartAndEnd());
+				Vec.Z = FCString::Atof(*Components[2].TrimStartAndEnd());
+				Vec.W = FCString::Atof(*Components[3].TrimStartAndEnd());
+			}
+			Store.SetParameterValue(Vec, Param);
+		}
+		else
+		{
+			return false;
+		}
+		return true;
+	};
+
+	// Helper lambda to search RI params in a script
+	auto SearchAndSetRIParam = [&](UNiagaraScript* Script) -> bool
+	{
+		if (!Script)
+		{
+			return false;
+		}
+
+		FNiagaraParameterStore& Store = Script->RapidIterationParameters;
+		TArray<FNiagaraVariable> Params;
+		Store.GetParameters(Params);
+
+		for (FNiagaraVariable& Param : Params)
+		{
+			FString ParamFullName = Param.GetName().ToString();
+			if (ParamFullName.Equals(ParameterName, ESearchCase::IgnoreCase) ||
+				ParamFullName.EndsWith(ParameterName, ESearchCase::IgnoreCase) ||
+				ParamFullName.Contains(ParameterName, ESearchCase::IgnoreCase))
+			{
+				if (SetRIParamValue(Store, Param))
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	};
+
+	// 1. First try User Parameters (system-level exposed parameters)
 	FNiagaraUserRedirectionParameterStore& UserParamStore = System->GetExposedParameters();
 	TArray<FNiagaraVariable> UserParams;
 	UserParamStore.GetParameters(UserParams);
@@ -1413,12 +1679,61 @@ bool UNiagaraService::SetParameter(
 				}
 				UserParamStore.SetParameterValue(Vec, Param);
 			}
+			else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+			{
+				FVector4f Vec;
+				// Parse vector manually
+				FString TrimmedValue = Value.TrimStartAndEnd();
+				TrimmedValue.RemoveFromStart(TEXT("("));
+				TrimmedValue.RemoveFromEnd(TEXT(")"));
+				TArray<FString> Components;
+				TrimmedValue.ParseIntoArray(Components, TEXT(","));
+				if (Components.Num() >= 4)
+				{
+					Vec.X = FCString::Atof(*Components[0].TrimStartAndEnd());
+					Vec.Y = FCString::Atof(*Components[1].TrimStartAndEnd());
+					Vec.Z = FCString::Atof(*Components[2].TrimStartAndEnd());
+					Vec.W = FCString::Atof(*Components[3].TrimStartAndEnd());
+				}
+				UserParamStore.SetParameterValue(Vec, Param);
+			}
 			else
 			{
 				UE_LOG(LogTemp, Warning, TEXT("UNiagaraService: Unsupported parameter type for: %s"), *ParameterName);
 				return false;
 			}
 
+			System->MarkPackageDirty();
+			return true;
+		}
+	}
+
+	// 2. Try System Scripts (SystemSpawn/SystemUpdate rapid iteration parameters)
+	if (SearchAndSetRIParam(System->GetSystemSpawnScript()))
+	{
+		System->MarkPackageDirty();
+		return true;
+	}
+	if (SearchAndSetRIParam(System->GetSystemUpdateScript()))
+	{
+		System->MarkPackageDirty();
+		return true;
+	}
+
+	// 3. Try Emitter Scripts (rapid iteration parameters)
+	for (FNiagaraEmitterHandle& Handle : System->GetEmitterHandles())
+	{
+		FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+		if (!EmitterData)
+		{
+			continue;
+		}
+
+		if (SearchAndSetRIParam(EmitterData->EmitterSpawnScriptProps.Script) ||
+			SearchAndSetRIParam(EmitterData->EmitterUpdateScriptProps.Script) ||
+			SearchAndSetRIParam(EmitterData->SpawnScriptProps.Script) ||
+			SearchAndSetRIParam(EmitterData->UpdateScriptProps.Script))
+		{
 			System->MarkPackageDirty();
 			return true;
 		}
@@ -2779,4 +3094,283 @@ FString UNiagaraService::DebugActivation(const FString& SystemPath)
 	}
 
 	return Result;
+}
+
+bool UNiagaraService::GetAllEditableSettings(
+	const FString& SystemPath,
+	FNiagaraSystemEditableSettings& OutSettings)
+{
+	UNiagaraSystem* System = LoadNiagaraSystem(SystemPath);
+	if (!System)
+	{
+		return false;
+	}
+
+	OutSettings.SystemPath = SystemPath;
+	OutSettings.SystemName = System->GetName();
+	OutSettings.TotalSettingsCount = 0;
+
+	// 1. Get User Parameters (system-level)
+	const FNiagaraUserRedirectionParameterStore& UserParamStore = System->GetExposedParameters();
+	TArray<FNiagaraVariable> UserParams;
+	UserParamStore.GetParameters(UserParams);
+
+	for (const FNiagaraVariable& Param : UserParams)
+	{
+		FNiagaraEditableSetting Setting;
+		Setting.SettingPath = Param.GetName().ToString();
+		Setting.DisplayName = Setting.SettingPath;
+		Setting.Category = TEXT("UserParameter");
+		Setting.ValueType = NiagaraTypeToString(Param.GetType());
+		Setting.EmitterName = TEXT("");
+		Setting.ScriptStage = TEXT("");
+
+		// Get current value from parameter store
+		const FNiagaraTypeDefinition& TypeDef = Param.GetType();
+		if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+		{
+			float Val = UserParamStore.GetParameterValue<float>(Param);
+			Setting.CurrentValue = FString::Printf(TEXT("%f"), Val);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+		{
+			int32 Val = UserParamStore.GetParameterValue<int32>(Param);
+			Setting.CurrentValue = FString::Printf(TEXT("%d"), Val);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+		{
+			bool Val = UserParamStore.GetParameterValue<bool>(Param);
+			Setting.CurrentValue = Val ? TEXT("true") : TEXT("false");
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+		{
+			FLinearColor Val = UserParamStore.GetParameterValue<FLinearColor>(Param);
+			Setting.CurrentValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+		{
+			FVector3f Val = UserParamStore.GetParameterValue<FVector3f>(Param);
+			Setting.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f)"), Val.X, Val.Y, Val.Z);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+		{
+			FVector4f Val = UserParamStore.GetParameterValue<FVector4f>(Param);
+			Setting.CurrentValue = FString::Printf(TEXT("(X=%f,Y=%f,Z=%f,W=%f)"), Val.X, Val.Y, Val.Z, Val.W);
+		}
+		else
+		{
+			Setting.CurrentValue = NiagaraVariableToString(Param);
+		}
+
+		OutSettings.UserParameters.Add(Setting);
+		OutSettings.TotalSettingsCount++;
+	}
+
+	// 2. Get Rapid Iteration Parameters from SYSTEM scripts first
+	auto ExtractSystemRIParams = [&](UNiagaraScript* Script, const FString& ScriptType)
+	{
+		if (!Script)
+		{
+			return;
+		}
+
+		const FNiagaraParameterStore& Store = Script->RapidIterationParameters;
+		TArray<FNiagaraVariable> Params;
+		Store.GetParameters(Params);
+
+		for (const FNiagaraVariable& Var : Params)
+		{
+			FNiagaraEditableSetting Setting;
+			Setting.SettingPath = Var.GetName().ToString();
+			Setting.DisplayName = Setting.SettingPath;
+			Setting.Category = TEXT("RapidIteration");
+			Setting.ValueType = NiagaraTypeToString(Var.GetType());
+			Setting.EmitterName = TEXT("SYSTEM");
+			Setting.ScriptStage = ScriptType;
+
+			// Get value
+			const FNiagaraTypeDefinition& TypeDef = Var.GetType();
+			int32 Offset = Store.IndexOf(Var);
+			if (Offset != INDEX_NONE)
+			{
+				const uint8* Data = Store.GetParameterData(Offset, TypeDef);
+				int32 Size = TypeDef.GetSize();
+
+				if (Data && Size > 0)
+				{
+					if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+					{
+						float Val;
+						FMemory::Memcpy(&Val, Data, sizeof(float));
+						Setting.CurrentValue = FString::Printf(TEXT("%f"), Val);
+					}
+					else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+					{
+						int32 Val;
+						FMemory::Memcpy(&Val, Data, sizeof(int32));
+						Setting.CurrentValue = FString::Printf(TEXT("%d"), Val);
+					}
+					else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+					{
+						bool Val = (*Data) != 0;
+						Setting.CurrentValue = Val ? TEXT("true") : TEXT("false");
+					}
+					else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+					{
+						FLinearColor Val;
+						FMemory::Memcpy(&Val, Data, sizeof(FLinearColor));
+						Setting.CurrentValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+					}
+					else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+					{
+						FVector3f Val;
+						FMemory::Memcpy(&Val, Data, sizeof(FVector3f));
+						Setting.CurrentValue = FString::Printf(TEXT("(%f, %f, %f)"), Val.X, Val.Y, Val.Z);
+					}
+					else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+					{
+						FVector4f Val;
+						FMemory::Memcpy(&Val, Data, sizeof(FVector4f));
+						Setting.CurrentValue = FString::Printf(TEXT("(%f, %f, %f, %f)"), Val.X, Val.Y, Val.Z, Val.W);
+					}
+					else if (TypeDef.IsEnum())
+					{
+						int32 Val;
+						FMemory::Memcpy(&Val, Data, sizeof(int32));
+						if (UEnum* Enum = TypeDef.GetEnum())
+						{
+							Setting.CurrentValue = Enum->GetNameStringByValue(Val);
+						}
+						else
+						{
+							Setting.CurrentValue = FString::Printf(TEXT("%d"), Val);
+						}
+					}
+					else
+					{
+						Setting.CurrentValue = FString::Printf(TEXT("(raw %d bytes)"), Size);
+					}
+				}
+			}
+
+			OutSettings.RapidIterationParameters.Add(Setting);
+			OutSettings.TotalSettingsCount++;
+		}
+	};
+
+	// Extract from System scripts
+	ExtractSystemRIParams(System->GetSystemSpawnScript(), TEXT("SystemSpawn"));
+	ExtractSystemRIParams(System->GetSystemUpdateScript(), TEXT("SystemUpdate"));
+
+	// 3. Get Rapid Iteration Parameters from all emitters
+	const TArray<FNiagaraEmitterHandle>& EmitterHandles = System->GetEmitterHandles();
+	for (const FNiagaraEmitterHandle& Handle : EmitterHandles)
+	{
+		FString EmitterName = Handle.GetName().ToString();
+		FVersionedNiagaraEmitterData* EmitterData = Handle.GetEmitterData();
+		if (!EmitterData)
+		{
+			continue;
+		}
+
+		// Lambda to extract RI params from a script
+		auto ExtractRIParams = [&](UNiagaraScript* Script, const FString& ScriptType)
+		{
+			if (!Script)
+			{
+				return;
+			}
+
+			const FNiagaraParameterStore& Store = Script->RapidIterationParameters;
+			TArray<FNiagaraVariable> Params;
+			Store.GetParameters(Params);
+
+			for (const FNiagaraVariable& Var : Params)
+			{
+				FNiagaraEditableSetting Setting;
+				Setting.SettingPath = Var.GetName().ToString();
+				Setting.DisplayName = Setting.SettingPath;
+				Setting.Category = TEXT("RapidIteration");
+				Setting.ValueType = NiagaraTypeToString(Var.GetType());
+				Setting.EmitterName = EmitterName;
+				Setting.ScriptStage = ScriptType;
+
+				// Get value
+				const FNiagaraTypeDefinition& TypeDef = Var.GetType();
+				int32 Offset = Store.IndexOf(Var);
+				if (Offset != INDEX_NONE)
+				{
+					const uint8* Data = Store.GetParameterData(Offset, TypeDef);
+					int32 Size = TypeDef.GetSize();
+
+					if (Data && Size > 0)
+					{
+						if (TypeDef == FNiagaraTypeDefinition::GetFloatDef())
+						{
+							float Val;
+							FMemory::Memcpy(&Val, Data, sizeof(float));
+							Setting.CurrentValue = FString::Printf(TEXT("%f"), Val);
+						}
+						else if (TypeDef == FNiagaraTypeDefinition::GetIntDef())
+						{
+							int32 Val;
+							FMemory::Memcpy(&Val, Data, sizeof(int32));
+							Setting.CurrentValue = FString::Printf(TEXT("%d"), Val);
+						}
+						else if (TypeDef == FNiagaraTypeDefinition::GetBoolDef())
+						{
+							bool Val = (*Data) != 0;
+							Setting.CurrentValue = Val ? TEXT("true") : TEXT("false");
+						}
+						else if (TypeDef == FNiagaraTypeDefinition::GetColorDef())
+						{
+							FLinearColor Val;
+							FMemory::Memcpy(&Val, Data, sizeof(FLinearColor));
+							Setting.CurrentValue = FString::Printf(TEXT("(R=%f,G=%f,B=%f,A=%f)"), Val.R, Val.G, Val.B, Val.A);
+						}
+						else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+						{
+							FVector3f Val;
+							FMemory::Memcpy(&Val, Data, sizeof(FVector3f));
+							Setting.CurrentValue = FString::Printf(TEXT("(%f, %f, %f)"), Val.X, Val.Y, Val.Z);
+						}
+						else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+						{
+							FVector4f Val;
+							FMemory::Memcpy(&Val, Data, sizeof(FVector4f));
+							Setting.CurrentValue = FString::Printf(TEXT("(%f, %f, %f, %f)"), Val.X, Val.Y, Val.Z, Val.W);
+						}
+						else if (TypeDef.IsEnum())
+						{
+							int32 Val;
+							FMemory::Memcpy(&Val, Data, sizeof(int32));
+							if (UEnum* Enum = TypeDef.GetEnum())
+							{
+								Setting.CurrentValue = Enum->GetNameStringByValue(Val);
+							}
+							else
+							{
+								Setting.CurrentValue = FString::Printf(TEXT("%d"), Val);
+							}
+						}
+						else
+						{
+							Setting.CurrentValue = FString::Printf(TEXT("(raw %d bytes)"), Size);
+						}
+					}
+				}
+
+				OutSettings.RapidIterationParameters.Add(Setting);
+				OutSettings.TotalSettingsCount++;
+			}
+		};
+
+		// Extract from all script types
+		ExtractRIParams(EmitterData->EmitterSpawnScriptProps.Script, TEXT("EmitterSpawn"));
+		ExtractRIParams(EmitterData->EmitterUpdateScriptProps.Script, TEXT("EmitterUpdate"));
+		ExtractRIParams(EmitterData->SpawnScriptProps.Script, TEXT("ParticleSpawn"));
+		ExtractRIParams(EmitterData->UpdateScriptProps.Script, TEXT("ParticleUpdate"));
+	}
+
+	return true;
 }

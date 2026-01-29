@@ -398,6 +398,70 @@ struct FNiagaraSystemSummary
 };
 
 /**
+ * Represents a single editable setting on a Niagara system or emitter
+ */
+USTRUCT(BlueprintType)
+struct FNiagaraEditableSetting
+{
+	GENERATED_BODY()
+
+	/** Full path to the setting (e.g., "User.Color", "Arc_Main.SpawnRate.SpawnRate") */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString SettingPath;
+
+	/** Display name for the setting */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString DisplayName;
+
+	/** Category: "UserParameter", "RapidIteration", "SystemProperty", "EmitterProperty" */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString Category;
+
+	/** Type of the value: "Float", "Int", "Bool", "Color", "Vector3", "Vector4", etc. */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString ValueType;
+
+	/** Current value as string */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString CurrentValue;
+
+	/** Which emitter this belongs to (empty for system-level settings) */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString EmitterName;
+
+	/** Script stage for rapid iteration params: EmitterSpawn, EmitterUpdate, ParticleSpawn, ParticleUpdate */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString ScriptStage;
+};
+
+/**
+ * Complete listing of all editable settings on a Niagara system
+ */
+USTRUCT(BlueprintType)
+struct FNiagaraSystemEditableSettings
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString SystemPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	FString SystemName;
+
+	/** All user-exposed parameters at system level */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	TArray<FNiagaraEditableSetting> UserParameters;
+
+	/** All rapid iteration parameters across all emitters */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	TArray<FNiagaraEditableSetting> RapidIterationParameters;
+
+	/** Total count of editable settings */
+	UPROPERTY(BlueprintReadWrite, Category = "Niagara")
+	int32 TotalSettingsCount = 0;
+};
+
+/**
  * Niagara Service - Python API for Niagara System manipulation
  *
  * Provides Niagara system management actions:
@@ -1129,6 +1193,34 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Debug Activation"))
 	static FString DebugActivation(const FString& SystemPath);
+
+	/**
+	 * Get ALL editable settings on a Niagara system in one call.
+	 * This includes user parameters and all rapid iteration parameters from all emitters.
+	 * Use this to discover what can be modified, then use set_parameter() or 
+	 * set_rapid_iteration_param() to change values.
+	 *
+	 * @param SystemPath - Full path to the Niagara system
+	 * @param OutSettings - All editable settings organized by category
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   success, settings = unreal.NiagaraService.get_all_editable_settings("/Game/VFX/NS_TeslaCoil")
+	 *   print(f"Found {settings.total_settings_count} editable settings")
+	 *   
+	 *   # List user parameters
+	 *   for p in settings.user_parameters:
+	 *       print(f"  {p.setting_path} ({p.value_type}): {p.current_value}")
+	 *   
+	 *   # Find color settings
+	 *   for p in settings.rapid_iteration_parameters:
+	 *       if "Color" in p.setting_path:
+	 *           print(f"  [{p.emitter_name}] {p.display_name}: {p.current_value}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Get All Editable Settings"))
+	static bool GetAllEditableSettings(
+		const FString& SystemPath,
+		FNiagaraSystemEditableSettings& OutSettings);
 
 private:
 	// Helper methods
