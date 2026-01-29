@@ -76,7 +76,10 @@ public class VibeUE : ModuleRules
 				"ImageWrapper",           // For image encoding/decoding
 				"DesktopPlatform",        // For file dialogs
 				"Niagara",                // For Niagara VFX runtime classes
-				"NiagaraEditor"           // For Niagara editor utilities and factories
+				"NiagaraEditor",          // For Niagara editor utilities and factories
+				"AnimGraph",              // For AnimGraphNode types (state machines, states)
+				"AnimGraphRuntime",       // For animation runtime types
+				"Persona"                 // For IAnimationBlueprintEditor interface
 			}
 		);
 		

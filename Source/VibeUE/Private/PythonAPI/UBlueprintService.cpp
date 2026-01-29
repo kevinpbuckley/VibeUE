@@ -16,6 +16,8 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_DynamicCast.h"
+#include "K2Node_Event.h"
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetStringLibrary.h"
@@ -2421,7 +2423,27 @@ FString UBlueprintService::AddGetVariableNode(
 		return FString();
 	}
 
-	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	// Special handling for Animation Blueprints and EventGraph
+	UEdGraph* Graph = nullptr;
+	UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(Blueprint);
+	if (AnimBP && GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		// AnimBPs may store EventGraph in UbergraphPages
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+	
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+
 	if (!Graph)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddGetVariableNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
@@ -2470,7 +2492,27 @@ FString UBlueprintService::AddSetVariableNode(
 		return FString();
 	}
 
-	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	// Special handling for Animation Blueprints and EventGraph
+	UEdGraph* Graph = nullptr;
+	UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(Blueprint);
+	if (AnimBP && GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		// AnimBPs may store EventGraph in UbergraphPages
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+	
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+
 	if (!Graph)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddSetVariableNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
@@ -2542,6 +2584,131 @@ FString UBlueprintService::AddBranchNode(
 	UE_LOG(LogTemp, Log, TEXT("AddBranchNode: Added branch node to %s"), *GraphName);
 
 	return BranchNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddCastNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& TargetClass,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCastNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCastNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Find the target class
+	UClass* TargetUClass = FindFirstObject<UClass>(*TargetClass, EFindFirstObjectOptions::None, ELogVerbosity::Warning, TEXT("AddCastNode"));
+	if (!TargetUClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCastNode: Class '%s' not found"), *TargetClass);
+		return FString();
+	}
+
+	// Create the cast node
+	UK2Node_DynamicCast* CastNode = NewObject<UK2Node_DynamicCast>(Graph);
+	CastNode->TargetType = TargetUClass;
+
+	// Add to graph
+	Graph->AddNode(CastNode, false, false);
+	CastNode->CreateNewGuid();
+	CastNode->PostPlacedNewNode();
+	CastNode->AllocateDefaultPins();
+
+	// Set position
+	CastNode->NodePosX = PosX;
+	CastNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCastNode: Added cast to '%s' in %s"), *TargetClass, *GraphName);
+
+	return CastNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddEventNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& EventName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	// For AnimBlueprints, check UbergraphPages for EventGraph first
+	UEdGraph* Graph = nullptr;
+	UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(Blueprint);
+	if (AnimBP && GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+	
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Try to find the event function
+	UFunction* EventFunction = nullptr;
+	
+	// Check parent class for the event function
+	if (Blueprint->ParentClass)
+	{
+		EventFunction = Blueprint->ParentClass->FindFunctionByName(FName(*EventName));
+	}
+
+	if (!EventFunction)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventNode: Event function '%s' not found in parent class"), *EventName);
+		return FString();
+	}
+
+	// Create the event node
+	UK2Node_Event* EventNode = NewObject<UK2Node_Event>(Graph);
+	EventNode->EventReference.SetExternalMember(FName(*EventName), Blueprint->ParentClass);
+	EventNode->bOverrideFunction = true;
+
+	// Add to graph
+	Graph->AddNode(EventNode, false, false);
+	EventNode->CreateNewGuid();
+	EventNode->PostPlacedNewNode();
+	EventNode->AllocateDefaultPins();
+
+	// Set position
+	EventNode->NodePosX = PosX;
+	EventNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddEventNode: Added event '%s' in %s"), *EventName, *GraphName);
+
+	return EventNode->NodeGuid.ToString();
 }
 
 FString UBlueprintService::AddPrintStringNode(
@@ -2779,51 +2946,91 @@ FString UBlueprintService::AddFunctionCallNode(
 
 	// Find the class that owns the function
 	UClass* OwnerClass = nullptr;
+	UFunction* Function = nullptr;
 	
-	// Map common class names to their actual classes
-	if (FunctionOwnerClass.Equals(TEXT("KismetMathLibrary"), ESearchCase::IgnoreCase))
+	// Check if this is a self-function call
+	if (FunctionOwnerClass.IsEmpty() || FunctionOwnerClass.Equals(TEXT("Self"), ESearchCase::IgnoreCase))
 	{
-		OwnerClass = UKismetMathLibrary::StaticClass();
-	}
-	else if (FunctionOwnerClass.Equals(TEXT("KismetSystemLibrary"), ESearchCase::IgnoreCase))
-	{
-		OwnerClass = UKismetSystemLibrary::StaticClass();
-	}
-	else if (FunctionOwnerClass.Equals(TEXT("KismetStringLibrary"), ESearchCase::IgnoreCase))
-	{
-		OwnerClass = UKismetStringLibrary::StaticClass();
-	}
-	else if (FunctionOwnerClass.Equals(TEXT("KismetArrayLibrary"), ESearchCase::IgnoreCase))
-	{
-		OwnerClass = UKismetArrayLibrary::StaticClass();
-	}
-	else if (FunctionOwnerClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
-	{
-		OwnerClass = UGameplayStatics::StaticClass();
+		// First check the generated class for compiled functions
+		if (Blueprint->GeneratedClass)
+		{
+			Function = Blueprint->GeneratedClass->FindFunctionByName(FName(*FunctionName));
+		}
+		
+		// If not found, check function graphs for user-defined functions
+		if (!Function)
+		{
+			for (UEdGraph* FuncGraph : Blueprint->FunctionGraphs)
+			{
+				if (FuncGraph && FuncGraph->GetFName() == FName(*FunctionName))
+				{
+					// Found the function graph, use the generated class function
+					if (Blueprint->GeneratedClass)
+					{
+						Function = Blueprint->GeneratedClass->FindFunctionByName(FName(*FunctionName));
+					}
+					break;
+				}
+			}
+		}
+		
+		if (Function)
+		{
+			OwnerClass = Blueprint->GeneratedClass;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Self function '%s' not found in blueprint"), *FunctionName);
+			return FString();
+		}
 	}
 	else
 	{
-		// Try to find the class by name using FindFirstObject (UE5 replacement for FindObject with ANY_PACKAGE)
-		OwnerClass = FindFirstObject<UClass>(*FunctionOwnerClass, EFindFirstObjectOptions::ExactClass);
+		// Map common class names to their actual classes
+		if (FunctionOwnerClass.Equals(TEXT("KismetMathLibrary"), ESearchCase::IgnoreCase))
+		{
+			OwnerClass = UKismetMathLibrary::StaticClass();
+		}
+		else if (FunctionOwnerClass.Equals(TEXT("KismetSystemLibrary"), ESearchCase::IgnoreCase))
+		{
+			OwnerClass = UKismetSystemLibrary::StaticClass();
+		}
+		else if (FunctionOwnerClass.Equals(TEXT("KismetStringLibrary"), ESearchCase::IgnoreCase))
+		{
+			OwnerClass = UKismetStringLibrary::StaticClass();
+		}
+		else if (FunctionOwnerClass.Equals(TEXT("KismetArrayLibrary"), ESearchCase::IgnoreCase))
+		{
+			OwnerClass = UKismetArrayLibrary::StaticClass();
+		}
+		else if (FunctionOwnerClass.Equals(TEXT("GameplayStatics"), ESearchCase::IgnoreCase))
+		{
+			OwnerClass = UGameplayStatics::StaticClass();
+		}
+		else
+		{
+			// Try to find the class by name using FindFirstObject (UE5 replacement for FindObject with ANY_PACKAGE)
+			OwnerClass = FindFirstObject<UClass>(*FunctionOwnerClass, EFindFirstObjectOptions::ExactClass);
+			if (!OwnerClass)
+			{
+				// Try with U prefix
+				OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *FunctionOwnerClass), EFindFirstObjectOptions::ExactClass);
+			}
+		}
+
 		if (!OwnerClass)
 		{
-			// Try with U prefix
-			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *FunctionOwnerClass), EFindFirstObjectOptions::ExactClass);
+			UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Class '%s' not found"), *FunctionOwnerClass);
+			return FString();
 		}
-	}
-
-	if (!OwnerClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Class '%s' not found"), *FunctionOwnerClass);
-		return FString();
-	}
-
-	// Find the function
-	UFunction* Function = OwnerClass->FindFunctionByName(FName(*FunctionName));
-	if (!Function)
-	{
-		UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Function '%s' not found in class '%s'"), *FunctionName, *FunctionOwnerClass);
-		return FString();
+		
+		// Find the function
+		Function = OwnerClass->FindFunctionByName(FName(*FunctionName));
+		if (!Function)
+		{
+			UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Function '%s' not found in class '%s'"), *FunctionName, *FunctionOwnerClass);
+			return FString();
+		}
 	}
 
 	// Create the call function node

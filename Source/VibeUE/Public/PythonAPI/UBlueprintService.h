@@ -1544,6 +1544,51 @@ public:
 		const FString& GraphName
 	);
 
+	/**
+	 * Add a cast node to a graph.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param TargetClass - Class to cast to (e.g., "Character", "Pawn", "Actor")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_cast_node("/Game/ABP_Character", "EventGraph", "Character", 200, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCastNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TargetClass,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add an event node to a graph (e.g., Event BeginPlay, Event Tick).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param EventName - Name of the event (e.g., "ReceiveBeginPlay", "ReceiveTick", "BlueprintInitializeAnimation")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_event_node("/Game/BP_Player", "EventGraph", "ReceiveBeginPlay", 0, 0)
+	 *   node_id = unreal.BlueprintService.add_event_node("/Game/ABP_Character", "EventGraph", "BlueprintInitializeAnimation", 0, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddEventNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& EventName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
 	// ============================================================================
 	// ADVANCED NODE OPERATIONS (Phase 4)
 	// ============================================================================

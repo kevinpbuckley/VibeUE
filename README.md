@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 14 specialized services with 300+ methods for Blueprints, Materials, Widgets, Niagara, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 15 specialized services with 340+ methods for Blueprints, Materials, Widgets, Animation, Niagara, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation`
 
 ##### Log Reading Tool
 
@@ -210,12 +210,13 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (14 services, 300+ methods)
+### 2. VibeUE Python API Services (15 services, 340+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `BlueprintService` | 64 | Blueprint lifecycle, variables, functions, components, nodes |
+| `AnimGraphService` | 39 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `MaterialService` | 29 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
 | `WidgetService` | 16 | UMG widget blueprints and components |
@@ -269,7 +270,7 @@ Plugins/VibeUE/BuildPlugin.bat
 
 ### 4. Configure API Key
 
-1. Open **Window > VibeUE > AI Chat**
+1. Open **Tools > VibeUE > AI Chat**
 2. Click the ⚙️ gear icon
 3. Get a free API key at [vibeue.com](https://vibeue.com)
 4. Paste and save
@@ -390,7 +391,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `animation`
 
 ### Using Skills
 
@@ -494,6 +495,64 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `get_nodes_in_graph(path, graph)` - List nodes
 - `discover_nodes(path, search, category)` - Find node types
 - `create_node_by_key(...)` - Create any node type
+
+### AnimGraphService (39 methods)
+
+AnimGraphService provides comprehensive Animation Blueprint manipulation for state machines, states, transitions, and animation nodes:
+
+**State Machine Management:**
+- `add_state_machine(path, name, x, y)` - Add state machine to AnimGraph
+- `list_state_machines(path)` - List all state machines
+- `get_state_machine_info(path, name)` - Get detailed state machine info
+
+**State Management:**
+- `add_state(path, machine, name, x, y)` - Add state to state machine
+- `remove_state(path, machine, name, remove_transitions)` - Remove state
+- `list_states_in_machine(path, machine)` - List all states and transitions
+- `get_state_info(path, machine, state)` - Get detailed state info
+- `open_anim_state(path, machine, state)` - Open state in editor
+
+**Transition Management:**
+- `add_transition(path, machine, source, dest, blend_duration)` - Add transition
+- `remove_transition(path, machine, source, dest)` - Remove transition
+- `get_state_transitions(path, machine, state)` - Get transitions for state
+- `open_transition(path, machine, source, dest)` - Open transition rule in editor
+
+**Conduit Management:**
+- `add_conduit(path, machine, name, x, y)` - Add conduit node
+
+**Animation Nodes:**
+- `add_sequence_player(path, graph, anim_path, x, y)` - Add sequence player
+- `add_blend_space_player(path, graph, bs_path, x, y)` - Add blend space player
+- `add_blend_by_bool(path, graph, x, y)` - Add Blend By Bool node
+- `add_blend_by_int(path, graph, num_poses, x, y)` - Add Blend By Int node
+- `add_layered_blend(path, graph, x, y)` - Add Layered Blend Per Bone
+- `add_slot_node(path, graph, slot_name, x, y)` - Add slot node
+- `add_save_cached_pose(path, graph, cache_name, x, y)` - Add Save Cached Pose
+- `add_use_cached_pose(path, graph, cache_name, x, y)` - Add Use Cached Pose
+- `add_two_bone_ik_node(path, graph, x, y)` - Add Two Bone IK
+- `add_modify_bone_node(path, graph, bone_name, x, y)` - Add Modify Bone
+
+**Node Connections:**
+- `connect_anim_nodes(path, graph, source_id, source_pin, target_id, target_pin)` - Connect pose pins
+- `connect_to_output_pose(path, graph, source_id, source_pin)` - Connect to Output Pose
+- `disconnect_anim_node(path, graph, node_id, pin_name)` - Disconnect node
+
+**Asset Management:**
+- `set_sequence_player_asset(path, graph, node_id, anim_path)` - Set animation on player
+- `set_blend_space_asset(path, graph, node_id, bs_path)` - Set blend space on player
+- `get_node_animation_asset(path, graph, node_id)` - Get current animation asset
+
+**Information & Navigation:**
+- `is_anim_blueprint(path)` - Check if asset is AnimBP
+- `get_skeleton(path)` - Get skeleton used by AnimBP
+- `get_preview_mesh(path)` - Get preview skeletal mesh
+- `get_parent_class(path)` - Get parent class
+- `get_output_pose_node_id(path, graph)` - Get Output Pose node ID
+- `get_used_anim_sequences(path)` - List all used animations
+- `list_graphs(path)` - List all graphs in AnimBP
+- `open_anim_graph(path, graph)` - Open graph in editor
+- `focus_node(path, node_id)` - Focus on specific node
 
 ### MaterialService (26 methods)
 
