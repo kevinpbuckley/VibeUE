@@ -2,7 +2,7 @@
 	"FileVersion": 3,
 	"Version": 3,
 	"VersionName": "3.0",
-	"EngineVersion": "5.7",
+	"EngineVersion": "5.7.0",
 	"FriendlyName": "VibeUE",
 	"Description": "In Editor AI Chat and Model Context Protocol server for Unreal Engine",
 	"Category": "Editor",
@@ -43,6 +43,10 @@
 		},
 		{
 			"Name": "AudioCapture",
+			"Enabled": true
+		},
+		{
+			"Name": "Niagara",
 			"Enabled": true
 		}
 	]

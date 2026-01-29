@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 10 specialized services with 209 methods for Blueprints, Materials, Widgets, Screenshots, and more
+- **Python API Services** - 14 specialized services with 300+ methods for Blueprints, Materials, Widgets, Niagara, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -26,7 +26,7 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Discovery & Execution Tools (6 tools)
+### 1. MCP Discovery & Execution Tools (7 tools)
 Lightweight MCP tools for exploring and executing Python:
 
 | Tool | Purpose |
@@ -36,8 +36,181 @@ Lightweight MCP tools for exploring and executing Python:
 | `discover_python_function` | Get function signatures and docstrings |
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
+| `manage_skills` | Load domain-specific knowledge on demand |
+| `read_logs` | Read and filter Unreal Engine log files with regex support |
 
-### 2. VibeUE Python API Services (10 services, 209 methods)
+**Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
+
+#### MCP Tool Reference
+
+##### Core Discovery Tools
+
+**`discover_python_module`**
+```python
+discover_python_module(
+    module_name: str,              # e.g., "unreal" (lowercase for UE module)
+    name_filter: str = "",         # Filter by name substring (case-insensitive)
+    include_classes: bool = True,  # Include classes in results
+    include_functions: bool = True, # Include functions in results
+    max_items: int = 100,          # Maximum items to return (0 = unlimited)
+    case_sensitive: bool = False   # Whether filtering is case-sensitive
+)
+```
+**Example:** `discover_python_module("unreal", name_filter="Blueprint")`
+
+**`discover_python_class`**
+```python
+discover_python_class(
+    class_name: str,                # Fully qualified class name (e.g., "unreal.BlueprintService")
+    method_filter: str = "",        # Filter methods by name substring
+    include_inherited: bool = False, # Include inherited methods
+    include_private: bool = False,  # Include private methods starting with _
+    max_methods: int = 0            # Maximum methods to return (0 = unlimited)
+)
+```
+**Example:** `discover_python_class("unreal.BlueprintService", method_filter="variable")`
+
+**`discover_python_function`**
+```python
+discover_python_function(
+    function_name: str  # Fully qualified function name (e.g., "unreal.load_asset")
+)
+```
+
+**`list_python_subsystems`**
+```python
+list_python_subsystems()  # No parameters - returns all UE editor subsystems
+```
+**Usage:** Access via `unreal.get_editor_subsystem(unreal.SubsystemName)`
+
+##### Execution Tool
+
+**`execute_python_code`**
+```python
+execute_python_code(
+    code: str  # Python code to execute (must start with "import unreal")
+)
+```
+**Important:** Use `import unreal` (lowercase). For subsystems: `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)`
+
+**Returns:** stdout, stderr, and execution status
+
+##### Skills System Tool
+
+**`manage_skills`**
+```python
+# List all available skills
+manage_skills(action="list")
+
+# Suggest skills based on query
+manage_skills(action="suggest", query="create widget button")
+
+# Load single skill
+manage_skills(action="load", skill_name="blueprints")
+
+# Load multiple skills together (more efficient - deduplicated discovery)
+manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
+```
+
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`
+
+##### Log Reading Tool
+
+**`read_logs`**
+```python
+# List all logs
+read_logs(action="list")
+
+# Filter by category: System, Blueprint, Niagara, VibeUE
+read_logs(action="list", category="Niagara")
+
+# Get file info
+read_logs(action="info", file="main")
+
+# Read paginated content
+read_logs(action="read", file="main", offset=0, limit=2000)
+
+# Get last N lines
+read_logs(action="tail", file="main", lines=50)
+
+# Get first N lines
+read_logs(action="head", file="main", lines=50)
+
+# Regex filter with context
+read_logs(
+    action="filter",
+    file="main",
+    pattern="ERROR|EXCEPTION",
+    context_lines=5,
+    max_matches=100,
+    case_sensitive=False
+)
+
+# Find errors
+read_logs(action="errors", file="main", max_matches=20)
+
+# Find warnings
+read_logs(action="warnings", file="main", max_matches=20)
+
+# Get new content since last read
+read_logs(action="since", file="main", last_line=2500)
+
+# Get help documentation
+read_logs(action="help")
+```
+
+**File Aliases:**
+- `main`, `system` → Project log (FPS57.log)
+- `chat`, `vibeue` → Chat history log
+- `llm` → Raw LLM API log
+
+### Log Reader Tool (`read_logs`)
+
+The `read_logs` MCP tool provides comprehensive log file access with filtering and analysis capabilities:
+
+**Actions:**
+- `list` - Browse available log files by category (System, Blueprint, Niagara, VibeUE)
+- `info` - Get file metadata (size, line count, last modified)
+- `read` - Read file with pagination (default 2000 lines, offset support)
+- `tail` - Get last N lines (like PowerShell's `Get-Content -Tail`)
+- `head` - Get first N lines
+- `filter` - Regex search with context lines and match limit
+- `errors` - Find error messages
+- `warnings` - Find warning messages
+- `since` - Get new content since last read (by line number)
+- `help` - Get detailed documentation
+
+**File Aliases:**
+- `main` or `system` → Main project log (FPS57.log)
+- `chat` or `vibeue` → VibeUE chat history log
+- `llm` → Raw LLM API request/response log
+- Or use full file paths
+
+**Examples:**
+```python
+# List all logs
+read_logs(action="list")
+
+# Filter by category
+read_logs(action="list", category="Niagara")
+
+# Get last 50 lines of main log
+read_logs(action="tail", file="main", lines=50)
+
+# Search for errors with context
+read_logs(action="filter", file="main", pattern="ERROR|EXCEPTION", context_lines=5)
+
+# Find compilation errors
+read_logs(action="errors", file="main", max_matches=20)
+
+# Read specific range
+read_logs(action="read", file="chat", offset=1000, limit=500)
+
+# Check for new content since line 2500
+read_logs(action="since", file="main", last_line=2500)
+```
+
+### 2. VibeUE Python API Services (14 services, 300+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -52,6 +225,10 @@ High-level services exposed to Python for common game development tasks:
 | `DataTableService` | 13 | DataTable rows and structure |
 | `ActorService` | 22 | Level actor management |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
+| `NiagaraService` | 39 | Niagara system lifecycle, emitters, parameters, settings discovery |
+| `NiagaraEmitterService` | 19 | Niagara emitter modules, renderers, properties |
+| `ProjectSettingsService` | 10+ | Project settings, editor preferences, UI configuration |
+| `EngineSettingsService` | 15+ | Engine settings, rendering, physics, audio, cvars, scalability |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -213,7 +390,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`
 
 ### Using Skills
 
@@ -391,6 +568,80 @@ ActorService provides comprehensive level actor manipulation:
 - Property access
 - And more
 
+### NiagaraService (39 methods)
+
+**Lifecycle:**
+- `create_system(name, path, template)` - Create new Niagara system
+- `compile_system(path)` / `compile_with_results(path)` - Compile with error messages
+- `save_system(path)` - Save to disk
+- `open_in_editor(path)` - Open in Niagara Editor
+
+**Information & Discovery:**
+- `get_system_info(path)` - Comprehensive system information
+- `get_system_properties(path)` - Effect type, determinism, warmup, bounds
+- `summarize(path)` - AI-friendly system summary
+- `list_emitters(path)` - List all emitters
+- `get_all_editable_settings(path)` - **Discover ALL editable settings** (user params, system scripts, emitter scripts)
+
+**Emitter Management:**
+- `add_emitter(system, emitter_asset, name)` - Add emitter to system
+- `copy_emitter(src_system, src_emitter, target_system, new_name)` - Copy between systems
+- `duplicate_emitter(system, source, new_name)` - Duplicate within system
+- `remove_emitter(system, emitter)` - Remove emitter
+- `rename_emitter(system, current, new)` - Rename emitter
+- `enable_emitter(system, emitter, enabled)` - Enable/disable
+- `move_emitter(system, emitter, index)` - Reorder emitter
+- `get_emitter_graph_position(system, emitter)` - Get emitter position in graph
+- `set_emitter_graph_position(system, emitter, x, y)` - Set emitter position
+- `get_emitter_lifecycle(system, emitter)` - Get loop behavior and lifecycle
+
+**Parameter Management:**
+- `list_parameters(path)` - List user-exposed parameters
+- `get_parameter(path, name)` - Get parameter value (searches User → System scripts → Emitter scripts)
+- `set_parameter(path, name, value)` - Set parameter value (searches User → System scripts → Emitter scripts)
+- `add/remove_user_parameter(...)` - Add/remove user parameters
+- `list_rapid_iteration_params(system, emitter)` - List emitter module parameters
+- `set_rapid_iteration_param(system, emitter, name, value)` - Set module values (color, spawn rate, etc.)
+- `set_rapid_iteration_param_by_stage(...)` - Set parameter in specific script stage
+
+**Search & Utilities:**
+- `search_systems(path, filter)` - Find Niagara systems
+- `search_emitter_assets(path, filter)` - Find emitter assets
+- `list_emitter_templates(path, filter)` - List available emitter templates
+- `system_exists(path)` / `emitter_exists(system, emitter)` / `parameter_exists(...)` - Existence checks
+- `compare_systems(source, target)` - Compare two systems
+- `copy_system_properties(target, source)` - Copy system settings
+- `debug_activation(path)` - Debug why system isn't playing
+
+### NiagaraEmitterService (19 methods)
+
+**Module Management:**
+- `list_modules(system, emitter, type)` - List all modules
+- `get_module_info(system, emitter, module)` - Get module details
+- `add_module(system, emitter, script, type)` - Add module
+- `remove_module(system, emitter, module)` - Remove module
+- `enable_module(system, emitter, module, enabled)` - Enable/disable module
+- `set_module_input(system, emitter, module, input, value)` - Set module input
+- `get_module_input(system, emitter, module, input)` - Get module input value
+- `reorder_module(system, emitter, module, index)` - Reorder module
+
+**Renderer Management:**
+- `list_renderers(system, emitter)` - List renderers
+- `get_renderer_details(system, emitter, index)` - Get renderer details
+- `add_renderer(system, emitter, type)` - Add renderer (Sprite, Mesh, Ribbon, Light, Component)
+- `remove_renderer(system, emitter, index)` - Remove renderer
+- `enable_renderer(system, emitter, index, enabled)` - Enable/disable renderer
+- `set_renderer_property(system, emitter, index, property, value)` - Set renderer property
+
+**Script Discovery:**
+- `search_module_scripts(filter, type)` - Find module scripts
+- `list_builtin_modules(type)` - List built-in modules
+- `get_script_info(path)` - Get script asset info
+
+**Emitter Properties:**
+- `get_emitter_properties(system, emitter)` - Get lifecycle and property info
+- `get_rapid_iteration_parameters(system, emitter, type)` - Get rapid iteration parameters
+
 ### ScreenshotService (6 methods)
 
 ScreenshotService enables AI vision by capturing editor content:
@@ -400,6 +651,51 @@ ScreenshotService enables AI vision by capturing editor content:
 - `get_open_editor_tabs()` - List open editor tabs with asset info
 - `get_active_window_title()` - Get focused window title
 - `is_editor_window_active()` - Check if editor is in focus
+
+### ProjectSettingsService (10+ methods)
+
+ProjectSettingsService provides access to project configuration and editor preferences:
+- `list_settings_categories()` - List all available settings categories
+- `list_settings(category)` - List settings in a category
+- `get_setting(category, setting)` - Get current setting value
+- `set_setting(category, setting, value)` - Modify setting value
+- `get_editor_style()` - Get editor UI appearance settings (toolbar icons, scale, colors)
+- `set_editor_style(property, value)` - Modify editor appearance (SmallToolBarIcons, ApplicationScale, etc.)
+- `get_project_info()` - Get project metadata (name, version, description)
+- `set_project_info(property, value)` - Update project metadata
+- `get_default_maps()` - Get editor/game startup map settings
+- `set_default_maps(editor_map, game_map)` - Configure startup maps
+
+### EngineSettingsService (15+ methods)
+
+EngineSettingsService controls core engine configuration across multiple domains:
+
+**Rendering Settings:**
+- `get/set_rendering_setting(setting, value)` - Configure rendering options
+- `list_rendering_settings()` - List available rendering settings
+
+**Physics Settings:**
+- `get/set_physics_setting(setting, value)` - Configure physics simulation
+- `list_physics_settings()` - List available physics settings
+
+**Audio Settings:**
+- `get/set_audio_setting(setting, value)` - Configure audio system
+- `list_audio_settings()` - List available audio settings
+
+**Console Variables (CVars):**
+- `get_cvar(name)` - Get console variable value
+- `set_cvar(name, value)` - Set console variable (runtime changes)
+- `list_cvars(filter)` - Search available console variables
+
+**Scalability Settings:**
+- `get_scalability_level(category)` - Get quality level (ViewDistance, AntiAliasing, etc.)
+- `set_scalability_level(category, level)` - Set quality level (0-4: Low to Epic)
+- `get_scalability_settings()` - Get all current scalability levels
+- `apply_scalability_preset(preset)` - Apply preset (Low, Medium, High, Epic, Cinematic)
+
+**Garbage Collection:**
+- `get/set_gc_setting(setting, value)` - Configure garbage collection behavior
+- `list_gc_settings()` - List available GC settings
 
 ---
 
@@ -450,12 +746,92 @@ types = unreal.DataTableService.search_row_types("Character")
 # 2. Create table
 unreal.DataTableService.create_data_table("CharacterStats", "/Game/Data", "DT_Characters")
 
+### Configure Project and Engine Settings
+
+```python
+# Configure Editor UI Appearance
+unreal.ProjectSettingsService.set_editor_style("SmallToolBarIcons", "true")
+unreal.ProjectSettingsService.set_editor_style("ApplicationScale", "1.2")
+
+# Set Project Metadata
+unreal.ProjectSettingsService.set_project_info("ProjectName", "My Awesome Game")
+unreal.ProjectSettingsService.set_project_info("Description", "An epic adventure")
+
+# Configure Startup Maps
+unreal.ProjectSettingsService.set_default_maps(
+    editor_map="/Game/Levels/EditorLevel",
+    game_map="/Game/Levels/MainMenu"
+)
+
+# Configure Rendering Settings
+unreal.EngineSettingsService.set_rendering_setting("bDefaultFeatureLevelES31", "true")
+unreal.EngineSettingsService.set_rendering_setting("DefaultGraphicsRHI", "DefaultGraphicsRHI_DX12")
+
+# Adjust Graphics Quality via Scalability
+unreal.EngineSettingsService.apply_scalability_preset("High")
+# Or set individual categories
+unreal.EngineSettingsService.set_scalability_level("ViewDistance", 3)  # 0-4: Low to Epic
+unreal.EngineSettingsService.set_scalability_level("AntiAliasing", 4)
+
+# Configure Physics Settings
+unreal.EngineSettingsService.set_physics_setting("bEnableStabilization", "true")
+unreal.EngineSettingsService.set_physics_setting("MaxSubsteps", "6")
+
+# Set Console Variables (CVars) for runtime changes
+unreal.EngineSettingsService.set_cvar("r.ScreenPercentage", "100")
+unreal.EngineSettingsService.set_cvar("r.Bloom", "1")
+
+# Configure Garbage Collection
+unreal.EngineSettingsService.set_gc_setting("gc.MaxObjectsInGame", "2097152")
+unreal.EngineSettingsService.set_gc_setting("gc.TimeBetweenPurgingPendingKillObjects", "60.0")
+```
+
 # 3. Add rows
 unreal.DataTableService.add_row("/Game/Data/DT_Characters", "Hero", 
     '{"Name": "Hero", "Health": 100, "Damage": 25}')
 
 # 4. Query rows
 row = unreal.DataTableService.get_row("/Game/Data/DT_Characters", "Hero")
+```
+
+### Build Niagara VFX System
+
+```python
+# 1. Create system
+result = unreal.NiagaraService.create_system("NS_Fire", "/Game/VFX")
+path = result.asset_path
+
+# 2. Add emitters
+unreal.NiagaraService.add_emitter(path, "minimal", "Flames")
+unreal.NiagaraService.add_emitter(path, "minimal", "Smoke")
+
+# 3. Discover ALL editable settings (recommended first step for existing systems)
+settings = unreal.NiagaraService.get_all_editable_settings(path)
+print(f"Total settings: {settings.total_settings_count}")
+
+# User Parameters (top priority)
+for p in settings.user_parameters:
+    print(f"[User] {p.setting_path} ({p.value_type}): {p.current_value}")
+
+# System & Emitter script settings
+for p in settings.rapid_iteration_parameters:
+    if "Color" in p.setting_path:
+        print(f"[{p.emitter_name}] {p.setting_path}: {p.current_value}")
+
+# 4. Set parameters (searches User → System scripts → Emitter scripts)
+unreal.NiagaraService.set_parameter(path, "User.Color", "(R=1,G=0.5,B=0,A=1)")
+unreal.NiagaraService.set_parameter(path, "System.Color", "(R=3,G=0.5,B=0,A=1)")
+
+# 5. Set rapid iteration parameters (emitter-specific)
+unreal.NiagaraService.set_rapid_iteration_param(
+    path, "Flames", 
+    "Constants.Flames.SpawnRate.SpawnRate", 
+    "500.0"
+)
+
+# 6. Compile and save
+unreal.NiagaraService.compile_system(path)
+unreal.NiagaraService.save_system(path)
 ```
 
 ---

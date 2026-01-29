@@ -14,8 +14,6 @@ keywords:
   - node
   - parameter
   - texture
-auto_load_keywords:
-  - material
   - MaterialService
   - MaterialNodeService
 ---

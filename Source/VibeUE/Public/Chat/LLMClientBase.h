@@ -138,9 +138,18 @@ private:
     /** Flag: currently inside a thinking block (<think>, <thinking>, <reasoning>) */
     bool bInThinkingBlock;
 
+    /** Flag: response was incomplete (finish_reason: null) and suggested tool usage */
+    bool bResponseIncomplete;
+    
+    /** Completion tokens from the response (for debugging/detection) */
+    int32 CompletionTokensInResponse;
+
 public:
     /** Get the accumulated response content (for non-streaming summarization) */
     const FString& GetLastAccumulatedResponse() const { return AccumulatedContent; }
+    
+    /** Check if the last response was incomplete (finish_reason: null with tool intent) */
+    bool WasResponseIncomplete() const { return bResponseIncomplete; }
 
     /** 
      * Sanitize a string for LLM communication - removes NUL characters and other problematic bytes

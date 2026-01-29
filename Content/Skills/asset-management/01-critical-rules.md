@@ -113,6 +113,22 @@ These methods do **NOT** exist (use alternatives):
 
 ---
 
+## ✅ Available Editor & Content Browser Methods
+
+These methods ARE available for tracking open assets and selections:
+
+| Method | Description |
+|--------|-------------|
+| `get_active_asset(out_asset)` | Returns bool + currently focused asset in editor |
+| `get_open_assets()` | Returns array of all assets currently open in editors |
+| `is_asset_open(path)` | Returns bool - true if specific asset is open |
+| `get_content_browser_selections()` | Returns array of all assets selected in Content Browser |
+| `get_primary_content_browser_selection(out_asset)` | Returns bool + first selected asset |
+
+**Note:** These methods return `FAssetData` objects with properties like `asset_name` and `package_path`.
+
+---
+
 ## Common Asset Types for Filtering
 
 When using `search_assets()` or `get_assets_by_type()`:

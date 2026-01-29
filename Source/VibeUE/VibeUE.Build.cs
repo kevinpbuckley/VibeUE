@@ -72,7 +72,11 @@ public class VibeUE : ModuleRules
 				"EnhancedInput",          // For Enhanced Input System support
 				"InputCore",              // For input types
 				"AudioCapture",           // For microphone input
-				"AudioCaptureCore"        // For FAudioCaptureSynth
+				"AudioCaptureCore",       // For FAudioCaptureSynth
+				"ImageWrapper",           // For image encoding/decoding
+				"DesktopPlatform",        // For file dialogs
+				"Niagara",                // For Niagara VFX runtime classes
+				"NiagaraEditor"           // For Niagara editor utilities and factories
 			}
 		);
 		
@@ -87,7 +91,8 @@ public class VibeUE : ModuleRules
 					"UMGEditor",           // For WidgetBlueprint.h and other UMG editor functionality
 					"MaterialEditor",      // For material editor integration
 					"LevelEditor",         // For global keyboard shortcuts
-					"StatusBar"            // For panel drawer integration
+					"StatusBar",           // For panel drawer integration
+					"ContentBrowser"       // For content browser selection queries
 				}
 			);
 		}

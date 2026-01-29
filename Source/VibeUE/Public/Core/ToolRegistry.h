@@ -25,6 +25,8 @@ struct VIBEUE_API FToolRegistration
 	FString Category;
 	TArray<FToolParameter> Parameters;
 	FToolExecuteFunc ExecuteFunc;
+	/** If true, tool is only available to VibeUE chat, not exposed via MCP */
+	bool bInternalOnly = false;
 };
 
 /**
@@ -179,6 +181,36 @@ struct VIBEUE_API FToolAutoRegistrar
 			TEXT(Category), \
 			ParamList, \
 			[](const TMap<FString, FString>& Params) -> FString ExecuteBody \
+		} \
+	);
+
+/**
+ * Register an internal-only tool (NOT exposed via MCP to external clients)
+ * Use for tools that need direct access to VibeUE chat session state.
+ * 
+ * Usage in .cpp file:
+ * 
+ * REGISTER_VIBEUE_INTERNAL_TOOL(attach_image,
+ *     "Attach an image to the next AI response",
+ *     "Chat",
+ *     TOOL_PARAMS(
+ *         TOOL_PARAM("file_path", "Path to the image file", "string", true)
+ *     ),
+ *     {
+ *         FString FilePath = Params.FindRef(TEXT("file_path"));
+ *         return UInternalChatTools::AttachImage(FilePath);
+ *     }
+ * );
+ */
+#define REGISTER_VIBEUE_INTERNAL_TOOL(ToolName, Description, Category, ParamList, ExecuteBody) \
+	static FToolAutoRegistrar AutoRegister_##ToolName( \
+		FToolRegistration{ \
+			TEXT(#ToolName), \
+			TEXT(Description), \
+			TEXT(Category), \
+			ParamList, \
+			[](const TMap<FString, FString>& Params) -> FString ExecuteBody, \
+			true \
 		} \
 	);
 

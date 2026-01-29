@@ -7,6 +7,7 @@
 #include "Widgets/DeclarativeSyntaxSupport.h"
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Text/SRichTextBlock.h"
+#include "Widgets/Images/SImage.h"
 #include "Chat/ChatSession.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAIChatWindow, Log, All);
@@ -53,7 +54,16 @@ public:
     
     /** Check if window is currently open */
     static bool IsWindowOpen();
-    
+
+    /** Static method to attach an image from a file path (for AI tool use) */
+    static bool AttachImageFromPath(const FString& FilePath);
+
+    /** Static method to check if an image is currently attached */
+    static bool HasImageAttached();
+
+    /** Static method to clear any attached image */
+    static void ClearImageAttachment();
+
 private:
     /** The chat session managing conversation state */
     TSharedPtr<FChatSession> ChatSession;
@@ -104,6 +114,53 @@ private:
 
     /** Voice input active state */
     bool bIsVoiceInputActive = false;
+
+    // ============ Image Attachment ============
+
+    /** Attachment button (paperclip icon) */
+    TSharedPtr<SButton> AttachmentButton;
+
+    /** Image preview container (shown when image is attached) */
+    TSharedPtr<SBox> ImagePreviewContainer;
+
+    /** Image preview widget */
+    TSharedPtr<SImage> ImagePreviewWidget;
+
+    /** Remove attachment button (X button on preview) */
+    TSharedPtr<SButton> RemoveAttachmentButton;
+
+    /** Currently attached image as base64 data URL */
+    FString AttachedImageDataUrl;
+
+    /** Brush for the attached image preview */
+    TSharedPtr<FSlateBrush> AttachedImageBrush;
+
+    /** Texture for the attached image */
+    UTexture2D* AttachedImageTexture = nullptr;
+
+    /** Handle attachment button clicked */
+    FReply OnAttachmentClicked();
+
+    /** Handle remove attachment button clicked */
+    FReply OnRemoveAttachmentClicked();
+
+    /** Open file dialog to select an image */
+    void OpenImageFileDialog();
+
+    /** Process and attach an image from file path */
+    void AttachImageFromFile(const FString& FilePath);
+
+    /** Process and attach an image from clipboard */
+    void AttachImageFromClipboard();
+
+    /** Set the attached image preview */
+    void SetAttachedImagePreview(const TArray<uint8>& ImageData, const FString& MimeType);
+
+    /** Clear the attached image */
+    void ClearAttachedImage();
+
+    /** Check if there's an attached image */
+    bool HasAttachedImage() const { return !AttachedImageDataUrl.IsEmpty(); }
 
     // ============ Thinking Indicator (Phase 1) ============
 

@@ -282,6 +282,8 @@ void FLLMClientBase::ResetStreamingState()
     bInToolCallBlock = false;
     bInFunctionBlock = false;
     bInThinkingBlock = false;
+    bResponseIncomplete = false;
+    CompletionTokensInResponse = 0;
 }
 
 void FLLMClientBase::CancelRequest()
@@ -1056,8 +1058,9 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
 {
     UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Processing non-streaming response"));
     
-    // Track completion tokens to detect API filtering
-    int32 CompletionTokensInResponse = 0;
+    // Track completion tokens and finish reason for detecting incomplete responses
+    CompletionTokensInResponse = 0;  // Use member variable
+    bool bFinishReasonNull = false;
     
     // Parse the JSON response
     TSharedPtr<FJsonObject> JsonObject;
@@ -1113,6 +1116,16 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
     {
         UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Invalid choice object"));
         return;
+    }
+    
+    // Check finish_reason - null indicates incomplete response
+    FString FinishReason;
+    (*ChoiceObj)->TryGetStringField(TEXT("finish_reason"), FinishReason);
+    bFinishReasonNull = FinishReason.IsEmpty() || FinishReason == TEXT("null");
+    
+    if (bFinishReasonNull)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] finish_reason is null - response may be incomplete"));
     }
     
     // Get the message object (non-streaming uses "message", streaming uses "delta")
@@ -1473,6 +1486,36 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
             CurrentOnChunk.Execute(FilteredMsg);
         }
         AccumulatedContent = FilteredMsg;
+    }
+    
+    // Detect incomplete response: finish_reason is null and content suggests tool usage intent
+    // This happens when the model says "I'll do X" but the tool call is cut off
+    if (bFinishReasonNull && !bToolCallsDetectedInStream && !AccumulatedContent.IsEmpty())
+    {
+        // Check for patterns that suggest the AI intended to make a tool call
+        FString LowerContent = AccumulatedContent.ToLower();
+        bool bSuggestsToolIntent = 
+            LowerContent.Contains(TEXT("i'll load")) ||
+            LowerContent.Contains(TEXT("i will load")) ||
+            LowerContent.Contains(TEXT("let me load")) ||
+            LowerContent.Contains(TEXT("i'll use")) ||
+            LowerContent.Contains(TEXT("i will use")) ||
+            LowerContent.Contains(TEXT("let me use")) ||
+            LowerContent.Contains(TEXT("i'll call")) ||
+            LowerContent.Contains(TEXT("i'll search")) ||
+            LowerContent.Contains(TEXT("i'll execute")) ||
+            LowerContent.Contains(TEXT("i'll run")) ||
+            LowerContent.Contains(TEXT("loading the")) ||
+            LowerContent.Contains(TEXT("using the")) ||
+            LowerContent.Contains(TEXT("calling the")) ||
+            (LowerContent.Contains(TEXT("skill")) && (LowerContent.Contains(TEXT("load")) || LowerContent.Contains(TEXT("find"))));
+        
+        if (bSuggestsToolIntent)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[AUTO-CONTINUE] Incomplete response detected - AI stated intent to use tool but no tool call received. Continuing silently..."));
+            bResponseIncomplete = true;
+            // Auto-continue will be handled by ChatSession - no need to show message to user
+        }
     }
 }
 

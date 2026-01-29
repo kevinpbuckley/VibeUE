@@ -539,5 +539,63 @@ namespace ErrorCodes
 	/** @brief Path is outside allowed directories */
 	constexpr const TCHAR* FILE_ACCESS_DENIED = TEXT("FILE_ACCESS_DENIED");
 
+	// ============================================================================
+	// Niagara Errors (11000-11099)
+	// ============================================================================
+
+	/** @brief Niagara System could not be found at specified path */
+	constexpr const TCHAR* NIAGARA_SYSTEM_NOT_FOUND = TEXT("NIAGARA_SYSTEM_NOT_FOUND");
+
+	/** @brief Niagara Emitter could not be found */
+	constexpr const TCHAR* NIAGARA_EMITTER_NOT_FOUND = TEXT("NIAGARA_EMITTER_NOT_FOUND");
+
+	/** @brief Failed to create Niagara System */
+	constexpr const TCHAR* NIAGARA_SYSTEM_CREATE_FAILED = TEXT("NIAGARA_SYSTEM_CREATE_FAILED");
+
+	/** @brief Failed to add emitter to system */
+	constexpr const TCHAR* NIAGARA_EMITTER_ADD_FAILED = TEXT("NIAGARA_EMITTER_ADD_FAILED");
+
+	/** @brief Failed to remove emitter from system */
+	constexpr const TCHAR* NIAGARA_EMITTER_REMOVE_FAILED = TEXT("NIAGARA_EMITTER_REMOVE_FAILED");
+
+	/** @brief Niagara compilation failed */
+	constexpr const TCHAR* NIAGARA_COMPILATION_FAILED = TEXT("NIAGARA_COMPILATION_FAILED");
+
+	/** @brief Niagara parameter not found */
+	constexpr const TCHAR* NIAGARA_PARAMETER_NOT_FOUND = TEXT("NIAGARA_PARAMETER_NOT_FOUND");
+
+	/** @brief Niagara parameter type mismatch */
+	constexpr const TCHAR* NIAGARA_PARAMETER_TYPE_MISMATCH = TEXT("NIAGARA_PARAMETER_TYPE_MISMATCH");
+
+	/** @brief Niagara system already exists at target path */
+	constexpr const TCHAR* NIAGARA_SYSTEM_ALREADY_EXISTS = TEXT("NIAGARA_SYSTEM_ALREADY_EXISTS");
+
+	/** @brief Emitter with same name already exists in system */
+	constexpr const TCHAR* NIAGARA_EMITTER_NAME_EXISTS = TEXT("NIAGARA_EMITTER_NAME_EXISTS");
+
+	/** @brief Failed to set Niagara parameter */
+	constexpr const TCHAR* NIAGARA_PARAMETER_SET_FAILED = TEXT("NIAGARA_PARAMETER_SET_FAILED");
+
+	/** @brief Emitter handle is invalid */
+	constexpr const TCHAR* NIAGARA_EMITTER_HANDLE_INVALID = TEXT("NIAGARA_EMITTER_HANDLE_INVALID");
+
+	/** @brief Niagara module not found */
+	constexpr const TCHAR* NIAGARA_MODULE_NOT_FOUND = TEXT("NIAGARA_MODULE_NOT_FOUND");
+
+	/** @brief Failed to add module to emitter */
+	constexpr const TCHAR* NIAGARA_MODULE_ADD_FAILED = TEXT("NIAGARA_MODULE_ADD_FAILED");
+
+	/** @brief Failed to remove module from emitter */
+	constexpr const TCHAR* NIAGARA_MODULE_REMOVE_FAILED = TEXT("NIAGARA_MODULE_REMOVE_FAILED");
+
+	/** @brief Niagara renderer not found */
+	constexpr const TCHAR* NIAGARA_RENDERER_NOT_FOUND = TEXT("NIAGARA_RENDERER_NOT_FOUND");
+
+	/** @brief Failed to add renderer to emitter */
+	constexpr const TCHAR* NIAGARA_RENDERER_ADD_FAILED = TEXT("NIAGARA_RENDERER_ADD_FAILED");
+
+	/** @brief Niagara script not found */
+	constexpr const TCHAR* NIAGARA_SCRIPT_NOT_FOUND = TEXT("NIAGARA_SCRIPT_NOT_FOUND");
+
 } // namespace ErrorCodes
 } // namespace VibeUE

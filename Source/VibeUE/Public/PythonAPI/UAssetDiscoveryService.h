@@ -225,4 +225,77 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Exists")
 	static bool AssetExists(const FString& AssetPath);
+
+	// ========== Open Assets & Content Browser ==========
+
+	/**
+	 * Get the currently active/focused asset in the editor.
+	 *
+	 * @param OutAsset - The active asset (only valid if function returns true)
+	 * @return True if an asset editor has focus, false otherwise
+	 *
+	 * Example:
+	 *   asset = unreal.AssetData()
+	 *   if unreal.AssetDiscoveryService.get_active_asset(asset):
+	 *       print(f"Currently editing: {asset.asset_name}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	static bool GetActiveAsset(FAssetData& OutAsset);
+
+	/**
+	 * Get all assets currently open in editors.
+	 *
+	 * @return Array of asset data for all currently open assets
+	 *
+	 * Example:
+	 *   open_assets = unreal.AssetDiscoveryService.get_open_assets()
+	 *   for asset in open_assets:
+	 *       print(f"Open: {asset.asset_name} at {asset.package_path}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	static TArray<FAssetData> GetOpenAssets();
+
+	/**
+	 * Get all assets currently selected in the Content Browser.
+	 *
+	 * @return Array of asset data for all selected assets
+	 *
+	 * Example:
+	 *   selected = unreal.AssetDiscoveryService.get_content_browser_selections()
+	 *   if len(selected) > 0:
+	 *       print(f"Selected {len(selected)} assets")
+	 *       for asset in selected:
+	 *           print(f"  - {asset.asset_name}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	static TArray<FAssetData> GetContentBrowserSelections();
+
+	/**
+	 * Get the primary asset selected in the Content Browser (first selection).
+	 *
+	 * @param OutAsset - The primary selected asset (only valid if function returns true)
+	 * @return True if an asset is selected, false if no selection
+	 *
+	 * Example:
+	 *   asset = unreal.AssetData()
+	 *   if unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset):
+	 *       print(f"Primary selection: {asset.asset_name}")
+	 *   else:
+	 *       print("No asset selected")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	static bool GetPrimaryContentBrowserSelection(FAssetData& OutAsset);
+
+	/**
+	 * Check if a specific asset is currently open in an editor.
+	 *
+	 * @param AssetPath - Full path to the asset
+	 * @return True if the asset is currently open
+	 *
+	 * Example:
+	 *   if unreal.AssetDiscoveryService.is_asset_open("/Game/Blueprints/BP_Player"):
+	 *       print("BP_Player is currently being edited")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	static bool IsAssetOpen(const FString& AssetPath);
 };

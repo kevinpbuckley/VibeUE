@@ -118,7 +118,30 @@ public:
     
     /** Send a user message and get AI response */
     void SendMessage(const FString& UserMessage);
+
+    /** Send a user message with an attached image (base64 data URL) */
+    void SendMessageWithImage(const FString& UserMessage, const FString& ImageDataUrl);
+
+    // ============ Pending Image for AI Tool Use ============
     
+    /**
+     * Queue an image to be included in the next AI request (used by attach_image tool).
+     * The image will be attached to the next follow-up request after tool execution.
+     * @param ImageDataUrl Base64 data URL of the image (e.g., "data:image/png;base64,...")
+     */
+    static void SetPendingImageForNextRequest(const FString& ImageDataUrl);
+    
+    /**
+     * Check if there's a pending image queued for the next request.
+     */
+    static bool HasPendingImage();
+    
+    /**
+     * Consume and return the pending image (clears it after returning).
+     * Should be called when building the next LLM request.
+     */
+    static FString ConsumePendingImage();
+
     /** Reset the conversation (clears history and persistence) */
     void ResetChat();
     
@@ -592,4 +615,13 @@ private:
 
     /** Current partial transcript during voice input */
     FString CurrentPartialTranscript;
+
+    // ============ Pending Image for AI Tool Use (Static) ============
+    
+    /** 
+     * Pending image data URL set by attach_image tool.
+     * Will be consumed on the next follow-up LLM request.
+     * Static because tools can only access static methods.
+     */
+    static FString PendingImageDataUrl;
 };

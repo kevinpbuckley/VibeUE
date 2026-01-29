@@ -127,3 +127,49 @@ import unreal
 
 unreal.AssetDiscoveryService.open_asset("/Game/BP_Player")
 ```
+
+---
+
+## Get Open Assets & Content Browser Selections
+
+```python
+import unreal
+
+# Get the currently active/focused asset
+active = unreal.AssetData()
+if unreal.AssetDiscoveryService.get_active_asset(active):
+    print(f"Currently focused: {active.asset_name}")
+
+# Get all currently open assets in editors
+open_assets = unreal.AssetDiscoveryService.get_open_assets()
+print(f"Currently editing {len(open_assets)} assets:")
+for asset in open_assets:
+    print(f"  - {asset.asset_name} ({asset.package_path})")
+
+# Check if specific asset is open
+if unreal.AssetDiscoveryService.is_asset_open("/Game/BP_Player"):
+    print("BP_Player is currently being edited")
+else:
+    print("BP_Player is not open")
+
+# Get all selected assets in Content Browser
+selected = unreal.AssetDiscoveryService.get_content_browser_selections()
+if len(selected) > 0:
+    print(f"Selected {len(selected)} assets in Content Browser:")
+    for asset in selected:
+        print(f"  - {asset.asset_name}")
+else:
+    print("No assets selected in Content Browser")
+
+# Get the primary selection (first selected item)
+primary = unreal.AssetData()
+if unreal.AssetDiscoveryService.get_primary_content_browser_selection(primary):
+    print(f"Primary selection: {primary.asset_name} at {primary.package_path}")
+    
+    # You can now work with the selected asset
+    if "Blueprint" in str(primary.asset_class_path):
+        print("Selected a Blueprint - opening it...")
+        unreal.AssetDiscoveryService.open_asset(primary.package_path.to_string())
+else:
+    print("Nothing selected in Content Browser")
+```
