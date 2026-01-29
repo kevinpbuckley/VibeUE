@@ -1,5 +1,34 @@
 # VibeUE Plugin - AI Coding Agent Instructions
 
+## 🚨 CRITICAL: Skills-First Workflow 🚨
+
+**BEFORE executing ANY domain-specific task (Animation, Blueprint, UMG, Material, Niagara, etc.), you MUST:**
+
+1. **Load the relevant skill** using `manage_skills(action="load", skill_name="<domain>")`
+2. **Read the skill's workflows** - they contain critical requirements (e.g., AnimBlueprints need skeleton reference)
+3. **Follow the exact pattern** from the skill - do NOT improvise or guess
+4. **Use discovery tools** if the skill references APIs you're unsure about
+
+**Example - Creating an Animation Blueprint:**
+```
+❌ WRONG: Execute Python code immediately, forget skeleton → FAILS
+✅ RIGHT: 
+   1. manage_skills(action="load", skill_name="animation")
+   2. Read workflow: "AnimBlueprints require skeleton reference"
+   3. Follow pattern: find skeleton → create with skeleton → save → open
+```
+
+**Skills prevent common failures:**
+- Animation: Missing skeleton reference
+- Blueprints: Wrong API names (create_blueprint vs add_blueprint)
+- UMG: Incorrect widget hierarchy operations
+- Materials: Missing material compilation
+- Niagara: Module ordering issues
+
+**If you execute domain-specific code without loading skills first, you will likely fail.**
+
+---
+
 ## Project Overview
 
 **VibeUE** is an Unreal Engine 5.7+ editor plugin that brings AI-powered development directly into the Unreal Editor through an In-Editor Chat Client and Model Context Protocol (MCP) integration. The plugin exposes 14 multi-action tools with 177 total actions for manipulating Blueprints, UMG widgets, materials, assets, and the level through natural language.
@@ -244,6 +273,60 @@ USubobjectDataSubsystem* SubobjectSubsystem = USubobjectDataSubsystem::Get();
 
 **NEVER modify CDOs (Class Default Objects)** - causes crashes. Only read from them.
 
+### Skills System
+
+**⚠️ MANDATORY: Load skills FIRST, ALWAYS ⚠️**
+
+Skills contain battle-tested workflows that prevent failures. **Never skip this step.**
+
+**Required skill mapping** (load BEFORE any work):
+
+| Task Domain | Load This Skill | Why It's Critical |
+|-------------|-----------------|-------------------|
+| Animation Blueprints | `animation` | Requires skeleton reference, state machine patterns |
+| Blueprints | `blueprints` | Correct API names, compilation requirements |
+| UMG Widgets | `umg-widgets` | Widget hierarchy, canvas panel operations |
+| Materials | `materials` | Node connections, material compilation |
+| Niagara Systems | `niagara-systems` | System lifecycle, emitter management |
+| Niagara Emitters | `niagara-emitters` | Module ordering, renderer setup |
+| Data Assets | `data-assets` | Property management, asset creation |
+| Data Tables | `data-tables` | Row operations, struct definitions |
+| Enhanced Input | `enhanced-input` | Action/mapping context relationships |
+| Level Actors | `level-actors` | Subsystem usage, actor manipulation |
+| Asset Management | `asset-management` | Find/open/save/delete patterns |
+
+**Execution order (MANDATORY):**
+```python
+# Step 1: ALWAYS load skill first
+manage_skills(action="load", skill_name="animation")
+
+# Step 2: Read the returned workflow carefully
+# Skill says: "AnimBlueprints require skeleton reference"
+# Skill provides: find skeleton → create with skeleton → save → open
+
+# Step 3: Discover APIs if needed (skill may reference classes)
+discover_python_class("unreal.AnimBlueprintFactory")
+
+# Step 4: Execute following the exact pattern from skill
+execute_python_code(code="...")  # Use skeleton from skill pattern
+```
+
+**Skills prevent these common failures:**
+- ❌ Animation: Creating AnimBP without skeleton → crash/invalid asset
+- ❌ Blueprint: Using wrong method name → AttributeError
+- ❌ UMG: Missing canvas panel → widget won't display
+- ❌ Material: Forgetting compilation → changes not visible
+- ❌ Niagara: Wrong module order → visual glitches
+
+**Skills location**: `Content/Skills/<domain>/skill.md`
+
+Skills document:
+- **Correct API usage patterns** with exact method names
+- **Common pitfalls and warnings** from real-world usage
+- **Step-by-step workflows** tested in production
+- **Data structure references** for all DTOs
+- **COMMON_MISTAKES section** showing wrong → right patterns
+
 ### Python Integration
 
 **Python code execution** happens through `FPythonExecutionService`:
@@ -253,19 +336,21 @@ USubobjectDataSubsystem* SubobjectSubsystem = USubobjectDataSubsystem::Get();
 - Then use `execute_code` action with learned APIs
 
 **Discovery workflow** (from `Content/instructions/vibeue.instructions.md`):
-1. **Discover** - Use `discover_class`, `discover_module`, `help`, `get_examples`
-2. **Learn** - Study methods, properties, parameters from response
-3. **Execute** - Write code using exact APIs from discovery
+1. **Load Skills** - Use `manage_skills` to get domain knowledge
+2. **Discover** - Use `discover_class`, `discover_module`, `discover_function` actions
+3. **Learn** - Study methods, properties, parameters from response
+4. **Execute** - Write code using exact APIs from discovery
 
-**Example** - Don't guess, discover first:
+**Example** - Skills + Discovery, never guess:
 ```python
 # WRONG: Guessing the API
 blueprint.add_variable('Health', 'float')  # May not exist
 
-# RIGHT: Discover then execute
-# First: action="discover_class", class_name="unreal.BlueprintEditorLibrary"
-# Learn: add_member_variable(blueprint, member_name, variable_type)
-# Then execute with correct signature
+# RIGHT: Load skill → Discover → Execute
+# 1. manage_skills(action="load", skill_name="blueprints")
+# 2. discover_class: class_name="unreal.BlueprintEditorLibrary"
+# 3. Learn: add_member_variable(blueprint, member_name, variable_type)
+# 4. Execute with correct signature
 ```
 
 ## Integration Points
