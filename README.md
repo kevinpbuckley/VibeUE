@@ -216,19 +216,19 @@ High-level services exposed to Python for common game development tasks:
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `BlueprintService` | 64 | Blueprint lifecycle, variables, functions, components, nodes |
-| `MaterialService` | 26 | Materials and material instances |
+| `MaterialService` | 29 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
-| `WidgetService` | 14 | UMG widget blueprints and components |
-| `InputService` | 20 | Enhanced Input actions, contexts, modifiers, triggers |
-| `AssetDiscoveryService` | 13 | Asset search, import/export, references |
-| `DataAssetService` | 10 | UDataAsset instances and properties |
-| `DataTableService` | 13 | DataTable rows and structure |
-| `ActorService` | 22 | Level actor management |
+| `WidgetService` | 16 | UMG widget blueprints and components |
+| `InputService` | 24 | Enhanced Input actions, contexts, modifiers, triggers |
+| `AssetDiscoveryService` | 19 | Asset search, import/export, references |
+| `DataAssetService` | 11 | UDataAsset instances and properties |
+| `DataTableService` | 15 | DataTable rows and structure |
+| `ActorService` | 24 | Level actor management |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
-| `NiagaraService` | 39 | Niagara system lifecycle, emitters, parameters, settings discovery |
-| `NiagaraEmitterService` | 19 | Niagara emitter modules, renderers, properties |
-| `ProjectSettingsService` | 10+ | Project settings, editor preferences, UI configuration |
-| `EngineSettingsService` | 15+ | Engine settings, rendering, physics, audio, cvars, scalability |
+| `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
+| `NiagaraEmitterService` | 24 | Niagara emitter modules, renderers, properties |
+| `ProjectSettingsService` | 17 | Project settings, editor preferences, UI configuration |
+| `EngineSettingsService` | 24 | Engine settings, rendering, physics, audio, cvars, scalability |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
