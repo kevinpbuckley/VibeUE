@@ -249,8 +249,8 @@ bool FMCPClient::StartServer(const FString& ServerName)
         *Command,
         *Args,
         false,  // bLaunchDetached
-        true,   // bLaunchHidden - hide console window
-        true,   // bLaunchReallyHidden
+        false,  // bLaunchHidden - show console window (required for Fab marketplace)
+        false,  // bLaunchReallyHidden
         nullptr, // OutProcessID
         0,      // PriorityModifier
         WorkDir.IsEmpty() ? nullptr : *WorkDir,
