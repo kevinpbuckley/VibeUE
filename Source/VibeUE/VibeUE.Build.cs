@@ -79,7 +79,9 @@ public class VibeUE : ModuleRules
 				"NiagaraEditor",          // For Niagara editor utilities and factories
 				"AnimGraph",              // For AnimGraphNode types (state machines, states)
 				"AnimGraphRuntime",       // For animation runtime types
-				"Persona"                 // For IAnimationBlueprintEditor interface
+				"Persona",                // For IAnimationBlueprintEditor interface
+				"SkeletalMeshModifiers",  // For SkeletonModifier (bone manipulation) - MeshModelingToolset plugin
+				"SkeletalMeshEditor"      // For SkeletalMeshEditorSubsystem
 			}
 		);
 		
