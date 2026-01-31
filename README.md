@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 15 specialized services with 340+ methods for Blueprints, Materials, Widgets, Animation, Niagara, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 16 specialized services with 420+ methods for Blueprints, Materials, Widgets, Animation, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation`, `skeleton`
 
 ##### Log Reading Tool
 
@@ -210,26 +210,27 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (15 services, 340+ methods)
+### 2. VibeUE Python API Services (16 services, 420+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
-| `BlueprintService` | 64 | Blueprint lifecycle, variables, functions, components, nodes |
-| `AnimGraphService` | 39 | Animation Blueprint state machines, states, transitions, anim nodes |
+| `BlueprintService` | 73 | Blueprint lifecycle, variables, functions, components, nodes |
+| `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
+| `SkeletonService` | 47 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `MaterialService` | 29 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
 | `WidgetService` | 16 | UMG widget blueprints and components |
-| `InputService` | 24 | Enhanced Input actions, contexts, modifiers, triggers |
+| `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `AssetDiscoveryService` | 19 | Asset search, import/export, references |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `ActorService` | 24 | Level actor management |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
-| `NiagaraEmitterService` | 24 | Niagara emitter modules, renderers, properties |
-| `ProjectSettingsService` | 17 | Project settings, editor preferences, UI configuration |
-| `EngineSettingsService` | 24 | Engine settings, rendering, physics, audio, cvars, scalability |
+| `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
+| `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
+| `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -391,7 +392,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `animation`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `animation`, `skeleton`
 
 ### Using Skills
 
@@ -617,7 +618,7 @@ AnimGraphService provides comprehensive Animation Blueprint manipulation for sta
 - `get_row/update_row/remove_row(...)` - Row operations
 - `get_row_struct(path)` - Get column schema
 
-### ActorService (22 methods)
+### ActorService (24 methods)
 
 ActorService provides comprehensive level actor manipulation:
 - Actor discovery and queries
@@ -627,7 +628,75 @@ ActorService provides comprehensive level actor manipulation:
 - Property access
 - And more
 
-### NiagaraService (39 methods)
+### SkeletonService (47 methods)
+
+SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
+
+**Discovery:**
+- `search_skeletons(path, filter)` - Find skeleton assets
+- `search_skeletal_meshes(path, filter)` - Find skeletal mesh assets
+- `get_skeleton_info(path)` - Get skeleton metadata
+- `get_mesh_skeleton(path)` - Get skeleton used by a mesh
+- `get_meshes_using_skeleton(path)` - Find all meshes using a skeleton
+
+**Bone Operations:**
+- `list_bones(path)` - List all bones with hierarchy
+- `get_bone_info(path, name)` - Get detailed bone info
+- `get_bone_hierarchy(path, name, depth)` - Get bone subtree
+- `get_bone_children(path, name)` - Get direct children
+- `get_bone_transform(path, name, space)` - Get transform (local/global)
+- `find_bone_by_index(path, index)` - Find bone by index
+- `bone_exists(path, name)` - Check if bone exists
+- `get_bone_path_to_root(path, name)` - Get chain from bone to root
+
+**Bone Modification (requires commit):**
+- `add_bone(path, name, parent, transform)` - Add new bone
+- `remove_bone(path, name, remove_children)` - Remove bone
+- `rename_bone(path, old_name, new_name)` - Rename bone
+- `mirror_bone(path, name, axis, prefix)` - Mirror bone
+- `reparent_bone(path, name, new_parent)` - Change parent
+- `set_bone_transform(path, name, transform, space)` - Set transform
+- `copy_bone_chain(path, source, new_parent, prefix)` - Duplicate chain
+- `commit_bone_changes(path)` - **CRITICAL: Apply all changes**
+
+**Sockets:**
+- `list_sockets(path)` - List all sockets
+- `get_socket_info(path, name)` - Get socket details
+- `add_socket(path, name, bone, location, rotation, scale, to_skeleton)` - Add socket
+- `remove_socket(path, name)` - Remove socket
+- `socket_exists(path, name)` - Check if socket exists
+- `update_socket(path, name, ...)` - Modify socket properties
+- `copy_socket(path, source, new_name, new_bone)` - Duplicate socket
+
+**Retargeting:**
+- `get_bone_retargeting_mode(path, name)` - Get retarget mode
+- `set_bone_retargeting_mode(path, name, mode)` - Set retarget mode
+- `get_all_retargeting_modes(path)` - Get all bones' modes
+- `set_batch_retargeting_mode(path, bones, mode)` - Set multiple bones
+
+**Curve Metadata:**
+- `list_curves(path)` - List curve metadata
+- `add_curve(path, name, morph, material)` - Add curve
+- `remove_curve(path, name)` - Remove curve
+- `get_curve_info(path, name)` - Get curve details
+- `set_curve_flags(path, name, morph, material)` - Set curve flags
+- `curve_exists(path, name)` - Check if curve exists
+
+**Blend Profiles:**
+- `list_blend_profiles(path)` - List profiles
+- `get_blend_profile(path, name)` - Get profile data
+- `create_blend_profile(path, name)` - Create profile
+- `set_blend_profile_scale(path, profile, bone, scale, children)` - Set blend scale
+
+**Properties & Editor:**
+- `get_preview_mesh(path)` - Get preview mesh
+- `set_preview_mesh(path, mesh)` - Set preview mesh
+- `get_physics_asset(mesh)` - Get associated physics asset
+- `open_in_editor(path)` - Open in Skeleton Tree editor
+- `open_mesh_in_editor(path)` - Open skeletal mesh editor
+- `refresh_skeleton(path)` - Refresh after changes
+
+### NiagaraService (37 methods)
 
 **Lifecycle:**
 - `create_system(name, path, template)` - Create new Niagara system
