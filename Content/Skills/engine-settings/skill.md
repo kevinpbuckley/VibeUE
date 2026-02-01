@@ -136,12 +136,14 @@ result = unreal.EngineSettingsService.set_engine_ini_value(
 
 ## Data Structures
 
-### FEngineSettingInfo
+> **Python Naming Convention**: C++ types like `FEngineSettingInfo` are exposed as `EngineSettingInfo` in Python (no `F` prefix).
+
+### EngineSettingInfo
 - `key`, `display_name`, `description`
 - `type`, `value`, `default_value`
 - `requires_restart`, `read_only`, `is_console_variable`
 
-### FConsoleVariableInfo
+### ConsoleVariableInfo
 - `name`, `value`, `default_value`, `description`
 - `type`, `flags`, `is_read_only`
 

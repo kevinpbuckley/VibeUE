@@ -303,7 +303,9 @@ if info.blend_profile_names:
 
 ## Data Structures
 
-### FBoneNodeInfo
+> **Python Naming Convention**: C++ types like `FBoneNodeInfo` are exposed as `BoneNodeInfo` in Python (no `F` prefix).
+
+### BoneNodeInfo
 | Property | Type | Description |
 |----------|------|-------------|
 | `bone_name` | string | Name of the bone |
@@ -317,7 +319,7 @@ if info.blend_profile_names:
 | `retargeting_mode` | string | Translation retarget mode |
 | `children` | array[string] | Names of child bones |
 
-### FMeshSocketInfo
+### MeshSocketInfo
 | Property | Type | Description |
 |----------|------|-------------|
 | `socket_name` | string | Socket identifier |
@@ -327,7 +329,7 @@ if info.blend_profile_names:
 | `relative_scale` | Vector | Scale factor |
 | `force_always_animated` | bool | Force bone LOD |
 
-### FSkeletonAssetInfo
+### SkeletonAssetInfo
 | Property | Type | Description |
 |----------|------|-------------|
 | `skeleton_path` | string | Asset path |
@@ -339,7 +341,7 @@ if info.blend_profile_names:
 | `blend_profile_names` | array[string] | Profile names |
 | `preview_forward_axis` | string | Forward axis setting |
 
-### FSkeletalMeshData
+### SkeletalMeshData
 | Property | Type | Description |
 |----------|------|-------------|
 | `mesh_path` | string | Asset path |

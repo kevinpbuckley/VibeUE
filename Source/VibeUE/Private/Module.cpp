@@ -154,46 +154,18 @@ void FModule::OnPreExit()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - cleaning up Python services"));
 	
-	// FIRST: Release all C++ Python service instances BEFORE running Python GC
-	// This prevents access violations when Python tries to garbage collect objects
-	// that the C++ side is still holding references to
+	// Release all C++ Python service instances
+	// This is safe because we're just clearing our own pointers
 	UPythonTools::Shutdown();
 	
-	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - forcing Python garbage collection"));
+	// NOTE: We deliberately do NOT call into Python here.
+	// During OnPreExit, the Python interpreter may already be partially shut down
+	// or in an inconsistent state. Calling ExecPythonCommand can cause access
+	// violations (reading address 0x28 = null pointer + offset).
+	// The C++ cleanup above is sufficient - Python's own shutdown will handle
+	// the rest of the garbage collection.
 	
-	// Force Python to garbage collect and release any UObject references
-	// This must happen BEFORE Unreal's garbage collector runs
-	IPythonScriptPlugin* PythonPlugin = FModuleManager::GetModulePtr<IPythonScriptPlugin>("PythonScriptPlugin");
-	if (PythonPlugin)
-	{
-		// Execute Python GC to release all cached UObject references
-		const TCHAR* PythonCode = TEXT(
-			"import gc\n"
-			"import sys\n"
-			"# Clear all module caches that might hold UObject references\n"
-			"if 'unreal' in sys.modules:\n"
-			"    import unreal\n"
-			"    # Clear any cached service instances\n"
-			"    for attr_name in dir(unreal):\n"
-			"        try:\n"
-			"            attr = getattr(unreal, attr_name)\n"
-			"            if hasattr(attr, '__dict__'):\n"
-			"                attr.__dict__.clear()\n"
-			"        except:\n"
-			"            pass\n"
-			"# Force garbage collection\n"
-			"gc.collect()\n"
-			"gc.collect()\n"
-			"gc.collect()\n"
-		);
-		
-		PythonPlugin->ExecPythonCommand(PythonCode);
-		UE_LOG(LogTemp, Display, TEXT("Python garbage collection completed"));
-	}
-	else
-	{
-		UE_LOG(LogTemp, Warning, TEXT("Python plugin not loaded, skipping GC"));
-	}
+	UE_LOG(LogTemp, Display, TEXT("VibeUE OnPreExit - C++ cleanup complete"));
 }
 
 #undef LOCTEXT_NAMESPACE

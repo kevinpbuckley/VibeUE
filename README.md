@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 16 specialized services with 420+ methods for Blueprints, Materials, Widgets, Animation, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 17 specialized services with 496 methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation`, `skeleton`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `skeleton`
 
 ##### Log Reading Tool
 
@@ -210,13 +210,14 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (16 services, 420+ methods)
+### 2. VibeUE Python API Services (17 services, 496 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `BlueprintService` | 73 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
+| `AnimSequenceService` | 75 | Animation sequence creation, keyframes, bone tracks, curves, notifies |
 | `SkeletonService` | 47 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `MaterialService` | 29 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |

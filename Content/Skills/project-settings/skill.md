@@ -117,13 +117,15 @@ result = unreal.ProjectSettingsService.set_ini_value(
 
 ## Data Structures
 
-### FProjectSettingInfo
+> **Python Naming Convention**: C++ types like `FProjectSettingInfo` are exposed as `ProjectSettingInfo` in Python (no `F` prefix).
+
+### ProjectSettingInfo
 - `key`, `display_name`, `description`
 - `type`, `value`, `default_value`
 - `config_section`, `config_file`
 - `requires_restart`, `read_only`
 
-### FProjectSettingResult
+### ProjectSettingResult
 - `success`, `error_message`
 - `modified_settings`, `failed_settings`
 - `requires_restart`
