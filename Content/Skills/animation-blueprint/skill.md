@@ -1,5 +1,5 @@
 ---
-name: animation
+name: animation-blueprint
 display_name: Animation Blueprints
 description: Navigate and inspect Animation Blueprints, state machines, states, and transitions
 vibeue_classes:
@@ -215,7 +215,9 @@ unreal.AnimGraphService.focus_node(abp_path, node_id)
 
 ## Data Structures
 
-### FAnimStateMachineInfo
+> **Python Naming Convention**: C++ types like `FAnimStateMachineInfo` are exposed as `AnimStateMachineInfo` in Python (no `F` prefix).
+
+### AnimStateMachineInfo
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -224,7 +226,7 @@ unreal.AnimGraphService.focus_node(abp_path, node_id)
 | `state_count` | int | Number of states |
 | `parent_graph_name` | string | Graph containing this machine |
 
-### FAnimStateInfo
+### AnimStateInfo
 
 | Property | Type | Description |
 |----------|------|-------------|
@@ -235,7 +237,7 @@ unreal.AnimGraphService.focus_node(abp_path, node_id)
 | `pos_x` | float | X position in graph |
 | `pos_y` | float | Y position in graph |
 
-### FAnimTransitionInfo
+### AnimTransitionInfo
 
 | Property | Type | Description |
 |----------|------|-------------|

@@ -91,16 +91,6 @@ The discovery tools (3-5 above) are still available when:
 - **Troubleshooting**: Getting AttributeError - verify correct method/property names
 - **Module exploration**: Finding classes you don't know exist (`discover_python_module("unreal", name_filter="Niagara")`)
 
-**⚠️ CRITICAL for VibeUE Services:** When using `discover_python_class` on VibeUE services, ALWAYS use `include_inherited=false` to exclude inherited base class methods:
-```python
-# CORRECT - Shows only service-specific methods
-discover_python_class(class_name="unreal.BlueprintService", include_inherited=false)
-
-# WRONG - Bloated with 30+ inherited Object methods (cast, get_class, modify, etc.)
-discover_python_class(class_name="unreal.BlueprintService")
-```
-Skills already filter out inherited methods in `vibeue_apis`. This rule only applies to manual discovery.
-
 ---
 
 ## ⚠️ Python Basics
@@ -190,15 +180,6 @@ if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
 unreal.BlueprintService.compile_blueprint(path)  # REQUIRED!
 ```
 
-### Blueprint Node Layout
-When adding nodes to graphs, use consistent positioning for readable layouts:
-- **Execution flow**: Left to right (X increases: 200, 400, 600...)
-- **Data nodes**: Above execution row (negative Y: -150 for getters, -75 for math)
-- **Branch paths**: True stays at current Y, False offsets down (+150)
-- **Grid spacing**: 200px horizontal, 150px vertical
-
-Load the `blueprints` skill for the full `03-node-layout.md` guide.
-
 ### Error Recovery
 - Max 3 attempts at same operation
 - Max 2 discovery calls for same function
@@ -256,7 +237,6 @@ AI: "Created BP_Enemy."
 
 **Skill Loading:**
 - Mention when loading a new skill: "Loading blueprints skill for API reference..."
-- Don't reload skills already loaded in this conversation
 
 ## 🚀 Getting Started Workflow
 
