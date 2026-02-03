@@ -91,31 +91,43 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	// Auto-save all dirty packages before executing Python code if enabled
 	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
 	{
-		UE_LOG(LogPythonTools, Log, TEXT("Auto-saving dirty packages before Python execution..."));
-
-		const bool bPromptUserToSave = false;
-		const bool bSaveMapPackages = true;
-		const bool bSaveContentPackages = true;
-		const bool bFastSave = false;
-		const bool bNotifyNoPackagesSaved = false;
-		const bool bCanBeDeclined = false;
-
-		bool bSaveSuccess = FEditorFileUtils::SaveDirtyPackages(
-			bPromptUserToSave,
-			bSaveMapPackages,
-			bSaveContentPackages,
-			bFastSave,
-			bNotifyNoPackagesSaved,
-			bCanBeDeclined
-		);
-
-		if (bSaveSuccess)
+		// Validate GEditor is available before attempting to save
+		if (!GEditor)
 		{
-			UE_LOG(LogPythonTools, Log, TEXT("Auto-save completed successfully"));
+			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
+		}
+		else if (GIsPlayInEditorWorld)
+		{
+			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: Currently in PIE mode"));
 		}
 		else
 		{
-			UE_LOG(LogPythonTools, Warning, TEXT("Auto-save completed with warnings or errors"));
+			UE_LOG(LogPythonTools, Log, TEXT("Auto-saving dirty packages before Python execution..."));
+
+			const bool bPromptUserToSave = false;
+			const bool bSaveMapPackages = true;
+			const bool bSaveContentPackages = true;
+			const bool bFastSave = false;
+			const bool bNotifyNoPackagesSaved = false;
+			const bool bCanBeDeclined = false;
+
+			bool bSaveSuccess = FEditorFileUtils::SaveDirtyPackages(
+				bPromptUserToSave,
+				bSaveMapPackages,
+				bSaveContentPackages,
+				bFastSave,
+				bNotifyNoPackagesSaved,
+				bCanBeDeclined
+			);
+
+			if (bSaveSuccess)
+			{
+				UE_LOG(LogPythonTools, Log, TEXT("Auto-save completed successfully"));
+			}
+			else
+			{
+				UE_LOG(LogPythonTools, Warning, TEXT("Auto-save completed with warnings or errors"));
+			}
 		}
 	}
 
