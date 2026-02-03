@@ -46,18 +46,19 @@ public:
 	 */
 	static FString GetFriendlyTypeName(const FEdGraphPinType& PinType);
 
-private:
-	// Type category detection
+	// Type category detection (public for use by other services)
 	static bool IsBasicType(const FString& TypeString);
 	static bool IsStructType(const FString& TypeString);
 	static bool IsObjectType(const FString& TypeString);
 	static bool IsClassType(const FString& TypeString);  // TSubclassOf<T>
 	static bool IsEnumType(const FString& TypeString);
 
-	// Type resolution
+	// Type resolution (public for use by UEnumStructService and other services)
 	static UScriptStruct* FindStructByName(const FString& StructName);
 	static UClass* FindClassByName(const FString& ClassName);
 	static UEnum* FindEnumByName(const FString& EnumName);
+
+private:
 
 	// Parse basic types
 	static bool ParseBasicType(const FString& TypeString, FEdGraphPinType& OutPinType, FString& OutErrorMessage);

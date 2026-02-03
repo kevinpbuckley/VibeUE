@@ -38,7 +38,7 @@ VibeUE uses a **lazy-loading skills system** to provide:
 
 **⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do, discovery tells you HOW (exact method signatures).
 
-{SKILLS}
+See the **Available Skills** section below for the full list.
 
 ### When to Load Skills
 
@@ -118,7 +118,24 @@ json_str = json.dumps(data)
 
 *ALWAYS*Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:**
 
-{SKILLS}
+- `animation-blueprint`
+- `animation-montage`
+- `animsequence`
+- `asset-management`
+- `blueprints`
+- `data-assets`
+- `data-tables`
+- `engine-settings`
+- `enhanced-input`
+- `enum-struct`
+- `level-actors`
+- `materials`
+- `niagara-emitters`
+- `niagara-systems`
+- `project-settings`
+- `screenshots`
+- `skeleton`
+- `umg-widgets`
 
 ---
 

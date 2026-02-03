@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `skeleton`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `skeleton`, `enum-struct`
 
 ##### Log Reading Tool
 
@@ -210,7 +210,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (18 services, 550+ methods)
+### 2. VibeUE Python API Services (19 services, 570+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -227,6 +227,7 @@ High-level services exposed to Python for common game development tasks:
 | `AssetDiscoveryService` | 19 | Asset search, import/export, references |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `DataTableService` | 15 | DataTable rows and structure |
+| `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `ActorService` | 24 | Level actor management |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |

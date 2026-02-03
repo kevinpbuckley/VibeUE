@@ -13,7 +13,7 @@
 ```
 ❌ WRONG: Execute Python code immediately, forget skeleton → FAILS
 ✅ RIGHT: 
-   1. manage_skills(action="load", skill_name="animation")
+    1. manage_skills(action="load", skill_name="animation-blueprint")
    2. Read workflow: "AnimBlueprints require skeleton reference"
    3. Follow pattern: find skeleton → create with skeleton → save → open
 ```
@@ -26,6 +26,27 @@
 - Niagara: Module ordering issues
 
 **If you execute domain-specific code without loading skills first, you will likely fail.**
+
+### Full VibeUE Skills List
+
+- `animation-blueprint`
+- `animation-montage`
+- `animsequence`
+- `asset-management`
+- `blueprints`
+- `data-assets`
+- `data-tables`
+- `engine-settings`
+- `enhanced-input`
+- `enum-struct`
+- `level-actors`
+- `materials`
+- `niagara-emitters`
+- `niagara-systems`
+- `project-settings`
+- `screenshots`
+- `skeleton`
+- `umg-widgets`
 
 ---
 
