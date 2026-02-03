@@ -786,6 +786,23 @@ public:
 	static TArray<FBlueprintFunctionInfo> ListFunctions(const FString& BlueprintPath);
 
 	/**
+	 * Open a blueprint and navigate to a specific function graph.
+	 * Opens the blueprint editor and focuses on the specified function tab.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param FunctionName - Name of the function to open (use "EventGraph" for main graph)
+	 * @return True if successful
+	 *
+	 * Example - Open a function graph:
+	 *   unreal.BlueprintService.open_function_graph("/Game/BP_Player", "ApplyDamage")
+	 *
+	 * Example - Open the EventGraph:
+	 *   unreal.BlueprintService.open_function_graph("/Game/BP_Player", "EventGraph")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool OpenFunctionGraph(const FString& BlueprintPath, const FString& FunctionName);
+
+	/**
 	 * List all components in a blueprint.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -1585,6 +1602,33 @@ public:
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const FString& EventName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add an Enhanced Input Action event node to a graph.
+	 * This creates a node that responds to an Enhanced Input Action asset (IA_*).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (typically "EventGraph")
+	 * @param InputActionPath - Full path to the Input Action asset (e.g., "/Game/Input/IA_Jump")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_input_action_node("/Game/BP_Player", "EventGraph", "/Game/Input/IA_Jump", 0, 0)
+	 *   node_id = unreal.BlueprintService.add_input_action_node("/Game/BP_Player", "EventGraph", "/Game/Input/IA_Ragdoll", -800, 2500)
+	 *
+	 * Note: The Input Action asset must exist. Create it first with InputService.create_action() if needed.
+	 * The node will have output pins for Started, Ongoing, Triggered, Completed, and Canceled events.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddInputActionNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& InputActionPath,
 		float PosX = 0.0f,
 		float PosY = 0.0f
 	);

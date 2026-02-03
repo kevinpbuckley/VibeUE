@@ -18,6 +18,8 @@
 #include "K2Node_CallFunction.h"
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
+#include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
+#include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
 #include "Kismet/KismetStringLibrary.h"
@@ -36,6 +38,15 @@
 #include "Factories/BlueprintFactory.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "SubobjectDataSubsystem.h"
+// For BlueprintActionDatabase - proper node discovery
+#include "BlueprintActionDatabase.h"
+#include "BlueprintNodeSpawner.h"
+#include "BlueprintFunctionNodeSpawner.h"
+#include "BlueprintVariableNodeSpawner.h"
+#include "BlueprintEventNodeSpawner.h"
+// For OpenFunctionGraph - Blueprint Editor navigation
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "BlueprintEditor.h"
 
 UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 {
@@ -164,6 +175,90 @@ TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& B
 	}
 
 	return Functions;
+}
+
+bool UBlueprintService::OpenFunctionGraph(const FString& BlueprintPath, const FString& FunctionName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenFunctionGraph: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	// Get the asset editor subsystem
+	UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+	if (!AssetEditorSubsystem)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenFunctionGraph: AssetEditorSubsystem not available"));
+		return false;
+	}
+
+	// Open the blueprint in the editor
+	if (!AssetEditorSubsystem->OpenEditorForAsset(Blueprint))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenFunctionGraph: Failed to open editor for blueprint"));
+		return false;
+	}
+
+	// Get the blueprint editor instance
+	IAssetEditorInstance* EditorInstance = AssetEditorSubsystem->FindEditorForAsset(Blueprint, false);
+	FBlueprintEditor* BlueprintEditor = static_cast<FBlueprintEditor*>(EditorInstance);
+	if (!BlueprintEditor)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenFunctionGraph: Could not get blueprint editor instance"));
+		return false;
+	}
+
+	// Find the target graph
+	UEdGraph* TargetGraph = nullptr;
+	FString FunctionLower = FunctionName.ToLower();
+
+	// Check if it's the EventGraph (uber graph)
+	if (FunctionLower == TEXT("eventgraph") || FunctionLower == TEXT("event graph") || FunctionName.IsEmpty())
+	{
+		if (Blueprint->UbergraphPages.Num() > 0)
+		{
+			TargetGraph = Blueprint->UbergraphPages[0];
+		}
+	}
+	else
+	{
+		// Search function graphs
+		for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+		{
+			if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+			{
+				TargetGraph = Graph;
+				break;
+			}
+		}
+
+		// If not found, also check uber graphs by name (some graphs might be there)
+		if (!TargetGraph)
+		{
+			for (UEdGraph* Graph : Blueprint->UbergraphPages)
+			{
+				if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+				{
+					TargetGraph = Graph;
+					break;
+				}
+			}
+		}
+	}
+
+	if (!TargetGraph)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("OpenFunctionGraph: Could not find graph '%s' in blueprint"), *FunctionName);
+		return false;
+	}
+
+	// Open the graph in the editor
+	BlueprintEditor->OpenDocument(TargetGraph, FDocumentTracker::OpenNewDocument);
+
+	UE_LOG(LogTemp, Log, TEXT("OpenFunctionGraph: Opened graph '%s' in blueprint '%s'"), *TargetGraph->GetName(), *BlueprintPath);
+	return true;
 }
 
 TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString& BlueprintPath)
@@ -2711,6 +2806,73 @@ FString UBlueprintService::AddEventNode(
 	return EventNode->NodeGuid.ToString();
 }
 
+FString UBlueprintService::AddInputActionNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& InputActionPath,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInputActionNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	// Find the graph
+	UEdGraph* Graph = nullptr;
+	if (GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+	
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInputActionNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Load the Input Action asset
+	UInputAction* InputAction = Cast<UInputAction>(UEditorAssetLibrary::LoadAsset(InputActionPath));
+	if (!InputAction)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInputActionNode: Failed to load Input Action asset: %s"), *InputActionPath);
+		return FString();
+	}
+
+	// Create the Enhanced Input Action node
+	UK2Node_EnhancedInputAction* InputActionNode = NewObject<UK2Node_EnhancedInputAction>(Graph);
+	InputActionNode->InputAction = InputAction;
+
+	// Add to graph
+	Graph->AddNode(InputActionNode, false, false);
+	InputActionNode->CreateNewGuid();
+	InputActionNode->PostPlacedNewNode();
+	InputActionNode->AllocateDefaultPins();
+
+	// Set position
+	InputActionNode->NodePosX = PosX;
+	InputActionNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddInputActionNode: Added Enhanced Input Action '%s' in %s"), *InputAction->GetName(), *GraphName);
+
+	return InputActionNode->NodeGuid.ToString();
+}
+
 FString UBlueprintService::AddPrintStringNode(
 	const FString& BlueprintPath,
 	const FString& GraphName,
@@ -3831,90 +3993,203 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 	FString SearchLower = SearchTerm.ToLower();
 	FString CategoryLower = Category.ToLower();
 	
-	// Search through common library functions
-	TArray<TPair<UClass*, FString>> FunctionLibraries = {
-		{UKismetMathLibrary::StaticClass(), TEXT("Math")},
-		{UKismetSystemLibrary::StaticClass(), TEXT("Utilities")},
-		{UKismetStringLibrary::StaticClass(), TEXT("String")},
-		{UKismetArrayLibrary::StaticClass(), TEXT("Array")},
-		{UGameplayStatics::StaticClass(), TEXT("Game")},
-	};
+	// Track seen spawner keys to avoid duplicates
+	TSet<FString> SeenSpawnerKeys;
 	
-	for (const auto& [LibClass, LibCategory] : FunctionLibraries)
+	// Helper lambda to add a function to results
+	auto AddFunctionToResults = [&](UFunction* Func, const FString& InCategory, const FString& OwnerClassName) -> bool
 	{
-		if (Results.Num() >= MaxResults)
+		if (!Func || Results.Num() >= MaxResults)
 		{
-			break;
+			return false;
+		}
+		
+		// Only include BlueprintCallable functions
+		if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+		{
+			return false;
+		}
+		
+		// Skip hidden/internal functions
+		if (Func->HasMetaData(TEXT("BlueprintInternalUseOnly")))
+		{
+			return false;
+		}
+		
+		FString FuncName = Func->GetName();
+		FString DisplayName = Func->GetDisplayNameText().ToString();
+		if (DisplayName.IsEmpty())
+		{
+			DisplayName = FuncName;
 		}
 		
 		// Filter by category if specified
-		if (!CategoryLower.IsEmpty() && !LibCategory.ToLower().Contains(CategoryLower))
+		if (!CategoryLower.IsEmpty())
 		{
-			continue;
+			if (!InCategory.ToLower().Contains(CategoryLower))
+			{
+				return false;
+			}
 		}
 		
-		// Iterate functions in this class
-		for (TFieldIterator<UFunction> It(LibClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		// Filter by search term
+		if (!SearchLower.IsEmpty())
 		{
-			if (Results.Num() >= MaxResults)
-			{
-				break;
-			}
+			bool bMatches = DisplayName.ToLower().Contains(SearchLower) ||
+			                FuncName.ToLower().Contains(SearchLower);
 			
-			UFunction* Func = *It;
-			if (!Func)
-			{
-				continue;
-			}
-			
-			// Only include BlueprintCallable functions
-			if (!Func->HasAnyFunctionFlags(FUNC_BlueprintCallable))
-			{
-				continue;
-			}
-			
-			FString FuncName = Func->GetName();
-			FString DisplayName = Func->GetDisplayNameText().ToString();
-			if (DisplayName.IsEmpty())
-			{
-				DisplayName = FuncName;
-			}
-			
-			// Filter by search term
-			if (!SearchLower.IsEmpty())
-			{
-				bool bMatches = DisplayName.ToLower().Contains(SearchLower) ||
-				                FuncName.ToLower().Contains(SearchLower);
-				
-				// Also check keywords
-				FString Keywords = Func->GetMetaData(TEXT("Keywords"));
-				if (!Keywords.IsEmpty())
-				{
-					bMatches = bMatches || Keywords.ToLower().Contains(SearchLower);
-				}
-				
-				if (!bMatches)
-				{
-					continue;
-				}
-			}
-			
-			FBlueprintNodeTypeInfo Info;
-			Info.DisplayName = DisplayName;
-			Info.Category = LibCategory;
-			Info.NodeClass = TEXT("K2Node_CallFunction");
-			Info.SpawnerKey = FString::Printf(TEXT("FUNC %s::%s"), *LibClass->GetName(), *FuncName);
-			Info.bIsPure = Func->HasAnyFunctionFlags(FUNC_BlueprintPure);
-			Info.Tooltip = Func->GetMetaData(TEXT("ToolTip"));
-			
-			// Get keywords
+			// Also check keywords
 			FString Keywords = Func->GetMetaData(TEXT("Keywords"));
 			if (!Keywords.IsEmpty())
 			{
-				Keywords.ParseIntoArray(Info.Keywords, TEXT(","), true);
+				bMatches = bMatches || Keywords.ToLower().Contains(SearchLower);
 			}
 			
-			Results.Add(Info);
+			if (!bMatches)
+			{
+				return false;
+			}
+		}
+		
+		FString SpawnerKey = FString::Printf(TEXT("FUNC %s::%s"), *OwnerClassName, *FuncName);
+		if (SeenSpawnerKeys.Contains(SpawnerKey))
+		{
+			return false;
+		}
+		SeenSpawnerKeys.Add(SpawnerKey);
+		
+		FBlueprintNodeTypeInfo Info;
+		Info.DisplayName = DisplayName;
+		Info.Category = InCategory;
+		Info.NodeClass = TEXT("K2Node_CallFunction");
+		Info.SpawnerKey = SpawnerKey;
+		Info.bIsPure = Func->HasAnyFunctionFlags(FUNC_BlueprintPure);
+		Info.bIsLatent = Func->HasMetaData(TEXT("Latent"));
+		Info.Tooltip = Func->GetMetaData(TEXT("ToolTip"));
+		
+		// Get keywords
+		FString Keywords = Func->GetMetaData(TEXT("Keywords"));
+		if (!Keywords.IsEmpty())
+		{
+			Keywords.ParseIntoArray(Info.Keywords, TEXT(","), true);
+		}
+		
+		Results.Add(Info);
+		return true;
+	};
+	
+	// 1. Add blueprint's own functions (Self functions)
+	if (UBlueprintGeneratedClass* GenClass = Cast<UBlueprintGeneratedClass>(Blueprint->GeneratedClass))
+	{
+		for (TFieldIterator<UFunction> It(GenClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		{
+			if (Results.Num() >= MaxResults) break;
+			AddFunctionToResults(*It, TEXT("Self Functions"), TEXT("Self"));
+		}
+	}
+	
+	// 2. Add parent class functions by walking the entire class hierarchy
+	// This ensures we get Character, Pawn, Actor functions etc.
+	UClass* CurrentClass = Blueprint->ParentClass;
+	while (CurrentClass && Results.Num() < MaxResults)
+	{
+		FString ClassName = CurrentClass->GetName();
+		FString CategoryStr = FString::Printf(TEXT("Parent: %s"), *ClassName);
+		
+		// Only get functions defined directly on this class (not inherited)
+		for (TFieldIterator<UFunction> It(CurrentClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		{
+			if (Results.Num() >= MaxResults) break;
+			AddFunctionToResults(*It, CategoryStr, ClassName);
+		}
+		
+		// Move up the hierarchy
+		CurrentClass = CurrentClass->GetSuperClass();
+		
+		// Stop at UObject
+		if (CurrentClass && CurrentClass->GetName() == TEXT("Object"))
+		{
+			break;
+		}
+	}
+	
+	// 3. Add common library functions - use static list for performance
+	// These are the most commonly used blueprint function libraries
+	// (Avoiding TObjectIterator which is slow and caused lockups)
+	TArray<TPair<UClass*, FString>> FunctionLibraries;
+	FunctionLibraries.Add({UKismetMathLibrary::StaticClass(), TEXT("Math")});
+	FunctionLibraries.Add({UKismetSystemLibrary::StaticClass(), TEXT("Utilities")});
+	FunctionLibraries.Add({UKismetStringLibrary::StaticClass(), TEXT("String")});
+	FunctionLibraries.Add({UKismetArrayLibrary::StaticClass(), TEXT("Array")});
+	FunctionLibraries.Add({UGameplayStatics::StaticClass(), TEXT("Game")});
+	
+	// Add more commonly needed libraries
+	if (UClass* TextLibrary = FindObject<UClass>(nullptr, TEXT("/Script/Engine.KismetTextLibrary")))
+	{
+		FunctionLibraries.Add({TextLibrary, TEXT("Text")});
+	}
+	if (UClass* InputLibrary = FindObject<UClass>(nullptr, TEXT("/Script/Engine.KismetInputLibrary")))
+	{
+		FunctionLibraries.Add({InputLibrary, TEXT("Input")});
+	}
+	if (UClass* RenderingLibrary = FindObject<UClass>(nullptr, TEXT("/Script/Engine.KismetRenderingLibrary")))
+	{
+		FunctionLibraries.Add({RenderingLibrary, TEXT("Rendering")});
+	}
+	if (UClass* MaterialLibrary = FindObject<UClass>(nullptr, TEXT("/Script/Engine.KismetMaterialLibrary")))
+	{
+		FunctionLibraries.Add({MaterialLibrary, TEXT("Material")});
+	}
+	if (UClass* AILibrary = FindObject<UClass>(nullptr, TEXT("/Script/AIModule.AIBlueprintHelperLibrary")))
+	{
+		FunctionLibraries.Add({AILibrary, TEXT("AI")});
+	}
+	if (UClass* NavLibrary = FindObject<UClass>(nullptr, TEXT("/Script/NavigationSystem.NavigationSystemV1")))
+	{
+		FunctionLibraries.Add({NavLibrary, TEXT("Navigation")});
+	}
+	if (UClass* WidgetLibrary = FindObject<UClass>(nullptr, TEXT("/Script/UMG.WidgetBlueprintLibrary")))
+	{
+		FunctionLibraries.Add({WidgetLibrary, TEXT("Widget")});
+	}
+	if (UClass* SlateBPLibrary = FindObject<UClass>(nullptr, TEXT("/Script/UMG.SlateBlueprintLibrary")))
+	{
+		FunctionLibraries.Add({SlateBPLibrary, TEXT("Slate")});
+	}
+	
+	// Iterate through all function libraries
+	for (const auto& LibPair : FunctionLibraries)
+	{
+		if (Results.Num() >= MaxResults) break;
+		
+		UClass* LibClass = LibPair.Key;
+		const FString& LibCategory = LibPair.Value;
+		
+		if (!LibClass) continue;
+		
+		for (TFieldIterator<UFunction> It(LibClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		{
+			if (Results.Num() >= MaxResults) break;
+			AddFunctionToResults(*It, LibCategory, LibClass->GetName());
+		}
+	}
+	
+	// 4. Add component-related functions from common component types
+	TArray<UClass*> ComponentClasses = {
+		UActorComponent::StaticClass(),
+		USceneComponent::StaticClass(),
+		UPrimitiveComponent::StaticClass()
+	};
+	
+	for (UClass* CompClass : ComponentClasses)
+	{
+		if (!CompClass || Results.Num() >= MaxResults) continue;
+		
+		for (TFieldIterator<UFunction> It(CompClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+		{
+			if (Results.Num() >= MaxResults) break;
+			FString Category = FString::Printf(TEXT("Component: %s"), *CompClass->GetName());
+			AddFunctionToResults(*It, Category, CompClass->GetName());
 		}
 	}
 	

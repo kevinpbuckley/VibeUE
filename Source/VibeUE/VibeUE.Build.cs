@@ -81,7 +81,8 @@ public class VibeUE : ModuleRules
 				"AnimGraphRuntime",       // For animation runtime types
 				"Persona",                // For IAnimationBlueprintEditor interface
 				"SkeletalMeshModifiers",  // For SkeletonModifier (bone manipulation) - MeshModelingToolset plugin
-				"SkeletalMeshEditor"      // For SkeletalMeshEditorSubsystem
+				"SkeletalMeshEditor",     // For SkeletalMeshEditorSubsystem
+				"InputBlueprintNodes"     // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
 			}
 		);
 		

@@ -160,6 +160,30 @@ unreal.BlueprintService.set_component_property(bp_path, "Glow", "Intensity", "50
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
+### Add Enhanced Input Action Node
+
+Use `add_input_action_node()` to create an Enhanced Input Action event node in a Blueprint:
+
+```python
+import unreal
+
+bp_path = "/Game/BP_ThirdPersonCharacter"
+ia_path = "/Game/Input/IA_Ragdoll"
+
+# Create the Enhanced Input Action node
+node_id = unreal.BlueprintService.add_input_action_node(bp_path, "EventGraph", ia_path, -800, 2500)
+
+if node_id:
+    # Connect to other nodes - Output pins are: Started, Ongoing, Triggered, Completed, Canceled
+    set_physics = unreal.BlueprintService.add_function_call_node(bp_path, "EventGraph", "PrimitiveComponent", "SetSimulatePhysics", -400, 2500)
+    unreal.BlueprintService.connect_nodes(bp_path, "EventGraph", node_id, "Started", set_physics, "execute")
+    
+    unreal.BlueprintService.compile_blueprint(bp_path)
+    unreal.EditorAssetLibrary.save_asset(bp_path)
+```
+
+**Important**: The Input Action asset must exist first. Create it with `InputService.create_action()` if needed.
+
 ---
 
 ## Node Layout Best Practices

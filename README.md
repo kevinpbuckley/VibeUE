@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 17 specialized services with 496 methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 18 specialized services with 550+ methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `skeleton`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `skeleton`
 
 ##### Log Reading Tool
 
@@ -210,7 +210,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (17 services, 496 methods)
+### 2. VibeUE Python API Services (18 services, 550+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -218,6 +218,7 @@ High-level services exposed to Python for common game development tasks:
 | `BlueprintService` | 73 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `AnimSequenceService` | 75 | Animation sequence creation, keyframes, bone tracks, curves, notifies |
+| `AnimMontageService` | 55 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 47 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `MaterialService` | 29 | Materials and material instances |
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
@@ -555,6 +556,92 @@ AnimGraphService provides comprehensive Animation Blueprint manipulation for sta
 - `list_graphs(path)` - List all graphs in AnimBP
 - `open_anim_graph(path, graph)` - Open graph in editor
 - `focus_node(path, node_id)` - Focus on specific node
+
+### AnimMontageService (55 methods)
+
+AnimMontageService provides comprehensive CRUD operations for Animation Montage assets including section management, slot tracks, animation segments, branching points, and blend settings:
+
+**Discovery:**
+- `list_montages(path, skeleton_filter)` - List all montages in a path
+- `get_montage_info(path)` - Get comprehensive montage information
+- `find_montages_for_skeleton(skeleton_path)` - Find all montages compatible with a skeleton
+- `find_montages_using_animation(anim_path)` - Find montages using a specific animation
+
+**Properties:**
+- `get_montage_length(path)` - Get total duration in seconds
+- `get_montage_skeleton(path)` - Get skeleton asset path
+- `set_blend_in(path, time, option)` - Set blend in settings (Linear, Cubic, etc.)
+- `set_blend_out(path, time, option)` - Set blend out settings
+- `get_blend_settings(path)` - Get all blend settings
+- `set_blend_out_trigger_time(path, time)` - Set when blend out begins
+
+**Section Management (C++ - required for TArray modification):**
+- `list_sections(path)` - List all sections with timing info
+- `get_section_info(path, name)` - Get detailed section info
+- `get_section_index_at_time(path, time)` - Get section index at time
+- `get_section_name_at_time(path, time)` - Get section name at time
+- `add_section(path, name, start_time)` - Add new section
+- `remove_section(path, name)` - Remove section
+- `rename_section(path, old_name, new_name)` - Rename section
+- `set_section_start_time(path, name, time)` - Move section
+- `get_section_length(path, name)` - Get section duration
+
+**Section Linking (Branching):**
+- `get_next_section(path, section)` - Get linked next section
+- `set_next_section(path, section, next)` - Link section to next
+- `set_section_loop(path, section, loop)` - Set section to loop
+- `get_all_section_links(path)` - Get complete flow chart
+- `clear_section_link(path, section)` - Clear link (ends montage)
+
+**Slot Tracks:**
+- `list_slot_tracks(path)` - List all slot tracks
+- `get_slot_track_info(path, index)` - Get track details
+- `add_slot_track(path, slot_name)` - Add new slot track
+- `remove_slot_track(path, index)` - Remove track
+- `set_slot_name(path, index, name)` - Change slot name
+- `get_all_used_slot_names(path)` - Get unique slot names
+
+**Animation Segments (Multiple Animations per Montage):**
+- `list_anim_segments(path, track_index)` - List segments in track
+- `get_anim_segment_info(path, track, segment)` - Get segment details
+- `add_anim_segment(path, track, anim_path, start_time, play_rate)` - Add animation
+- `remove_anim_segment(path, track, segment)` - Remove segment
+- `set_segment_start_time(path, track, segment, time)` - Move segment
+- `set_segment_play_rate(path, track, segment, rate)` - Set playback speed
+- `set_segment_start_position(path, track, segment, pos)` - Trim start
+- `set_segment_end_position(path, track, segment, pos)` - Trim end
+- `set_segment_loop_count(path, track, segment, count)` - Set loop count
+
+**Notifies:**
+- `list_notifies(path)` - List all notifies
+- `add_notify(path, class, time, name)` - Add instant notify
+- `add_notify_state(path, class, start, duration, name)` - Add state notify
+- `remove_notify(path, index)` - Remove notify
+- `set_notify_trigger_time(path, index, time)` - Move notify
+- `set_notify_link_to_section(path, index, section)` - Link to section
+
+**Branching Points:**
+- `list_branching_points(path)` - List all branching points
+- `add_branching_point(path, name, time)` - Add frame-accurate event
+- `remove_branching_point(path, index)` - Remove branching point
+- `is_branching_point_at_time(path, time)` - Check for branching point
+
+**Root Motion:**
+- `get/set_enable_root_motion_translation(path, enable)` - Control translation
+- `get/set_enable_root_motion_rotation(path, enable)` - Control rotation
+- `get_root_motion_at_time(path, time)` - Get root motion transform
+
+**Creation:**
+- `create_montage_from_animation(anim, dest, name)` - Create from animation
+- `create_empty_montage(skeleton, dest, name)` - Create empty montage
+- `duplicate_montage(source, dest, name)` - Duplicate montage
+
+**Editor:**
+- `open_montage_editor(path)` - Open in Animation Editor
+- `refresh_montage_editor(path)` - Refresh UI after modifications
+- `jump_to_section(path, section)` - Preview jump to section
+- `set_preview_time(path, time)` - Set preview playhead
+- `play_preview(path, start_section)` - Play in preview
 
 ### MaterialService (26 methods)
 
@@ -921,6 +1008,45 @@ unreal.DataTableService.add_row("/Game/Data/DT_Characters", "Hero",
 
 # 4. Query rows
 row = unreal.DataTableService.get_row("/Game/Data/DT_Characters", "Hero")
+```
+
+### Build Animation Montage with Multiple Animations
+
+```python
+# 1. Create empty montage from skeleton
+path = unreal.AnimMontageService.create_empty_montage(
+    "/Game/Characters/Mannequin/SK_Mannequin",
+    "/Game/Montages",
+    "AM_ComboAttack"
+)
+
+# 2. Add animation segments sequentially
+unreal.AnimMontageService.add_anim_segment(path, 0, "/Game/Animations/Attack1", 0.0)
+unreal.AnimMontageService.add_anim_segment(path, 0, "/Game/Animations/Attack2", 1.0)
+unreal.AnimMontageService.add_anim_segment(path, 0, "/Game/Animations/Attack3", 2.0)
+
+# 3. Add sections for each attack phase
+unreal.AnimMontageService.add_section(path, "Attack1", 0.0)
+unreal.AnimMontageService.add_section(path, "Attack2", 1.0)
+unreal.AnimMontageService.add_section(path, "Attack3", 2.0)
+
+# 4. Link sections for combo flow
+unreal.AnimMontageService.set_next_section(path, "Attack1", "Attack2")
+unreal.AnimMontageService.set_next_section(path, "Attack2", "Attack3")
+
+# 5. Add branching points for combo input windows
+unreal.AnimMontageService.add_branching_point(path, "ComboWindow1", 0.7)
+unreal.AnimMontageService.add_branching_point(path, "ComboWindow2", 1.7)
+
+# 6. Set blend settings
+unreal.AnimMontageService.set_blend_in(path, 0.15, "Cubic")
+unreal.AnimMontageService.set_blend_out(path, 0.2, "Linear")
+
+# 7. Refresh editor to see changes
+unreal.AnimMontageService.refresh_montage_editor(path)
+
+# 8. Save
+unreal.EditorAssetLibrary.save_asset(path)
 ```
 
 ### Build Niagara VFX System
