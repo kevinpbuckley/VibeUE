@@ -4188,8 +4188,8 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		for (TFieldIterator<UFunction> It(CompClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
 		{
 			if (Results.Num() >= MaxResults) break;
-			FString Category = FString::Printf(TEXT("Component: %s"), *CompClass->GetName());
-			AddFunctionToResults(*It, Category, CompClass->GetName());
+			FString CompCategory = FString::Printf(TEXT("Component: %s"), *CompClass->GetName());
+			AddFunctionToResults(*It, CompCategory, CompClass->GetName());
 		}
 	}
 	
