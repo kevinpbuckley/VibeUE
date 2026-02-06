@@ -121,3 +121,36 @@ FString FVibeUEPaths::GetConfigDir()
 	}
 	return PluginDir / TEXT("Config");
 }
+
+FString FVibeUEPaths::GetScreenshotsDir()
+{
+	// Use Project/Saved/VibeUE/Screenshots
+	FString ScreenshotsDir = FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("Screenshots");
+	
+	// Ensure directory exists
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (!PlatformFile.DirectoryExists(*ScreenshotsDir))
+	{
+		PlatformFile.CreateDirectoryTree(*ScreenshotsDir);
+	}
+	
+	return ScreenshotsDir;
+}
+
+void FVibeUEPaths::ClearScreenshotsDir()
+{
+	FString ScreenshotsDir = FPaths::ProjectSavedDir() / TEXT("VibeUE") / TEXT("Screenshots");
+	
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+	if (PlatformFile.DirectoryExists(*ScreenshotsDir))
+	{
+		// Delete all files and subdirectories
+		IFileManager& FileManager = IFileManager::Get();
+		FileManager.DeleteDirectory(*ScreenshotsDir, false, true);
+		
+		// Recreate the empty directory
+		PlatformFile.CreateDirectoryTree(*ScreenshotsDir);
+		
+		UE_LOG(LogVibeUEPaths, Log, TEXT("Cleared VibeUE screenshots directory: %s"), *ScreenshotsDir);
+	}
+}

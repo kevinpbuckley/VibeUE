@@ -30,6 +30,7 @@
 ### Full VibeUE Skills List
 
 - `animation-blueprint`
+- `animsequence`
 - `animation-montage`
 - `animsequence`
 - `asset-management`

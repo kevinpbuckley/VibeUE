@@ -1,11 +1,13 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/USkeletonService.h"
+#include "PythonAPI/UAnimSequenceService.h"
 
 #include "Animation/Skeleton.h"
 #include "Engine/SkeletalMesh.h"
 #include "Engine/SkeletalMeshSocket.h"
 #include "Animation/BlendProfile.h"
+#include "Animation/AnimSequence.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "Editor.h"
@@ -29,6 +31,7 @@ USkeleton* USkeletonService::LoadSkeleton(const FString& SkeletonPath)
 		return nullptr;
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("USkeletonService::LoadSkeleton: Loading asset: %s"), *SkeletonPath);
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(SkeletonPath);
 	if (!LoadedObject)
 	{
@@ -54,6 +57,7 @@ USkeletalMesh* USkeletonService::LoadSkeletalMesh(const FString& SkeletalMeshPat
 		return nullptr;
 	}
 
+	UE_LOG(LogTemp, Log, TEXT("USkeletonService::LoadSkeletalMesh: Loading asset: %s"), *SkeletalMeshPath);
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(SkeletalMeshPath);
 	if (!LoadedObject)
 	{
@@ -74,6 +78,7 @@ USkeletalMesh* USkeletonService::LoadSkeletalMesh(const FString& SkeletalMeshPat
 USkeleton* USkeletonService::GetSkeletonFromAsset(const FString& AssetPath)
 {
 	// Try loading as Skeleton first
+	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetSkeletonFromAsset: Loading asset: %s"), *AssetPath);
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AssetPath);
 	if (!LoadedObject)
 	{
@@ -99,6 +104,7 @@ USkeleton* USkeletonService::GetSkeletonFromAsset(const FString& AssetPath)
 
 const FReferenceSkeleton* USkeletonService::GetReferenceSkeleton(const FString& AssetPath)
 {
+	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetReferenceSkeleton: Loading asset: %s"), *AssetPath);
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AssetPath);
 	if (!LoadedObject)
 	{
@@ -1432,6 +1438,7 @@ bool USkeletonService::SetPhysicsAsset(const FString& SkeletalMeshPath, const FS
 	}
 	else
 	{
+		UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetSkeletalMeshInfo: Loading physics asset: %s"), *PhysicsAssetPath);
 		UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(PhysicsAssetPath);
 		UPhysicsAsset* PhysAsset = Cast<UPhysicsAsset>(LoadedAsset);
 		if (!PhysAsset)
@@ -1460,6 +1467,7 @@ bool USkeletonService::SetPostProcessAnimBlueprint(const FString& SkeletalMeshPa
 	}
 	else
 	{
+		UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetSkeletalMeshInfo: Loading anim blueprint: %s"), *AnimBlueprintPath);
 		UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AnimBlueprintPath);
 		UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(LoadedAsset);
 		if (!AnimBP)
@@ -1534,6 +1542,7 @@ bool USkeletonService::OpenSkeletalMeshEditor(const FString& SkeletalMeshPath)
 
 bool USkeletonService::SaveAsset(const FString& AssetPath)
 {
+	UE_LOG(LogTemp, Log, TEXT("USkeletonService::GetMeshSocketInfo: Loading asset: %s"), *AssetPath);
 	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
 	if (!Asset)
 	{
@@ -1541,4 +1550,553 @@ bool USkeletonService::SaveAsset(const FString& AssetPath)
 	}
 
 	return UEditorAssetLibrary::SaveAsset(AssetPath);
+}
+
+// ============================================================================
+// SKELETON PROFILES & CONSTRAINTS
+// ============================================================================
+
+// Static storage for skeleton profiles and learned constraints
+static TMap<FString, FSkeletonProfile> CachedSkeletonProfiles;
+static TMap<FString, FLearnedConstraintsInfo> CachedLearnedConstraints;
+
+bool USkeletonService::CreateSkeletonProfile(const FString& SkeletonPath, FSkeletonProfile& OutProfile)
+{
+	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
+	if (!Skeleton)
+	{
+		OutProfile.bIsValid = false;
+		return false;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+
+	OutProfile.SkeletonPath = SkeletonPath;
+	OutProfile.SkeletonName = Skeleton->GetName();
+	OutProfile.BoneCount = RefSkeleton.GetNum();
+	OutProfile.bIsValid = true;
+
+	// Build bone hierarchy
+	OutProfile.BoneHierarchy.Empty();
+	for (int32 BoneIndex = 0; BoneIndex < RefSkeleton.GetNum(); BoneIndex++)
+	{
+		FBoneNodeInfo BoneInfo;
+		BoneInfo.BoneName = RefSkeleton.GetBoneName(BoneIndex).ToString();
+		BoneInfo.BoneIndex = BoneIndex;
+		BoneInfo.ParentBoneIndex = RefSkeleton.GetParentIndex(BoneIndex);
+		
+		if (BoneInfo.ParentBoneIndex >= 0)
+		{
+			BoneInfo.ParentBoneName = RefSkeleton.GetBoneName(BoneInfo.ParentBoneIndex).ToString();
+		}
+
+		// Calculate depth
+		int32 Depth = 0;
+		int32 CurrentIndex = BoneIndex;
+		while (RefSkeleton.GetParentIndex(CurrentIndex) >= 0)
+		{
+			Depth++;
+			CurrentIndex = RefSkeleton.GetParentIndex(CurrentIndex);
+		}
+		BoneInfo.Depth = Depth;
+
+		// Get transforms
+		BoneInfo.LocalTransform = RefSkeleton.GetRefBonePose()[BoneIndex];
+		
+		// Calculate global transform by walking up the hierarchy
+		FTransform GlobalTransform = BoneInfo.LocalTransform;
+		CurrentIndex = BoneInfo.ParentBoneIndex;
+		while (CurrentIndex >= 0)
+		{
+			GlobalTransform = GlobalTransform * RefSkeleton.GetRefBonePose()[CurrentIndex];
+			CurrentIndex = RefSkeleton.GetParentIndex(CurrentIndex);
+		}
+		BoneInfo.GlobalTransform = GlobalTransform;
+
+		// Get retargeting mode
+		BoneInfo.RetargetingMode = RetargetingModeToString(
+			Skeleton->GetBoneTranslationRetargetingMode(BoneIndex)
+		);
+
+		// Count children
+		int32 ChildCount = 0;
+		for (int32 i = 0; i < RefSkeleton.GetNum(); i++)
+		{
+			if (RefSkeleton.GetParentIndex(i) == BoneIndex)
+			{
+				ChildCount++;
+				BoneInfo.Children.Add(RefSkeleton.GetBoneName(i).ToString());
+			}
+		}
+		BoneInfo.ChildCount = ChildCount;
+
+		OutProfile.BoneHierarchy.Add(BoneInfo);
+	}
+
+	// Initialize default constraints for all bones (unconstrained)
+	OutProfile.Constraints.Empty();
+	for (const FBoneNodeInfo& BoneInfo : OutProfile.BoneHierarchy)
+	{
+		FBoneConstraint Constraint;
+		Constraint.BoneName = BoneInfo.BoneName;
+		Constraint.MinRotation = FRotator(-180.0f, -180.0f, -180.0f);
+		Constraint.MaxRotation = FRotator(180.0f, 180.0f, 180.0f);
+		Constraint.bIsHinge = false;
+		Constraint.HingeAxis = 1;
+		OutProfile.Constraints.Add(Constraint);
+	}
+
+	// Check if learned constraints exist
+	OutProfile.bHasLearnedConstraints = CachedLearnedConstraints.Contains(SkeletonPath);
+	if (OutProfile.bHasLearnedConstraints)
+	{
+		OutProfile.LearnedRanges = CachedLearnedConstraints[SkeletonPath].BoneRanges;
+	}
+
+	// Cache the profile
+	CachedSkeletonProfiles.Add(SkeletonPath, OutProfile);
+
+	return true;
+}
+
+bool USkeletonService::GetSkeletonProfile(const FString& SkeletonPath, FSkeletonProfile& OutProfile)
+{
+	if (CachedSkeletonProfiles.Contains(SkeletonPath))
+	{
+		OutProfile = CachedSkeletonProfiles[SkeletonPath];
+		return true;
+	}
+
+	OutProfile.bIsValid = false;
+	return false;
+}
+
+bool USkeletonService::LearnFromAnimations(
+	const FString& SkeletonPath,
+	int32 MaxAnimations,
+	int32 SamplesPerAnimation,
+	FLearnedConstraintsInfo& OutConstraints)
+{
+	// Validate skeleton first
+	USkeleton* Skeleton = LoadSkeleton(SkeletonPath);
+	if (!Skeleton || !IsValid(Skeleton))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LearnFromAnimations: Invalid skeleton path %s"), *SkeletonPath);
+		return false;
+	}
+
+	OutConstraints.SkeletonPath = SkeletonPath;
+	OutConstraints.AnimationCount = 0;
+	OutConstraints.TotalSamples = 0;
+	OutConstraints.BoneRanges.Empty();
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	int32 BoneCount = RefSkeleton.GetNum();
+	
+	if (BoneCount <= 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LearnFromAnimations: Skeleton has no bones"));
+		return false;
+	}
+
+	// Initialize per-bone rotation accumulators
+	TMap<FString, TArray<FRotator>> BoneRotationSamples;
+	for (int32 i = 0; i < BoneCount; i++)
+	{
+		FString BoneName = RefSkeleton.GetBoneName(i).ToString();
+		BoneRotationSamples.Add(BoneName, TArray<FRotator>());
+	}
+
+	// Build skeleton name for flexible matching
+	FString SkeletonName;
+	{
+		int32 LastSlash, LastDot;
+		if (SkeletonPath.FindLastChar(TEXT('/'), LastSlash))
+		{
+			FString AfterSlash = SkeletonPath.RightChop(LastSlash + 1);
+			if (AfterSlash.FindChar(TEXT('.'), LastDot))
+			{
+				SkeletonName = AfterSlash.Left(LastDot);
+			}
+			else
+			{
+				SkeletonName = AfterSlash;
+			}
+		}
+		else
+		{
+			SkeletonName = SkeletonPath;
+		}
+	}
+
+	// Apply limits
+	const int32 HardLimit = 10;  // Reduced for safety
+	int32 MaxToProcess = MaxAnimations > 0 ? FMath::Min(MaxAnimations, HardLimit) : HardLimit;
+
+	// Use Asset Registry to process ONE animation at a time (no batch list)
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UAnimSequence::StaticClass()->GetClassPathName());
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> AssetList;
+	AssetRegistry.GetAssets(Filter, AssetList);
+
+	int32 ProcessedCount = 0;
+	for (const FAssetData& Asset : AssetList)
+	{
+		if (ProcessedCount >= MaxToProcess)
+		{
+			break;
+		}
+
+		FAssetTagValueRef SkeletonTag = Asset.TagsAndValues.FindTag(FName(TEXT("Skeleton")));
+		if (!SkeletonTag.IsSet())
+		{
+			continue;
+		}
+
+		FString TagSkeletonPath = SkeletonTag.AsString();
+		bool bMatches = TagSkeletonPath.Equals(SkeletonPath) ||
+					TagSkeletonPath.Contains(SkeletonPath) ||
+					SkeletonPath.Contains(TagSkeletonPath) ||
+					TagSkeletonPath.Contains(SkeletonName);
+		if (!bMatches)
+		{
+			continue;
+		}
+
+		const FString AnimPath = Asset.GetObjectPathString();
+		const FString AnimName = Asset.AssetName.ToString();
+
+		// ========== LOAD PHASE ==========
+		UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: Loading anim asset: %s"), *AnimPath);
+		UAnimSequence* AnimSeq = LoadObject<UAnimSequence>(nullptr, *AnimPath);
+		if (!AnimSeq || !IsValid(AnimSeq))
+		{
+			UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: Could not load %s"), *AnimPath);
+			continue;
+		}
+
+		// ========== VALIDATE PHASE ==========
+		USkeleton* AnimSkeleton = AnimSeq->GetSkeleton();
+		if (!AnimSkeleton || !IsValid(AnimSkeleton))
+		{
+			UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: No valid skeleton for %s"), *AnimName);
+			continue;
+		}
+
+		// ========== SAMPLE PHASE ==========
+		int32 SamplesFromThisAnim = 0;
+		const FReferenceSkeleton& AnimRefSkeleton = AnimSkeleton->GetReferenceSkeleton();
+		int32 AnimBoneCount = AnimRefSkeleton.GetNum();
+		if (AnimBoneCount <= 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: Skeleton has no bones for %s"), *AnimName);
+			continue;
+		}
+
+		for (int32 BoneIndex = 0; BoneIndex < AnimBoneCount; BoneIndex++)
+		{
+			FName BoneFName = AnimRefSkeleton.GetBoneName(BoneIndex);
+			FString BoneName = BoneFName.ToString();
+			if (!BoneRotationSamples.Contains(BoneName))
+			{
+				continue;
+			}
+
+			const FTransform& RefPose = AnimRefSkeleton.GetRefBonePose()[BoneIndex];
+			FRotator RefRotation = RefPose.GetRotation().Rotator();
+			BoneRotationSamples[BoneName].Add(RefRotation);
+			OutConstraints.TotalSamples++;
+			SamplesFromThisAnim++;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("LearnFromAnimations: %s - %d samples"), *AnimName, SamplesFromThisAnim);
+		OutConstraints.AnimationCount++;
+		ProcessedCount++;
+	}
+
+	if (ProcessedCount == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("LearnFromAnimations: No animations processed for skeleton"));
+		return true;
+	}
+
+	// Calculate min/max and percentiles for each bone
+	OutConstraints.BoneRanges.Empty();
+	for (const auto& Pair : BoneRotationSamples)
+	{
+		const FString& BoneName = Pair.Key;
+		const TArray<FRotator>& Samples = Pair.Value;
+
+		if (Samples.Num() == 0) continue;
+
+		FLearnedBoneRange Range;
+		Range.BoneName = BoneName;
+		Range.SampleCount = Samples.Num();
+
+		// Separate arrays for each axis
+		TArray<float> Rolls, Pitches, Yaws;
+		for (const FRotator& R : Samples)
+		{
+			Rolls.Add(R.Roll);
+			Pitches.Add(R.Pitch);
+			Yaws.Add(R.Yaw);
+		}
+
+		// Sort for percentile calculation
+		Rolls.Sort();
+		Pitches.Sort();
+		Yaws.Sort();
+
+		// Min/Max
+		Range.MinRotation = FRotator(Pitches[0], Yaws[0], Rolls[0]);
+		Range.MaxRotation = FRotator(Pitches.Last(), Yaws.Last(), Rolls.Last());
+
+		// 5th and 95th percentiles
+		int32 P5Index = FMath::Clamp(Samples.Num() * 5 / 100, 0, Samples.Num() - 1);
+		int32 P95Index = FMath::Clamp(Samples.Num() * 95 / 100, 0, Samples.Num() - 1);
+		
+		Range.Percentile5 = FRotator(Pitches[P5Index], Yaws[P5Index], Rolls[P5Index]);
+		Range.Percentile95 = FRotator(Pitches[P95Index], Yaws[P95Index], Rolls[P95Index]);
+
+		OutConstraints.BoneRanges.Add(Range);
+	}
+
+	// Cache the learned constraints
+	CachedLearnedConstraints.Add(SkeletonPath, OutConstraints);
+
+	// Update cached profile if exists
+	if (CachedSkeletonProfiles.Contains(SkeletonPath))
+	{
+		CachedSkeletonProfiles[SkeletonPath].bHasLearnedConstraints = true;
+		CachedSkeletonProfiles[SkeletonPath].LearnedRanges = OutConstraints.BoneRanges;
+	}
+
+	return true;
+}
+
+bool USkeletonService::GetLearnedConstraints(const FString& SkeletonPath, FLearnedConstraintsInfo& OutConstraints)
+{
+	if (CachedLearnedConstraints.Contains(SkeletonPath))
+	{
+		OutConstraints = CachedLearnedConstraints[SkeletonPath];
+		return true;
+	}
+
+	return false;
+}
+
+bool USkeletonService::SetBoneConstraints(
+	const FString& SkeletonPath,
+	const FString& BoneName,
+	const FRotator& MinRotation,
+	const FRotator& MaxRotation,
+	bool bIsHinge,
+	int32 HingeAxis)
+{
+	// Ensure profile exists
+	if (!CachedSkeletonProfiles.Contains(SkeletonPath))
+	{
+		FSkeletonProfile Profile;
+		if (!CreateSkeletonProfile(SkeletonPath, Profile))
+		{
+			return false;
+		}
+	}
+
+	FSkeletonProfile& Profile = CachedSkeletonProfiles[SkeletonPath];
+
+	// Find and update the constraint for this bone
+	for (FBoneConstraint& Constraint : Profile.Constraints)
+	{
+		if (Constraint.BoneName.Equals(BoneName, ESearchCase::IgnoreCase))
+		{
+			Constraint.MinRotation = MinRotation;
+			Constraint.MaxRotation = MaxRotation;
+			Constraint.bIsHinge = bIsHinge;
+			Constraint.HingeAxis = HingeAxis;
+			return true;
+		}
+	}
+
+	// Bone not found in skeleton
+	UE_LOG(LogTemp, Warning, TEXT("USkeletonService::SetBoneConstraints: Bone not found: %s"), *BoneName);
+	return false;
+}
+
+bool USkeletonService::ValidateBoneRotation(
+	const FString& SkeletonPath,
+	const FString& BoneName,
+	const FRotator& Rotation,
+	bool bUseLearnedConstraints,
+	FBoneValidationResult& OutResult)
+{
+	OutResult.BoneName = BoneName;
+	OutResult.OriginalRotation = Rotation;
+	OutResult.ClampedRotation = Rotation;
+	OutResult.bIsValid = true;
+	OutResult.ViolationType = TEXT("None");
+
+	FRotator MinLimit, MaxLimit;
+
+	if (bUseLearnedConstraints)
+	{
+		// Use learned constraints
+		if (!CachedLearnedConstraints.Contains(SkeletonPath))
+		{
+			OutResult.Message = TEXT("No learned constraints available for this skeleton");
+			return true; // Validation completed but no constraints to check
+		}
+
+		const FLearnedConstraintsInfo& Learned = CachedLearnedConstraints[SkeletonPath];
+		bool bFound = false;
+		for (const FLearnedBoneRange& Range : Learned.BoneRanges)
+		{
+			if (Range.BoneName.Equals(BoneName, ESearchCase::IgnoreCase))
+			{
+				// Use safe percentile range
+				MinLimit = Range.Percentile5;
+				MaxLimit = Range.Percentile95;
+				bFound = true;
+				break;
+			}
+		}
+
+		if (!bFound)
+		{
+			OutResult.Message = TEXT("Bone not found in learned constraints");
+			return true;
+		}
+	}
+	else
+	{
+		// Use manual constraints
+		if (!CachedSkeletonProfiles.Contains(SkeletonPath))
+		{
+			FSkeletonProfile Profile;
+			CreateSkeletonProfile(SkeletonPath, Profile);
+		}
+
+		const FSkeletonProfile& Profile = CachedSkeletonProfiles[SkeletonPath];
+		bool bFound = false;
+		bool bIsHinge = false;
+		int32 HingeAxis = 1;
+
+		for (const FBoneConstraint& Constraint : Profile.Constraints)
+		{
+			if (Constraint.BoneName.Equals(BoneName, ESearchCase::IgnoreCase))
+			{
+				MinLimit = Constraint.MinRotation;
+				MaxLimit = Constraint.MaxRotation;
+				bIsHinge = Constraint.bIsHinge;
+				HingeAxis = Constraint.HingeAxis;
+				bFound = true;
+				break;
+			}
+		}
+
+		if (!bFound)
+		{
+			OutResult.Message = TEXT("Bone not found in skeleton profile");
+			return false;
+		}
+
+		// Check hinge constraint
+		if (bIsHinge)
+		{
+			bool bHingeViolation = false;
+			switch (HingeAxis)
+			{
+				case 0: // Roll (X)
+					if (FMath::Abs(Rotation.Pitch) > 0.1f || FMath::Abs(Rotation.Yaw) > 0.1f)
+					{
+						bHingeViolation = true;
+						OutResult.ClampedRotation.Pitch = 0.0f;
+						OutResult.ClampedRotation.Yaw = 0.0f;
+					}
+					break;
+				case 1: // Pitch (Y)
+					if (FMath::Abs(Rotation.Roll) > 0.1f || FMath::Abs(Rotation.Yaw) > 0.1f)
+					{
+						bHingeViolation = true;
+						OutResult.ClampedRotation.Roll = 0.0f;
+						OutResult.ClampedRotation.Yaw = 0.0f;
+					}
+					break;
+				case 2: // Yaw (Z)
+					if (FMath::Abs(Rotation.Roll) > 0.1f || FMath::Abs(Rotation.Pitch) > 0.1f)
+					{
+						bHingeViolation = true;
+						OutResult.ClampedRotation.Roll = 0.0f;
+						OutResult.ClampedRotation.Pitch = 0.0f;
+					}
+					break;
+			}
+
+			if (bHingeViolation)
+			{
+				OutResult.bIsValid = false;
+				OutResult.ViolationType = TEXT("HingeViolation");
+				OutResult.Message = FString::Printf(TEXT("Bone %s is a hinge joint on axis %d; non-hinge axes were zeroed"), *BoneName, HingeAxis);
+			}
+		}
+	}
+
+	// Check min/max limits
+	FRotator Clamped = Rotation;
+	bool bWasClamped = false;
+
+	if (Rotation.Roll < MinLimit.Roll)
+	{
+		Clamped.Roll = MinLimit.Roll;
+		bWasClamped = true;
+	}
+	else if (Rotation.Roll > MaxLimit.Roll)
+	{
+		Clamped.Roll = MaxLimit.Roll;
+		bWasClamped = true;
+	}
+
+	if (Rotation.Pitch < MinLimit.Pitch)
+	{
+		Clamped.Pitch = MinLimit.Pitch;
+		bWasClamped = true;
+	}
+	else if (Rotation.Pitch > MaxLimit.Pitch)
+	{
+		Clamped.Pitch = MaxLimit.Pitch;
+		bWasClamped = true;
+	}
+
+	if (Rotation.Yaw < MinLimit.Yaw)
+	{
+		Clamped.Yaw = MinLimit.Yaw;
+		bWasClamped = true;
+	}
+	else if (Rotation.Yaw > MaxLimit.Yaw)
+	{
+		Clamped.Yaw = MaxLimit.Yaw;
+		bWasClamped = true;
+	}
+
+	if (bWasClamped)
+	{
+		OutResult.bIsValid = false;
+		if (OutResult.ViolationType == TEXT("None"))
+		{
+			OutResult.ViolationType = TEXT("MaxExceeded");
+		}
+		OutResult.ClampedRotation = Clamped;
+		OutResult.Message = FString::Printf(
+			TEXT("Rotation clamped from (%.1f, %.1f, %.1f) to (%.1f, %.1f, %.1f)"),
+			Rotation.Pitch, Rotation.Yaw, Rotation.Roll,
+			Clamped.Pitch, Clamped.Yaw, Clamped.Roll
+		);
+	}
+
+	return true;
 }

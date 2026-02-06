@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UAnimSequenceService.h"
+#include "PythonAPI/USkeletonService.h"
 
 #include "Animation/AnimSequence.h"
 #include "Animation/Skeleton.h"
@@ -21,6 +22,18 @@
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "JsonObjectConverter.h"
 
+// Animation pose capture includes
+#include "Engine/SkeletalMesh.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/SceneCaptureComponent2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "HAL/PlatformFileManager.h"
+#include "Misc/FileHelper.h"
+#include "IImageWrapper.h"
+#include "IImageWrapperModule.h"
+#include "Modules/ModuleManager.h"
+#include "Utils/VibeUEPaths.h"
+
 // ============================================================================
 // PRIVATE HELPERS
 // ============================================================================
@@ -34,6 +47,7 @@ UAnimSequence* UAnimSequenceService::LoadAnimSequence(const FString& AnimPath)
 	}
 
 	// First, try direct load
+	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::LoadAnimSequence: Loading asset: %s"), *AnimPath);
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(AnimPath);
 	if (LoadedObject)
 	{
@@ -280,14 +294,20 @@ TArray<FAnimSequenceInfo> UAnimSequenceService::ListAnimSequences(
 		else if (!SkeletonFilter.IsEmpty())
 		{
 			// If we need skeleton filter but don't have tag data, load the asset
-			FSoftObjectPath AssetPath(Asset.GetSoftObjectPath());
-			UAnimSequence* AnimSeq = Cast<UAnimSequence>(AssetPath.TryLoad());
-			if (!AnimSeq)
+			UE_LOG(LogTemp, Log, TEXT("ListAnimSequences: Loading asset for skeleton filter: %s"), *Asset.GetObjectPathString());
+			UAnimSequence* AnimSeq = Cast<UAnimSequence>(Asset.GetAsset());
+			if (!AnimSeq || !IsValid(AnimSeq))
 			{
-				continue;
+				FSoftObjectPath AssetPath(Asset.GetSoftObjectPath());
+				UE_LOG(LogTemp, Log, TEXT("ListAnimSequences: TryLoad asset: %s"), *AssetPath.ToString());
+				AnimSeq = Cast<UAnimSequence>(AssetPath.TryLoad());
+				if (!AnimSeq || !IsValid(AnimSeq))
+				{
+					continue;
+				}
 			}
 			USkeleton* Skeleton = AnimSeq->GetSkeleton();
-			if (!Skeleton || !Skeleton->GetPathName().Contains(SkeletonFilter))
+			if (!Skeleton || !IsValid(Skeleton) || !Skeleton->GetPathName().Contains(SkeletonFilter))
 			{
 				continue;
 			}
@@ -337,23 +357,100 @@ TArray<FAnimSequenceInfo> UAnimSequenceService::FindAnimationsForSkeleton(const 
 	TArray<FAssetData> AssetList;
 	AssetRegistry.GetAssets(Filter, AssetList);
 
+	// Limit results to prevent memory issues
+	const int32 MaxResults = 100;
+	int32 MatchCount = 0;
+
+	// Extract skeleton name from path for flexible matching
+	// Path can be: "/Game/Path/SK_Name.SK_Name" or "/Game/Path/SK_Name"
+	FString SkeletonName;
+	{
+		int32 LastSlash, LastDot;
+		if (SkeletonPath.FindLastChar(TEXT('/'), LastSlash))
+		{
+			FString AfterSlash = SkeletonPath.RightChop(LastSlash + 1);
+			if (AfterSlash.FindChar(TEXT('.'), LastDot))
+			{
+				SkeletonName = AfterSlash.Left(LastDot);
+			}
+			else
+			{
+				SkeletonName = AfterSlash;
+			}
+		}
+		else
+		{
+			SkeletonName = SkeletonPath;
+		}
+	}
+
+	// NO LOADING VERSION: Build info entirely from asset registry tags
 	for (const FAssetData& Asset : AssetList)
 	{
-		// Use soft load to avoid crashes on corrupted/invalid assets
-		FSoftObjectPath AssetPath(Asset.GetSoftObjectPath());
-		UAnimSequence* AnimSeq = Cast<UAnimSequence>(AssetPath.TryLoad());
-		if (!AnimSeq)
+		if (MatchCount >= MaxResults)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("FindAnimationsForSkeleton: Limiting results to %d animations"), MaxResults);
+			break;
+		}
+
+		// Filter by skeleton using asset tag ONLY - no loading
+		FAssetTagValueRef SkeletonTag = Asset.TagsAndValues.FindTag(FName(TEXT("Skeleton")));
+		if (!SkeletonTag.IsSet())
+		{
+			continue;  // Skip assets without skeleton tags
+		}
+
+		FString TagSkeletonPath = SkeletonTag.AsString();
+		
+		// Flexible path matching
+		bool bMatches = TagSkeletonPath.Equals(SkeletonPath) ||
+		                TagSkeletonPath.Contains(SkeletonPath) ||
+		                SkeletonPath.Contains(TagSkeletonPath) ||
+		                TagSkeletonPath.Contains(SkeletonName);
+		
+		if (!bMatches)
 		{
 			continue;
 		}
 
-		USkeleton* Skeleton = AnimSeq->GetSkeleton();
-		if (Skeleton && Skeleton->GetPathName().Equals(SkeletonPath))
+		// Build info from asset registry tags WITHOUT loading the asset
+		FAnimSequenceInfo Info;
+		Info.AnimPath = Asset.GetObjectPathString();
+		Info.AnimName = Asset.AssetName.ToString();
+		Info.SkeletonPath = TagSkeletonPath;
+
+		// Try to get additional info from tags if available
+		FAssetTagValueRef DurationTag = Asset.TagsAndValues.FindTag(FName(TEXT("SequenceLength")));
+		if (DurationTag.IsSet())
 		{
-			FAnimSequenceInfo Info;
-			FillAnimSequenceInfo(AnimSeq, Info);
-			Results.Add(Info);
+			Info.Duration = FCString::Atof(*DurationTag.AsString());
 		}
+		
+		FAssetTagValueRef FrameRateTag = Asset.TagsAndValues.FindTag(FName(TEXT("SamplingFrameRate")));
+		if (FrameRateTag.IsSet())
+		{
+			Info.FrameRate = FCString::Atof(*FrameRateTag.AsString());
+		}
+		else
+		{
+			Info.FrameRate = 30.0f;  // Default assumption
+		}
+		
+		// Compute approximate frame count from duration and frame rate
+		if (Info.Duration > 0 && Info.FrameRate > 0)
+		{
+			Info.FrameCount = FMath::CeilToInt(Info.Duration * Info.FrameRate);
+		}
+
+		// Try to get compressed size from tags
+		FAssetTagValueRef CompressedSizeTag = Asset.TagsAndValues.FindTag(FName(TEXT("CompressedSize")));
+		if (CompressedSizeTag.IsSet())
+		{
+			Info.CompressedSize = FCString::Atoi64(*CompressedSizeTag.AsString());
+		}
+
+		Results.Add(Info);
+		MatchCount++;
 	}
 
 	return Results;
@@ -382,15 +479,23 @@ TArray<FAnimSequenceInfo> UAnimSequenceService::SearchAnimations(
 		FString AssetName = Asset.AssetName.ToString();
 		if (AssetName.MatchesWildcard(NamePattern))
 		{
-			// Use soft load to avoid crashes on corrupted/invalid assets
-			FSoftObjectPath AssetPath(Asset.GetSoftObjectPath());
-			UAnimSequence* AnimSeq = Cast<UAnimSequence>(AssetPath.TryLoad());
-			if (AnimSeq)
+			// Use GetAsset first (if already loaded), then TryLoad as fallback
+			UE_LOG(LogTemp, Log, TEXT("SearchAnimations: Loading asset for name match: %s"), *Asset.GetObjectPathString());
+			UAnimSequence* AnimSeq = Cast<UAnimSequence>(Asset.GetAsset());
+			if (!AnimSeq || !IsValid(AnimSeq))
 			{
-				FAnimSequenceInfo Info;
-				FillAnimSequenceInfo(AnimSeq, Info);
-				Results.Add(Info);
+				FSoftObjectPath AssetPath(Asset.GetSoftObjectPath());
+				UE_LOG(LogTemp, Log, TEXT("SearchAnimations: TryLoad asset: %s"), *AssetPath.ToString());
+				AnimSeq = Cast<UAnimSequence>(AssetPath.TryLoad());
+				if (!AnimSeq || !IsValid(AnimSeq))
+				{
+					continue;
+				}
 			}
+			
+			FAnimSequenceInfo Info;
+			FillAnimSequenceInfo(AnimSeq, Info);
+			Results.Add(Info);
 		}
 	}
 
@@ -607,14 +712,10 @@ FString UAnimSequenceService::CreateAnimSequence(
 		bool bTrackExists = false;
 		if (DataModel)
 		{
-			for (const FBoneAnimationTrack& ExistingTrack : DataModel->GetBoneAnimationTracks())
-			{
-				if (ExistingTrack.Name == BoneFName)
-				{
-					bTrackExists = true;
-					break;
-				}
-			}
+			// Use GetBoneTrackNames to avoid deprecated GetBoneAnimationTracks
+			TArray<FName> ExistingTrackNames;
+			DataModel->GetBoneTrackNames(ExistingTrackNames);
+			bTrackExists = ExistingTrackNames.Contains(BoneFName);
 		}
 
 		// Add bone track only if it doesn't exist
@@ -936,7 +1037,8 @@ bool UAnimSequenceService::GetBoneTransformAtTime(
 
 	// Get bone transform at time using FSkeletonPoseBoneIndex
 	FSkeletonPoseBoneIndex SkeletonBoneIndex(BoneIndex);
-	AnimSeq->GetBoneTransform(OutTransform, SkeletonBoneIndex, static_cast<double>(Time), true);
+	FAnimExtractContext ExtractionContext(static_cast<double>(Time));
+	AnimSeq->GetBoneTransform(OutTransform, SkeletonBoneIndex, ExtractionContext, true);
 
 	if (bGlobalSpace)
 	{
@@ -949,7 +1051,8 @@ bool UAnimSequenceService::GetBoneTransformAtTime(
 		{
 			FTransform BoneTransform;
 			FSkeletonPoseBoneIndex CurrentSkeletonIndex(CurrentIndex);
-			AnimSeq->GetBoneTransform(BoneTransform, CurrentSkeletonIndex, static_cast<double>(Time), true);
+			FAnimExtractContext ChainExtractionContext(static_cast<double>(Time));
+			AnimSeq->GetBoneTransform(BoneTransform, CurrentSkeletonIndex, ChainExtractionContext, true);
 			ChainTransforms.Insert(BoneTransform, 0);
 			CurrentIndex = RefSkeleton.GetParentIndex(CurrentIndex);
 		}
@@ -1021,11 +1124,12 @@ TArray<FBonePose> UAnimSequenceService::GetPoseAtTime(
 	// First pass: get all local transforms
 	TArray<FTransform> LocalTransforms;
 	LocalTransforms.SetNum(NumBones);
+	FAnimExtractContext PoseExtractionContext(static_cast<double>(Time));
 
 	for (int32 BoneIndex = 0; BoneIndex < NumBones; ++BoneIndex)
 	{
 		FSkeletonPoseBoneIndex SkeletonBoneIndex(BoneIndex);
-		AnimSeq->GetBoneTransform(LocalTransforms[BoneIndex], SkeletonBoneIndex, static_cast<double>(Time), true);
+		AnimSeq->GetBoneTransform(LocalTransforms[BoneIndex], SkeletonBoneIndex, PoseExtractionContext, true);
 	}
 
 	// Second pass: compute global transforms if needed and fill results
@@ -1093,8 +1197,9 @@ bool UAnimSequenceService::GetRootMotionAtTime(
 
 	Time = FMath::Clamp(Time, 0.0f, AnimSeq->GetPlayLength());
 
-	// ExtractRootMotion(StartTime, DeltaTime, bAllowLooping)
-	OutTransform = AnimSeq->ExtractRootMotion(0.0f, Time, false);
+	// Use FAnimExtractContext to avoid deprecation warning
+	FAnimExtractContext RootMotionContext(static_cast<double>(Time), true);
+	OutTransform = AnimSeq->ExtractRootMotion(RootMotionContext);
 	return true;
 }
 
@@ -1108,8 +1213,9 @@ bool UAnimSequenceService::GetTotalRootMotion(
 		return false;
 	}
 
-	// ExtractRootMotion(StartTime, DeltaTime, bAllowLooping)
-	OutTransform = AnimSeq->ExtractRootMotion(0.0f, AnimSeq->GetPlayLength(), false);
+	// Use FAnimExtractContext to avoid deprecation warning
+	FAnimExtractContext TotalRootMotionContext(static_cast<double>(AnimSeq->GetPlayLength()), true);
+	OutTransform = AnimSeq->ExtractRootMotion(TotalRootMotionContext);
 	return true;
 }
 
@@ -2650,4 +2756,1223 @@ bool UAnimSequenceService::StopPreview(const FString& AnimPath)
 	// TODO: Implement through IPersonaToolkit if editor is open
 	UE_LOG(LogTemp, Log, TEXT("UAnimSequenceService::StopPreview: Would stop preview for %s"), *AnimPath);
 	return true;
+}
+
+// ============================================================================
+// PREVIEW EDITING
+// ============================================================================
+
+// Static storage for preview state
+struct FPreviewEditState
+{
+	TArray<FBoneDelta> PendingDeltas;
+	int32 PreviewFrame = 0;
+	FString Space;
+	bool bIsActive = false;
+};
+
+static TMap<FString, FPreviewEditState> ActivePreviews;
+
+bool UAnimSequenceService::PreviewBoneRotation(
+	const FString& AnimPath,
+	const FString& BoneName,
+	const FRotator& RotationDelta,
+	const FString& Space,
+	int32 PreviewFrame,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+	OutResult.bWasClamped = false;
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
+		return false;
+	}
+
+	// Verify bone exists
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	int32 BoneIndex = RefSkeleton.FindBoneIndex(FName(*BoneName));
+	if (BoneIndex == INDEX_NONE)
+	{
+		OutResult.ErrorMessage = FString::Printf(TEXT("Bone not found: %s"), *BoneName);
+		return false;
+	}
+
+	// Validate rotation against constraints
+	FBoneValidationResult ValidationResult;
+	FString SkeletonPath = Skeleton->GetPathName();
+	USkeletonService::ValidateBoneRotation(SkeletonPath, BoneName, RotationDelta, true, ValidationResult);
+
+	FRotator EffectiveRotation = RotationDelta;
+	if (!ValidationResult.bIsValid)
+	{
+		OutResult.bWasClamped = true;
+		EffectiveRotation = ValidationResult.ClampedRotation;
+		OutResult.Messages.Add(ValidationResult.Message);
+	}
+
+	// Add to preview state
+	FPreviewEditState& PreviewState = ActivePreviews.FindOrAdd(AnimPath);
+	PreviewState.bIsActive = true;
+	PreviewState.PreviewFrame = PreviewFrame;
+	PreviewState.Space = Space;
+
+	// Check if this bone already has a pending edit
+	bool bFound = false;
+	for (FBoneDelta& Delta : PreviewState.PendingDeltas)
+	{
+		if (Delta.BoneName.Equals(BoneName, ESearchCase::IgnoreCase))
+		{
+			Delta.RotationDelta = EffectiveRotation;
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		FBoneDelta NewDelta;
+		NewDelta.BoneName = BoneName;
+		NewDelta.RotationDelta = EffectiveRotation;
+		PreviewState.PendingDeltas.Add(NewDelta);
+	}
+
+	OutResult.bSuccess = true;
+	OutResult.ModifiedBones.Add(BoneName);
+	OutResult.StartFrame = PreviewFrame;
+	OutResult.EndFrame = PreviewFrame;
+
+	return true;
+}
+
+bool UAnimSequenceService::PreviewPoseDelta(
+	const FString& AnimPath,
+	const TArray<FBoneDelta>& BoneDeltas,
+	const FString& Space,
+	int32 PreviewFrame,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+	OutResult.bWasClamped = false;
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
+		return false;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	FString SkeletonPath = Skeleton->GetPathName();
+
+	// First pass: validate all bones exist
+	for (const FBoneDelta& Delta : BoneDeltas)
+	{
+		int32 BoneIndex = RefSkeleton.FindBoneIndex(FName(*Delta.BoneName));
+		if (BoneIndex == INDEX_NONE)
+		{
+			OutResult.ErrorMessage = FString::Printf(TEXT("Bone not found: %s"), *Delta.BoneName);
+			return false;
+		}
+	}
+
+	// Second pass: validate all rotations and collect effective values
+	TArray<FBoneDelta> EffectiveDeltas;
+	for (const FBoneDelta& Delta : BoneDeltas)
+	{
+		FBoneValidationResult ValidationResult;
+		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, true, ValidationResult);
+
+		FBoneDelta EffectiveDelta = Delta;
+		if (!ValidationResult.bIsValid)
+		{
+			OutResult.bWasClamped = true;
+			EffectiveDelta.RotationDelta = ValidationResult.ClampedRotation;
+			OutResult.Messages.Add(ValidationResult.Message);
+		}
+
+		EffectiveDeltas.Add(EffectiveDelta);
+		OutResult.ModifiedBones.Add(Delta.BoneName);
+	}
+
+	// Apply to preview state (atomic)
+	FPreviewEditState& PreviewState = ActivePreviews.FindOrAdd(AnimPath);
+	PreviewState.bIsActive = true;
+	PreviewState.PreviewFrame = PreviewFrame;
+	PreviewState.Space = Space;
+	PreviewState.PendingDeltas = EffectiveDeltas;
+
+	OutResult.bSuccess = true;
+	OutResult.StartFrame = PreviewFrame;
+	OutResult.EndFrame = PreviewFrame;
+
+	return true;
+}
+
+bool UAnimSequenceService::CancelPreview(const FString& AnimPath)
+{
+	if (ActivePreviews.Contains(AnimPath))
+	{
+		ActivePreviews.Remove(AnimPath);
+		return true;
+	}
+	return false;
+}
+
+bool UAnimSequenceService::GetPreviewState(const FString& AnimPath, FAnimationPreviewState& OutState)
+{
+	OutState.AnimPath = AnimPath;
+
+	if (ActivePreviews.Contains(AnimPath))
+	{
+		const FPreviewEditState& PreviewState = ActivePreviews[AnimPath];
+		OutState.bIsActive = PreviewState.bIsActive;
+		OutState.PendingEditCount = PreviewState.PendingDeltas.Num();
+		OutState.PreviewFrame = PreviewState.PreviewFrame;
+
+		for (const FBoneDelta& Delta : PreviewState.PendingDeltas)
+		{
+			OutState.PendingBones.Add(Delta.BoneName);
+		}
+		return true;
+	}
+
+	OutState.bIsActive = false;
+	OutState.PendingEditCount = 0;
+	return true;
+}
+
+bool UAnimSequenceService::ValidatePose(
+	const FString& AnimPath,
+	bool bUseLearnedConstraints,
+	FPoseValidationResult& OutResult)
+{
+	OutResult.bIsValid = true;
+	OutResult.PassedCount = 0;
+	OutResult.FailedCount = 0;
+
+	if (!ActivePreviews.Contains(AnimPath))
+	{
+		// No preview active - nothing to validate
+		return true;
+	}
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		return false;
+	}
+
+	FString SkeletonPath = Skeleton->GetPathName();
+	const FPreviewEditState& PreviewState = ActivePreviews[AnimPath];
+
+	for (const FBoneDelta& Delta : PreviewState.PendingDeltas)
+	{
+		FBoneValidationResult BoneResult;
+		USkeletonService::ValidateBoneRotation(SkeletonPath, Delta.BoneName, Delta.RotationDelta, bUseLearnedConstraints, BoneResult);
+
+		if (BoneResult.bIsValid)
+		{
+			OutResult.PassedCount++;
+		}
+		else
+		{
+			OutResult.FailedCount++;
+			OutResult.bIsValid = false;
+			OutResult.ViolatingBones.Add(Delta.BoneName);
+			OutResult.ViolationMessages.Add(BoneResult.Message);
+			OutResult.Suggestions.Add(FString::Printf(TEXT("Use clamped value: %s"), *BoneResult.ClampedRotation.ToString()));
+		}
+	}
+
+	return true;
+}
+
+bool UAnimSequenceService::BakePreviewToKeyframes(
+	const FString& AnimPath,
+	int32 StartFrame,
+	int32 EndFrame,
+	const FString& InterpMode,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+
+	if (!ActivePreviews.Contains(AnimPath))
+	{
+		OutResult.ErrorMessage = TEXT("No preview active for this animation");
+		return false;
+	}
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	const FPreviewEditState& PreviewState = ActivePreviews[AnimPath];
+	IAnimationDataController& Controller = AnimSeq->GetController();
+	const IAnimationDataModel* DataModel = AnimSeq->GetDataModel();
+
+	// Resolve frame range
+	int32 TotalFrames = AnimSeq->GetNumberOfSampledKeys();
+	int32 ActualStartFrame = FMath::Max(0, StartFrame);
+	int32 ActualEndFrame = EndFrame < 0 ? TotalFrames - 1 : FMath::Min(EndFrame, TotalFrames - 1);
+
+	// Open bracket for batch editing
+	Controller.OpenBracket(NSLOCTEXT("AnimSequenceService", "BakePreview", "Bake Preview Edits"));
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	float FrameRate = AnimSeq->GetSamplingFrameRate().AsDecimal();
+
+	for (const FBoneDelta& Delta : PreviewState.PendingDeltas)
+	{
+		int32 BoneIndex = RefSkeleton.FindBoneIndex(FName(*Delta.BoneName));
+		if (BoneIndex == INDEX_NONE) continue;
+
+		FName BoneName = FName(*Delta.BoneName);
+		
+		// Build full key arrays for this bone
+		TArray<FVector3f> PositionalKeys;
+		TArray<FQuat4f> RotationalKeys;
+		TArray<FVector3f> ScalingKeys;
+		PositionalKeys.SetNum(TotalFrames);
+		RotationalKeys.SetNum(TotalFrames);
+		ScalingKeys.SetNum(TotalFrames);
+
+		FQuat DeltaQuat = Delta.RotationDelta.Quaternion();
+
+		for (int32 Frame = 0; Frame < TotalFrames; Frame++)
+		{
+			float Time = (float)Frame / FrameRate;
+
+			// Get current transform
+			FTransform CurrentTransform;
+			FSkeletonPoseBoneIndex SkeletonBoneIdx(BoneIndex);
+			FAnimExtractContext FrameExtractionContext(static_cast<double>(Time));
+			AnimSeq->GetBoneTransform(CurrentTransform, SkeletonBoneIdx, FrameExtractionContext, true);
+
+			// Apply delta only within the specified range
+			if (Frame >= ActualStartFrame && Frame <= ActualEndFrame)
+			{
+				FQuat NewRotation = CurrentTransform.GetRotation() * DeltaQuat;
+				CurrentTransform.SetRotation(NewRotation);
+			}
+
+			PositionalKeys[Frame] = FVector3f(CurrentTransform.GetTranslation());
+			RotationalKeys[Frame] = FQuat4f(CurrentTransform.GetRotation());
+			ScalingKeys[Frame] = FVector3f(CurrentTransform.GetScale3D());
+		}
+
+		// Ensure bone track exists
+		Controller.AddBoneCurve(BoneName, false);
+		
+		// Set all keys at once
+		Controller.SetBoneTrackKeys(BoneName, PositionalKeys, RotationalKeys, ScalingKeys, false);
+
+		OutResult.ModifiedBones.Add(Delta.BoneName);
+	}
+
+	Controller.CloseBracket();
+
+	// Clear preview state
+	ActivePreviews.Remove(AnimPath);
+
+	OutResult.bSuccess = true;
+	OutResult.StartFrame = ActualStartFrame;
+	OutResult.EndFrame = ActualEndFrame;
+
+	// Mark dirty and save
+	AnimSeq->MarkPackageDirty();
+
+	return true;
+}
+
+bool UAnimSequenceService::ApplyBoneRotation(
+	const FString& AnimPath,
+	const FString& BoneName,
+	const FRotator& Rotation,
+	const FString& Space,
+	int32 StartFrame,
+	int32 EndFrame,
+	bool bIsDelta,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
+		return false;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	int32 BoneIndex = RefSkeleton.FindBoneIndex(FName(*BoneName));
+	if (BoneIndex == INDEX_NONE)
+	{
+		OutResult.ErrorMessage = FString::Printf(TEXT("Bone not found: %s"), *BoneName);
+		return false;
+	}
+
+	IAnimationDataController& Controller = AnimSeq->GetController();
+
+	int32 TotalFrames = AnimSeq->GetNumberOfSampledKeys();
+	int32 ActualStartFrame = FMath::Max(0, StartFrame);
+	int32 ActualEndFrame = EndFrame < 0 ? TotalFrames - 1 : FMath::Min(EndFrame, TotalFrames - 1);
+	float FrameRate = AnimSeq->GetSamplingFrameRate().AsDecimal();
+
+	Controller.OpenBracket(NSLOCTEXT("AnimSequenceService", "ApplyRotation", "Apply Bone Rotation"));
+
+	FName BoneNameFName = FName(*BoneName);
+	FQuat RotationQuat = Rotation.Quaternion();
+
+	// Build full key arrays for this bone
+	TArray<FVector3f> PositionalKeys;
+	TArray<FQuat4f> RotationalKeys;
+	TArray<FVector3f> ScalingKeys;
+	PositionalKeys.SetNum(TotalFrames);
+	RotationalKeys.SetNum(TotalFrames);
+	ScalingKeys.SetNum(TotalFrames);
+
+	for (int32 Frame = 0; Frame < TotalFrames; Frame++)
+	{
+		float Time = (float)Frame / FrameRate;
+
+		FTransform CurrentTransform;
+		FSkeletonPoseBoneIndex SkeletonBoneIdx(BoneIndex);
+		FAnimExtractContext RotationExtractionContext(static_cast<double>(Time));
+		AnimSeq->GetBoneTransform(CurrentTransform, SkeletonBoneIdx, RotationExtractionContext, true);
+
+		// Apply rotation only within the specified range
+		if (Frame >= ActualStartFrame && Frame <= ActualEndFrame)
+		{
+			FQuat NewRotation;
+			if (bIsDelta)
+			{
+				NewRotation = CurrentTransform.GetRotation() * RotationQuat;
+			}
+			else
+			{
+				NewRotation = RotationQuat;
+			}
+			CurrentTransform.SetRotation(NewRotation);
+		}
+
+		PositionalKeys[Frame] = FVector3f(CurrentTransform.GetTranslation());
+		RotationalKeys[Frame] = FQuat4f(CurrentTransform.GetRotation());
+		ScalingKeys[Frame] = FVector3f(CurrentTransform.GetScale3D());
+	}
+
+	// Ensure bone track exists and set all keys
+	Controller.AddBoneCurve(BoneNameFName, false);
+	Controller.SetBoneTrackKeys(BoneNameFName, PositionalKeys, RotationalKeys, ScalingKeys, false);
+
+	Controller.CloseBracket();
+
+	OutResult.bSuccess = true;
+	OutResult.ModifiedBones.Add(BoneName);
+	OutResult.StartFrame = ActualStartFrame;
+	OutResult.EndFrame = ActualEndFrame;
+
+	AnimSeq->MarkPackageDirty();
+
+	return true;
+}
+
+// ============================================================================
+// POSE UTILITIES
+// ============================================================================
+
+bool UAnimSequenceService::CopyPose(
+	const FString& SrcAnimPath,
+	int32 SrcFrame,
+	const FString& DstAnimPath,
+	int32 DstFrame,
+	const TArray<FString>& BoneFilter,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+
+	UAnimSequence* SrcAnim = LoadAnimSequence(SrcAnimPath);
+	UAnimSequence* DstAnim = LoadAnimSequence(DstAnimPath);
+
+	if (!SrcAnim || !DstAnim)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load source or destination animation");
+		return false;
+	}
+
+	USkeleton* SrcSkeleton = SrcAnim->GetSkeleton();
+	USkeleton* DstSkeleton = DstAnim->GetSkeleton();
+
+	if (!SrcSkeleton || !DstSkeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Source or destination animation has no skeleton");
+		return false;
+	}
+
+	const FReferenceSkeleton& SrcRefSkeleton = SrcSkeleton->GetReferenceSkeleton();
+	const FReferenceSkeleton& DstRefSkeleton = DstSkeleton->GetReferenceSkeleton();
+
+	float SrcTime = (float)SrcFrame / SrcAnim->GetSamplingFrameRate().AsDecimal();
+	float DstFrameRate = DstAnim->GetSamplingFrameRate().AsDecimal();
+	int32 DstTotalFrames = DstAnim->GetNumberOfSampledKeys();
+
+	IAnimationDataController& DstController = DstAnim->GetController();
+
+	DstController.OpenBracket(NSLOCTEXT("AnimSequenceService", "CopyPose", "Copy Pose"));
+
+	int32 BoneCount = SrcRefSkeleton.GetNum();
+	for (int32 i = 0; i < BoneCount; i++)
+	{
+		FString BoneName = SrcRefSkeleton.GetBoneName(i).ToString();
+
+		// Apply filter if provided
+		if (BoneFilter.Num() > 0 && !BoneFilter.Contains(BoneName))
+		{
+			continue;
+		}
+
+		// Check if bone exists in destination
+		int32 DstBoneIndex = DstRefSkeleton.FindBoneIndex(FName(*BoneName));
+		if (DstBoneIndex == INDEX_NONE)
+		{
+			continue;
+		}
+
+		// Get source transform
+		FTransform SrcTransform;
+		FSkeletonPoseBoneIndex SrcSkeletonBoneIdx(i);
+		FAnimExtractContext SrcExtractionContext(static_cast<double>(SrcTime));
+		SrcAnim->GetBoneTransform(SrcTransform, SrcSkeletonBoneIdx, SrcExtractionContext, true);
+
+		// Build full key arrays for destination
+		TArray<FVector3f> PositionalKeys;
+		TArray<FQuat4f> RotationalKeys;
+		TArray<FVector3f> ScalingKeys;
+		PositionalKeys.SetNum(DstTotalFrames);
+		RotationalKeys.SetNum(DstTotalFrames);
+		ScalingKeys.SetNum(DstTotalFrames);
+
+		// Get existing transforms for all frames
+		for (int32 Frame = 0; Frame < DstTotalFrames; Frame++)
+		{
+			float Time = (float)Frame / DstFrameRate;
+			FTransform CurrentTransform;
+			FSkeletonPoseBoneIndex DstSkeletonBoneIdx(DstBoneIndex);
+			FAnimExtractContext DstExtractionContext(static_cast<double>(Time));
+			DstAnim->GetBoneTransform(CurrentTransform, DstSkeletonBoneIdx, DstExtractionContext, true);
+
+			// Override only the target frame with source pose
+			if (Frame == DstFrame)
+			{
+				PositionalKeys[Frame] = FVector3f(SrcTransform.GetTranslation());
+				RotationalKeys[Frame] = FQuat4f(SrcTransform.GetRotation());
+				ScalingKeys[Frame] = FVector3f(SrcTransform.GetScale3D());
+			}
+			else
+			{
+				PositionalKeys[Frame] = FVector3f(CurrentTransform.GetTranslation());
+				RotationalKeys[Frame] = FQuat4f(CurrentTransform.GetRotation());
+				ScalingKeys[Frame] = FVector3f(CurrentTransform.GetScale3D());
+			}
+		}
+
+		FName BoneNameFName = FName(*BoneName);
+		DstController.AddBoneCurve(BoneNameFName, false);
+		DstController.SetBoneTrackKeys(BoneNameFName, PositionalKeys, RotationalKeys, ScalingKeys, false);
+
+		OutResult.ModifiedBones.Add(BoneName);
+	}
+
+	DstController.CloseBracket();
+
+	OutResult.bSuccess = true;
+	OutResult.StartFrame = DstFrame;
+	OutResult.EndFrame = DstFrame;
+
+	DstAnim->MarkPackageDirty();
+
+	return true;
+}
+
+bool UAnimSequenceService::MirrorPose(
+	const FString& AnimPath,
+	int32 Frame,
+	const FString& MirrorAxis,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
+		return false;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	float FrameRate = AnimSeq->GetSamplingFrameRate().AsDecimal();
+	float Time = (float)Frame / FrameRate;
+	int32 TotalFrames = AnimSeq->GetNumberOfSampledKeys();
+
+	// Build mapping of left/right bone pairs
+	TMap<FString, FString> BonePairs;
+	int32 BoneCount = RefSkeleton.GetNum();
+	
+	for (int32 i = 0; i < BoneCount; i++)
+	{
+		FString BoneName = RefSkeleton.GetBoneName(i).ToString();
+		FString LowerName = BoneName.ToLower();
+		
+		FString MirroredName;
+		if (LowerName.EndsWith(TEXT("_l")))
+		{
+			MirroredName = BoneName.Left(BoneName.Len() - 2) + TEXT("_r");
+		}
+		else if (LowerName.EndsWith(TEXT("_r")))
+		{
+			MirroredName = BoneName.Left(BoneName.Len() - 2) + TEXT("_l");
+		}
+		else if (LowerName.Contains(TEXT("left")))
+		{
+			MirroredName = BoneName.Replace(TEXT("left"), TEXT("right"), ESearchCase::IgnoreCase);
+		}
+		else if (LowerName.Contains(TEXT("right")))
+		{
+			MirroredName = BoneName.Replace(TEXT("right"), TEXT("left"), ESearchCase::IgnoreCase);
+		}
+
+		if (!MirroredName.IsEmpty())
+		{
+			// Verify mirrored bone exists
+			if (RefSkeleton.FindBoneIndex(FName(*MirroredName)) != INDEX_NONE)
+			{
+				BonePairs.Add(BoneName, MirroredName);
+			}
+		}
+	}
+
+	// Collect transforms before swapping
+	TMap<FString, FTransform> OriginalTransforms;
+	FAnimExtractContext MirrorExtractionContext(static_cast<double>(Time));
+	for (int32 i = 0; i < BoneCount; i++)
+	{
+		FString BoneName = RefSkeleton.GetBoneName(i).ToString();
+		FTransform BoneTransform;
+		FSkeletonPoseBoneIndex SkeletonBoneIdx(i);
+		AnimSeq->GetBoneTransform(BoneTransform, SkeletonBoneIdx, MirrorExtractionContext, true);
+		OriginalTransforms.Add(BoneName, BoneTransform);
+	}
+
+	IAnimationDataController& Controller = AnimSeq->GetController();
+	Controller.OpenBracket(NSLOCTEXT("AnimSequenceService", "MirrorPose", "Mirror Pose"));
+
+	// Apply mirrored transforms
+	TSet<FString> ProcessedBones;
+	for (const auto& Pair : BonePairs)
+	{
+		if (ProcessedBones.Contains(Pair.Key))
+		{
+			continue;
+		}
+
+		const FString& BoneA = Pair.Key;
+		const FString& BoneB = Pair.Value;
+
+		FTransform TransformA = OriginalTransforms[BoneA];
+		FTransform TransformB = OriginalTransforms[BoneB];
+
+		// Mirror the transforms (flip on mirror axis)
+		if (MirrorAxis.Equals(TEXT("X"), ESearchCase::IgnoreCase))
+		{
+			TransformA.Mirror(EAxis::X, EAxis::X);
+			TransformB.Mirror(EAxis::X, EAxis::X);
+		}
+		else if (MirrorAxis.Equals(TEXT("Y"), ESearchCase::IgnoreCase))
+		{
+			TransformA.Mirror(EAxis::Y, EAxis::Y);
+			TransformB.Mirror(EAxis::Y, EAxis::Y);
+		}
+		else
+		{
+			TransformA.Mirror(EAxis::Z, EAxis::Z);
+			TransformB.Mirror(EAxis::Z, EAxis::Z);
+		}
+
+		// Build full key arrays for bone A
+		int32 BoneAIndex = RefSkeleton.FindBoneIndex(FName(*BoneA));
+		int32 BoneBIndex = RefSkeleton.FindBoneIndex(FName(*BoneB));
+
+		// Process Bone A - copy all existing frames, override target frame with mirrored B
+		{
+			TArray<FVector3f> PositionalKeys;
+			TArray<FQuat4f> RotationalKeys;
+			TArray<FVector3f> ScalingKeys;
+			PositionalKeys.SetNum(TotalFrames);
+			RotationalKeys.SetNum(TotalFrames);
+			ScalingKeys.SetNum(TotalFrames);
+
+			for (int32 F = 0; F < TotalFrames; F++)
+			{
+				float FrameTime = (float)F / FrameRate;
+				FTransform CurrentTransform;
+				FSkeletonPoseBoneIndex SkeletonBoneIdx(BoneAIndex);
+				FAnimExtractContext BoneAExtractionContext(static_cast<double>(FrameTime));
+				AnimSeq->GetBoneTransform(CurrentTransform, SkeletonBoneIdx, BoneAExtractionContext, true);
+
+				if (F == Frame)
+				{
+					// Swap: A gets mirrored B
+					PositionalKeys[F] = FVector3f(TransformB.GetTranslation());
+					RotationalKeys[F] = FQuat4f(TransformB.GetRotation());
+					ScalingKeys[F] = FVector3f(TransformB.GetScale3D());
+				}
+				else
+				{
+					PositionalKeys[F] = FVector3f(CurrentTransform.GetTranslation());
+					RotationalKeys[F] = FQuat4f(CurrentTransform.GetRotation());
+					ScalingKeys[F] = FVector3f(CurrentTransform.GetScale3D());
+				}
+			}
+
+			Controller.AddBoneCurve(FName(*BoneA), false);
+			Controller.SetBoneTrackKeys(FName(*BoneA), PositionalKeys, RotationalKeys, ScalingKeys, false);
+		}
+
+		// Process Bone B - copy all existing frames, override target frame with mirrored A
+		{
+			TArray<FVector3f> PositionalKeys;
+			TArray<FQuat4f> RotationalKeys;
+			TArray<FVector3f> ScalingKeys;
+			PositionalKeys.SetNum(TotalFrames);
+			RotationalKeys.SetNum(TotalFrames);
+			ScalingKeys.SetNum(TotalFrames);
+
+			for (int32 F = 0; F < TotalFrames; F++)
+			{
+				float FrameTime = (float)F / FrameRate;
+				FTransform CurrentTransform;
+				FSkeletonPoseBoneIndex SkeletonBoneIdx(BoneBIndex);
+				FAnimExtractContext BoneBExtractionContext(static_cast<double>(FrameTime));
+				AnimSeq->GetBoneTransform(CurrentTransform, SkeletonBoneIdx, BoneBExtractionContext, true);
+
+				if (F == Frame)
+				{
+					// Swap: B gets mirrored A
+					PositionalKeys[F] = FVector3f(TransformA.GetTranslation());
+					RotationalKeys[F] = FQuat4f(TransformA.GetRotation());
+					ScalingKeys[F] = FVector3f(TransformA.GetScale3D());
+				}
+				else
+				{
+					PositionalKeys[F] = FVector3f(CurrentTransform.GetTranslation());
+					RotationalKeys[F] = FQuat4f(CurrentTransform.GetRotation());
+					ScalingKeys[F] = FVector3f(CurrentTransform.GetScale3D());
+				}
+			}
+
+			Controller.AddBoneCurve(FName(*BoneB), false);
+			Controller.SetBoneTrackKeys(FName(*BoneB), PositionalKeys, RotationalKeys, ScalingKeys, false);
+		}
+
+		OutResult.ModifiedBones.Add(BoneA);
+		OutResult.ModifiedBones.Add(BoneB);
+		
+		ProcessedBones.Add(BoneA);
+		ProcessedBones.Add(BoneB);
+	}
+
+	Controller.CloseBracket();
+
+	OutResult.bSuccess = true;
+	OutResult.StartFrame = Frame;
+	OutResult.EndFrame = Frame;
+
+	AnimSeq->MarkPackageDirty();
+
+	return true;
+}
+
+TArray<FBonePose> UAnimSequenceService::GetReferencePose(const FString& SkeletonPath)
+{
+	TArray<FBonePose> Result;
+
+	USkeleton* Skeleton = Cast<USkeleton>(UEditorAssetLibrary::LoadAsset(SkeletonPath));
+	if (!Skeleton)
+	{
+		return Result;
+	}
+
+	const FReferenceSkeleton& RefSkeleton = Skeleton->GetReferenceSkeleton();
+	
+	for (int32 i = 0; i < RefSkeleton.GetNum(); i++)
+	{
+		FBonePose Pose;
+		Pose.BoneName = RefSkeleton.GetBoneName(i).ToString();
+		Pose.BoneIndex = i;
+		Pose.Transform = RefSkeleton.GetRefBonePose()[i];
+		Result.Add(Pose);
+	}
+
+	return Result;
+}
+
+void UAnimSequenceService::QuatToEuler(const FQuat& Quat, FRotator& OutRotator)
+{
+	OutRotator = Quat.Rotator();
+}
+
+// ============================================================================
+// RETARGETING
+// ============================================================================
+
+bool UAnimSequenceService::RetargetPreview(
+	const FString& AnimPath,
+	const FString& TargetSkeletonPath,
+	FAnimationEditResult& OutResult)
+{
+	OutResult.bSuccess = false;
+
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* SourceSkeleton = AnimSeq->GetSkeleton();
+	USkeleton* TargetSkeleton = Cast<USkeleton>(UEditorAssetLibrary::LoadAsset(TargetSkeletonPath));
+
+	if (!SourceSkeleton || !TargetSkeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load source or target skeleton");
+		return false;
+	}
+
+	if (SourceSkeleton == TargetSkeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Source and target skeletons are the same");
+		return false;
+	}
+
+	// Check bone compatibility
+	const FReferenceSkeleton& SourceRef = SourceSkeleton->GetReferenceSkeleton();
+	const FReferenceSkeleton& TargetRef = TargetSkeleton->GetReferenceSkeleton();
+
+	TArray<FString> MissingInTarget;
+	TArray<FString> MissingInSource;
+
+	for (int32 i = 0; i < SourceRef.GetNum(); i++)
+	{
+		FString BoneName = SourceRef.GetBoneName(i).ToString();
+		if (TargetRef.FindBoneIndex(FName(*BoneName)) == INDEX_NONE)
+		{
+			MissingInTarget.Add(BoneName);
+		}
+	}
+
+	for (int32 i = 0; i < TargetRef.GetNum(); i++)
+	{
+		FString BoneName = TargetRef.GetBoneName(i).ToString();
+		if (SourceRef.FindBoneIndex(FName(*BoneName)) == INDEX_NONE)
+		{
+			MissingInSource.Add(BoneName);
+		}
+	}
+
+	if (MissingInTarget.Num() > 0)
+	{
+		OutResult.Messages.Add(FString::Printf(TEXT("Bones in source but not in target: %s"), 
+			*FString::Join(MissingInTarget, TEXT(", "))));
+	}
+
+	if (MissingInSource.Num() > 0)
+	{
+		OutResult.Messages.Add(FString::Printf(TEXT("Bones in target but not in source: %s"), 
+			*FString::Join(MissingInSource, TEXT(", "))));
+	}
+
+	// Open animation editor with the target skeleton context
+	// Note: Full retarget preview requires IPersonaToolkit integration
+	if (GEditor)
+	{
+		GEditor->GetEditorSubsystem<UAssetEditorSubsystem>()->OpenEditorForAsset(AnimSeq);
+		OutResult.Messages.Add(TEXT("Animation editor opened. Manual retarget preview required."));
+	}
+
+	OutResult.bSuccess = true;
+	return true;
+}
+
+// ============================================================================
+// ANIMATION POSE CAPTURE (Visual Feedback)
+// ============================================================================
+
+bool UAnimSequenceService::CaptureAnimationPose(
+	const FString& AnimPath,
+	float Time,
+	const FString& OutputPath,
+	const FString& CameraAngle,
+	int32 ImageWidth,
+	int32 ImageHeight,
+	FAnimationPoseCaptureResult& OutResult)
+{
+	OutResult.bSuccess = false;
+	OutResult.AnimPath = AnimPath;
+	OutResult.CapturedTime = Time;
+
+	// Validate and set defaults
+	if (ImageWidth <= 0) ImageWidth = 512;
+	if (ImageHeight <= 0) ImageHeight = 512;
+	FString ActualCameraAngle = CameraAngle.IsEmpty() ? TEXT("three_quarter") : CameraAngle;
+	
+	// Use VibeUE screenshots directory as default if no path provided
+	FString ActualOutputPath = OutputPath;
+	if (ActualOutputPath.IsEmpty())
+	{
+		FString ScreenshotsDir = FVibeUEPaths::GetScreenshotsDir();
+		FString AnimName = FPaths::GetBaseFilename(AnimPath);
+		ActualOutputPath = ScreenshotsDir / FString::Printf(TEXT("%s_%.2fs.png"), *AnimName, Time);
+	}
+
+	// Load animation
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to load animation");
+		return false;
+	}
+
+	USkeleton* Skeleton = AnimSeq->GetSkeleton();
+	if (!Skeleton)
+	{
+		OutResult.ErrorMessage = TEXT("Animation has no skeleton");
+		return false;
+	}
+
+	// Find compatible skeletal mesh
+	USkeletalMesh* SkeletalMesh = nullptr;
+	{
+		IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+		FARFilter Filter;
+		Filter.ClassPaths.Add(USkeletalMesh::StaticClass()->GetClassPathName());
+		Filter.bRecursivePaths = true;
+
+		TArray<FAssetData> FoundMeshes;
+		AssetRegistry.GetAssets(Filter, FoundMeshes);
+
+		FString SkeletonPath = Skeleton->GetPathName();
+		for (const FAssetData& AssetData : FoundMeshes)
+		{
+			FAssetDataTagMapSharedView::FFindTagResult SkeletonTag = AssetData.TagsAndValues.FindTag("Skeleton");
+			if (SkeletonTag.IsSet())
+			{
+				FString MeshSkeletonPath = SkeletonTag.GetValue();
+				if (MeshSkeletonPath.Contains(Skeleton->GetName()))
+				{
+					SkeletalMesh = Cast<USkeletalMesh>(AssetData.GetAsset());
+					if (SkeletalMesh)
+					{
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	if (!SkeletalMesh)
+	{
+		OutResult.ErrorMessage = TEXT("Could not find a compatible skeletal mesh for this skeleton");
+		return false;
+	}
+
+	// Get the editor world
+	UWorld* World = GEditor ? GEditor->GetEditorWorldContext().World() : nullptr;
+	if (!World)
+	{
+		OutResult.ErrorMessage = TEXT("No editor world available");
+		return false;
+	}
+
+	// Clamp time to animation duration
+	float Duration = AnimSeq->GetPlayLength();
+	Time = FMath::Clamp(Time, 0.0f, Duration);
+	OutResult.CapturedTime = Time;
+	OutResult.CapturedFrame = FMath::RoundToInt(Time * AnimSeq->GetSamplingFrameRate().AsDecimal());
+
+	// Create temporary render target
+	UTextureRenderTarget2D* RenderTarget = NewObject<UTextureRenderTarget2D>(GetTransientPackage());
+	RenderTarget->RenderTargetFormat = ETextureRenderTargetFormat::RTF_RGBA8;
+	RenderTarget->InitAutoFormat(ImageWidth, ImageHeight);
+	RenderTarget->UpdateResourceImmediate(true);
+
+	// Spawn temporary actor for capture scene
+	FActorSpawnParameters SpawnParams;
+	SpawnParams.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+	AActor* TempActor = World->SpawnActor<AActor>(AActor::StaticClass(), FVector::ZeroVector, FRotator::ZeroRotator, SpawnParams);
+	
+	if (!TempActor)
+	{
+		OutResult.ErrorMessage = TEXT("Failed to spawn temporary capture actor");
+		return false;
+	}
+
+	// Create skeletal mesh component
+	USkeletalMeshComponent* SkelMeshComp = NewObject<USkeletalMeshComponent>(TempActor);
+	SkelMeshComp->SetSkeletalMesh(SkeletalMesh);
+	SkelMeshComp->SetAnimationMode(EAnimationMode::AnimationSingleNode);
+	SkelMeshComp->RegisterComponent();
+	TempActor->SetRootComponent(SkelMeshComp);
+	
+	// Ensure proper world transform - mannequins face -X by default in UE
+	SkelMeshComp->SetWorldRotation(FRotator(0, 0, 0));
+	
+	// Set the animation and position AFTER registration
+	SkelMeshComp->SetAnimation(AnimSeq);
+	SkelMeshComp->Play(false); // Enable playback but don't loop
+	SkelMeshComp->SetPosition(Time, false);
+	SkelMeshComp->SetPlayRate(0.0f); // Freeze at this position
+	
+	// Force update the pose - need to tick to apply the animation
+	SkelMeshComp->TickComponent(0.0f, ELevelTick::LEVELTICK_All, nullptr);
+	SkelMeshComp->RefreshBoneTransforms();
+	SkelMeshComp->FinalizeBoneTransform();
+	
+	// Also tick the actor to ensure transforms are updated
+	TempActor->Tick(0.0f);
+
+	// Calculate camera position based on angle
+	// Use the actual component bounds which reflect current pose
+	FBoxSphereBounds ActualBounds = SkelMeshComp->CalcBounds(SkelMeshComp->GetComponentTransform());
+	FVector MeshCenter = ActualBounds.Origin;
+	float MeshHeight = ActualBounds.BoxExtent.Z * 2.0f;
+	float CameraDistance = FMath::Max(ActualBounds.SphereRadius * 3.0f, 200.0f);
+	
+	FVector CameraLocation;
+	FRotator CameraRotation;
+
+	// Camera rotations: (Pitch, Yaw, Roll)
+	// Roll of 180 flips the camera's up vector to correct upside-down rendering
+	// UE coordinate system: X=forward, Y=right, Z=up
+	// Mannequin faces -Y by default, so "front" should look from +Y toward -Y
+	if (ActualCameraAngle.Equals(TEXT("front"), ESearchCase::IgnoreCase))
+	{
+		CameraLocation = MeshCenter + FVector(0, CameraDistance, 0);
+		CameraRotation = FRotator(0, -90, 180);  // Look at -Y (character's face), flip up
+	}
+	else if (ActualCameraAngle.Equals(TEXT("back"), ESearchCase::IgnoreCase))
+	{
+		CameraLocation = MeshCenter + FVector(0, -CameraDistance, 0);
+		CameraRotation = FRotator(0, 90, 180);  // Look at +Y (character's back), flip up
+	}
+	else if (ActualCameraAngle.Equals(TEXT("side"), ESearchCase::IgnoreCase))
+	{
+		CameraLocation = MeshCenter + FVector(CameraDistance, 0, 0);
+		CameraRotation = FRotator(0, 180, 180);  // Look at -X (character's right side), flip up
+	}
+	else if (ActualCameraAngle.Equals(TEXT("top"), ESearchCase::IgnoreCase))
+	{
+		CameraLocation = MeshCenter + FVector(0, 0, CameraDistance);
+		CameraRotation = FRotator(-90, -90, 0);  // Top view looking down
+	}
+	else // three_quarter (default)
+	{
+		CameraLocation = MeshCenter + FVector(CameraDistance * 0.7f, CameraDistance * 0.7f, CameraDistance * 0.3f);
+		CameraRotation = FRotator(-15, -135, 180);  // Angled view, flip up
+	}
+
+	// Create scene capture component - use WORLD transforms not relative
+	USceneCaptureComponent2D* CaptureComponent = NewObject<USceneCaptureComponent2D>(TempActor);
+	CaptureComponent->TextureTarget = RenderTarget;
+	CaptureComponent->SetWorldLocation(CameraLocation);
+	CaptureComponent->SetWorldRotation(CameraRotation);
+	CaptureComponent->CaptureSource = ESceneCaptureSource::SCS_FinalColorLDR;
+	CaptureComponent->bCaptureEveryFrame = false;
+	CaptureComponent->bCaptureOnMovement = false;
+	CaptureComponent->FOVAngle = 60.0f;
+	CaptureComponent->ShowOnlyComponent(SkelMeshComp);
+	CaptureComponent->PrimitiveRenderMode = ESceneCapturePrimitiveRenderMode::PRM_UseShowOnlyList;
+	CaptureComponent->RegisterComponent();
+
+	// Capture the scene
+	CaptureComponent->CaptureScene();
+
+	// Ensure directory exists
+	FString Directory = FPaths::GetPath(ActualOutputPath);
+	if (!Directory.IsEmpty())
+	{
+		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+		if (!PlatformFile.DirectoryExists(*Directory))
+		{
+			PlatformFile.CreateDirectoryTree(*Directory);
+		}
+	}
+
+	// Ensure .png extension
+	if (!ActualOutputPath.EndsWith(TEXT(".png"), ESearchCase::IgnoreCase))
+	{
+		ActualOutputPath += TEXT(".png");
+	}
+
+	// Read render target pixels
+	TArray<FColor> Pixels;
+	FTextureRenderTargetResource* RTResource = RenderTarget->GameThread_GetRenderTargetResource();
+	if (RTResource && RTResource->ReadPixels(Pixels))
+	{
+		// Flip both Y axis (render target is upside down) and X axis (mirror correction)
+		TArray<FColor> FlippedPixels;
+		FlippedPixels.SetNum(Pixels.Num());
+		for (int32 Y = 0; Y < ImageHeight; ++Y)
+		{
+			for (int32 X = 0; X < ImageWidth; ++X)
+			{
+				// Flip Y (vertical) and X (horizontal) to correct both upside-down and mirror
+				int32 SrcIndex = (ImageHeight - 1 - Y) * ImageWidth + (ImageWidth - 1 - X);
+				int32 DstIndex = Y * ImageWidth + X;
+				FlippedPixels[DstIndex] = Pixels[SrcIndex];
+			}
+		}
+
+		// Save as PNG
+		IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+		TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+		
+		if (ImageWrapper.IsValid() && ImageWrapper->SetRaw(FlippedPixels.GetData(), FlippedPixels.Num() * sizeof(FColor), ImageWidth, ImageHeight, ERGBFormat::BGRA, 8))
+		{
+			// UE 5.7: GetCompressed returns TArray64<uint8> directly
+			TArray64<uint8> PNGData = ImageWrapper->GetCompressed(100);
+			if (PNGData.Num() > 0)
+			{
+				if (FFileHelper::SaveArrayToFile(PNGData, *ActualOutputPath))
+				{
+					OutResult.bSuccess = true;
+					OutResult.ImagePath = ActualOutputPath;
+					OutResult.ImageWidth = ImageWidth;
+					OutResult.ImageHeight = ImageHeight;
+					OutResult.CameraAngle = ActualCameraAngle;
+				}
+				else
+				{
+					OutResult.ErrorMessage = FString::Printf(TEXT("Failed to write file: %s"), *ActualOutputPath);
+				}
+			}
+			else
+			{
+				OutResult.ErrorMessage = TEXT("Failed to compress image to PNG");
+			}
+		}
+		else
+		{
+			OutResult.ErrorMessage = TEXT("Failed to create PNG image wrapper");
+		}
+	}
+	else
+	{
+		OutResult.ErrorMessage = TEXT("Failed to read render target pixels");
+	}
+
+	// Cleanup
+	CaptureComponent->UnregisterComponent();
+	CaptureComponent->DestroyComponent();
+	SkelMeshComp->UnregisterComponent();
+	SkelMeshComp->DestroyComponent();
+	World->DestroyActor(TempActor);
+
+	return OutResult.bSuccess;
+}
+
+TArray<FAnimationPoseCaptureResult> UAnimSequenceService::CaptureAnimationSequence(
+	const FString& AnimPath,
+	const FString& OutputDirectory,
+	int32 FrameCount,
+	const FString& CameraAngle,
+	int32 ImageWidth,
+	int32 ImageHeight)
+{
+	TArray<FAnimationPoseCaptureResult> Results;
+
+	if (FrameCount <= 0)
+	{
+		FrameCount = 8;
+	}
+
+	// Load animation to get duration
+	UAnimSequence* AnimSeq = LoadAnimSequence(AnimPath);
+	if (!AnimSeq)
+	{
+		FAnimationPoseCaptureResult ErrorResult;
+		ErrorResult.bSuccess = false;
+		ErrorResult.ErrorMessage = TEXT("Failed to load animation");
+		Results.Add(ErrorResult);
+		return Results;
+	}
+
+	float Duration = AnimSeq->GetPlayLength();
+	float TimeStep = Duration / FMath::Max(1, FrameCount - 1);
+
+	// Use VibeUE screenshots directory as default if no directory provided
+	FString ActualOutputDir = OutputDirectory;
+	if (ActualOutputDir.IsEmpty())
+	{
+		FString AnimName = FPaths::GetBaseFilename(AnimPath);
+		ActualOutputDir = FVibeUEPaths::GetScreenshotsDir() / AnimName;
+	}
+	
+	// Ensure directory ends with separator
+	if (!ActualOutputDir.EndsWith(TEXT("/")) && !ActualOutputDir.EndsWith(TEXT("\\")))
+	{
+		ActualOutputDir += TEXT("/");
+	}
+
+	// Capture each frame
+	for (int32 i = 0; i < FrameCount; ++i)
+	{
+		float Time = (FrameCount > 1) ? (i * TimeStep) : 0.0f;
+		FString OutputPath = FString::Printf(TEXT("%sframe_%03d.png"), *ActualOutputDir, i);
+
+		FAnimationPoseCaptureResult Result;
+		CaptureAnimationPose(AnimPath, Time, OutputPath, CameraAngle, ImageWidth, ImageHeight, Result);
+		Results.Add(Result);
+	}
+
+	return Results;
 }

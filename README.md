@@ -14,9 +14,9 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 18 specialized services with 550+ methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 19 specialized services with 600+ methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
-- **MCP Discovery Tools** - 6 tools for exploring and executing Python in Unreal context
+- **MCP Discovery Tools** - 7 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and Windsurf via MCP
 
@@ -210,30 +210,30 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (19 services, 570+ methods)
+### 2. VibeUE Python API Services (19 services, 600 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
-| `BlueprintService` | 73 | Blueprint lifecycle, variables, functions, components, nodes |
+| `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
+| `BlueprintService` | 75 | Blueprint lifecycle, variables, functions, components, nodes |
+| `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
+| `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
-| `AnimSequenceService` | 75 | Animation sequence creation, keyframes, bone tracks, curves, notifies |
-| `AnimMontageService` | 55 | Animation montages: sections, slots, segments, branching points, blend settings |
-| `SkeletonService` | 47 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
-| `MaterialService` | 29 | Materials and material instances |
-| `MaterialNodeService` | 21 | Material graph expressions and connections |
-| `WidgetService` | 16 | UMG widget blueprints and components |
-| `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
-| `AssetDiscoveryService` | 19 | Asset search, import/export, references |
-| `DataAssetService` | 11 | UDataAsset instances and properties |
-| `DataTableService` | 15 | DataTable rows and structure |
-| `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
-| `ActorService` | 24 | Level actor management |
-| `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
-| `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
-| `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
+| `MaterialService` | 29 | Materials and material instances |
+| `ActorService` | 24 | Level actor management |
+| `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
+| `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
+| `MaterialNodeService` | 21 | Material graph expressions and connections |
+| `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
+| `AssetDiscoveryService` | 19 | Asset search, import/export, references |
+| `WidgetService` | 16 | UMG widget blueprints and components |
+| `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
+| `DataTableService` | 15 | DataTable rows and structure |
+| `DataAssetService` | 11 | UDataAsset instances and properties |
+| `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -465,7 +465,7 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (64 methods)
+### BlueprintService (75 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
@@ -500,7 +500,7 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `discover_nodes(path, search, category)` - Find node types
 - `create_node_by_key(...)` - Create any node type
 
-### AnimGraphService (39 methods)
+### AnimGraphService (38 methods)
 
 AnimGraphService provides comprehensive Animation Blueprint manipulation for state machines, states, transitions, and animation nodes:
 
@@ -558,7 +558,7 @@ AnimGraphService provides comprehensive Animation Blueprint manipulation for sta
 - `open_anim_graph(path, graph)` - Open graph in editor
 - `focus_node(path, node_id)` - Focus on specific node
 
-### AnimMontageService (55 methods)
+### AnimMontageService (62 methods)
 
 AnimMontageService provides comprehensive CRUD operations for Animation Montage assets including section management, slot tracks, animation segments, branching points, and blend settings:
 
@@ -644,7 +644,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `set_preview_time(path, time)` - Set preview playhead
 - `play_preview(path, start_section)` - Play in preview
 
-### MaterialService (26 methods)
+### MaterialService (29 methods)
 
 **Lifecycle:**
 - `create_material(name, path)` - Create material
@@ -668,7 +668,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `connect_to_output(path, expr, output, property)` - Connect to material output
 - `create_parameter(...)` - Create parameter expression
 
-### WidgetService (14 methods)
+### WidgetService (16 methods)
 
 - `list_widget_blueprints(path)` - Find widget blueprints
 - `add_component(path, type, name, parent)` - Add widget
@@ -676,7 +676,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `get_hierarchy(path)` - Get widget tree
 - `bind_event(path, event, function)` - Bind events
 
-### InputService (20 methods)
+### InputService (23 methods)
 
 - `create_action(name, path, value_type)` - Create Input Action
 - `create_mapping_context(name, path, priority)` - Create context
@@ -684,7 +684,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `add_modifier/trigger(...)` - Add modifiers/triggers
 - `get_available_keys(filter)` - List bindable keys
 
-### AssetDiscoveryService (13 methods)
+### AssetDiscoveryService (19 methods)
 
 - `search_assets(term, type)` - Find assets
 - `save_asset(path)` / `save_all_assets()` - Save
@@ -692,14 +692,14 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `export_texture(asset, file)` - Export texture
 - `get_asset_dependencies/referencers(path)` - References
 
-### DataAssetService (10 methods)
+### DataAssetService (11 methods)
 
 - `search_types(filter)` - Find DataAsset subclasses
 - `create_data_asset(class, path, name)` - Create instance
 - `get/set_property(path, name, value)` - Property access
 - `set_properties(path, json)` - Bulk set properties
 
-### DataTableService (13 methods)
+### DataTableService (15 methods)
 
 - `search_row_types(filter)` - Find row struct types
 - `create_data_table(struct, path, name)` - Create table
@@ -717,7 +717,7 @@ ActorService provides comprehensive level actor manipulation:
 - Property access
 - And more
 
-### SkeletonService (47 methods)
+### SkeletonService (53 methods)
 
 SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
 
@@ -830,7 +830,7 @@ SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
 - `copy_system_properties(target, source)` - Copy system settings
 - `debug_activation(path)` - Debug why system isn't playing
 
-### NiagaraEmitterService (19 methods)
+### NiagaraEmitterService (23 methods)
 
 **Module Management:**
 - `list_modules(system, emitter, type)` - List all modules
