@@ -286,9 +286,13 @@ Plugins/VibeUE/BuildPlugin.bat
 VibeUE automatically enables these required plugins during installation:
 
 | Plugin | Purpose |
-|--------|---------|| **PythonScriptPlugin** | Python runtime and Unreal Engine Python API || **EditorScriptingUtilities** | Blueprint and asset manipulation APIs |
+|--------|---------|
+| **PythonScriptPlugin** | Python runtime and Unreal Engine Python API |
+| **EditorScriptingUtilities** | Blueprint and asset manipulation APIs |
 | **EnhancedInput** | Input system discovery and configuration |
 | **AudioCapture** | Speech-to-text input for in-editor chat |
+| **Niagara** | Niagara VFX system and emitter manipulation |
+| **MeshModelingToolset** | Skeleton modifier for bone manipulation |
 
 ---
 
