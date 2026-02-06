@@ -50,6 +50,9 @@ for %%P in (
     "E:\Program Files\Epic Games\UE_5.7"
     "C:\Program Files\Epic Games\UE_5.7"
     "D:\Program Files\Epic Games\UE_5.7"
+    "F:\Program Files\Epic Games\UE_5.7"
+    "G:\Program Files\Epic Games\UE_5.7"
+    "H:\Program Files\Epic Games\UE_5.7"
 ) do (
     if exist "%%~P\Engine\Build\BatchFiles\RunUAT.bat" (
         set "UE_PATH=%%~P"
@@ -84,6 +87,9 @@ for %%P in (
     "E:\Program Files\Epic Games\UE_5.7"
     "C:\Program Files\Epic Games\UE_5.7"
     "D:\Program Files\Epic Games\UE_5.7"
+    "F:\Program Files\Epic Games\UE_5.7"
+    "G:\Program Files\Epic Games\UE_5.7"
+    "H:\Program Files\Epic Games\UE_5.7"
     "E:\Program Files\Epic Games\UE_5.6"
     "%ProgramFiles%\Epic Games\UE_5.6"
     "%ProgramFiles%\Epic Games\UE_5.5"

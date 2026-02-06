@@ -6,16 +6,17 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 ✨ WHAT MAKES VIBEUE SPECIAL:
 
 • 🎮 IN-EDITOR AI CHAT - Built-in chat client inside Unreal Engine!
-• 9 Specialized Python API Services with 203 Combined Methods
-• 6 MCP Discovery & Execution Tools - Explore and execute Python
+• 19 Python API Services with 600+ Combined Methods
+• 7 MCP Discovery & Execution Tools - Explore and execute Python
+• 19 Domain Skills - Lazy-loaded knowledge reducing context overhead 50-65%
 • Native C++ HTTP MCP Server - No Python dependency required
 • Complete Blueprint lifecycle management (create, compile, modify)
-• Blueprint Components, Variables, Functions, and Graph Nodes
+• Animation System - Sequences, Blueprints, Montages, Skeletons with full editing
 • Advanced UMG widget development with property management & events
-• Data Assets & Data Tables - Create and manage game data
+• Niagara Systems & Emitters - Full particle system creation and editing
 • Enhanced Input System - Actions, Mapping Contexts, Modifiers & Triggers
 • Material & Material Instance editing with node graph support
-• Level Actor management - spawn, transform, query actors
+• Project/Engine Settings - Direct access to editor configuration
 • FREE AI tier included - Get a free API key at vibeue.com!
 
 
@@ -48,4 +49,4 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 Transform your Unreal Engine development from manual to magical. Understand existing Blueprints, learn how materials work, and create new content through natural conversation!
 
 
-Requirements: Windows, Unreal Engine 5.7+, Python Script Plugin, EditorScriptingUtilities Plugin, Enhanced Input Plugin, AudioCapture Plugin
+Requirements: Windows/Mac/Linux, Unreal Engine 5.7+, Python Script Plugin, EditorScriptingUtilities Plugin, Enhanced Input Plugin, AudioCapture Plugin, Niagara Plugin, MeshModelingToolset Plugin
