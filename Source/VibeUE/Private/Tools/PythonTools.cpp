@@ -88,6 +88,18 @@ void UPythonTools::Shutdown()
 
 FString UPythonTools::ExecutePythonCode(const FString& Code)
 {
+	// Efficient engine readiness check - once ready, never check again
+	static bool bEngineReady = false;
+	if (!bEngineReady)
+	{
+		// Check engine, editor, and that we're past initial load phase
+		if (!GEngine || !GEditor || GIsInitialLoad)
+		{
+			return TEXT("Unreal Engine Loading");
+		}
+		bEngineReady = true;
+	}
+
 	// Auto-save all dirty packages before executing Python code if enabled
 	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
 	{

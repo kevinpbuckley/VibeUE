@@ -328,6 +328,175 @@ struct FAnimCompressionInfo
 };
 
 /**
+ * A single bone delta for preview editing
+ */
+USTRUCT(BlueprintType)
+struct FBoneDelta
+{
+	GENERATED_BODY()
+
+	/** Name of the bone to modify */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString BoneName;
+
+	/** Rotation delta to apply (Euler degrees) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FRotator RotationDelta = FRotator::ZeroRotator;
+
+	/** Translation delta to apply (optional) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FVector TranslationDelta = FVector::ZeroVector;
+
+	/** Scale delta to apply (multiplicative, default 1,1,1 = no change) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FVector ScaleDelta = FVector::OneVector;
+};
+
+/**
+ * Result of previewing or applying an animation edit
+ */
+USTRUCT(BlueprintType)
+struct FAnimationEditResult
+{
+	GENERATED_BODY()
+
+	/** Whether the edit was successful */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bSuccess = false;
+
+	/** List of bone names that were modified */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> ModifiedBones;
+
+	/** Frame range that was affected (start frame) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 StartFrame = 0;
+
+	/** Frame range that was affected (end frame) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 EndFrame = 0;
+
+	/** Whether any rotations were clamped due to constraints */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bWasClamped = false;
+
+	/** Warnings or informational messages */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> Messages;
+
+	/** Error message if bSuccess is false */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString ErrorMessage;
+};
+
+/**
+ * Result of capturing an animation pose to an image file
+ */
+USTRUCT(BlueprintType)
+struct FAnimationPoseCaptureResult
+{
+	GENERATED_BODY()
+
+	/** Whether the capture was successful */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bSuccess = false;
+
+	/** Full path to the output image file */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString ImagePath;
+
+	/** Animation path that was captured */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString AnimPath;
+
+	/** Time in seconds that was captured */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	float CapturedTime = 0.0f;
+
+	/** Frame number that was captured */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 CapturedFrame = 0;
+
+	/** Width of the captured image */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 ImageWidth = 0;
+
+	/** Height of the captured image */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 ImageHeight = 0;
+
+	/** Camera angle used (front, side, back, three_quarter, top) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString CameraAngle;
+
+	/** Error message if bSuccess is false */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString ErrorMessage;
+};
+
+/**
+ * Result of validating a pose against constraints
+ */
+USTRUCT(BlueprintType)
+struct FPoseValidationResult
+{
+	GENERATED_BODY()
+
+	/** Whether all bones passed validation */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bIsValid = true;
+
+	/** Number of bones that passed validation */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 PassedCount = 0;
+
+	/** Number of bones that failed validation */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 FailedCount = 0;
+
+	/** List of bone names with constraint violations */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> ViolatingBones;
+
+	/** Detailed violation messages per bone */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> ViolationMessages;
+
+	/** Suggested corrections for invalid rotations */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> Suggestions;
+};
+
+/**
+ * State of an active animation preview session
+ */
+USTRUCT(BlueprintType)
+struct FAnimationPreviewState
+{
+	GENERATED_BODY()
+
+	/** Path to the animation being previewed */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString AnimPath;
+
+	/** Whether a preview is currently active */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bIsActive = false;
+
+	/** Number of pending bone edits */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 PendingEditCount = 0;
+
+	/** Bones with pending edits */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> PendingBones;
+
+	/** Frame being previewed */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 PreviewFrame = 0;
+};
+
+/**
  * Animation Sequence service exposed directly to Python.
  *
  * This service provides comprehensive CRUD operations for Animation Sequence assets
@@ -1361,6 +1530,368 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Editor")
 	static bool StopPreview(const FString& AnimPath);
+
+	// ============================================================================
+	// PREVIEW EDITING (Inspect → Preview → Validate → Bake workflow)
+	// ============================================================================
+
+	/**
+	 * Preview a bone rotation delta before baking to keyframes.
+	 * The delta is applied to the bone's current rotation in the specified space.
+	 * Multiple previews can be stacked before baking.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param BoneName - Name of the bone to rotate
+	 * @param RotationDelta - Rotation delta (Euler degrees)
+	 * @param Space - Coordinate space: "local", "component", or "world"
+	 * @param PreviewFrame - Frame to preview at (default: current frame)
+	 * @param OutResult - Result with applied changes and any clamping
+	 * @return True if preview was applied successfully
+	 *
+	 * Example:
+	 *   # Preview rotating the upper arm 30 degrees
+	 *   result = unreal.AnimSequenceService.preview_bone_rotation(
+	 *       "/Game/Anims/AS_Idle",
+	 *       "upperarm_r",
+	 *       unreal.Rotator(0, 30, 0),  # 30 degree pitch
+	 *       "local",
+	 *       0
+	 *   )
+	 *   if result.was_clamped:
+	 *       print("Rotation was clamped to constraints")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool PreviewBoneRotation(
+		const FString& AnimPath,
+		const FString& BoneName,
+		const FRotator& RotationDelta,
+		const FString& Space,
+		int32 PreviewFrame,
+		FAnimationEditResult& OutResult);
+
+	/**
+	 * Preview rotation deltas for multiple bones at once.
+	 * All deltas are applied atomically - if one fails validation, none are applied.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param BoneDeltas - Array of bone deltas to apply
+	 * @param Space - Coordinate space: "local", "component", or "world"
+	 * @param PreviewFrame - Frame to preview at
+	 * @param OutResult - Result with applied changes
+	 * @return True if all previews were applied successfully
+	 *
+	 * Example:
+	 *   deltas = [
+	 *       unreal.BoneDelta(bone_name="upperarm_r", rotation_delta=unreal.Rotator(0, 45, 0)),
+	 *       unreal.BoneDelta(bone_name="lowerarm_r", rotation_delta=unreal.Rotator(0, 30, 0)),
+	 *       unreal.BoneDelta(bone_name="hand_r", rotation_delta=unreal.Rotator(10, 0, 15))
+	 *   ]
+	 *   result = unreal.AnimSequenceService.preview_pose_delta("/Game/Anims/AS_Idle", deltas, "local", 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool PreviewPoseDelta(
+		const FString& AnimPath,
+		const TArray<FBoneDelta>& BoneDeltas,
+		const FString& Space,
+		int32 PreviewFrame,
+		FAnimationEditResult& OutResult);
+
+	/**
+	 * Cancel all pending preview edits without baking to keyframes.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @return True if preview was cancelled
+	 *
+	 * Example:
+	 *   # Discard previewed changes
+	 *   unreal.AnimSequenceService.cancel_preview("/Game/Anims/AS_Idle")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool CancelPreview(const FString& AnimPath);
+
+	/**
+	 * Get the current state of an animation preview session.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param OutState - Current preview state
+	 * @return True if state was retrieved
+	 *
+	 * Example:
+	 *   state = unreal.AnimSequenceService.get_preview_state("/Game/Anims/AS_Idle")
+	 *   if state.is_active:
+	 *       print(f"Previewing {state.pending_edit_count} edits")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool GetPreviewState(
+		const FString& AnimPath,
+		FAnimationPreviewState& OutState);
+
+	/**
+	 * Validate the current preview pose against bone constraints.
+	 * Uses the skeleton's constraint profile (manual or learned).
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param bUseLearnedConstraints - Use learned constraints instead of manual
+	 * @param OutResult - Validation result with violations and suggestions
+	 * @return True if validation completed (check OutResult.bIsValid for pass/fail)
+	 *
+	 * Example:
+	 *   result = unreal.AnimSequenceService.validate_pose("/Game/Anims/AS_Idle", True)
+	 *   if not result.is_valid:
+	 *       for violation in result.violation_messages:
+	 *           print(f"Violation: {violation}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool ValidatePose(
+		const FString& AnimPath,
+		bool bUseLearnedConstraints,
+		FPoseValidationResult& OutResult);
+
+	/**
+	 * Bake all pending preview edits to keyframes in the animation.
+	 * This commits the previewed changes to the actual animation data.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param StartFrame - Start frame of range to bake (0 = start of animation)
+	 * @param EndFrame - End frame of range to bake (-1 = end of animation)
+	 * @param InterpMode - Interpolation mode: "linear", "cubic", "auto"
+	 * @param OutResult - Result with baked frame range and any issues
+	 * @return True if bake was successful
+	 *
+	 * Example:
+	 *   # Bake preview to all frames with cubic interpolation
+	 *   result = unreal.AnimSequenceService.bake_preview_to_keyframes(
+	 *       "/Game/Anims/AS_Idle",
+	 *       0, -1,  # All frames
+	 *       "cubic"
+	 *   )
+	 *   if result.success:
+	 *       print(f"Baked frames {result.start_frame} to {result.end_frame}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool BakePreviewToKeyframes(
+		const FString& AnimPath,
+		int32 StartFrame,
+		int32 EndFrame,
+		const FString& InterpMode,
+		FAnimationEditResult& OutResult);
+
+	/**
+	 * Apply a bone rotation directly to keyframes without preview.
+	 * For quick edits when preview validation is not needed.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param BoneName - Name of the bone to rotate
+	 * @param Rotation - Rotation to apply (absolute or delta based on bIsDelta)
+	 * @param Space - Coordinate space: "local", "component", or "world"
+	 * @param StartFrame - Start frame of range
+	 * @param EndFrame - End frame of range (-1 = end of animation)
+	 * @param bIsDelta - If true, rotation is added to existing; if false, it replaces
+	 * @param OutResult - Result with applied changes
+	 * @return True if rotation was applied successfully
+	 *
+	 * Example:
+	 *   # Add 15 degree rotation to frames 0-30
+	 *   result = unreal.AnimSequenceService.apply_bone_rotation(
+	 *       "/Game/Anims/AS_Idle",
+	 *       "spine_01",
+	 *       unreal.Rotator(0, 0, 15),  # 15 degree yaw
+	 *       "local",
+	 *       0, 30,
+	 *       True  # Delta mode
+	 *   )
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Preview")
+	static bool ApplyBoneRotation(
+		const FString& AnimPath,
+		const FString& BoneName,
+		const FRotator& Rotation,
+		const FString& Space,
+		int32 StartFrame,
+		int32 EndFrame,
+		bool bIsDelta,
+		FAnimationEditResult& OutResult);
+
+	// ============================================================================
+	// POSE UTILITIES
+	// ============================================================================
+
+	/**
+	 * Copy a pose from one frame/animation to another.
+	 *
+	 * @param SrcAnimPath - Source animation path
+	 * @param SrcFrame - Source frame number
+	 * @param DstAnimPath - Destination animation path
+	 * @param DstFrame - Destination frame number
+	 * @param BoneFilter - Optional list of bone names to copy (empty = all bones)
+	 * @param OutResult - Result with copied bones
+	 * @return True if pose was copied successfully
+	 *
+	 * Example:
+	 *   # Copy frame 0 from idle to frame 15 of walk
+	 *   result = unreal.AnimSequenceService.copy_pose(
+	 *       "/Game/Anims/AS_Idle", 0,
+	 *       "/Game/Anims/AS_Walk", 15,
+	 *       []  # All bones
+	 *   )
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	static bool CopyPose(
+		const FString& SrcAnimPath,
+		int32 SrcFrame,
+		const FString& DstAnimPath,
+		int32 DstFrame,
+		const TArray<FString>& BoneFilter,
+		FAnimationEditResult& OutResult);
+
+	/**
+	 * Mirror a pose across the character's symmetry axis.
+	 * Swaps left/right bone transforms (e.g., hand_l ↔ hand_r).
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param Frame - Frame to mirror
+	 * @param MirrorAxis - Axis to mirror across: "X", "Y", or "Z" (default: "X")
+	 * @param OutResult - Result with mirrored bones
+	 * @return True if pose was mirrored successfully
+	 *
+	 * Example:
+	 *   result = unreal.AnimSequenceService.mirror_pose("/Game/Anims/AS_Wave", 15, "X")
+	 *   print(f"Mirrored {len(result.modified_bones)} bones")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	static bool MirrorPose(
+		const FString& AnimPath,
+		int32 Frame,
+		const FString& MirrorAxis,
+		FAnimationEditResult& OutResult);
+
+	/**
+	 * Get the reference pose (T-pose/bind pose) for a skeleton.
+	 *
+	 * @param SkeletonPath - Path to the skeleton asset
+	 * @return Array of bone poses in reference pose
+	 *
+	 * Example:
+	 *   ref_pose = unreal.AnimSequenceService.get_reference_pose("/Game/SK_Mannequin")
+	 *   for bone in ref_pose:
+	 *       print(f"{bone.bone_name}: {bone.transform.rotation}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Pose")
+	static TArray<FBonePose> GetReferencePose(const FString& SkeletonPath);
+
+	/**
+	 * Convert a quaternion to Euler angles (degrees).
+	 *
+	 * @param Quat - Quaternion to convert
+	 * @param OutRotator - Output Euler rotation
+	 *
+	 * Example:
+	 *   euler = unreal.AnimSequenceService.quat_to_euler(some_quat)
+	 *   print(f"Roll={euler.roll}, Pitch={euler.pitch}, Yaw={euler.yaw}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Helpers")
+	static void QuatToEuler(const FQuat& Quat, FRotator& OutRotator);
+
+	// ============================================================================
+	// RETARGETING
+	// ============================================================================
+
+	/**
+	 * Preview an animation on a different skeleton (retarget preview).
+	 * Does not modify the original animation.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param TargetSkeletonPath - Path to the target skeleton
+	 * @param OutResult - Result with any retargeting issues
+	 * @return True if preview was set up successfully
+	 *
+	 * Example:
+	 *   result = unreal.AnimSequenceService.retarget_preview(
+	 *       "/Game/Anims/AS_Run",
+	 *       "/Game/MetaHumans/SK_MetaHuman"
+	 *   )
+	 *   if result.success:
+	 *       print("Preview active - check animation editor")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Retarget")
+	static bool RetargetPreview(
+		const FString& AnimPath,
+		const FString& TargetSkeletonPath,
+		FAnimationEditResult& OutResult);
+
+	// ============================================================================
+	// ANIMATION POSE CAPTURE (Visual Feedback)
+	// ============================================================================
+
+	/**
+	 * Capture an animation pose at a specific time to an image file.
+	 * This renders the skeletal mesh at a specific animation frame without using
+	 * screenshots, providing visual feedback for AI-generated animations.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param Time - Time in seconds to capture (0.0 = first frame)
+	 * @param OutputPath - Full path to output image file (PNG format)
+	 * @param CameraAngle - Camera angle: "front", "side", "back", "three_quarter", "top" (default: "three_quarter")
+	 * @param ImageWidth - Width of output image in pixels (default: 512)
+	 * @param ImageHeight - Height of output image in pixels (default: 512)
+	 * @param OutResult - Capture result with file info
+	 * @return True if capture was successful
+	 *
+	 * Example:
+	 *   result = unreal.AnimSequenceService.capture_animation_pose(
+	 *       "/Game/Animations/AS_Run",
+	 *       0.5,  # Capture at 0.5 seconds
+	 *       "C:/Temp/run_frame.png",
+	 *       "three_quarter",
+	 *       512, 512
+	 *   )
+	 *   if result.success:
+	 *       print(f"Captured to: {result.image_path}")
+	 *
+	 * Note: This spawns a temporary actor, sets the pose, renders to texture,
+	 * and exports to PNG - all without affecting the current viewport or taking screenshots.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Capture")
+	static bool CaptureAnimationPose(
+		const FString& AnimPath,
+		float Time,
+		const FString& OutputPath,
+		const FString& CameraAngle,
+		int32 ImageWidth,
+		int32 ImageHeight,
+		FAnimationPoseCaptureResult& OutResult);
+
+	/**
+	 * Capture multiple frames of an animation as a sequence of images.
+	 * Useful for creating thumbnails or comparing poses across time.
+	 *
+	 * @param AnimPath - Path to the animation asset
+	 * @param OutputDirectory - Directory to save images (files named frame_001.png, etc.)
+	 * @param FrameCount - Number of frames to capture (evenly distributed across animation)
+	 * @param CameraAngle - Camera angle: "front", "side", "back", "three_quarter", "top" (default: "three_quarter")
+	 * @param ImageWidth - Width of output images (default: 256)
+	 * @param ImageHeight - Height of output images (default: 256)
+	 * @return Array of capture results for each frame
+	 *
+	 * Example:
+	 *   results = unreal.AnimSequenceService.capture_animation_sequence(
+	 *       "/Game/Animations/AS_Run",
+	 *       "C:/Temp/run_frames/",
+	 *       8,  # Capture 8 frames
+	 *       "front",
+	 *       256, 256
+	 *   )
+	 *   for r in results:
+	 *       print(f"Frame {r.captured_frame}: {r.image_path}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Capture")
+	static TArray<FAnimationPoseCaptureResult> CaptureAnimationSequence(
+		const FString& AnimPath,
+		const FString& OutputDirectory,
+		int32 FrameCount,
+		const FString& CameraAngle,
+		int32 ImageWidth,
+		int32 ImageHeight);
 
 private:
 	// ============================================================================

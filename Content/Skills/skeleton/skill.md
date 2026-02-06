@@ -1,7 +1,7 @@
 ---
 name: skeleton
 display_name: Skeleton & Skeletal Mesh Management
-description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, and blend profiles
+description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints
 vibeue_classes:
   - SkeletonService
 unreal_classes:
@@ -20,9 +20,20 @@ keywords:
   - blend profile
   - morph target
   - physics asset
+  - skeleton profile
+  - bone constraint
+  - joint limit
+  - learned constraints
 ---
 
 # Skeleton & Skeletal Mesh Skill
+
+> **Related Skills:**
+> - **animsequence** - For editing animations with constraint validation (uses skeleton profiles)
+> - **animsequence** - For creating new animations with keyframes
+> - **animation-blueprint** - For AnimBP state machines and navigation
+>
+> **Use this skill when:** Modifying skeleton structure (bones, sockets), retargeting modes, blend profiles, or curve metadata
 
 ## Critical Rules
 
@@ -95,6 +106,44 @@ unreal.SkeletonService.add_socket("/Game/Characters/SKM_Mannequin", ...)
 | `Skeleton` | Use skeleton's reference pose | Root, pelvis, IK targets |
 | `AnimationScaled` | Scale animation by skeleton size | Height-scaled characters |
 | `OrientAndScale` | Match orientation and scale | Helper/utility bones |
+
+### Skeleton Profiles & Constraints
+
+For animation editing with constraint validation, use the skeleton profile methods:
+
+```python
+import unreal
+
+# Create/refresh skeleton profile with hierarchy and constraints
+profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
+print(f"Skeleton has {profile.bone_count} bones")
+
+# Learn constraints from existing animations
+constraints = unreal.SkeletonService.learn_from_animations("/Game/SK_Mannequin", 50, 10)
+print(f"Learned from {constraints.animation_count} animations")
+
+# Set manual bone constraints (e.g., elbow as hinge)
+unreal.SkeletonService.set_bone_constraints(
+    "/Game/SK_Mannequin",
+    "lowerarm_r",
+    unreal.Rotator(0, 0, 0),     # Min rotation
+    unreal.Rotator(0, 145, 0),   # Max rotation
+    True,  # Is hinge joint
+    1      # Pitch axis (Y)
+)
+
+# Validate a rotation against constraints
+result = unreal.SkeletonService.validate_bone_rotation(
+    "/Game/SK_Mannequin",
+    "upperarm_r",
+    unreal.Rotator(0, 180, 0),  # Test rotation
+    True  # Use learned constraints
+)
+if not result.is_valid:
+    print(f"Clamped to: {result.clamped_rotation}")
+```
+
+> **See the `animsequence` skill** for complete preview→validate→bake workflow.
 
 ## Workflows
 

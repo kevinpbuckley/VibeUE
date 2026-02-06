@@ -172,6 +172,175 @@ struct FBlendProfileData
 };
 
 /**
+ * Joint constraint limits for a bone
+ */
+USTRUCT(BlueprintType)
+struct FBoneConstraint
+{
+	GENERATED_BODY()
+
+	/** Name of the bone */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString BoneName;
+
+	/** Minimum rotation (Euler angles in degrees) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator MinRotation = FRotator(-180.0f, -180.0f, -180.0f);
+
+	/** Maximum rotation (Euler angles in degrees) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator MaxRotation = FRotator(180.0f, 180.0f, 180.0f);
+
+	/** Whether this bone is constrained as a hinge (single axis rotation) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	bool bIsHinge = false;
+
+	/** Hinge axis if bIsHinge is true (0=X/Roll, 1=Y/Pitch, 2=Z/Yaw) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	int32 HingeAxis = 1;
+
+	/** Preferred rotation order for Euler angles */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString RotationOrder = TEXT("YXZ");
+};
+
+/**
+ * Learned rotation range for a bone from existing animations
+ */
+USTRUCT(BlueprintType)
+struct FLearnedBoneRange
+{
+	GENERATED_BODY()
+
+	/** Name of the bone */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString BoneName;
+
+	/** Minimum observed rotation (Euler angles in degrees) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator MinRotation = FRotator::ZeroRotator;
+
+	/** Maximum observed rotation (Euler angles in degrees) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator MaxRotation = FRotator::ZeroRotator;
+
+	/** 5th percentile rotation (safer minimum) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator Percentile5 = FRotator::ZeroRotator;
+
+	/** 95th percentile rotation (safer maximum) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator Percentile95 = FRotator::ZeroRotator;
+
+	/** Number of samples analyzed */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	int32 SampleCount = 0;
+};
+
+/**
+ * Learned constraints from analyzing existing animations
+ */
+USTRUCT(BlueprintType)
+struct FLearnedConstraintsInfo
+{
+	GENERATED_BODY()
+
+	/** Path to the skeleton */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString SkeletonPath;
+
+	/** Number of animations analyzed */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	int32 AnimationCount = 0;
+
+	/** Total frames sampled across all animations */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	int32 TotalSamples = 0;
+
+	/** Per-bone learned rotation ranges */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	TArray<FLearnedBoneRange> BoneRanges;
+};
+
+/**
+ * Comprehensive skeleton profile with constraints and learned data
+ */
+USTRUCT(BlueprintType)
+struct FSkeletonProfile
+{
+	GENERATED_BODY()
+
+	/** Path to the skeleton */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString SkeletonPath;
+
+	/** Display name of the skeleton */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString SkeletonName;
+
+	/** Number of bones */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	int32 BoneCount = 0;
+
+	/** Whether this profile has been built */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	bool bIsValid = false;
+
+	/** Whether learned constraints are available */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	bool bHasLearnedConstraints = false;
+
+	/** Bone hierarchy (indexed by bone index) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	TArray<FBoneNodeInfo> BoneHierarchy;
+
+	/** User-defined or default constraints per bone */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	TArray<FBoneConstraint> Constraints;
+
+	/** Learned rotation ranges from animations (if available) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	TArray<FLearnedBoneRange> LearnedRanges;
+
+	/** Retarget profile names configured for this skeleton */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	TArray<FString> RetargetProfiles;
+};
+
+/**
+ * Result of validating a bone rotation against constraints
+ */
+USTRUCT(BlueprintType)
+struct FBoneValidationResult
+{
+	GENERATED_BODY()
+
+	/** Name of the bone */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString BoneName;
+
+	/** Whether the rotation is valid (within constraints) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	bool bIsValid = true;
+
+	/** Type of violation if invalid: "None", "MinExceeded", "MaxExceeded", "HingeViolation" */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString ViolationType = TEXT("None");
+
+	/** The original rotation that was tested */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator OriginalRotation = FRotator::ZeroRotator;
+
+	/** The clamped rotation (valid within constraints) */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FRotator ClampedRotation = FRotator::ZeroRotator;
+
+	/** Descriptive message about the violation */
+	UPROPERTY(BlueprintReadWrite, Category = "Skeleton")
+	FString Message;
+};
+
+/**
  * Information about a skeletal mesh asset
  */
 USTRUCT(BlueprintType)
@@ -1170,6 +1339,146 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Editor")
 	static bool SaveAsset(const FString& AssetPath);
+
+	// ============================================================================
+	// SKELETON PROFILES & CONSTRAINTS
+	// ============================================================================
+
+	/**
+	 * Create or refresh a skeleton profile with hierarchy, constraints, and metadata.
+	 * Builds a comprehensive profile that can be cached for repeated use.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param OutProfile - Output skeleton profile
+	 * @return True if profile was created successfully
+	 *
+	 * Example:
+	 *   profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
+	 *   print(f"Bones: {profile.bone_count}, Constraints: {len(profile.constraints)}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool CreateSkeletonProfile(
+		const FString& SkeletonPath,
+		FSkeletonProfile& OutProfile);
+
+	/**
+	 * Get an existing skeleton profile from cache.
+	 * Returns an empty profile if not cached - use CreateSkeletonProfile first.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param OutProfile - Output skeleton profile
+	 * @return True if profile was found in cache
+	 *
+	 * Example:
+	 *   profile = unreal.SkeletonService.get_skeleton_profile("/Game/SK_Mannequin")
+	 *   if not profile.is_valid:
+	 *       profile = unreal.SkeletonService.create_skeleton_profile("/Game/SK_Mannequin")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool GetSkeletonProfile(
+		const FString& SkeletonPath,
+		FSkeletonProfile& OutProfile);
+
+	/**
+	 * Learn bone rotation constraints from existing animations for this skeleton.
+	 * Analyzes all compatible animations to derive rotation ranges per bone.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param MaxAnimations - Maximum animations to analyze (0 = all)
+	 * @param SamplesPerAnimation - Frames to sample per animation (0 = all frames)
+	 * @param OutConstraints - Output learned constraints info
+	 * @return True if learning was successful
+	 *
+	 * Example:
+	 *   constraints = unreal.SkeletonService.learn_from_animations("/Game/SK_Mannequin", 50, 10)
+	 *   print(f"Analyzed {constraints.animation_count} animations")
+	 *   for bone_range in constraints.bone_ranges:
+	 *       print(f"{bone_range.bone_name}: {bone_range.min_rotation} to {bone_range.max_rotation}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool LearnFromAnimations(
+		const FString& SkeletonPath,
+		int32 MaxAnimations,
+		int32 SamplesPerAnimation,
+		FLearnedConstraintsInfo& OutConstraints);
+
+	/**
+	 * Get previously learned constraints for a skeleton.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param OutConstraints - Output learned constraints info
+	 * @return True if learned constraints exist
+	 *
+	 * Example:
+	 *   constraints = unreal.SkeletonService.get_learned_constraints("/Game/SK_Mannequin")
+	 *   if constraints:
+	 *       for br in constraints.bone_ranges:
+	 *           print(f"{br.bone_name}: samples={br.sample_count}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool GetLearnedConstraints(
+		const FString& SkeletonPath,
+		FLearnedConstraintsInfo& OutConstraints);
+
+	/**
+	 * Set custom constraints for a bone.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param BoneName - Name of the bone
+	 * @param MinRotation - Minimum rotation limits (Euler degrees)
+	 * @param MaxRotation - Maximum rotation limits (Euler degrees)
+	 * @param bIsHinge - Whether this is a hinge joint (single axis)
+	 * @param HingeAxis - Axis for hinge (0=X, 1=Y, 2=Z) if bIsHinge
+	 * @return True if constraints were set successfully
+	 *
+	 * Example:
+	 *   # Set elbow as hinge joint (only bends on Y axis)
+	 *   unreal.SkeletonService.set_bone_constraints(
+	 *       "/Game/SK_Mannequin",
+	 *       "lowerarm_r",
+	 *       unreal.Rotator(0, 0, 0),      # Min
+	 *       unreal.Rotator(0, 145, 0),    # Max (145 degree bend)
+	 *       True,                          # Is hinge
+	 *       1                              # Y axis (pitch)
+	 *   )
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool SetBoneConstraints(
+		const FString& SkeletonPath,
+		const FString& BoneName,
+		const FRotator& MinRotation,
+		const FRotator& MaxRotation,
+		bool bIsHinge = false,
+		int32 HingeAxis = 1);
+
+	/**
+	 * Validate a bone rotation against constraints.
+	 *
+	 * @param SkeletonPath - Path to the Skeleton asset
+	 * @param BoneName - Name of the bone
+	 * @param Rotation - Rotation to validate (local space Euler degrees)
+	 * @param bUseLearnedConstraints - Whether to use learned ranges instead of manual constraints
+	 * @param OutResult - Validation result with clamped values if invalid
+	 * @return True if validation completed (check OutResult.bIsValid for pass/fail)
+	 *
+	 * Example:
+	 *   result = unreal.SkeletonService.validate_bone_rotation(
+	 *       "/Game/SK_Mannequin",
+	 *       "lowerarm_r",
+	 *       unreal.Rotator(0, 160, 0),  # Exceeds typical elbow range
+	 *       True
+	 *   )
+	 *   if not result.is_valid:
+	 *       print(f"Violation: {result.violation_type} - {result.message}")
+	 *       print(f"Use clamped value: {result.clamped_rotation}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Skeleton|Profiles")
+	static bool ValidateBoneRotation(
+		const FString& SkeletonPath,
+		const FString& BoneName,
+		const FRotator& Rotation,
+		bool bUseLearnedConstraints,
+		FBoneValidationResult& OutResult);
 
 private:
 	// ============================================================================

@@ -12,6 +12,7 @@
 #include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
 #include "UI/ChatRichTextStyles.h"
+#include "Utils/VibeUEPaths.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
 
@@ -113,6 +114,9 @@ static FAutoConsoleCommandWithArgsAndOutputDevice TestToolCommand(
 void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
+
+	// Clear screenshots directory from previous sessions to save disk space
+	FVibeUEPaths::ClearScreenshotsDir();
 
 	// Initialize Chat Rich Text Styles (for markdown rendering)
 	FChatRichTextStyles::Initialize();

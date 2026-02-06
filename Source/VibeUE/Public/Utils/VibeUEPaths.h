@@ -47,6 +47,20 @@ public:
 	 */
 	static FString GetConfigDir();
 
+	/**
+	 * Get the VibeUE Screenshots directory under Project/Saved.
+	 * Creates the directory if it doesn't exist.
+	 * 
+	 * @return Absolute path to Project/Saved/VibeUE/Screenshots
+	 */
+	static FString GetScreenshotsDir();
+
+	/**
+	 * Clear all files in the VibeUE Screenshots directory.
+	 * Called on plugin startup to save disk space.
+	 */
+	static void ClearScreenshotsDir();
+
 private:
 	/** Cached plugin directory path */
 	static FString CachedPluginDir;
