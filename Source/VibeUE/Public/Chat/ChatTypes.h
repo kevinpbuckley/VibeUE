@@ -318,7 +318,21 @@ struct VIBEUE_API FOpenRouterModel
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     bool bSupportsTools = false;
     
+    /** Community rating from VibeUE website: "great", "good", "moderate", "bad", or empty for unrated */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString Rating;
+    
     FOpenRouterModel() = default;
+    
+    /** Get numeric rating tier for sorting (higher = better). 0 = unrated */
+    int32 GetRatingTier() const
+    {
+        if (Rating == TEXT("great")) return 4;
+        if (Rating == TEXT("good")) return 3;
+        if (Rating == TEXT("moderate")) return 2;
+        if (Rating == TEXT("bad")) return 1;
+        return 0; // unrated
+    }
     
     /** Create from OpenRouter API JSON response */
     static FOpenRouterModel FromJson(const TSharedPtr<FJsonObject>& JsonObject)
@@ -365,14 +379,19 @@ struct VIBEUE_API FOpenRouterModel
     /** Get display string for dropdown */
     FString GetDisplayString() const
     {
+        FString Prefix;
+        if (Rating == TEXT("great"))
+        {
+            Prefix = TEXT("\u2B50 "); // Gold star emoji
+        }
+        
         if (IsFree())
         {
-            return FString::Printf(TEXT("[FREE] %s (%dK)"), *Name, ContextLength / 1024);
+            return FString::Printf(TEXT("%s[FREE] %s (%dK)"), *Prefix, *Name, ContextLength / 1024);
         }
         else
         {
-            // Show price per 1M tokens
-            return FString::Printf(TEXT("%s (%dK) $%.2f/1M"), *Name, ContextLength / 1024, PricingPrompt);
+            return FString::Printf(TEXT("%s%s (%dK) $%.2f/1M"), *Prefix, *Name, ContextLength / 1024, PricingPrompt);
         }
     }
 };

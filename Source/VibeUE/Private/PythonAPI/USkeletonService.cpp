@@ -1941,7 +1941,8 @@ bool USkeletonService::ValidateBoneRotation(
 	OutResult.bIsValid = true;
 	OutResult.ViolationType = TEXT("None");
 
-	FRotator MinLimit, MaxLimit;
+	FRotator MinLimit(ForceInit);
+	FRotator MaxLimit(ForceInit);
 
 	if (bUseLearnedConstraints)
 	{

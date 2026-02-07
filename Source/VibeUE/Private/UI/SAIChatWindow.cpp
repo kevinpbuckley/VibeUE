@@ -12,6 +12,9 @@
 #include "Chat/VibeUEAPIClient.h"
 #include "Speech/SpeechToTextService.h"
 #include "Speech/ElevenLabsSpeechProvider.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
 #include "Widgets/Layout/SScrollBox.h"
 #include "Widgets/Input/SEditableTextBox.h"
 #include "Widgets/Input/SMultiLineEditableTextBox.h"
@@ -128,6 +131,13 @@ namespace VibeUEColors
     // Border/highlight
     const FLinearColor Border(0.2f, 0.2f, 0.25f, 1.0f);
     const FLinearColor BorderHighlight(0.0f, 0.7f, 0.7f, 0.5f);    // Cyan highlight border
+    
+    // Model rating colors (matching website)
+    const FLinearColor RatingGreat(0.13f, 0.55f, 0.13f, 1.0f);     // Green-700 for "great"
+    const FLinearColor RatingGood(0.2f, 0.72f, 0.35f, 1.0f);       // Green-500 for "good"
+    const FLinearColor RatingModerate(0.85f, 0.75f, 0.1f, 1.0f);   // Yellow-500 for "moderate"
+    const FLinearColor RatingBad(0.86f, 0.2f, 0.2f, 1.0f);         // Red-600 for "bad"
+    const FLinearColor Gold(1.0f, 0.84f, 0.0f, 1.0f);              // Gold for star icon
 }
 
 void SAIChatWindow::Construct(const FArguments& InArgs)
@@ -2447,8 +2457,49 @@ void SAIChatWindow::OnModelSelectionChanged(TSharedPtr<FOpenRouterModel> NewSele
 
 TSharedRef<SWidget> SAIChatWindow::GenerateModelComboItem(TSharedPtr<FOpenRouterModel> Model)
 {
+    if (!Model.IsValid())
+    {
+        return SNew(STextBlock).Text(FText::FromString(TEXT("Unknown")));
+    }
+    
+    FLinearColor TextColor = GetRatingColor(Model->Rating);
+    
+    // Build display string without star (star gets its own gold-colored text)
+    FString DisplayStr;
+    if (Model->IsFree())
+    {
+        DisplayStr = FString::Printf(TEXT("[FREE] %s (%dK)"), *Model->Name, Model->ContextLength / 1024);
+    }
+    else
+    {
+        DisplayStr = FString::Printf(TEXT("%s (%dK) $%.2f/1M"), *Model->Name, Model->ContextLength / 1024, Model->PricingPrompt);
+    }
+    
+    if (Model->Rating == TEXT("great"))
+    {
+        // Gold star + colored model text
+        return SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .Padding(0, 0, 4, 0)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("\u2B50")))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::Gold))
+            ]
+            + SHorizontalBox::Slot()
+            .FillWidth(1.0f)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(DisplayStr))
+                .ColorAndOpacity(FSlateColor(TextColor))
+            ];
+    }
+    
+    // Non-great models: just colored text
     return SNew(STextBlock)
-        .Text(FText::FromString(Model.IsValid() ? Model->GetDisplayString() : TEXT("Unknown")));
+        .Text(FText::FromString(DisplayStr))
+        .ColorAndOpacity(FSlateColor(TextColor));
 }
 
 FText SAIChatWindow::GetSelectedModelText() const
@@ -2686,11 +2737,164 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
         
         CHAT_LOG(Log, TEXT("Loaded %d models with tool support (from %d total)"), 
             AvailableModels.Num(), Models.Num());
+        
+        // Fetch model ratings from VibeUE website to color-code and sort
+        FetchModelRatings();
     }
     else
     {
         AddSystemNotification(TEXT("❌ Failed to fetch models"));
     }
+}
+
+void SAIChatWindow::FetchModelRatings()
+{
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(TEXT("https://vibeue.com/api/models/ratings"));
+    Request->SetVerb(TEXT("GET"));
+    Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
+    
+    // Use BindSP with SharedThis to match the pattern that works in OpenRouterClient
+    Request->OnProcessRequestComplete().BindSP(
+        StaticCastSharedRef<SAIChatWindow>(AsShared()),
+        &SAIChatWindow::HandleModelRatingsFetched);
+    
+    Request->ProcessRequest();
+    CHAT_LOG(Log, TEXT("Fetching model ratings from VibeUE..."));
+}
+
+void SAIChatWindow::HandleModelRatingsFetched(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+{
+    if (!bConnectedSuccessfully || !Response.IsValid())
+    {
+        CHAT_LOG(Warning, TEXT("Failed to fetch model ratings from VibeUE"));
+        return;
+    }
+    
+    int32 ResponseCode = Response->GetResponseCode();
+    if (ResponseCode != 200)
+    {
+        CHAT_LOG(Warning, TEXT("Model ratings request failed with code %d"), ResponseCode);
+        return;
+    }
+    
+    TSharedPtr<FJsonObject> RootObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Response->GetContentAsString());
+    
+    if (!FJsonSerializer::Deserialize(Reader, RootObject) || !RootObject.IsValid())
+    {
+        CHAT_LOG(Warning, TEXT("Failed to parse model ratings JSON"));
+        return;
+    }
+    
+    const TSharedPtr<FJsonObject>* RatingsObject;
+    if (!RootObject->TryGetObjectField(TEXT("ratings"), RatingsObject))
+    {
+        CHAT_LOG(Warning, TEXT("Model ratings response missing 'ratings' object"));
+        return;
+    }
+    
+    // Cache all ratings
+    ModelRatings.Empty();
+    for (const auto& Pair : (*RatingsObject)->Values)
+    {
+        FString RatingValue;
+        if (Pair.Value->TryGetString(RatingValue))
+        {
+            ModelRatings.Add(Pair.Key, RatingValue);
+        }
+    }
+    
+    bModelRatingsFetched = true;
+    CHAT_LOG(Log, TEXT("Fetched %d model ratings from VibeUE"), ModelRatings.Num());
+    
+    // Apply ratings to available models
+    ApplyModelRatings();
+}
+
+void SAIChatWindow::ApplyModelRatings()
+{
+    if (!bModelRatingsFetched || AvailableModels.Num() == 0)
+    {
+        return;
+    }
+    
+    // Apply ratings to each model
+    int32 RatedCount = 0;
+    for (const TSharedPtr<FOpenRouterModel>& ModelPtr : AvailableModels)
+    {
+        if (ModelPtr.IsValid())
+        {
+            const FString* FoundRating = ModelRatings.Find(ModelPtr->Id);
+            if (FoundRating)
+            {
+                ModelPtr->Rating = *FoundRating;
+                RatedCount++;
+            }
+            else
+            {
+                ModelPtr->Rating = TEXT(""); // Unrated
+            }
+        }
+    }
+    
+    // Remember current selection
+    FString SelectedModelId;
+    if (SelectedModel.IsValid())
+    {
+        SelectedModelId = SelectedModel->Id;
+    }
+    
+    // Re-sort: rated models first (great > good > moderate > bad), then free, then alphabetical
+    AvailableModels.Sort([](const TSharedPtr<FOpenRouterModel>& A, const TSharedPtr<FOpenRouterModel>& B)
+    {
+        int32 TierA = A->GetRatingTier();
+        int32 TierB = B->GetRatingTier();
+        
+        // Rated models come first (higher tier = better)
+        if (TierA != TierB)
+        {
+            return TierA > TierB;
+        }
+        
+        // Within same tier: free models first
+        if (A->IsFree() != B->IsFree())
+        {
+            return A->IsFree();
+        }
+        
+        // Then alphabetical
+        return A->Name < B->Name;
+    });
+    
+    // Restore selection
+    SelectedModel.Reset();
+    for (const TSharedPtr<FOpenRouterModel>& ModelPtr : AvailableModels)
+    {
+        if (ModelPtr->Id == SelectedModelId)
+        {
+            SelectedModel = ModelPtr;
+            break;
+        }
+    }
+    
+    // Refresh UI
+    ModelComboBox->RefreshOptions();
+    if (SelectedModel.IsValid())
+    {
+        ModelComboBox->SetSelectedItem(SelectedModel);
+    }
+    
+    CHAT_LOG(Log, TEXT("Applied ratings to %d/%d models, re-sorted dropdown"), RatedCount, AvailableModels.Num());
+}
+
+FLinearColor SAIChatWindow::GetRatingColor(const FString& Rating)
+{
+    if (Rating == TEXT("great"))    return VibeUEColors::RatingGreat;
+    if (Rating == TEXT("good"))     return VibeUEColors::RatingGood;
+    if (Rating == TEXT("moderate")) return VibeUEColors::RatingModerate;
+    if (Rating == TEXT("bad"))      return VibeUEColors::RatingBad;
+    return VibeUEColors::TextPrimary; // Unrated = white/default
 }
 
 void SAIChatWindow::UpdateModelDropdownForProvider()

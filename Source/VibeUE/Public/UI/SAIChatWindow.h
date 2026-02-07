@@ -9,6 +9,8 @@
 #include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Images/SImage.h"
 #include "Chat/ChatSession.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogAIChatWindow, Log, All);
 
@@ -82,6 +84,12 @@ private:
     
     /** Available models for the combo box */
     TArray<TSharedPtr<FOpenRouterModel>> AvailableModels;
+    
+    /** Cached model ratings from VibeUE website API */
+    TMap<FString, FString> ModelRatings;
+    
+    /** Whether model ratings have been fetched */
+    bool bModelRatingsFetched = false;
     
     /** Status text block */
     TSharedPtr<STextBlock> StatusText;
@@ -314,6 +322,18 @@ private:
     
     /** Handle models fetched callback */
     void HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterModel>& Models);
+    
+    /** Fetch model ratings from VibeUE website API and apply to available models */
+    void FetchModelRatings();
+    
+    /** Handle model ratings fetch response */
+    void HandleModelRatingsFetched(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully);
+    
+    /** Apply cached ratings to available models, re-sort, and refresh UI */
+    void ApplyModelRatings();
+    
+    /** Get the color for a model's rating */
+    static FLinearColor GetRatingColor(const FString& Rating);
     
     /** Handle MCP tools ready callback */
     void HandleToolsReady(bool bSuccess, int32 ToolCount);
