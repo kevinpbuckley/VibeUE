@@ -107,7 +107,7 @@ namespace VibeUEColors
     // Role accent colors (borders)
     const FLinearColor Gray(0.5f, 0.5f, 0.55f, 1.0f);              // Gray - user messages
     const FLinearColor Blue(0.3f, 0.5f, 0.9f, 1.0f);               // Blue - assistant messages
-    const FLinearColor Orange(0.95f, 0.6f, 0.15f, 1.0f);           // Bright Orange - tool calls (sending)
+    const FLinearColor Orange(0.45f, 0.18f, 0.08f, 1.0f);           // Warm brown-orange - tool calls
     const FLinearColor Green(0.2f, 0.8f, 0.4f, 1.0f);              // Bright Green - tool success
     const FLinearColor Red(0.9f, 0.25f, 0.25f, 1.0f);              // Bright Red - tool failures
     
@@ -123,10 +123,10 @@ namespace VibeUEColors
     const FLinearColor TextCode(0.72f, 0.82f, 0.72f, 1.0f);        // Code/JSON text - slight green tint
     
     // Message background colors  
-    const FLinearColor UserMessage(0.07f, 0.03f, 0.11f, 1.0f);     // User messages - dark UE purple
+    const FLinearColor UserMessage(0.10f, 0.08f, 0.18f, 1.0f);     // User messages - dusty lavender purple
     const FLinearColor AssistantMessage(0.0f, 0.0f, 0.0f, 0.0f);   // Assistant - transparent (no background)
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
-    const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
+    const FLinearColor SystemMessage(0.45f, 0.18f, 0.08f, 1.0f);   // System/Error - warm brown-orange
     
     // Border/highlight
     const FLinearColor Border(0.2f, 0.2f, 0.25f, 1.0f);
@@ -156,6 +156,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnSummarizationComplete.BindSP(this, &SAIChatWindow::HandleSummarizationComplete);
     ChatSession->OnTokenBudgetUpdated.BindSP(this, &SAIChatWindow::HandleTokenBudgetUpdated);
     ChatSession->OnToolIterationLimitReached.BindSP(this, &SAIChatWindow::HandleToolIterationLimitReached);
+    ChatSession->OnToolCallApprovalRequired.BindSP(this, &SAIChatWindow::HandleToolCallApprovalRequired);
     ChatSession->OnLLMThinkingStarted.BindSP(this, &SAIChatWindow::HandleLLMThinkingStarted);
     ChatSession->OnLLMThinkingComplete.BindSP(this, &SAIChatWindow::HandleLLMThinkingComplete);
 
@@ -1059,27 +1060,27 @@ void SAIChatWindow::AddToolCallWidget(const FChatToolCall& ToolCall, int32 Messa
                 ]
             ]
             
-            // Status indicator (arrow while pending, then ✓ or ✗)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            .VAlign(VAlign_Center)
-            .Padding(0, 0, 6, 0)
-            [
-                SAssignNew(WidgetData.StatusText, STextBlock)
-                .Text(FText::FromString(TEXT("→")))  // Right arrow = running
-                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
-                .ColorAndOpacity(FSlateColor(VibeUEColors::Orange))
-            ]
-            
             // Tool call summary
             + SHorizontalBox::Slot()
-            .FillWidth(1.0f)
+            .AutoWidth()
             .VAlign(VAlign_Center)
             [
                 SAssignNew(WidgetData.SummaryText, STextBlock)
                 .Text(FText::FromString(CallSummary))
                 .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
                 .ColorAndOpacity(FSlateColor(VibeUEColors::TextPrimary))
+            ]
+            
+            // Status indicator after tool name (arrow while pending, then ✓ or ✗)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .VAlign(VAlign_Center)
+            .Padding(6, 0, 0, 0)
+            [
+                SAssignNew(WidgetData.StatusText, STextBlock)
+                .Text(FText::FromString(TEXT("\u2192")))  // Right arrow = running
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 11))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::Orange))
             ]
         ]
         
@@ -1734,6 +1735,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     TSharedPtr<SCheckBox> DebugModeCheckBox;
     TSharedPtr<SCheckBox> AutoSaveBeforePythonCheckBox;
+    TSharedPtr<SCheckBox> YoloModeCheckBox;
     TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
     TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
     TSharedPtr<SSpinBox<float>> TopPSpinBox;
@@ -1759,6 +1761,9 @@ FReply SAIChatWindow::OnSettingsClicked()
 
     // Load current auto-save setting
     bool bCurrentAutoSaveBeforePython = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
+    
+    // Load current YOLO mode setting
+    bool bCurrentYoloMode = FChatSession::IsYoloModeEnabled();
     
     // Get available providers for the dropdown
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
@@ -1942,6 +1947,28 @@ FReply SAIChatWindow::OnSettingsClicked()
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Auto Save Before Python Execution")))
                 .ToolTipText(FText::FromString(TEXT("Automatically save all dirty packages before executing Python code to protect against crashes.")))
+            ]
+        ]
+
+        // YOLO Mode (auto-execute Python code without approval)
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 8, 8, 4)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SAssignNew(YoloModeCheckBox, SCheckBox)
+                .IsChecked(bCurrentYoloMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+            ]
+            + SHorizontalBox::Slot()
+            .Padding(4, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("YOLO Mode (Auto-Execute Python)")))
+                .ToolTipText(FText::FromString(TEXT("When enabled, Python code is executed automatically without requiring approval. When disabled, you must click Approve before each Python code execution.")))
             ]
         ]
 
@@ -2266,7 +2293,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         [
             SNew(SButton)
             .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, AutoSaveBeforePythonCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
+            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
             {
                 // Save VibeUE API key
                 FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
@@ -2292,6 +2319,10 @@ FReply SAIChatWindow::OnSettingsClicked()
                 // Save auto-save before Python execution setting
                 bool bNewAutoSaveBeforePython = AutoSaveBeforePythonCheckBox->IsChecked();
                 FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bNewAutoSaveBeforePython);
+
+                // Save YOLO mode setting
+                bool bNewYoloMode = YoloModeCheckBox->IsChecked();
+                FChatSession::SetYoloModeEnabled(bNewYoloMode);
 
                 // Save LLM generation parameters
                 FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
@@ -3065,6 +3096,172 @@ void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int3
         // We need to add this as a visual-only message, not to the actual conversation
         // For now, just show it in the status and let user type 'continue'
     }
+}
+
+void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, const FMCPToolCall& ToolCall)
+{
+    // Check YOLO mode to determine if we need approval buttons or just a code preview
+    bool bYoloMode = FChatSession::IsYoloModeEnabled();
+    
+    CHAT_LOG(Log, TEXT("Tool call code preview: %s (id=%s, yolo=%s)"), *ToolCall.ToolName, *ToolCallId, bYoloMode ? TEXT("on") : TEXT("off"));
+    
+    if (!bYoloMode)
+    {
+        PendingApprovalToolCallId = ToolCallId;
+    }
+    
+    // Extract Python code from tool call arguments
+    FString PythonCode;
+    if (ToolCall.Arguments.IsValid())
+    {
+        ToolCall.Arguments->TryGetStringField(TEXT("code"), PythonCode);
+    }
+    
+    if (PythonCode.IsEmpty())
+    {
+        PythonCode = TEXT("(no code provided)");
+    }
+    
+    // Create a shared bool to track button visibility (hide after approve/reject)
+    bApprovalButtonsVisible = MakeShared<bool>(!bYoloMode);
+    TSharedPtr<bool> ButtonsVisiblePtr = bApprovalButtonsVisible;
+    
+    // Capture tool call ID for button lambdas
+    FString CapturedToolCallId = ToolCallId;
+    FString CapturedCode = PythonCode;
+    TWeakPtr<FChatSession> WeakSession = ChatSession;
+    
+    // Create a solid brush for code background
+    static FSlateBrush CodeBlockBrush;
+    CodeBlockBrush.DrawAs = ESlateBrushDrawType::Box;
+    CodeBlockBrush.TintColor = FSlateColor(FLinearColor::White);
+    
+    // Header text changes based on YOLO mode
+    FString HeaderText = bYoloMode
+        ? TEXT("\U0001F40D Python Code")
+        : TEXT("\U0001F40D Python Code - Approval Required");
+    FLinearColor HeaderColor = bYoloMode
+        ? FLinearColor(0.4f, 0.9f, 0.4f)   // Green when auto-executing
+        : FLinearColor(1.0f, 0.8f, 0.2f);  // Yellow when awaiting approval
+    
+    // Build the code preview widget: header + code block + optional buttons
+    TSharedRef<SVerticalBox> ApprovalContent = SNew(SVerticalBox)
+        // Header
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(0, 4, 0, 4)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(HeaderText))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            .ColorAndOpacity(FSlateColor(HeaderColor))
+        ]
+        // Code block
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(0, 2, 0, 4)
+        [
+            SNew(SBorder)
+            .BorderImage(&CodeBlockBrush)
+            .BorderBackgroundColor(FLinearColor(0.06f, 0.06f, 0.06f, 1.0f))
+            .Padding(8)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(PythonCode))
+                .Font(FCoreStyle::GetDefaultFontStyle("Mono", 10))
+                .ColorAndOpacity(FSlateColor(FLinearColor(0.4f, 0.9f, 0.4f)))
+                .AutoWrapText(true)
+            ]
+        ]
+        // Approve / Reject buttons
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(0, 4, 0, 8)
+        [
+            SNew(SHorizontalBox)
+            .Visibility_Lambda([ButtonsVisiblePtr]() -> EVisibility
+            {
+                return (ButtonsVisiblePtr.IsValid() && *ButtonsVisiblePtr) ? EVisibility::Visible : EVisibility::Collapsed;
+            })
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .Padding(0, 0, 8, 0)
+            [
+                SNew(SButton)
+                .OnClicked_Lambda([this, CapturedToolCallId, ButtonsVisiblePtr, WeakSession]() -> FReply
+                {
+                    if (ButtonsVisiblePtr.IsValid())
+                    {
+                        *ButtonsVisiblePtr = false;
+                    }
+                    if (TSharedPtr<FChatSession> Session = WeakSession.Pin())
+                    {
+                        Session->ApproveToolCall(CapturedToolCallId);
+                    }
+                    PendingApprovalToolCallId.Empty();
+                    return FReply::Handled();
+                })
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(4, 2)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("\u2713 Approve")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.2f, 0.9f, 0.2f)))
+                    ]
+                ]
+            ]
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SNew(SButton)
+                .OnClicked_Lambda([this, CapturedToolCallId, ButtonsVisiblePtr, WeakSession]() -> FReply
+                {
+                    if (ButtonsVisiblePtr.IsValid())
+                    {
+                        *ButtonsVisiblePtr = false;
+                    }
+                    if (TSharedPtr<FChatSession> Session = WeakSession.Pin())
+                    {
+                        Session->RejectToolCall(CapturedToolCallId);
+                    }
+                    PendingApprovalToolCallId.Empty();
+                    return FReply::Handled();
+                })
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(4, 2)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("\u2717 Reject")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.3f, 0.3f)))
+                    ]
+                ]
+            ]
+        ];
+    
+    // Wrap in a border with a subtle highlight to make it stand out
+    MessageScrollBox->AddSlot()
+    .Padding(10)
+    [
+        SNew(SBorder)
+        .BorderImage(&CodeBlockBrush)
+        .BorderBackgroundColor(FLinearColor(0.12f, 0.12f, 0.15f, 1.0f))
+        .Padding(8)
+        [
+            ApprovalContent
+        ]
+    ];
+    
+    ScrollToBottom();
 }
 
 void SAIChatWindow::UpdateTokenBudgetDisplay()
