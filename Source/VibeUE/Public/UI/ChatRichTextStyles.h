@@ -36,6 +36,12 @@ public:
     static const FName Style_H3;
     static const FName Style_ListItem;
     static const FName Style_Link;
+    static const FName Style_Blockquote;
+    static const FName Style_BlockquoteAccent;
+    static const FName Style_HorizontalRule;
+    static const FName Style_TableHeader;
+    static const FName Style_Table;
+    static const FName Style_CodeLang;
 
 private:
     /** Create the style set with all text styles */
