@@ -154,9 +154,9 @@ TSharedRef<FSlateStyleSet> FChatRichTextStyles::Create()
     HrStyle.SetColorAndOpacity(FSlateColor(ChatColors::HrColor));
     NewStyleSet->Set(Style_HorizontalRule, HrStyle);
 
-    // Table header - bold mono
+    // Table header - mono to keep column alignment
     FTextBlockStyle TableHeaderStyle = DefaultStyle;
-    TableHeaderStyle.SetFont(FCoreStyle::GetDefaultFontStyle("Bold", 11));
+    TableHeaderStyle.SetFont(MonoFont);
     TableHeaderStyle.SetColorAndOpacity(FSlateColor(ChatColors::TableHeaderText));
     NewStyleSet->Set(Style_TableHeader, TableHeaderStyle);
 

@@ -197,7 +197,7 @@ TSharedRef<SWidget> SMarkdownTextBlock::CreateRichTextWidget(const FString& Rich
     // Each SRichTextBlock handles only ONE block's worth of inline formatting,
     // so we stay well under any styled-run limits.
     TArray<TSharedRef<ITextDecorator>> Decorators;
-    Decorators.Add(SRichTextBlock::HyperlinkDecorator(TEXT("a"), OnHyperlinkClicked));
+    Decorators.Add(SRichTextBlock::HyperlinkDecorator(TEXT("link"), OnHyperlinkClicked));
 
     TSharedRef<FRichTextLayoutMarshaller> Marshaller =
         FRichTextLayoutMarshaller::Create(MoveTemp(Decorators), &FChatRichTextStyles::Get());
