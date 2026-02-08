@@ -265,6 +265,7 @@ FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
     , bInToolCallBlock(false)
     , bInFunctionBlock(false)
+    , ConnectionRetryCount(0)
 {
 }
 
@@ -357,6 +358,14 @@ void FLLMClientBase::SendChatRequest(
 {
     // Cancel any existing request
     CancelRequest();
+
+    // Reset retry count for new request
+    ConnectionRetryCount = 0;
+
+    // Save request parameters for potential retry
+    LastMessages = Messages;
+    LastModelId = ModelId;
+    LastTools = Tools;
 
     // Store delegates
     CurrentOnChunk = OnChunk;
@@ -1541,8 +1550,20 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
             }
             else
             {
-                UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed with connection error (no streaming data received)"));
-                CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed. Please try again."));
+                // Connection failed with no streaming data - retry before giving up
+                if (ConnectionRetryCount < MaxConnectionRetries)
+                {
+                    ConnectionRetryCount++;
+                    UE_LOG(LogLLMClientBase, Warning, TEXT("HandleRequestComplete: Connection failed (attempt %d/%d) - retrying..."), 
+                        ConnectionRetryCount, MaxConnectionRetries);
+                    CurrentRequest.Reset();
+                    ResetStreamingState();
+                    RetryCurrentRequest();
+                    return;
+                }
+                
+                UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed after %d retries - connection error (no streaming data received)"), MaxConnectionRetries);
+                CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed after 3 retries. Please try again."));
                 CurrentOnComplete.ExecuteIfBound(false);
                 CurrentRequest.Reset();
                 ResetStreamingState();
@@ -1706,6 +1727,27 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
     }
 
     // Clean up
+    ConnectionRetryCount = 0;  // Reset on successful completion
     CurrentRequest.Reset();
     ResetStreamingState();
+}
+
+void FLLMClientBase::RetryCurrentRequest()
+{
+    // Rebuild the HTTP request from saved parameters
+    CurrentRequest = BuildHttpRequest(LastMessages, LastModelId, LastTools);
+    if (!CurrentRequest.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("[RETRY] Failed to rebuild HTTP request"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to rebuild request for retry."));
+        CurrentOnComplete.ExecuteIfBound(false);
+        return;
+    }
+
+    // Re-bind handlers
+    CurrentRequest->OnRequestProgress64().BindRaw(this, &FLLMClientBase::HandleRequestProgress);
+    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
+
+    UE_LOG(LogLLMClientBase, Log, TEXT("[RETRY] Sending retry attempt %d/%d"), ConnectionRetryCount, MaxConnectionRetries);
+    CurrentRequest->ProcessRequest();
 }

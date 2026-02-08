@@ -123,7 +123,7 @@ namespace VibeUEColors
     const FLinearColor TextCode(0.72f, 0.82f, 0.72f, 1.0f);        // Code/JSON text - slight green tint
     
     // Message background colors  
-    const FLinearColor UserMessage(0.07f, 0.03f, 0.11f, 1.0f);     // User messages - dark UE purple
+    const FLinearColor UserMessage(0.10f, 0.08f, 0.18f, 1.0f);     // User messages - dusty lavender purple
     const FLinearColor AssistantMessage(0.0f, 0.0f, 0.0f, 0.0f);   // Assistant - transparent (no background)
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
     const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
