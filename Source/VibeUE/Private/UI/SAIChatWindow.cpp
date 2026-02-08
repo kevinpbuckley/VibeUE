@@ -107,7 +107,7 @@ namespace VibeUEColors
     // Role accent colors (borders)
     const FLinearColor Gray(0.5f, 0.5f, 0.55f, 1.0f);              // Gray - user messages
     const FLinearColor Blue(0.3f, 0.5f, 0.9f, 1.0f);               // Blue - assistant messages
-    const FLinearColor Orange(0.95f, 0.6f, 0.15f, 1.0f);           // Bright Orange - tool calls (sending)
+    const FLinearColor Orange(0.45f, 0.18f, 0.08f, 1.0f);           // Warm brown-orange - tool calls
     const FLinearColor Green(0.2f, 0.8f, 0.4f, 1.0f);              // Bright Green - tool success
     const FLinearColor Red(0.9f, 0.25f, 0.25f, 1.0f);              // Bright Red - tool failures
     
@@ -126,7 +126,7 @@ namespace VibeUEColors
     const FLinearColor UserMessage(0.10f, 0.08f, 0.18f, 1.0f);     // User messages - dusty lavender purple
     const FLinearColor AssistantMessage(0.0f, 0.0f, 0.0f, 0.0f);   // Assistant - transparent (no background)
     const FLinearColor ToolMessage(0.12f, 0.12f, 0.12f, 1.0f);     // Tool - dark gray
-    const FLinearColor SystemMessage(0.22f, 0.08f, 0.08f, 1.0f);   // System/Error - dark red
+    const FLinearColor SystemMessage(0.45f, 0.18f, 0.08f, 1.0f);   // System/Error - warm brown-orange
     
     // Border/highlight
     const FLinearColor Border(0.2f, 0.2f, 0.25f, 1.0f);
