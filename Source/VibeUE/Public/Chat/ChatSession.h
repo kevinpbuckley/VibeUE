@@ -102,6 +102,12 @@ DECLARE_DELEGATE(FOnLLMThinkingStarted);
 DECLARE_DELEGATE(FOnLLMThinkingComplete);
 
 /**
+ * Delegate called when a tool call requires user approval before execution
+ * (fired when YOLO mode is disabled and execute_python_code is about to run)
+ */
+DECLARE_DELEGATE_TwoParams(FOnToolCallApprovalRequired, const FString& /* ToolCallId */, const FMCPToolCall& /* ToolCall */);
+
+/**
  * Manages conversation state, message history, and persistence
  */
 class VIBEUE_API FChatSession : public TSharedFromThis<FChatSession>
@@ -313,6 +319,21 @@ public:
     /** Set auto-save before Python execution enabled */
     static void SetAutoSaveBeforePythonExecutionEnabled(bool bEnabled);
 
+    /** Check if YOLO mode is enabled (auto-execute Python code without approval) */
+    static bool IsYoloModeEnabled();
+
+    /** Set YOLO mode enabled */
+    static void SetYoloModeEnabled(bool bEnabled);
+
+    /** Approve a pending tool call for execution (called from UI when user clicks Approve) */
+    void ApproveToolCall(const FString& ToolCallId);
+
+    /** Reject a pending tool call (called from UI when user clicks Reject) */
+    void RejectToolCall(const FString& ToolCallId);
+
+    /** Check if a tool call is waiting for user approval */
+    bool IsWaitingForToolApproval() const { return PendingApprovalToolCall.IsSet(); }
+
     // ============ LLM Generation Parameters ============
     
     /** Get/Set temperature (0.0-2.0, lower = more deterministic) */
@@ -378,6 +399,7 @@ public:
     FOnToolIterationLimitReached OnToolIterationLimitReached;
     FOnLLMThinkingStarted OnLLMThinkingStarted;
     FOnLLMThinkingComplete OnLLMThinkingComplete;
+    FOnToolCallApprovalRequired OnToolCallApprovalRequired;
 
     // ============ Voice Input ============
 
@@ -577,6 +599,12 @@ private:
     
     /** Whether a tool call is currently being executed */
     bool bIsExecutingTool = false;
+    
+    /** Tool call waiting for user approval (when YOLO mode is off for execute_python_code) */
+    TOptional<FMCPToolCall> PendingApprovalToolCall;
+    
+    /** Flag to bypass approval check (set after user approves) */
+    bool bBypassApprovalCheck = false;
     
     /** Execute the next tool in the queue (sequential execution) */
     void ExecuteNextToolInQueue();

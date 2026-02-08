@@ -617,6 +617,29 @@ void FChatSession::ExecuteNextToolInQueue()
     
     UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
     
+    // === PYTHON CODE PREVIEW / APPROVAL ===
+    // Always show code preview for execute_python_code before execution.
+    // If YOLO mode is off, pause and wait for user approval.
+    // If YOLO mode is on, show the code block and continue execution.
+    if (ToolCall.ToolName == TEXT("execute_python_code") && !bBypassApprovalCheck)
+    {
+        // Always fire the delegate to show code preview in the UI
+        OnToolCallApprovalRequired.ExecuteIfBound(ToolCall.Id, ToolCall);
+        
+        if (!IsYoloModeEnabled())
+        {
+            // YOLO off: pause execution and wait for user to approve/reject
+            PendingApprovalToolCall = ToolCall;
+            UE_LOG(LogChatSession, Log, TEXT("execute_python_code requires approval (YOLO mode off). Waiting for user."));
+            return;
+        }
+        else
+        {
+            UE_LOG(LogChatSession, Log, TEXT("execute_python_code: YOLO mode on, code preview shown, executing immediately."));
+        }
+    }
+    bBypassApprovalCheck = false; // Reset after check
+    
     // Check if this is a reflection-based tool first
     FToolRegistry& Registry = FToolRegistry::Get();
     const FToolMetadata* ReflectionTool = Registry.FindTool(ToolCall.ToolName);
@@ -1104,6 +1127,8 @@ void FChatSession::CancelRequest()
     ToolCallQueue.Empty();
     bIsExecutingTool = false;
     PendingToolCallCount = 0;
+    PendingApprovalToolCall.Reset();
+    bBypassApprovalCheck = false;
     
     // Mark streaming message as incomplete
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
@@ -2142,6 +2167,69 @@ void FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bool bEnabled)
 {
     GConfig->SetBool(TEXT("VibeUE"), TEXT("AutoSaveBeforePythonExecution"), bEnabled, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+bool FChatSession::IsYoloModeEnabled()
+{
+    bool bYoloMode = false; // Default to disabled - require approval for Python execution
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("YoloMode"), bYoloMode, GEditorPerProjectIni);
+    return bYoloMode;
+}
+
+void FChatSession::SetYoloModeEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("YoloMode"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+void FChatSession::ApproveToolCall(const FString& ToolCallId)
+{
+    if (!PendingApprovalToolCall.IsSet())
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("ApproveToolCall: No pending approval"));
+        return;
+    }
+    
+    FMCPToolCall ToolCall = PendingApprovalToolCall.GetValue();
+    PendingApprovalToolCall.Reset();
+    
+    if (ToolCall.Id != ToolCallId)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("ApproveToolCall: ID mismatch - expected %s, got %s"), *ToolCall.Id, *ToolCallId);
+        return;
+    }
+    
+    UE_LOG(LogChatSession, Log, TEXT("Tool call approved by user: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+    
+    // Re-insert at front of queue and execute with bypass flag
+    ToolCallQueue.Insert(ToolCall, 0);
+    bBypassApprovalCheck = true;
+    ExecuteNextToolInQueue();
+}
+
+void FChatSession::RejectToolCall(const FString& ToolCallId)
+{
+    if (!PendingApprovalToolCall.IsSet())
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("RejectToolCall: No pending approval"));
+        return;
+    }
+    
+    FMCPToolCall ToolCall = PendingApprovalToolCall.GetValue();
+    PendingApprovalToolCall.Reset();
+    
+    UE_LOG(LogChatSession, Log, TEXT("Tool call rejected by user: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+    
+    // Send rejection as tool result so the LLM knows the user declined
+    FChatMessage ToolResultMsg(TEXT("tool"), TEXT("User rejected execution of this Python code. Ask the user what they would like to change or do differently."));
+    ToolResultMsg.ToolCallId = ToolCall.Id;
+    Messages.Add(ToolResultMsg);
+    OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+    
+    PendingToolCallCount--;
+    
+    // Continue with next tool in queue
+    ExecuteNextToolInQueue();
 }
 
 FString FChatSession::GetVibeUEApiKeyFromConfig()

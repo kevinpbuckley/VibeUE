@@ -351,6 +351,15 @@ private:
     /** Handle tool iteration limit reached callback */
     void HandleToolIterationLimitReached(int32 CurrentIteration, int32 MaxIterations);
 
+    /** Handle tool call approval required callback (YOLO mode off) */
+    void HandleToolCallApprovalRequired(const FString& ToolCallId, const FMCPToolCall& ToolCall);
+
+    /** ID of tool call currently pending user approval */
+    FString PendingApprovalToolCallId;
+
+    /** Shared bool to track if approval buttons should be hidden after action */
+    TSharedPtr<bool> bApprovalButtonsVisible;
+
     // ============ Voice Input Handlers ============
 
     /** Handle microphone button pressed (start recording) */
