@@ -8,6 +8,7 @@
 #include "Widgets/Input/SComboBox.h"
 #include "Widgets/Text/SRichTextBlock.h"
 #include "Widgets/Images/SImage.h"
+#include "UI/SMarkdownTextBlock.h"
 #include "Chat/ChatSession.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -103,8 +104,8 @@ private:
     /** Empty state container shown when no messages */
     TSharedPtr<SWidget> EmptyStateWidget;
     
-    /** Map of message index to rich text block for streaming updates */
-    TMap<int32, TSharedPtr<SRichTextBlock>> MessageTextBlocks;
+    /** Map of message index to markdown text block for streaming updates */
+    TMap<int32, TSharedPtr<SMarkdownTextBlock>> MessageTextBlocks;
 
     // ============ Voice Input UI Components ============
 
