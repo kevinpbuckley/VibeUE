@@ -521,15 +521,18 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
         return;
     }
 
-    // Check for error
+    // Check for error - SSE streams can contain error chunks mid-stream
+    // (e.g., OpenRouter "JSON error injected into SSE stream" from backend 500s)
+    // These are transient - the stream usually continues with [DONE] afterward.
+    // Log as warning but do NOT fire the destructive error handler, which would
+    // remove the in-progress assistant message.
     if (JsonObject->HasField(TEXT("error")))
     {
         const TSharedPtr<FJsonObject>* ErrorObj;
         if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
         {
             FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
-            UE_LOG(LogLLMClientBase, Error, TEXT("Stream error: %s"), *ErrorMessage);
-            CurrentOnError.ExecuteIfBound(ErrorMessage);
+            UE_LOG(LogLLMClientBase, Warning, TEXT("SSE stream received error chunk (non-fatal): %s"), *ErrorMessage);
         }
         return;
     }
@@ -1527,15 +1530,24 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         EHttpRequestStatus::Type RequestStatus = Request->GetStatus();
         if (RequestStatus == EHttpRequestStatus::Failed)
         {
-            UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed with connection error (possibly timeout)"));
-            UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: OnError bound=%s, OnComplete bound=%s"), 
-                CurrentOnError.IsBound() ? TEXT("Yes") : TEXT("No"),
-                CurrentOnComplete.IsBound() ? TEXT("Yes") : TEXT("No"));
-            CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed. Please try again."));
-            CurrentOnComplete.ExecuteIfBound(false);
-            CurrentRequest.Reset();
-            ResetStreamingState();
-            return;
+            // For SSE streaming, the server closing the connection is normal behavior
+            // but UE's HTTP module reports it as "Failed". If we already received
+            // streaming data, this is NOT an error - just proceed to normal completion.
+            bool bHasStreamData = !StreamBuffer.IsEmpty();
+            if (bHasStreamData)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Request status=Failed but StreamBuffer has %d chars - treating as successful SSE completion"), StreamBuffer.Len());
+                // Fall through to normal completion logic below
+            }
+            else
+            {
+                UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed with connection error (no streaming data received)"));
+                CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed. Please try again."));
+                CurrentOnComplete.ExecuteIfBound(false);
+                CurrentRequest.Reset();
+                ResetStreamingState();
+                return;
+            }
         }
     }
     
