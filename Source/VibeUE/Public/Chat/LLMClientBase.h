@@ -144,6 +144,18 @@ private:
     /** Completion tokens from the response (for debugging/detection) */
     int32 CompletionTokensInResponse;
 
+    /** Connection retry state */
+    static constexpr int32 MaxConnectionRetries = 3;
+    int32 ConnectionRetryCount;
+
+    /** Saved request parameters for retry rebuild */
+    TArray<FChatMessage> LastMessages;
+    FString LastModelId;
+    TArray<FMCPTool> LastTools;
+
+    /** Retry the current request after a connection failure */
+    void RetryCurrentRequest();
+
 public:
     /** Get the accumulated response content (for non-streaming summarization) */
     const FString& GetLastAccumulatedResponse() const { return AccumulatedContent; }

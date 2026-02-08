@@ -265,6 +265,7 @@ FLLMClientBase::FLLMClientBase()
     : bToolCallsDetectedInStream(false)
     , bInToolCallBlock(false)
     , bInFunctionBlock(false)
+    , ConnectionRetryCount(0)
 {
 }
 
@@ -357,6 +358,14 @@ void FLLMClientBase::SendChatRequest(
 {
     // Cancel any existing request
     CancelRequest();
+
+    // Reset retry count for new request
+    ConnectionRetryCount = 0;
+
+    // Save request parameters for potential retry
+    LastMessages = Messages;
+    LastModelId = ModelId;
+    LastTools = Tools;
 
     // Store delegates
     CurrentOnChunk = OnChunk;
@@ -521,15 +530,18 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
         return;
     }
 
-    // Check for error
+    // Check for error - SSE streams can contain error chunks mid-stream
+    // (e.g., OpenRouter "JSON error injected into SSE stream" from backend 500s)
+    // These are transient - the stream usually continues with [DONE] afterward.
+    // Log as warning but do NOT fire the destructive error handler, which would
+    // remove the in-progress assistant message.
     if (JsonObject->HasField(TEXT("error")))
     {
         const TSharedPtr<FJsonObject>* ErrorObj;
         if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
         {
             FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
-            UE_LOG(LogLLMClientBase, Error, TEXT("Stream error: %s"), *ErrorMessage);
-            CurrentOnError.ExecuteIfBound(ErrorMessage);
+            UE_LOG(LogLLMClientBase, Warning, TEXT("SSE stream received error chunk (non-fatal): %s"), *ErrorMessage);
         }
         return;
     }
@@ -1527,15 +1539,36 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         EHttpRequestStatus::Type RequestStatus = Request->GetStatus();
         if (RequestStatus == EHttpRequestStatus::Failed)
         {
-            UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed with connection error (possibly timeout)"));
-            UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: OnError bound=%s, OnComplete bound=%s"), 
-                CurrentOnError.IsBound() ? TEXT("Yes") : TEXT("No"),
-                CurrentOnComplete.IsBound() ? TEXT("Yes") : TEXT("No"));
-            CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed. Please try again."));
-            CurrentOnComplete.ExecuteIfBound(false);
-            CurrentRequest.Reset();
-            ResetStreamingState();
-            return;
+            // For SSE streaming, the server closing the connection is normal behavior
+            // but UE's HTTP module reports it as "Failed". If we already received
+            // streaming data, this is NOT an error - just proceed to normal completion.
+            bool bHasStreamData = !StreamBuffer.IsEmpty();
+            if (bHasStreamData)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Request status=Failed but StreamBuffer has %d chars - treating as successful SSE completion"), StreamBuffer.Len());
+                // Fall through to normal completion logic below
+            }
+            else
+            {
+                // Connection failed with no streaming data - retry before giving up
+                if (ConnectionRetryCount < MaxConnectionRetries)
+                {
+                    ConnectionRetryCount++;
+                    UE_LOG(LogLLMClientBase, Warning, TEXT("HandleRequestComplete: Connection failed (attempt %d/%d) - retrying..."), 
+                        ConnectionRetryCount, MaxConnectionRetries);
+                    CurrentRequest.Reset();
+                    ResetStreamingState();
+                    RetryCurrentRequest();
+                    return;
+                }
+                
+                UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed after %d retries - connection error (no streaming data received)"), MaxConnectionRetries);
+                CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed after 3 retries. Please try again."));
+                CurrentOnComplete.ExecuteIfBound(false);
+                CurrentRequest.Reset();
+                ResetStreamingState();
+                return;
+            }
         }
     }
     
@@ -1694,6 +1727,27 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
     }
 
     // Clean up
+    ConnectionRetryCount = 0;  // Reset on successful completion
     CurrentRequest.Reset();
     ResetStreamingState();
+}
+
+void FLLMClientBase::RetryCurrentRequest()
+{
+    // Rebuild the HTTP request from saved parameters
+    CurrentRequest = BuildHttpRequest(LastMessages, LastModelId, LastTools);
+    if (!CurrentRequest.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("[RETRY] Failed to rebuild HTTP request"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to rebuild request for retry."));
+        CurrentOnComplete.ExecuteIfBound(false);
+        return;
+    }
+
+    // Re-bind handlers
+    CurrentRequest->OnRequestProgress64().BindRaw(this, &FLLMClientBase::HandleRequestProgress);
+    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
+
+    UE_LOG(LogLLMClientBase, Log, TEXT("[RETRY] Sending retry attempt %d/%d"), ConnectionRetryCount, MaxConnectionRetries);
+    CurrentRequest->ProcessRequest();
 }
