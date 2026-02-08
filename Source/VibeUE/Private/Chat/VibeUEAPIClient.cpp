@@ -96,22 +96,21 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     TSharedPtr<FJsonObject> RequestBody = MakeShareable(new FJsonObject());
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
     
-    // TEMPORARY: Disable streaming to test non-streaming flow
-    // TODO: Re-enable streaming once we have a proper SSE implementation
-    RequestBody->SetBoolField(TEXT("stream"), false);
+    // Enable streaming for incremental response display
+    RequestBody->SetBoolField(TEXT("stream"), true);
     
     // LLM generation parameters
     RequestBody->SetNumberField(TEXT("temperature"), Temperature);
     RequestBody->SetNumberField(TEXT("top_p"), TopP);
     RequestBody->SetNumberField(TEXT("max_tokens"), MaxTokens);
     
-    UE_LOG(LogVibeUEAPIClient, Log, TEXT("LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=false"), 
+    UE_LOG(LogVibeUEAPIClient, Log, TEXT("LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=true"), 
         Temperature, TopP, MaxTokens);
     
-    // Note: stream_options not needed when streaming is disabled
-    // TSharedPtr<FJsonObject> StreamOptions = MakeShareable(new FJsonObject());
-    // StreamOptions->SetBoolField(TEXT("include_usage"), true);
-    // RequestBody->SetObjectField(TEXT("stream_options"), StreamOptions);
+    // Request usage stats in the final streaming chunk
+    TSharedPtr<FJsonObject> StreamOptions = MakeShareable(new FJsonObject());
+    StreamOptions->SetBoolField(TEXT("include_usage"), true);
+    RequestBody->SetObjectField(TEXT("stream_options"), StreamOptions);
 
     // Add tools if provided (use same format as OpenRouter)
     if (Tools.Num() > 0)
