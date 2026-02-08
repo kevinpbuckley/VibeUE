@@ -3217,6 +3217,7 @@ void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, co
             ]
             + SHorizontalBox::Slot()
             .AutoWidth()
+            .Padding(0, 0, 8, 0)
             [
                 SNew(SButton)
                 .OnClicked_Lambda([this, CapturedToolCallId, ButtonsVisiblePtr, WeakSession]() -> FReply
@@ -3243,6 +3244,43 @@ void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, co
                         .Text(FText::FromString(TEXT("\u2717 Reject")))
                         .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
                         .ColorAndOpacity(FSlateColor(FLinearColor(0.9f, 0.3f, 0.3f)))
+                    ]
+                ]
+            ]
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            [
+                SNew(SButton)
+                .OnClicked_Lambda([this, CapturedToolCallId, ButtonsVisiblePtr, WeakSession]() -> FReply
+                {
+                    // Enable YOLO mode and save the setting
+                    FChatSession::SetYoloModeEnabled(true);
+                    
+                    // Hide the buttons
+                    if (ButtonsVisiblePtr.IsValid())
+                    {
+                        *ButtonsVisiblePtr = false;
+                    }
+                    
+                    // Approve the current tool call
+                    if (TSharedPtr<FChatSession> Session = WeakSession.Pin())
+                    {
+                        Session->ApproveToolCall(CapturedToolCallId);
+                    }
+                    PendingApprovalToolCallId.Empty();
+                    return FReply::Handled();
+                })
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(4, 2)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("\u26A1 Auto Approve")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                        .ColorAndOpacity(FSlateColor(FLinearColor(0.4f, 0.6f, 1.0f)))
                     ]
                 ]
             ]
