@@ -159,6 +159,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     ChatSession->OnToolCallApprovalRequired.BindSP(this, &SAIChatWindow::HandleToolCallApprovalRequired);
     ChatSession->OnLLMThinkingStarted.BindSP(this, &SAIChatWindow::HandleLLMThinkingStarted);
     ChatSession->OnLLMThinkingComplete.BindSP(this, &SAIChatWindow::HandleLLMThinkingComplete);
+    ChatSession->OnTaskListUpdated.BindSP(this, &SAIChatWindow::HandleTaskListUpdated);
 
     // Voice input delegates
     ChatSession->OnVoiceInputStarted.BindSP(this, &SAIChatWindow::OnVoiceInputStarted);
@@ -296,6 +297,16 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                 .ColorAndOpacity(FSlateColor(VibeUEColors::Magenta))
             ]
             
+            // Task list widget (sticky header, hidden until first manage_tasks call)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(8, 4)
+            [
+                SAssignNew(TaskListWidget, SVibeUETaskList)
+                .TaskList(TArray<FVibeUETaskItem>())
+                .Visibility(EVisibility::Collapsed)
+            ]
+
             // Message list area
             + SVerticalBox::Slot()
             .FillHeight(1.0f)
@@ -2658,8 +2669,37 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
     UpdateUIState();
 }
 
+void SAIChatWindow::HandleTaskListUpdated(const TArray<FVibeUETaskItem>& NewTaskList)
+{
+    UE_LOG(LogAIChatWindow, Log, TEXT("HandleTaskListUpdated: %d tasks, widget valid: %s"),
+        NewTaskList.Num(), TaskListWidget.IsValid() ? TEXT("YES") : TEXT("NO"));
+
+    if (!TaskListWidget.IsValid())
+    {
+        UE_LOG(LogAIChatWindow, Error, TEXT("TaskListWidget is INVALID - cannot update task list UI"));
+        return;
+    }
+
+    if (NewTaskList.Num() > 0)
+    {
+        TaskListWidget->SetVisibility(EVisibility::Visible);
+        TaskListWidget->UpdateTaskList(NewTaskList);
+        UE_LOG(LogAIChatWindow, Log, TEXT("Task list widget shown with %d items"), NewTaskList.Num());
+    }
+    else
+    {
+        TaskListWidget->SetVisibility(EVisibility::Collapsed);
+    }
+}
+
 void SAIChatWindow::HandleChatReset()
 {
+    // Hide task list widget
+    if (TaskListWidget.IsValid())
+    {
+        TaskListWidget->SetVisibility(EVisibility::Collapsed);
+    }
+
     RebuildMessageList();
     UpdateUIState();
     UpdateTokenBudgetDisplay();

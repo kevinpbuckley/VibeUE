@@ -15,7 +15,9 @@ unreal_classes:
 
 ### ⚠️ Creating Widget Blueprints
 
-WidgetService does NOT create widgets. Use `WidgetBlueprintFactory`:
+**NEVER use `BlueprintEditorLibrary` or guess at factory APIs!**
+
+WidgetService does NOT create widgets. **ONLY this pattern works:**
 
 ```python
 import unreal
@@ -25,6 +27,13 @@ factory.set_editor_property("parent_class", unreal.UserWidget)
 asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
 widget_asset = asset_tools.create_asset("MainMenu", "/Game/UI", unreal.WidgetBlueprint, factory)
 ```
+
+**Common hallucinations to AVOID:**
+- ❌ `BlueprintEditorLibrary.get_blueprint_class()` - Does NOT exist
+- ❌ `unreal.create_widget_blueprint()` - Does NOT exist  
+- ❌ `WidgetService.create_widget()` - Does NOT exist
+
+**Use the pattern above. Nothing else.**
 
 ### ⚠️ Hierarchy Rules
 

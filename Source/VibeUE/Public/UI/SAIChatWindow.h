@@ -10,6 +10,7 @@
 #include "Widgets/Images/SImage.h"
 #include "UI/SMarkdownTextBlock.h"
 #include "Chat/ChatSession.h"
+#include "UI/SVibeUETaskList.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
 
@@ -170,6 +171,14 @@ private:
 
     /** Check if there's an attached image */
     bool HasAttachedImage() const { return !AttachedImageDataUrl.IsEmpty(); }
+
+    // ============ Task List Widget ============
+
+    /** Task list widget shown as sticky header */
+    TSharedPtr<SVibeUETaskList> TaskListWidget;
+
+    /** Handle task list updated from session */
+    void HandleTaskListUpdated(const TArray<FVibeUETaskItem>& NewTaskList);
 
     // ============ Thinking Indicator (Phase 1) ============
 

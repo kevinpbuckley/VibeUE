@@ -108,6 +108,11 @@ DECLARE_DELEGATE(FOnLLMThinkingComplete);
 DECLARE_DELEGATE_TwoParams(FOnToolCallApprovalRequired, const FString& /* ToolCallId */, const FMCPToolCall& /* ToolCall */);
 
 /**
+ * Delegate called when the task list is updated
+ */
+DECLARE_DELEGATE_OneParam(FOnTaskListUpdated, const TArray<FVibeUETaskItem>& /* TaskList */);
+
+/**
  * Manages conversation state, message history, and persistence
  */
 class VIBEUE_API FChatSession : public TSharedFromThis<FChatSession>
@@ -400,6 +405,21 @@ public:
     FOnLLMThinkingStarted OnLLMThinkingStarted;
     FOnLLMThinkingComplete OnLLMThinkingComplete;
     FOnToolCallApprovalRequired OnToolCallApprovalRequired;
+    FOnTaskListUpdated OnTaskListUpdated;
+
+    // ============ Task List ============
+
+    /** Update the task list (called by manage_tasks tool) */
+    void UpdateTaskList(const TArray<FVibeUETaskItem>& NewTaskList);
+
+    /** Get current task list */
+    const TArray<FVibeUETaskItem>& GetTaskList() const { return TaskList; }
+
+    /** Serialize task list for injection into system prompt */
+    FString SerializeTaskListForPrompt() const;
+
+    /** Clear task list (on chat reset) */
+    void ClearTaskList();
 
     // ============ Voice Input ============
 
@@ -623,6 +643,9 @@ private:
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;
+
+    /** Current task list managed by manage_tasks tool */
+    TArray<FVibeUETaskItem> TaskList;
 
     // Loop detection is handled via prompt-based self-awareness instructions
     // See vibeue.instructions.md for details

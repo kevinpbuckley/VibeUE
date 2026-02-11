@@ -9,6 +9,7 @@
 class UFunction;
 class UClass;
 class FProperty;
+class FChatSession;
 
 DECLARE_LOG_CATEGORY_EXTERN(LogToolRegistry, Log, All);
 
@@ -96,6 +97,12 @@ public:
 	/** Check if registry is initialized */
 	bool IsInitialized() const { return bInitialized; }
 
+	/** Set the current chat session (for tools that need session access) */
+	void SetCurrentSession(FChatSession* Session) { CurrentSession = Session; }
+
+	/** Get the current chat session (may be null outside tool execution) */
+	FChatSession* GetCurrentSession() const { return CurrentSession; }
+
 private:
 	FToolRegistry();
 	~FToolRegistry();
@@ -122,6 +129,9 @@ private:
 	TArray<FToolRegistration> PendingRegistrations;
 	TSet<FString> DisabledTools;
 	bool bInitialized = false;
+
+	/** Current chat session pointer (set during tool execution, null otherwise) */
+	FChatSession* CurrentSession = nullptr;
 };
 
 //=============================================================================

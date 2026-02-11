@@ -58,6 +58,14 @@ Show me all the widgets now.
 
 ---
 
+Save the widget blueprint.
+
+---
+
+Open the widget blueprint in the editor to verify it compiles without errors.
+
+---
+
 ## Text Configuration
 
 What properties does the title text have?
@@ -129,6 +137,21 @@ Add some more buttons and text for a proper menu layout.
 ---
 
 Configure the layout to look like a vertical menu.
+
+---
+
+## Complex Hierarchy Test
+
+Create a nested widget structure to test GUID registration:
+- Add a VerticalBox called "MainContainer"
+- Inside MainContainer, add a HorizontalBox called "HeaderRow"
+- Inside HeaderRow, add a TextBlock called "HeaderTitle"
+- Add a ScrollBox called "ContentScroll" to MainContainer
+- Inside ContentScroll, add a VerticalBox called "ItemList"
+
+---
+
+Save and verify the complex hierarchy compiles without GUID errors.
 
 ---
 

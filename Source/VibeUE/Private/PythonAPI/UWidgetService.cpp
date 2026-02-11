@@ -364,6 +364,13 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 
 	NewWidget->bIsVariable = bIsVariable;
 
+	// Register widget with GUID map (required for UMG compilation)
+	const FName WidgetFName = NewWidget->GetFName();
+	if (!WidgetBP->WidgetVariableNameToGuidMap.Contains(WidgetFName))
+	{
+		WidgetBP->WidgetVariableNameToGuidMap.Add(WidgetFName, FGuid::NewGuid());
+	}
+
 	// Add to parent or set as root
 	if (ParentPanel)
 	{

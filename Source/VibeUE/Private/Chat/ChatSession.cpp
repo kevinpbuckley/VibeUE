@@ -10,6 +10,7 @@
 #include "UI/SAIChatWindow.h"
 #include "Core/ToolRegistry.h"
 #include "Core/ToolMetadata.h"
+#include "Utils/VibeUEPaths.h"
 #include "Chat/MCPTypes.h"
 #include "Async/Async.h"
 #include "Speech/SpeechToTextService.h"
@@ -759,8 +760,10 @@ void FChatSession::ExecuteNextToolInQueue()
             UE_LOG(LogChatSession, Log, TEXT("  %s = %s"), *Pair.Key, *Pair.Value);
         }
         
-        // Execute tool
+        // Set session context so internal tools can access the session
+        Registry.SetCurrentSession(this);
         FString Result = Registry.ExecuteTool(ToolCall.ToolName, Parameters);
+        Registry.SetCurrentSession(nullptr);
         
         // Create result
         FMCPToolResult ToolResult;
@@ -1033,25 +1036,70 @@ void FChatSession::SendFollowUpAfterToolCall()
     UsageStats.RequestCount++;
 }
 
+// ============ Task List ============
+
+void FChatSession::UpdateTaskList(const TArray<FVibeUETaskItem>& NewTaskList)
+{
+    TaskList = NewTaskList;
+    UE_LOG(LogChatSession, Log, TEXT("Task list updated: %d items, delegate bound: %s"),
+        TaskList.Num(), OnTaskListUpdated.IsBound() ? TEXT("YES") : TEXT("NO"));
+    OnTaskListUpdated.ExecuteIfBound(TaskList);
+}
+
+FString FChatSession::SerializeTaskListForPrompt() const
+{
+    if (TaskList.Num() == 0)
+    {
+        return TEXT("");
+    }
+
+    FString Result = TEXT("<taskList>\nCurrent task progress:\n");
+    int32 CompletedCount = 0;
+
+    for (const auto& Item : TaskList)
+    {
+        Result += FString::Printf(TEXT("- [%s] (%d) %s\n"),
+            *Item.GetStatusString(), Item.Id, *Item.Title);
+        if (Item.Status == EVibeUETaskStatus::Completed)
+        {
+            CompletedCount++;
+        }
+    }
+
+    Result += FString::Printf(TEXT("\nProgress: %d/%d tasks completed\n</taskList>"),
+        CompletedCount, TaskList.Num());
+
+    return Result;
+}
+
+void FChatSession::ClearTaskList()
+{
+    TaskList.Empty();
+    OnTaskListUpdated.ExecuteIfBound(TaskList);
+}
+
 void FChatSession::ResetChat()
 {
     CancelRequest();
     Messages.Empty();
-    
+
     // Reset usage stats
     UsageStats.Reset();
-    
+
     // Reset iteration tracking
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
-    
+
+    // Clear task list
+    ClearTaskList();
+
     // Delete history file
     FString HistoryPath = GetHistoryFilePath();
     if (FPaths::FileExists(HistoryPath))
     {
         IFileManager::Get().Delete(*HistoryPath);
     }
-    
+
     OnChatReset.ExecuteIfBound();
     UE_LOG(LogChatSession, Log, TEXT("Chat reset"));
 }
@@ -1976,11 +2024,32 @@ TArray<FChatMessage> FChatSession::BuildApiMessages() const
 {
     TArray<FChatMessage> ApiMessages;
     
+    // Build full system prompt with optional tool instructions
+    FString FullSystemPrompt = SystemPrompt;
+
+    // Append manage_tasks instructions if the tool is enabled
+    if (FToolRegistry::Get().IsToolEnabled(TEXT("manage_tasks")))
+    {
+        FString TaskInstructionsPath = FVibeUEPaths::GetInstructionsDir() / TEXT("tools") / TEXT("manage_tasks.md");
+        FString TaskInstructions;
+        if (FFileHelper::LoadFileToString(TaskInstructions, *TaskInstructionsPath))
+        {
+            FullSystemPrompt += TEXT("\n\n---\n\n") + TaskInstructions;
+        }
+
+        // Append current task list state
+        FString TaskContext = SerializeTaskListForPrompt();
+        if (!TaskContext.IsEmpty())
+        {
+            FullSystemPrompt += TEXT("\n\n") + TaskContext;
+        }
+    }
+
     int32 AvailableTokens = GetCurrentModelContextLength() - ReservedResponseTokens;
-    int32 UsedTokens = EstimateTokenCount(SystemPrompt);
-    
-    // Always include system prompt
-    ApiMessages.Add(FChatMessage(TEXT("system"), SystemPrompt));
+    int32 UsedTokens = EstimateTokenCount(FullSystemPrompt);
+
+    // Always include system prompt (with task list context appended)
+    ApiMessages.Add(FChatMessage(TEXT("system"), FullSystemPrompt));
     
     // If we have a conversation summary, add it after system prompt
     if (!ConversationSummary.IsEmpty())
