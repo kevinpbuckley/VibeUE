@@ -435,6 +435,14 @@ FString UDataAssetService::CreateDataAsset(
 	
 	// Use default path if not provided
 	FString FinalPath = AssetPath.IsEmpty() ? TEXT("/Game/Data") : AssetPath;
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = FinalPath / AssetName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		UE_LOG(LogDataAssetService, Error, TEXT("CreateDataAsset: Asset '%s' already exists at '%s'. Delete it first or use a different name."), *AssetName, *FullAssetPath);
+		return TEXT("");
+	}
 	
 	// Create the asset using asset tools
 	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();

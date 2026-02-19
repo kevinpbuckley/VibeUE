@@ -2027,24 +2027,6 @@ TArray<FChatMessage> FChatSession::BuildApiMessages() const
     // Build full system prompt with optional tool instructions
     FString FullSystemPrompt = SystemPrompt;
 
-    // Append manage_tasks instructions if the tool is enabled
-    if (FToolRegistry::Get().IsToolEnabled(TEXT("manage_tasks")))
-    {
-        FString TaskInstructionsPath = FVibeUEPaths::GetInstructionsDir() / TEXT("tools") / TEXT("manage_tasks.md");
-        FString TaskInstructions;
-        if (FFileHelper::LoadFileToString(TaskInstructions, *TaskInstructionsPath))
-        {
-            FullSystemPrompt += TEXT("\n\n---\n\n") + TaskInstructions;
-        }
-
-        // Append current task list state
-        FString TaskContext = SerializeTaskListForPrompt();
-        if (!TaskContext.IsEmpty())
-        {
-            FullSystemPrompt += TEXT("\n\n") + TaskContext;
-        }
-    }
-
     int32 AvailableTokens = GetCurrentModelContextLength() - ReservedResponseTokens;
     int32 UsedTokens = EstimateTokenCount(FullSystemPrompt);
 

@@ -236,15 +236,24 @@ FMaterialCreateResult UMaterialService::CreateMaterial(
 {
 	FMaterialCreateResult Result;
 
-	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-	
-	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-	
 	FString PackagePath = DestinationPath;
 	if (!PackagePath.EndsWith(TEXT("/")))
 	{
 		PackagePath += TEXT("/");
 	}
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = PackagePath + MaterialName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Material '%s' already exists at '%s'. Delete it first or use a different name."), *MaterialName, *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialService::CreateMaterial: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	
+	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
 	
 	UObject* NewAsset = AssetTools.CreateAsset(MaterialName, PackagePath, UMaterial::StaticClass(), Factory);
 	
@@ -281,16 +290,25 @@ FMaterialCreateResult UMaterialService::CreateInstance(
 		return Result;
 	}
 
-	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-	
-	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
-	Factory->InitialParent = ParentMaterial;
-	
 	FString PackagePath = DestinationPath;
 	if (!PackagePath.EndsWith(TEXT("/")))
 	{
 		PackagePath += TEXT("/");
 	}
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = PackagePath + InstanceName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Material instance '%s' already exists at '%s'. Delete it first or use a different name."), *InstanceName, *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialService::CreateInstance: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	
+	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+	Factory->InitialParent = ParentMaterial;
 	
 	UObject* NewAsset = AssetTools.CreateAsset(InstanceName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory);
 	

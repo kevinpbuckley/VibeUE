@@ -394,6 +394,14 @@ FString UEnumStructService::CreateEnum(const FString& AssetPath, const FString& 
 		NormalizedPath = TEXT("/Game/") + NormalizedPath;
 	}
 
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = NormalizedPath / FinalName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		UE_LOG(LogEnumStructService, Error, TEXT("CreateEnum: Enum '%s' already exists at '%s'. Delete it first or use a different name."), *FinalName, *FullAssetPath);
+		return TEXT("");
+	}
+
 	// Create the asset using asset tools
 	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
 
@@ -764,6 +772,14 @@ FString UEnumStructService::CreateStruct(const FString& AssetPath, const FString
 	if (!NormalizedPath.StartsWith(TEXT("/")))
 	{
 		NormalizedPath = TEXT("/Game/") + NormalizedPath;
+	}
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = NormalizedPath / FinalName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		UE_LOG(LogEnumStructService, Error, TEXT("CreateStruct: Struct '%s' already exists at '%s'. Delete it first or use a different name."), *FinalName, *FullAssetPath);
+		return TEXT("");
 	}
 
 	// Create the asset using asset tools

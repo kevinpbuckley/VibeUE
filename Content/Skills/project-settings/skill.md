@@ -68,9 +68,22 @@ if result.success:
 ```python
 import unreal
 
+# set_setting auto-persists to the correct config file - no save_config needed
 result = unreal.ProjectSettingsService.set_setting("maps", "GameDefaultMap", "/Game/Maps/MainMenu.MainMenu")
 if result.success:
-    unreal.ProjectSettingsService.save_config("DefaultEngine.ini")
+    print("Default map updated and saved")
+```
+
+### Set Editor Startup Map
+
+```python
+import unreal
+
+# EditorStartupMap controls which level opens when the editor launches
+# Use full asset path format: /Game/Path/To/Level.Level
+result = unreal.ProjectSettingsService.set_setting("maps", "EditorStartupMap", "/Game/Levels/MyLevel.MyLevel")
+if result.success:
+    print("Editor startup map updated and saved")
 ```
 
 ### Discover Settings Classes

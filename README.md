@@ -238,7 +238,8 @@ High-level services exposed to Python for common game development tasks:
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
 - `unreal.EditorAssetLibrary` - Asset operations
-- `unreal.EditorLevelLibrary` - Level manipulation
+- `unreal.EditorActorSubsystem` - Level actor manipulation (via `unreal.get_editor_subsystem()`)
+- ~~`unreal.EditorLevelLibrary`~~ - **DEPRECATED** — use `EditorActorSubsystem` instead
 - `unreal.EditorUtilityLibrary` - Editor utilities
 - `unreal.SystemLibrary` - System functions
 - All Unreal Python APIs available in the editor
