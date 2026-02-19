@@ -173,6 +173,33 @@ if unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset):
     print(f"Selected: {asset.asset_name}")
 ```
 
+### Create Non-Standard Asset Types (Factory Pattern)
+
+Assets not covered by VibeUE services (e.g., `LandscapeGrassType`) require `AssetToolsHelpers` + a factory:
+
+```python
+import unreal
+
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+
+# LandscapeGrassType
+factory = unreal.LandscapeGrassTypeFactory()
+lgt = asset_tools.create_asset("LGT_MyGrass", "/Game/Landscape", unreal.LandscapeGrassType, factory)
+
+# After creation, set properties via set_editor_property, then save
+unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_MyGrass")
+```
+
+> **Tip:** Use `discover_python_module("unreal", name_filter="Factory")` to find available factories for other asset types.
+
+### ⚠️ search_assets May Not Find All Asset Types
+
+`search_assets(term, type)` searches by name/type but may return empty for niche types like `LandscapeGrassType`. If search returns nothing:
+
+1. Use `get_assets_by_type("LandscapeGrassType")` for type-specific queries
+2. Use `list_assets_in_path("/Game/SomeFolder")` and filter in Python
+3. Asset class names must match UE class names exactly (e.g., `LandscapeGrassType`, not `GrassType`)
+
 ### Common Asset Types for Filtering
 
 - `Blueprint` - Blueprint classes
@@ -184,3 +211,5 @@ if unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset):
 - `MaterialInstanceConstant` - Material instances
 - `DataTable` - Data Tables
 - `PrimaryDataAsset` - Primary Data Assets
+- `LandscapeGrassType` - Landscape grass/vegetation scatter types
+- `LandscapeLayerInfoObject` - Landscape paint layer info

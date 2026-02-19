@@ -664,5 +664,6 @@ private:
 	static class UMaterialInstanceConstant* LoadMaterialInstanceConstant(const FString& InstancePath);
 	static FString PropertyValueToString(const FProperty* Property, const void* Container);
 	static bool StringToPropertyValue(FProperty* Property, void* Container, const FString& Value);
+	static int64 ResolveEnumValue(UEnum* Enum, const FString& Value);
 	static TArray<FString> GetEnumPropertyValues(const FEnumProperty* EnumProp);
 };

@@ -9,6 +9,8 @@ unreal_classes:
   - LandscapeProxy
   - LandscapeInfo
   - LandscapeLayerInfoObject
+  - LandscapeGrassType
+  - GrassVariety
 keywords:
   - landscape
   - terrain
@@ -17,6 +19,11 @@ keywords:
   - paint
   - layer
   - topography
+  - grass
+  - grass type
+  - LGT
+  - foliage
+  - vegetation
 ---
 
 # Landscape Terrain Skill
@@ -56,6 +63,39 @@ When sculpting pushes vertices to 0 or 65535, a saturation warning is logged. To
 - **Most methods** accept world coordinates (WorldX, WorldY)
 - **set_height_in_region** uses landscape-local vertex indices
 - Heights in `set_height_in_region` are world-space Z values
+
+### ⚠️ GrassVariety Struct Properties Are Read-Only via Direct Assignment
+
+`GrassVariety` (and its nested structs like `PerPlatformFloat`, `FloatInterval`, etc.) **cannot** be set via direct attribute assignment. You MUST use `set_editor_property()` for all properties.
+
+```python
+# WRONG - raises "Property is read-only and cannot be set"
+nv = unreal.GrassVariety()
+nv.affect_distance_field_lighting = True
+nv.grass_density.default = 50.0
+
+# CORRECT - use set_editor_property and construct new struct instances
+nv = unreal.GrassVariety()
+nv.set_editor_property('affect_distance_field_lighting', True)
+nv.set_editor_property('grass_density', unreal.PerPlatformFloat(default=50.0))
+nv.set_editor_property('scale_x', unreal.FloatInterval(min=1.0, max=3.0))
+```
+
+This applies to ALL nested structs: `PerPlatformFloat`, `PerPlatformInt`, `PerQualityLevelFloat`, `PerQualityLevelInt`, `FloatInterval`, `LightingChannels`. Always construct a **new** struct instance with keyword args.
+
+### ⚠️ Creating LandscapeGrassType Assets Requires AssetTools + Factory
+
+LandscapeGrassType assets are NOT created via LandscapeService. Use `AssetToolsHelpers` with `LandscapeGrassTypeFactory`:
+
+```python
+# WRONG - no such method exists
+unreal.LandscapeService.create_grass_type("LGT_MyGrass", "/Game/Grass")
+
+# CORRECT - use AssetTools + Factory
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+factory = unreal.LandscapeGrassTypeFactory()
+new_asset = asset_tools.create_asset("LGT_MyGrass", "/Game/Grass", unreal.LandscapeGrassType, factory)
+```
 
 ### ⚠️ Use LandscapeMaterialService for Landscape Materials - NOT MaterialService
 
@@ -325,6 +365,94 @@ if sample.valid:
 weights = unreal.LandscapeService.get_layer_weights_at_location("MyTerrain", 500.0, 500.0)
 for w in weights:
     print(f"{w.layer_name}: {w.weight}")
+```
+
+### Create LandscapeGrassType Asset
+
+```python
+import unreal
+
+# Create a new LandscapeGrassType asset using AssetTools + Factory
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+factory = unreal.LandscapeGrassTypeFactory()
+new_lgt = asset_tools.create_asset("LGT_MyGrass", "/Game/Landscape", unreal.LandscapeGrassType, factory)
+
+# Set top-level properties
+new_lgt.set_editor_property('enable_density_scaling', True)
+
+# Build grass varieties array
+varieties = unreal.Array(unreal.GrassVariety)
+
+v = unreal.GrassVariety()
+v.set_editor_property('grass_mesh', unreal.load_asset("/Game/Meshes/SM_Grass_01"))
+v.set_editor_property('grass_density', unreal.PerPlatformFloat(default=100.0))
+v.set_editor_property('grass_density_quality', unreal.PerQualityLevelFloat(default=400.0))
+v.set_editor_property('start_cull_distance', unreal.PerPlatformInt(default=3000))
+v.set_editor_property('start_cull_distance_quality', unreal.PerQualityLevelInt(default=10000))
+v.set_editor_property('end_cull_distance', unreal.PerPlatformInt(default=3000))
+v.set_editor_property('end_cull_distance_quality', unreal.PerQualityLevelInt(default=10000))
+v.set_editor_property('scale_x', unreal.FloatInterval(min=1.0, max=2.0))
+v.set_editor_property('scale_y', unreal.FloatInterval(min=1.0, max=1.0))
+v.set_editor_property('scale_z', unreal.FloatInterval(min=1.0, max=1.0))
+v.set_editor_property('allowed_density_range', unreal.FloatInterval(min=0.0, max=1.0))
+v.set_editor_property('lighting_channels', unreal.LightingChannels(channel0=True, channel1=False, channel2=False))
+v.set_editor_property('scaling', unreal.GrassScaling.UNIFORM)
+v.set_editor_property('random_rotation', True)
+v.set_editor_property('align_to_surface', True)
+v.set_editor_property('use_grid', True)
+v.set_editor_property('placement_jitter', 1.0)
+varieties.append(v)
+
+new_lgt.set_editor_property('grass_varieties', varieties)
+unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_MyGrass")
+```
+
+### Clone LandscapeGrassType (Read + Recreate)
+
+To recreate a LandscapeGrassType without duplicating, read properties from source and write to a new asset:
+
+```python
+import unreal
+
+# Load source
+src = unreal.load_asset("/Game/Landscape/LGT_Grass")
+
+# Create new asset
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+factory = unreal.LandscapeGrassTypeFactory()
+dst = asset_tools.create_asset("LGT_Grass2", "/Game/Landscape", unreal.LandscapeGrassType, factory)
+dst.set_editor_property('enable_density_scaling', src.get_editor_property('enable_density_scaling'))
+
+# Copy all varieties
+src_vars = src.get_editor_property('grass_varieties')
+new_vars = unreal.Array(unreal.GrassVariety)
+for sv in src_vars:
+    nv = unreal.GrassVariety()
+    # Simple properties — MUST use set_editor_property, not direct assignment
+    for prop in ['affect_distance_field_lighting', 'align_to_surface', 'align_to_triangle_normals',
+                 'cast_contact_shadow', 'cast_dynamic_shadow', 'grass_mesh',
+                 'keep_instance_buffer_cpu_copy', 'max_scale_weight_attenuation', 'min_lod',
+                 'placement_jitter', 'random_rotation', 'receives_decals', 'scaling',
+                 'shadow_cache_invalidation_behavior', 'use_grid', 'use_landscape_lightmap',
+                 'weight_attenuates_max_scale']:
+        nv.set_editor_property(prop, sv.get_editor_property(prop))
+    # Struct properties — construct NEW instances with keyword args
+    nv.set_editor_property('grass_density', unreal.PerPlatformFloat(default=sv.grass_density.default))
+    nv.set_editor_property('grass_density_quality', unreal.PerQualityLevelFloat(default=sv.grass_density_quality.default))
+    nv.set_editor_property('start_cull_distance', unreal.PerPlatformInt(default=sv.start_cull_distance.default))
+    nv.set_editor_property('start_cull_distance_quality', unreal.PerQualityLevelInt(default=sv.start_cull_distance_quality.default))
+    nv.set_editor_property('end_cull_distance', unreal.PerPlatformInt(default=sv.end_cull_distance.default))
+    nv.set_editor_property('end_cull_distance_quality', unreal.PerQualityLevelInt(default=sv.end_cull_distance_quality.default))
+    nv.set_editor_property('scale_x', unreal.FloatInterval(min=sv.scale_x.min, max=sv.scale_x.max))
+    nv.set_editor_property('scale_y', unreal.FloatInterval(min=sv.scale_y.min, max=sv.scale_y.max))
+    nv.set_editor_property('scale_z', unreal.FloatInterval(min=sv.scale_z.min, max=sv.scale_z.max))
+    nv.set_editor_property('allowed_density_range', unreal.FloatInterval(min=sv.allowed_density_range.min, max=sv.allowed_density_range.max))
+    nv.set_editor_property('lighting_channels', unreal.LightingChannels(
+        channel0=sv.lighting_channels.channel0, channel1=sv.lighting_channels.channel1, channel2=sv.lighting_channels.channel2))
+    new_vars.append(nv)
+
+dst.set_editor_property('grass_varieties', new_vars)
+unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_Grass2")
 ```
 
 ### Check Existence

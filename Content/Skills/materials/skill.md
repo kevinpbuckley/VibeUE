@@ -321,15 +321,63 @@ json_str = unreal.MaterialNodeService.export_material_graph(path)
 import json
 graph = json.loads(json_str)
 
-print(f"Material: {graph['material_name']}")
 print(f"Expressions: {len(graph['expressions'])}")
 print(f"Connections: {len(graph['connections'])}")
 
-# Each expression includes: id, class, position, properties, parameter info,
-# function paths, HLSL code, collection references, inputs, outputs
+# Each expression includes: id, class, class_full, pos_x, pos_y,
+# properties (dict), inputs (list), outputs (list)
+# Parameter expressions also have: is_parameter, parameter_name, group
+# Function calls have: function_path
+# Custom expressions have: hlsl_code, output_type, custom_input_names
 for expr in graph['expressions']:
-    print(f"  {expr['class']} at ({expr['x']}, {expr['y']})")
+    print(f"  {expr['class']} at ({expr['pos_x']}, {expr['pos_y']})")
+    if expr.get('is_parameter'):
+        print(f"    Parameter: {expr['parameter_name']} (group: {expr['group']})")
 ```
+
+### ⚠️ Export JSON Schema Reference
+
+**Top-level keys:**
+- `material` — `{blend_mode, shading_model, two_sided}`
+- `expressions` — array of expression objects
+- `connections` — array of connection objects
+- `output_connections` — array of material output connection objects
+
+**Expression object keys:**
+- `id` — unique expression identifier (use for connections)
+- `class` — short class name (e.g. `"Add"`, `"Multiply"`, `"ScalarParameter"`)
+- `class_full` — full UE class name (e.g. `"MaterialExpressionAdd"`)
+- `pos_x`, `pos_y` — editor position (NOT `x`/`y`)
+- `properties` — dict of editable property name→value (excludes ParameterName, Group)
+- `inputs` — list of input pin names
+- `outputs` — list of output pin names
+- `is_parameter` — true for parameter expressions
+- `parameter_name` — the parameter's display name (only on parameters)
+- `group` — parameter group name (only on parameters)
+- `function_path` — material function asset path (only on function calls)
+- `hlsl_code` — HLSL code string (only on Custom expressions)
+- `custom_input_names` — comma-separated input names (only on Custom expressions)
+- `landscape_layers` — array of layer configs (only on LandscapeLayerBlend)
+
+**Connection object keys:**
+- `source_id` — expression ID of the source node
+- `source_output_index` — integer index of the source output pin
+- `source_output_name` — name of the source output pin (empty string for default pin)
+- `target_id` — expression ID of the target node
+- `target_input` — name of the target input pin (NOT `target_input_name`)
+
+**Output connection object keys (material property connections):**
+- `property` — material property name (e.g. `"BaseColor"`, `"Normal"`)
+- `expression_id` — expression ID connected to this output
+- `output_index` — which output pin index of the expression
+- `output_name` — the output pin name (empty string for default)
+
+### ⚠️ Enum Value Format
+
+When setting material properties via `set_property`, enum values accept:
+- **Full prefixed names**: `"BLEND_Masked"`, `"MSM_DefaultLit"`, `"MD_Surface"`
+- **Short suffix names**: `"Masked"`, `"DefaultLit"`, `"Surface"`
+- Both are accepted — the API uses fuzzy matching
 
 ### Recreate Material from Export
 
@@ -346,15 +394,46 @@ graph = json.loads(source_json)
 new_path = unreal.MaterialService.create_material("M_Source_Copy", "/Game/Materials/")
 
 # 3. Set material properties
-unreal.MaterialService.set_blend_mode(new_path, graph['blend_mode'])
-unreal.MaterialService.set_shading_model(new_path, graph['shading_model'])
+mat = graph['material']
+unreal.MaterialService.set_blend_mode(new_path, mat['blend_mode'])
+unreal.MaterialService.set_shading_model(new_path, mat['shading_model'])
 
-# 4. Batch create all expressions (use types from export)
-types = [e['class'].replace('MaterialExpression', '') for e in graph['expressions']]
-# ... set up positions, then batch_create_expressions
+# 4. Batch create all expressions
+# Use class_full or class (both accepted by create APIs)
+types = [e['class'] for e in graph['expressions']]
+x_positions = [e['pos_x'] for e in graph['expressions']]
+y_positions = [e['pos_y'] for e in graph['expressions']]
 
-# 5. Batch connect all wires from connections array
-# 6. Batch set all properties
-# 7. Compile
+# For function calls and specialized types, use batch_create_specialized
+# For generic types, use batch_create_expressions
+
+# 5. Set parameter names FIRST (before batch_set_properties)
+# The export's parameter_name field has the correct name
+for expr in graph['expressions']:
+    if expr.get('is_parameter'):
+        unreal.MaterialNodeService.set_expression_property(
+            new_path, new_id_map[expr['id']], "ParameterName", expr['parameter_name'])
+        if expr.get('group'):
+            unreal.MaterialNodeService.set_expression_property(
+                new_path, new_id_map[expr['id']], "Group", expr['group'])
+
+# 6. Batch set all other properties (ParameterName/Group excluded from export)
+
+# 7. Batch connect using connections array
+source_ids = [new_id_map[c['source_id']] for c in graph['connections']]
+output_names = [c['source_output_name'] for c in graph['connections']]
+target_ids = [new_id_map[c['target_id']] for c in graph['connections']]
+input_names = [c['target_input'] for c in graph['connections']]
+
+unreal.MaterialNodeService.batch_connect_expressions(
+    new_path, source_ids, output_names, target_ids, input_names)
+
+# 8. Connect output_connections (material property outputs)
+for oc in graph['output_connections']:
+    unreal.MaterialNodeService.connect_to_output(
+        new_path, new_id_map[oc['expression_id']],
+        oc['output_name'], oc['property'])
+
+# 9. Compile
 unreal.MaterialService.compile_material(new_path)
 ```

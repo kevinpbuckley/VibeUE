@@ -28,6 +28,7 @@
 #include "MaterialEditingLibrary.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 #include "ScopedTransaction.h"
 #include "UObject/UObjectIterator.h"
 #include "Serialization/JsonWriter.h"
@@ -2083,13 +2084,23 @@ FString UMaterialNodeService::ExportMaterialGraph(const FString& MaterialPath)
 		ExprObj->SetNumberField(TEXT("pos_x"), Expr->MaterialExpressionEditorX);
 		ExprObj->SetNumberField(TEXT("pos_y"), Expr->MaterialExpressionEditorY);
 
-		// Properties
+		// Properties — exclude parameter identity fields since they are exported
+		// as dedicated top-level fields (parameter_name, group). Including them
+		// in properties causes batch_set_properties to overwrite parameter names.
+		static const TSet<FString> ExcludedPropertyNames = {
+			TEXT("ParameterName"),
+			TEXT("Group"),
+			TEXT("ExpressionGUID"),
+			TEXT("MaterialExpressionEditorX"),
+			TEXT("MaterialExpressionEditorY"),
+		};
 		TSharedRef<FJsonObject> PropsObj = MakeShared<FJsonObject>();
 		for (TFieldIterator<FProperty> PropIt(Expr->GetClass()); PropIt; ++PropIt)
 		{
 			FProperty* Prop = *PropIt;
 			if (Prop->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient)) continue;
 			if (!Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+			if (ExcludedPropertyNames.Contains(Prop->GetName())) continue;
 
 			FString Value;
 			Prop->ExportTextItem_Direct(Value, Prop->ContainerPtrToValuePtr<void>(Expr), nullptr, Expr, PPF_None);
@@ -2106,6 +2117,12 @@ FString UMaterialNodeService::ExportMaterialGraph(const FString& MaterialPath)
 			ExprObj->SetBoolField(TEXT("is_parameter"), true);
 			ExprObj->SetStringField(TEXT("parameter_name"), ParamExpr->ParameterName.ToString());
 			ExprObj->SetStringField(TEXT("group"), ParamExpr->Group.ToString());
+		}
+		else if (UMaterialExpressionTextureSampleParameter* TexParamExpr = Cast<UMaterialExpressionTextureSampleParameter>(Expr))
+		{
+			ExprObj->SetBoolField(TEXT("is_parameter"), true);
+			ExprObj->SetStringField(TEXT("parameter_name"), TexParamExpr->ParameterName.ToString());
+			ExprObj->SetStringField(TEXT("group"), TexParamExpr->Group.ToString());
 		}
 
 		// Function call info
@@ -2279,13 +2296,30 @@ FString UMaterialNodeService::ExportMaterialGraph(const FString& MaterialPath)
 	}
 	Root->SetArrayField(TEXT("connections"), ConnectionsArray);
 
-	// Material output connections
-	TSharedRef<FJsonObject> OutputConns = MakeShared<FJsonObject>();
+	// Material output connections — includes expression ID, output pin index, and output pin name
+	// so that connect_to_output can use the correct source output pin
+	TArray<TSharedPtr<FJsonValue>> OutputConnsArray;
 	auto ExportOutput = [&](EMaterialProperty Prop, const FString& Name) {
 		FExpressionInput* Input = Material->GetExpressionInputForProperty(Prop);
 		if (Input && Input->Expression)
 		{
-			OutputConns->SetStringField(Name, GetExpressionId(Input->Expression));
+			TSharedRef<FJsonObject> OutObj = MakeShared<FJsonObject>();
+			OutObj->SetStringField(TEXT("property"), Name);
+			OutObj->SetStringField(TEXT("expression_id"), GetExpressionId(Input->Expression));
+			OutObj->SetNumberField(TEXT("output_index"), Input->OutputIndex);
+
+			// Resolve output pin name from the source expression
+			FString OutputName;
+			TArray<FExpressionOutput>& SourceOutputs = Input->Expression->GetOutputs();
+			if (Input->OutputIndex >= 0 && Input->OutputIndex < SourceOutputs.Num())
+			{
+				OutputName = SourceOutputs[Input->OutputIndex].OutputName.IsNone()
+					? TEXT("")
+					: SourceOutputs[Input->OutputIndex].OutputName.ToString();
+			}
+			OutObj->SetStringField(TEXT("output_name"), OutputName);
+
+			OutputConnsArray.Add(MakeShared<FJsonValueObject>(OutObj));
 		}
 	};
 	ExportOutput(MP_BaseColor, TEXT("BaseColor"));
@@ -2303,7 +2337,7 @@ FString UMaterialNodeService::ExportMaterialGraph(const FString& MaterialPath)
 	ExportOutput(MP_Refraction, TEXT("Refraction"));
 	ExportOutput(MP_PixelDepthOffset, TEXT("PixelDepthOffset"));
 	ExportOutput(MP_ShadingModel, TEXT("ShadingModel"));
-	Root->SetObjectField(TEXT("output_connections"), OutputConns);
+	Root->SetArrayField(TEXT("output_connections"), OutputConnsArray);
 
 	// Serialize to string
 	FString OutputString;
@@ -2524,7 +2558,7 @@ FString UMaterialNodeService::CompareMaterialGraphs(
 	bool bConnMatch = (ConnA == ConnB);
 	Root->SetBoolField(TEXT("connection_count_match"), bConnMatch);
 
-	// Parameter comparison
+	// Parameter comparison — list ALL parameters from both sides for diagnostics
 	auto GetParameters = [](const TArray<UMaterialExpression*>& Exprs) -> TArray<TPair<FString, FString>>
 	{
 		TArray<TPair<FString, FString>> Params;
@@ -2545,6 +2579,27 @@ FString UMaterialNodeService::CompareMaterialGraphs(
 
 	TArray<TPair<FString, FString>> ParamsA = GetParameters(TopA);
 	TArray<TPair<FString, FString>> ParamsB = GetParameters(TopB);
+
+	// Export full parameter lists for AI diagnostics
+	TArray<TSharedPtr<FJsonValue>> ParamsAArray;
+	for (const auto& P : ParamsA)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), P.Key);
+		Obj->SetStringField(TEXT("type"), P.Value);
+		ParamsAArray.Add(MakeShared<FJsonValueObject>(Obj));
+	}
+	Root->SetArrayField(TEXT("parameters_a"), ParamsAArray);
+
+	TArray<TSharedPtr<FJsonValue>> ParamsBArray;
+	for (const auto& P : ParamsB)
+	{
+		TSharedRef<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"), P.Key);
+		Obj->SetStringField(TEXT("type"), P.Value);
+		ParamsBArray.Add(MakeShared<FJsonValueObject>(Obj));
+	}
+	Root->SetArrayField(TEXT("parameters_b"), ParamsBArray);
 
 	// Find missing in B and extra in B
 	TArray<TSharedPtr<FJsonValue>> MissingInB;
@@ -2581,8 +2636,91 @@ FString UMaterialNodeService::CompareMaterialGraphs(
 	bool bParamMatch = (MissingInB.Num() == 0 && ExtraInB.Num() == 0 && ParamsA.Num() == ParamsB.Num());
 	Root->SetBoolField(TEXT("parameter_match"), bParamMatch);
 
+	// Material output connection comparison
+	auto GetOutputConnections = [](UMaterial* Mat) -> TMap<FString, FString>
+	{
+		TMap<FString, FString> Outputs;
+		static const TArray<TPair<EMaterialProperty, FString>> OutputProps = {
+			{MP_BaseColor, TEXT("BaseColor")},
+			{MP_Metallic, TEXT("Metallic")},
+			{MP_Specular, TEXT("Specular")},
+			{MP_Roughness, TEXT("Roughness")},
+			{MP_EmissiveColor, TEXT("EmissiveColor")},
+			{MP_Normal, TEXT("Normal")},
+			{MP_AmbientOcclusion, TEXT("AmbientOcclusion")},
+			{MP_Opacity, TEXT("Opacity")},
+			{MP_OpacityMask, TEXT("OpacityMask")},
+			{MP_WorldPositionOffset, TEXT("WorldPositionOffset")},
+		};
+		for (const auto& Pair : OutputProps)
+		{
+			FExpressionInput* PropInput = Mat->GetExpressionInputForProperty(Pair.Key);
+			if (PropInput && PropInput->Expression)
+			{
+				Outputs.Add(Pair.Value, PropInput->Expression->GetClass()->GetName().Replace(TEXT("MaterialExpression"), TEXT("")));
+			}
+		}
+		return Outputs;
+	};
+
+	TMap<FString, FString> OutputsA = GetOutputConnections(MaterialA);
+	TMap<FString, FString> OutputsB = GetOutputConnections(MaterialB);
+
+	TArray<TSharedPtr<FJsonValue>> OutputDiffArray;
+	TSet<FString> AllOutputs;
+	for (const auto& Pair : OutputsA) AllOutputs.Add(Pair.Key);
+	for (const auto& Pair : OutputsB) AllOutputs.Add(Pair.Key);
+
+	bool bOutputsMatch = true;
+	for (const FString& OutputName : AllOutputs)
+	{
+		FString* ClassA_Ptr = OutputsA.Find(OutputName);
+		FString* ClassB_Ptr = OutputsB.Find(OutputName);
+		FString ClassAStr = ClassA_Ptr ? *ClassA_Ptr : TEXT("(none)");
+		FString ClassBStr = ClassB_Ptr ? *ClassB_Ptr : TEXT("(none)");
+		if (ClassAStr != ClassBStr)
+		{
+			bOutputsMatch = false;
+			TSharedRef<FJsonObject> DiffObj = MakeShared<FJsonObject>();
+			DiffObj->SetStringField(TEXT("output"), OutputName);
+			DiffObj->SetStringField(TEXT("a"), ClassAStr);
+			DiffObj->SetStringField(TEXT("b"), ClassBStr);
+			OutputDiffArray.Add(MakeShared<FJsonValueObject>(DiffObj));
+		}
+	}
+	Root->SetArrayField(TEXT("output_connection_diff"), OutputDiffArray);
+	Root->SetBoolField(TEXT("output_connection_match"), bOutputsMatch);
+
+	// Material settings comparison
+	TSharedRef<FJsonObject> SettingsDiff = MakeShared<FJsonObject>();
+	bool bSettingsMatch = true;
+	FString BlendA = UEnum::GetValueAsString(MaterialA->BlendMode);
+	FString BlendB = UEnum::GetValueAsString(MaterialB->BlendMode);
+	if (BlendA != BlendB)
+	{
+		bSettingsMatch = false;
+		SettingsDiff->SetStringField(TEXT("blend_mode_a"), BlendA);
+		SettingsDiff->SetStringField(TEXT("blend_mode_b"), BlendB);
+	}
+	FString ShadingA = UEnum::GetValueAsString(MaterialA->GetShadingModels().GetFirstShadingModel());
+	FString ShadingB = UEnum::GetValueAsString(MaterialB->GetShadingModels().GetFirstShadingModel());
+	if (ShadingA != ShadingB)
+	{
+		bSettingsMatch = false;
+		SettingsDiff->SetStringField(TEXT("shading_model_a"), ShadingA);
+		SettingsDiff->SetStringField(TEXT("shading_model_b"), ShadingB);
+	}
+	if (MaterialA->IsTwoSided() != MaterialB->IsTwoSided())
+	{
+		bSettingsMatch = false;
+		SettingsDiff->SetBoolField(TEXT("two_sided_a"), MaterialA->IsTwoSided());
+		SettingsDiff->SetBoolField(TEXT("two_sided_b"), MaterialB->IsTwoSided());
+	}
+	Root->SetObjectField(TEXT("settings_diff"), SettingsDiff);
+	Root->SetBoolField(TEXT("settings_match"), bSettingsMatch);
+
 	// Overall match
-	bool bOverallMatch = bExprCountMatch && bAllClassesMatch && bConnMatch && bParamMatch;
+	bool bOverallMatch = bExprCountMatch && bAllClassesMatch && bConnMatch && bParamMatch && bOutputsMatch && bSettingsMatch;
 	Root->SetBoolField(TEXT("match"), bOverallMatch);
 
 	// Serialize

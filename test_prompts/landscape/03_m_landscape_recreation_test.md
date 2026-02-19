@@ -144,7 +144,13 @@ Create a new material called `M_Landscape2` in `/Game/Stylized_Spruce_Forest/Mat
 
 ---
 
-### 2.2 Set Material Properties
+### 2.2 Open M_Landscape2 in Editor
+
+Open M_Landscape2 in the material editor so we can watch it populate in real time as expressions and connections are added.
+
+---
+
+### 2.3 Set Material Properties
 
 From the export, set the exact same material properties on M_Landscape2:
 - Blend mode (should be Masked)
@@ -156,7 +162,7 @@ List each property you set and its value.
 
 ---
 
-### 2.3 Verify Material Properties
+### 2.4 Verify Material Properties
 
 Get M_Landscape2's properties. Compare against M_Landscape's properties. Report any differences.
 
