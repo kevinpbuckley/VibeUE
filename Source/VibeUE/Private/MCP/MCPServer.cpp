@@ -20,7 +20,7 @@ static const TArray<FString> SUPPORTED_PROTOCOL_VERSIONS = {
     TEXT("2025-06-18"),  // Mid-2025 spec
     TEXT("2024-11-05")   // For compatibility with older clients
 };
-static const FString MCP_SERVER_NAME = TEXT("VibeUE");
+static const FString MCP_SERVER_NAME = TEXT("VibeMCP");
 static const FString MCP_SERVER_VERSION = TEXT("1.0.0");
 
 FMCPServer::FMCPServer()
@@ -240,8 +240,13 @@ uint32 FMCPServer::Run()
                 if (ClientSocket)
                 {
                     UE_LOG(LogMCPServer, Log, TEXT("MCP: New connection accepted"));
-                    HandleConnection(ClientSocket);
-                    UE_LOG(LogMCPServer, Log, TEXT("MCP: Connection handling completed"));
+                    // Dispatch to background thread so the server loop can immediately
+                    // accept the next connection (critical for SSE + POST concurrency)
+                    FMCPServer* ServerPtr = this;
+                    Async(EAsyncExecution::Thread, [ServerPtr, ClientSocket]()
+                    {
+                        ServerPtr->HandleConnection(ClientSocket);
+                    });
                 }
             }
         }
@@ -282,8 +287,9 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
     
     UE_LOG(LogMCPServer, Verbose, TEXT("MCP Request: %s %s"), *Method, *Path);
     
-    // Only handle /mcp endpoint
-    if (!Path.StartsWith(TEXT("/mcp")))
+    // Handle /mcp (Streamable HTTP) and /sse (legacy SSE transport for Windsurf)
+    bool bIsLegacySse = Path.StartsWith(TEXT("/sse"));
+    if (!Path.StartsWith(TEXT("/mcp")) && !bIsLegacySse)
     {
         SendHttpResponse(ClientSocket, 404, TEXT("Not Found"), TEXT("text/plain"), TEXT("Not Found"));
         ClientSocket->Close();
@@ -324,12 +330,15 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
     {
         UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Processing JSON-RPC request"));
         
+        // Capture whether this is a session-less request BEFORE HandleMCPRequest assigns a new session ID
+        bool bIsSessionless = SessionId.IsEmpty();
+        
         // Process JSON-RPC request (SessionId already retrieved above)
         bool bIsNotification = false;
         FString Response = HandleMCPRequest(Body, SessionId, bIsNotification);
         
-        UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Request processed, notification=%d, response length=%d"), 
-            bIsNotification, Response.Len());
+        UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Request processed, notification=%d, response length=%d, sessionless=%d"), 
+            bIsNotification, Response.Len(), bIsSessionless);
         
         if (bIsNotification)
         {
@@ -338,37 +347,123 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
         }
         else
         {
-            // Build response headers
-            TMap<FString, FString> ResponseHeaders;
-            
-            // If this was an initialize request and we generated a session ID, include it
-            if (!SessionId.IsEmpty())
+            // Legacy SSE transport (Windsurf): route response back over the open SSE stream.
+            // Windsurf sends POST before opening SSE, so we try to send immediately if SSE is
+            // already open, otherwise queue the response for delivery when SSE opens.
+            bool bRoutedViaSSE = false;
+            if (bIsSessionless)
             {
-                ResponseHeaders.Add(TEXT("Mcp-Session-Id"), SessionId);
+                // First try to send to any existing live SSE connection
+                TSharedPtr<FMCPSSEConnection> LegacySseConn;
+                {
+                    FScopeLock Lock(&SSELock);
+                    for (const TSharedPtr<FMCPSSEConnection>& Conn : SSEConnections)
+                    {
+                        if (Conn.IsValid() && Conn->bIsActive && Conn->SessionId.IsEmpty())
+                        {
+                            LegacySseConn = Conn;
+                            break;
+                        }
+                    }
+                }
+                if (LegacySseConn.IsValid())
+                {
+                    int32 EventId = ++NextEventId;
+                    bool bSent = SendSSEEvent(LegacySseConn->ClientSocket, Response, EventId);
+                    if (bSent)
+                    {
+                        UE_LOG(LogMCPServer, Log, TEXT("MCP POST (legacy SSE): routed response over live SSE stream"));
+                        TMap<FString, FString> Resp202Headers;
+                        if (!SessionId.IsEmpty()) { Resp202Headers.Add(TEXT("Mcp-Session-Id"), SessionId); }
+                        Resp202Headers.Add(TEXT("Access-Control-Allow-Origin"), TEXT("*"));
+                        Resp202Headers.Add(TEXT("Access-Control-Expose-Headers"), TEXT("Mcp-Session-Id"));
+                        SendHttpResponse(ClientSocket, 202, TEXT("Accepted"), TEXT(""), TEXT(""), Resp202Headers);
+                        bRoutedViaSSE = true;
+                    }
+                    else
+                    {
+                        LegacySseConn->bIsActive = false;
+                    }
+                }
+                if (!bRoutedViaSSE)
+                {
+                    // No live SSE yet - wait up to 30s for SSE to open, then route directly
+                    UE_LOG(LogMCPServer, Log, TEXT("MCP POST (legacy SSE): no SSE connection yet, waiting for SSE..."));
+                    const int32 WaitRetries = 300; // 30 seconds at 100ms each
+                    for (int32 Retry = 0; Retry < WaitRetries && !bRoutedViaSSE; ++Retry)
+                    {
+                        FPlatformProcess::Sleep(0.1f);
+                        TSharedPtr<FMCPSSEConnection> WaitConn;
+                        {
+                            FScopeLock Lock(&SSELock);
+                            for (const TSharedPtr<FMCPSSEConnection>& Conn : SSEConnections)
+                            {
+                                if (Conn.IsValid() && Conn->bIsActive && Conn->SessionId.IsEmpty())
+                                {
+                                    WaitConn = Conn;
+                                    break;
+                                }
+                            }
+                        }
+                        if (WaitConn.IsValid())
+                        {
+                            int32 EventId = ++NextEventId;
+                            bool bSent = SendSSEEvent(WaitConn->ClientSocket, Response, EventId);
+                            if (bSent)
+                            {
+                                UE_LOG(LogMCPServer, Log, TEXT("MCP POST (legacy SSE): routed to SSE after waiting %d retries"), Retry);
+                                TMap<FString, FString> Resp202Headers;
+                                if (!SessionId.IsEmpty()) { Resp202Headers.Add(TEXT("Mcp-Session-Id"), SessionId); }
+                                Resp202Headers.Add(TEXT("Access-Control-Allow-Origin"), TEXT("*"));
+                                Resp202Headers.Add(TEXT("Access-Control-Expose-Headers"), TEXT("Mcp-Session-Id"));
+                                SendHttpResponse(ClientSocket, 202, TEXT("Accepted"), TEXT(""), TEXT(""), Resp202Headers);
+                                bRoutedViaSSE = true;
+                            }
+                            else
+                            {
+                                WaitConn->bIsActive = false;
+                            }
+                        }
+                    }
+                }
             }
-            
-            // Add CORS headers
-            ResponseHeaders.Add(TEXT("Access-Control-Allow-Origin"), TEXT("*"));
-            ResponseHeaders.Add(TEXT("Access-Control-Allow-Headers"), TEXT("Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Accept"));
-            
-            // Check if client wants SSE response
-            if (AcceptsSSE(Headers))
+
+            if (bRoutedViaSSE)
             {
-                // Send as SSE stream (single event then close for POST)
-                SendSSEResponse(ClientSocket, SessionId);
-                int32 EventId = ++NextEventId;
-                SendSSEEvent(ClientSocket, Response, EventId);
-                // Note: Don't close socket here - let client close or we send more events
-                // For POST, we close after sending the response
-                ClientSocket->Close();
-                ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
-                return true;
+                // Already handled above
             }
             else
             {
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Sending HTTP response"));
-                SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Response sent"));
+                // Build response headers
+                TMap<FString, FString> ResponseHeaders;
+                
+                // If this was an initialize request and we generated a session ID, include it
+                if (!SessionId.IsEmpty())
+                {
+                    ResponseHeaders.Add(TEXT("Mcp-Session-Id"), SessionId);
+                }
+                
+                // Add CORS headers
+                ResponseHeaders.Add(TEXT("Access-Control-Allow-Origin"), TEXT("*"));
+                ResponseHeaders.Add(TEXT("Access-Control-Allow-Headers"), TEXT("Content-Type, Authorization, Mcp-Session-Id, MCP-Protocol-Version, Accept"));
+                
+                // Check if client wants SSE response
+                if (AcceptsSSE(Headers))
+                {
+                    // Send as SSE stream (single event then close for POST)
+                    SendSSEResponse(ClientSocket, SessionId);
+                    int32 EventId = ++NextEventId;
+                    SendSSEEvent(ClientSocket, Response, EventId);
+                    ClientSocket->Close();
+                    ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM)->DestroySocket(ClientSocket);
+                    return true;
+                }
+                else
+                {
+                    UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Sending HTTP response"));
+                    SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
+                    UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Response sent"));
+                }
             }
         }
     }
@@ -384,8 +479,8 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
             return false;
         }
         
-        // Handle SSE stream request
-        return HandleSSERequest(ClientSocket, Headers);
+        // Handle SSE stream request (bIsLegacySse=true sends the 'endpoint' event Windsurf requires)
+        return HandleSSERequest(ClientSocket, Headers, bIsLegacySse);
     }
     else if (Method == TEXT("DELETE"))
     {
@@ -441,11 +536,11 @@ bool FMCPServer::ParseHttpRequest(FSocket* Socket, FString& OutMethod, FString& 
     int32 TotalRead = 0;
     const int32 MaxSize = 1024 * 1024; // 1MB max request
     int32 EmptyReadCount = 0;
-    const int32 MaxEmptyReads = 3; // Give up after 3 empty reads (15 seconds total)
+    const int32 MaxEmptyReads = 50; // Give up after 50 empty reads (5 seconds total at 100ms each)
     
     while (TotalRead < MaxSize && EmptyReadCount < MaxEmptyReads)
     {
-        bool bHadData = Socket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromSeconds(5.0));
+        bool bHadData = Socket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromMilliseconds(100));
         
         if (!bHadData)
         {
@@ -590,7 +685,7 @@ void FMCPServer::SendHttpResponse(FSocket* Socket, int32 StatusCode, const FStri
     }
     
     Response += FString::Printf(TEXT("Content-Length: %d\r\n"), BodyByteLength);
-    Response += TEXT("Connection: close\r\n");
+    Response += TEXT("Connection: keep-alive\r\n");
     
     // Add extra headers
     for (const auto& Header : ExtraHeaders)
@@ -1224,7 +1319,7 @@ void FMCPServer::ProcessPendingRequests()
 
 // ============ SSE Streaming Support ============
 
-bool FMCPServer::HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers)
+bool FMCPServer::HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers, bool bSendEndpointEvent)
 {
     FString SessionId = Headers.FindRef(TEXT("mcp-session-id"));
     
@@ -1266,22 +1361,96 @@ bool FMCPServer::HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FSt
         SSEConnections.Add(Connection);
     }
     
-    // Send initial empty event to prime reconnection (per MCP spec)
-    int32 EventId = ++NextEventId;
-    SendSSEEvent(ClientSocket, TEXT(""), EventId);
-    
     // Send retry hint (1 second recommended by spec)
     FString RetryHint = TEXT("retry: 1000\n\n");
     FTCHARToUTF8 Converter(*RetryHint);
     int32 BytesSent = 0;
     ClientSocket->Send(reinterpret_cast<const uint8*>(Converter.Get()), Converter.Length(), BytesSent);
     
-    UE_LOG(LogMCPServer, Log, TEXT("SSE stream opened for session: %s"), SessionId.IsEmpty() ? TEXT("<none>") : *SessionId);
+    if (bSendEndpointEvent)
+    {
+        // Legacy SSE transport (Windsurf): send 'endpoint' event so the client knows where to POST.
+        FString PostUrl = FString::Printf(TEXT("http://127.0.0.1:%d/mcp"), Config.Port);
+        FString EndpointEvent = FString::Printf(TEXT("event: endpoint\ndata: %s\n\n"), *PostUrl);
+        FTCHARToUTF8 EndpointConverter(*EndpointEvent);
+        int32 EndpointBytesSent = 0;
+        ClientSocket->Send(reinterpret_cast<const uint8*>(EndpointConverter.Get()), EndpointConverter.Length(), EndpointBytesSent);
+        UE_LOG(LogMCPServer, Log, TEXT("SSE stream opened (legacy /sse transport) - sent endpoint: %s"), *PostUrl);
+        
+        // Flush any responses that were queued before this SSE connection opened
+        {
+            TArray<FString> Queued;
+            {
+                FScopeLock Lock(&PendingSSELock);
+                Queued = MoveTemp(PendingSSEResponses);
+            }
+            for (const FString& Pending : Queued)
+            {
+                int32 EventId = ++NextEventId;
+                SendSSEEvent(ClientSocket, Pending, EventId);
+                UE_LOG(LogMCPServer, Log, TEXT("SSE stream: flushed queued response to new SSE connection"));
+            }
+        }
+        
+        // Keep the SSE connection alive so subsequent POSTs can route responses back here.
+        // Poll until the socket is dead or the server is stopping.
+        UE_LOG(LogMCPServer, Log, TEXT("SSE stream: keeping legacy connection alive"));
+        while (!bShouldStop)
+        {
+            // Check if socket is still alive by peeking
+            uint8 Peek[1];
+            int32 BytesRead = 0;
+            bool bHasData = ClientSocket->Wait(ESocketWaitConditions::WaitForRead, FTimespan::FromMilliseconds(500));
+            if (bHasData)
+            {
+                // Client closed connection or sent unexpected data
+                if (!ClientSocket->Recv(Peek, 1, BytesRead, ESocketReceiveFlags::Peek) || BytesRead == 0)
+                {
+                    UE_LOG(LogMCPServer, Log, TEXT("SSE stream: legacy connection closed by client"));
+                    break;
+                }
+            }
+            // Send a keepalive comment every 15 seconds to prevent proxy timeouts
+            static int32 KeepaliveCounter = 0;
+            if (++KeepaliveCounter >= 30) // 30 * 500ms = 15s
+            {
+                KeepaliveCounter = 0;
+                FString Keepalive = TEXT(": keepalive\n\n");
+                FTCHARToUTF8 KAConverter(*Keepalive);
+                int32 KABytesSent = 0;
+                if (!ClientSocket->Send(reinterpret_cast<const uint8*>(KAConverter.Get()), KAConverter.Length(), KABytesSent))
+                {
+                    UE_LOG(LogMCPServer, Log, TEXT("SSE stream: keepalive failed, connection dead"));
+                    break;
+                }
+            }
+        }
+        
+        // Mark connection inactive on exit
+        {
+            FScopeLock Lock(&SSELock);
+            for (const TSharedPtr<FMCPSSEConnection>& Conn : SSEConnections)
+            {
+                if (Conn.IsValid() && Conn->ClientSocket == ClientSocket)
+                {
+                    Conn->bIsActive = false;
+                    break;
+                }
+            }
+        }
+        
+        return true;
+    }
+    else
+    {
+        // Streamable HTTP transport: send initial empty event to prime reconnection
+        int32 EventId = ++NextEventId;
+        SendSSEEvent(ClientSocket, TEXT(""), EventId);
+        UE_LOG(LogMCPServer, Log, TEXT("SSE stream opened for session: %s"), SessionId.IsEmpty() ? TEXT("<none>") : *SessionId);
+    }
     
     // Note: We keep the connection open for server-initiated messages
     // The connection will be cleaned up when the client disconnects or on shutdown
-    // For now, we don't have server-initiated messages, so we just keep it open
-    // The client can close the connection when done
     
     return true;
 }
@@ -1327,20 +1496,16 @@ bool FMCPServer::SendSSEEvent(FSocket* ClientSocket, const FString& Data, int32 
         Event += FString::Printf(TEXT("id: %d\n"), EventId);
     }
     
-    // Data field - handle multi-line data
+    // Data field - send as single line so JSON clients can parse it directly
     if (Data.IsEmpty())
     {
         Event += TEXT("data: \n");
     }
     else
     {
-        // SSE requires each line of data to be prefixed with "data: "
-        TArray<FString> Lines;
-        Data.ParseIntoArray(Lines, TEXT("\n"));
-        for (const FString& Line : Lines)
-        {
-            Event += FString::Printf(TEXT("data: %s\n"), *Line);
-        }
+        // Collapse to single line - MCP clients (Windsurf) parse each data: line as a complete JSON message
+        FString SingleLine = Data.Replace(TEXT("\r\n"), TEXT("")).Replace(TEXT("\n"), TEXT("")).Replace(TEXT("\r"), TEXT(""));
+        Event += FString::Printf(TEXT("data: %s\n"), *SingleLine);
     }
     
     Event += TEXT("\n"); // Empty line to signal end of event

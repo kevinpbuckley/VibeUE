@@ -149,8 +149,8 @@ private:
     /** Handle MCP JSON-RPC request */
     FString HandleMCPRequest(const FString& JsonBody, FString& InOutSessionId, bool& bOutIsNotification);
     
-    /** Handle SSE GET request - opens event stream */
-    bool HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers);
+    /** Handle SSE GET request - opens event stream. bSendEndpointEvent=true for legacy /sse transport (Windsurf). */
+    bool HandleSSERequest(FSocket* ClientSocket, const TMap<FString, FString>& Headers, bool bSendEndpointEvent = false);
     
     /** Send SSE event to a client */
     bool SendSSEEvent(FSocket* ClientSocket, const FString& Data, int32 EventId = -1);
@@ -213,6 +213,10 @@ private:
     /** Active SSE connections */
     TArray<TSharedPtr<FMCPSSEConnection>> SSEConnections;
     FCriticalSection SSELock;
+
+    /** Pending responses queued before SSE connection opened (legacy SSE transport) */
+    TArray<FString> PendingSSEResponses;
+    FCriticalSection PendingSSELock;
     
     /** Next SSE event ID for resumability */
     TAtomic<int32> NextEventId;
