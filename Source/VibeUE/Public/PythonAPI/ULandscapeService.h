@@ -159,7 +159,7 @@ struct FLandscapeNoiseResult
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 25 landscape management actions:
+ * Provides 26 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
@@ -170,9 +170,10 @@ struct FLandscapeNoiseResult
  * - delete_landscape: Remove a landscape from the level
  *
  * Heightmap:
- * - import_heightmap: Import heightmap from RAW/PNG file
- * - export_heightmap: Export heightmap to RAW file
+ * - import_heightmap: Import heightmap from PNG (preferred) or RAW file
+ * - export_heightmap: Export heightmap to PNG (default) or RAW file
  * - get_height_at_location: Sample height at world position
+ * - get_height_in_region: Read heights in a rectangular region (bulk read)
  * - set_height_in_region: Set heights in a rectangular region
  *
  * Sculpting:
@@ -298,7 +299,7 @@ public:
 	// =================================================================
 
 	/**
-	 * Import a heightmap from a 16-bit RAW or PNG file.
+	 * Import a heightmap from a 16-bit PNG (preferred) or RAW file.
 	 * Maps to action="import_heightmap"
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
@@ -311,7 +312,7 @@ public:
 		const FString& FilePath);
 
 	/**
-	 * Export a heightmap to a 16-bit RAW file.
+	 * Export a heightmap to a 16-bit PNG file by default (or RAW if a non-PNG extension is provided).
 	 * Maps to action="export_heightmap"
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
@@ -336,6 +337,26 @@ public:
 	static FLandscapeHeightSample GetHeightAtLocation(
 		const FString& LandscapeNameOrLabel,
 		float WorldX, float WorldY);
+
+	/**
+	 * Get height values in a rectangular region using landscape-local vertex indices.
+	 * Maps to action="get_height_in_region"
+	 *
+	 * Returns world-space Z heights for each vertex in the region.
+	 * The array is row-major (SizeX values per row, SizeY rows).
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param StartX - Start X vertex index
+	 * @param StartY - Start Y vertex index
+	 * @param SizeX - Width in vertices
+	 * @param SizeY - Height in vertices
+	 * @return Row-major array of world-space Z heights (size = SizeX * SizeY), empty on failure
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<float> GetHeightInRegion(
+		const FString& LandscapeNameOrLabel,
+		int32 StartX, int32 StartY,
+		int32 SizeX, int32 SizeY);
 
 	/**
 	 * Set height values in a rectangular region using landscape-local vertex indices.

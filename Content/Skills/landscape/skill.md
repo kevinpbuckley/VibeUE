@@ -61,8 +61,9 @@ When sculpting pushes vertices to 0 or 65535, a saturation warning is logged. To
 ### World Coordinates vs Landscape Coordinates
 
 - **Most methods** accept world coordinates (WorldX, WorldY)
-- **set_height_in_region** uses landscape-local vertex indices
+- **get_height_in_region** and **set_height_in_region** use landscape-local vertex indices
 - Heights in `set_height_in_region` are world-space Z values
+- Heights returned by `get_height_in_region` are world-space Z values
 
 ### ⚠️ GrassVariety Struct Properties Are Read-Only via Direct Assignment
 
@@ -233,7 +234,10 @@ if info.actor_label:
 import unreal
 
 # RAW file must be 16-bit, matching landscape resolution
-unreal.LandscapeService.import_heightmap("MyTerrain", "C:/Heightmaps/terrain.raw")
+# After import, the landscape visually updates immediately (collision + render rebuilt)
+success = unreal.LandscapeService.import_heightmap("MyTerrain", "C:/Heightmaps/terrain.raw")
+if success:
+    print("Heightmap imported successfully")
 ```
 
 ### Export Heightmap
@@ -242,6 +246,49 @@ unreal.LandscapeService.import_heightmap("MyTerrain", "C:/Heightmaps/terrain.raw
 import unreal
 
 unreal.LandscapeService.export_heightmap("MyTerrain", "C:/Heightmaps/terrain_export.raw")
+```
+
+### Copy Terrain Between Landscapes
+
+```python
+import unreal
+
+# Method 1: Using get_height_in_region / set_height_in_region (no file I/O)
+info = unreal.LandscapeService.get_landscape_info("SourceLandscape")
+res_x = info.resolution_x
+res_y = info.resolution_y
+
+# Read all heights as world-space Z values (landscape-local vertex coords)
+heights = unreal.LandscapeService.get_height_in_region("SourceLandscape", 0, 0, res_x, res_y)
+if len(heights) > 0:
+    # Write to destination (must have same resolution)
+    unreal.LandscapeService.set_height_in_region("DestLandscape", 0, 0, res_x, res_y, heights)
+
+# Method 2: Using export/import via temp file
+import os
+temp_path = os.path.join(unreal.Paths.project_saved_dir(), "temp_heightmap.raw")
+unreal.LandscapeService.export_heightmap("SourceLandscape", temp_path)
+unreal.LandscapeService.import_heightmap("DestLandscape", temp_path)
+os.remove(temp_path)  # Clean up
+```
+
+### Read Height Data in Region
+
+```python
+import unreal
+
+# Read a 100x100 vertex region starting at vertex (0, 0)
+# Returns world-space Z heights as a flat array (row-major)
+heights = unreal.LandscapeService.get_height_in_region("MyTerrain", 0, 0, 100, 100)
+if len(heights) > 0:
+    print(f"Read {len(heights)} height values")
+    print(f"First height: {heights[0]}")
+    print(f"Last height: {heights[-1]}")
+
+# Read the ENTIRE landscape heightmap
+info = unreal.LandscapeService.get_landscape_info("MyTerrain")
+all_heights = unreal.LandscapeService.get_height_in_region(
+    "MyTerrain", 0, 0, info.resolution_x, info.resolution_y)
 ```
 
 ### Sculpt Terrain

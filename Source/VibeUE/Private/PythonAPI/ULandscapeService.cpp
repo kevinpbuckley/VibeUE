@@ -10,12 +10,17 @@
 #include "LandscapeLayerInfoObject.h"
 #include "LandscapeHeightfieldCollisionComponent.h"
 #include "LandscapeDataAccess.h"
+#include "LandscapeEditLayer.h"
+#include "LandscapeEditorModule.h"
+#include "LandscapeFileFormatInterface.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
 #include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Modules/ModuleManager.h"
 #include "ScopedTransaction.h"
 
 // =================================================================
@@ -76,6 +81,29 @@ ULandscapeInfo* ULandscapeService::GetLandscapeInfoForActor(ALandscapeProxy* Lan
 	return Landscape->GetLandscapeInfo();
 }
 
+/**
+ * Resolve a valid editing layer GUID for the given landscape.
+ * GetEditingLayer() can return an invalid GUID on freshly created landscapes
+ * because nothing has explicitly called SetEditingLayer(). The Landscape editor UI
+ * always has a selected layer (GetCurrentEditLayerConst()), so we replicate that
+ * by falling back to the first available edit layer.
+ */
+static FGuid ResolveEditLayerGuid(ALandscape* Landscape)
+{
+	FGuid LayerGuid = Landscape->GetEditingLayer();
+	if (!LayerGuid.IsValid())
+	{
+		const TArray<ULandscapeEditLayerBase*> EditLayers = Landscape->GetEditLayers();
+		if (EditLayers.Num() > 0 && EditLayers[0])
+		{
+			LayerGuid = EditLayers[0]->GetGuid();
+			UE_LOG(LogTemp, Log, TEXT("ResolveEditLayerGuid: Falling back to first edit layer '%s' GUID=%s"),
+				*EditLayers[0]->GetFName().ToString(), *LayerGuid.ToString());
+		}
+	}
+	return LayerGuid;
+}
+
 void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscape)
 {
 	if (!Landscape)
@@ -83,23 +111,42 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 		return;
 	}
 
-	// Mark all landscape components dirty so they rebuild their collision and render data.
-	// This is necessary after modifying heightmap data via FLandscapeEditDataInterface,
-	// otherwise line traces, height queries via GetHeightAtLocation, and visual rendering
-	// will still use the old data.
-	for (ULandscapeComponent* Component : Landscape->LandscapeComponents)
+	UWorld* World = Landscape->GetWorld();
+	if (!World)
 	{
-		if (Component)
+		return;
+	}
+
+	// Update every proxy that belongs to this landscape GUID. In partitioned levels,
+	// components can be distributed across proxies, so updating only one actor can leave
+	// terrain in a partially refreshed state.
+	const FGuid LandscapeGuid = Landscape->GetLandscapeGuid();
+	for (TActorIterator<ALandscapeProxy> It(World); It; ++It)
+	{
+		ALandscapeProxy* Proxy = *It;
+		if (!Proxy || Proxy->GetLandscapeGuid() != LandscapeGuid)
 		{
-			// Recreate collision for this component
+			continue;
+		}
+
+		for (ULandscapeComponent* Component : Proxy->LandscapeComponents)
+		{
+			if (!Component)
+			{
+				continue;
+			}
+
 			ULandscapeHeightfieldCollisionComponent* CollisionComp = Component->GetCollisionComponent();
 			if (CollisionComp)
 			{
 				CollisionComp->RecreateCollision();
 			}
+
 			Component->MarkRenderStateDirty();
 			Component->UpdateComponentToWorld();
 		}
+
+		Proxy->MarkPackageDirty();
 	}
 }
 
@@ -361,14 +408,6 @@ bool ULandscapeService::ImportHeightmap(
 		return false;
 	}
 
-	// Load file data
-	TArray<uint8> FileData;
-	if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
-	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Failed to load file '%s'"), *FilePath);
-		return false;
-	}
-
 	// Get landscape extent
 	int32 MinX, MinY, MaxX, MaxY;
 	if (!LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
@@ -381,21 +420,83 @@ bool ULandscapeService::ImportHeightmap(
 	int32 SizeY = MaxY - MinY + 1;
 	int32 ExpectedBytes = SizeX * SizeY * sizeof(uint16);
 
-	if (FileData.Num() != ExpectedBytes)
+	// Load file data through Unreal's native Landscape file format importer
+	// (same import stack used by Landscape UI for PNG/RAW format handling).
+	TArray<uint16> ImportedHeightData;
+	const FString Extension = FPaths::GetExtension(FilePath, false).ToLower();
+	ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::LoadModuleChecked<ILandscapeEditorModule>(TEXT("LandscapeEditor"));
+	const ILandscapeHeightmapFileFormat* HeightmapFormat = LandscapeEditorModule.GetHeightmapFormatByExtension(*FString::Printf(TEXT(".%s"), *Extension));
+
+	if (HeightmapFormat)
 	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: File size mismatch. Expected %d bytes for %dx%d landscape, got %d bytes"),
-			ExpectedBytes, SizeX, SizeY, FileData.Num());
-		return false;
+		const FLandscapeImportData<uint16> ImportData = HeightmapFormat->Import(*FilePath, FLandscapeFileResolution(SizeX, SizeY));
+		if (ImportData.ResultCode == ELandscapeImportResult::Error)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Native import failed for '%s': %s"),
+				*FilePath, *ImportData.ErrorMessage.ToString());
+			return false;
+		}
+
+		if (ImportData.Data.Num() != SizeX * SizeY)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Native import size mismatch. Expected %d samples, got %d samples"),
+				SizeX * SizeY, ImportData.Data.Num());
+			return false;
+		}
+
+		ImportedHeightData = ImportData.Data;
+	}
+	else
+	{
+		TArray<uint8> FileData;
+		if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Failed to load RAW file '%s'"), *FilePath);
+			return false;
+		}
+
+		if (FileData.Num() != ExpectedBytes)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: RAW file size mismatch. Expected %d bytes for %dx%d landscape, got %d bytes"),
+				ExpectedBytes, SizeX, SizeY, FileData.Num());
+			return false;
+		}
+
+		ImportedHeightData.SetNumUninitialized(SizeX * SizeY);
+		FMemory::Memcpy(ImportedHeightData.GetData(), FileData.GetData(), ExpectedBytes);
 	}
 
-	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ImportHeightmap", "Import Heightmap"));
+	// Write the uint16 data directly to the landscape via FHeightmapAccessor,
+	// matching the exact path used by the Landscape editor UI Import button
+	// (FEdModeLandscape::ImportHeightData → FHeightmapAccessor<false>::SetData).
+	// We intentionally do NOT convert uint16→float→uint16 through SetHeightInRegion
+	// because the round-trip introduces floating-point precision errors.
+	{
+		FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ImportHeightmap", "Import Heightmap"));
 
-	// Write height data using the edit interface
-	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-	const uint16* HeightData = reinterpret_cast<const uint16*>(FileData.GetData());
-	LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData, 0, true);
+		const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
 
-	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmap: Imported heightmap to '%s' (%dx%d)"), *LandscapeNameOrLabel, SizeX, SizeY);
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, ImportedHeightData.GetData());
+		HeightmapAccessor.Flush();
+	}
+
+	LandscapeInfo->ForceLayersFullUpdate();
+	UpdateLandscapeAfterHeightEdit(Landscape);
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmap: Imported %s heightmap to '%s' (%dx%d)"),
+		*Extension.ToUpper(), *LandscapeNameOrLabel, SizeX, SizeY);
 	return true;
 }
 
@@ -427,26 +528,27 @@ bool ULandscapeService::ExportHeightmap(
 	int32 SizeX = MaxX - MinX + 1;
 	int32 SizeY = MaxY - MinY + 1;
 
-	// Read height data
-	TArray<uint16> HeightData;
-	HeightData.SetNumUninitialized(SizeX * SizeY);
+	// Export as PNG by default (if no extension or .png), with RAW fallback based on extension.
+	FString FinalOutputPath = OutputFilePath;
+	const FString Extension = FPaths::GetExtension(OutputFilePath, false).ToLower();
+	const bool bExportPng = Extension.IsEmpty() || Extension == TEXT("png");
 
-	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-	LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
-
-	// Save to file
-	TArray<uint8> FileData;
-	FileData.SetNumUninitialized(HeightData.Num() * sizeof(uint16));
-	FMemory::Memcpy(FileData.GetData(), HeightData.GetData(), FileData.Num());
-
-	if (!FFileHelper::SaveArrayToFile(FileData, *OutputFilePath))
+	if (bExportPng && Extension.IsEmpty())
 	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ExportHeightmap: Failed to save file '%s'"), *OutputFilePath);
+		FinalOutputPath += TEXT(".png");
+	}
+
+	// Use the native Landscape export path (same core path used by the editor UI)
+	LandscapeInfo->ExportHeightmap(FinalOutputPath);
+	if (!FPaths::FileExists(FinalOutputPath))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ExportHeightmap: Native export did not produce file '%s'"), *FinalOutputPath);
 		return false;
 	}
 
-	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ExportHeightmap: Exported heightmap from '%s' (%dx%d) to '%s'"),
-		*LandscapeNameOrLabel, SizeX, SizeY, *OutputFilePath);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ExportHeightmap: Exported %s heightmap from '%s' (%dx%d) to '%s'"),
+		bExportPng ? TEXT("PNG") : TEXT("RAW"), *LandscapeNameOrLabel, SizeX, SizeY, *FinalOutputPath);
+
 	return true;
 }
 
@@ -540,6 +642,59 @@ FLandscapeHeightSample ULandscapeService::GetHeightAtLocation(
 	return Sample;
 }
 
+TArray<float> ULandscapeService::GetHeightInRegion(
+	const FString& LandscapeNameOrLabel,
+	int32 StartX, int32 StartY,
+	int32 SizeX, int32 SizeY)
+{
+	TArray<float> Result;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::GetHeightInRegion: Landscape '%s' not found"), *LandscapeNameOrLabel);
+		return Result;
+	}
+
+	if (SizeX <= 0 || SizeY <= 0)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::GetHeightInRegion: Invalid region size %dx%d"), SizeX, SizeY);
+		return Result;
+	}
+
+	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
+	if (!LandscapeInfo)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::GetHeightInRegion: No landscape info"));
+		return Result;
+	}
+
+	int32 EndX = StartX + SizeX - 1;
+	int32 EndY = StartY + SizeY - 1;
+
+	// Read raw uint16 height data
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SizeX * SizeY);
+
+	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
+	LandscapeEdit.GetHeightData(StartX, StartY, EndX, EndY, HeightData.GetData(), 0);
+
+	// Convert uint16 to world-space float heights
+	FVector LandscapeLocation = Landscape->GetActorLocation();
+	float ZScale = Landscape->GetActorScale3D().Z;
+	float LandscapeZScale = LANDSCAPE_ZSCALE;
+
+	Result.SetNumUninitialized(SizeX * SizeY);
+	for (int32 i = 0; i < HeightData.Num(); i++)
+	{
+		Result[i] = LandscapeLocation.Z + (static_cast<float>(HeightData[i]) - 32768.0f) * LandscapeZScale * ZScale;
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::GetHeightInRegion: Read %d heights from region (%d,%d)-(%d,%d)"),
+		Result.Num(), StartX, StartY, EndX, EndY);
+	return Result;
+}
+
 bool ULandscapeService::SetHeightInRegion(
 	const FString& LandscapeNameOrLabel,
 	int32 StartX, int32 StartY,
@@ -581,13 +736,27 @@ bool ULandscapeService::SetHeightInRegion(
 	for (int32 i = 0; i < Heights.Num(); i++)
 	{
 		// Convert world-space height to uint16
-		float NormalizedHeight = Heights[i] / (LandscapeZScale * ZScale);
+		float NormalizedHeight = (Heights[i] - Landscape->GetActorLocation().Z) / (LandscapeZScale * ZScale);
 		int32 UintHeight = FMath::RoundToInt(NormalizedHeight + 32768.0f);
 		HeightData[i] = static_cast<uint16>(FMath::Clamp(UintHeight, 0, 65535));
 	}
 
-	FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
-	LandscapeEdit.SetHeightData(StartX, StartY, StartX + SizeX - 1, StartY + SizeY - 1, HeightData.GetData(), 0, true);
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	FScopedSetLandscapeEditingLayer EditLayerScope(
+		Landscape,
+		EditLayerGuid,
+		[Landscape]()
+		{
+			if (Landscape)
+			{
+				Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+			}
+		});
+
+	FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+	HeightmapAccessor.SetData(StartX, StartY, StartX + SizeX - 1, StartY + SizeY - 1, HeightData.GetData());
+	HeightmapAccessor.Flush();
+	LandscapeInfo->ForceLayersFullUpdate();
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
