@@ -12,15 +12,56 @@
 #include <excpt.h>
 #include "Windows/HideWindowsPlatformTypes.h"
 
+// UE5 assert exception code (check() failures raise this via RaiseException)
+static constexpr DWORD UE_ASSERT_EXCEPTION_CODE = 0x4000;
+
+// Mirror UE5's FAssertInfo struct layout (defined in WindowsPlatformCrashContext.cpp)
+struct FVibeUEAssertInfo
+{
+	const TCHAR* ErrorMessage;
+	void* ProgramCounter;
+};
+
 // Helper struct for SEH-safe Python execution result
+// NOTE: Must be POD-like (no C++ destructors) since it's used in __try functions
 struct FSEHExecutionResult
 {
 	bool bSuccess = false;
 	bool bCrashed = false;
 	DWORD ExceptionCode = 0;
+	TCHAR AssertMessage[512]; // Populated for UE assert exceptions (0x4000)
+	bool bHasAssertMessage = false;
 };
 
-// Separate function for SEH - cannot have C++ objects that need unwinding
+// SEH exception filter that extracts assert info before handling
+static LONG WINAPI PythonSEHFilter(LPEXCEPTION_POINTERS ExInfo, FSEHExecutionResult* OutResult)
+{
+	OutResult->bCrashed = true;
+	OutResult->ExceptionCode = ExInfo->ExceptionRecord->ExceptionCode;
+
+	// For UE assert exceptions (check() failures), extract the error message
+	if (ExInfo->ExceptionRecord->ExceptionCode == UE_ASSERT_EXCEPTION_CODE &&
+		ExInfo->ExceptionRecord->NumberParameters >= 1 &&
+		ExInfo->ExceptionRecord->ExceptionInformation[0] != 0)
+	{
+		const FVibeUEAssertInfo* Info = (const FVibeUEAssertInfo*)ExInfo->ExceptionRecord->ExceptionInformation[0];
+		if (Info->ErrorMessage)
+		{
+			// Safe copy into fixed buffer
+			int32 i = 0;
+			for (; i < 511 && Info->ErrorMessage[i] != 0; i++)
+			{
+				OutResult->AssertMessage[i] = Info->ErrorMessage[i];
+			}
+			OutResult->AssertMessage[i] = 0;
+			OutResult->bHasAssertMessage = true;
+		}
+	}
+
+	return EXCEPTION_EXECUTE_HANDLER;
+}
+
+// Separate function for SEH - cannot have C++ objects that need unwinding in __try block
 static FSEHExecutionResult ExecutePythonWithSEH(IPythonScriptPlugin* PythonPlugin, FPythonCommandEx* Command)
 {
 	FSEHExecutionResult Result;
@@ -28,10 +69,9 @@ static FSEHExecutionResult ExecutePythonWithSEH(IPythonScriptPlugin* PythonPlugi
 	{
 		Result.bSuccess = PythonPlugin->ExecPythonCommandEx(*Command);
 	}
-	__except(EXCEPTION_EXECUTE_HANDLER)
+	__except(PythonSEHFilter(GetExceptionInformation(), &Result))
 	{
-		Result.bCrashed = true;
-		Result.ExceptionCode = GetExceptionCode();
+		// Result already populated by PythonSEHFilter
 	}
 	return Result;
 }
@@ -160,7 +200,14 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 	if (SEHResult.bCrashed)
 	{
 		bCrashed = true;
-		CrashMessage = FString::Printf(TEXT("Python execution caused a crash (exception code: 0x%08X). The Python code may have accessed invalid memory."), SEHResult.ExceptionCode);
+		if (SEHResult.ExceptionCode == UE_ASSERT_EXCEPTION_CODE && SEHResult.bHasAssertMessage)
+		{
+			CrashMessage = FString::Printf(TEXT("Python execution caused a UE assertion failure: %s"), SEHResult.AssertMessage);
+		}
+		else
+		{
+			CrashMessage = FString::Printf(TEXT("Python execution caused a crash (exception code: 0x%08X). The Python code may have accessed invalid memory."), SEHResult.ExceptionCode);
+		}
 		UE_LOG(LogTemp, Error, TEXT("%s"), *CrashMessage);
 	}
 #else

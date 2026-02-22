@@ -141,6 +141,13 @@ Do this in separate steps:
 | `info.quads_per_section` | `info.subsection_size_quads` |
 | `MaterialService.create_material()` for landscapes | `LandscapeMaterialService.create_landscape_material()` |
 | Guessing layer info path `Grass_LayerInfo` | Use `create_layer_info_object().asset_path` → `LI_Grass` |
+| `segment.start_control_point_index` | `segment.start_point_index` (spline segment) |
+| `segment.end_control_point_index` | `segment.end_point_index` (spline segment) |
+| `layer.name` on list_layers result | `layer.layer_name` (LandscapeLayerInfo_Custom property) |
+| `LandscapeService.create_spline_control_point(...)` | `LandscapeService.create_spline_point(...)` (no "control" in name) |
+| `LandscapeMaterialService.add_material_layer(...)` | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
+| `mat_path = create_landscape_material(...)` as string | Returns `LandscapeMaterialCreateResult` — use `result.asset_path` |
+| Reading weights right after painting and getting 0.0 | Weights are written to edit layer — reads use same path |
 
 ### LandscapeCreateResult (from create_landscape)
 
@@ -182,6 +189,32 @@ create_landscape(location, rotation, scale,
 ```
 
 The label parameter is `landscape_label`, NOT `actor_label`.
+
+### LandscapeSplinePointInfo (from get_spline_info)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `point_index` | int | Index of this control point |
+| `location` | Vector | World-space position |
+| `width` | float | Half-width of spline influence |
+| `side_falloff` | float | Side falloff distance |
+| `end_falloff` | float | End tip falloff distance |
+| `paint_layer_name` | str | Paint layer applied under spline |
+| `raise_terrain` | bool | Whether terrain is raised to spline |
+| `lower_terrain` | bool | Whether terrain is lowered to spline |
+
+### LandscapeSplineSegmentInfo (from get_spline_info)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `segment_index` | int | Index of this segment |
+| `start_point_index` | int | Index of start control point (**NOT** `start_control_point_index`) |
+| `end_point_index` | int | Index of end control point (**NOT** `end_control_point_index`) |
+| `start_tangent_length` | float | Start tangent arm length |
+| `end_tangent_length` | float | End tangent arm length |
+| `layer_name` | str | Layer painted under segment |
+| `raise_terrain` | bool | Raise terrain under segment |
+| `lower_terrain` | bool | Lower terrain under segment |
 
 ---
 

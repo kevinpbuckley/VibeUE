@@ -144,10 +144,3 @@ Check layer weights at (4000, 4000).
 
 ---
 
-## Cleanup
-
-Delete MatTestTerrain.
-
----
-
-Delete all assets under /Game/LandscapeTest - material, layer infos, everything. Force delete.

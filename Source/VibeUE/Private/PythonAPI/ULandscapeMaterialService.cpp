@@ -145,6 +145,7 @@ FLandscapeMaterialCreateResult ULandscapeMaterialService::CreateLandscapeMateria
 	FString FullAssetPath = DestinationPath / MaterialName;
 	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
 	{
+		Result.AssetPath = FullAssetPath;
 		Result.ErrorMessage = FString::Printf(TEXT("Landscape material '%s' already exists at '%s'. Delete it first or use a different name."), *MaterialName, *FullAssetPath);
 		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateLandscapeMaterial: %s"), *Result.ErrorMessage);
 		return Result;
@@ -168,7 +169,7 @@ FLandscapeMaterialCreateResult ULandscapeMaterialService::CreateLandscapeMateria
 	// No special domain change needed - MD_Surface is the default
 
 	Result.bSuccess = true;
-	Result.AssetPath = NewMaterial->GetPathName();
+	Result.AssetPath = FullAssetPath;
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateLandscapeMaterial: Created landscape material '%s'"), *Result.AssetPath);
 	return Result;
@@ -720,7 +721,7 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 		if (ExistingInfo)
 		{
 			Result.bSuccess = true;
-			Result.AssetPath = ExistingInfo->GetPathName();
+			Result.AssetPath = FullAssetPath;
 			Result.LayerName = LayerName;
 			UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateLayerInfoObject: Layer info '%s' already exists at '%s', returning existing"),
 				*LayerName, *Result.AssetPath);
@@ -763,10 +764,10 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 	LayerInfoObj->MarkPackageDirty();
 
 	// Save the asset
-	UEditorAssetLibrary::SaveAsset(LayerInfoObj->GetPathName(), false);
+	UEditorAssetLibrary::SaveAsset(FullAssetPath, false);
 
 	Result.bSuccess = true;
-	Result.AssetPath = LayerInfoObj->GetPathName();
+	Result.AssetPath = FullAssetPath;
 	Result.LayerName = LayerName;
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateLayerInfoObject: Created layer info '%s' at '%s'"),

@@ -156,10 +156,162 @@ struct FLandscapeNoiseResult
 	FString ErrorMessage;
 };
 
+// =========================================================================
+// Spline Data Structs
+// =========================================================================
+
+/** Information about a single landscape spline control point */
+USTRUCT(BlueprintType)
+struct FLandscapeSplinePointInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 PointIndex = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector Location = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FRotator Rotation = FRotator::ZeroRotator;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float Width = 500.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float SideFalloff = 500.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float EndFalloff = 500.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString LayerName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bRaiseTerrain = true;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bLowerTerrain = true;
+};
+
+/** Information about a single landscape spline segment */
+USTRUCT(BlueprintType)
+struct FLandscapeSplineSegmentInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 SegmentIndex = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 StartPointIndex = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 EndPointIndex = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float StartTangentLength = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float EndTangentLength = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString LayerName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bRaiseTerrain = true;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bLowerTerrain = true;
+};
+
+/** Complete spline state on a landscape */
+USTRUCT(BlueprintType)
+struct FLandscapeSplineInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumControlPoints = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 NumSegments = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FLandscapeSplinePointInfo> ControlPoints;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FLandscapeSplineSegmentInfo> Segments;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+/** Result of creating a spline control point */
+USTRUCT(BlueprintType)
+struct FSplineCreateResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 PointIndex = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+// =========================================================================
+// Weight Map Data Structs
+// =========================================================================
+
+/** Result of exporting a weight map */
+USTRUCT(BlueprintType)
+struct FWeightMapExportResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString FilePath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 Width = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 Height = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+/** Result of importing a weight map */
+USTRUCT(BlueprintType)
+struct FWeightMapImportResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 VerticesModified = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 26 landscape management actions:
+ * Provides 44 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
@@ -678,6 +830,376 @@ public:
 	static bool LayerExists(
 		const FString& LandscapeNameOrLabel,
 		const FString& LayerName);
+
+	// =================================================================
+	// Batch Painting Operations
+	// =================================================================
+
+	/**
+	 * Paint a layer across a rectangular vertex-index region with uniform weight.
+	 * Maps to action="paint_layer_in_region"
+	 *
+	 * Much faster than calling paint_layer_at_location in a loop. Uses bulk
+	 * TAlphamapAccessor write — a single SetData+Flush covers the whole region.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Paint layer to write
+	 * @param StartX - First vertex X index (inclusive)
+	 * @param StartY - First vertex Y index (inclusive)
+	 * @param SizeX - Region width in vertices
+	 * @param SizeY - Region height in vertices
+	 * @param Strength - Target weight (0.0–1.0). Each vertex is set to this value.
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static bool PaintLayerInRegion(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		int32 StartX, int32 StartY,
+		int32 SizeX, int32 SizeY,
+		float Strength = 1.0f);
+
+	/**
+	 * Paint a layer across a world-space rectangular region with uniform weight.
+	 * Maps to action="paint_layer_in_world_rect"
+	 *
+	 * Converts world coordinates to vertex indices and delegates to PaintLayerInRegion.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Paint layer to write
+	 * @param WorldMinX - Minimum X world coordinate
+	 * @param WorldMinY - Minimum Y world coordinate
+	 * @param WorldMaxX - Maximum X world coordinate
+	 * @param WorldMaxY - Maximum Y world coordinate
+	 * @param Strength - Target weight (0.0–1.0)
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static bool PaintLayerInWorldRect(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		float WorldMinX, float WorldMinY,
+		float WorldMaxX, float WorldMaxY,
+		float Strength = 1.0f);
+
+	// =================================================================
+	// Weight Map Import / Export
+	// =================================================================
+
+	/**
+	 * Export a single paint layer's weight data as an 8-bit grayscale PNG.
+	 * Maps to action="export_weight_map"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Layer to export (e.g. "L1")
+	 * @param OutputFilePath - Absolute path for the output .png file
+	 * @return Export result with dimensions and error info
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static FWeightMapExportResult ExportWeightMap(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		const FString& OutputFilePath);
+
+	/**
+	 * Import layer weights from an 8-bit grayscale PNG (R channel is used).
+	 * Maps to action="import_weight_map"
+	 *
+	 * Image dimensions must match the landscape vertex resolution exactly.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Target paint layer
+	 * @param FilePath - Absolute path to source PNG file
+	 * @return Import result with vertex count and error info
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static FWeightMapImportResult ImportWeightMap(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		const FString& FilePath);
+
+	/**
+	 * Bulk-read layer weights as a flat float array (0.0–1.0), row-major.
+	 * Maps to action="get_weights_in_region"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Layer to read
+	 * @param StartX - Start vertex X
+	 * @param StartY - Start vertex Y
+	 * @param SizeX - Width in vertices
+	 * @param SizeY - Height in vertices
+	 * @return Row-major float array (size = SizeX * SizeY), empty on failure
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static TArray<float> GetWeightsInRegion(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		int32 StartX, int32 StartY,
+		int32 SizeX, int32 SizeY);
+
+	/**
+	 * Bulk-write layer weights from a flat float array (0.0–1.0), row-major.
+	 * Maps to action="set_weights_in_region"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param LayerName - Target paint layer
+	 * @param StartX - Start vertex X
+	 * @param StartY - Start vertex Y
+	 * @param SizeX - Width in vertices
+	 * @param SizeY - Height in vertices
+	 * @param Weights - Values 0.0–1.0, size must equal SizeX * SizeY
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Painting")
+	static bool SetWeightsInRegion(
+		const FString& LandscapeNameOrLabel,
+		const FString& LayerName,
+		int32 StartX, int32 StartY,
+		int32 SizeX, int32 SizeY,
+		const TArray<float>& Weights);
+
+	// =================================================================
+	// Landscape Holes (Visibility Mask)
+	// =================================================================
+
+	/**
+	 * Punch or fill a circular hole at a world position.
+	 * Maps to action="set_hole_at_location"
+	 *
+	 * Uses the landscape visibility layer (weight 255 = hole, 0 = solid).
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param WorldX - Center X coordinate in world units
+	 * @param WorldY - Center Y coordinate in world units
+	 * @param BrushRadius - Radius of hole in world units
+	 * @param bCreateHole - True to punch a hole, False to fill
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	static bool SetHoleAtLocation(
+		const FString& LandscapeNameOrLabel,
+		float WorldX, float WorldY,
+		float BrushRadius,
+		bool bCreateHole = true);
+
+	/**
+	 * Set hole visibility for a rectangular region of vertices.
+	 * Maps to action="set_hole_in_region"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param StartX - Start vertex X
+	 * @param StartY - Start vertex Y
+	 * @param SizeX - Width in vertices
+	 * @param SizeY - Height in vertices
+	 * @param bCreateHole - True to punch a hole, False to fill
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	static bool SetHoleInRegion(
+		const FString& LandscapeNameOrLabel,
+		int32 StartX, int32 StartY,
+		int32 SizeX, int32 SizeY,
+		bool bCreateHole = true);
+
+	/**
+	 * Check if a world position is inside a hole.
+	 * Maps to action="get_hole_at_location"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param WorldX - World X coordinate
+	 * @param WorldY - World Y coordinate
+	 * @return True if the vertex at that location is a hole
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Holes")
+	static bool GetHoleAtLocation(
+		const FString& LandscapeNameOrLabel,
+		float WorldX, float WorldY);
+
+	// =================================================================
+	// Landscape Splines
+	// =================================================================
+
+	/**
+	 * Create a new spline control point on the landscape.
+	 * Maps to action="create_spline_point"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param WorldLocation - World-space position for the control point
+	 * @param Width - Half-width of the spline influence (world units)
+	 * @param SideFalloff - Falloff at the sides (world units)
+	 * @param EndFalloff - Falloff at start/end tips (world units)
+	 * @param PaintLayerName - Paint layer applied under the spline (empty = none)
+	 * @param bRaiseTerrain - Whether to raise terrain to spline level
+	 * @param bLowerTerrain - Whether to lower terrain to spline level
+	 * @return Create result with index of the new point
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static FSplineCreateResult CreateSplinePoint(
+		const FString& LandscapeNameOrLabel,
+		FVector WorldLocation,
+		float Width = 500.0f,
+		float SideFalloff = 500.0f,
+		float EndFalloff = 500.0f,
+		const FString& PaintLayerName = TEXT(""),
+		bool bRaiseTerrain = true,
+		bool bLowerTerrain = true);
+
+	/**
+	 * Connect two existing control points with a spline segment.
+	 * Maps to action="connect_spline_points"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param StartPointIndex - Index of the start control point
+	 * @param EndPointIndex - Index of the end control point
+	 * @param TangentLength - Tangent arm length (0 = auto from distance)
+	 * @param PaintLayerName - Layer painted under this segment
+	 * @param bRaiseTerrain - Whether to raise terrain under segment
+	 * @param bLowerTerrain - Whether to lower terrain under segment
+	 * @return True if segment was created
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool ConnectSplinePoints(
+		const FString& LandscapeNameOrLabel,
+		int32 StartPointIndex,
+		int32 EndPointIndex,
+		float TangentLength = 0.0f,
+		const FString& PaintLayerName = TEXT(""),
+		bool bRaiseTerrain = true,
+		bool bLowerTerrain = true);
+
+	/**
+	 * Create an entire spline path from an array of world locations.
+	 * Maps to action="create_spline_from_points"
+	 *
+	 * Creates control points and connects them sequentially. This is the
+	 * "just draw me a road" convenience action.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param WorldLocations - Ordered world-space positions along the path
+	 * @param Width - Half-width for all control points
+	 * @param SideFalloff - Side falloff for all control points
+	 * @param EndFalloff - End falloff for all control points
+	 * @param PaintLayerName - Layer painted under the entire spline
+	 * @param bRaiseTerrain - Raise terrain along spline
+	 * @param bLowerTerrain - Lower terrain along spline
+	 * @param bClosedLoop - Whether to connect last point back to first
+	 * @return Spline info describing all created points and segments
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static FLandscapeSplineInfo CreateSplineFromPoints(
+		const FString& LandscapeNameOrLabel,
+		const TArray<FVector>& WorldLocations,
+		float Width = 500.0f,
+		float SideFalloff = 500.0f,
+		float EndFalloff = 500.0f,
+		const FString& PaintLayerName = TEXT(""),
+		bool bRaiseTerrain = true,
+		bool bLowerTerrain = true,
+		bool bClosedLoop = false);
+
+	/**
+	 * Get all control points and segments on a landscape's spline component.
+	 * Maps to action="get_spline_info"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @return Spline info with all control points and segments
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static FLandscapeSplineInfo GetSplineInfo(
+		const FString& LandscapeNameOrLabel);
+
+	/**
+	 * Modify an existing control point's properties.
+	 * Maps to action="modify_spline_point"
+	 *
+	 * Pass -1.0 for Width/SideFalloff/EndFalloff to leave them unchanged.
+	 * Pass "__unchanged__" for PaintLayerName to leave it unchanged.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param PointIndex - Index of the control point to modify
+	 * @param WorldLocation - New world-space location
+	 * @param Width - New half-width (-1 = unchanged)
+	 * @param SideFalloff - New side falloff (-1 = unchanged)
+	 * @param EndFalloff - New end falloff (-1 = unchanged)
+	 * @param PaintLayerName - New paint layer name ("__unchanged__" = no change)
+	 * @return True if modified successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool ModifySplinePoint(
+		const FString& LandscapeNameOrLabel,
+		int32 PointIndex,
+		FVector WorldLocation,
+		float Width = -1.0f,
+		float SideFalloff = -1.0f,
+		float EndFalloff = -1.0f,
+		const FString& PaintLayerName = TEXT("__unchanged__"));
+
+	/**
+	 * Remove a control point and all its connected segments.
+	 * Maps to action="delete_spline_point"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param PointIndex - Index of the control point to remove
+	 * @return True if deleted successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool DeleteSplinePoint(
+		const FString& LandscapeNameOrLabel,
+		int32 PointIndex);
+
+	/**
+	 * Clear all control points and segments from the landscape.
+	 * Maps to action="delete_all_splines"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @return True if cleared successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool DeleteAllSplines(
+		const FString& LandscapeNameOrLabel);
+
+	/**
+	 * Apply terrain deformation and layer painting for all splines.
+	 * Maps to action="apply_splines_to_landscape"
+	 *
+	 * Triggers UE's built-in spline → landscape rasterization, which raises/lowers
+	 * terrain and paints weight layers under all spline segments.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @return True if applied successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool ApplySplinesToLandscape(
+		const FString& LandscapeNameOrLabel);
+
+	// =================================================================
+	// Landscape Resize
+	// =================================================================
+
+	/**
+	 * Resize a landscape to a new component grid, resampling height and weight data.
+	 * Maps to action="resize_landscape"
+	 *
+	 * WARNING: This is a destructive operation. The old landscape is deleted and
+	 * recreated with new dimensions. Foliage instances are NOT transferred.
+	 * Splines are also NOT transferred — rebuild them after resizing.
+	 *
+	 * Implementation uses export → delete → create → bilinear-resample → reimport.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape to resize
+	 * @param NewComponentCountX - New number of components in X
+	 * @param NewComponentCountY - New number of components in Y
+	 * @param NewQuadsPerSection - Quads per section (-1 = keep current)
+	 * @param NewSectionsPerComponent - Sections per component (-1 = keep current)
+	 * @return Create result describing the new landscape
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FLandscapeCreateResult ResizeLandscape(
+		const FString& LandscapeNameOrLabel,
+		int32 NewComponentCountX,
+		int32 NewComponentCountY,
+		int32 NewQuadsPerSection = -1,
+		int32 NewSectionsPerComponent = -1);
 
 private:
 	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel);

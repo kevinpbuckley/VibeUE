@@ -14,6 +14,95 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 
+/**
+ * Extract a COMMON_MISTAKES section from skill markdown content.
+ * Looks for headings: "## COMMON_MISTAKES" or "### ⚠️ Common Mistakes to Avoid"
+ * Returns the section content up to the next heading of equal or higher level, or empty string if not found.
+ */
+static FString ExtractCommonMistakes(const FString& SkillContent)
+{
+	// Try multiple heading patterns
+	const TArray<FString> Patterns = {
+		TEXT("## COMMON_MISTAKES"),
+		TEXT("### COMMON_MISTAKES"),
+		TEXT("### ⚠️ Common Mistakes to Avoid"),
+		TEXT("### Common Mistakes to Avoid"),
+		TEXT("## Common Mistakes")
+	};
+
+	int32 SectionStart = INDEX_NONE;
+	int32 HeadingLevel = 0; // number of '#' chars in the matched heading
+
+	for (const FString& Pattern : Patterns)
+	{
+		SectionStart = SkillContent.Find(Pattern, ESearchCase::IgnoreCase);
+		if (SectionStart != INDEX_NONE)
+		{
+			// Count '#' chars to determine heading level
+			HeadingLevel = 0;
+			for (int32 i = 0; i < Pattern.Len() && Pattern[i] == '#'; i++)
+			{
+				HeadingLevel++;
+			}
+
+			// Move past the heading line
+			int32 LineEnd = SkillContent.Find(TEXT("\n"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SectionStart);
+			if (LineEnd != INDEX_NONE)
+			{
+				SectionStart = LineEnd + 1;
+			}
+			break;
+		}
+	}
+
+	if (SectionStart == INDEX_NONE)
+	{
+		return FString();
+	}
+
+	// Find the end of this section (next heading of equal or higher level)
+	int32 SectionEnd = SkillContent.Len();
+	FString HeadingPrefix;
+	for (int32 i = 0; i < HeadingLevel; i++)
+	{
+		HeadingPrefix += TEXT("#");
+	}
+	HeadingPrefix += TEXT(" ");
+
+	// Search for next heading at same or higher level
+	int32 SearchPos = SectionStart;
+	while (SearchPos < SkillContent.Len())
+	{
+		int32 NextNewline = SkillContent.Find(TEXT("\n"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchPos);
+		if (NextNewline == INDEX_NONE)
+		{
+			break;
+		}
+
+		int32 NextLineStart = NextNewline + 1;
+		if (NextLineStart < SkillContent.Len())
+		{
+			// Check if next line starts with a heading of equal or higher level
+			bool bIsHeading = true;
+			int32 HashCount = 0;
+			for (int32 i = NextLineStart; i < SkillContent.Len() && SkillContent[i] == '#'; i++)
+			{
+				HashCount++;
+			}
+			if (HashCount > 0 && HashCount <= HeadingLevel)
+			{
+				SectionEnd = NextNewline;
+				break;
+			}
+		}
+
+		SearchPos = NextLineStart;
+	}
+
+	FString Section = SkillContent.Mid(SectionStart, SectionEnd - SectionStart).TrimStartAndEnd();
+	return Section;
+}
+
 // Helper function to extract a field from ParamsJson
 static FString ExtractParamFromJson(const TMap<FString, FString>& Params, const FString& FieldName)
 {
@@ -879,16 +968,12 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 		     "Example: discover_python_class('unreal.BlueprintService', method_filter='variable') "
 		     "to find all variable-related methods. The 'content' below has workflows and gotchas."));
 
-	// Quick reference for commonly misused methods
-	ResultObj->SetStringField(TEXT("COMMON_MISTAKES"),
-		TEXT("WRONG -> CORRECT:\n")
-		TEXT("• create_blueprint(path, parent) -> create_blueprint(name, parent, folder)\n")
-		TEXT("• add_variable_get_node -> add_get_variable_node\n")
-		TEXT("• add_variable_set_node -> add_set_variable_node\n")
-		TEXT("• add_function -> create_function\n")
-		TEXT("• list_nodes -> get_nodes_in_graph\n")
-		TEXT("• get_component_info(path, name) -> get_component_info(type) [1 arg only]\n")
-		TEXT("• connect_pins -> connect_nodes\n"));
+	// Extract COMMON_MISTAKES from skill markdown content (skill-specific, not hardcoded)
+	FString ExtractedMistakes = ExtractCommonMistakes(ConcatenatedContent);
+	if (!ExtractedMistakes.IsEmpty())
+	{
+		ResultObj->SetStringField(TEXT("COMMON_MISTAKES"), ExtractedMistakes);
+	}
 
 	// Add class lists - AI should call discover_python_class on these
 	TArray<TSharedPtr<FJsonValue>> VibeUEClassesArray;
@@ -1017,16 +1102,12 @@ static FString LoadSingleSkill(const FString& SkillName)
 		TEXT("Example: discover_python_class('unreal.BlueprintService', method_filter='variable') ")
 		TEXT("to find all variable-related methods. The 'content' below has workflows and gotchas."));
 
-	// Quick reference for commonly misused methods
-	ResultObj->SetStringField(TEXT("COMMON_MISTAKES"),
-		TEXT("WRONG -> CORRECT:\n")
-		TEXT("• create_blueprint(path, parent) -> create_blueprint(name, parent, folder)\n")
-		TEXT("• add_variable_get_node -> add_get_variable_node\n")
-		TEXT("• add_variable_set_node -> add_set_variable_node\n")
-		TEXT("• add_function -> create_function\n")
-		TEXT("• list_nodes -> get_nodes_in_graph\n")
-		TEXT("• get_component_info(path, name) -> get_component_info(type) [1 arg only]\n")
-		TEXT("• connect_pins -> connect_nodes\n"));
+	// Extract COMMON_MISTAKES from skill markdown content (skill-specific, not hardcoded)
+	FString ExtractedMistakesSingle = ExtractCommonMistakes(ConcatenatedContent);
+	if (!ExtractedMistakesSingle.IsEmpty())
+	{
+		ResultObj->SetStringField(TEXT("COMMON_MISTAKES"), ExtractedMistakesSingle);
+	}
 
 	// Add class lists - AI should call discover_python_class on these
 	TArray<TSharedPtr<FJsonValue>> VibeUEClassesArray;

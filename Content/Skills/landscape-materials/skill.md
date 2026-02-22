@@ -118,7 +118,7 @@ import unreal
 grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
 rock_info = unreal.LandscapeMaterialService.create_layer_info_object("Rock", "/Game/Landscape")
 sand_info = unreal.LandscapeMaterialService.create_layer_info_object("Sand", "/Game/Landscape")
-# grass_info.asset_path = "/Game/Landscape/LI_Grass.LI_Grass" (NOT "Grass_LayerInfo")
+# grass_info.asset_path = "/Game/Landscape/LI_Grass" (NOT "Grass_LayerInfo")
 
 # Assign material with EXACT paths from create results
 unreal.LandscapeMaterialService.assign_material_to_landscape(
@@ -184,7 +184,7 @@ unreal.LandscapeMaterialService.assign_material_to_landscape(
     "MyTerrain",
     "/Game/Materials/M_Terrain",
     {
-        "Grass": "/Game/Landscape/LI_Grass.LI_Grass",
+        "Grass": "/Game/Landscape/LI_Grass",
         "Rock": "/Game/Landscape/LI_Rock.LI_Rock",
         "Sand": "/Game/Landscape/LI_Sand.LI_Sand"
     }
@@ -323,7 +323,7 @@ unreal.EditorAssetLibrary.save_asset(mat_path)
 # 6. Create layer info objects — ALWAYS use .asset_path result
 grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
 rock_info = unreal.LandscapeMaterialService.create_layer_info_object("Rock", "/Game/Landscape")
-# grass_info.asset_path = "/Game/Landscape/LI_Grass.LI_Grass"
+# grass_info.asset_path = "/Game/Landscape/LI_Grass"
 
 # 7. Create landscape
 ls = unreal.LandscapeService.create_landscape(
