@@ -2812,9 +2812,11 @@ bool ULandscapeService::ConnectSplinePoints(
 	StartCP->Modify();
 	EndCP->Modify();
 
-	// Auto-calculate tangent from distance if not specified
+	// Auto-calculate tangent from distance if not specified (0.0 = sentinel for auto).
+	// Non-zero values — including NEGATIVE — are used as-is. Negative tangent lengths
+	// are valid in UE and reverse the spline mesh flow direction along the segment.
 	float UsedTangentLen = TangentLength;
-	if (UsedTangentLen <= 0.0f)
+	if (UsedTangentLen == 0.0f)
 	{
 		UsedTangentLen = (StartCP->Location - EndCP->Location).Size() * 0.5f;
 	}
@@ -3014,7 +3016,9 @@ bool ULandscapeService::ModifySplinePoint(
 	float Width,
 	float SideFalloff,
 	float EndFalloff,
-	const FString& PaintLayerName)
+	const FString& PaintLayerName,
+	FRotator Rotation,
+	bool bAutoCalcRotation)
 {
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
 	if (!Landscape)
@@ -3051,13 +3055,22 @@ bool ULandscapeService::ModifySplinePoint(
 		CP->LayerName = FName(*PaintLayerName);
 	}
 
-	CP->AutoCalcRotation(false);
+	if (bAutoCalcRotation)
+	{
+		CP->AutoCalcRotation(false);
+	}
+	else
+	{
+		// Apply explicit rotation supplied by caller
+		CP->Rotation = Rotation;
+	}
 	CP->UpdateSplinePoints();
 
 	SplinesComp->MarkRenderStateDirty();
 	Landscape->MarkPackageDirty();
 
-	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ModifySplinePoint: Modified point %d"), PointIndex);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ModifySplinePoint: Modified point %d (rotation=%s)"),
+		PointIndex, bAutoCalcRotation ? TEXT("auto") : *Rotation.ToString());
 	return true;
 }
 

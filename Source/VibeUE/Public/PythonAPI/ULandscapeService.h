@@ -1051,7 +1051,9 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param StartPointIndex - Index of the start control point
 	 * @param EndPointIndex - Index of the end control point
-	 * @param TangentLength - Tangent arm length (0 = auto from distance)
+	 * @param TangentLength - Tangent arm length. 0.0 = auto-calculate from point
+	 *        distance. Non-zero values (including NEGATIVE) are used as-is.
+	 *        Negative tangents reverse the flow direction of spline meshes.
 	 * @param PaintLayerName - Layer painted under this segment
 	 * @param bRaiseTerrain - Whether to raise terrain under segment
 	 * @param bLowerTerrain - Whether to lower terrain under segment
@@ -1114,6 +1116,8 @@ public:
 	 *
 	 * Pass -1.0 for Width/SideFalloff/EndFalloff to leave them unchanged.
 	 * Pass "__unchanged__" for PaintLayerName to leave it unchanged.
+	 * When bAutoCalcRotation=true (default), rotation is recomputed from connected
+	 * segments. Set bAutoCalcRotation=false and supply Rotation to set it explicitly.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param PointIndex - Index of the control point to modify
@@ -1122,6 +1126,9 @@ public:
 	 * @param SideFalloff - New side falloff (-1 = unchanged)
 	 * @param EndFalloff - New end falloff (-1 = unchanged)
 	 * @param PaintLayerName - New paint layer name ("__unchanged__" = no change)
+	 * @param Rotation - Explicit rotation to apply (only used if bAutoCalcRotation=false)
+	 * @param bAutoCalcRotation - If true, auto-compute rotation from segments (default);
+	 *        if false, apply the supplied Rotation directly
 	 * @return True if modified successfully
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
@@ -1132,7 +1139,9 @@ public:
 		float Width = -1.0f,
 		float SideFalloff = -1.0f,
 		float EndFalloff = -1.0f,
-		const FString& PaintLayerName = TEXT("__unchanged__"));
+		const FString& PaintLayerName = TEXT("__unchanged__"),
+		FRotator Rotation = FRotator::ZeroRotator,
+		bool bAutoCalcRotation = true);
 
 	/**
 	 * Remove a control point and all its connected segments.

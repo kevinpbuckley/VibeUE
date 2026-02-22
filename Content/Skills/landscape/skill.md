@@ -147,6 +147,8 @@ Do this in separate steps:
 | `LandscapeService.create_spline_control_point(...)` | `LandscapeService.create_spline_point(...)` (no "control" in name) |
 | `LandscapeMaterialService.add_material_layer(...)` | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
 | `mat_path = create_landscape_material(...)` as string | Returns `LandscapeMaterialCreateResult` — use `result.asset_path` |
+| `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length` directly — negatives are preserved and reverse mesh flow |
+| `modify_spline_point(...)` with wrong rotation | Use `auto_calc_rotation=False, rotation=pt.rotation` to set exact rotation from get_spline_info |
 | Reading weights right after painting and getting 0.0 | Weights are written to edit layer — reads use same path |
 
 ### LandscapeCreateResult (from create_landscape)
