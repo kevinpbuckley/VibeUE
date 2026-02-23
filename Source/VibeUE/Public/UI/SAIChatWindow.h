@@ -197,6 +197,21 @@ private:
     /** Whether thinking indicator is currently visible in scroll box */
     bool bThinkingIndicatorVisible = false;
 
+    // ============ Auto-Scroll ============
+
+    /**
+     * Set to true when the user manually scrolls up (away from the bottom).
+     * When true, ScrollToBottom() becomes a no-op (unless bForce is passed).
+     * Cleared when the user scrolls back to the bottom, or when we force-scroll.
+     */
+    bool bUserHasScrolledUp = false;
+
+    /** Guard: true while we are performing a programmatic ScrollToEnd(). */
+    bool bIsProgrammaticScroll = false;
+
+    /** Called when the user scrolls the message scroll box */
+    void OnScrollBoxUserScrolled(float ScrollOffset);
+
     /** Current vibing word for the thinking indicator (randomly selected) */
     FString CurrentVibingWord;
 
@@ -266,8 +281,8 @@ private:
     /** Add a system notification to the chat UI (not stored in conversation history) */
     void AddSystemNotification(const FString& Message);
     
-    /** Scroll to the bottom of the message list */
-    void ScrollToBottom();
+    /** Scroll to the bottom of the message list. If bForce is false, won't scroll if user has scrolled up. */
+    void ScrollToBottom(bool bForce = false);
     
     /** Handle send button clicked */
     FReply OnSendClicked();

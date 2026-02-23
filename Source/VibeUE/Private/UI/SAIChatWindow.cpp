@@ -317,6 +317,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                 .Padding(4)
                 [
                     SAssignNew(MessageScrollBox, SScrollBox)
+                    .OnUserScrolled(this, &SAIChatWindow::OnScrollBoxUserScrolled)
                 ]
             ]
             
@@ -1223,10 +1224,41 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
     }
 }
 
-void SAIChatWindow::ScrollToBottom()
+void SAIChatWindow::OnScrollBoxUserScrolled(float ScrollOffset)
 {
+    if (!MessageScrollBox.IsValid())
+    {
+        return;
+    }
+
+    // Ignore scroll events triggered by our own programmatic ScrollToEnd()
+    if (bIsProgrammaticScroll)
+    {
+        return;
+    }
+
+    const float EndOffset = MessageScrollBox->GetScrollOffsetOfEnd();
+    const float DistanceFromBottom = EndOffset - ScrollOffset;
+    const float BottomThreshold = 50.0f;
+
+    bool bNearBottom = (DistanceFromBottom <= BottomThreshold);
+    bUserHasScrolledUp = !bNearBottom;
+}
+
+void SAIChatWindow::ScrollToBottom(bool bForce)
+{
+    if (!MessageScrollBox.IsValid())
+    {
+        return;
+    }
+
+    // Unless forced, respect the user's scroll position.
+    if (!bForce && bUserHasScrolledUp)
+    {
+        return;
+    }
+
     // If thinking indicator is visible, move it to the bottom
-    // This ensures it always appears below the latest content
     if (bThinkingIndicatorVisible && ThinkingIndicatorWidget.IsValid())
     {
         MessageScrollBox->RemoveSlot(ThinkingIndicatorWidget.ToSharedRef());
@@ -1237,7 +1269,13 @@ void SAIChatWindow::ScrollToBottom()
         ];
     }
 
+    // Guard: prevent OnUserScrolled from seeing this programmatic scroll
+    bIsProgrammaticScroll = true;
     MessageScrollBox->ScrollToEnd();
+    bIsProgrammaticScroll = false;
+
+    // After programmatic scroll, clear the flag since we're now at the bottom
+    bUserHasScrolledUp = false;
 }
 
 FReply SAIChatWindow::OnSendClicked()
@@ -1256,6 +1294,9 @@ FReply SAIChatWindow::OnSendClicked()
 
         // Clear any previous error message before sending new request
         // Status now shown via streaming indicator in chat
+
+        // User is actively sending — always scroll to show their message
+        ScrollToBottom(/*bForce=*/ true);
 
         InputTextBox->SetText(FText::GetEmpty());
 
@@ -2700,6 +2741,8 @@ void SAIChatWindow::HandleChatReset()
         TaskListWidget->SetVisibility(EVisibility::Collapsed);
     }
 
+    // Reset always scrolls to top/bottom of fresh conversation
+    bUserHasScrolledUp = false;
     RebuildMessageList();
     UpdateUIState();
     UpdateTokenBudgetDisplay();
@@ -3339,6 +3382,8 @@ void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, co
         ]
     ];
     
+    // Scroll to show approval — but respect the user's scroll position.
+    // If user scrolled up to read earlier content, they can scroll down when ready.
     ScrollToBottom();
 }
 
@@ -3595,8 +3640,8 @@ void SAIChatWindow::ShowThinkingIndicator(bool bShow)
             }
         }
 
-        // Note: Don't call ScrollToBottom() here to avoid recursion
-        MessageScrollBox->ScrollToEnd();
+        // ScrollToBottom() checks position internally — won't scroll if user is reading above
+        ScrollToBottom();
     }
     else
     {
