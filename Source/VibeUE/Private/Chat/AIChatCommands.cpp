@@ -61,8 +61,8 @@ void FAIChatCommands::Initialize()
     // Register tab spawner
     RegisterTabSpawner();
     
-    // Register menus
-    RegisterMenus();
+    // Register menus via startup callback to ensure UToolMenus is fully initialized
+    UToolMenus::RegisterStartupCallback(FSimpleMulticastDelegate::FDelegate::CreateStatic(&FAIChatCommands::RegisterMenus));
     
     // Register status bar panel drawer (after editor is ready)
     if (GEditor)
@@ -168,33 +168,36 @@ void FAIChatCommands::RegisterMenus()
     {
         return;
     }
-    
-    // Add to Tools menu
-    UToolMenu* ToolsMenu = ToolMenus->ExtendMenu("LevelEditor.MainMenu.Tools");
-    if (ToolsMenu)
+
+    // Owner will be used for cleanup in call to UToolMenus::UnregisterOwner()
+    FToolMenuOwnerScoped OwnerScoped("AIChatCommands");
+
+    // Add to Window menu under Assistance section (alongside Epic AI Assistant)
     {
-        FToolMenuSection& Section = ToolsMenu->FindOrAddSection("VibeUE");
-        Section.Label = LOCTEXT("VibeUESection", "VibeUE");
-        
-        Section.AddMenuEntryWithCommandList(
-            Get().OpenAIChat,
-            CommandList,
-            LOCTEXT("OpenAIChatLabel", "AI Chat"),
+        UToolMenu* WindowMenu = ToolMenus->ExtendMenu("MainFrame.MainMenu.Window");
+
+        FToolMenuSection& Section = WindowMenu->FindOrAddSection("Assistance");
+
+        Section.AddEntry(FToolMenuEntry::InitMenuEntry(
+            "VibeUEAIChat",
+            LOCTEXT("OpenAIChatLabel", "VibeUE AI Chat"),
             LOCTEXT("OpenAIChatTooltip", "Open the VibeUE AI Chat panel (Ctrl+Shift+V)"),
-            FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Comment")
-        );
+            FSlateIcon(FAppStyle::GetAppStyleSetName(), "Icons.Comment"),
+            FUIAction(
+                FExecuteAction::CreateStatic(&FAIChatCommands::HandleOpenAIChat),
+                FCanExecuteAction::CreateStatic(&FAIChatCommands::CanOpenAIChat)
+            )
+        ));
     }
-    
+
     ToolMenus->RefreshAllWidgets();
 }
 
 void FAIChatCommands::UnregisterMenus()
 {
-    UToolMenus* ToolMenus = UToolMenus::Get();
-    if (ToolMenus)
-    {
-        ToolMenus->RemoveMenu("LevelEditor.MainMenu.Tools");
-    }
+    // Use UnregisterOwner to remove only our entries, not the entire section
+    // (the Assistance section is shared with Epic's AI Assistant)
+    UToolMenus::UnregisterOwner("AIChatCommands");
 }
 
 void FAIChatCommands::HandleOpenAIChat()

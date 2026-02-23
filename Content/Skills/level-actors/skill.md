@@ -13,6 +13,10 @@ unreal_classes:
 
 ## Critical Rules
 
+### 🚫 DEPRECATED: `unreal.EditorLevelLibrary`
+
+**DO NOT use `unreal.EditorLevelLibrary`.** The entire Editor Scripting Utilities Plugin is deprecated in UE 5.7+. Use `unreal.EditorActorSubsystem` via `unreal.get_editor_subsystem()` for all level actor operations.
+
 ### ⚠️ Get Subsystem Instance First
 
 ```python
@@ -84,11 +88,14 @@ if bp_class:
 
 ### Get Level Actors
 
+> ⚠️ **`unreal.EditorLevelLibrary` is DEPRECATED.** Always use `EditorActorSubsystem` instead.
+
 ```python
 import unreal
 
-all_actors = unreal.EditorLevelLibrary.get_all_level_actors()
-lights = unreal.EditorLevelLibrary.get_all_level_actors_of_class(unreal.PointLight)
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+all_actors = actor_subsys.get_all_level_actors()
+lights = actor_subsys.get_all_level_actors_of_class(unreal.PointLight)
 
 for actor in all_actors[:10]:
     loc = actor.get_actor_location()

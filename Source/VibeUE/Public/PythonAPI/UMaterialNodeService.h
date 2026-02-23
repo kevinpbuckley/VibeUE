@@ -179,9 +179,61 @@ struct FMaterialOutputConnectionInfo
 };
 
 /**
+ * Descriptor for batch-creating specialized expressions (function calls, custom HLSL, collection params).
+ * Used with BatchCreateSpecialized to create all node types in a single transaction.
+ */
+USTRUCT(BlueprintType)
+struct FBatchCreateDescriptor
+{
+	GENERATED_BODY()
+
+	/** Expression class name (e.g., "Multiply", "MaterialFunctionCall", "Custom", "CollectionParameter") */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString ClassName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	int32 PosX = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	int32 PosY = 0;
+
+	/** For MaterialFunctionCall: path to the material function asset */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString FunctionPath;
+
+	/** For Custom: HLSL code string */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString HLSLCode;
+
+	/** For Custom: output type ("CMOT_Float1", "CMOT_Float2", "CMOT_Float3", "CMOT_Float4", "CMOT_MaterialAttributes") */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString HLSLOutputType;
+
+	/** For Custom: display description */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString HLSLDescription;
+
+	/** For Custom: comma-separated input names */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString HLSLInputNames;
+
+	/** For Custom: semicolon-separated additional outputs, each as "Name:Type" (e.g., "WorldHeight:Float1;Mask:Float3") */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString HLSLAdditionalOutputs;
+
+	/** For CollectionParameter: path to the MaterialParameterCollection asset */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString CollectionPath;
+
+	/** For CollectionParameter: parameter name within the collection */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString CollectionParamName;
+};
+
+/**
  * Material Node Service - Python API for material graph manipulation
  * 
- * Provides 21 material node management actions:
+ * Provides 37 material node management actions:
  * 
  * Discovery:
  * - discover_types: Find available material expression types
@@ -191,6 +243,11 @@ struct FMaterialOutputConnectionInfo
  * - create: Create a new material expression
  * - delete: Delete an expression
  * - move: Move expression to new position
+ * 
+ * Specialized Creation:
+ * - create_function_call: Create a MaterialFunctionCall node referencing a function asset
+ * - create_custom_expression: Create a Custom HLSL expression node
+ * - create_collection_parameter: Create a CollectionParameter referencing a parameter collection
  * 
  * Information:
  * - list: List all expressions in material
@@ -210,9 +267,23 @@ struct FMaterialOutputConnectionInfo
  * - list_properties: List all expression properties
  * 
  * Parameters:
- * - create_parameter: Create parameter expression
+ * - create_parameter: Create parameter expression (Scalar, Vector, Texture, TextureObject, StaticBool, StaticSwitch)
  * - promote_to_parameter: Promote constant to parameter
  * - set_parameter_metadata: Set parameter group/priority
+ * 
+ * Batch Operations:
+ * - batch_create: Create multiple expressions in one call
+ * - batch_connect: Connect multiple expression pairs in one call
+ * - batch_set_properties: Set properties on multiple expressions in one call
+ * - batch_create_specialized: Create all expression types (including function calls, custom HLSL, collection params) in one call
+ * 
+ * Export:
+ * - export_graph: Export complete material graph as JSON for recreation
+ * - export_graph_summary: Export lightweight summary (counts, types) without full property data
+ * - compare_graphs: Compare two material graphs and report differences
+ * 
+ * Layout:
+ * - layout_expressions: Auto-arrange all nodes in a clean left-to-right flow
  * 
  * Material Outputs:
  * - get_output_properties: Get available material output pins
@@ -229,6 +300,12 @@ struct FMaterialOutputConnectionInfo
  * 
  *   # Connect to material output
  *   unreal.MaterialNodeService.connect_to_output("/Game/M_Test", expr.id, "", "BaseColor")
+ * 
+ *   # Create function call node
+ *   func = unreal.MaterialNodeService.create_function_call("/Game/M_Test", "/Engine/Functions/MF_Noise", -500, 0)
+ * 
+ *   # Batch create expressions
+ *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test", ["Add","Multiply","Constant"], [0,0,0], [-300,-200,-100], [0,200,400])
  * 
  * note: This replaces the JSON-based manage_material_node MCP tool
  */
@@ -309,6 +386,81 @@ public:
 		const FString& ExpressionId,
 		int32 PosX,
 		int32 PosY);
+
+	// =================================================================
+	// Specialized Creation Actions
+	// =================================================================
+
+	/**
+	 * Create a MaterialFunctionCall expression referencing a material function asset.
+	 * Maps to action="create_function_call"
+	 *
+	 * The function reference is loaded and set automatically, which creates the
+	 * correct input/output pins matching the function's interface.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param FunctionPath Full path to the material function asset (e.g., "/Engine/Functions/Engine_MaterialFunctions03/Procedurals/NoiseFunctions")
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Created expression info with function's inputs/outputs
+	 *
+	 * Example:
+	 *   func = unreal.MaterialNodeService.create_function_call("/Game/M_Test", "/Game/MF_TerrainLayer", -500, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FMaterialExpressionInfo CreateFunctionCall(
+		const FString& MaterialPath,
+		const FString& FunctionPath,
+		int32 PosX = 0,
+		int32 PosY = 0);
+
+	/**
+	 * Create a Custom HLSL expression node with code, output type, and optional inputs.
+	 * Maps to action="create_custom_expression"
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param Code HLSL code string (e.g., "return Input0 * 2.0;")
+	 * @param OutputType Output type: "CMOT_Float1", "CMOT_Float2", "CMOT_Float3", "CMOT_Float4", "CMOT_MaterialAttributes"
+	 * @param Description Display name for the node
+	 * @param InputNames Comma-separated custom input names (e.g., "Albedo,Mask,UV") or empty for no custom inputs
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Created expression info
+	 *
+	 * Example:
+	 *   node = unreal.MaterialNodeService.create_custom_expression("/Game/M_Test", "return Input0 * 2;", "CMOT_Float3", "DoubleIt", "Color", -500, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FMaterialExpressionInfo CreateCustomExpression(
+		const FString& MaterialPath,
+		const FString& Code,
+		const FString& OutputType = TEXT("CMOT_Float3"),
+		const FString& Description = TEXT("Custom"),
+		const FString& InputNames = TEXT(""),
+		int32 PosX = 0,
+		int32 PosY = 0);
+
+	/**
+	 * Create a CollectionParameter expression referencing a MaterialParameterCollection.
+	 * Maps to action="create_collection_parameter"
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param CollectionPath Full path to the MaterialParameterCollection asset
+	 * @param ParameterName Name of the parameter within the collection to use
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Created expression info
+	 *
+	 * Example:
+	 *   node = unreal.MaterialNodeService.create_collection_parameter("/Game/M_Test", "/Game/MPC_Weather", "WindStrength", -500, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FMaterialExpressionInfo CreateCollectionParameter(
+		const FString& MaterialPath,
+		const FString& CollectionPath,
+		const FString& ParameterName,
+		int32 PosX = 0,
+		int32 PosY = 0);
 
 	// =================================================================
 	// Information Actions
@@ -476,10 +628,13 @@ public:
 	 * Create a parameter expression directly.
 	 * Maps to action="create_parameter"
 	 * @param MaterialPath Full path to the material
-	 * @param ParameterType Type (Scalar, Vector, Texture, StaticBool)
+	 * @param ParameterType Type: "Scalar", "Vector", "Texture", "TextureObject", "StaticBool", "StaticSwitch"
 	 * @param ParameterName Name for the parameter
 	 * @param GroupName Optional parameter group
-	 * @param DefaultValue Default value as string
+	 * @param DefaultValue Default value as string. For Scalar: "0.5". For Vector/Color:
+	 *        "(R=1.0,G=0.0,B=0.0,A=1.0)" or "1.0,0.0,0.0,1.0" or "1.0,0.0,0.0" (alpha defaults to 1.0)
+	 *        or "1.0/0.0/0.0". For StaticBool/StaticSwitch: "true"/"false".
+	 *        For Texture/TextureObject: asset path "/Game/Textures/T_Tex"
 	 * @param PosX X position in graph
 	 * @param PosY Y position in graph
 	 * @return Created parameter info
@@ -547,6 +702,203 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
 	static TArray<FMaterialOutputConnectionInfo> GetOutputConnections(const FString& MaterialPath);
+
+	// =================================================================
+	// Batch Operations
+	// =================================================================
+
+	/**
+	 * Batch-create multiple expressions in one call for performance.
+	 * Maps to action="batch_create"
+	 *
+	 * All nodes are created in a single transaction with one graph refresh,
+	 * yielding 10-100x speedup over individual create calls for large materials.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param ExpressionClasses Array of class names (e.g., ["Add", "Multiply", "Constant"])
+	 * @param PosXArray Array of X positions (same length as ExpressionClasses)
+	 * @param PosYArray Array of Y positions (same length as ExpressionClasses)
+	 * @return Array of created expression info in same order
+	 *
+	 * Example:
+	 *   nodes = unreal.MaterialNodeService.batch_create_expressions("/Game/M_Test",
+	 *       ["Add","Multiply","Constant"], [-300,-200,-100], [0,200,400])
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static TArray<FMaterialExpressionInfo> BatchCreateExpressions(
+		const FString& MaterialPath,
+		const TArray<FString>& ExpressionClasses,
+		const TArray<int32>& PosXArray,
+		const TArray<int32>& PosYArray);
+
+	/**
+	 * Batch-connect multiple expression pairs in one call.
+	 * Maps to action="batch_connect"
+	 *
+	 * All connections are made in a single transaction with one graph refresh.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param SourceIds Array of source expression IDs
+	 * @param SourceOutputs Array of source output names (empty string for first output)
+	 * @param TargetIds Array of target expression IDs
+	 * @param TargetInputs Array of target input names
+	 * @return Number of successful connections
+	 *
+	 * Example:
+	 *   count = unreal.MaterialNodeService.batch_connect_expressions("/Game/M_Test",
+	 *       [n1.id, n2.id], ["", ""], [n3.id, n3.id], ["A", "B"])
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static int32 BatchConnectExpressions(
+		const FString& MaterialPath,
+		const TArray<FString>& SourceIds,
+		const TArray<FString>& SourceOutputs,
+		const TArray<FString>& TargetIds,
+		const TArray<FString>& TargetInputs);
+
+	/**
+	 * Batch-set properties on multiple expressions in one call.
+	 * Maps to action="batch_set_properties"
+	 *
+	 * All property changes are made in a single transaction with one graph refresh.
+	 * The arrays must all be the same length (each index is one set operation).
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param ExpressionIds Array of expression IDs
+	 * @param PropertyNames Array of property names
+	 * @param PropertyValues Array of property values as strings
+	 * @return Number of successful property sets
+	 *
+	 * Example:
+	 *   count = unreal.MaterialNodeService.batch_set_properties("/Game/M_Test",
+	 *       [n1.id, n1.id, n2.id], ["R", "G", "Bias"], ["True", "False", "0.5"])
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static int32 BatchSetProperties(
+		const FString& MaterialPath,
+		const TArray<FString>& ExpressionIds,
+		const TArray<FString>& PropertyNames,
+		const TArray<FString>& PropertyValues);
+
+	/**
+	 * Batch-create expressions of all types (including specialized) in one transaction.
+	 * Maps to action="batch_create_specialized"
+	 *
+	 * Supports generic expressions, MaterialFunctionCall (with function path),
+	 * Custom HLSL (with code, output type, inputs), and CollectionParameter
+	 * (with collection path and parameter name). All created in a single transaction
+	 * with one graph refresh for 10-100x speedup.
+	 *
+	 * For generic expressions, only ClassName/PosX/PosY are needed.
+	 * For MaterialFunctionCall, also set FunctionPath.
+	 * For Custom, also set HLSLCode, HLSLOutputType, HLSLDescription, HLSLInputNames.
+	 * For CollectionParameter, also set CollectionPath, CollectionParamName.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @param Descriptors Array of creation descriptors
+	 * @return Array of created expression info in same order (empty entries on failure)
+	 *
+	 * Example:
+	 *   descs = [FBatchCreateDescriptor(ClassName="Multiply", PosX=-400, PosY=0),
+	 *            FBatchCreateDescriptor(ClassName="MaterialFunctionCall", PosX=-600, PosY=0, FunctionPath="/Game/MF_Test")]
+	 *   nodes = unreal.MaterialNodeService.batch_create_specialized("/Game/M_Test", descs)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static TArray<FMaterialExpressionInfo> BatchCreateSpecialized(
+		const FString& MaterialPath,
+		const TArray<FBatchCreateDescriptor>& Descriptors);
+
+	// =================================================================
+	// Export Actions
+	// =================================================================
+
+	/**
+	 * Export the complete material graph as a JSON string for analysis or recreation.
+	 * Maps to action="export_graph"
+	 *
+	 * Returns material settings, all expressions (type, position, properties),
+	 * all connections, and material output connections — everything needed to
+	 * recreate the material from scratch.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @return JSON string of complete graph, or empty string on failure
+	 *
+	 * Example:
+	 *   json_str = unreal.MaterialNodeService.export_material_graph("/Game/M_Landscape")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString ExportMaterialGraph(const FString& MaterialPath);
+
+	/**
+	 * Export a lightweight summary of a material graph (counts, types, parameters).
+	 * Maps to action="export_material_graph_summary"
+	 *
+	 * Returns a JSON object with:
+	 * - expression_count: total expressions
+	 * - class_counts: {class_name: count} frequency map
+	 * - connection_count: total connections
+	 * - material_output_count: connected material outputs
+	 * - parameter_count: number of scalar/vector/texture/static parameters
+	 * - parameters: [{name, type}] list
+	 *
+	 * Much lighter than ExportMaterialGraph — useful for verification and comparison.
+	 *
+	 * @param MaterialPath Full path to the material
+	 * @return JSON string summary, or empty string on failure
+	 *
+	 * Example:
+	 *   summary = unreal.MaterialNodeService.export_material_graph_summary("/Game/M_Mat")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString ExportMaterialGraphSummary(const FString& MaterialPath);
+
+	/**
+	 * Compare two material graphs and return a JSON diff report.
+	 * Maps to action="compare_material_graphs"
+	 *
+	 * Compares expression counts by class, connection counts, parameter lists,
+	 * and material output assignments. Returns JSON with:
+	 * - match: true/false overall
+	 * - expression_count_match, connection_count_match, parameter_match, output_match
+	 * - expression_count_a, expression_count_b
+	 * - class_diff: [{class_name, count_a, count_b}] for mismatches
+	 * - missing_parameters_in_b, extra_parameters_in_b: [{name, type}]
+	 *
+	 * @param MaterialPathA Full path to first material (reference)
+	 * @param MaterialPathB Full path to second material (recreation)
+	 * @return JSON diff string, or empty string on failure
+	 *
+	 * Example:
+	 *   diff = unreal.MaterialNodeService.compare_material_graphs("/Game/M_Original", "/Game/M_Copy")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString CompareMaterialGraphs(
+		const FString& MaterialPathA,
+		const FString& MaterialPathB);
+
+	// =================================================================
+	// Layout Actions
+	// =================================================================
+
+	/**
+	 * Auto-arrange all material expressions into a clean left-to-right layout.
+	 * Walks the connection graph from material outputs back through inputs,
+	 * positions nodes in columns by depth, and stacks vertically within columns.
+	 * Maps to action="layout_expressions"
+	 * @param MaterialPath Full path to the material
+	 * @param ColumnSpacing Horizontal spacing between columns (default 300)
+	 * @param RowSpacing Vertical spacing between nodes in same column (default 180)
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.MaterialNodeService.layout_expressions("/Game/Materials/M_Terrain")
+	 *   unreal.MaterialNodeService.layout_expressions("/Game/Materials/M_Terrain", 400, 200)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static bool LayoutExpressions(
+		const FString& MaterialPath,
+		int32 ColumnSpacing = 300,
+		int32 RowSpacing = 180);
 
 private:
 	// Helper methods

@@ -1,0 +1,1 @@
+recreate landscape1 as landscape2. paint it the same, foliange the same. water the same, have it to the right so I can clearly compare them.  don't use export import we want to test our tools ability to create things.

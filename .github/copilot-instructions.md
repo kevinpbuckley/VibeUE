@@ -51,6 +51,23 @@
 
 ---
 
+## 🚫 DEPRECATED API: `unreal.EditorLevelLibrary`
+
+**`unreal.EditorLevelLibrary` is DEPRECATED in UE 5.7+.** The entire Editor Scripting Utilities Plugin is deprecated. Use `unreal.EditorActorSubsystem` instead:
+
+```python
+# ❌ DEPRECATED - DO NOT USE
+actors = unreal.EditorLevelLibrary.get_all_level_actors()
+
+# ✅ CORRECT
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+actors = actor_subsys.get_all_level_actors()
+```
+
+If you see `EditorLevelLibrary` in any code, system prompt, or skill - it must be replaced with the subsystem equivalent.
+
+---
+
 ## Project Overview
 
 **VibeUE** is an Unreal Engine 5.7+ editor plugin that brings AI-powered development directly into the Unreal Editor through an In-Editor Chat Client and Model Context Protocol (MCP) integration. The plugin exposes 14 multi-action tools with 177 total actions for manipulating Blueprints, UMG widgets, materials, assets, and the level through natural language.

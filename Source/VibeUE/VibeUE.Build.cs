@@ -82,7 +82,10 @@ public class VibeUE : ModuleRules
 				"Persona",                // For IAnimationBlueprintEditor interface
 				"SkeletalMeshModifiers",  // For SkeletonModifier (bone manipulation) - MeshModelingToolset plugin
 				"SkeletalMeshEditor",     // For SkeletalMeshEditorSubsystem
-				"InputBlueprintNodes"     // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
+				"InputBlueprintNodes",    // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
+				"Landscape",              // For ALandscape, ULandscapeInfo, ULandscapeComponent
+				"LandscapeEditor",        // For landscape editor factories and utilities
+				"Foliage"                 // Required by LandscapeEdit.h (InstancedFoliageActor)
 			}
 		);
 		

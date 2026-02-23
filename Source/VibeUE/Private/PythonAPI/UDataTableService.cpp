@@ -372,6 +372,15 @@ FString UDataTableService::CreateDataTable(const FString& RowStructName, const F
 	}
 
 	// Create the data table using asset tools
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = NormalizedPath / AssetName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		UE_LOG(LogDataTableService, Warning, TEXT("CreateDataTable: DataTable '%s' already exists at '%s'. Delete it first or use a different name."), *AssetName, *FullAssetPath);
+		return FString();
+	}
+
 	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
 
 	// Create factory with the specified row struct

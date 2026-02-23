@@ -134,6 +134,57 @@ FString UMaterialService::PropertyValueToString(const FProperty* Property, const
 	return ExportedValue;
 }
 
+int64 UMaterialService::ResolveEnumValue(UEnum* Enum, const FString& Value)
+{
+	if (!Enum)
+	{
+		return INDEX_NONE;
+	}
+
+	// 1. Try exact match first (e.g., "BLEND_Masked", "MSM_DefaultLit")
+	int64 Result = Enum->GetValueByNameString(Value);
+	if (Result != INDEX_NONE)
+	{
+		return Result;
+	}
+
+	// 2. Try case-insensitive partial suffix match against all enum values.
+	//    This handles AI sending "Masked" instead of "BLEND_Masked",
+	//    or "DefaultLit" instead of "MSM_DefaultLit".
+	//    We match if the enum name string ends with "_<Value>" (case-insensitive).
+	FString SuffixPattern = FString::Printf(TEXT("_%s"), *Value);
+	for (int32 i = 0; i < Enum->NumEnums() - 1; ++i) // -1 to skip _MAX
+	{
+		FString EnumName = Enum->GetNameStringByIndex(i);
+		if (EnumName.Equals(Value, ESearchCase::IgnoreCase))
+		{
+			return Enum->GetValueByIndex(i);
+		}
+		if (EnumName.EndsWith(SuffixPattern, ESearchCase::IgnoreCase))
+		{
+			return Enum->GetValueByIndex(i);
+		}
+	}
+
+	// 3. Try substring match — if the value is contained anywhere in the enum name
+	for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+	{
+		FString EnumName = Enum->GetNameStringByIndex(i);
+		if (EnumName.Contains(Value, ESearchCase::IgnoreCase))
+		{
+			return Enum->GetValueByIndex(i);
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("UMaterialService::ResolveEnumValue: Could not resolve '%s' in enum %s. Valid values:"), *Value, *Enum->GetName());
+	for (int32 i = 0; i < Enum->NumEnums() - 1; ++i)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("  - %s"), *Enum->GetNameStringByIndex(i));
+	}
+
+	return INDEX_NONE;
+}
+
 bool UMaterialService::StringToPropertyValue(FProperty* Property, void* Container, const FString& Value)
 {
 	if (!Property || !Container)
@@ -173,7 +224,7 @@ bool UMaterialService::StringToPropertyValue(FProperty* Property, void* Containe
 	{
 		if (UEnum* Enum = ByteProp->Enum)
 		{
-			int64 EnumValue = Enum->GetValueByNameString(Value);
+			int64 EnumValue = ResolveEnumValue(Enum, Value);
 			if (EnumValue != INDEX_NONE)
 			{
 				ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
@@ -187,7 +238,7 @@ bool UMaterialService::StringToPropertyValue(FProperty* Property, void* Containe
 	{
 		if (UEnum* Enum = EnumProp->GetEnum())
 		{
-			int64 EnumValue = Enum->GetValueByNameString(Value);
+			int64 EnumValue = ResolveEnumValue(Enum, Value);
 			if (EnumValue != INDEX_NONE)
 			{
 				EnumProp->GetUnderlyingProperty()->SetIntPropertyValue(ValuePtr, EnumValue);
@@ -236,15 +287,24 @@ FMaterialCreateResult UMaterialService::CreateMaterial(
 {
 	FMaterialCreateResult Result;
 
-	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-	
-	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
-	
 	FString PackagePath = DestinationPath;
 	if (!PackagePath.EndsWith(TEXT("/")))
 	{
 		PackagePath += TEXT("/");
 	}
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = PackagePath + MaterialName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Material '%s' already exists at '%s'. Delete it first or use a different name."), *MaterialName, *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialService::CreateMaterial: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	
+	UMaterialFactoryNew* Factory = NewObject<UMaterialFactoryNew>();
 	
 	UObject* NewAsset = AssetTools.CreateAsset(MaterialName, PackagePath, UMaterial::StaticClass(), Factory);
 	
@@ -281,16 +341,25 @@ FMaterialCreateResult UMaterialService::CreateInstance(
 		return Result;
 	}
 
-	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
-	
-	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
-	Factory->InitialParent = ParentMaterial;
-	
 	FString PackagePath = DestinationPath;
 	if (!PackagePath.EndsWith(TEXT("/")))
 	{
 		PackagePath += TEXT("/");
 	}
+
+	// Check if asset already exists to avoid blocking overwrite dialog
+	FString FullAssetPath = PackagePath + InstanceName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Material instance '%s' already exists at '%s'. Delete it first or use a different name."), *InstanceName, *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialService::CreateInstance: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+	
+	UMaterialInstanceConstantFactoryNew* Factory = NewObject<UMaterialInstanceConstantFactoryNew>();
+	Factory->InitialParent = ParentMaterial;
 	
 	UObject* NewAsset = AssetTools.CreateAsset(InstanceName, PackagePath, UMaterialInstanceConstant::StaticClass(), Factory);
 	
@@ -324,6 +393,23 @@ bool UMaterialService::CompileMaterial(const FString& MaterialPath)
 	}
 
 	Material->ForceRecompileForRendering();
+
+	// Auto-refresh the Material Editor UI if it's open, so the user
+	// sees updated preview/graph without manually closing and reopening
+	if (GEditor)
+	{
+		UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+		if (AssetEditorSubsystem)
+		{
+			IAssetEditorInstance* Editor = AssetEditorSubsystem->FindEditorForAsset(Material, false);
+			if (Editor)
+			{
+				AssetEditorSubsystem->CloseAllEditorsForAsset(Material);
+				AssetEditorSubsystem->OpenEditorForAsset(Material);
+			}
+		}
+	}
+
 	return true;
 }
 

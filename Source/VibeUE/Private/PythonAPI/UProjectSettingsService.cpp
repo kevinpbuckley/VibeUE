@@ -708,17 +708,18 @@ FProjectSettingResult UProjectSettingsService::SetSetting(const FString& Categor
 	}
 
 #if WITH_EDITOR
-	// Notify after change - this triggers PostEditChangeProperty which:
-	// 1. Applies any runtime effects (like ApplicationScale -> FSlateApplication::SetApplicationScale)
-	// 2. Broadcasts change events so listeners can react
-	// 3. Calls SaveConfig() to persist the change
-	// This is exactly what the editor's property panel does.
+	// Notify after change - triggers runtime effects and broadcasts change events.
+	// NOTE: PostEditChangeProperty does NOT automatically call SaveConfig() -
+	// only some settings classes override it to do so. We must explicitly save.
 	FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
 	SettingsObj->PostEditChangeProperty(PropertyChangedEvent);
-#else
-	// In non-editor builds, fall back to manual save
-	SettingsObj->SaveConfig();
 #endif
+
+	// Always persist to config file - PostEditChangeProperty alone does NOT save,
+	// and GConfig->Flush() only writes cached config, not CDO property changes.
+	// TryUpdateDefaultConfigFile() writes the CDO's current property values to
+	// the appropriate config file (e.g. DefaultEngine.ini, DefaultGame.ini).
+	SettingsObj->TryUpdateDefaultConfigFile();
 
 	Result.bSuccess = true;
 	Result.ModifiedSettings.Add(FString::Printf(TEXT("%s.%s"), *CategoryId, *Key));
