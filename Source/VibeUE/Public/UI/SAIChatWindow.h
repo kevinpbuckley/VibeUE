@@ -197,6 +197,18 @@ private:
     /** Whether thinking indicator is currently visible in scroll box */
     bool bThinkingIndicatorVisible = false;
 
+    // ============ Auto-Scroll ============
+
+    /**
+     * Whether the chat should auto-scroll to the bottom as new content arrives.
+     * Set to false when the user manually scrolls up to read earlier content.
+     * Restored to true when the user scrolls back to the bottom, or sends a message.
+     */
+    bool bAutoScrollEnabled = true;
+
+    /** Called when the user scrolls the message scroll box */
+    void OnScrollBoxUserScrolled(float ScrollOffset);
+
     /** Current vibing word for the thinking indicator (randomly selected) */
     FString CurrentVibingWord;
 

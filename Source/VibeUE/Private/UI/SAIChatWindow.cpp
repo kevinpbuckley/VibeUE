@@ -317,6 +317,7 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                 .Padding(4)
                 [
                     SAssignNew(MessageScrollBox, SScrollBox)
+                    .OnUserScrolled(this, &SAIChatWindow::OnScrollBoxUserScrolled)
                 ]
             ]
             
@@ -1223,6 +1224,23 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
     }
 }
 
+void SAIChatWindow::OnScrollBoxUserScrolled(float ScrollOffset)
+{
+    if (!MessageScrollBox.IsValid())
+    {
+        return;
+    }
+
+    // If the user scrolled back to (or near) the bottom, re-enable auto-scroll.
+    // Otherwise, they've scrolled up to read — pause auto-scroll so we don't
+    // snap them away from where they're reading.
+    const float EndOffset = MessageScrollBox->GetScrollOffsetOfEnd();
+    const float DistanceFromBottom = EndOffset - ScrollOffset;
+    const float BottomThreshold = 20.0f;
+
+    bAutoScrollEnabled = (DistanceFromBottom <= BottomThreshold);
+}
+
 void SAIChatWindow::ScrollToBottom()
 {
     // If thinking indicator is visible, move it to the bottom
@@ -1256,6 +1274,9 @@ FReply SAIChatWindow::OnSendClicked()
 
         // Clear any previous error message before sending new request
         // Status now shown via streaming indicator in chat
+
+        // User is actively sending — always scroll to show their message
+        bAutoScrollEnabled = true;
 
         InputTextBox->SetText(FText::GetEmpty());
 
@@ -2665,7 +2686,11 @@ void SAIChatWindow::HandleMessageUpdated(int32 Index, const FChatMessage& Messag
         UpdateTokenBudgetDisplay();
     }
     
-    ScrollToBottom();
+    // Respect the user's scroll position during streaming — only auto-scroll if they're pinned to the bottom
+    if (bAutoScrollEnabled)
+    {
+        ScrollToBottom();
+    }
     UpdateUIState();
 }
 
