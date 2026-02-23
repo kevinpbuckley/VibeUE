@@ -2245,7 +2245,7 @@ FReply SAIChatWindow::OnSettingsClicked()
             [
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Port:")))
-                .ToolTipText(FText::FromString(TEXT("Port for the MCP HTTP server. Default: 8080")))
+                .ToolTipText(FText::FromString(TEXT("Port for the MCP HTTP server. Default: 8088")))
             ]
             + SHorizontalBox::Slot()
             .FillWidth(0.6f)

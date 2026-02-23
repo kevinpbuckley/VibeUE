@@ -379,7 +379,7 @@ public:
     static bool GetMCPServerEnabledFromConfig();
     static void SaveMCPServerEnabledToConfig(bool bEnabled);
     
-    /** Get/Set MCP Server port (default: 8080) */
+    /** Get/Set MCP Server port (default: 8088) */
     static int32 GetMCPServerPortFromConfig();
     static void SaveMCPServerPortToConfig(int32 Port);
     
@@ -390,7 +390,7 @@ public:
     static void SaveMCPServerApiKeyToConfig(const FString& ApiKey);
     
     /** Default MCP Server port */
-    static constexpr int32 DefaultMCPServerPort = 8080;
+    static constexpr int32 DefaultMCPServerPort = 8088;
 
     // Delegates
     FOnMessageAdded OnMessageAdded;

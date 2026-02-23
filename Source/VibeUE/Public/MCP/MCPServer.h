@@ -28,7 +28,7 @@ struct FMCPHostConfig
     bool bEnabled = true;
     
     /** Port to listen on */
-    int32 Port = 8080;
+    int32 Port = 8088;
     
     /** API key for authentication (empty = no auth required) */
     FString ApiKey;
