@@ -9,12 +9,12 @@ https://www.vibeue.com/
 
 </div>
 
-**VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Control Blueprints, UMG widgets, materials, and assets through natural language.
+**VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Control Blueprints, materials, UMG widgets, landscapes, foliage, and assets through natural language.
 
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 19 specialized services with 600+ methods for Blueprints, Materials, Widgets, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 22 specialized services with 670+ methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 7 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -112,7 +112,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `skeleton`, `enum-struct`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `foliage`
 
 ##### Log Reading Tool
 
@@ -210,7 +210,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (19 services, 600 methods)
+### 2. VibeUE Python API Services (22 services, 670+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -219,6 +219,7 @@ High-level services exposed to Python for common game development tasks:
 | `BlueprintService` | 75 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
+| `LandscapeService` | 44 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `MaterialService` | 29 | Materials and material instances |
@@ -229,8 +230,10 @@ High-level services exposed to Python for common game development tasks:
 | `MaterialNodeService` | 21 | Material graph expressions and connections |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `AssetDiscoveryService` | 19 | Asset search, import/export, references |
+| `LandscapeMaterialService` | 17 | Landscape material layers, blend nodes, layer info objects, grass output |
 | `WidgetService` | 16 | UMG widget blueprints and components |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
+| `FoliageService` | 16 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
@@ -400,7 +403,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `animation`, `skeleton`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `foliage`
 
 ### Using Skills
 
@@ -789,6 +792,137 @@ SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
 - `open_in_editor(path)` - Open in Skeleton Tree editor
 - `open_mesh_in_editor(path)` - Open skeletal mesh editor
 - `refresh_skeleton(path)` - Refresh after changes
+
+### LandscapeService (44 methods)
+
+LandscapeService provides comprehensive landscape terrain manipulation including sculpting, weight layer painting, heightmap import/export, visibility holes, and spline-based road/path creation:
+
+**Discovery:**
+- `list_landscapes()` - Find all landscape actors in the current level
+- `get_landscape_info(name)` - Get landscape metadata (size, components, layers)
+- `landscape_exists(name)` / `layer_exists(name, layer)` - Existence checks
+
+**Lifecycle:**
+- `create_landscape(name, ...)` - Create a new landscape actor
+- `delete_landscape(name)` - Remove a landscape actor
+
+**Heightmap Operations:**
+- `import_heightmap(name, file)` - Import heightmap from PNG/R16 file
+- `export_heightmap(name, file)` - Export heightmap to file
+- `get_height_at_location(name, x, y)` - Sample height at world position
+- `get_height_in_region(name, ...)` - Get heights across a region
+- `set_height_in_region(name, ...)` - Set heights across a region
+
+**Sculpting:**
+- `sculpt_at_location(name, x, y, radius, strength)` - Raise/lower terrain
+- `flatten_at_location(name, x, y, radius, height)` - Flatten to target height
+- `smooth_at_location(name, x, y, radius, strength)` - Smooth terrain
+- `raise_lower_region(name, ...)` - Raise or lower a rectangular region
+- `apply_noise(name, ...)` - Apply procedural noise
+
+**Paint Layer Operations:**
+- `list_layers(name)` - List all landscape layers
+- `add_layer(name, layer, ...)` - Add a paint layer
+- `remove_layer(name, layer)` - Remove a paint layer
+- `get_layer_weights_at_location(name, x, y)` - Sample layer weights
+- `paint_layer_at_location(name, layer, x, y, radius, strength)` - Paint a layer
+- `paint_layer_in_region(name, layer, ...)` - Batch paint a region
+- `paint_layer_in_world_rect(name, layer, ...)` - Paint in world-space rect
+
+**Weight Map Import/Export:**
+- `export_weight_map(name, layer, file)` - Export layer weight map
+- `import_weight_map(name, layer, file)` - Import layer weight map
+- `get_weights_in_region(name, ...)` - Read weights across a region
+- `set_weights_in_region(name, ...)` - Write weights across a region
+
+**Visibility Holes:**
+- `get_hole_at_location(name, x, y)` - Check if hole exists at location
+- `set_hole_at_location(name, x, y, hole)` - Create/remove a hole
+- `set_hole_in_region(name, ...)` - Set holes across a region
+
+**Splines:**
+- `create_spline_point(name, x, y, z)` - Create a landscape spline point
+- `connect_spline_points(name, p1, p2)` - Connect two spline points
+- `create_spline_from_points(name, points)` - Create a spline from a list of positions
+- `get_spline_info(name)` - Get all spline points and segments
+- `modify_spline_point(name, index, ...)` - Move or adjust a spline point
+- `delete_spline_point(name, index)` - Remove a spline point
+- `delete_all_splines(name)` - Clear all splines on the landscape
+- `apply_splines_to_landscape(name)` - Bake splines into the terrain shape
+- `set_spline_segment_meshes(name, segment, mesh)` - Assign mesh to spline segment
+- `set_spline_point_mesh(name, index, mesh)` - Assign mesh at spline point
+
+**Properties:**
+- `get_landscape_property(name, prop)` / `set_landscape_property(name, prop, val)` - Property access
+- `set_landscape_material(name, material)` - Assign material to landscape
+- `set_landscape_visibility(name, visible)` / `set_landscape_collision(name, enabled)` - Visibility and collision
+
+**Resize:**
+- `resize_landscape(name, ...)` - Change landscape dimensions
+
+### LandscapeMaterialService (17 methods)
+
+LandscapeMaterialService handles the creation and configuration of landscape-specific materials including layer blend nodes, layer info objects, and grass output:
+
+**Material Creation:**
+- `create_landscape_material(name, path)` - Create a landscape-compatible material
+
+**Layer Blend Nodes:**
+- `create_layer_blend_node(material, x, y)` - Create a LandscapeLayerBlend node
+- `create_layer_blend_node_with_layers(material, layers, x, y)` - Create node with predefined layers
+- `add_layer_to_blend_node(material, node_id, layer_name, blend_type)` - Add layer to blend node
+- `remove_layer_from_blend_node(material, node_id, layer_name)` - Remove layer from blend node
+- `get_layer_blend_info(material, node_id)` - Get blend node configuration
+- `connect_to_layer_input(material, node_id, layer, texture)` - Connect texture to layer input
+
+**Landscape-Specific Expressions:**
+- `create_layer_coords_node(material, x, y)` - Create LandscapeLayerCoords UV node
+- `create_layer_sample_node(material, layer, x, y)` - Create LandscapeLayerSample node
+- `create_layer_weight_node(material, layer, x, y)` - Create LandscapeLayerWeight expression
+- `create_grass_output(material, grass_types, x, y)` - Create LandscapeGrassOutput node
+
+**Layer Info Objects:**
+- `create_layer_info_object(name, path, layer_name)` - Create a LandscapeLayerInfoObject asset
+- `get_layer_info_details(path)` - Get layer info properties (phys material, hardness, etc.)
+
+**Material Assignment:**
+- `assign_material_to_landscape(landscape, material)` - Assign material to a landscape actor
+
+**Convenience:**
+- `setup_layer_textures(material, layers)` - One-call setup for multi-layer textured landscape material
+
+**Existence Checks:**
+- `landscape_material_exists(path)` / `layer_info_exists(path)` - Existence checks
+
+### FoliageService (16 methods)
+
+FoliageService provides foliage type management, instance scattering, layer-aware placement, and instance queries:
+
+**Discovery:**
+- `list_foliage_types()` - List all foliage types in the current level
+- `get_instance_count(foliage_type)` - Get total instance count for a foliage type
+
+**Foliage Type Management:**
+- `create_foliage_type(mesh, name, path)` - Create a new FoliageType asset from a static mesh
+- `get_foliage_type_property(type, property)` - Get a foliage type property value
+- `set_foliage_type_property(type, property, value)` - Set a foliage type property value
+
+**Scatter Placement:**
+- `scatter_foliage(type, center, radius, count)` - Scatter instances in a circular area
+- `scatter_foliage_rect(type, min, max, density)` - Scatter in a rectangular region
+- `add_foliage_instances(type, transforms)` - Add instances at specific transforms
+- `scatter_foliage_on_layer(type, landscape, layer, ...)` - Place foliage weighted by a landscape paint layer
+
+**Removal:**
+- `remove_foliage_in_radius(type, center, radius)` - Remove instances within a radius
+- `remove_all_foliage_of_type(type)` - Remove all instances of a foliage type
+- `clear_all_foliage()` - Remove all foliage instances from the level
+
+**Query:**
+- `get_foliage_in_radius(type, center, radius)` - Get instance locations within a radius
+
+**Existence Checks:**
+- `foliage_type_exists(type)` / `has_foliage_instances(type)` - Existence checks
 
 ### NiagaraService (37 methods)
 

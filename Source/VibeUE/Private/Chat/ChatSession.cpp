@@ -131,6 +131,7 @@ void FChatSession::SendMessage(const FString& UserMessage)
     // Reset tool call iteration counter for new user message
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
+    bWasCancelled = false;
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
@@ -239,6 +240,7 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     // Reset tool call iteration counter for new user message
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
+    bWasCancelled = false;
 
     // Create user message with multimodal content
     FChatMessage UserMsg;
@@ -444,7 +446,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             bWasIncomplete = OpenRouterClient->WasResponseIncomplete();
         }
         
-        if (bWasIncomplete && ToolCallIterationCount < MaxToolCallIterations)
+        if (bWasIncomplete && !bWasCancelled && ToolCallIterationCount < MaxToolCallIterations)
         {
             UE_LOG(LogChatSession, Log, TEXT("[AUTO-CONTINUE] Detected incomplete response - sending follow-up to continue"));
             
@@ -925,6 +927,13 @@ void FChatSession::ExecuteNextToolInQueue()
 
 void FChatSession::SendFollowUpAfterToolCall()
 {
+    // Do not send a follow-up if the user explicitly cancelled the request
+    if (bWasCancelled)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("[FOLLOW-UP] Skipping follow-up - request was cancelled by user"));
+        return;
+    }
+
     // If summarization is in progress, wait for it to complete before continuing
     // This prevents the context from overflowing while we're trying to reduce it
     if (bIsSummarizing)
@@ -1170,7 +1179,11 @@ void FChatSession::CancelRequest()
     {
         VibeUEClient->CancelRequest();
     }
-    
+
+    // Mark as cancelled so auto-continue and follow-up requests are suppressed
+    // until the user sends a new message
+    bWasCancelled = true;
+
     // Clear tool call queue and reset execution state
     ToolCallQueue.Empty();
     bIsExecutingTool = false;

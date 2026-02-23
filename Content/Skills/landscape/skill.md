@@ -147,9 +147,21 @@ Do this in separate steps:
 | `LandscapeService.create_spline_control_point(...)` | `LandscapeService.create_spline_point(...)` (no "control" in name) |
 | `LandscapeMaterialService.add_material_layer(...)` | `LandscapeMaterialService.add_layer_to_blend_node(...)` |
 | `mat_path = create_landscape_material(...)` as string | Returns `LandscapeMaterialCreateResult` — use `result.asset_path` |
-| `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length` directly — negatives are preserved and reverse mesh flow |
+| `connect_spline_points(..., tangent_length=25.0)` ignoring negative source | Pass `tangent_length=seg.start_tangent_length, end_tangent_length=seg.end_tangent_length` — **both** tangents are needed for exact shape |
+| Only passing `tangent_length` to `connect_spline_points` | Must also pass `end_tangent_length=seg.end_tangent_length` — end tangent is typically negative (UE convention). Omitting it defaults to `-start_tangent` which is usually correct for NEW splines, but when copying, always pass both explicitly |
+| `create_spline_point("L", location=vec)` | Parameter is `world_location`, NOT `location`: `create_spline_point("L", world_location=vec)` |
+| `modify_spline_point("L", 0, location=vec)` | Parameter is `world_location`, NOT `location`: `modify_spline_point("L", 0, world_location=vec)` |
 | `modify_spline_point(...)` with wrong rotation | Use `auto_calc_rotation=False, rotation=pt.rotation` to set exact rotation from get_spline_info |
+| Setting rotation BEFORE `connect_spline_points` | `connect_spline_points` triggers auto-calc rotation — set rotations AFTER all segments are connected |
+| `pt.paint_layer_name` on LandscapeSplinePointInfo | Property is `pt.layer_name` (NOT `paint_layer_name`) — `paint_layer_name` is the **parameter** name in `create_spline_point` |
 | Reading weights right after painting and getting 0.0 | Weights are written to edit layer — reads use same path |
+| `spline_info.points` on LandscapeSplineInfo | Property is `spline_info.control_points` (**NOT** `points`) |
+| Not setting spline segment meshes after connecting | Use `set_spline_segment_meshes()` to assign mesh entries (e.g. SM_River) — splines are green without meshes |
+| Forgetting to set control point meshes | Use `set_spline_point_mesh()` — control points can have their own static mesh |
+| `layer.asset_path` on LandscapeLayerInfo_Custom | Property is `layer.layer_info_path` (**NOT** `asset_path`) |
+| Guessing random offset like 110000 for side-by-side | Calculate: `offset = (resolution - 1) * scale.x` e.g. (1009-1)*100 = 100800 |
+| Using `FoliageService.clear_all_foliage()` thinking it only clears one landscape | `clear_all_foliage()` removes ALL foliage from the ENTIRE level — use `remove_foliage_in_radius()` or `remove_all_foliage_of_type()` to target specific areas |
+| Manually scattering foliage to replicate a landscape that uses LandscapeGrassType | If foliage is procedural (from LandscapeGrassType on the material), just copy paint layers — foliage auto-generates from weights. Check if `list_foliage_types()` returns 0; if so, foliage is procedural. |
 
 ### LandscapeCreateResult (from create_landscape)
 
@@ -181,6 +193,14 @@ Do this in separate steps:
 
 **No `success` field.** Check `actor_label` to verify data was returned.
 
+### LandscapeLayerInfo_Custom (from get_landscape_info or list_layers)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `layer_name` | str | Name of the paint layer (e.g. "L1", "Grass") |
+| `layer_info_path` | str | Asset path of the layer info object (**NOT** `asset_path`) |
+| `is_weight_blended` | bool | Whether the layer uses weight blending |
+
 ### create_landscape Signature
 
 ```
@@ -198,12 +218,16 @@ The label parameter is `landscape_label`, NOT `actor_label`.
 |----------|------|-------------|
 | `point_index` | int | Index of this control point |
 | `location` | Vector | World-space position |
+| `rotation` | Rotator | Control point rotation (tangent direction) |
 | `width` | float | Half-width of spline influence |
 | `side_falloff` | float | Side falloff distance |
 | `end_falloff` | float | End tip falloff distance |
-| `paint_layer_name` | str | Paint layer applied under spline |
+| `layer_name` | str | Paint layer applied under spline (**NOT** `paint_layer_name`) |
 | `raise_terrain` | bool | Whether terrain is raised to spline |
 | `lower_terrain` | bool | Whether terrain is lowered to spline |
+| `mesh_path` | str | Static mesh assigned to this control point (empty = none) |
+| `mesh_scale` | Vector | Scale of the control point mesh |
+| `segment_mesh_offset` | float | Offset for mesh at segment connections |
 
 ### LandscapeSplineSegmentInfo (from get_spline_info)
 
@@ -217,6 +241,19 @@ The label parameter is `landscape_label`, NOT `actor_label`.
 | `layer_name` | str | Layer painted under segment |
 | `raise_terrain` | bool | Raise terrain under segment |
 | `lower_terrain` | bool | Lower terrain under segment |
+| `spline_meshes` | Array[LandscapeSplineMeshEntryInfo] | Mesh entries assigned to this segment |
+
+### LandscapeSplineMeshEntryInfo (mesh entry in segment spline_meshes)
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `mesh_path` | str | Asset path of the static mesh (e.g. `/Game/.../SM_River.SM_River`) |
+| `scale` | Vector | XYZ scale of the mesh along the spline |
+| `scale_to_width` | bool | Whether mesh scales to match spline width |
+| `material_override_paths` | Array[str] | Asset paths of material overrides (empty = use mesh defaults) |
+| `center_adjust` | Vector2D | XY offset to center the mesh on the spline |
+| `forward_axis` | int | Spline mesh forward axis: 0=X, 1=Y, 2=Z |
+| `up_axis` | int | Spline mesh up axis: 0=X, 1=Y, 2=Z |
 
 ---
 
@@ -283,6 +320,77 @@ import unreal
 unreal.LandscapeService.export_heightmap("MyTerrain", "C:/Heightmaps/terrain_export.raw")
 ```
 
+### Recreate Splines from One Landscape to Another
+
+```python
+import unreal
+
+svc = unreal.LandscapeService
+
+# 1. Get source spline data
+src = svc.get_spline_info("SourceLandscape")
+
+# 2. Create control points on destination (use pt.layer_name, NOT pt.paint_layer_name)
+#    IMPORTANT: keyword is world_location=, NOT location=
+point_mapping = {}
+for pt in src.control_points:
+    res = svc.create_spline_point(
+        "DestLandscape", world_location=pt.location,
+        width=pt.width, side_falloff=pt.side_falloff, end_falloff=pt.end_falloff,
+        paint_layer_name=pt.layer_name if pt.layer_name else "",
+        raise_terrain=pt.raise_terrain, lower_terrain=pt.lower_terrain
+    )
+    if res.success:
+        point_mapping[pt.point_index] = res.point_index
+
+# 3. Connect segments with EXACT tangent lengths (BOTH start and end)
+for seg in src.segments:
+    if seg.start_point_index in point_mapping and seg.end_point_index in point_mapping:
+        svc.connect_spline_points(
+            "DestLandscape",
+            point_mapping[seg.start_point_index],
+            point_mapping[seg.end_point_index],
+            tangent_length=seg.start_tangent_length,
+            end_tangent_length=seg.end_tangent_length,  # MUST pass both!
+            paint_layer_name=seg.layer_name if seg.layer_name else "",
+            raise_terrain=seg.raise_terrain, lower_terrain=seg.lower_terrain
+        )
+
+# 4. Set EXACT rotations AFTER all connections
+#    CRITICAL: connect_spline_points triggers auto-calc rotation,
+#    so rotations must be applied LAST to stick
+#    IMPORTANT: keyword is world_location=, NOT location=
+for pt in src.control_points:
+    if pt.point_index in point_mapping:
+        svc.modify_spline_point(
+            "DestLandscape", point_mapping[pt.point_index],
+            world_location=pt.location,
+            rotation=pt.rotation, auto_calc_rotation=False
+        )
+
+# 5. Copy spline meshes from source segments
+for seg in src.segments:
+    if seg.spline_meshes and len(seg.spline_meshes) > 0:
+        svc.set_spline_segment_meshes(
+            "DestLandscape", seg.segment_index, seg.spline_meshes
+        )
+
+# 6. Copy control point meshes from source points
+for pt in src.control_points:
+    if pt.mesh_path:
+        svc.set_spline_point_mesh(
+            "DestLandscape", point_mapping[pt.point_index],
+            pt.mesh_path, pt.mesh_scale, pt.segment_mesh_offset
+        )
+
+# 7. Apply to deform terrain
+svc.apply_splines_to_landscape("DestLandscape")
+```
+
+> **Order matters:** Create points → Connect segments → Set rotations → Set meshes → Apply.
+> `connect_spline_points` overwrites control point rotations via auto-calc.
+> Always set explicit rotations as the LAST step before apply.
+
 ### Copy Terrain Between Landscapes
 
 ```python
@@ -305,6 +413,44 @@ temp_path = os.path.join(unreal.Paths.project_saved_dir(), "temp_heightmap.raw")
 unreal.LandscapeService.export_heightmap("SourceLandscape", temp_path)
 unreal.LandscapeService.import_heightmap("DestLandscape", temp_path)
 os.remove(temp_path)  # Clean up
+```
+
+### Copy Paint Layers Between Landscapes
+
+```python
+import unreal
+
+src = "SourceLandscape"
+dst = "DestLandscape"
+info = unreal.LandscapeService.get_landscape_info(src)
+layers = unreal.LandscapeService.list_layers(src)
+
+# 1. Add all layers to destination (uses layer_info_path, NOT asset_path)
+for layer in layers:
+    unreal.LandscapeService.add_layer(dst, layer.layer_info_path)
+
+# 2. Copy weights for each layer
+for layer in layers:
+    weights = unreal.LandscapeService.get_weights_in_region(
+        src, layer.layer_name, 0, 0, info.resolution_x, info.resolution_y)
+    if weights and sum(weights) > 0:
+        unreal.LandscapeService.set_weights_in_region(
+            dst, layer.layer_name, 0, 0, info.resolution_x, info.resolution_y, weights)
+        print(f"Copied weights for {layer.layer_name}")
+```
+
+### Calculate Landscape Offset for Side-by-Side
+
+```python
+import unreal
+
+# Correct way to position a duplicate landscape next to the source:
+info = unreal.LandscapeService.get_landscape_info("SourceLandscape")
+# Total world size = (resolution - 1) * scale component
+landscape_width = (info.resolution_x - 1) * info.scale.x  # e.g. (1009-1)*100 = 100800
+new_x = info.location.x + landscape_width  # place immediately to the right
+new_loc = unreal.Vector(new_x, info.location.y, info.location.z)
+# Do NOT use arbitrary offsets like 110000 — calculate from actual dimensions
 ```
 
 ### Read Height Data in Region
@@ -535,6 +681,121 @@ for sv in src_vars:
 
 dst.set_editor_property('grass_varieties', new_vars)
 unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_Grass2")
+```
+
+### Clone Entire Landscape (Complete Workflow)
+
+When duplicating a landscape with all details, follow these steps IN ORDER:
+
+**Step 1: Gather source info**
+```python
+import unreal
+
+src = "SourceLandscape"
+info = unreal.LandscapeService.get_landscape_info(src)
+layers = unreal.LandscapeService.list_layers(src)
+```
+
+**Step 2: Calculate exact offset position**
+```python
+# width = (resolution - 1) * scale.x — DO NOT use arbitrary offsets
+width = (info.resolution_x - 1) * info.scale.x
+new_x = info.location.x + width
+```
+
+**Step 3: Create destination landscape**
+```python
+dst = "DestLandscape"
+# Derive component counts from resolution (info has num_components total, not per-axis)
+comp_size = info.subsection_size_quads * info.num_subsections
+count_x = (info.resolution_x - 1) // comp_size
+count_y = (info.resolution_y - 1) // comp_size
+
+unreal.LandscapeService.create_landscape(
+    location=unreal.Vector(new_x, info.location.y, info.location.z),
+    rotation=info.rotation,
+    scale=info.scale,
+    landscape_label=dst,
+    quads_per_section=info.subsection_size_quads,
+    sections_per_component=info.num_subsections,
+    component_count_x=count_x,
+    component_count_y=count_y
+)
+```
+
+**Step 4: Copy heightmap**
+```python
+import tempfile, os
+temp = os.path.join(tempfile.gettempdir(), "terrain_copy.png")
+unreal.LandscapeService.export_heightmap(src, temp)
+unreal.LandscapeService.import_heightmap(dst, temp)
+os.remove(temp)
+```
+
+**Step 5: Add layers and copy weight painting**
+```python
+for layer in layers:
+    # Use layer.layer_info_path — NOT layer.asset_path
+    unreal.LandscapeService.add_layer(dst, layer.layer_info_path)
+
+for layer in layers:
+    weights = unreal.LandscapeService.get_weights_in_region(
+        src, layer.layer_name, 0, 0, info.resolution_x, info.resolution_y)
+    if weights and sum(weights) > 0:
+        unreal.LandscapeService.set_weights_in_region(
+            dst, layer.layer_name, 0, 0, info.resolution_x, info.resolution_y, weights)
+```
+
+**Step 6: Copy splines (with rotations, tangents, and meshes)**
+```python
+spline_info = unreal.LandscapeService.get_spline_info(src)
+offset = unreal.Vector(new_x - info.location.x, 0, 0)
+
+# Create all control points
+point_mapping = {}
+for pt in spline_info.control_points:
+    res = unreal.LandscapeService.create_spline_point(
+        dst, location=pt.location + offset,
+        width=pt.width, side_falloff=pt.side_falloff, end_falloff=pt.end_falloff,
+        paint_layer_name=pt.layer_name if pt.layer_name else "",
+        raise_terrain=pt.raise_terrain, lower_terrain=pt.lower_terrain)
+    if res.success:
+        point_mapping[pt.point_index] = res.point_index
+
+# Connect segments with EXACT tangent lengths (BOTH start and end)
+for seg in spline_info.segments:
+    if seg.start_point_index in point_mapping and seg.end_point_index in point_mapping:
+        unreal.LandscapeService.connect_spline_points(
+            dst,
+            point_mapping[seg.start_point_index],
+            point_mapping[seg.end_point_index],
+            tangent_length=seg.start_tangent_length,
+            end_tangent_length=seg.end_tangent_length,  # CRITICAL: preserves exact shape
+            paint_layer_name=seg.layer_name if seg.layer_name else "",
+            raise_terrain=seg.raise_terrain, lower_terrain=seg.lower_terrain)
+
+# Set rotations AFTER connecting (connect triggers auto-calc)
+for pt in spline_info.control_points:
+    if pt.point_index in point_mapping:
+        unreal.LandscapeService.modify_spline_point(
+            dst, point_mapping[pt.point_index], pt.location + offset,
+            rotation=pt.rotation, auto_calc_rotation=False)
+
+# Set segment meshes
+for seg in spline_info.segments:
+    if seg.spline_meshes and len(seg.spline_meshes) > 0:
+        unreal.LandscapeService.set_spline_segment_meshes(
+            dst, seg.segment_index, seg.spline_meshes)
+
+unreal.LandscapeService.apply_splines(dst)
+```
+
+**Step 7: Procedural foliage will auto-generate**
+```
+Foliage from LandscapeGrassType (procedural) auto-generates from the landscape
+material layers. Once layers and weights are copied, this foliage appears automatically.
+Do NOT use FoliageService.scatter_foliage_rect for procedural foliage.
+FoliageService only manages MANUALLY placed instances (e.g. individual trees).
 ```
 
 ### Check Existence

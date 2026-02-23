@@ -637,6 +637,9 @@ private:
     
     /** Whether we're waiting for user to decide if they want to continue after hitting iteration limit */
     bool bWaitingForUserToContinue = false;
+
+    /** Set when the user explicitly clicks Stop - prevents auto-continue and follow-up requests until a new user message arrives */
+    bool bWasCancelled = false;
     
     /** Default value for MaxToolCallIterations - same as Copilot (200) */
     static constexpr int32 DefaultMaxToolCallIterations = 200;

@@ -55,7 +55,11 @@ Use the `seed` parameter to get reproducible scatter patterns. Same seed + same 
 |-------|---------|
 | `result.success` | `result.success` (Python auto-converts `bSuccess`) |
 | `result.count` | `result.instances_added` |
+| `result.instances_placed` | `result.instances_added` (**NOT** `instances_placed`) |
+| `ft.asset_path` on VibeUEFoliageTypeInfo | `ft.foliage_type_path` (**NOT** `asset_path`) |
 | `scatter_foliage(..., landscape="X")` | `scatter_foliage(..., landscape_name_or_label="X")` |
+| `clear_all_foliage()` to clear one landscape | `clear_all_foliage()` removes ALL foliage from the ENTIRE level — use `remove_foliage_in_radius()` for targeted removal |
+| Manually scattering foliage on a cloned landscape | If source uses LandscapeGrassType (procedural), just copy paint layers — foliage auto-generates. Check `list_foliage_types()`: if 0, foliage is procedural. |
 | Forgetting to check `instances_rejected` | Always check — tells you how many failed surface trace or layer filter |
 
 ---

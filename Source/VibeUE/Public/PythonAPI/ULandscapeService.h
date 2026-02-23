@@ -192,6 +192,53 @@ struct FLandscapeSplinePointInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
 	bool bLowerTerrain = true;
+
+	/** Mesh placed at the control point (empty = none). Asset path string. */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString MeshPath;
+
+	/** Scale of the control point mesh */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector MeshScale = FVector(1.0f, 1.0f, 1.0f);
+
+	/** Vertical offset of the spline segment mesh at this point */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float SegmentMeshOffset = 0.0f;
+};
+
+/** Information about a single mesh entry used on a landscape spline segment */
+USTRUCT(BlueprintType)
+struct FLandscapeSplineMeshEntryInfo
+{
+	GENERATED_BODY()
+
+	/** Asset path of the static mesh (e.g. "/Game/.../SM_River.SM_River") */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString MeshPath;
+
+	/** Scale applied to the mesh (Z = forwards) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector Scale = FVector(1.0f, 1.0f, 1.0f);
+
+	/** Whether the mesh scales to fit the spline width */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bScaleToWidth = true;
+
+	/** Material override asset paths (empty = use mesh defaults) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FString> MaterialOverridePaths;
+
+	/** Center adjustment (XY tweak to center mesh on the spline) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector2D CenterAdjust = FVector2D::ZeroVector;
+
+	/** Forward axis for the spline mesh orientation (0=X, 1=Y, 2=Z) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 ForwardAxis = 0;
+
+	/** Up axis for the spline mesh orientation (0=X, 1=Y, 2=Z) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 UpAxis = 2;
 };
 
 /** Information about a single landscape spline segment */
@@ -223,6 +270,10 @@ struct FLandscapeSplineSegmentInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
 	bool bLowerTerrain = true;
+
+	/** Meshes used along the spline segment (usually SM_River etc.) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	TArray<FLandscapeSplineMeshEntryInfo> SplineMeshes;
 };
 
 /** Complete spline state on a landscape */
@@ -311,7 +362,7 @@ struct FWeightMapImportResult
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 44 landscape management actions:
+ * Provides 46 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
@@ -320,6 +371,7 @@ struct FWeightMapImportResult
  * Lifecycle:
  * - create_landscape: Create a new landscape with configurable dimensions
  * - delete_landscape: Remove a landscape from the level
+ * - resize_landscape: Resize an existing landscape to new dimensions
  *
  * Heightmap:
  * - import_heightmap: Import heightmap from PNG (preferred) or RAW file
@@ -342,6 +394,21 @@ struct FWeightMapImportResult
  * - get_layer_weights_at_location: Get layer weights at position
  * - paint_layer_at_location: Paint a layer with brush
  *
+ * Region Painting:
+ * - paint_layer_in_region: Paint layer weights in a rectangular region (vertex coords)
+ * - paint_layer_in_world_rect: Paint layer weights in a world-space rectangle
+ *
+ * Weight Maps:
+ * - export_weight_map: Export layer weight map to file
+ * - import_weight_map: Import layer weight map from file
+ * - get_weights_in_region: Read weight values in a rectangular region
+ * - set_weights_in_region: Set weight values in a rectangular region
+ *
+ * Holes:
+ * - set_hole_at_location: Create/remove a hole at a world position
+ * - set_hole_in_region: Create/remove holes in a rectangular region
+ * - get_hole_at_location: Check if there is a hole at a world position
+ *
  * Properties:
  * - set_landscape_material: Assign material to landscape
  * - get_landscape_property: Get a property value
@@ -354,6 +421,18 @@ struct FWeightMapImportResult
  * Existence:
  * - landscape_exists: Check if landscape exists
  * - layer_exists: Check if layer exists on landscape
+ *
+ * Splines:
+ * - create_spline_point: Create a control point (param: world_location, NOT location)
+ * - connect_spline_points: Connect two control points with a segment
+ * - create_spline_from_points: Create a complete spline from an array of points
+ * - get_spline_info: Get all spline control points and segments
+ * - modify_spline_point: Modify a control point (param: world_location, NOT location)
+ * - delete_spline_point: Delete a control point
+ * - delete_all_splines: Remove all splines from a landscape
+ * - apply_splines_to_landscape: Apply spline deformation to the terrain
+ * - set_spline_segment_meshes: Assign meshes to a spline segment
+ * - set_spline_point_mesh: Assign a mesh to a control point
  *
  * Python Usage:
  *   import unreal
@@ -371,8 +450,9 @@ struct FWeightMapImportResult
  *   # Sculpt a mountain (raise by 5000 world units)
  *   unreal.LandscapeService.sculpt_at_location("Landscape", 0.0, 0.0, 5000.0, 5000.0, "Smooth")
  *
- *   # Raise a rectangular region by 1000 world units
- *   unreal.LandscapeService.raise_lower_region("Landscape", 0.0, 0.0, 5000.0, 5000.0, 1000.0)
+ *   # Create a spline point (use world_location=, NOT location=)
+ *   svc = unreal.LandscapeService
+ *   r = svc.create_spline_point("MyLandscape", world_location=unreal.Vector(0, 0, 500))
  *
  *   # Apply procedural noise for natural terrain
  *   unreal.LandscapeService.apply_noise("Landscape", 0.0, 0.0, 10000.0, 500.0, 0.005, 42)
@@ -1051,9 +1131,12 @@ public:
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param StartPointIndex - Index of the start control point
 	 * @param EndPointIndex - Index of the end control point
-	 * @param TangentLength - Tangent arm length. 0.0 = auto-calculate from point
-	 *        distance. Non-zero values (including NEGATIVE) are used as-is.
+	 * @param TangentLength - Start tangent arm length. 0.0 = auto-calculate from
+	 *        point distance. Non-zero values (including NEGATIVE) are used as-is.
 	 *        Negative tangents reverse the flow direction of spline meshes.
+	 * @param EndTangentLength - End tangent arm length. 0.0 = auto (negates the
+	 *        start tangent, which is the standard UE convention for proper mesh
+	 *        flow direction). Non-zero values are used as-is.
 	 * @param PaintLayerName - Layer painted under this segment
 	 * @param bRaiseTerrain - Whether to raise terrain under segment
 	 * @param bLowerTerrain - Whether to lower terrain under segment
@@ -1065,6 +1148,7 @@ public:
 		int32 StartPointIndex,
 		int32 EndPointIndex,
 		float TangentLength = 0.0f,
+		float EndTangentLength = 0.0f,
 		const FString& PaintLayerName = TEXT(""),
 		bool bRaiseTerrain = true,
 		bool bLowerTerrain = true);
@@ -1180,6 +1264,54 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
 	static bool ApplySplinesToLandscape(
 		const FString& LandscapeNameOrLabel);
+
+	/**
+	 * Set the meshes used on a spline segment.
+	 * Maps to action="set_spline_segment_meshes"
+	 *
+	 * The array of mesh entries replaces the entire SplineMeshes list on the
+	 * segment. Each entry specifies a mesh asset path, scale, and whether it
+	 * should scale to the spline width. If multiple entries are provided they
+	 * are used in random order along the segment.
+	 *
+	 * Call this AFTER connecting points (connect_spline_points) to set the
+	 * visual mesh on each segment. Then call apply_splines_to_landscape to
+	 * regenerate mesh components and terrain deformation.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param SegmentIndex - Index of the segment to modify (from get_spline_info)
+	 * @param MeshEntries - Array of mesh entries to set on the segment
+	 * @return True if meshes were set successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool SetSplineSegmentMeshes(
+		const FString& LandscapeNameOrLabel,
+		int32 SegmentIndex,
+		const TArray<FLandscapeSplineMeshEntryInfo>& MeshEntries);
+
+	/**
+	 * Set mesh properties on a spline control point.
+	 * Maps to action="set_spline_point_mesh"
+	 *
+	 * Control points can have their own mesh (e.g. a rock or bridge piece)
+	 * placed at the point location. This also sets the segment_mesh_offset
+	 * which controls the vertical offset of the spline segment mesh at this
+	 * point — useful for rivers with a surface offset.
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param PointIndex - Index of the control point
+	 * @param MeshPath - Asset path for the control point mesh (empty = clear)
+	 * @param MeshScale - Scale of the control point mesh
+	 * @param SegmentMeshOffset - Vertical offset for connected segment meshes
+	 * @return True if set successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape|Splines")
+	static bool SetSplinePointMesh(
+		const FString& LandscapeNameOrLabel,
+		int32 PointIndex,
+		const FString& MeshPath = TEXT(""),
+		FVector MeshScale = FVector(1.0f, 1.0f, 1.0f),
+		float SegmentMeshOffset = 0.0f);
 
 	// =================================================================
 	// Landscape Resize

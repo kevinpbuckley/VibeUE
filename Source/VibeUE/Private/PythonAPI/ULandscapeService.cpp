@@ -874,53 +874,73 @@ bool ULandscapeService::SculptAtLocation(
 
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SculptAtLocation", "Sculpt Landscape"));
 
-	// Read current height data
+	// Read current height data (merged view across all edit layers)
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SizeX * SizeY);
 
 	int32 SaturatedCount = 0;
 
-	// Scope the edit interface so its destructor flushes and releases the
-	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
-	// triggers UpdateMaterialInstances / texture compression.
 	{
 		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
 		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	} // ~FLandscapeEditDataInterface: release read lock
 
-		// Apply brush
-		// Convert world-space height delta to uint16 heightmap delta
-		// UE mapping: WorldHeight = (HeightValue - 32768) * LANDSCAPE_ZSCALE * ActorScale.Z
-		// So: HeightDelta_uint16 = WorldDelta / (LANDSCAPE_ZSCALE * ActorScale.Z)
-		float ZScale = LandscapeScale.Z;
-		float StrengthInUnits = Strength / (LANDSCAPE_ZSCALE * ZScale);
+	// Apply brush
+	// Convert world-space height delta to uint16 heightmap delta
+	// UE mapping: WorldHeight = (HeightValue - 32768) * LANDSCAPE_ZSCALE * ActorScale.Z
+	// So: HeightDelta_uint16 = WorldDelta / (LANDSCAPE_ZSCALE * ActorScale.Z)
+	float ZScale = LandscapeScale.Z;
+	float StrengthInUnits = Strength / (LANDSCAPE_ZSCALE * ZScale);
 
-		for (int32 Y = 0; Y < SizeY; Y++)
+	for (int32 Y = 0; Y < SizeY; Y++)
+	{
+		for (int32 X = 0; X < SizeX; X++)
 		{
-			for (int32 X = 0; X < SizeX; X++)
-			{
-				float VertX = static_cast<float>(MinX + X);
-				float VertY = static_cast<float>(MinY + Y);
-				float Distance = FMath::Sqrt(FMath::Square(VertX - LocalX) + FMath::Square(VertY - LocalY));
+			float VertX = static_cast<float>(MinX + X);
+			float VertY = static_cast<float>(MinY + Y);
+			float Distance = FMath::Sqrt(FMath::Square(VertX - LocalX) + FMath::Square(VertY - LocalY));
 
-				float Falloff = CalculateBrushFalloff(Distance, LocalRadius, BrushFalloffType);
-				if (Falloff > 0.0f)
+			float Falloff = CalculateBrushFalloff(Distance, LocalRadius, BrushFalloffType);
+			if (Falloff > 0.0f)
+			{
+				int32 Index = Y * SizeX + X;
+				float CurrentHeight = static_cast<float>(HeightData[Index]);
+				float Delta = StrengthInUnits * Falloff;
+				float NewHeight = FMath::Clamp(CurrentHeight + Delta, 0.0f, 65535.0f);
+				if (NewHeight == 0.0f || NewHeight == 65535.0f)
 				{
-					int32 Index = Y * SizeX + X;
-					float CurrentHeight = static_cast<float>(HeightData[Index]);
-					float Delta = StrengthInUnits * Falloff;
-					float NewHeight = FMath::Clamp(CurrentHeight + Delta, 0.0f, 65535.0f);
-					if (NewHeight == 0.0f || NewHeight == 65535.0f)
-					{
-						SaturatedCount++;
-					}
-					HeightData[Index] = static_cast<uint16>(FMath::RoundToInt(NewHeight));
+					SaturatedCount++;
 				}
+				HeightData[Index] = static_cast<uint16>(FMath::RoundToInt(NewHeight));
 			}
 		}
+	}
 
-		// Write modified height data
-		LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
-	} // ~FLandscapeEditDataInterface: flushes and releases heightmap texture write lock
+	// Write using edit-layer-aware path to preserve paint layer weights.
+	// Using FLandscapeEditDataInterface::SetHeightData bypasses edit layers and
+	// causes a full layer resolve that zeroes out all weightmap data.
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	{
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
+		HeightmapAccessor.Flush();
+	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
+	// Only update heightmap — do NOT call ForceLayersFullUpdate() which would
+	// also resolve weightmap layers. If the edit layer has no stored weight data,
+	// a full resolve zeroes out all paint layer weights.
+	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -996,34 +1016,51 @@ bool ULandscapeService::FlattenAtLocation(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SizeX * SizeY);
 
-	// Scope the edit interface so its destructor flushes and releases the
-	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
-	// triggers UpdateMaterialInstances / texture compression.
+	// Read current heights (merged view across all edit layers)
 	{
 		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
 		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	} // ~FLandscapeEditDataInterface: release read lock
 
-		for (int32 Y = 0; Y < SizeY; Y++)
+	for (int32 Y = 0; Y < SizeY; Y++)
+	{
+		for (int32 X = 0; X < SizeX; X++)
 		{
-			for (int32 X = 0; X < SizeX; X++)
-			{
-				float VertX = static_cast<float>(MinX + X);
-				float VertY = static_cast<float>(MinY + Y);
-				float Distance = FMath::Sqrt(FMath::Square(VertX - LocalX) + FMath::Square(VertY - LocalY));
+			float VertX = static_cast<float>(MinX + X);
+			float VertY = static_cast<float>(MinY + Y);
+			float Distance = FMath::Sqrt(FMath::Square(VertX - LocalX) + FMath::Square(VertY - LocalY));
 
-				float Falloff = CalculateBrushFalloff(Distance, LocalRadius, BrushFalloffType);
-				if (Falloff > 0.0f)
-				{
-					int32 Index = Y * SizeX + X;
-					float CurrentHeight = static_cast<float>(HeightData[Index]);
-					float NewHeight = FMath::Lerp(CurrentHeight, TargetUint, Strength * Falloff);
-					HeightData[Index] = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(NewHeight), 0, 65535));
-				}
+			float Falloff = CalculateBrushFalloff(Distance, LocalRadius, BrushFalloffType);
+			if (Falloff > 0.0f)
+			{
+				int32 Index = Y * SizeX + X;
+				float CurrentHeight = static_cast<float>(HeightData[Index]);
+				float NewHeight = FMath::Lerp(CurrentHeight, TargetUint, Strength * Falloff);
+				HeightData[Index] = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(NewHeight), 0, 65535));
 			}
 		}
+	}
 
-		LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
-	} // ~FLandscapeEditDataInterface: flushes and releases heightmap texture write lock
+	// Write using edit-layer-aware path to preserve paint layer weights.
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	{
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
+		HeightmapAccessor.Flush();
+	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
+	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -1095,15 +1132,14 @@ bool ULandscapeService::SmoothAtLocation(
 	TArray<uint16> HeightData;
 	HeightData.SetNumUninitialized(SizeX * SizeY);
 
-	// Scope the edit interface so its destructor flushes and releases the
-	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
-	// triggers UpdateMaterialInstances / texture compression.
+	// Read current heights (merged view across all edit layers)
 	{
 		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
 		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	} // ~FLandscapeEditDataInterface: release read lock
 
-		// Pre-compute Gaussian weights for the kernel
-		float Sigma = static_cast<float>(KernelRadius) / 2.0f;
+	// Pre-compute Gaussian weights for the kernel
+	float Sigma = static_cast<float>(KernelRadius) / 2.0f;
 	float SigmaSq2 = 2.0f * Sigma * Sigma;
 
 	// Create output copy
@@ -1144,8 +1180,26 @@ bool ULandscapeService::SmoothAtLocation(
 		}
 	}
 
-		LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, SmoothedData.GetData(), 0, true);
-	} // ~FLandscapeEditDataInterface: flushes and releases heightmap texture write lock
+	// Write using edit-layer-aware path to preserve paint layer weights.
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	{
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, SmoothedData.GetData());
+		HeightmapAccessor.Flush();
+	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
+	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -1228,15 +1282,14 @@ bool ULandscapeService::RaiseLowerRegion(
 
 	int32 SaturatedCount = 0;
 
-	// Scope the edit interface so its destructor flushes and releases the
-	// heightmap texture write lock before UpdateLandscapeAfterHeightEdit
-	// triggers UpdateMaterialInstances / texture compression.
+	// Read current heights (merged view across all edit layers)
 	{
 		FLandscapeEditDataInterface LandscapeEdit(LandscapeInfo);
 		LandscapeEdit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	} // ~FLandscapeEditDataInterface: release read lock
 
-		for (int32 Y = 0; Y < SizeY; Y++)
-		{
+	for (int32 Y = 0; Y < SizeY; Y++)
+	{
 		for (int32 X = 0; X < SizeX; X++)
 		{
 			// Convert back to world coords for falloff calculation
@@ -1283,8 +1336,26 @@ bool ULandscapeService::RaiseLowerRegion(
 		}
 	}
 
-		LandscapeEdit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
-	} // ~FLandscapeEditDataInterface: flushes and releases heightmap texture write lock
+	// Write using edit-layer-aware path to preserve paint layer weights.
+	const FGuid EditLayerGuid = ResolveEditLayerGuid(Landscape);
+	{
+		FScopedSetLandscapeEditingLayer EditLayerScope(
+			Landscape,
+			EditLayerGuid,
+			[Landscape]()
+			{
+				if (Landscape)
+				{
+					Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
+				}
+			});
+
+		FHeightmapAccessor<false> HeightmapAccessor(LandscapeInfo);
+		HeightmapAccessor.SetData(MinX, MinY, MaxX, MaxY, HeightData.GetData());
+		HeightmapAccessor.Flush();
+	} // ~FHeightmapAccessor: flushes and releases heightmap texture write lock
+
+	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
 
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
@@ -2772,6 +2843,7 @@ bool ULandscapeService::ConnectSplinePoints(
 	int32 StartPointIndex,
 	int32 EndPointIndex,
 	float TangentLength,
+	float EndTangentLength,
 	const FString& PaintLayerName,
 	bool bRaiseTerrain,
 	bool bLowerTerrain)
@@ -2815,17 +2887,26 @@ bool ULandscapeService::ConnectSplinePoints(
 	// Auto-calculate tangent from distance if not specified (0.0 = sentinel for auto).
 	// Non-zero values — including NEGATIVE — are used as-is. Negative tangent lengths
 	// are valid in UE and reverse the spline mesh flow direction along the segment.
-	float UsedTangentLen = TangentLength;
-	if (UsedTangentLen == 0.0f)
+	float UsedStartTangent = TangentLength;
+	if (UsedStartTangent == 0.0f)
 	{
-		UsedTangentLen = (StartCP->Location - EndCP->Location).Size() * 0.5f;
+		UsedStartTangent = (StartCP->Location - EndCP->Location).Size() * 0.5f;
+	}
+
+	// End tangent: 0.0 (default) = negate start tangent, which is the standard UE
+	// convention (end tangent points back toward start for proper mesh flow).
+	// Non-zero values are used as-is for explicit control.
+	float UsedEndTangent = EndTangentLength;
+	if (UsedEndTangent == 0.0f)
+	{
+		UsedEndTangent = -UsedStartTangent;
 	}
 
 	ULandscapeSplineSegment* NewSeg = NewObject<ULandscapeSplineSegment>(SplinesComp, NAME_None, RF_Transactional);
 	NewSeg->Connections[0].ControlPoint = StartCP;
-	NewSeg->Connections[0].TangentLen   = UsedTangentLen;
+	NewSeg->Connections[0].TangentLen   = UsedStartTangent;
 	NewSeg->Connections[1].ControlPoint = EndCP;
-	NewSeg->Connections[1].TangentLen   = UsedTangentLen;
+	NewSeg->Connections[1].TangentLen   = UsedEndTangent;
 	NewSeg->LayerName    = FName(*PaintLayerName);
 	NewSeg->bRaiseTerrain = bRaiseTerrain;
 	NewSeg->bLowerTerrain = bLowerTerrain;
@@ -2850,8 +2931,8 @@ bool ULandscapeService::ConnectSplinePoints(
 	SplinesComp->MarkRenderStateDirty();
 	Landscape->MarkPackageDirty();
 
-	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ConnectSplinePoints: Connected points %d → %d (tangent=%.0f)"),
-		StartPointIndex, EndPointIndex, UsedTangentLen);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ConnectSplinePoints: Connected points %d → %d (start_tan=%.0f, end_tan=%.0f)"),
+		StartPointIndex, EndPointIndex, UsedStartTangent, UsedEndTangent);
 	return true;
 }
 
@@ -2909,7 +2990,7 @@ FLandscapeSplineInfo ULandscapeService::CreateSplineFromPoints(
 	int32 NumPoints = WorldLocations.Num();
 	for (int32 i = 0; i < NumPoints - 1; i++)
 	{
-		if (!ConnectSplinePoints(LandscapeNameOrLabel, BaseIndex + i, BaseIndex + i + 1, 0.0f, PaintLayerName, bRaiseTerrain, bLowerTerrain))
+		if (!ConnectSplinePoints(LandscapeNameOrLabel, BaseIndex + i, BaseIndex + i + 1, 0.0f, 0.0f, PaintLayerName, bRaiseTerrain, bLowerTerrain))
 		{
 			SplineInfo.ErrorMessage = FString::Printf(TEXT("Failed to connect points %d → %d"), i, i + 1);
 			return SplineInfo;
@@ -2919,7 +3000,7 @@ FLandscapeSplineInfo ULandscapeService::CreateSplineFromPoints(
 	// Close loop if requested
 	if (bClosedLoop && NumPoints >= 2)
 	{
-		ConnectSplinePoints(LandscapeNameOrLabel, BaseIndex + NumPoints - 1, BaseIndex, 0.0f, PaintLayerName, bRaiseTerrain, bLowerTerrain);
+		ConnectSplinePoints(LandscapeNameOrLabel, BaseIndex + NumPoints - 1, BaseIndex, 0.0f, 0.0f, PaintLayerName, bRaiseTerrain, bLowerTerrain);
 	}
 
 	// Return the current spline state
@@ -2966,6 +3047,15 @@ FLandscapeSplineInfo ULandscapeService::GetSplineInfo(const FString& LandscapeNa
 		PointInfo.LayerName     = CP->LayerName.ToString();
 		PointInfo.bRaiseTerrain = CP->bRaiseTerrain;
 		PointInfo.bLowerTerrain = CP->bLowerTerrain;
+
+		// Mesh properties on control point
+		if (CP->Mesh)
+		{
+			PointInfo.MeshPath = CP->Mesh->GetPathName();
+		}
+		PointInfo.MeshScale = CP->MeshScale;
+		PointInfo.SegmentMeshOffset = CP->SegmentMeshOffset;
+
 		SplineInfo.ControlPoints.Add(PointInfo);
 	}
 
@@ -3000,6 +3090,29 @@ FLandscapeSplineInfo ULandscapeService::GetSplineInfo(const FString& LandscapeNa
 		SegInfo.LayerName         = Seg->LayerName.ToString();
 		SegInfo.bRaiseTerrain     = Seg->bRaiseTerrain;
 		SegInfo.bLowerTerrain     = Seg->bLowerTerrain;
+
+		// Populate spline mesh entries
+		for (const FLandscapeSplineMeshEntry& MeshEntry : Seg->SplineMeshes)
+		{
+			FLandscapeSplineMeshEntryInfo EntryInfo;
+			if (MeshEntry.Mesh)
+			{
+				EntryInfo.MeshPath = MeshEntry.Mesh->GetPathName();
+			}
+			EntryInfo.Scale = MeshEntry.Scale;
+			EntryInfo.bScaleToWidth = MeshEntry.bScaleToWidth;
+			EntryInfo.CenterAdjust = MeshEntry.CenterAdjust;
+			EntryInfo.ForwardAxis = static_cast<int32>(MeshEntry.ForwardAxis);
+			EntryInfo.UpAxis = static_cast<int32>(MeshEntry.UpAxis);
+
+			for (UMaterialInterface* Mat : MeshEntry.MaterialOverrides)
+			{
+				EntryInfo.MaterialOverridePaths.Add(Mat ? Mat->GetPathName() : TEXT(""));
+			}
+
+			SegInfo.SplineMeshes.Add(EntryInfo);
+		}
+
 		SplineInfo.Segments.Add(SegInfo);
 	}
 
@@ -3220,6 +3333,148 @@ bool ULandscapeService::ApplySplinesToLandscape(const FString& LandscapeNameOrLa
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ApplySplinesToLandscape: Applied splines to '%s'"), *LandscapeNameOrLabel);
+	return true;
+}
+
+bool ULandscapeService::SetSplineSegmentMeshes(
+	const FString& LandscapeNameOrLabel,
+	int32 SegmentIndex,
+	const TArray<FLandscapeSplineMeshEntryInfo>& MeshEntries)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetSplineSegmentMeshes: Landscape '%s' not found"), *LandscapeNameOrLabel);
+		return false;
+	}
+
+	ULandscapeSplinesComponent* SplinesComp = Landscape->GetSplinesComponent();
+	if (!SplinesComp || !SplinesComp->GetSegments().IsValidIndex(SegmentIndex))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::SetSplineSegmentMeshes: Invalid segment index %d"), SegmentIndex);
+		return false;
+	}
+
+	ULandscapeSplineSegment* Seg = SplinesComp->GetSegments()[SegmentIndex];
+	if (!Seg)
+	{
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SetSegmentMeshes", "Set Spline Segment Meshes"));
+	Seg->Modify();
+
+	// Clear existing mesh entries and rebuild
+	Seg->SplineMeshes.Empty();
+
+	for (const FLandscapeSplineMeshEntryInfo& EntryInfo : MeshEntries)
+	{
+		FLandscapeSplineMeshEntry NewEntry;
+
+		if (!EntryInfo.MeshPath.IsEmpty())
+		{
+			UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *EntryInfo.MeshPath));
+			if (Mesh)
+			{
+				NewEntry.Mesh = Mesh;
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetSplineSegmentMeshes: Could not load mesh '%s'"), *EntryInfo.MeshPath);
+			}
+		}
+
+		NewEntry.Scale = EntryInfo.Scale;
+		NewEntry.bScaleToWidth = EntryInfo.bScaleToWidth;
+		NewEntry.CenterAdjust = EntryInfo.CenterAdjust;
+		NewEntry.ForwardAxis = static_cast<ESplineMeshAxis::Type>(FMath::Clamp(EntryInfo.ForwardAxis, 0, 2));
+		NewEntry.UpAxis = static_cast<ESplineMeshAxis::Type>(FMath::Clamp(EntryInfo.UpAxis, 0, 2));
+
+		// Load material overrides
+		for (const FString& MatPath : EntryInfo.MaterialOverridePaths)
+		{
+			if (!MatPath.IsEmpty())
+			{
+				UMaterialInterface* Mat = Cast<UMaterialInterface>(StaticLoadObject(UMaterialInterface::StaticClass(), nullptr, *MatPath));
+				NewEntry.MaterialOverrides.Add(Mat);
+			}
+			else
+			{
+				NewEntry.MaterialOverrides.Add(nullptr);
+			}
+		}
+
+		Seg->SplineMeshes.Add(NewEntry);
+	}
+
+	// Update the spline mesh components
+	Seg->UpdateSplinePoints();
+
+	SplinesComp->MarkRenderStateDirty();
+	Landscape->MarkPackageDirty();
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::SetSplineSegmentMeshes: Set %d mesh entries on segment %d"),
+		MeshEntries.Num(), SegmentIndex);
+	return true;
+}
+
+bool ULandscapeService::SetSplinePointMesh(
+	const FString& LandscapeNameOrLabel,
+	int32 PointIndex,
+	const FString& MeshPath,
+	FVector MeshScale,
+	float SegmentMeshOffset)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetSplinePointMesh: Landscape '%s' not found"), *LandscapeNameOrLabel);
+		return false;
+	}
+
+	ULandscapeSplinesComponent* SplinesComp = Landscape->GetSplinesComponent();
+	if (!SplinesComp || !SplinesComp->GetControlPoints().IsValidIndex(PointIndex))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::SetSplinePointMesh: Invalid point index %d"), PointIndex);
+		return false;
+	}
+
+	ULandscapeSplineControlPoint* CP = SplinesComp->GetControlPoints()[PointIndex];
+	if (!CP)
+	{
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "SetPointMesh", "Set Spline Point Mesh"));
+	CP->Modify();
+
+	if (MeshPath.IsEmpty())
+	{
+		CP->Mesh = nullptr;
+	}
+	else
+	{
+		UStaticMesh* Mesh = Cast<UStaticMesh>(StaticLoadObject(UStaticMesh::StaticClass(), nullptr, *MeshPath));
+		if (Mesh)
+		{
+			CP->Mesh = Mesh;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::SetSplinePointMesh: Could not load mesh '%s'"), *MeshPath);
+		}
+	}
+
+	CP->MeshScale = MeshScale;
+	CP->SegmentMeshOffset = SegmentMeshOffset;
+
+	CP->UpdateSplinePoints();
+
+	SplinesComp->MarkRenderStateDirty();
+	Landscape->MarkPackageDirty();
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::SetSplinePointMesh: Set mesh on point %d (mesh=%s, offset=%.1f)"),
+		PointIndex, *MeshPath, SegmentMeshOffset);
 	return true;
 }
 
