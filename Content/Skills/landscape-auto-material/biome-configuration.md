@@ -83,9 +83,9 @@ count = unreal.MaterialService.set_instance_parameters_bulk(
 
 ## Biome Comparison Table
 
-Example biome configurations from Real_Landscape:
+Example biome configurations (project-agnostic):
 
-| Parameter | Default | Meadow Island | Meadow Mountain |
+| Parameter | Default | Island Variant | Mountain Variant |
 |-----------|---------|--------------|-----------------|
 | SlopeThreshold | 0.7 | 0.75 | 0.6 |
 | AltitudeThreshold | 5000 | 500 | 8000 |

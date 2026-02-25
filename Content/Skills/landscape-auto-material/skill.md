@@ -36,7 +36,7 @@ keywords:
   - biome
   - landscape material
   - layer function
-  - Real_Landscape
+    - production landscape workflow
   - parametric material
   - function input
   - function output
@@ -133,36 +133,36 @@ unreal.MaterialNodeService.add_function_input(func_path, "Roughness", "Scalar", 
 
 ---
 
-## Real_Landscape Reference Architecture
+## Reference Architecture Example
 
-The Real_Landscape content pack demonstrates this paradigm with:
+A production auto-material setup typically looks like this:
 
 ```
-M_Landscape_Master_01 (Master Material)
-├── MF_AutoLayer_01 ──── Drives automatic layer selection
-│   ├── MF_Altitude_Blend_01 ── Height-based layer transitions
-│   └── MF_Slope_Blend_01 ──── Slope-based layer transitions
+M_Landscape_Master (Master Material)
+├── MF_AutoLayer ─────── Drives automatic layer selection
+│   ├── MF_Altitude_Blend ── Height-based layer transitions
+│   └── MF_Slope_Blend ───── Slope-based layer transitions
 ├── MF_Layer_Grass ──────── Per-layer texture sampling
 ├── MF_Layer_Rock ───────── Per-layer texture sampling
 ├── MF_Layer_Snow ───────── Per-layer texture sampling
 ├── MF_Layer_Dirt / Forest / Beach / Desert / Grass_Dry / Rock_Desert
-├── MF_RVT_01 ──────────── Runtime Virtual Texture output
-├── MF_Distance_Blends_01 ─ LOD transitions
-├── MF_Distance_Fades_01 ── Far-distance fading
-├── MF_BumpOffset_WorldAlignedNormal_01 ── Parallax
-├── MF_Color_Correction_01 ── Color grading
-├── MF_Color_Variations_01 ── Per-instance color variation
-├── MF_Normal_Correction_01 ── Normal map fixes
-├── MF_PBR_Conversion_01 ──── Roughness/metallic conversion
-├── MF_Texture_Scale_01 ───── UV tiling control
-├── MF_Displacement_01 ────── World position offset
-└── MF_Wind_System_01 ────── Foliage wind animation
+├── MF_RVT ─────────────── Runtime Virtual Texture output
+├── MF_Distance_Blends ─── LOD transitions
+├── MF_Distance_Fades ──── Far-distance fading
+├── MF_BumpOffset_WorldAlignedNormal ── Parallax
+├── MF_Color_Correction ── Color grading
+├── MF_Color_Variations ── Per-instance color variation
+├── MF_Normal_Correction ─ Normal map fixes
+├── MF_PBR_Conversion ──── Roughness/metallic conversion
+├── MF_Texture_Scale ───── UV tiling control
+├── MF_Displacement ────── World position offset
+└── MF_Wind_System ─────── Foliage wind animation
 ```
 
 **Biome instances** override textures and blend thresholds:
 - `MI_Landscape_Default_01` — grasslands with moderate slopes
-- `MI_Landscape_Meadow_Island_01` — island variant with beach/sand
-- `MI_Landscape_Meadow_Mountain_01` — alpine with more snow/rock
+- `MI_Landscape_Island_01` — island variant with beach/sand
+- `MI_Landscape_Mountain_01` — alpine with more snow/rock
 
 **Texture naming convention:**
 | Suffix | Meaning | Example |
@@ -284,8 +284,7 @@ func = unreal.MaterialNodeService.create_material_function(
     "MF_Layer_Tropical",
     "/Game/Materials/Functions",
     "Samples and blends tropical layer textures",
-    True,  # bExposeToLibrary
-    ["Landscape"]  # LibraryCategories
+    True  # bExposeToLibrary
 )
 func_path = func.asset_path
 
@@ -359,7 +358,7 @@ import unreal
 
 # Get function interface information
 info = unreal.MaterialNodeService.get_function_info(
-    "/Game/Real_Landscape/Core/Materials/Functions/MF_AutoLayer_01")
+    "/Game/Materials/Functions/MF_AutoLayer")
 
 print(f"Description: {info.description}")
 print(f"Expression count: {info.expression_count}")
@@ -373,7 +372,7 @@ for out in info.outputs:
 
 # Export full function graph as JSON
 graph_json = unreal.MaterialNodeService.export_function_graph(
-    "/Game/Real_Landscape/Core/Materials/Functions/MF_AutoLayer_01")
+    "/Game/Materials/Functions/MF_AutoLayer")
 print(graph_json)
 ```
 
@@ -506,7 +505,7 @@ Volume expects `BaseColor_Normal_Roughness` but material only outputs `BaseColor
 Create function → immediately create function call → fails because function not saved. Always `save_asset()` the function first.
 
 ### 5. Missing `bExposeToLibrary`
-Material function created but doesn't appear in the material editor's function library → set `bExposeToLibrary=True` and add `LibraryCategories`.
+Material function created but doesn't appear in the material editor's function library → set `bExposeToLibrary=True`.
 
 ### 6. Compiling in Same Block as Creation
 Master materials with many function calls take minutes to compile. Putting create + compile in one code block causes timeout.
@@ -516,6 +515,15 @@ Master materials with many function calls take minutes to compile. Putting creat
 
 ### 8. Static Switch Parameters Need UpdateStaticPermutation
 Static switches are compile-time. After setting via bulk set, the instance needs a static permutation update (handled internally by `set_instance_parameters_bulk`).
+
+### 9. Auto Layer Has Zero Weights
+Landscape looks unpainted or auto-blend never appears when all layer weights are 0. Verify with `get_weights_in_region` and fill/paint the base auto layer at least once.
+
+### 10. Layer Info/Material Family Mismatch
+If a landscape is switched to a different master/instance family, existing Layer Info assets may not match expected layer names/workflow. Recreate layer infos from the active material's layer list and reassign them.
+
+### 11. RVT Volume Missing or Mis-sized
+RVT asset assignment alone is not enough. Ensure each landscape has an RVT volume covering its bounds; recreate volume per landscape after major transform/scale changes.
 
 ---
 

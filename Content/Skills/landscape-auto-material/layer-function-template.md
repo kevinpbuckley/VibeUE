@@ -15,8 +15,7 @@ func = unreal.MaterialNodeService.create_material_function(
     "MF_Layer_<TerrainType>",        # e.g., MF_Layer_Tropical
     "/Game/Materials/Functions/Layers",
     "Samples <TerrainType> terrain textures with tiling and detail blending",
-    True,       # bExposeToLibrary
-    ["Landscape", "Layers"]  # LibraryCategories
+    True       # bExposeToLibrary
 )
 func_path = func.asset_path
 ```
@@ -119,7 +118,7 @@ unreal.MaterialNodeService.connect_expressions(
     mat_path, call_id, "BaseColor", blend_id, "<TerrainType> BaseColor")
 ```
 
-## Real_Landscape Layer Function List
+## Example Layer Function Catalog
 
 | Function | Terrain | Textures | Special Features |
 |----------|---------|----------|-----------------|

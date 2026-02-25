@@ -113,7 +113,7 @@ unreal.RuntimeVirtualTextureService.assign_rvt_to_landscape(
 import unreal
 
 info = unreal.RuntimeVirtualTextureService.get_runtime_virtual_texture_info(
-    "/Game/Real_Landscape/Default/Textures/RVT/RVT_Default_Demo_01")
+    "/Game/VirtualTextures/RVT_Landscape_01")
 
 print(f"Type: {info.material_type}")
 print(f"Tiles: {info.tile_count} × {info.tile_size}px")

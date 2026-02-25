@@ -2,7 +2,7 @@
 
 ## Master Material Parameters
 
-These are the typical parameters exposed by a master landscape material following the Real_Landscape paradigm. Parameter names follow the convention `<Category>_<Name>`.
+These are the typical parameters exposed by a production master landscape material. Parameter names follow the convention `<Category>_<Name>`.
 
 ### Layer Texture Parameters (per layer)
 
@@ -78,7 +78,7 @@ These are the typical parameters exposed by a master landscape material followin
 | `RVT_VirtualTexture` | Texture | Runtime Virtual Texture asset reference | None |
 | `RVT_WorldHeight` | Scalar | Reference world height for RVT | 0.0 |
 
-## Real_Landscape Texture Naming Convention
+## Common Texture Naming Convention
 
 | Suffix | Meaning | Example |
 |--------|---------|---------|
