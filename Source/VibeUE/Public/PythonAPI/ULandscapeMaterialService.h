@@ -50,6 +50,105 @@ struct FLandscapeMaterialLayerConfig
 };
 
 /**
+ * Configuration for a layer in the auto-material system.
+ * Each layer defines textures and a role that determines automatic blending behavior.
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeAutoLayerConfig
+{
+	GENERATED_BODY()
+
+	/** Layer name (e.g., "Grass", "Rock", "Snow") */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString LayerName;
+
+	/** Path to diffuse/albedo texture asset */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString DiffuseTexturePath;
+
+	/** Optional: Path to normal map texture */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString NormalTexturePath;
+
+	/** Optional: Path to roughness texture */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString RoughnessTexturePath;
+
+	/** UV tiling scale (default 0.01 = tile every 100 units) */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	float TilingScale = 0.01f;
+
+	/**
+	 * Role determines auto-blend behavior:
+	 *  "base"   - Default layer, shown on low/flat terrain
+	 *  "slope"  - Shown on steep terrain (driven by slope mask)
+	 *  "height" - Shown at high elevation (driven by height mask)
+	 *  "paint"  - Manual paint only (no auto-blending)
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString Role = TEXT("paint");
+};
+
+/**
+ * Result of auto-material creation
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeAutoMaterialResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	bool bSuccess = false;
+
+	/** Path to the created material asset */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString MaterialAssetPath;
+
+	/** Paths to each created layer info object */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	TArray<FString> LayerInfoPaths;
+
+	/** Node ID of the created LandscapeLayerBlend node */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString BlendNodeId;
+
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString ErrorMessage;
+};
+
+/**
+ * A discovered set of landscape textures (albedo + optional normal + optional roughness)
+ */
+USTRUCT(BlueprintType)
+struct FLandscapeTextureSet
+{
+	GENERATED_BODY()
+
+	/** Terrain type inferred from path/name (e.g., "Grass", "Rock", "Snow") */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString TerrainType;
+
+	/** Path to albedo/diffuse texture */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString AlbedoPath;
+
+	/** Path to normal map (empty if not found) */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString NormalPath;
+
+	/** Path to roughness map (empty if not found) */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	FString RoughnessPath;
+
+	/** Resolution of the albedo texture */
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	int32 TextureWidth = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "LandscapeMaterial")
+	int32 TextureHeight = 0;
+};
+
+/**
  * Information about a LandscapeLayerBlend node
  */
 USTRUCT(BlueprintType)
@@ -88,7 +187,7 @@ struct FLandscapeLayerInfoCreateResult
 /**
  * Landscape material service exposed directly to Python.
  *
- * Provides 17 landscape material management actions:
+ * Provides 20 landscape material management actions:
  *
  * Material Creation:
  * - create_landscape_material: Create a material configured for landscape use
@@ -122,6 +221,11 @@ struct FLandscapeLayerInfoCreateResult
  *
  * Weight Node:
  * - create_layer_weight_node: Create a LandscapeLayerWeight expression
+ *
+ * Height/Slope-Driven Blending:
+ * - create_height_mask: Build a world-height → 0-1 mask node network (no weight maps)
+ * - create_slope_mask: Build a slope-angle → 0-1 mask node network (no weight maps)
+ * - setup_height_slope_blend: Wire height/slope masks into a blend node (full auto-blend setup)
  *
  * Existence:
  * - landscape_material_exists: Check if a material exists
@@ -261,7 +365,8 @@ public:
 	 * @param SourceOutput - Output name (empty for first output)
 	 * @param BlendNodeId - Blend node ID
 	 * @param LayerName - Layer name to connect to
-	 * @param InputType - Input type: "Layer" (diffuse color) or "Height" (for height blend)
+	 * @param InputType - Input type: "Layer" (diffuse color), "Height" (for LB_HeightBlend),
+	 *                   or "Alpha" (for LB_AlphaBlend — alias for "Height")
 	 * @return True if connection was made
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial")
@@ -454,6 +559,119 @@ public:
 		int32 PosY = 0);
 
 	// =================================================================
+	// Height/Slope-Driven Blending
+	// =================================================================
+
+	/**
+	 * Create a height-based mask node network in the material graph.
+	 * Maps to action="create_height_mask"
+	 *
+	 * Builds: AbsoluteWorldPosition → ComponentMask(B/Z) → SmoothStep
+	 * Output: 0 below MinHeight, smooth S-curve transition, 1 above MaxHeight.
+	 *
+	 * Use the returned expression ID as an Alpha input on an LB_AlphaBlend layer
+	 * to blend a layer in above a certain elevation — e.g., snow above 8000 units.
+	 * No weight-map painting required; the material handles it automatically.
+	 *
+	 * @param MaterialPath    - Full path to the material asset
+	 * @param MinHeight       - World Z where mask begins rising from 0 (world units)
+	 * @param MaxHeight       - World Z where mask reaches 1 (world units)
+	 * @param PosX            - X position of the output node in the material graph
+	 * @param PosY            - Y position of the output node
+	 * @return Expression ID of the SmoothStep output node, or empty string on failure
+	 *
+	 * Example:
+	 *   mask_id = svc.create_height_mask("/Game/M_Terrain", 5000.0, 8000.0)
+	 *   svc.connect_to_layer_input("/Game/M_Terrain", mask_id, "", blend_id, "Snow", "Alpha")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial")
+	static FString CreateHeightMaskNode(
+		const FString& MaterialPath,
+		float MinHeight,
+		float MaxHeight,
+		int32 PosX = -1200,
+		int32 PosY = 0);
+
+	/**
+	 * Create a slope-based mask node network in the material graph.
+	 * Maps to action="create_slope_mask"
+	 *
+	 * Builds: VertexNormalWS → ComponentMask(B/Z) → OneMinus → SmoothStep
+	 * Output: 0 for flat terrain (below MinSlopeDegrees), 1 for steep/cliff terrain
+	 * (above MaxSlopeDegrees).
+	 *
+	 * WorldNormal.Z = cos(slope_angle):
+	 *   Flat (0°)     → NormalZ ≈ 1.0 → SlopeFactor ≈ 0
+	 *   Vertical (90°) → NormalZ ≈ 0.0 → SlopeFactor ≈ 1
+	 *
+	 * @param MaterialPath      - Full path to the material asset
+	 * @param MinSlopeDegrees   - Slope angle below which mask = 0 (flat terrain)
+	 * @param MaxSlopeDegrees   - Slope angle above which mask = 1 (cliff terrain)
+	 * @param PosX              - X position of the output node
+	 * @param PosY              - Y position of the output node
+	 * @return Expression ID of the SmoothStep output node, or empty string on failure
+	 *
+	 * Example:
+	 *   mask_id = svc.create_slope_mask("/Game/M_Terrain", 30.0, 60.0)
+	 *   svc.connect_to_layer_input("/Game/M_Terrain", mask_id, "", blend_id, "Rock", "Alpha")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial")
+	static FString CreateSlopeMaskNode(
+		const FString& MaterialPath,
+		float MinSlopeDegrees = 30.0f,
+		float MaxSlopeDegrees = 60.0f,
+		int32 PosX = -1200,
+		int32 PosY = 300);
+
+	/**
+	 * Set up a complete height/slope-driven layer blend in one call.
+	 * Maps to action="setup_height_slope_blend"
+	 *
+	 * Switches the specified layers in an existing LandscapeLayerBlend node to
+	 * LB_AlphaBlend mode, then creates height and/or slope mask networks and
+	 * connects them as the Alpha input for each layer.
+	 *
+	 * This replaces runtime weight-map painting for elevation/slope zones with a
+	 * fully procedural material solution — no painting tools needed.
+	 *
+	 * Layer zones:
+	 *   BaseLayerName  - Displays on low, flat terrain (no alpha mask; weight blend)
+	 *   HeightLayerName - Fades in above HeightThreshold (e.g., snow on peaks)
+	 *   SlopeLayerName  - Fades in above SlopeThreshold degrees (e.g., rock on cliffs)
+	 *
+	 * @param MaterialPath     - Full path to the material
+	 * @param BlendNodeId      - Existing LandscapeLayerBlend node to configure
+	 * @param BaseLayerName    - Layer for low/flat terrain (kept as LB_WeightBlend)
+	 * @param HeightLayerName  - Layer for high-altitude zones. Empty = skip.
+	 * @param SlopeLayerName   - Layer for steep-slope zones. Empty = skip.
+	 * @param HeightThreshold  - World Z where height layer begins to appear (world units)
+	 * @param HeightBlend      - Transition width above threshold (world units)
+	 * @param SlopeThreshold   - Slope angle where slope layer begins to appear (degrees)
+	 * @param SlopeBlend       - Transition width above threshold (degrees)
+	 * @return True if setup succeeded
+	 *
+	 * Example:
+	 *   # Create blend node with three layers
+	 *   blend = svc.create_layer_blend_node_with_layers(mat, [grass_cfg, snow_cfg, rock_cfg])
+	 *   # Wire height/slope masks automatically — no painting needed
+	 *   svc.setup_height_slope_blend(mat, blend.node_id,
+	 *       base_layer_name="Grass",
+	 *       height_layer_name="Snow", height_threshold=8000.0, height_blend=2000.0,
+	 *       slope_layer_name="Rock",  slope_threshold=35.0,    slope_blend=10.0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial")
+	static bool SetupHeightSlopeBlend(
+		const FString& MaterialPath,
+		const FString& BlendNodeId,
+		const FString& BaseLayerName,
+		const FString& HeightLayerName = TEXT(""),
+		const FString& SlopeLayerName = TEXT(""),
+		float HeightThreshold = 5000.0f,
+		float HeightBlend = 1000.0f,
+		float SlopeThreshold = 35.0f,
+		float SlopeBlend = 10.0f);
+
+	// =================================================================
 	// Existence Checks
 	// =================================================================
 
@@ -474,6 +692,66 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial|Exists")
 	static bool LayerInfoExists(const FString& LayerInfoAssetPath);
+
+	// ===== Auto-Material Creation =====
+
+	/**
+	 * Create a complete landscape material with automatic layer blending.
+	 * Maps to action="create_auto_material"
+	 *
+	 * Creates a material with LandscapeLayerBlend, texture samplers,
+	 * and optional height/slope auto-blend masks. Also creates layer info
+	 * objects and assigns the material to the target landscape.
+	 *
+	 * Layer roles control auto-blend behavior:
+	 *  - "base"   — Default layer, shown on low/flat terrain
+	 *  - "slope"  — Shown on steep terrain via WorldAlignedNormal mask
+	 *  - "height" — Shown at high elevation via WorldPosition mask
+	 *  - "paint"  — Manual paint only (no auto-blending)
+	 *
+	 * @param LandscapeNameOrLabel - Name/label of target landscape (empty = don't assign)
+	 * @param MaterialName - Name for the new material asset
+	 * @param MaterialPath - Directory path where material will be created
+	 * @param LayerConfigs - Array of layer configurations
+	 * @param bAutoBlend - If true, wire height/slope masks for layers with those roles
+	 * @param HeightThreshold - World Z height where height layer begins
+	 * @param HeightBlend - Transition width for height blending
+	 * @param SlopeThreshold - Slope angle where slope layer begins (degrees)
+	 * @param SlopeBlend - Transition width for slope blending (degrees)
+	 * @return Result with material path, layer info paths, and any errors
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial|AutoMaterial")
+	static FLandscapeAutoMaterialResult CreateAutoMaterial(
+		const FString& LandscapeNameOrLabel,
+		const FString& MaterialName,
+		const FString& MaterialPath,
+		const TArray<FLandscapeAutoLayerConfig>& LayerConfigs,
+		bool bAutoBlend = true,
+		float HeightThreshold = 5000.0f,
+		float HeightBlend = 1000.0f,
+		float SlopeThreshold = 35.0f,
+		float SlopeBlend = 10.0f);
+
+	// ===== Texture Discovery =====
+
+	/**
+	 * Search the content browser for landscape-suitable textures.
+	 * Maps to action="find_landscape_textures"
+	 *
+	 * Searches content directories for textures matching common landscape naming
+	 * conventions (Albedo/Diffuse/BaseColor, Normal, Roughness, in Landscape/
+	 * Terrain/Ground directories). Groups matched textures into sets.
+	 *
+	 * @param SearchPath - Root content path to search (empty = "/Game/")
+	 * @param TerrainType - Optional filter: "grass", "rock", "snow", "mud", "sand", etc.
+	 * @param bIncludeNormals - Also return matching normal maps
+	 * @return Array of discovered texture sets grouped by terrain type
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|LandscapeMaterial|AutoMaterial")
+	static TArray<FLandscapeTextureSet> FindLandscapeTextures(
+		const FString& SearchPath = TEXT(""),
+		const FString& TerrainType = TEXT(""),
+		bool bIncludeNormals = true);
 
 private:
 	static UMaterial* LoadMaterialAsset(const FString& MaterialPath);

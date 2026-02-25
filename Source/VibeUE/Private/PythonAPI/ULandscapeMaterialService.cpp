@@ -10,6 +10,11 @@
 #include "Materials/MaterialExpressionLandscapeGrassOutput.h"
 #include "Materials/MaterialExpressionTextureSample.h"
 #include "Materials/MaterialExpressionTextureObject.h"
+#include "Materials/MaterialExpressionWorldPosition.h"
+#include "Materials/MaterialExpressionVertexNormalWS.h"
+#include "Materials/MaterialExpressionComponentMask.h"
+#include "Materials/MaterialExpressionOneMinus.h"
+#include "Materials/MaterialExpressionSmoothStep.h"
 #include "LandscapeGrassType.h"
 #include "MaterialGraph/MaterialGraph.h"
 #include "MaterialEditingLibrary.h"
@@ -520,7 +525,8 @@ bool ULandscapeMaterialService::ConnectToLayerInput(
 		InputsPerLayer = 2; // Layer + Height
 	}
 
-	if (InputType.Equals(TEXT("Height"), ESearchCase::IgnoreCase))
+	if (InputType.Equals(TEXT("Height"), ESearchCase::IgnoreCase) ||
+		InputType.Equals(TEXT("Alpha"), ESearchCase::IgnoreCase))
 	{
 		InputOffset = 1;
 	}
@@ -1155,6 +1161,734 @@ FString ULandscapeMaterialService::CreateLayerWeightNode(
 	FString NodeId = GetExpressionId(NewExpression);
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateLayerWeightNode: Created for layer '%s'"), *LayerName);
 	return NodeId;
+}
+
+// =================================================================
+// Height/Slope-Driven Blending
+// =================================================================
+
+FString ULandscapeMaterialService::CreateHeightMaskNode(
+	const FString& MaterialPath,
+	float MinHeight,
+	float MaxHeight,
+	int32 PosX,
+	int32 PosY)
+{
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return FString();
+	}
+
+	if (MinHeight >= MaxHeight)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateHeightMaskNode: MinHeight (%.1f) must be less than MaxHeight (%.1f)"), MinHeight, MaxHeight);
+		return FString();
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeMaterialService", "CreateHeightMask", "Create Height Mask"));
+	Material->Modify();
+
+	// 1. AbsoluteWorldPosition node
+	UMaterialExpression* WorldPosExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionWorldPosition::StaticClass(), PosX - 600, PosY);
+	if (!WorldPosExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateHeightMaskNode: Failed to create WorldPosition node"));
+		return FString();
+	}
+	// Use absolute world position (default mode already gives us what we need)
+
+	// 2. ComponentMask to extract Z (B channel = world height)
+	UMaterialExpression* MaskExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionComponentMask::StaticClass(), PosX - 350, PosY);
+	if (!MaskExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateHeightMaskNode: Failed to create ComponentMask node"));
+		return FString();
+	}
+	UMaterialExpressionComponentMask* MaskNode = Cast<UMaterialExpressionComponentMask>(MaskExpr);
+	MaskNode->R = false;
+	MaskNode->G = false;
+	MaskNode->B = true;  // Z channel
+	MaskNode->A = false;
+	MaskNode->Input.Connect(0, WorldPosExpr);
+
+	// 3. SmoothStep: 0 below MinHeight, smooth S-curve, 1 above MaxHeight
+	UMaterialExpression* SmoothExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionSmoothStep::StaticClass(), PosX, PosY);
+	if (!SmoothExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateHeightMaskNode: Failed to create SmoothStep node"));
+		return FString();
+	}
+	UMaterialExpressionSmoothStep* SmoothNode = Cast<UMaterialExpressionSmoothStep>(SmoothExpr);
+	SmoothNode->ConstMin = MinHeight;
+	SmoothNode->ConstMax = MaxHeight;
+	SmoothNode->Value.Connect(0, MaskNode);
+
+	RefreshMaterialGraph(Material);
+
+	FString NodeId = GetExpressionId(SmoothExpr);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateHeightMaskNode: Created height mask (%.1f → %.1f)"), MinHeight, MaxHeight);
+	return NodeId;
+}
+
+FString ULandscapeMaterialService::CreateSlopeMaskNode(
+	const FString& MaterialPath,
+	float MinSlopeDegrees,
+	float MaxSlopeDegrees,
+	int32 PosX,
+	int32 PosY)
+{
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return FString();
+	}
+
+	if (MinSlopeDegrees < 0.0f || MaxSlopeDegrees > 90.0f || MinSlopeDegrees >= MaxSlopeDegrees)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Invalid slope range [%.1f, %.1f]. Must be in [0, 90] with Min < Max."), MinSlopeDegrees, MaxSlopeDegrees);
+		return FString();
+	}
+
+	// Convert angle thresholds to slope factor: SlopeFactor = 1 - cos(angle_radians)
+	// Flat (0°)      → cos(0) = 1.0 → SlopeFactor = 0.0
+	// Vertical (90°) → cos(90°) = 0.0 → SlopeFactor = 1.0
+	const float SlopeFactorMin = 1.0f - FMath::Cos(FMath::DegreesToRadians(MinSlopeDegrees));
+	const float SlopeFactorMax = 1.0f - FMath::Cos(FMath::DegreesToRadians(MaxSlopeDegrees));
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeMaterialService", "CreateSlopeMask", "Create Slope Mask"));
+	Material->Modify();
+
+	// 1. VertexNormalWS node
+	UMaterialExpression* NormalExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionVertexNormalWS::StaticClass(), PosX - 700, PosY);
+	if (!NormalExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Failed to create VertexNormalWS node"));
+		return FString();
+	}
+
+	// 2. ComponentMask to extract Z (B channel = up-facing component of world normal)
+	UMaterialExpression* MaskExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionComponentMask::StaticClass(), PosX - 500, PosY);
+	if (!MaskExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Failed to create ComponentMask node"));
+		return FString();
+	}
+	UMaterialExpressionComponentMask* MaskNode = Cast<UMaterialExpressionComponentMask>(MaskExpr);
+	MaskNode->R = false;
+	MaskNode->G = false;
+	MaskNode->B = true;  // Z = up-facing component
+	MaskNode->A = false;
+	MaskNode->Input.Connect(0, NormalExpr);
+
+	// 3. OneMinus: converts NormalZ (1=flat, 0=cliff) → SlopeFactor (0=flat, 1=cliff)
+	UMaterialExpression* OneMinusExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionOneMinus::StaticClass(), PosX - 300, PosY);
+	if (!OneMinusExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Failed to create OneMinus node"));
+		return FString();
+	}
+	UMaterialExpressionOneMinus* OneMinusNode = Cast<UMaterialExpressionOneMinus>(OneMinusExpr);
+	OneMinusNode->Input.Connect(0, MaskNode);
+
+	// 4. SmoothStep: 0 below MinSlopeFactor, smooth S-curve, 1 above MaxSlopeFactor
+	UMaterialExpression* SmoothExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+		Material, UMaterialExpressionSmoothStep::StaticClass(), PosX, PosY);
+	if (!SmoothExpr)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Failed to create SmoothStep node"));
+		return FString();
+	}
+	UMaterialExpressionSmoothStep* SmoothNode = Cast<UMaterialExpressionSmoothStep>(SmoothExpr);
+	SmoothNode->ConstMin = SlopeFactorMin;
+	SmoothNode->ConstMax = SlopeFactorMax;
+	SmoothNode->Value.Connect(0, OneMinusNode);
+
+	RefreshMaterialGraph(Material);
+
+	FString NodeId = GetExpressionId(SmoothExpr);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateSlopeMaskNode: Created slope mask (%.1f° → %.1f°, factors %.4f → %.4f)"),
+		MinSlopeDegrees, MaxSlopeDegrees, SlopeFactorMin, SlopeFactorMax);
+	return NodeId;
+}
+
+bool ULandscapeMaterialService::SetupHeightSlopeBlend(
+	const FString& MaterialPath,
+	const FString& BlendNodeId,
+	const FString& BaseLayerName,
+	const FString& HeightLayerName,
+	const FString& SlopeLayerName,
+	float HeightThreshold,
+	float HeightBlend,
+	float SlopeThreshold,
+	float SlopeBlend)
+{
+	if (HeightLayerName.IsEmpty() && SlopeLayerName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: HeightLayerName and SlopeLayerName are both empty — nothing to do"));
+		return false;
+	}
+
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return false;
+	}
+
+	UMaterialExpressionLandscapeLayerBlend* BlendNode = FindLayerBlendNode(Material, BlendNodeId);
+	if (!BlendNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Blend node '%s' not found"), *BlendNodeId);
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeMaterialService", "SetupHeightSlopeBlend", "Setup Height/Slope Blend"));
+	Material->Modify();
+	BlendNode->Modify();
+
+	// Graph layout: place mask nodes to the left of the blend node
+	const int32 BlendX = BlendNode->MaterialExpressionEditorX;
+	const int32 BlendY = BlendNode->MaterialExpressionEditorY;
+	const int32 HeightMaskX = BlendX - 1400;
+	const int32 SlopeMaskX  = BlendX - 1400;
+	const int32 HeightMaskY = BlendY;
+	const int32 SlopeMaskY  = BlendY + 400;
+
+	bool bSuccess = true;
+
+	// --- Height layer ---
+	if (!HeightLayerName.IsEmpty())
+	{
+		// Find layer index
+		int32 LayerIdx = INDEX_NONE;
+		for (int32 i = 0; i < BlendNode->Layers.Num(); i++)
+		{
+			if (BlendNode->Layers[i].LayerName.ToString().Equals(HeightLayerName, ESearchCase::IgnoreCase))
+			{
+				LayerIdx = i;
+				break;
+			}
+		}
+
+		if (LayerIdx == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: HeightLayerName '%s' not found in blend node"), *HeightLayerName);
+			bSuccess = false;
+		}
+		else
+		{
+			// Switch to AlphaBlend so our mask drives the blend (not painted weights)
+			BlendNode->Layers[LayerIdx].BlendType = LB_AlphaBlend;
+
+			// Create height mask network
+			// Inline creation to avoid a second LoadMaterialAsset round-trip
+			UMaterialExpression* WorldPosExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionWorldPosition::StaticClass(), HeightMaskX - 600, HeightMaskY);
+			UMaterialExpression* HMaskExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionComponentMask::StaticClass(), HeightMaskX - 350, HeightMaskY);
+			UMaterialExpression* HSmoothExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionSmoothStep::StaticClass(), HeightMaskX, HeightMaskY);
+
+			if (WorldPosExpr && HMaskExpr && HSmoothExpr)
+			{
+				UMaterialExpressionComponentMask* HMaskNode = Cast<UMaterialExpressionComponentMask>(HMaskExpr);
+				HMaskNode->R = false; HMaskNode->G = false; HMaskNode->B = true; HMaskNode->A = false;
+				HMaskNode->Input.Connect(0, WorldPosExpr);
+
+				UMaterialExpressionSmoothStep* HSmoothNode = Cast<UMaterialExpressionSmoothStep>(HSmoothExpr);
+				HSmoothNode->ConstMin = HeightThreshold;
+				HSmoothNode->ConstMax = HeightThreshold + HeightBlend;
+				HSmoothNode->Value.Connect(0, HMaskNode);
+
+				// Connect mask to the HeightInput of this layer (reused as Alpha for LB_AlphaBlend)
+				BlendNode->Layers[LayerIdx].HeightInput.Connect(0, HSmoothNode);
+
+				UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Height mask connected for layer '%s' (threshold=%.1f, blend=%.1f)"),
+					*HeightLayerName, HeightThreshold, HeightBlend);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Failed to create height mask nodes"));
+				bSuccess = false;
+			}
+		}
+	}
+
+	// --- Slope layer ---
+	if (!SlopeLayerName.IsEmpty())
+	{
+		int32 LayerIdx = INDEX_NONE;
+		for (int32 i = 0; i < BlendNode->Layers.Num(); i++)
+		{
+			if (BlendNode->Layers[i].LayerName.ToString().Equals(SlopeLayerName, ESearchCase::IgnoreCase))
+			{
+				LayerIdx = i;
+				break;
+			}
+		}
+
+		if (LayerIdx == INDEX_NONE)
+		{
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: SlopeLayerName '%s' not found in blend node"), *SlopeLayerName);
+			bSuccess = false;
+		}
+		else
+		{
+			BlendNode->Layers[LayerIdx].BlendType = LB_AlphaBlend;
+
+			const float SlopeFactorMin = 1.0f - FMath::Cos(FMath::DegreesToRadians(SlopeThreshold));
+			const float SlopeFactorMax = 1.0f - FMath::Cos(FMath::DegreesToRadians(SlopeThreshold + SlopeBlend));
+
+			UMaterialExpression* NormalExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionVertexNormalWS::StaticClass(), SlopeMaskX - 700, SlopeMaskY);
+			UMaterialExpression* SMaskExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionComponentMask::StaticClass(), SlopeMaskX - 500, SlopeMaskY);
+			UMaterialExpression* OneMinusExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionOneMinus::StaticClass(), SlopeMaskX - 300, SlopeMaskY);
+			UMaterialExpression* SSmoothExpr = UMaterialEditingLibrary::CreateMaterialExpression(
+				Material, UMaterialExpressionSmoothStep::StaticClass(), SlopeMaskX, SlopeMaskY);
+
+			if (NormalExpr && SMaskExpr && OneMinusExpr && SSmoothExpr)
+			{
+				UMaterialExpressionComponentMask* SMaskNode = Cast<UMaterialExpressionComponentMask>(SMaskExpr);
+				SMaskNode->R = false; SMaskNode->G = false; SMaskNode->B = true; SMaskNode->A = false;
+				SMaskNode->Input.Connect(0, NormalExpr);
+
+				UMaterialExpressionOneMinus* OneMinusNode = Cast<UMaterialExpressionOneMinus>(OneMinusExpr);
+				OneMinusNode->Input.Connect(0, SMaskNode);
+
+				UMaterialExpressionSmoothStep* SSmoothNode = Cast<UMaterialExpressionSmoothStep>(SSmoothExpr);
+				SSmoothNode->ConstMin = SlopeFactorMin;
+				SSmoothNode->ConstMax = SlopeFactorMax;
+				SSmoothNode->Value.Connect(0, OneMinusNode);
+
+				BlendNode->Layers[LayerIdx].HeightInput.Connect(0, SSmoothNode);
+
+				UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Slope mask connected for layer '%s' (threshold=%.1f°, blend=%.1f°, factors=%.4f→%.4f)"),
+					*SlopeLayerName, SlopeThreshold, SlopeBlend, SlopeFactorMin, SlopeFactorMax);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Failed to create slope mask nodes"));
+				bSuccess = false;
+			}
+		}
+	}
+
+	if (bSuccess)
+	{
+		RefreshMaterialGraph(Material);
+		UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::SetupHeightSlopeBlend: Complete for material '%s'"), *MaterialPath);
+	}
+
+	return bSuccess;
+}
+
+// =================================================================
+// Auto-Material Creation
+// =================================================================
+
+FLandscapeAutoMaterialResult ULandscapeMaterialService::CreateAutoMaterial(
+	const FString& LandscapeNameOrLabel,
+	const FString& MaterialName,
+	const FString& MaterialPath,
+	const TArray<FLandscapeAutoLayerConfig>& LayerConfigs,
+	bool bAutoBlend,
+	float HeightThreshold,
+	float HeightBlend,
+	float SlopeThreshold,
+	float SlopeBlend)
+{
+	FLandscapeAutoMaterialResult Result;
+
+	if (MaterialName.IsEmpty() || MaterialPath.IsEmpty())
+	{
+		Result.ErrorMessage = TEXT("MaterialName and MaterialPath cannot be empty");
+		return Result;
+	}
+
+	if (LayerConfigs.Num() == 0)
+	{
+		Result.ErrorMessage = TEXT("At least one layer configuration is required");
+		return Result;
+	}
+
+	// Step 1: Create the material
+	FLandscapeMaterialCreateResult MatResult = CreateLandscapeMaterial(MaterialName, MaterialPath);
+	if (!MatResult.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to create material: %s"), *MatResult.ErrorMessage);
+		return Result;
+	}
+	Result.MaterialAssetPath = MatResult.AssetPath;
+
+	UMaterial* Material = LoadMaterialAsset(Result.MaterialAssetPath);
+	if (!Material)
+	{
+		Result.ErrorMessage = TEXT("Failed to load newly created material");
+		return Result;
+	}
+
+	// Step 2: Build layer configs for LayerBlendNodeWithLayers
+	TArray<FLandscapeMaterialLayerConfig> BlendLayerConfigs;
+	for (const FLandscapeAutoLayerConfig& AutoLayer : LayerConfigs)
+	{
+		FLandscapeMaterialLayerConfig LayerCfg;
+		LayerCfg.LayerName = AutoLayer.LayerName;
+
+		// Height-role layers use LB_HeightBlend; others use LB_WeightBlend
+		if (AutoLayer.Role.Equals(TEXT("height"), ESearchCase::IgnoreCase) ||
+			AutoLayer.Role.Equals(TEXT("slope"), ESearchCase::IgnoreCase))
+		{
+			LayerCfg.BlendType = TEXT("LB_HeightBlend");
+			LayerCfg.bUseHeightBlend = true;
+		}
+		else
+		{
+			LayerCfg.BlendType = TEXT("LB_WeightBlend");
+			LayerCfg.bUseHeightBlend = false;
+		}
+
+		LayerCfg.PreviewWeight = 1.0f;
+		BlendLayerConfigs.Add(LayerCfg);
+	}
+
+	// Step 3: Create LandscapeLayerBlend node with all layers
+	FLandscapeLayerBlendInfo BlendInfo = CreateLayerBlendNodeWithLayers(
+		Result.MaterialAssetPath, BlendLayerConfigs, 0, 0);
+
+	if (BlendInfo.NodeId.IsEmpty())
+	{
+		Result.ErrorMessage = TEXT("Failed to create LandscapeLayerBlend node");
+		return Result;
+	}
+	Result.BlendNodeId = BlendInfo.NodeId;
+
+	// Step 4: Create texture samplers for each layer and connect to blend
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeMaterialService", "CreateAutoMaterial", "Create Auto Material"));
+	Material->Modify();
+
+	UMaterialExpressionLandscapeLayerBlend* BlendNode = FindLayerBlendNode(Material, BlendInfo.NodeId);
+	if (!BlendNode)
+	{
+		Result.ErrorMessage = TEXT("Failed to find newly created blend node");
+		return Result;
+	}
+
+	for (int32 i = 0; i < LayerConfigs.Num(); i++)
+	{
+		const FLandscapeAutoLayerConfig& AutoLayer = LayerConfigs[i];
+		int32 BaseY = i * 350;
+
+		// Create diffuse/albedo texture sampler
+		if (!AutoLayer.DiffuseTexturePath.IsEmpty())
+		{
+			UTexture* DiffuseTex = Cast<UTexture>(UEditorAssetLibrary::LoadAsset(AutoLayer.DiffuseTexturePath));
+			if (DiffuseTex)
+			{
+				UMaterialExpressionTextureSample* DiffuseSampler = Cast<UMaterialExpressionTextureSample>(
+					UMaterialEditingLibrary::CreateMaterialExpression(
+						Material, UMaterialExpressionTextureSample::StaticClass(), -600, BaseY));
+
+				if (DiffuseSampler)
+				{
+					DiffuseSampler->Texture = DiffuseTex;
+
+					// Connect to Layer input of the blend node
+					if (i < BlendNode->Layers.Num())
+					{
+						BlendNode->Layers[i].LayerInput.Connect(0, DiffuseSampler);
+					}
+				}
+			}
+			else
+			{
+				UE_LOG(LogTemp, Warning, TEXT("CreateAutoMaterial: Diffuse texture not found: %s"), *AutoLayer.DiffuseTexturePath);
+			}
+		}
+
+		// Create normal texture sampler
+		if (!AutoLayer.NormalTexturePath.IsEmpty())
+		{
+			UTexture* NormalTex = Cast<UTexture>(UEditorAssetLibrary::LoadAsset(AutoLayer.NormalTexturePath));
+			if (NormalTex)
+			{
+				UMaterialExpressionTextureSample* NormalSampler = Cast<UMaterialExpressionTextureSample>(
+					UMaterialEditingLibrary::CreateMaterialExpression(
+						Material, UMaterialExpressionTextureSample::StaticClass(), -600, BaseY + 150));
+
+				if (NormalSampler)
+				{
+					NormalSampler->Texture = NormalTex;
+					NormalSampler->SamplerType = SAMPLERTYPE_Normal;
+					// Normal samplers need separate LandscapeLayerBlend for normal channel
+					// For simplicity, we connect them later if the user wants full normal blending
+				}
+			}
+		}
+	}
+
+	// Step 5: Connect BlendNode output to material BaseColor
+	{
+		FExpressionInput* BaseColorInput = Material->GetExpressionInputForProperty(MP_BaseColor);
+		if (BaseColorInput)
+		{
+			BaseColorInput->Expression = BlendNode;
+			BaseColorInput->OutputIndex = 0;
+		}
+	}
+
+	// Step 6: Setup auto-blend masks if requested
+	if (bAutoBlend)
+	{
+		// Identify layers by role
+		FString BaseLayerName, SlopeLayerName, HeightLayerName;
+		for (const FLandscapeAutoLayerConfig& AutoLayer : LayerConfigs)
+		{
+			if (AutoLayer.Role.Equals(TEXT("base"), ESearchCase::IgnoreCase))
+			{
+				BaseLayerName = AutoLayer.LayerName;
+			}
+			else if (AutoLayer.Role.Equals(TEXT("slope"), ESearchCase::IgnoreCase))
+			{
+				SlopeLayerName = AutoLayer.LayerName;
+			}
+			else if (AutoLayer.Role.Equals(TEXT("height"), ESearchCase::IgnoreCase))
+			{
+				HeightLayerName = AutoLayer.LayerName;
+			}
+		}
+
+		// Use the existing SetupHeightSlopeBlend if we have the right roles
+		if ((!HeightLayerName.IsEmpty() || !SlopeLayerName.IsEmpty()) && !BaseLayerName.IsEmpty())
+		{
+			SetupHeightSlopeBlend(
+				Result.MaterialAssetPath,
+				BlendInfo.NodeId,
+				BaseLayerName,
+				HeightLayerName.IsEmpty() ? TEXT("") : HeightLayerName,
+				SlopeLayerName.IsEmpty() ? TEXT("") : SlopeLayerName,
+				HeightThreshold,
+				HeightBlend,
+				SlopeThreshold,
+				SlopeBlend);
+		}
+	}
+
+	RefreshMaterialGraph(Material);
+
+	// Step 7: Create layer info objects
+	FString LayerInfoDir = MaterialPath;
+	TMap<FString, FString> LayerInfoMap;
+	for (const FLandscapeAutoLayerConfig& AutoLayer : LayerConfigs)
+	{
+		FLandscapeLayerInfoCreateResult InfoResult = CreateLayerInfoObject(
+			AutoLayer.LayerName, LayerInfoDir, true);
+
+		if (InfoResult.bSuccess)
+		{
+			Result.LayerInfoPaths.Add(InfoResult.AssetPath);
+			LayerInfoMap.Add(AutoLayer.LayerName, InfoResult.AssetPath);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CreateAutoMaterial: Failed to create layer info for '%s': %s"),
+				*AutoLayer.LayerName, *InfoResult.ErrorMessage);
+		}
+	}
+
+	// Step 8: Compile the material
+	UMaterialEditingLibrary::RecompileMaterial(Material);
+
+	// Step 9: Assign to landscape if specified
+	if (!LandscapeNameOrLabel.IsEmpty())
+	{
+		bool bAssigned = AssignMaterialToLandscape(LandscapeNameOrLabel, Result.MaterialAssetPath, LayerInfoMap);
+		if (!bAssigned)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CreateAutoMaterial: Material created but failed to assign to landscape '%s'"),
+				*LandscapeNameOrLabel);
+		}
+	}
+
+	// Save the material
+	UEditorAssetLibrary::SaveAsset(Result.MaterialAssetPath, false);
+
+	Result.bSuccess = true;
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::CreateAutoMaterial: Created auto-material '%s' with %d layers"),
+		*Result.MaterialAssetPath, LayerConfigs.Num());
+
+	return Result;
+}
+
+// =================================================================
+// Texture Discovery
+// =================================================================
+
+TArray<FLandscapeTextureSet> ULandscapeMaterialService::FindLandscapeTextures(
+	const FString& SearchPath,
+	const FString& TerrainType,
+	bool bIncludeNormals)
+{
+	TArray<FLandscapeTextureSet> Results;
+
+	FString RootPath = SearchPath.IsEmpty() ? TEXT("/Game") : SearchPath;
+
+	// Get asset registry
+	FAssetRegistryModule& AssetRegistryModule = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry");
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// Search for all Texture2D assets under the root path
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UTexture2D::StaticClass()->GetClassPathName());
+	Filter.PackagePaths.Add(FName(*RootPath));
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> AssetDataList;
+	AssetRegistry.GetAssets(Filter, AssetDataList);
+
+	// Suffix patterns for identification
+	static const TArray<FString> AlbedoSuffixes = {
+		TEXT("_Albedo"), TEXT("_Diffuse"), TEXT("_BaseColor"), TEXT("_D"),
+		TEXT("_Color"), TEXT("_BC"), TEXT("_Base")
+	};
+	static const TArray<FString> NormalSuffixes = {
+		TEXT("_Normal"), TEXT("_N"), TEXT("_NormalMap"), TEXT("_Norm")
+	};
+	static const TArray<FString> RoughnessSuffixes = {
+		TEXT("_Roughness"), TEXT("_R"), TEXT("_Rough"), TEXT("_RMA"),
+		TEXT("_ORM"), TEXT("_ARM")
+	};
+
+	// Terrain type keywords for path inference
+	static const TArray<FString> TerrainKeywords = {
+		TEXT("Grass"), TEXT("Rock"), TEXT("Snow"), TEXT("Mud"), TEXT("Sand"),
+		TEXT("Dirt"), TEXT("Slope"), TEXT("Ice"), TEXT("Needles"), TEXT("Pebbles"),
+		TEXT("Gravel"), TEXT("Clay"), TEXT("Moss"), TEXT("Ground"), TEXT("Forest"),
+		TEXT("Stone"), TEXT("Cliff"), TEXT("Mountain"), TEXT("Alpine"),
+		TEXT("Desert"), TEXT("Tropical"), TEXT("Tundra"), TEXT("Meadow")
+	};
+
+	// Relevant directory keywords
+	static const TArray<FString> LandscapeDirKeywords = {
+		TEXT("Landscape"), TEXT("Terrain"), TEXT("Ground"), TEXT("Environment"),
+		TEXT("Land"), TEXT("Surface"), TEXT("Nature")
+	};
+
+	// Filter to albedo textures
+	TMap<FString, FLandscapeTextureSet> TextureSets; // Key = base name (without suffix)
+
+	for (const FAssetData& AssetData : AssetDataList)
+	{
+		FString AssetPath = AssetData.GetObjectPathString();
+		FString AssetName = AssetData.AssetName.ToString();
+
+		// Optional terrain type filter
+		if (!TerrainType.IsEmpty())
+		{
+			if (!AssetPath.Contains(TerrainType, ESearchCase::IgnoreCase) &&
+				!AssetName.Contains(TerrainType, ESearchCase::IgnoreCase))
+			{
+				continue;
+			}
+		}
+
+		// Check if this is an albedo texture
+		for (const FString& Suffix : AlbedoSuffixes)
+		{
+			if (AssetName.EndsWith(Suffix, ESearchCase::IgnoreCase))
+			{
+				FString BaseName = AssetName.Left(AssetName.Len() - Suffix.Len());
+
+				FLandscapeTextureSet& Set = TextureSets.FindOrAdd(BaseName);
+				Set.AlbedoPath = AssetPath;
+
+				// Infer terrain type from path components
+				for (const FString& Keyword : TerrainKeywords)
+				{
+					if (AssetPath.Contains(Keyword, ESearchCase::IgnoreCase) ||
+						BaseName.Contains(Keyword, ESearchCase::IgnoreCase))
+					{
+						Set.TerrainType = Keyword;
+						break;
+					}
+				}
+
+				if (Set.TerrainType.IsEmpty())
+				{
+					Set.TerrainType = BaseName;
+				}
+
+				// Try to get texture dimensions
+				UTexture2D* Tex = Cast<UTexture2D>(AssetData.GetAsset());
+				if (Tex)
+				{
+					Set.TextureWidth = Tex->GetSizeX();
+					Set.TextureHeight = Tex->GetSizeY();
+				}
+
+				break;
+			}
+		}
+	}
+
+	// Now look for matching normals and roughness
+	if (bIncludeNormals)
+	{
+		for (const FAssetData& AssetData : AssetDataList)
+		{
+			FString AssetName = AssetData.AssetName.ToString();
+			FString AssetPath = AssetData.GetObjectPathString();
+
+			// Check normal maps
+			for (const FString& Suffix : NormalSuffixes)
+			{
+				if (AssetName.EndsWith(Suffix, ESearchCase::IgnoreCase))
+				{
+					FString BaseName = AssetName.Left(AssetName.Len() - Suffix.Len());
+					if (FLandscapeTextureSet* Set = TextureSets.Find(BaseName))
+					{
+						Set->NormalPath = AssetPath;
+					}
+					break;
+				}
+			}
+
+			// Check roughness maps
+			for (const FString& Suffix : RoughnessSuffixes)
+			{
+				if (AssetName.EndsWith(Suffix, ESearchCase::IgnoreCase))
+				{
+					FString BaseName = AssetName.Left(AssetName.Len() - Suffix.Len());
+					if (FLandscapeTextureSet* Set = TextureSets.Find(BaseName))
+					{
+						Set->RoughnessPath = AssetPath;
+					}
+					break;
+				}
+			}
+		}
+	}
+
+	// Convert map to array
+	for (auto& Pair : TextureSets)
+	{
+		if (!Pair.Value.AlbedoPath.IsEmpty())
+		{
+			Results.Add(Pair.Value);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::FindLandscapeTextures: Found %d texture sets under '%s' (filter='%s')"),
+		Results.Num(), *RootPath, *TerrainType);
+
+	return Results;
 }
 
 // =================================================================

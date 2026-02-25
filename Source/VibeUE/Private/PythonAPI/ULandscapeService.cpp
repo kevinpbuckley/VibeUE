@@ -3641,3 +3641,1224 @@ FLandscapeCreateResult ULandscapeService::ResizeLandscape(
 		*NewLabel, NewSizeX, NewSizeY, LayerWeights.Num());
 	return FinalResult;
 }
+
+// =================================================================
+// Internal helpers (file-scope, v3)
+// =================================================================
+
+namespace LandscapeServiceV3
+{
+	/** Convert a uint16 heightmap value to world Z. */
+	static float RawToWorldZ(uint16 Raw, float LandscapeZ, float LandscapeScaleZ)
+	{
+		return LandscapeZ + (static_cast<float>(Raw) - 32768.0f) * LANDSCAPE_ZSCALE * LandscapeScaleZ;
+	}
+
+	/** Convert world Z to a clamped uint16 heightmap value. */
+	static uint16 WorldZToRaw(float WorldZ, float LandscapeZ, float LandscapeScaleZ)
+	{
+		float Raw = (WorldZ - LandscapeZ) / (LANDSCAPE_ZSCALE * LandscapeScaleZ) + 32768.0f;
+		return static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(Raw), 0, 65535));
+	}
+
+	/** Compute slope in degrees at vertex (X, Y) using central differences on uint16 data. */
+	static float SlopeDegrees(const TArray<uint16>& H, int32 X, int32 Y, int32 SzX, int32 SzY,
+	                           float ScaleX, float ScaleY, float LandscapeScaleZ)
+	{
+		int32 X0 = FMath::Max(X - 1, 0),    X1 = FMath::Min(X + 1, SzX - 1);
+		int32 Y0 = FMath::Max(Y - 1, 0),    Y1 = FMath::Min(Y + 1, SzY - 1);
+
+		float DivX = static_cast<float>(X1 - X0) * ScaleX;
+		float DivY = static_cast<float>(Y1 - Y0) * ScaleY;
+
+		float dZdX = (DivX > 0.0f)
+			? (static_cast<float>(H[Y * SzX + X1]) - static_cast<float>(H[Y * SzX + X0]))
+			  * LANDSCAPE_ZSCALE * LandscapeScaleZ / DivX
+			: 0.0f;
+
+		float dZdY = (DivY > 0.0f)
+			? (static_cast<float>(H[Y1 * SzX + X]) - static_cast<float>(H[Y0 * SzX + X]))
+			  * LANDSCAPE_ZSCALE * LandscapeScaleZ / DivY
+			: 0.0f;
+
+		return FMath::RadiansToDegrees(FMath::Atan(FMath::Sqrt(dZdX * dZdX + dZdY * dZdY)));
+	}
+
+	/** Compute surface normal at vertex (X, Y). */
+	static FVector SurfaceNormal(const TArray<uint16>& H, int32 X, int32 Y, int32 SzX, int32 SzY,
+	                              float ScaleX, float ScaleY, float LandscapeScaleZ)
+	{
+		int32 X0 = FMath::Max(X - 1, 0),    X1 = FMath::Min(X + 1, SzX - 1);
+		int32 Y0 = FMath::Max(Y - 1, 0),    Y1 = FMath::Min(Y + 1, SzY - 1);
+
+		float DivX = static_cast<float>(X1 - X0) * ScaleX;
+		float DivY = static_cast<float>(Y1 - Y0) * ScaleY;
+
+		float dZdX = (DivX > 0.0f)
+			? (static_cast<float>(H[Y * SzX + X1]) - static_cast<float>(H[Y * SzX + X0]))
+			  * LANDSCAPE_ZSCALE * LandscapeScaleZ / DivX
+			: 0.0f;
+
+		float dZdY = (DivY > 0.0f)
+			? (static_cast<float>(H[Y1 * SzX + X]) - static_cast<float>(H[Y0 * SzX + X]))
+			  * LANDSCAPE_ZSCALE * LandscapeScaleZ / DivY
+			: 0.0f;
+
+		return FVector(-dZdX, -dZdY, 1.0f).GetSafeNormal();
+	}
+
+	/** Smooth cosine falloff: 1.0 at centre, 0.0 at radius. */
+	static float CosFalloff(float Dist, float Radius)
+	{
+		if (Dist >= Radius) return 0.0f;
+		return 0.5f * (FMath::Cos(Dist / Radius * PI) + 1.0f);
+	}
+
+	/** Power-shaped radial falloff (1 at centre, 0 at edge). Sharpness > 1 peaks the tip. */
+	static float PowerFalloff(float Dist, float Radius, float Sharpness)
+	{
+		if (Dist >= Radius) return 0.0f;
+		float t = 1.0f - Dist / Radius;
+		return FMath::Pow(t, Sharpness);
+	}
+
+	/** Apply a radial height delta (mountain / valley / crater) to a uint16 buffer. */
+	static bool ApplyRadialDelta(
+		ALandscape* Landscape, ULandscapeInfo* LInfo,
+		float WorldCX, float WorldCY, float WorldRadius,
+		TFunctionRef<float(float /* dist */, float /* curWorldZ */)> DeltaFn,
+		const TCHAR* OpName)
+	{
+		FVector LocXY  = Landscape->GetActorLocation();
+		FVector ScaleV = Landscape->GetActorScale3D();
+
+		float LocalCX = (WorldCX - LocXY.X) / ScaleV.X;
+		float LocalCY = (WorldCY - LocXY.Y) / ScaleV.Y;
+		float LocalR  = WorldRadius / FMath::Max(ScaleV.X, 0.001f);
+
+		int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+		if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return false;
+
+		int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt(LocalCX - LocalR));
+		int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt(LocalCY - LocalR));
+		int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt (LocalCX + LocalR));
+		int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt (LocalCY + LocalR));
+		if (MinX > MaxX || MinY > MaxY) return false;
+
+		int32 SzX = MaxX - MinX + 1;
+		int32 SzY = MaxY - MinY + 1;
+
+		TArray<uint16> HeightData;
+		HeightData.SetNumUninitialized(SzX * SzY);
+
+		{
+			FLandscapeEditDataInterface Edit(LInfo);
+			Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+			for (int32 Y = 0; Y < SzY; Y++)
+			{
+				for (int32 X = 0; X < SzX; X++)
+				{
+					float VertX = static_cast<float>(MinX + X);
+					float VertY = static_cast<float>(MinY + Y);
+					float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+
+					if (Dist >= LocalR) continue;
+
+					int32 Idx = Y * SzX + X;
+					float WorldZ = RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
+					float Delta  = DeltaFn(Dist * ScaleV.X, WorldZ); // pass world-unit dist
+
+					HeightData[Idx] = WorldZToRaw(WorldZ + Delta, LocXY.Z, ScaleV.Z);
+				}
+			}
+
+			Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
+		}
+
+		return true;
+	}
+} // namespace LandscapeServiceV3
+
+// =================================================================
+// Mesh Projection (v3)
+// =================================================================
+
+FMeshProjectionResult ULandscapeService::ProjectMeshToLandscape(
+	const FString& LandscapeNameOrLabel,
+	const FString& MeshActorLabel,
+	float BlendWeight,
+	bool bAdditive)
+{
+	FMeshProjectionResult Result;
+
+	UWorld* World = GetEditorWorld();
+	if (!World) { Result.ErrorMessage = TEXT("No editor world"); return Result; }
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) { Result.ErrorMessage = TEXT("Landscape not found: ") + LandscapeNameOrLabel; return Result; }
+
+	// Find the actor to project
+	AActor* MeshActor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetActorLabel().Equals(MeshActorLabel, ESearchCase::IgnoreCase) ||
+		    It->GetName().Equals(MeshActorLabel, ESearchCase::IgnoreCase))
+		{
+			MeshActor = *It;
+			break;
+		}
+	}
+	if (!MeshActor) { Result.ErrorMessage = TEXT("Actor not found: ") + MeshActorLabel; return Result; }
+
+	FVector Origin, Extent;
+	MeshActor->GetActorBounds(false, Origin, Extent);
+	FVector BoundsMin = Origin - Extent;
+	FVector BoundsMax = Origin + Extent;
+	Result.BoundsMin = BoundsMin;
+	Result.BoundsMax = BoundsMax;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) { Result.ErrorMessage = TEXT("Landscape info not found"); return Result; }
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY))
+	{ Result.ErrorMessage = TEXT("Failed to get landscape extent"); return Result; }
+
+	// Convert mesh bounds to vertex index range
+	int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt((BoundsMin.X - LocXY.X) / ScaleV.X));
+	int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt((BoundsMin.Y - LocXY.Y) / ScaleV.Y));
+	int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt ((BoundsMax.X - LocXY.X) / ScaleV.X));
+	int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt ((BoundsMax.Y - LocXY.Y) / ScaleV.Y));
+	if (MinX > MaxX || MinY > MaxY) { Result.bSuccess = true; return Result; }
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	FCollisionQueryParams Params;
+	Params.bTraceComplex = true;
+	Params.AddIgnoredActor(Landscape);
+
+	int32 Modified = 0;
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ProjectMesh", "Project Mesh to Landscape"));
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+		for (int32 Y = 0; Y < SzY; Y++)
+		{
+			for (int32 X = 0; X < SzX; X++)
+			{
+				float WorldX = LocXY.X + static_cast<float>(MinX + X) * ScaleV.X;
+				float WorldY = LocXY.Y + static_cast<float>(MinY + Y) * ScaleV.Y;
+
+				FVector TraceStart(WorldX, WorldY, BoundsMax.Z + 1000.0f);
+				FVector TraceEnd  (WorldX, WorldY, BoundsMin.Z - 1000.0f);
+
+				FHitResult Hit;
+				if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params) &&
+				    Hit.GetActor() == MeshActor)
+				{
+					int32 Idx = Y * SzX + X;
+					float CurWorldZ = LandscapeServiceV3::RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
+					float TargetZ   = bAdditive ? CurWorldZ + (Hit.Location.Z - Origin.Z) * BlendWeight
+					                            : FMath::Lerp(CurWorldZ, Hit.Location.Z, BlendWeight);
+
+					HeightData[Idx] = LandscapeServiceV3::WorldZToRaw(TargetZ, LocXY.Z, ScaleV.Z);
+					Modified++;
+				}
+			}
+		}
+
+		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
+	}
+
+	UpdateLandscapeAfterHeightEdit(Landscape);
+
+	Result.bSuccess = true;
+	Result.VerticesModified = Modified;
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ProjectMeshToLandscape: '%s' → %d vertices modified"), *MeshActorLabel, Modified);
+	return Result;
+}
+
+TArray<FMeshProjectionResult> ULandscapeService::ProjectMultipleMeshesToLandscape(
+	const FString& LandscapeNameOrLabel,
+	const TArray<FString>& MeshActorLabels,
+	float BlendWeight,
+	bool bAdditive)
+{
+	TArray<FMeshProjectionResult> Results;
+	Results.Reserve(MeshActorLabels.Num());
+	for (const FString& Label : MeshActorLabels)
+	{
+		Results.Add(ProjectMeshToLandscape(LandscapeNameOrLabel, Label, BlendWeight, bAdditive));
+	}
+	return Results;
+}
+
+TArray<FVector> ULandscapeService::SampleMeshHeights(
+	const FString& MeshActorLabel,
+	float CenterX,
+	float CenterY,
+	float Radius,
+	int32 SampleCount)
+{
+	TArray<FVector> Results;
+
+	UWorld* World = GetEditorWorld();
+	if (!World) return Results;
+
+	AActor* MeshActor = nullptr;
+	for (TActorIterator<AActor> It(World); It; ++It)
+	{
+		if (It->GetActorLabel().Equals(MeshActorLabel, ESearchCase::IgnoreCase) ||
+		    It->GetName().Equals(MeshActorLabel, ESearchCase::IgnoreCase))
+		{
+			MeshActor = *It;
+			break;
+		}
+	}
+	if (!MeshActor) return Results;
+
+	FVector Origin, Extent;
+	MeshActor->GetActorBounds(false, Origin, Extent);
+
+	FCollisionQueryParams Params;
+	Params.bTraceComplex = true;
+
+	int32 N = FMath::Max(SampleCount, 1);
+	float Step = (N > 1) ? 2.0f * Radius / static_cast<float>(N - 1) : 0.0f;
+
+	for (int32 Y = 0; Y < N; Y++)
+	{
+		for (int32 X = 0; X < N; X++)
+		{
+			float WorldX = CenterX - Radius + X * Step;
+			float WorldY = CenterY - Radius + Y * Step;
+
+			FVector TraceStart(WorldX, WorldY, Origin.Z + Extent.Z + 1000.0f);
+			FVector TraceEnd  (WorldX, WorldY, Origin.Z - Extent.Z - 1000.0f);
+
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params) &&
+			    Hit.GetActor() == MeshActor)
+			{
+				Results.Add(Hit.Location);
+			}
+		}
+	}
+
+	return Results;
+}
+
+// =================================================================
+// Terrain Analysis (v3)
+// =================================================================
+
+FTerrainAnalysis ULandscapeService::AnalyzeTerrain(
+	const FString& LandscapeNameOrLabel,
+	float CenterX,
+	float CenterY,
+	float Radius)
+{
+	FTerrainAnalysis Result;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) { Result.ErrorMessage = TEXT("Landscape not found: ") + LandscapeNameOrLabel; return Result; }
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) { Result.ErrorMessage = TEXT("Landscape info not found"); return Result; }
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY))
+	{ Result.ErrorMessage = TEXT("Failed to get landscape extent"); return Result; }
+
+	int32 MinX = LandMinX, MinY = LandMinY, MaxX = LandMaxX, MaxY = LandMaxY;
+
+	if (Radius > 0.0f)
+	{
+		float LocalCX = (CenterX - LocXY.X) / ScaleV.X;
+		float LocalCY = (CenterY - LocXY.Y) / ScaleV.Y;
+		float LocalR  = Radius / FMath::Max(ScaleV.X, 0.001f);
+
+		MinX = FMath::Max(LandMinX, FMath::FloorToInt(LocalCX - LocalR));
+		MinY = FMath::Max(LandMinY, FMath::FloorToInt(LocalCY - LocalR));
+		MaxX = FMath::Min(LandMaxX, FMath::CeilToInt (LocalCX + LocalR));
+		MaxY = FMath::Min(LandMaxY, FMath::CeilToInt (LocalCY + LocalR));
+	}
+	if (MinX > MaxX || MinY > MaxY) { Result.ErrorMessage = TEXT("Region out of bounds"); return Result; }
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	}
+
+	float MinH =  FLT_MAX, MaxH = -FLT_MAX, SumH = 0.0f, SumSlope = 0.0f, MaxSlope = 0.0f;
+	double SumSqH = 0.0;
+	int32 Count = 0;
+
+	for (int32 Y = 0; Y < SzY; Y++)
+	{
+		for (int32 X = 0; X < SzX; X++)
+		{
+			float WorldZ = LandscapeServiceV3::RawToWorldZ(HeightData[Y * SzX + X], LocXY.Z, ScaleV.Z);
+			MinH = FMath::Min(MinH, WorldZ);
+			MaxH = FMath::Max(MaxH, WorldZ);
+			SumH += WorldZ;
+			SumSqH += static_cast<double>(WorldZ) * WorldZ;
+
+			float Slope = LandscapeServiceV3::SlopeDegrees(HeightData, X, Y, SzX, SzY, ScaleV.X, ScaleV.Y, ScaleV.Z);
+			SumSlope += Slope;
+			MaxSlope  = FMath::Max(MaxSlope, Slope);
+			Count++;
+		}
+	}
+
+	if (Count == 0) { Result.ErrorMessage = TEXT("No vertices in region"); return Result; }
+
+	float AvgH = SumH / Count;
+	float Var  = static_cast<float>(SumSqH / Count) - AvgH * AvgH;
+
+	Result.bSuccess           = true;
+	Result.MinHeight          = MinH;
+	Result.MaxHeight          = MaxH;
+	Result.AverageHeight      = AvgH;
+	Result.AverageSlopeDegrees = SumSlope / Count;
+	Result.MaxSlopeDegrees    = MaxSlope;
+	Result.Roughness          = FMath::Sqrt(FMath::Max(Var, 0.0f));
+	Result.VerticesAnalyzed   = Count;
+	return Result;
+}
+
+float ULandscapeService::GetSlopeAtLocation(
+	const FString& LandscapeNameOrLabel,
+	float WorldX,
+	float WorldY)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return -1.0f;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return -1.0f;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 VX = FMath::RoundToInt((WorldX - LocXY.X) / ScaleV.X);
+	int32 VY = FMath::RoundToInt((WorldY - LocXY.Y) / ScaleV.Y);
+
+	// Read 3x3 patch
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return -1.0f;
+
+	int32 MinX = FMath::Max(LandMinX, VX - 1);
+	int32 MinY = FMath::Max(LandMinY, VY - 1);
+	int32 MaxX = FMath::Min(LandMaxX, VX + 1);
+	int32 MaxY = FMath::Min(LandMaxY, VY + 1);
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	}
+
+	int32 CX = VX - MinX;
+	int32 CY = VY - MinY;
+	return LandscapeServiceV3::SlopeDegrees(HeightData, CX, CY, SzX, SzY, ScaleV.X, ScaleV.Y, ScaleV.Z);
+}
+
+FVector ULandscapeService::GetNormalAtLocation(
+	const FString& LandscapeNameOrLabel,
+	float WorldX,
+	float WorldY)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return FVector::ZeroVector;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return FVector::ZeroVector;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 VX = FMath::RoundToInt((WorldX - LocXY.X) / ScaleV.X);
+	int32 VY = FMath::RoundToInt((WorldY - LocXY.Y) / ScaleV.Y);
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return FVector::ZeroVector;
+
+	int32 MinX = FMath::Max(LandMinX, VX - 1);
+	int32 MinY = FMath::Max(LandMinY, VY - 1);
+	int32 MaxX = FMath::Min(LandMaxX, VX + 1);
+	int32 MaxY = FMath::Min(LandMaxY, VY + 1);
+	int32 SzX  = MaxX - MinX + 1;
+	int32 SzY  = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	}
+
+	int32 CX = VX - MinX;
+	int32 CY = VY - MinY;
+	return LandscapeServiceV3::SurfaceNormal(HeightData, CX, CY, SzX, SzY, ScaleV.X, ScaleV.Y, ScaleV.Z);
+}
+
+TArray<float> ULandscapeService::GetSlopeMap(
+	const FString& LandscapeNameOrLabel,
+	float MinWorldX,
+	float MinWorldY,
+	float MaxWorldX,
+	float MaxWorldY)
+{
+	TArray<float> Results;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return Results;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return Results;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return Results;
+
+	int32 MinX = LandMinX, MinY = LandMinY, MaxX = LandMaxX, MaxY = LandMaxY;
+
+	if (MinWorldX != 0.0f || MaxWorldX != 0.0f)
+	{
+		MinX = FMath::Max(LandMinX, FMath::FloorToInt((MinWorldX - LocXY.X) / ScaleV.X));
+		MinY = FMath::Max(LandMinY, FMath::FloorToInt((MinWorldY - LocXY.Y) / ScaleV.Y));
+		MaxX = FMath::Min(LandMaxX, FMath::CeilToInt ((MaxWorldX - LocXY.X) / ScaleV.X));
+		MaxY = FMath::Min(LandMaxY, FMath::CeilToInt ((MaxWorldY - LocXY.Y) / ScaleV.Y));
+	}
+	if (MinX > MaxX || MinY > MaxY) return Results;
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+	}
+
+	Results.SetNumUninitialized(SzX * SzY);
+	for (int32 Y = 0; Y < SzY; Y++)
+		for (int32 X = 0; X < SzX; X++)
+			Results[Y * SzX + X] = LandscapeServiceV3::SlopeDegrees(HeightData, X, Y, SzX, SzY, ScaleV.X, ScaleV.Y, ScaleV.Z);
+
+	return Results;
+}
+
+TArray<FVector> ULandscapeService::FindFlatAreas(
+	const FString& LandscapeNameOrLabel,
+	float MaxSlopeDegrees,
+	float MinRadius,
+	int32 MaxResults)
+{
+	TArray<FVector> Results;
+
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return Results;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return Results;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return Results;
+
+	int32 SzX = LandMaxX - LandMinX + 1;
+	int32 SzY = LandMaxY - LandMinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(LandMinX, LandMinY, LandMaxX, LandMaxY, HeightData.GetData(), 0);
+	}
+
+	// Build a boolean mask of flat vertices
+	TArray<bool> IsFlatMask;
+	IsFlatMask.SetNumZeroed(SzX * SzY);
+	for (int32 Y = 0; Y < SzY; Y++)
+		for (int32 X = 0; X < SzX; X++)
+			IsFlatMask[Y * SzX + X] = (LandscapeServiceV3::SlopeDegrees(HeightData, X, Y, SzX, SzY, ScaleV.X, ScaleV.Y, ScaleV.Z) <= MaxSlopeDegrees);
+
+	// Simple flood-fill clustering
+	TArray<bool> Visited;
+	Visited.SetNumZeroed(SzX * SzY);
+
+	int32 MinClusterRadius = FMath::Max(1, FMath::RoundToInt(MinRadius / ScaleV.X));
+
+	for (int32 Y = 0; Y < SzY && Results.Num() < MaxResults; Y++)
+	{
+		for (int32 X = 0; X < SzX && Results.Num() < MaxResults; X++)
+		{
+			int32 Idx = Y * SzX + X;
+			if (!IsFlatMask[Idx] || Visited[Idx]) continue;
+
+			// BFS
+			TArray<FIntPoint> Cluster;
+			TQueue<FIntPoint> Queue;
+			Queue.Enqueue({X, Y});
+			Visited[Idx] = true;
+
+			while (!Queue.IsEmpty())
+			{
+				FIntPoint P;
+				Queue.Dequeue(P);
+				Cluster.Add(P);
+
+				const FIntPoint Neighbors[4] = {{P.X-1,P.Y},{P.X+1,P.Y},{P.X,P.Y-1},{P.X,P.Y+1}};
+				for (auto& N : Neighbors)
+				{
+					if (N.X < 0 || N.X >= SzX || N.Y < 0 || N.Y >= SzY) continue;
+					int32 NIdx = N.Y * SzX + N.X;
+					if (!IsFlatMask[NIdx] || Visited[NIdx]) continue;
+					Visited[NIdx] = true;
+					Queue.Enqueue(N);
+				}
+			}
+
+			if (Cluster.Num() < MinClusterRadius * MinClusterRadius) continue;
+
+			// Compute cluster center in world space
+			float SumX = 0.0f, SumY = 0.0f, SumZ = 0.0f;
+			for (auto& P : Cluster)
+			{
+				SumX += LocXY.X + static_cast<float>(LandMinX + P.X) * ScaleV.X;
+				SumY += LocXY.Y + static_cast<float>(LandMinY + P.Y) * ScaleV.Y;
+				SumZ += LandscapeServiceV3::RawToWorldZ(HeightData[P.Y * SzX + P.X], LocXY.Z, ScaleV.Z);
+			}
+			float N = static_cast<float>(Cluster.Num());
+			Results.Add(FVector(SumX / N, SumY / N, SumZ / N));
+		}
+	}
+
+	return Results;
+}
+
+// =================================================================
+// Batch Geometry (v3)
+// =================================================================
+
+TArray<FLineTraceHit> ULandscapeService::BatchLineTrace(
+	const TArray<FVector>& StartLocations,
+	const TArray<FVector>& EndLocations)
+{
+	TArray<FLineTraceHit> Results;
+
+	UWorld* World = GetEditorWorld();
+	if (!World) return Results;
+
+	int32 Count = FMath::Min(StartLocations.Num(), EndLocations.Num());
+	Results.SetNum(Count);
+
+	FCollisionQueryParams Params;
+	Params.bTraceComplex = true;
+
+	for (int32 i = 0; i < Count; i++)
+	{
+		FHitResult Hit;
+		if (World->LineTraceSingleByChannel(Hit, StartLocations[i], EndLocations[i], ECC_Visibility, Params))
+		{
+			Results[i].bHit        = true;
+			Results[i].HitLocation = Hit.Location;
+			Results[i].HitNormal   = Hit.Normal;
+			Results[i].Distance    = Hit.Distance;
+			Results[i].ActorName   = Hit.GetActor() ? Hit.GetActor()->GetActorLabel() : FString();
+		}
+	}
+
+	return Results;
+}
+
+TArray<FLineTraceHit> ULandscapeService::BatchLineTraceGrid(
+	float OriginX,
+	float OriginY,
+	float Width,
+	float Height,
+	int32 GridResolution,
+	float StartZ,
+	float EndZ)
+{
+	TArray<FLineTraceHit> Results;
+
+	UWorld* World = GetEditorWorld();
+	if (!World) return Results;
+
+	int32 N = FMath::Max(GridResolution, 1);
+	Results.SetNum(N * N);
+
+	FCollisionQueryParams Params;
+	Params.bTraceComplex = true;
+
+	for (int32 Y = 0; Y < N; Y++)
+	{
+		for (int32 X = 0; X < N; X++)
+		{
+			float U = (N > 1) ? static_cast<float>(X) / static_cast<float>(N - 1) : 0.5f;
+			float V = (N > 1) ? static_cast<float>(Y) / static_cast<float>(N - 1) : 0.5f;
+
+			float WorldX = OriginX + U * Width;
+			float WorldY = OriginY + V * Height;
+
+			FVector TraceStart(WorldX, WorldY, StartZ);
+			FVector TraceEnd  (WorldX, WorldY, EndZ);
+
+			int32 Idx = Y * N + X;
+			FHitResult Hit;
+			if (World->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_Visibility, Params))
+			{
+				Results[Idx].bHit        = true;
+				Results[Idx].HitLocation = Hit.Location;
+				Results[Idx].HitNormal   = Hit.Normal;
+				Results[Idx].Distance    = Hit.Distance;
+				Results[Idx].ActorName   = Hit.GetActor() ? Hit.GetActor()->GetActorLabel() : FString();
+			}
+		}
+	}
+
+	return Results;
+}
+
+// =================================================================
+// Semantic Terrain Features (v3)
+// =================================================================
+
+bool ULandscapeService::CreateMountain(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius, float Height,
+	float Sharpness, bool bAddNoise, int32 Seed)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+	float NoiseAmplitude = Height * 0.15f;
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateMountain", "Create Mountain"));
+
+	bool bOk = LandscapeServiceV3::ApplyRadialDelta(Landscape, LInfo, CenterX, CenterY, Radius,
+		[&](float WorldDist, float CurZ) -> float
+		{
+			float t = LandscapeServiceV3::PowerFalloff(WorldDist, Radius, Sharpness);
+			float Delta = Height * t;
+			if (bAddNoise)
+			{
+				float WorldX = CenterX + (WorldDist > 0.0f ? WorldDist : 0.0f);
+				float NoiseVal = PerlinNoise2D(WorldX, CurZ, 0.002f, 4, Seed);
+				Delta += NoiseVal * NoiseAmplitude * t;
+			}
+			return Delta;
+		},
+		TEXT("CreateMountain"));
+
+	if (bOk) UpdateLandscapeAfterHeightEdit(Landscape);
+	return bOk;
+}
+
+bool ULandscapeService::CreateValley(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius, float Depth,
+	float Sharpness, bool bAddNoise, int32 Seed)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	float NoiseAmplitude = Depth * 0.1f;
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateValley", "Create Valley"));
+
+	bool bOk = LandscapeServiceV3::ApplyRadialDelta(Landscape, LInfo, CenterX, CenterY, Radius,
+		[&](float WorldDist, float CurZ) -> float
+		{
+			float t = LandscapeServiceV3::PowerFalloff(WorldDist, Radius, Sharpness);
+			float Delta = -Depth * t;
+			if (bAddNoise)
+			{
+				float NoiseVal = PerlinNoise2D(CenterX + WorldDist, CenterY, 0.002f, 4, Seed);
+				Delta += NoiseVal * NoiseAmplitude * t;
+			}
+			return Delta;
+		},
+		TEXT("CreateValley"));
+
+	if (bOk) UpdateLandscapeAfterHeightEdit(Landscape);
+	return bOk;
+}
+
+bool ULandscapeService::CreateRidge(
+	const FString& LandscapeNameOrLabel,
+	float StartX, float StartY,
+	float EndX, float EndY,
+	float Width, float Height,
+	float Sharpness, bool bAddNoise, int32 Seed)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return false;
+
+	// AABB of the ridge (expand by Width on all sides)
+	float BMinX = FMath::Min(StartX, EndX) - Width;
+	float BMinY = FMath::Min(StartY, EndY) - Width;
+	float BMaxX = FMath::Max(StartX, EndX) + Width;
+	float BMaxY = FMath::Max(StartY, EndY) + Width;
+
+	int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt((BMinX - LocXY.X) / ScaleV.X));
+	int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt((BMinY - LocXY.Y) / ScaleV.Y));
+	int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt ((BMaxX - LocXY.X) / ScaleV.X));
+	int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt ((BMaxY - LocXY.Y) / ScaleV.Y));
+	if (MinX > MaxX || MinY > MaxY) return false;
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	FVector2D SpineDir = FVector2D(EndX - StartX, EndY - StartY);
+	float SpineLen = SpineDir.Size();
+	if (SpineLen < 0.001f) return false;
+	FVector2D SpineN = SpineDir / SpineLen;
+
+	float NoiseAmplitude = Height * 0.12f;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateRidge", "Create Ridge"));
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+		for (int32 Y = 0; Y < SzY; Y++)
+		{
+			for (int32 X = 0; X < SzX; X++)
+			{
+				float WorldX = LocXY.X + static_cast<float>(MinX + X) * ScaleV.X;
+				float WorldY = LocXY.Y + static_cast<float>(MinY + Y) * ScaleV.Y;
+
+				// Point-to-segment distance
+				FVector2D ToP(WorldX - StartX, WorldY - StartY);
+				float Along = FVector2D::DotProduct(ToP, SpineN);
+				float ClampedAlong = FMath::Clamp(Along, 0.0f, SpineLen);
+				FVector2D Closest(StartX + SpineN.X * ClampedAlong, StartY + SpineN.Y * ClampedAlong);
+				float PerpDist = FVector2D(WorldX - Closest.X, WorldY - Closest.Y).Size();
+
+				if (PerpDist >= Width) continue;
+
+				int32 Idx = Y * SzX + X;
+				float CurWorldZ = LandscapeServiceV3::RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
+				float t = LandscapeServiceV3::PowerFalloff(PerpDist, Width, Sharpness);
+				float Delta = Height * t;
+				if (bAddNoise)
+				{
+					float NoiseVal = PerlinNoise2D(WorldX, WorldY, 0.0015f, 4, Seed);
+					Delta += NoiseVal * NoiseAmplitude * t;
+				}
+				HeightData[Idx] = LandscapeServiceV3::WorldZToRaw(CurWorldZ + Delta, LocXY.Z, ScaleV.Z);
+			}
+		}
+
+		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
+	}
+
+	UpdateLandscapeAfterHeightEdit(Landscape);
+	return true;
+}
+
+bool ULandscapeService::CreatePlateau(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius, float Height,
+	float EdgeBlend)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	float TotalRadius = Radius + EdgeBlend;
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreatePlateau", "Create Plateau"));
+
+	bool bOk = LandscapeServiceV3::ApplyRadialDelta(Landscape, LInfo, CenterX, CenterY, TotalRadius,
+		[&](float WorldDist, float /*CurZ*/) -> float
+		{
+			if (WorldDist <= Radius) return Height;
+			// EdgeBlend zone: smooth step from Height to 0
+			float t = 1.0f - (WorldDist - Radius) / FMath::Max(EdgeBlend, 0.001f);
+			t = FMath::Clamp(t, 0.0f, 1.0f);
+			t = t * t * (3.0f - 2.0f * t); // smoothstep
+			return Height * t;
+		},
+		TEXT("CreatePlateau"));
+
+	if (bOk) UpdateLandscapeAfterHeightEdit(Landscape);
+	return bOk;
+}
+
+bool ULandscapeService::ApplyErosion(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius,
+	int32 Iterations,
+	float Strength,
+	int32 Seed)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return false;
+
+	float LocalCX = (CenterX - LocXY.X) / ScaleV.X;
+	float LocalCY = (CenterY - LocXY.Y) / ScaleV.Y;
+	float LocalR  = Radius / FMath::Max(ScaleV.X, 0.001f);
+
+	int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt(LocalCX - LocalR));
+	int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt(LocalCY - LocalR));
+	int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt (LocalCX + LocalR));
+	int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt (LocalCY + LocalR));
+	if (MinX > MaxX || MinY > MaxY) return false;
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "ApplyErosionV3", "Apply Erosion"));
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+		// Thermal erosion: iteratively move material from steep to adjacent lower cells
+		int32 Passes = FMath::Max(1, Iterations / 100);
+		float TalusThreshold = 4.0f * Strength; // in uint16 units
+
+		FRandomStream Rand(Seed);
+
+		for (int32 Pass = 0; Pass < Passes; Pass++)
+		{
+			TArray<uint16> Temp = HeightData;
+
+			for (int32 Y = 1; Y < SzY - 1; Y++)
+			{
+				for (int32 X = 1; X < SzX - 1; X++)
+				{
+					// Only process vertices within the circular region
+					float VertX = static_cast<float>(MinX + X);
+					float VertY = static_cast<float>(MinY + Y);
+					float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+					if (Dist >= LocalR) continue;
+
+					float EdgeFalloff = LandscapeServiceV3::CosFalloff(Dist, LocalR);
+
+					float h = static_cast<float>(HeightData[Y * SzX + X]);
+
+					// Neighbors (4-connected)
+					int32 NbrsIdx[4] = {
+						(Y - 1) * SzX + X,
+						(Y + 1) * SzX + X,
+						Y * SzX + (X - 1),
+						Y * SzX + (X + 1)
+					};
+
+					float MinNeighbor = h;
+					int32 MinIdx = -1;
+					for (int32 k = 0; k < 4; k++)
+					{
+						float nh = static_cast<float>(HeightData[NbrsIdx[k]]);
+						if (nh < MinNeighbor) { MinNeighbor = nh; MinIdx = k; }
+					}
+
+					float Diff = h - MinNeighbor;
+					if (MinIdx >= 0 && Diff > TalusThreshold)
+					{
+						float Transfer = (Diff - TalusThreshold) * 0.5f * EdgeFalloff;
+						Temp[Y * SzX + X]       = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(h - Transfer), 0, 65535));
+						Temp[NbrsIdx[MinIdx]]   = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(MinNeighbor + Transfer), 0, 65535));
+					}
+				}
+			}
+
+			HeightData = MoveTemp(Temp);
+		}
+
+		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
+	}
+
+	UpdateLandscapeAfterHeightEdit(Landscape);
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ApplyErosion: %d passes applied at (%.0f,%.0f) r=%.0f"), Iterations/100, CenterX, CenterY, Radius);
+	return true;
+}
+
+bool ULandscapeService::CreateCrater(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius, float Depth,
+	float RimHeight)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	float TotalRadius = Radius * 1.3f; // rim extends beyond crater bowl
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateCrater", "Create Crater"));
+
+	bool bOk = LandscapeServiceV3::ApplyRadialDelta(Landscape, LInfo, CenterX, CenterY, TotalRadius,
+		[&](float WorldDist, float /*CurZ*/) -> float
+		{
+			float t = WorldDist / Radius; // 0=centre, 1=rim edge, >1=outside
+			if (t <= 1.0f)
+			{
+				// Bowl: deepest at t=0, 0 at t=1
+				float BowlT = 1.0f - t * t;
+				float RimT  = LandscapeServiceV3::CosFalloff(FMath::Abs(t - 0.85f) * Radius, Radius * 0.2f);
+				return -Depth * BowlT + RimHeight * RimT;
+			}
+			else
+			{
+				// Outer rim taper
+				float TaperT = LandscapeServiceV3::CosFalloff(WorldDist - Radius, Radius * 0.3f);
+				return RimHeight * TaperT;
+			}
+		},
+		TEXT("CreateCrater"));
+
+	if (bOk) UpdateLandscapeAfterHeightEdit(Landscape);
+	return bOk;
+}
+
+bool ULandscapeService::CreateTerraces(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius,
+	int32 NumTerraces,
+	float Smoothness)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return false;
+
+	float LocalCX = (CenterX - LocXY.X) / ScaleV.X;
+	float LocalCY = (CenterY - LocXY.Y) / ScaleV.Y;
+	float LocalR  = Radius / FMath::Max(ScaleV.X, 0.001f);
+
+	int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt(LocalCX - LocalR));
+	int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt(LocalCY - LocalR));
+	int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt (LocalCX + LocalR));
+	int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt (LocalCY + LocalR));
+	if (MinX > MaxX || MinY > MaxY) return false;
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateTerraces", "Create Terraces"));
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+		// Find height range in region to determine terrace step size
+		float MinH = FLT_MAX, MaxH = -FLT_MAX;
+		for (int32 Y = 0; Y < SzY; Y++)
+		{
+			for (int32 X = 0; X < SzX; X++)
+			{
+				float VertX = static_cast<float>(MinX + X);
+				float VertY = static_cast<float>(MinY + Y);
+				float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+				if (Dist >= LocalR) continue;
+
+				float WorldZ = LandscapeServiceV3::RawToWorldZ(HeightData[Y * SzX + X], LocXY.Z, ScaleV.Z);
+				MinH = FMath::Min(MinH, WorldZ);
+				MaxH = FMath::Max(MaxH, WorldZ);
+			}
+		}
+
+		if (MaxH <= MinH || NumTerraces < 1) return false;
+
+		float StepH = (MaxH - MinH) / static_cast<float>(NumTerraces);
+
+		for (int32 Y = 0; Y < SzY; Y++)
+		{
+			for (int32 X = 0; X < SzX; X++)
+			{
+				float VertX = static_cast<float>(MinX + X);
+				float VertY = static_cast<float>(MinY + Y);
+				float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+				if (Dist >= LocalR) continue;
+
+				float EdgeFalloff = LandscapeServiceV3::CosFalloff(Dist, LocalR);
+				if (EdgeFalloff < 0.01f) continue;
+
+				int32 Idx = Y * SzX + X;
+				float WorldZ   = LandscapeServiceV3::RawToWorldZ(HeightData[Idx], LocXY.Z, ScaleV.Z);
+				float Normalised = (WorldZ - MinH) / (MaxH - MinH); // [0,1]
+
+				// Quantize to terrace
+				float TerracedN  = FMath::FloorToFloat(Normalised * NumTerraces) / NumTerraces;
+				// Add fractional smoothness within each terrace
+				float Frac = FMath::Fmod(Normalised * NumTerraces, 1.0f);
+				float SmoothedFrac = Smoothness * Frac / NumTerraces;
+				float NewNormalised = TerracedN + SmoothedFrac;
+				float NewWorldZ = MinH + NewNormalised * (MaxH - MinH);
+
+				// Blend toward terraced value based on distance from centre
+				float Blended = FMath::Lerp(WorldZ, NewWorldZ, EdgeFalloff);
+				HeightData[Idx] = LandscapeServiceV3::WorldZToRaw(Blended, LocXY.Z, ScaleV.Z);
+			}
+		}
+
+		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0, true);
+	}
+
+	UpdateLandscapeAfterHeightEdit(Landscape);
+	return true;
+}
+
+bool ULandscapeService::BlendTerrainFeatures(
+	const FString& LandscapeNameOrLabel,
+	float CenterX, float CenterY,
+	float Radius,
+	float BlendWeight)
+{
+	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+	if (!Landscape) return false;
+
+	ULandscapeInfo* LInfo = Landscape->GetLandscapeInfo();
+	if (!LInfo) return false;
+
+	FVector LocXY  = Landscape->GetActorLocation();
+	FVector ScaleV = Landscape->GetActorScale3D();
+
+	int32 LandMinX, LandMinY, LandMaxX, LandMaxY;
+	if (!LInfo->GetLandscapeExtent(LandMinX, LandMinY, LandMaxX, LandMaxY)) return false;
+
+	float LocalCX = (CenterX - LocXY.X) / ScaleV.X;
+	float LocalCY = (CenterY - LocXY.Y) / ScaleV.Y;
+	float LocalR  = Radius / FMath::Max(ScaleV.X, 0.001f);
+
+	// Add 1 vertex border for neighbour sampling
+	int32 MinX = FMath::Max(LandMinX, FMath::FloorToInt(LocalCX - LocalR) - 1);
+	int32 MinY = FMath::Max(LandMinY, FMath::FloorToInt(LocalCY - LocalR) - 1);
+	int32 MaxX = FMath::Min(LandMaxX, FMath::CeilToInt (LocalCX + LocalR) + 1);
+	int32 MaxY = FMath::Min(LandMaxY, FMath::CeilToInt (LocalCY + LocalR) + 1);
+	if (MinX > MaxX || MinY > MaxY) return false;
+
+	int32 SzX = MaxX - MinX + 1;
+	int32 SzY = MaxY - MinY + 1;
+
+	TArray<uint16> HeightData;
+	HeightData.SetNumUninitialized(SzX * SzY);
+
+	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "BlendTerrainFeatures", "Blend Terrain"));
+
+	{
+		FLandscapeEditDataInterface Edit(LInfo);
+		Edit.GetHeightData(MinX, MinY, MaxX, MaxY, HeightData.GetData(), 0);
+
+		TArray<uint16> Smoothed = HeightData;
+
+		// 3x3 box average
+		for (int32 Y = 1; Y < SzY - 1; Y++)
+		{
+			for (int32 X = 1; X < SzX - 1; X++)
+			{
+				float VertX = static_cast<float>(MinX + X);
+				float VertY = static_cast<float>(MinY + Y);
+				float Dist  = FMath::Sqrt(FMath::Square(VertX - LocalCX) + FMath::Square(VertY - LocalCY));
+				if (Dist >= LocalR) continue;
+
+				float EdgeFalloff = LandscapeServiceV3::CosFalloff(Dist, LocalR);
+				float EffectiveBlend = BlendWeight * EdgeFalloff;
+
+				float Sum = 0.0f;
+				for (int32 DY = -1; DY <= 1; DY++)
+					for (int32 DX = -1; DX <= 1; DX++)
+						Sum += static_cast<float>(HeightData[(Y + DY) * SzX + (X + DX)]);
+
+				float Avg = Sum / 9.0f;
+				float Original = static_cast<float>(HeightData[Y * SzX + X]);
+				float Blended = FMath::Lerp(Original, Avg, EffectiveBlend);
+				Smoothed[Y * SzX + X] = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(Blended), 0, 65535));
+			}
+		}
+
+		Edit.SetHeightData(MinX, MinY, MaxX, MaxY, Smoothed.GetData(), 0, true);
+	}
+
+	UpdateLandscapeAfterHeightEdit(Landscape);
+	return true;
+}

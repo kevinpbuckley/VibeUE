@@ -359,10 +359,115 @@ struct FWeightMapImportResult
 	FString ErrorMessage;
 };
 
+// =========================================================================
+// Mesh Projection Data Structs
+// =========================================================================
+
+/** Result of projecting a static mesh actor's surface onto a landscape */
+USTRUCT(BlueprintType)
+struct FMeshProjectionResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	/** Number of landscape vertices modified */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 VerticesModified = 0;
+
+	/** Bounding box min of the affected region (world space) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector BoundsMin = FVector::ZeroVector;
+
+	/** Bounding box max of the affected region (world space) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector BoundsMax = FVector::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+// =========================================================================
+// Terrain Analysis Data Structs
+// =========================================================================
+
+/** Comprehensive terrain statistics for a region */
+USTRUCT(BlueprintType)
+struct FTerrainAnalysis
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	/** Minimum height in the region (world Z) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float MinHeight = 0.0f;
+
+	/** Maximum height in the region (world Z) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float MaxHeight = 0.0f;
+
+	/** Average height in the region (world Z) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float AverageHeight = 0.0f;
+
+	/** Average slope in degrees */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float AverageSlopeDegrees = 0.0f;
+
+	/** Maximum slope in degrees */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float MaxSlopeDegrees = 0.0f;
+
+	/** Height standard deviation (roughness indicator) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float Roughness = 0.0f;
+
+	/** Number of vertices analyzed */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 VerticesAnalyzed = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+// =========================================================================
+// Batch Line Trace Data Structs
+// =========================================================================
+
+/** Result of a single line trace */
+USTRUCT(BlueprintType)
+struct FLineTraceHit
+{
+	GENERATED_BODY()
+
+	/** Whether the trace hit anything */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bHit = false;
+
+	/** World-space hit location */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector HitLocation = FVector::ZeroVector;
+
+	/** World-space surface normal at hit */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FVector HitNormal = FVector::ZeroVector;
+
+	/** Distance from trace start to hit */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	float Distance = 0.0f;
+
+	/** Name of the hit actor (empty if no hit) */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ActorName;
+};
+
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 46 landscape management actions:
+ * Provides 64 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
@@ -433,6 +538,32 @@ struct FWeightMapImportResult
  * - apply_splines_to_landscape: Apply spline deformation to the terrain
  * - set_spline_segment_meshes: Assign meshes to a spline segment
  * - set_spline_point_mesh: Assign a mesh to a control point
+ *
+ * Mesh Projection (v3):
+ * - project_mesh_to_landscape: Conform landscape to a mesh actor's surface
+ * - project_meshes_to_landscape: Batch project multiple mesh actors
+ * - sample_mesh_heights: Sample world-Z hits from a mesh actor's surface
+ *
+ * Terrain Analysis (v3):
+ * - analyze_terrain: Get height range, slope, and roughness stats for a region
+ * - get_slope_at_location: Get slope in degrees at a world position
+ * - get_normal_at_location: Get surface normal vector at a world position
+ * - get_slope_map: Get per-vertex slope values for a region
+ * - find_flat_areas: Find world locations where slope is below a threshold
+ *
+ * Batch Geometry (v3):
+ * - batch_line_trace: Multiple arbitrary line traces in one call
+ * - batch_line_trace_grid: Downward grid of line traces over a world-space region
+ *
+ * Semantic Terrain Features (v3):
+ * - create_mountain: Raise terrain with smooth radial falloff
+ * - create_valley: Lower terrain with smooth radial falloff
+ * - create_ridge: Raise terrain along a line with perpendicular falloff
+ * - create_plateau: Create a flat-topped elevated area with smooth edges
+ * - apply_erosion: Particle-based hydraulic erosion simulation
+ * - create_crater: Bowl-shaped depression with optional rim
+ * - create_terraces: Stepped horizontal terraces
+ * - blend_terrain_features: Smooth and blend heights in a region
  *
  * Python Usage:
  *   import unreal
@@ -1341,6 +1472,381 @@ public:
 		int32 NewComponentCountY,
 		int32 NewQuadsPerSection = -1,
 		int32 NewSectionsPerComponent = -1);
+
+	// =================================================================
+	// Mesh Projection (v3)
+	// =================================================================
+
+	/**
+	 * Project a static mesh actor's surface onto the landscape heightmap.
+	 * Traces downward at each landscape vertex within the mesh's XY footprint
+	 * and sets the landscape height to match the mesh surface.
+	 * Maps to action="project_mesh_to_landscape"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param MeshActorLabel       - Label of the static mesh actor in the scene
+	 * @param BlendWeight          - 0.0=keep original, 1.0=fully match mesh surface
+	 * @param bAdditive            - If true, displace existing height rather than replace
+	 * @return Result with vertex count and bounds info
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FMeshProjectionResult ProjectMeshToLandscape(
+		const FString& LandscapeNameOrLabel,
+		const FString& MeshActorLabel,
+		float BlendWeight = 1.0f,
+		bool bAdditive = false);
+
+	/**
+	 * Project multiple mesh actors onto the landscape in one batch call.
+	 * Maps to action="project_meshes_to_landscape"
+	 *
+	 * @param LandscapeNameOrLabel - Name or label of the landscape
+	 * @param MeshActorLabels      - Labels of static mesh actors to project
+	 * @param BlendWeight          - Blend factor (0-1)
+	 * @param bAdditive            - If true, add displacements
+	 * @return Array of per-mesh projection results
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<FMeshProjectionResult> ProjectMultipleMeshesToLandscape(
+		const FString& LandscapeNameOrLabel,
+		const TArray<FString>& MeshActorLabels,
+		float BlendWeight = 1.0f,
+		bool bAdditive = false);
+
+	/**
+	 * Sample surface Z values from a mesh actor using downward line traces.
+	 * Useful for previewing mesh shape before projection.
+	 * Maps to action="sample_mesh_heights"
+	 *
+	 * @param MeshActorLabel - Label of the actor to sample
+	 * @param CenterX        - World X center of sample region
+	 * @param CenterY        - World Y center of sample region
+	 * @param Radius         - Sampling radius in world units
+	 * @param SampleCount    - Grid dimension (SampleCount x SampleCount traces)
+	 * @return Array of world-space hit locations (only hits included)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<FVector> SampleMeshHeights(
+		const FString& MeshActorLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		int32 SampleCount = 10);
+
+	// =================================================================
+	// Terrain Analysis (v3)
+	// =================================================================
+
+	/**
+	 * Analyze terrain statistics (height range, slope, roughness) for a region.
+	 * Maps to action="analyze_terrain"
+	 *
+	 * @param LandscapeNameOrLabel - Landscape to analyze
+	 * @param CenterX              - World X center (0 = whole landscape)
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Analysis radius in world units (0 = whole landscape)
+	 * @return Terrain statistics including height range, average slope, roughness
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FTerrainAnalysis AnalyzeTerrain(
+		const FString& LandscapeNameOrLabel,
+		float CenterX = 0.0f,
+		float CenterY = 0.0f,
+		float Radius = 0.0f);
+
+	/**
+	 * Get the slope angle in degrees at a world location.
+	 * Maps to action="get_slope_at_location"
+	 *
+	 * @param LandscapeNameOrLabel - Landscape to query
+	 * @param WorldX               - World X coordinate
+	 * @param WorldY               - World Y coordinate
+	 * @return Slope in degrees (0=flat, 90=vertical). Returns -1.0 on failure.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static float GetSlopeAtLocation(
+		const FString& LandscapeNameOrLabel,
+		float WorldX,
+		float WorldY);
+
+	/**
+	 * Get the terrain surface normal at a world location.
+	 * Maps to action="get_normal_at_location"
+	 *
+	 * @param LandscapeNameOrLabel - Landscape to query
+	 * @param WorldX               - World X coordinate
+	 * @param WorldY               - World Y coordinate
+	 * @return Unit normal vector (ZeroVector on failure)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FVector GetNormalAtLocation(
+		const FString& LandscapeNameOrLabel,
+		float WorldX,
+		float WorldY);
+
+	/**
+	 * Get per-vertex slope values (degrees) for a world-space region.
+	 * Maps to action="get_slope_map"
+	 *
+	 * Pass all zeros to analyze the entire landscape.
+	 *
+	 * @param LandscapeNameOrLabel - Landscape to query
+	 * @param MinWorldX            - Region min world X (0 = whole landscape)
+	 * @param MinWorldY            - Region min world Y
+	 * @param MaxWorldX            - Region max world X
+	 * @param MaxWorldY            - Region max world Y
+	 * @return Row-major slope array in degrees (same layout as GetHeightInRegion)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<float> GetSlopeMap(
+		const FString& LandscapeNameOrLabel,
+		float MinWorldX = 0.0f,
+		float MinWorldY = 0.0f,
+		float MaxWorldX = 0.0f,
+		float MaxWorldY = 0.0f);
+
+	/**
+	 * Find world-space centers of areas where the terrain is flatter than a threshold.
+	 * Maps to action="find_flat_areas"
+	 *
+	 * @param LandscapeNameOrLabel - Landscape to search
+	 * @param MaxSlopeDegrees      - Maximum slope considered flat (default 5)
+	 * @param MinRadius            - Minimum flat cluster radius in world units
+	 * @param MaxResults           - Maximum number of results
+	 * @return World-space centers of flat areas (sorted by cluster size)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<FVector> FindFlatAreas(
+		const FString& LandscapeNameOrLabel,
+		float MaxSlopeDegrees = 5.0f,
+		float MinRadius = 500.0f,
+		int32 MaxResults = 10);
+
+	// =================================================================
+	// Batch Geometry (v3)
+	// =================================================================
+
+	/**
+	 * Perform multiple line traces in a single call.
+	 * Maps to action="batch_line_trace"
+	 *
+	 * @param StartLocations - Array of trace start points
+	 * @param EndLocations   - Array of trace end points (must match length)
+	 * @return Array of hit results, same length as input arrays
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<FLineTraceHit> BatchLineTrace(
+		const TArray<FVector>& StartLocations,
+		const TArray<FVector>& EndLocations);
+
+	/**
+	 * Perform a grid of downward line traces over a world-space region.
+	 * Maps to action="batch_line_trace_grid"
+	 *
+	 * @param OriginX        - World X of grid start corner
+	 * @param OriginY        - World Y of grid start corner
+	 * @param Width          - Grid width in world units
+	 * @param Height         - Grid height in world units
+	 * @param GridResolution - Number of sample points per axis
+	 * @param StartZ         - Trace start Z (above terrain)
+	 * @param EndZ           - Trace end Z (below terrain)
+	 * @return Row-major array of hit results (GridResolution x GridResolution)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static TArray<FLineTraceHit> BatchLineTraceGrid(
+		float OriginX,
+		float OriginY,
+		float Width,
+		float Height,
+		int32 GridResolution = 10,
+		float StartZ = 100000.0f,
+		float EndZ = -100000.0f);
+
+	// =================================================================
+	// Semantic Terrain Features (v3)
+	// =================================================================
+
+	/**
+	 * Raise terrain in a smooth radial profile to form a mountain.
+	 * Maps to action="create_mountain"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Base radius in world units
+	 * @param Height               - Peak height delta in world units
+	 * @param Sharpness            - Profile power (1.0=cosine, 2.0=peaked, 0.5=wide)
+	 * @param bAddNoise            - Add Perlin noise for natural variation
+	 * @param Seed                 - Random seed for noise
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreateMountain(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		float Height,
+		float Sharpness = 1.0f,
+		bool bAddNoise = true,
+		int32 Seed = 0);
+
+	/**
+	 * Lower terrain in a smooth radial profile to form a valley.
+	 * Maps to action="create_valley"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Valley radius in world units
+	 * @param Depth                - Depression depth in world units
+	 * @param Sharpness            - Profile power (1.0=gentle bowl, 2.0=sharper)
+	 * @param bAddNoise            - Add Perlin noise for natural variation
+	 * @param Seed                 - Random seed for noise
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreateValley(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		float Depth,
+		float Sharpness = 1.0f,
+		bool bAddNoise = true,
+		int32 Seed = 0);
+
+	/**
+	 * Create an elongated ridge between two world-space points.
+	 * Maps to action="create_ridge"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param StartX               - World X of ridge spine start
+	 * @param StartY               - World Y of ridge spine start
+	 * @param EndX                 - World X of ridge spine end
+	 * @param EndY                 - World Y of ridge spine end
+	 * @param Width                - Half-width of ridge perpendicular to spine
+	 * @param Height               - Ridge height delta in world units
+	 * @param Sharpness            - Cross-section profile power
+	 * @param bAddNoise            - Add Perlin noise for natural variation
+	 * @param Seed                 - Random seed for noise
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreateRidge(
+		const FString& LandscapeNameOrLabel,
+		float StartX, float StartY,
+		float EndX, float EndY,
+		float Width,
+		float Height,
+		float Sharpness = 1.0f,
+		bool bAddNoise = true,
+		int32 Seed = 0);
+
+	/**
+	 * Create a flat-topped elevated area (plateau) with smooth edges.
+	 * Maps to action="create_plateau"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Plateau flat-top radius
+	 * @param Height               - Plateau height delta in world units
+	 * @param EdgeBlend            - Edge blend distance in world units
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreatePlateau(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		float Height,
+		float EdgeBlend = 500.0f);
+
+	/**
+	 * Apply particle-based hydraulic erosion simulation to a region.
+	 * Maps to action="apply_erosion"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center of erosion zone
+	 * @param CenterY              - World Y center of erosion zone
+	 * @param Radius               - Erosion radius in world units
+	 * @param Iterations           - Number of erosion passes (more = stronger effect)
+	 * @param Strength             - Erosion intensity multiplier (0.0-1.0)
+	 * @param Seed                 - Random seed
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool ApplyErosion(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		int32 Iterations = 1000,
+		float Strength = 1.0f,
+		int32 Seed = 0);
+
+	/**
+	 * Create a bowl-shaped crater depression with an optional raised rim.
+	 * Maps to action="create_crater"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Outer crater radius in world units
+	 * @param Depth                - Central depression depth in world units
+	 * @param RimHeight            - Rim raise height in world units (0 = no rim)
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreateCrater(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		float Depth,
+		float RimHeight = 0.0f);
+
+	/**
+	 * Quantize terrain heights into horizontal stepped terraces.
+	 * Maps to action="create_terraces"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Region radius in world units
+	 * @param NumTerraces          - Number of terrace steps
+	 * @param Smoothness           - Edge blend factor (0=sharp, 1=fully smoothed)
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool CreateTerraces(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		int32 NumTerraces = 5,
+		float Smoothness = 0.5f);
+
+	/**
+	 * Smooth and blend terrain heights in a region using a box average.
+	 * Maps to action="blend_terrain_features"
+	 *
+	 * @param LandscapeNameOrLabel - Target landscape
+	 * @param CenterX              - World X center
+	 * @param CenterY              - World Y center
+	 * @param Radius               - Blend radius in world units
+	 * @param BlendWeight          - Blend strength (0=no change, 1=fully smoothed)
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static bool BlendTerrainFeatures(
+		const FString& LandscapeNameOrLabel,
+		float CenterX,
+		float CenterY,
+		float Radius,
+		float BlendWeight = 0.5f);
 
 private:
 	static class ALandscape* FindLandscapeByIdentifier(const FString& NameOrLabel);

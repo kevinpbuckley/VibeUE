@@ -4,11 +4,75 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include "UMaterialService.h"
 #include "UMaterialNodeService.generated.h"
 
 class UMaterial;
 class UMaterialExpression;
+class UMaterialFunction;
 struct FExpressionInput;
+
+/**
+ * Information about a single input or output on a Material Function
+ */
+USTRUCT(BlueprintType)
+struct FMaterialFunctionPinInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Name;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Description;
+
+	/** Numeric input type (EFunctionInputType: 0=Scalar, 1=Vector2, 2=Vector3, 3=Vector4, 4=Texture2D, etc.) */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	int32 InputType = 0;
+
+	/** Human-readable type name (e.g., "Scalar", "Vector3", "Texture2D") */
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString InputTypeName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	int32 SortPriority = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Id;
+};
+
+/**
+ * Information about a Material Function's interface
+ */
+USTRUCT(BlueprintType)
+struct FVibeUEMaterialFunctionInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString FunctionPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString Description;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	TArray<FMaterialFunctionPinInfo> Inputs;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	TArray<FMaterialFunctionPinInfo> Outputs;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	int32 ExpressionCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	bool bExposeToLibrary = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	TArray<FString> LibraryCategories;
+
+	UPROPERTY(BlueprintReadWrite, Category = "MaterialNode")
+	FString ErrorMessage;
+};
 
 /**
  * Material expression type information for discovery
@@ -900,10 +964,195 @@ public:
 		int32 ColumnSpacing = 300,
 		int32 RowSpacing = 180);
 
+	// =================================================================
+	// Material Function Actions
+	// =================================================================
+
+	/**
+	 * Export a Material Function's node graph as JSON.
+	 * Maps to action="export_function_graph"
+	 *
+	 * Works like export_graph but for UMaterialFunction assets.
+	 * Returns all expressions, connections, function inputs/outputs,
+	 * and properties — everything needed to recreate the function.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @return JSON string of the complete function graph, or empty string on failure
+	 *
+	 * Example:
+	 *   json_str = unreal.MaterialNodeService.export_function_graph("/Game/Real_Landscape/Core/Materials/Functions/MF_AutoLayer_01")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString ExportFunctionGraph(const FString& FunctionPath);
+
+	/**
+	 * Get information about a Material Function's interface (inputs/outputs).
+	 * Maps to action="get_function_info"
+	 *
+	 * Inspects a UMaterialFunction asset and returns its description,
+	 * input pins, output pins, expression count, and library exposure settings.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @return Function info struct (empty with error if not found)
+	 *
+	 * Example:
+	 *   info = unreal.MaterialNodeService.get_function_info("/Game/Real_Landscape/Core/Materials/Functions/MF_Slope_Blend_01")
+	 *   for inp in info.inputs:
+	 *       print(f"Input: {inp.name} ({inp.input_type_name})")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FVibeUEMaterialFunctionInfo GetFunctionInfo(const FString& FunctionPath);
+
+	/**
+	 * Create a new Material Function asset.
+	 * Maps to action="create_material_function"
+	 *
+	 * Creates an empty UMaterialFunction that can be populated with
+	 * expressions, inputs, and outputs. Use add_function_input/output
+	 * to define the function's interface.
+	 *
+	 * @param FunctionName Name for the new function asset
+	 * @param DirectoryPath Content directory to create it in
+	 * @param Description Optional description text
+	 * @param bExposeToLibrary If true, function appears in the material function library
+	 * @param LibraryCategories Optional category strings for library organization
+	 * @return Create result with asset path
+	 *
+	 * Example:
+	 *   result = unreal.MaterialNodeService.create_material_function("MF_MyLayer", "/Game/Materials/Functions", "Custom layer blending function", True)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FMaterialCreateResult CreateMaterialFunction(
+		const FString& FunctionName,
+		const FString& DirectoryPath,
+		const FString& Description = TEXT(""),
+		bool bExposeToLibrary = false);
+
+	/**
+	 * Add an input to a Material Function.
+	 * Maps to action="add_function_input"
+	 *
+	 * Creates a UMaterialExpressionFunctionInput inside the function.
+	 * The input will appear as a pin when the function is used in a material.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param InputName Display name for the input
+	 * @param InputType Type of the input: "Scalar", "Vector2", "Vector3", "Vector4",
+	 *        "Texture2D", "TextureCube", "VolumeTexture", "StaticBool", "MaterialAttributes"
+	 * @param SortPriority Sort order (lower = higher in list)
+	 * @param Description Optional tooltip description
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Expression ID of the created FunctionInput node
+	 *
+	 * Example:
+	 *   inp_id = unreal.MaterialNodeService.add_function_input("/Game/MF_MyLayer", "BaseColor", "Vector3", 0, "Albedo texture input")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString AddFunctionInput(
+		const FString& FunctionPath,
+		const FString& InputName,
+		const FString& InputType = TEXT("Vector3"),
+		int32 SortPriority = 0,
+		const FString& Description = TEXT(""),
+		int32 PosX = -600,
+		int32 PosY = 0);
+
+	/**
+	 * Add an output to a Material Function.
+	 * Maps to action="add_function_output"
+	 *
+	 * Creates a UMaterialExpressionFunctionOutput inside the function.
+	 * The output will appear as a pin when the function is used in a material.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param OutputName Display name for the output
+	 * @param SortPriority Sort order (lower = higher in list)
+	 * @param Description Optional tooltip description
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Expression ID of the created FunctionOutput node
+	 *
+	 * Example:
+	 *   out_id = unreal.MaterialNodeService.add_function_output("/Game/MF_MyLayer", "BlendedColor", 0, "Final blended output")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FString AddFunctionOutput(
+		const FString& FunctionPath,
+		const FString& OutputName,
+		int32 SortPriority = 0,
+		const FString& Description = TEXT(""),
+		int32 PosX = 200,
+		int32 PosY = 0);
+
+	/**
+	 * Create a material expression inside a Material Function's graph.
+	 * Maps to action="create_function_expression"
+	 *
+	 * Like CreateExpression but operates on a UMaterialFunction instead of UMaterial.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param ExpressionClass Class name (e.g., "Add", "Multiply", "TextureSample")
+	 * @param PosX X position in graph
+	 * @param PosY Y position in graph
+	 * @return Created expression info
+	 *
+	 * Example:
+	 *   node = unreal.MaterialNodeService.create_function_expression("/Game/MF_MyLayer", "Multiply", -200, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static FMaterialExpressionInfo CreateFunctionExpression(
+		const FString& FunctionPath,
+		const FString& ExpressionClass,
+		int32 PosX = 0,
+		int32 PosY = 0);
+
+	/**
+	 * Connect two expressions inside a Material Function's graph.
+	 * Maps to action="connect_function_expressions"
+	 *
+	 * Like ConnectExpressions but operates on a UMaterialFunction.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param SourceExpressionId Source expression ID
+	 * @param SourceOutput Output name (empty for first output)
+	 * @param TargetExpressionId Target expression ID
+	 * @param TargetInput Input name on target
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static bool ConnectFunctionExpressions(
+		const FString& FunctionPath,
+		const FString& SourceExpressionId,
+		const FString& SourceOutput,
+		const FString& TargetExpressionId,
+		const FString& TargetInput);
+
+	/**
+	 * Set a property on an expression inside a Material Function's graph.
+	 * Maps to action="set_function_expression_property"
+	 *
+	 * Like SetExpressionProperty but operates on a UMaterialFunction.
+	 *
+	 * @param FunctionPath Full asset path to the UMaterialFunction
+	 * @param ExpressionId Expression ID
+	 * @param PropertyName Property name
+	 * @param PropertyValue Value as string
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "MaterialNode")
+	static bool SetFunctionExpressionProperty(
+		const FString& FunctionPath,
+		const FString& ExpressionId,
+		const FString& PropertyName,
+		const FString& PropertyValue);
+
 private:
 	// Helper methods
 	static UMaterial* LoadMaterialAsset(const FString& MaterialPath);
+	static UMaterialFunction* LoadMaterialFunctionAsset(const FString& FunctionPath);
 	static UMaterialExpression* FindExpressionById(UMaterial* Material, const FString& ExpressionId);
+	static UMaterialExpression* FindExpressionInFunctionById(UMaterialFunction* Function, const FString& ExpressionId);
 	static FString GetExpressionId(UMaterialExpression* Expression);
 	static FExpressionInput* FindInputByName(UMaterialExpression* Expression, const FString& InputName);
 	static int32 FindOutputIndexByName(UMaterialExpression* Expression, const FString& OutputName);
@@ -913,4 +1162,6 @@ private:
 	static FMaterialExpressionInfo BuildExpressionInfo(UMaterialExpression* Expression);
 	static EMaterialProperty StringToMaterialProperty(const FString& PropertyName);
 	static void RefreshMaterialGraph(UMaterial* Material);
+	static FString FunctionInputTypeToString(int32 InputType);
+	static int32 StringToFunctionInputType(const FString& TypeName);
 };
