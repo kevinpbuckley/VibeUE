@@ -437,3 +437,21 @@ for oc in graph['output_connections']:
 # 9. Compile
 unreal.MaterialService.compile_material(new_path)
 ```
+
+---
+
+## Material Functions
+
+For creating and editing **Material Functions** (reusable node subgraphs):
+
+- Use `MaterialNodeService.get_function_info(function_path)` to inspect a function's inputs/outputs
+- Use `MaterialNodeService.export_function_graph(function_path)` to export a function's complete node graph as JSON
+- Use `MaterialNodeService.create_material_function(name, dir)` to create new functions
+- Use `MaterialNodeService.add_function_input/output(...)` to add I/O pins
+- Use `MaterialNodeService.create_function_call(mat_path, func_path)` to reference functions in material graphs
+- Load the `landscape-auto-material` skill for landscape-specific material function patterns
+
+## Related Skills
+
+- **landscape-materials**: Landscape materials with `LandscapeLayerBlend` nodes
+- **landscape-auto-material**: Production landscape materials using material functions, RVT, and instances

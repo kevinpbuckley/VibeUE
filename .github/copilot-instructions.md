@@ -30,7 +30,7 @@
 ### Full VibeUE Skills List
 
 - `animation-blueprint`
-- `animsequence`
+- `animation-editing`
 - `animation-montage`
 - `animsequence`
 - `asset-management`
@@ -40,6 +40,9 @@
 - `engine-settings`
 - `enhanced-input`
 - `enum-struct`
+- `foliage`
+- `landscape`
+- `landscape-materials`
 - `level-actors`
 - `materials`
 - `niagara-emitters`

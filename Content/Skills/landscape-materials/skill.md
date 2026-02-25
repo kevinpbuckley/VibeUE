@@ -18,9 +18,24 @@ keywords:
   - weight blend
   - layer info
   - terrain texture
+  - height blend
+  - slope blend
+  - auto paint
+  - height mask
+  - slope mask
 ---
 
 # Landscape Material System Skill
+
+## When to Use This Skill vs. landscape-auto-material
+
+- **This skill** (`landscape-materials`): Simple materials with 2-5 layers using `LandscapeLayerBlend`. Good for prototyping.
+- **`landscape-auto-material`**: Production materials using material functions, RVT, and material instances. Good for shipping quality. Use when you need the Real_Landscape paradigm with auto-layering, altitude/slope blending via material functions, and biome configuration through material instances.
+
+If you need material functions, Runtime Virtual Textures, or the master-material + instance pattern:
+```python
+manage_skills(action="load", skill_name="landscape-auto-material")
+```
 
 ## Critical Rules
 

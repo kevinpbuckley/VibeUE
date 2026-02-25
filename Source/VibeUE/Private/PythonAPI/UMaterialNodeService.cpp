@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UMaterialNodeService.h"
+#include "PythonAPI/UMaterialService.h"
 #include "Materials/Material.h"
 #include "Materials/MaterialExpression.h"
 #include "Materials/MaterialExpressionParameter.h"
@@ -21,12 +22,17 @@
 #include "Materials/MaterialExpressionCollectionParameter.h"
 #include "Materials/MaterialExpressionLandscapeLayerBlend.h"
 #include "Materials/MaterialExpressionLandscapeGrassOutput.h"
+#include "Materials/MaterialExpressionFunctionInput.h"
+#include "Materials/MaterialExpressionFunctionOutput.h"
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "LandscapeGrassType.h"
 #include "MaterialGraph/MaterialGraph.h"
 #include "MaterialEditingLibrary.h"
 #include "EditorAssetLibrary.h"
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
+#include "Factories/MaterialFunctionFactoryNew.h"
 #include "Editor.h"
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "ScopedTransaction.h"
@@ -2966,4 +2972,633 @@ TArray<FMaterialOutputConnectionInfo> UMaterialNodeService::GetOutputConnections
 	CheckProperty(MP_ShadingModel, TEXT("ShadingModel"));
 	
 	return Results;
+}
+
+// =================================================================
+// Material Function Helpers
+// =================================================================
+
+UMaterialFunction* UMaterialNodeService::LoadMaterialFunctionAsset(const FString& FunctionPath)
+{
+	UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(FunctionPath);
+	if (!LoadedObj)
+	{
+		// Try direct load
+		LoadedObj = LoadObject<UMaterialFunction>(nullptr, *FunctionPath);
+	}
+	if (!LoadedObj)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService: Failed to load material function: %s"), *FunctionPath);
+		return nullptr;
+	}
+
+	UMaterialFunction* Function = Cast<UMaterialFunction>(LoadedObj);
+	if (!Function)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService: Object is not a material function: %s (is %s)"),
+			*FunctionPath, *LoadedObj->GetClass()->GetName());
+		return nullptr;
+	}
+
+	return Function;
+}
+
+UMaterialExpression* UMaterialNodeService::FindExpressionInFunctionById(UMaterialFunction* Function, const FString& ExpressionId)
+{
+	if (!Function) return nullptr;
+
+	TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions = Function->GetExpressions();
+	for (UMaterialExpression* Expr : Expressions)
+	{
+		if (!Expr) continue;
+		if (GetExpressionId(Expr) == ExpressionId)
+		{
+			return Expr;
+		}
+	}
+
+	// Try matching by index
+	int32 Index = FCString::Atoi(*ExpressionId);
+	if (Index >= 0 && Index < Expressions.Num())
+	{
+		return Expressions[Index];
+	}
+
+	return nullptr;
+}
+
+FString UMaterialNodeService::FunctionInputTypeToString(int32 InputType)
+{
+	switch (InputType)
+	{
+	case 0: return TEXT("Scalar");
+	case 1: return TEXT("Vector2");
+	case 2: return TEXT("Vector3");
+	case 3: return TEXT("Vector4");
+	case 4: return TEXT("Texture2D");
+	case 5: return TEXT("TextureCube");
+	case 6: return TEXT("Texture2DArray");
+	case 7: return TEXT("VolumeTexture");
+	case 8: return TEXT("StaticBool");
+	case 9: return TEXT("MaterialAttributes");
+	case 10: return TEXT("TextureExternal");
+	default: return FString::Printf(TEXT("Unknown_%d"), InputType);
+	}
+}
+
+int32 UMaterialNodeService::StringToFunctionInputType(const FString& TypeName)
+{
+	FString Upper = TypeName.ToUpper();
+	if (Upper == TEXT("SCALAR") || Upper == TEXT("FLOAT") || Upper == TEXT("FLOAT1")) return 0;
+	if (Upper == TEXT("VECTOR2") || Upper == TEXT("FLOAT2")) return 1;
+	if (Upper == TEXT("VECTOR3") || Upper == TEXT("FLOAT3")) return 2;
+	if (Upper == TEXT("VECTOR4") || Upper == TEXT("FLOAT4")) return 3;
+	if (Upper == TEXT("TEXTURE2D") || Upper == TEXT("TEXTURE")) return 4;
+	if (Upper == TEXT("TEXTURECUBE") || Upper == TEXT("CUBEMAP")) return 5;
+	if (Upper == TEXT("TEXTURE2DARRAY")) return 6;
+	if (Upper == TEXT("VOLUMETEXTURE")) return 7;
+	if (Upper == TEXT("STATICBOOL") || Upper == TEXT("BOOL")) return 8;
+	if (Upper == TEXT("MATERIALATTRIBUTES")) return 9;
+	if (Upper == TEXT("TEXTUREEXTERNAL") || Upper == TEXT("EXTERNAL")) return 10;
+
+	UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService: Unknown function input type: %s, defaulting to Vector3"), *TypeName);
+	return 2; // Default to Vector3
+}
+
+// =================================================================
+// Material Function Actions
+// =================================================================
+
+FString UMaterialNodeService::ExportFunctionGraph(const FString& FunctionPath)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return FString();
+	}
+
+	TSharedRef<FJsonObject> Root = MakeShared<FJsonObject>();
+
+	// Function metadata
+	TSharedRef<FJsonObject> FuncSettings = MakeShared<FJsonObject>();
+	FuncSettings->SetStringField(TEXT("path"), Function->GetPathName());
+	FuncSettings->SetStringField(TEXT("description"), Function->Description);
+	FuncSettings->SetBoolField(TEXT("expose_to_library"), Function->bExposeToLibrary);
+
+	TArray<FString> Categories;
+	for (const FText& Cat : Function->LibraryCategoriesText)
+	{
+		Categories.Add(Cat.ToString());
+	}
+	if (Categories.Num() > 0)
+	{
+		FuncSettings->SetStringField(TEXT("library_categories"), FString::Join(Categories, TEXT(",")));
+	}
+	Root->SetObjectField(TEXT("function"), FuncSettings);
+
+	// All expressions in the function
+	TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions = Function->GetExpressions();
+
+	TArray<TSharedPtr<FJsonValue>> ExpressionsArray;
+	for (UMaterialExpression* Expr : Expressions)
+	{
+		if (!Expr) continue;
+
+		TSharedRef<FJsonObject> ExprObj = MakeShared<FJsonObject>();
+		ExprObj->SetStringField(TEXT("id"), GetExpressionId(Expr));
+		ExprObj->SetStringField(TEXT("class"), Expr->GetClass()->GetName().Replace(TEXT("MaterialExpression"), TEXT("")));
+		ExprObj->SetStringField(TEXT("class_full"), Expr->GetClass()->GetName());
+		ExprObj->SetNumberField(TEXT("pos_x"), Expr->MaterialExpressionEditorX);
+		ExprObj->SetNumberField(TEXT("pos_y"), Expr->MaterialExpressionEditorY);
+
+		// Properties
+		static const TSet<FString> ExcludedPropertyNames = {
+			TEXT("ParameterName"),
+			TEXT("Group"),
+			TEXT("ExpressionGUID"),
+			TEXT("MaterialExpressionEditorX"),
+			TEXT("MaterialExpressionEditorY"),
+		};
+		TSharedRef<FJsonObject> PropsObj = MakeShared<FJsonObject>();
+		for (TFieldIterator<FProperty> PropIt(Expr->GetClass()); PropIt; ++PropIt)
+		{
+			FProperty* Prop = *PropIt;
+			if (Prop->HasAnyPropertyFlags(CPF_Transient | CPF_DuplicateTransient)) continue;
+			if (!Prop->HasAnyPropertyFlags(CPF_Edit)) continue;
+			if (ExcludedPropertyNames.Contains(Prop->GetName())) continue;
+
+			FString Value;
+			Prop->ExportTextItem_Direct(Value, Prop->ContainerPtrToValuePtr<void>(Expr), nullptr, Expr, PPF_None);
+			if (!Value.IsEmpty())
+			{
+				PropsObj->SetStringField(Prop->GetName(), Value);
+			}
+		}
+		ExprObj->SetObjectField(TEXT("properties"), PropsObj);
+
+		// Function Input info
+		if (UMaterialExpressionFunctionInput* FuncInput = Cast<UMaterialExpressionFunctionInput>(Expr))
+		{
+			ExprObj->SetBoolField(TEXT("is_function_input"), true);
+			ExprObj->SetStringField(TEXT("input_name"), FuncInput->InputName.ToString());
+			ExprObj->SetStringField(TEXT("description"), FuncInput->Description);
+			ExprObj->SetNumberField(TEXT("input_type"), (int32)FuncInput->InputType);
+			ExprObj->SetStringField(TEXT("input_type_name"), FunctionInputTypeToString((int32)FuncInput->InputType));
+			ExprObj->SetNumberField(TEXT("sort_priority"), FuncInput->SortPriority);
+			ExprObj->SetBoolField(TEXT("use_preview_value_as_default"), FuncInput->bUsePreviewValueAsDefault);
+		}
+
+		// Function Output info
+		if (UMaterialExpressionFunctionOutput* FuncOutput = Cast<UMaterialExpressionFunctionOutput>(Expr))
+		{
+			ExprObj->SetBoolField(TEXT("is_function_output"), true);
+			ExprObj->SetStringField(TEXT("output_name"), FuncOutput->OutputName.ToString());
+			ExprObj->SetStringField(TEXT("description"), FuncOutput->Description);
+			ExprObj->SetNumberField(TEXT("sort_priority"), FuncOutput->SortPriority);
+		}
+
+		// Function call info
+		if (UMaterialExpressionMaterialFunctionCall* FuncCall = Cast<UMaterialExpressionMaterialFunctionCall>(Expr))
+		{
+			if (FuncCall->MaterialFunction)
+			{
+				ExprObj->SetStringField(TEXT("function_path"), FuncCall->MaterialFunction->GetPathName());
+			}
+		}
+
+		// Parameter info
+		if (UMaterialExpressionParameter* ParamExpr = Cast<UMaterialExpressionParameter>(Expr))
+		{
+			ExprObj->SetBoolField(TEXT("is_parameter"), true);
+			ExprObj->SetStringField(TEXT("parameter_name"), ParamExpr->ParameterName.ToString());
+			ExprObj->SetStringField(TEXT("group"), ParamExpr->Group.ToString());
+		}
+		else if (UMaterialExpressionTextureSampleParameter* TexParamExpr = Cast<UMaterialExpressionTextureSampleParameter>(Expr))
+		{
+			ExprObj->SetBoolField(TEXT("is_parameter"), true);
+			ExprObj->SetStringField(TEXT("parameter_name"), TexParamExpr->ParameterName.ToString());
+			ExprObj->SetStringField(TEXT("group"), TexParamExpr->Group.ToString());
+		}
+
+		// Inputs
+		TArray<TSharedPtr<FJsonValue>> InputsArr;
+		for (int32 i = 0; Expr->GetInput(i) != nullptr; i++)
+		{
+			FName InputName = Expr->GetInputName(i);
+			FString InputStr = InputName.IsNone() ? FString::Printf(TEXT("Input_%d"), i) : InputName.ToString();
+			InputsArr.Add(MakeShared<FJsonValueString>(InputStr));
+		}
+		ExprObj->SetArrayField(TEXT("inputs"), InputsArr);
+
+		// Outputs
+		TArray<TSharedPtr<FJsonValue>> OutputsArr;
+		TArray<FExpressionOutput>& Outputs = Expr->GetOutputs();
+		for (int32 i = 0; i < Outputs.Num(); i++)
+		{
+			FString OutputStr = Outputs[i].OutputName.IsNone() ? FString::Printf(TEXT("Output_%d"), i) : Outputs[i].OutputName.ToString();
+			OutputsArr.Add(MakeShared<FJsonValueString>(OutputStr));
+		}
+		ExprObj->SetArrayField(TEXT("outputs"), OutputsArr);
+
+		ExpressionsArray.Add(MakeShared<FJsonValueObject>(ExprObj));
+	}
+	Root->SetArrayField(TEXT("expressions"), ExpressionsArray);
+
+	// Connections
+	TArray<TSharedPtr<FJsonValue>> ConnectionsArray;
+	for (UMaterialExpression* Expr : Expressions)
+	{
+		if (!Expr) continue;
+
+		for (int32 i = 0; ; i++)
+		{
+			FExpressionInput* Input = Expr->GetInput(i);
+			if (!Input) break;
+			if (Input->Expression)
+			{
+				TSharedRef<FJsonObject> ConnObj = MakeShared<FJsonObject>();
+				ConnObj->SetStringField(TEXT("source_id"), GetExpressionId(Input->Expression));
+				ConnObj->SetNumberField(TEXT("source_output_index"), Input->OutputIndex);
+
+				TArray<FExpressionOutput>& SourceOutputs = Input->Expression->GetOutputs();
+				FString SourceOutputName;
+				if (Input->OutputIndex >= 0 && Input->OutputIndex < SourceOutputs.Num())
+				{
+					SourceOutputName = SourceOutputs[Input->OutputIndex].OutputName.IsNone()
+						? TEXT("")
+						: SourceOutputs[Input->OutputIndex].OutputName.ToString();
+				}
+				ConnObj->SetStringField(TEXT("source_output_name"), SourceOutputName);
+
+				ConnObj->SetStringField(TEXT("target_id"), GetExpressionId(Expr));
+				FName InputName = Expr->GetInputName(i);
+				ConnObj->SetStringField(TEXT("target_input"), InputName.IsNone() ? FString::Printf(TEXT("Input_%d"), i) : InputName.ToString());
+
+				ConnectionsArray.Add(MakeShared<FJsonValueObject>(ConnObj));
+			}
+		}
+	}
+	Root->SetArrayField(TEXT("connections"), ConnectionsArray);
+
+	// Serialize to string
+	FString OutputString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
+	FJsonSerializer::Serialize(Root, Writer);
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::ExportFunctionGraph: Exported %d expressions, %d connections from %s"),
+		Expressions.Num(), ConnectionsArray.Num(), *FunctionPath);
+
+	return OutputString;
+}
+
+FVibeUEMaterialFunctionInfo UMaterialNodeService::GetFunctionInfo(const FString& FunctionPath)
+{
+	FVibeUEMaterialFunctionInfo Info;
+
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		Info.ErrorMessage = FString::Printf(TEXT("Failed to load material function: %s"), *FunctionPath);
+		return Info;
+	}
+
+	Info.FunctionPath = Function->GetPathName();
+	Info.Description = Function->Description;
+	Info.bExposeToLibrary = Function->bExposeToLibrary;
+
+	for (const FText& Cat : Function->LibraryCategoriesText)
+	{
+		Info.LibraryCategories.Add(Cat.ToString());
+	}
+
+	TConstArrayView<TObjectPtr<UMaterialExpression>> Expressions = Function->GetExpressions();
+	Info.ExpressionCount = Expressions.Num();
+
+	// Collect inputs and outputs
+	for (UMaterialExpression* Expr : Expressions)
+	{
+		if (!Expr) continue;
+
+		if (UMaterialExpressionFunctionInput* FuncInput = Cast<UMaterialExpressionFunctionInput>(Expr))
+		{
+			FMaterialFunctionPinInfo PinInfo;
+			PinInfo.Name = FuncInput->InputName.ToString();
+			PinInfo.Description = FuncInput->Description;
+			PinInfo.InputType = (int32)FuncInput->InputType;
+			PinInfo.InputTypeName = FunctionInputTypeToString((int32)FuncInput->InputType);
+			PinInfo.SortPriority = FuncInput->SortPriority;
+			PinInfo.Id = GetExpressionId(Expr);
+			Info.Inputs.Add(PinInfo);
+		}
+		else if (UMaterialExpressionFunctionOutput* FuncOutput = Cast<UMaterialExpressionFunctionOutput>(Expr))
+		{
+			FMaterialFunctionPinInfo PinInfo;
+			PinInfo.Name = FuncOutput->OutputName.ToString();
+			PinInfo.Description = FuncOutput->Description;
+			PinInfo.SortPriority = FuncOutput->SortPriority;
+			PinInfo.Id = GetExpressionId(Expr);
+			Info.Outputs.Add(PinInfo);
+		}
+	}
+
+	// Sort by priority
+	Info.Inputs.Sort([](const FMaterialFunctionPinInfo& A, const FMaterialFunctionPinInfo& B)
+	{
+		return A.SortPriority < B.SortPriority;
+	});
+	Info.Outputs.Sort([](const FMaterialFunctionPinInfo& A, const FMaterialFunctionPinInfo& B)
+	{
+		return A.SortPriority < B.SortPriority;
+	});
+
+	return Info;
+}
+
+FMaterialCreateResult UMaterialNodeService::CreateMaterialFunction(
+	const FString& FunctionName,
+	const FString& DirectoryPath,
+	const FString& Description,
+	bool bExposeToLibrary)
+{
+	FMaterialCreateResult Result;
+
+	FString PackagePath = DirectoryPath;
+	if (!PackagePath.EndsWith(TEXT("/")))
+	{
+		PackagePath += TEXT("/");
+	}
+
+	// Check if asset already exists
+	FString FullAssetPath = PackagePath + FunctionName;
+	if (UEditorAssetLibrary::DoesAssetExist(FullAssetPath))
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("Material function '%s' already exists at '%s'. Delete it first or use a different name."),
+			*FunctionName, *FullAssetPath);
+		UE_LOG(LogTemp, Error, TEXT("UMaterialNodeService::CreateMaterialFunction: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+	UMaterialFunctionFactoryNew* Factory = NewObject<UMaterialFunctionFactoryNew>();
+
+	UObject* NewAsset = AssetTools.CreateAsset(
+		FunctionName, PackagePath, UMaterialFunction::StaticClass(), Factory);
+
+	if (!NewAsset)
+	{
+		Result.ErrorMessage = TEXT("Failed to create material function asset");
+		return Result;
+	}
+
+	UMaterialFunction* Function = Cast<UMaterialFunction>(NewAsset);
+	if (Function)
+	{
+		Function->Modify();
+		Function->Description = Description;
+		Function->bExposeToLibrary = bExposeToLibrary;
+	}
+
+	Result.bSuccess = true;
+	Result.AssetPath = NewAsset->GetPathName();
+
+	// Save immediately
+	UEditorAssetLibrary::SaveAsset(Result.AssetPath, false);
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::CreateMaterialFunction: Created '%s' at '%s'"),
+		*FunctionName, *Result.AssetPath);
+
+	return Result;
+}
+
+FString UMaterialNodeService::AddFunctionInput(
+	const FString& FunctionPath,
+	const FString& InputName,
+	const FString& InputType,
+	int32 SortPriority,
+	const FString& Description,
+	int32 PosX,
+	int32 PosY)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return FString();
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Add Function Input", "Add Function Input"));
+	Function->Modify();
+
+	// Create a FunctionInput expression inside the function
+	UMaterialExpressionFunctionInput* NewInput = NewObject<UMaterialExpressionFunctionInput>(Function);
+	if (!NewInput)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::AddFunctionInput: Failed to create input expression"));
+		return FString();
+	}
+
+	NewInput->InputName = *InputName;
+	NewInput->InputType = (EFunctionInputType)StringToFunctionInputType(InputType);
+	NewInput->SortPriority = SortPriority;
+	NewInput->Description = Description;
+	NewInput->bUsePreviewValueAsDefault = true;
+
+	// Position inputs on the left side, spaced by sort priority
+	NewInput->MaterialExpressionEditorX = PosX;
+	NewInput->MaterialExpressionEditorY = PosY;
+
+	// Add to function's expression collection
+	Function->GetExpressionCollection().AddExpression(NewInput);
+
+	// Mark function as changed
+	Function->PostEditChange();
+
+	// Save
+	UEditorAssetLibrary::SaveAsset(FunctionPath, false);
+
+	FString Id = GetExpressionId(NewInput);
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::AddFunctionInput: Added input '%s' (type=%s) to '%s', id=%s"),
+		*InputName, *InputType, *FunctionPath, *Id);
+
+	return Id;
+}
+
+FString UMaterialNodeService::AddFunctionOutput(
+	const FString& FunctionPath,
+	const FString& OutputName,
+	int32 SortPriority,
+	const FString& Description,
+	int32 PosX,
+	int32 PosY)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return FString();
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Add Function Output", "Add Function Output"));
+	Function->Modify();
+
+	UMaterialExpressionFunctionOutput* NewOutput = NewObject<UMaterialExpressionFunctionOutput>(Function);
+	if (!NewOutput)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::AddFunctionOutput: Failed to create output expression"));
+		return FString();
+	}
+
+	NewOutput->OutputName = *OutputName;
+	NewOutput->SortPriority = SortPriority;
+	NewOutput->Description = Description;
+
+	// Position outputs on the right side
+	NewOutput->MaterialExpressionEditorX = PosX;
+	NewOutput->MaterialExpressionEditorY = PosY;
+
+	Function->GetExpressionCollection().AddExpression(NewOutput);
+
+	Function->PostEditChange();
+
+	UEditorAssetLibrary::SaveAsset(FunctionPath, false);
+
+	FString Id = GetExpressionId(NewOutput);
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::AddFunctionOutput: Added output '%s' to '%s', id=%s"),
+		*OutputName, *FunctionPath, *Id);
+
+	return Id;
+}
+
+FMaterialExpressionInfo UMaterialNodeService::CreateFunctionExpression(
+	const FString& FunctionPath,
+	const FString& ExpressionClass,
+	int32 PosX,
+	int32 PosY)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return FMaterialExpressionInfo();
+	}
+
+	UClass* ExpClass = ResolveExpressionClass(ExpressionClass);
+	if (!ExpClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::CreateFunctionExpression: Unknown class: %s"), *ExpressionClass);
+		return FMaterialExpressionInfo();
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Create Function Expression", "Create Function Expression"));
+	Function->Modify();
+
+	UMaterialExpression* NewExpression = UMaterialEditingLibrary::CreateMaterialExpressionInFunction(
+		Function, ExpClass, PosX, PosY);
+
+	if (!NewExpression)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::CreateFunctionExpression: Failed to create expression of class %s"),
+			*ExpressionClass);
+		return FMaterialExpressionInfo();
+	}
+
+	Function->PostEditChange();
+
+	return BuildExpressionInfo(NewExpression);
+}
+
+bool UMaterialNodeService::ConnectFunctionExpressions(
+	const FString& FunctionPath,
+	const FString& SourceExpressionId,
+	const FString& SourceOutput,
+	const FString& TargetExpressionId,
+	const FString& TargetInput)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return false;
+	}
+
+	UMaterialExpression* SourceExpr = FindExpressionInFunctionById(Function, SourceExpressionId);
+	UMaterialExpression* TargetExpr = FindExpressionInFunctionById(Function, TargetExpressionId);
+
+	if (!SourceExpr || !TargetExpr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectFunctionExpressions: Source or target not found (src=%s, tgt=%s)"),
+			*SourceExpressionId, *TargetExpressionId);
+		return false;
+	}
+
+	// Find output index on source
+	int32 OutputIndex = FindOutputIndexByName(SourceExpr, SourceOutput);
+	if (OutputIndex < 0) OutputIndex = 0;
+
+	// Find input on target
+	FExpressionInput* Input = FindInputByName(TargetExpr, TargetInput);
+	if (!Input)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectFunctionExpressions: Input '%s' not found on target"),
+			*TargetInput);
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Connect Function Expressions", "Connect Function Expressions"));
+	Function->Modify();
+
+	Input->Expression = SourceExpr;
+	Input->OutputIndex = OutputIndex;
+
+	Function->PostEditChange();
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::ConnectFunctionExpressions: Connected %s[%s] -> %s[%s]"),
+		*SourceExpressionId, *SourceOutput, *TargetExpressionId, *TargetInput);
+
+	return true;
+}
+
+bool UMaterialNodeService::SetFunctionExpressionProperty(
+	const FString& FunctionPath,
+	const FString& ExpressionId,
+	const FString& PropertyName,
+	const FString& PropertyValue)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return false;
+	}
+
+	UMaterialExpression* Expression = FindExpressionInFunctionById(Function, ExpressionId);
+	if (!Expression)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::SetFunctionExpressionProperty: Expression not found: %s"), *ExpressionId);
+		return false;
+	}
+
+	// Find the property
+	FProperty* Prop = Expression->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!Prop)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::SetFunctionExpressionProperty: Property '%s' not found on %s"),
+			*PropertyName, *Expression->GetClass()->GetName());
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Set Function Expression Property", "Set Function Expression Property"));
+	Expression->Modify();
+
+	void* ValuePtr = Prop->ContainerPtrToValuePtr<void>(Expression);
+	if (!Prop->ImportText_Direct(*PropertyValue, ValuePtr, Expression, PPF_None))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::SetFunctionExpressionProperty: Failed to set '%s' = '%s'"),
+			*PropertyName, *PropertyValue);
+		return false;
+	}
+
+	Function->PostEditChange();
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::SetFunctionExpressionProperty: Set %s.%s = %s"),
+		*ExpressionId, *PropertyName, *PropertyValue);
+
+	return true;
 }

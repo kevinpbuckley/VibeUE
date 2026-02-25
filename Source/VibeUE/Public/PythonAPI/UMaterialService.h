@@ -613,6 +613,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Save Material Instance"))
 	static bool SaveInstance(const FString& InstancePath);
 
+	/**
+	 * Set multiple parameters on a material instance in one call.
+	 * Maps to action="set_instance_parameters_bulk"
+	 *
+	 * Supports Scalar, Vector, Texture, and StaticSwitch parameter types.
+	 * Much more efficient than calling individual set methods for instances
+	 * with many parameters (e.g., Real_Landscape master materials with 50+ params).
+	 *
+	 * @param InstancePath - Full path to the material instance
+	 * @param Names - Array of parameter names
+	 * @param Types - Array of parameter types ("Scalar", "Vector", "Texture", "StaticSwitch")
+	 * @param Values - Array of values as strings. For Scalar: "0.5". For Vector: "(R=1,G=0,B=0,A=1)".
+	 *        For Texture: "/Game/Textures/T_Tex". For StaticSwitch: "true"/"false".
+	 * @return Number of parameters successfully set
+	 *
+	 * Example:
+	 *   count = unreal.MaterialService.set_instance_parameters_bulk(
+	 *       "/Game/Materials/MI_Landscape",
+	 *       ["Tiling", "BaseColor", "DiffuseTexture", "UseSnow"],
+	 *       ["Scalar", "Vector", "Texture", "StaticSwitch"],
+	 *       ["0.01", "(R=0.2,G=0.5,B=0.1,A=1)", "/Game/T_Grass_BC", "true"]
+	 *   )
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Parameters Bulk"))
+	static int32 SetInstanceParametersBulk(
+		const FString& InstancePath,
+		const TArray<FString>& Names,
+		const TArray<FString>& Types,
+		const TArray<FString>& Values);
+
 	// =================================================================
 	// Existence Checks
 	// =================================================================

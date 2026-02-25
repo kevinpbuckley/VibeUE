@@ -320,7 +320,9 @@ The built-in chat interface runs directly in Unreal Editor:
 
 ## 🧠 Using VibeUE with External AI Agents
 
-When using VibeUE's MCP server with external AI agents (Claude, GitHub Copilot, Cursor, etc.), **you must include the VibeUE instructions** in your AI system prompt or context.
+When using VibeUE's MCP server with external AI agents (Claude Code, GitHub Copilot, Cursor, Antigravity, etc.), **you must include the VibeUE instructions** in your AI system prompt or context.
+
+> **Ready-made templates**: See [`Content/samples/README.md`](Content/samples/README.md) for copy-paste setup instructions for each supported AI tool.
 
 ### Why This Matters
 
@@ -333,35 +335,40 @@ The `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` file contains:
 
 **Without these instructions, AI agents will make incorrect assumptions about the API and encounter failures.**
 
-### Claude (Claude Desktop, Cursor, Windsurf)
+### Claude Code ✅ Import Supported (Recommended)
 
-1. Copy `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` content
-2. Add it to your Claude context with instructions like:
+Create `CLAUDE.md` at your project root:
 
 ```markdown
-# VibeUE API System Prompt
+# My Unreal Project
 
-Include the full contents of vibeue.instructions.md here.
+@Plugins/VibeUE/Content/samples/instructions.sample.md
 ```
 
-Or use Claude's **context window feature** to load the file directly.
+The `@` directive inlines the file automatically — no copying needed.
 
 ### GitHub Copilot
 
-1. Include VibeUE instructions in your workspace settings
-2. Create `.github/copilot-instructions.md` and reference the VibeUE instructions
-3. Add to your project's README or documentation
+Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
 
-### VS Code + Custom LLM
+```
+.github/copilot-instructions.md
+```
 
-If using VS Code with a custom LLM provider:
+### Cursor
 
-1. Add `Plugins/VibeUE/Content/instructions/vibeue.instructions.md` to your `.vscode/settings.json`:
+Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
 
-```json
-{
-  "llm.systemPrompt": "Include contents of Plugins/VibeUE/Content/instructions/vibeue.instructions.md"
-}
+```
+.cursor/rules/vibeue.mdc
+```
+
+### Google Antigravity
+
+Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
+
+```
+.agent/rules/vibeue.md
 ```
 
 ### Quick Reference: Essential Rules
@@ -1398,7 +1405,9 @@ Plugins/VibeUE/
 ├── Config/
 │   ├── Instructions/          # Custom instruction files
 │   └── vibeue.mcp.json        # External MCP servers
-├── Content/instructions/      # AI system prompts
+├── Content/
+│   ├── instructions/          # AI system prompts
+│   └── samples/               # Ready-made AI assistant instruction templates
 └── VibeUE.uplugin
 ```
 

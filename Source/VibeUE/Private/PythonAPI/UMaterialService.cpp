@@ -18,6 +18,7 @@
 #include "UObject/SavePackage.h"
 #include "Misc/PackageName.h"
 #include "Engine/Texture.h"
+#include "StaticParameterSet.h"
 
 // =================================================================
 // Helper Methods
@@ -1172,6 +1173,146 @@ bool UMaterialService::ClearInstanceParameterOverride(
 bool UMaterialService::SaveInstance(const FString& InstancePath)
 {
 	return UEditorAssetLibrary::SaveAsset(InstancePath, false);
+}
+
+// =================================================================
+// Bulk Parameter Setting
+// =================================================================
+
+int32 UMaterialService::SetInstanceParametersBulk(
+	const FString& InstancePath,
+	const TArray<FString>& Names,
+	const TArray<FString>& Types,
+	const TArray<FString>& Values)
+{
+	if (Names.Num() != Types.Num() || Names.Num() != Values.Num())
+	{
+		UE_LOG(LogTemp, Error, TEXT("UMaterialService::SetInstanceParametersBulk: Mismatched array lengths (Names=%d, Types=%d, Values=%d)"),
+			Names.Num(), Types.Num(), Values.Num());
+		return 0;
+	}
+
+	UMaterialInstanceConstant* Instance = LoadMaterialInstanceConstant(InstancePath);
+	if (!Instance)
+	{
+		return 0;
+	}
+
+	Instance->Modify();
+
+	int32 SuccessCount = 0;
+
+	for (int32 i = 0; i < Names.Num(); i++)
+	{
+		const FString& ParamName = Names[i];
+		const FString& ParamType = Types[i];
+		const FString& ParamValue = Values[i];
+		FString TypeUpper = ParamType.ToUpper();
+
+		if (TypeUpper == TEXT("SCALAR") || TypeUpper == TEXT("FLOAT"))
+		{
+			float Val = FCString::Atof(*ParamValue);
+			Instance->SetScalarParameterValueEditorOnly(FName(*ParamName), Val);
+			SuccessCount++;
+		}
+		else if (TypeUpper == TEXT("VECTOR") || TypeUpper == TEXT("COLOR"))
+		{
+			// Parse "(R=1.0,G=0.5,B=0.0,A=1.0)" or "1.0,0.5,0.0,1.0"
+			FLinearColor Color = FLinearColor::White;
+			if (ParamValue.Contains(TEXT("R=")))
+			{
+				Color.InitFromString(ParamValue);
+			}
+			else
+			{
+				TArray<FString> Parts;
+				ParamValue.ParseIntoArray(Parts, TEXT(","));
+				if (Parts.Num() >= 3)
+				{
+					Color.R = FCString::Atof(*Parts[0]);
+					Color.G = FCString::Atof(*Parts[1]);
+					Color.B = FCString::Atof(*Parts[2]);
+					if (Parts.Num() >= 4)
+					{
+						Color.A = FCString::Atof(*Parts[3]);
+					}
+				}
+			}
+			Instance->SetVectorParameterValueEditorOnly(FName(*ParamName), Color);
+			SuccessCount++;
+		}
+		else if (TypeUpper == TEXT("TEXTURE") || TypeUpper == TEXT("TEXTURE2D"))
+		{
+			if (ParamValue.IsEmpty())
+			{
+				Instance->SetTextureParameterValueEditorOnly(FName(*ParamName), nullptr);
+				SuccessCount++;
+			}
+			else
+			{
+				UTexture* Texture = Cast<UTexture>(UEditorAssetLibrary::LoadAsset(ParamValue));
+				if (Texture)
+				{
+					Instance->SetTextureParameterValueEditorOnly(FName(*ParamName), Texture);
+					SuccessCount++;
+				}
+				else
+				{
+					UE_LOG(LogTemp, Warning, TEXT("UMaterialService::SetInstanceParametersBulk: Texture not found: %s (param=%s)"),
+						*ParamValue, *ParamName);
+				}
+			}
+		}
+		else if (TypeUpper == TEXT("STATICSWITCH") || TypeUpper == TEXT("BOOL"))
+		{
+			bool bVal = ParamValue.ToBool() || ParamValue == TEXT("1");
+			// StaticSwitchParameters are on the base FStaticParameterSetRuntimeData in UE 5.7
+			FStaticParameterSet StaticParams;
+			Instance->GetStaticParameterValues(StaticParams);
+
+			bool bFound = false;
+			for (auto& Param : StaticParams.StaticSwitchParameters)
+			{
+				if (Param.ParameterInfo.Name.ToString().Equals(ParamName, ESearchCase::IgnoreCase))
+				{
+					Param.Value = bVal;
+					Param.bOverride = true;
+					bFound = true;
+					break;
+				}
+			}
+
+			if (!bFound)
+			{
+				// Add a new static switch parameter
+				FStaticSwitchParameter NewParam;
+				NewParam.ParameterInfo.Name = FName(*ParamName);
+				NewParam.Value = bVal;
+				NewParam.bOverride = true;
+				StaticParams.StaticSwitchParameters.Add(NewParam);
+			}
+
+			Instance->UpdateStaticPermutation(StaticParams);
+			SuccessCount++;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UMaterialService::SetInstanceParametersBulk: Unknown type '%s' for param '%s'"),
+				*ParamType, *ParamName);
+		}
+	}
+
+	// Mark dirty and trigger update
+	UPackage* Package = Instance->GetOutermost();
+	if (Package)
+	{
+		Package->MarkPackageDirty();
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialService::SetInstanceParametersBulk: Set %d/%d parameters on '%s'"),
+		SuccessCount, Names.Num(), *InstancePath);
+
+	return SuccessCount;
 }
 
 // =================================================================

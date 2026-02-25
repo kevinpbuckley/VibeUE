@@ -34,15 +34,24 @@ manage_skills(action="load", skill_names=["blueprints", "umg-widgets"])
 | Domain | Skill Name |
 |--------|------------|
 | Blueprints (BP_) | `blueprints` |
-| Materials (M_, MI_) | `materials` |
 | UMG Widgets (WBP_) | `umg-widgets` |
 | Enhanced Input (IA_, IMC_) | `enhanced-input` |
+| Enums & Structs | `enum-struct` |
+| Materials (M_, MI_) | `materials` |
 | Level Actors | `level-actors` |
 | Data Tables (DT_) | `data-tables` |
 | Data Assets | `data-assets` |
 | Asset Search/Import | `asset-management` |
 | Niagara Systems (NS_) | `niagara-systems` |
 | Niagara Emitters | `niagara-emitters` |
+| Landscape Terrain | `landscape` |
+| Landscape Materials | `landscape-materials` |
+| Foliage & Vegetation | `foliage` |
+| Skeleton & Skeletal Mesh | `skeleton` |
+| Animation Sequences | `animsequence` |
+| Animation Blueprints | `animation-blueprint` |
+| Animation Montages | `animation-montage` |
+| Animation Editing | `animation-editing` |
 | Screenshots | `screenshots` |
 | Project Settings | `project-settings` |
 | Engine Settings | `engine-settings` |
