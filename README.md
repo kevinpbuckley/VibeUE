@@ -14,7 +14,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 22 specialized services with 670+ methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Project/Engine Settings, and more
+- **Python API Services** - 23 specialized services with 700+ methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 7 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -210,7 +210,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (22 services, 670+ methods)
+### 2. VibeUE Python API Services (23 services, 700+ methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -219,24 +219,25 @@ High-level services exposed to Python for common game development tasks:
 | `BlueprintService` | 75 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
-| `LandscapeService` | 44 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
+| `LandscapeService` | 64 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
-| `MaterialService` | 29 | Materials and material instances |
+| `MaterialService` | 30 | Materials and material instances |
 | `ActorService` | 24 | Level actor management |
 | `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
-| `MaterialNodeService` | 21 | Material graph expressions and connections |
+| `MaterialNodeService` | 40 | Material graph expressions and connections |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `AssetDiscoveryService` | 19 | Asset search, import/export, references |
-| `LandscapeMaterialService` | 17 | Landscape material layers, blend nodes, layer info objects, grass output |
+| `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
 | `WidgetService` | 16 | UMG widget blueprints and components |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
 | `FoliageService` | 16 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
+| `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -659,7 +660,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `set_preview_time(path, time)` - Set preview playhead
 - `play_preview(path, start_section)` - Play in preview
 
-### MaterialService (29 methods)
+### MaterialService (30 methods)
 
 **Lifecycle:**
 - `create_material(name, path)` - Create material
@@ -675,7 +676,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `set_instance_scalar/vector/texture_parameter(...)` - Set overrides
 - `clear_instance_parameter_override(...)` - Clear override
 
-### MaterialNodeService (21 methods)
+### MaterialNodeService (40 methods)
 
 - `discover_types(category, search)` - Find expression types
 - `create_expression(path, class, x, y)` - Create expression
@@ -800,7 +801,7 @@ SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
 - `open_mesh_in_editor(path)` - Open skeletal mesh editor
 - `refresh_skeleton(path)` - Refresh after changes
 
-### LandscapeService (44 methods)
+### LandscapeService (64 methods)
 
 LandscapeService provides comprehensive landscape terrain manipulation including sculpting, weight layer painting, heightmap import/export, visibility holes, and spline-based road/path creation:
 
@@ -867,7 +868,7 @@ LandscapeService provides comprehensive landscape terrain manipulation including
 **Resize:**
 - `resize_landscape(name, ...)` - Change landscape dimensions
 
-### LandscapeMaterialService (17 methods)
+### LandscapeMaterialService (22 methods)
 
 LandscapeMaterialService handles the creation and configuration of landscape-specific materials including layer blend nodes, layer info objects, and grass output:
 
@@ -1014,6 +1015,14 @@ ScreenshotService enables AI vision by capturing editor content:
 - `get_open_editor_tabs()` - List open editor tabs with asset info
 - `get_active_window_title()` - Get focused window title
 - `is_editor_window_active()` - Check if editor is in focus
+
+### RuntimeVirtualTextureService (4 methods)
+
+RuntimeVirtualTextureService manages RVT assets and landscape integration:
+- `create_runtime_virtual_texture(name, path, ...)` - Create a Runtime Virtual Texture asset
+- `get_runtime_virtual_texture_info(path)` - Get RVT asset metadata
+- `create_rvt_volume(landscape, rvt_path, ...)` - Create an RVT volume actor sized to a landscape
+- `assign_rvt_to_landscape(landscape, rvt_path)` - Assign an RVT asset to a landscape actor
 
 ### ProjectSettingsService (10+ methods)
 
