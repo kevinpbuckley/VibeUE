@@ -26,7 +26,9 @@
 #include "Components/Slider.h"
 #include "Components/ProgressBar.h"
 #include "Components/Spacer.h"
+#include "Components/RichTextBlock.h"
 #include "Kismet2/BlueprintEditorUtils.h"
+#include "Kismet2/KismetEditorUtilities.h"
 #include "UObject/PropertyIterator.h"
 #include "UObject/UnrealType.h"
 
@@ -110,6 +112,7 @@ TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
 		WidgetClassMap.Add(TEXT("ScrollBox"), UScrollBox::StaticClass());
 		WidgetClassMap.Add(TEXT("GridPanel"), UGridPanel::StaticClass());
 		WidgetClassMap.Add(TEXT("WidgetSwitcher"), UWidgetSwitcher::StaticClass());
+		WidgetClassMap.Add(TEXT("RichTextBlock"), URichTextBlock::StaticClass());
 	}
 	
 	if (TSubclassOf<UWidget>* Found = WidgetClassMap.Find(TypeName))
@@ -125,7 +128,37 @@ TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
 			return Pair.Value;
 		}
 	}
-	
+
+	// Fallback: search Asset Registry for a custom Widget Blueprint by name
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	FARFilter Filter;
+	Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/UMGEditor.WidgetBlueprint")));
+	TArray<FAssetData> AssetDataList;
+	AssetRegistry.GetAssets(Filter, AssetDataList);
+
+	for (const FAssetData& AssetData : AssetDataList)
+	{
+		if (AssetData.AssetName.ToString().Equals(TypeName, ESearchCase::IgnoreCase))
+		{
+			if (UWidgetBlueprint* WBP = Cast<UWidgetBlueprint>(AssetData.GetAsset()))
+			{
+				// Ensure the WBP is compiled before using its GeneratedClass
+				if (!WBP->GeneratedClass || WBP->Status == BS_Dirty)
+				{
+					UE_LOG(LogTemp, Log, TEXT("UWidgetService: Compiling WBP '%s' before resolving class"), *TypeName);
+					FKismetEditorUtilities::CompileBlueprint(WBP);
+				}
+
+				if (WBP->GeneratedClass && WBP->GeneratedClass->IsChildOf(UWidget::StaticClass()))
+				{
+					TSubclassOf<UWidget> WidgetSubclass(*WBP->GeneratedClass);
+					WidgetClassMap.Add(TypeName, WidgetSubclass);
+					return WidgetSubclass;
+				}
+			}
+		}
+	}
+
 	return nullptr;
 }
 
@@ -286,11 +319,30 @@ TArray<FString> UWidgetService::SearchTypes(const FString& FilterText)
 {
 	TArray<FString> Results;
 	
+	// Built-in native widget types
 	for (const FString& Type : GAvailableWidgetTypes)
 	{
 		if (FilterText.IsEmpty() || Type.Contains(FilterText, ESearchCase::IgnoreCase))
 		{
 			Results.Add(Type);
+		}
+	}
+
+	// Also list custom Widget Blueprints from the Asset Registry
+	// (Note: these CANNOT be added via add_component - they are listed for reference only)
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	FARFilter Filter;
+	Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/UMGEditor.WidgetBlueprint")));
+	TArray<FAssetData> AssetDataList;
+	AssetRegistry.GetAssets(Filter, AssetDataList);
+
+	for (const FAssetData& AssetData : AssetDataList)
+	{
+		FString AssetName = AssetData.AssetName.ToString();
+		if (FilterText.IsEmpty() || AssetName.Contains(FilterText, ESearchCase::IgnoreCase))
+		{
+			// Prefix with [WBP] to distinguish from native types
+			Results.Add(FString::Printf(TEXT("[WBP] %s (%s)"), *AssetName, *AssetData.GetObjectPathString()));
 		}
 	}
 	
@@ -332,8 +384,25 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	TSubclassOf<UWidget> WidgetClass = FindWidgetClass(ComponentType);
 	if (!WidgetClass)
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("Unknown widget type '%s'. Use search_types() to get available types."), *ComponentType);
+		Result.ErrorMessage = FString::Printf(TEXT("Unknown widget type '%s'. Use search_types() to get available types, or list_widget_blueprints() for custom WBPs."), *ComponentType);
 		return Result;
+	}
+
+	// For UserWidget subclasses (custom WBPs), do additional safety checks
+	const bool bIsUserWidget = WidgetClass->IsChildOf(UUserWidget::StaticClass());
+	if (bIsUserWidget)
+	{
+		// Prevent circular references: a WBP cannot contain itself as a child
+		if (WidgetBP->GeneratedClass && (WidgetClass == WidgetBP->GeneratedClass ||
+			WidgetClass->IsChildOf(WidgetBP->GeneratedClass)))
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("Cannot add '%s': circular reference detected. A Widget Blueprint cannot contain itself as a child component."),
+				*ComponentType);
+			return Result;
+		}
+
+		UE_LOG(LogTemp, Log, TEXT("UWidgetService: Adding custom WBP '%s' as component '%s'"), *ComponentType, *ComponentName);
 	}
 
 	// Find parent panel (or use root)
@@ -394,9 +463,22 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		return Result;
 	}
 
-	// Mark blueprint as modified
+	// Mark blueprint as modified and compile
 	WidgetBP->Modify();
-	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	if (bIsUserWidget)
+	{
+		// For UserWidget subclasses, do a synchronous compile immediately.
+		// This ensures the parent WBP is in a valid compiled state before
+		// any deferred operations (like auto-save) try to process it,
+		// which would otherwise crash in Slate prepass with stack overflow.
+		UE_LOG(LogTemp, Log, TEXT("UWidgetService: Compiling parent WBP after adding UserWidget child '%s'"), *ComponentName);
+		FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	}
+	else
+	{
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+	}
 
 	Result.bSuccess = true;
 	Result.ComponentName = NewWidget->GetName();

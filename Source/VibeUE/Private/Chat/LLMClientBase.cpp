@@ -511,7 +511,22 @@ void FLLMClientBase::ProcessSSEData(const FString& Data)
             // Check for stream end
             if (JsonData == TEXT("[DONE]"))
             {
-                FirePendingToolCalls();
+                // Do NOT fire tool calls here inside HandleRequestProgress.
+                // Executing tools synchronously within the HTTP module's progress callback
+                // can corrupt internal HTTP state and cause EXCEPTION_ACCESS_VIOLATION.
+                // Tool calls will be fired from HandleRequestComplete instead, after the
+                // HTTP module has fully finished processing the request.
+                if (PendingToolCalls.Num() > 0)
+                {
+                    if (IsDebugLoggingEnabled())
+                    {
+                        UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - %d tool calls pending, will fire from HandleRequestComplete"), PendingToolCalls.Num());
+                    }
+                }
+                else if (IsDebugLoggingEnabled())
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - no pending tool calls"));
+                }
                 continue;
             }
 
@@ -1604,7 +1619,11 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         }
         
         // Check if we have content that needs processing
-        if (ResponseContent.Len() > 0)
+        // IMPORTANT: If tool calls were detected during SSE streaming, do NOT re-process
+        // the response as SSE. The PendingToolCalls map already has the correct data
+        // accumulated during streaming chunks. Re-processing would re-send content chunks
+        // to the UI and could double-populate PendingToolCalls.
+        if (ResponseContent.Len() > 0 && !bToolCallsDetectedInStream)
         {
             // Check if this is non-SSE (JSON) content that wasn't processed in progress callback
             FString TrimmedContent = ResponseContent.TrimStart();
@@ -1614,7 +1633,7 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
             bool bAlreadyProcessedAsStream = StreamBuffer.Len() > 0;
             
             // For non-SSE content, we need to process it here since progress callback deferred it
-            if (!bIsSSEContent && !bToolCallsDetectedInStream && !bAlreadyProcessedAsStream)
+            if (!bIsSSEContent && !bAlreadyProcessedAsStream)
             {
                 UE_LOG(LogLLMClientBase, Log, TEXT("Processing non-streaming JSON response"));
                 UE_LOG(LogLLMClientBase, Log, TEXT("Response preview: %s"), *ResponseContent.Left(1000));
@@ -1640,12 +1659,19 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
                 }
             }
         }
+        else if (bToolCallsDetectedInStream && ResponseContent.Len() > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Skipping SSE reprocessing - tool calls accumulated during stream, will fire below"));
+        }
     }
     
-    // Fire any pending tool calls that weren't fired (e.g., if [DONE] was in a deferred chunk)
+    // Fire any pending tool calls.
+    // Tool calls are ALWAYS fired here in HandleRequestComplete, never in HandleRequestProgress.
+    // This ensures the HTTP module has fully finished processing the request before we
+    // execute tools synchronously (which can involve heavy work like HTTP requests, file I/O, etc.).
     if (PendingToolCalls.Num() > 0)
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Firing %d pending tool calls that weren't fired during stream"), PendingToolCalls.Num());
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Firing %d pending tool calls"), PendingToolCalls.Num());
         FirePendingToolCalls();
     }
     

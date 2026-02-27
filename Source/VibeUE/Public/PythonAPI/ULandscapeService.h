@@ -318,6 +318,97 @@ struct FSplineCreateResult
 };
 
 // =========================================================================
+// Heightmap Import Data Structs
+// =========================================================================
+
+/** Result of importing a heightmap */
+USTRUCT(BlueprintType)
+struct FHeightmapImportResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	/** Resolution of the imported heightmap (e.g. "1081x1081") */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Resolution;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+/** Dimensions of a heightmap file */
+USTRUCT(BlueprintType)
+struct FHeightmapDimensions
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 Width = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 Height = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 BitDepth = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+/** Result of resizing a heightmap file */
+USTRUCT(BlueprintType)
+struct FHeightmapResizeResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	bool bSuccess = false;
+
+	/** Original dimensions (e.g. "1081x1081") */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString OriginalDimensions;
+
+	/** New dimensions after resize (e.g. "505x505") */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString NewDimensions;
+
+	/** Path to the resized heightmap file */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString OutputFile;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString ErrorMessage;
+};
+
+/** Result of calculating landscape resolution */
+USTRUCT(BlueprintType)
+struct FLandscapeResolutionInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 ResolutionX = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 ResolutionY = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 TotalVertices = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	int32 TotalComponents = 0;
+
+	/** Recommended landscape config string for display */
+	UPROPERTY(BlueprintReadWrite, Category = "Landscape")
+	FString Description;
+};
+
+// =========================================================================
 // Weight Map Data Structs
 // =========================================================================
 
@@ -667,10 +758,10 @@ public:
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param FilePath - Absolute path to the heightmap file
-	 * @return True if import succeeded
+	 * @return Result with success status, resolution, and error message if failed
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
-	static bool ImportHeightmap(
+	static FHeightmapImportResult ImportHeightmap(
 		const FString& LandscapeNameOrLabel,
 		const FString& FilePath);
 
@@ -686,6 +777,76 @@ public:
 	static bool ExportHeightmap(
 		const FString& LandscapeNameOrLabel,
 		const FString& OutputFilePath);
+
+	/**
+	 * Get the dimensions of a heightmap file (PNG or RAW).
+	 *
+	 * Use this to check if a heightmap file matches a landscape's resolution
+	 * before importing. Returns width, height, and bit depth.
+	 *
+	 * @param FilePath - Absolute path to the heightmap file (PNG or RAW)
+	 * @return Dimensions with width, height, bit depth
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FHeightmapDimensions GetHeightmapDimensions(const FString& FilePath);
+
+	/**
+	 * Resize a heightmap file to a target resolution using bilinear interpolation.
+	 *
+	 * Reads a 16-bit grayscale PNG heightmap, resamples it to the target dimensions,
+	 * and saves the result. Use this to match a heightmap to a landscape's resolution.
+	 *
+	 * Workflow: generate_heightmap → GetHeightmapDimensions → ResizeHeightmap → ImportHeightmap
+	 *
+	 * @param SourcePath - Absolute path to the source heightmap PNG file
+	 * @param TargetWidth - Desired output width in pixels (must match landscape resolution_x)
+	 * @param TargetHeight - Desired output height in pixels (must match landscape resolution_y)
+	 * @param OutputPath - Absolute path for the resized output file. If empty, appends "_resized" to source filename
+	 * @return Result with success status, dimensions, output file path
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FHeightmapResizeResult ResizeHeightmap(
+		const FString& SourcePath,
+		int32 TargetWidth,
+		int32 TargetHeight,
+		const FString& OutputPath = TEXT(""));
+
+	/**
+	 * Calculate the vertex resolution a landscape will have for given configuration parameters.
+	 *
+	 * Resolution = (ComponentCount * QuadsPerSection * SectionsPerComponent) + 1
+	 *
+	 * Use this to determine what heightmap resolution you need before creating a landscape
+	 * or to find valid landscape parameters that match a known heightmap size.
+	 *
+	 * @param ComponentCountX - Number of components in X (e.g. 8)
+	 * @param ComponentCountY - Number of components in Y (e.g. 8)
+	 * @param QuadsPerSection - Quads per section: 7, 15, 31, 63, 127, or 255 (default: 63)
+	 * @param SectionsPerComponent - Sections per component: 1 or 2 (default: 1)
+	 * @return Resolution info with X, Y dimensions and total vertex count
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FLandscapeResolutionInfo CalculateLandscapeResolution(
+		int32 ComponentCountX,
+		int32 ComponentCountY,
+		int32 QuadsPerSection = 63,
+		int32 SectionsPerComponent = 1);
+
+	/**
+	 * Find the best landscape configuration that matches a target heightmap resolution.
+	 *
+	 * Given a heightmap size (e.g. 1081x1081), returns the landscape parameters
+	 * (ComponentCount, QuadsPerSection, SectionsPerComponent) that produce the exact
+	 * same resolution. Prefers configurations with fewer components to avoid timeouts.
+	 *
+	 * @param TargetWidth - Target resolution width (e.g. 1081)
+	 * @param TargetHeight - Target resolution height (e.g. 1081)
+	 * @return Resolution info with recommended landscape parameters, or empty if no valid config exists
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Landscape")
+	static FLandscapeResolutionInfo FindLandscapeConfigForResolution(
+		int32 TargetWidth,
+		int32 TargetHeight);
 
 	/**
 	 * Get the height at a specific world XY location.

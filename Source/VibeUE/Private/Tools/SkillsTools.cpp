@@ -11,6 +11,7 @@
 #include "GenericPlatform/GenericPlatformFile.h"
 #include "Json.h"
 #include "JsonUtilities.h"
+#include "Internationalization/Regex.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 
@@ -1225,6 +1226,69 @@ static TArray<FString> ExtractSkillNamesArray(const TMap<FString, FString>& Para
 	return Result;
 }
 
+// Helper struct and function for sanitizing malformed manage_skills action parameters.
+// Extracted outside REGISTER_VIBEUE_TOOL macro because TMap<K,V> template commas
+// confuse the C preprocessor's argument parsing.
+struct FSanitizedAction
+{
+	FString Action;
+	TMap<FString, FString> RecoveredParams;
+};
+
+static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
+{
+	FSanitizedAction Result;
+	Result.Action = RawAction;
+
+	// Some LLMs (e.g. Gemini Flash) produce malformed JSON escaping that
+	// merges all parameters into the "action" value, e.g.:
+	//   {"action":"load\", \"skill_name\": \"landscape"}
+	// After JSON parsing this becomes Action = "load", "skill_name": "landscape"
+	// We sanitize by:
+	// 1. Extracting embedded parameters from the corrupted string
+	// 2. Truncating action at first quote/comma to get the real action
+	if (Result.Action.Contains(TEXT("\"")))
+	{
+		// Try to parse embedded key-value pairs from the corrupted action string
+		// Pattern: load", "skill_name": "landscape"  →  skill_name=landscape
+		FRegexPattern Pattern(TEXT("\"(\\w+)\"\\s*:\\s*\"([^\"]+)\""));
+		FRegexMatcher Matcher(Pattern, Result.Action);
+		while (Matcher.FindNext())
+		{
+			FString Key = Matcher.GetCaptureGroup(1);
+			FString Value = Matcher.GetCaptureGroup(2);
+			Result.RecoveredParams.Add(Key, Value);
+			UE_LOG(LogTemp, Warning, TEXT("manage_skills: Recovered embedded param '%s'='%s' from malformed action string"), *Key, *Value);
+		}
+
+		// Truncate action at first quote/comma
+		int32 QuoteIdx = INDEX_NONE;
+		Result.Action.FindChar(TEXT('"'), QuoteIdx);
+		int32 CommaIdx = INDEX_NONE;
+		Result.Action.FindChar(TEXT(','), CommaIdx);
+		int32 TruncateAt = INDEX_NONE;
+		if (QuoteIdx != INDEX_NONE && CommaIdx != INDEX_NONE)
+		{
+			TruncateAt = FMath::Min(QuoteIdx, CommaIdx);
+		}
+		else if (QuoteIdx != INDEX_NONE)
+		{
+			TruncateAt = QuoteIdx;
+		}
+		else if (CommaIdx != INDEX_NONE)
+		{
+			TruncateAt = CommaIdx;
+		}
+		if (TruncateAt != INDEX_NONE)
+		{
+			Result.Action = Result.Action.Left(TruncateAt).TrimEnd();
+		}
+		UE_LOG(LogTemp, Warning, TEXT("manage_skills: Sanitized malformed action to '%s' (recovered %d embedded params)"), *Result.Action, Result.RecoveredParams.Num());
+	}
+
+	return Result;
+}
+
 // Register manage_skills tool
 REGISTER_VIBEUE_TOOL(manage_skills,
 	"Discover and load domain-specific knowledge skills. Use 'list' to see available skills, 'suggest' to find skills matching a query, 'load' to load a skill by name or display_name. Use 'skill_names' array to load multiple skills with deduplicated discovery.",
@@ -1236,7 +1300,9 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		TOOL_PARAM("skill_names", "Array of skill names to load together with deduplicated discovery (for 'load' action). More efficient when loading multiple related skills.", "array", false)
 	),
 	{
-		FString Action = ExtractParamFromJson(Params, TEXT("action"));
+		FString RawAction = ExtractParamFromJson(Params, TEXT("action"));
+		FSanitizedAction Sanitized = SanitizeManageSkillsAction(RawAction);
+		FString Action = Sanitized.Action;
 
 		if (Action.Equals(TEXT("list"), ESearchCase::IgnoreCase))
 		{
@@ -1245,6 +1311,11 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		else if (Action.Equals(TEXT("suggest"), ESearchCase::IgnoreCase))
 		{
 			FString Query = ExtractParamFromJson(Params, TEXT("query"));
+			// Fall back to recovered params from malformed JSON
+			if (Query.IsEmpty() && Sanitized.RecoveredParams.Contains(TEXT("query")))
+			{
+				Query = Sanitized.RecoveredParams.FindRef(TEXT("query"));
+			}
 			if (Query.IsEmpty())
 			{
 				TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
@@ -1267,6 +1338,11 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 			if (SkillNames.Num() == 0)
 			{
 				FString SkillName = ExtractParamFromJson(Params, TEXT("skill_name"));
+				// Fall back to recovered params from malformed JSON
+				if (SkillName.IsEmpty() && Sanitized.RecoveredParams.Contains(TEXT("skill_name")))
+				{
+					SkillName = Sanitized.RecoveredParams.FindRef(TEXT("skill_name"));
+				}
 				if (!SkillName.IsEmpty())
 				{
 					SkillNames.Add(SkillName);

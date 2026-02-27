@@ -174,14 +174,22 @@ result = service.capture_viewport("E:/Screenshots/viewport.png", 1920, 1080)
 
 ---
 
-## Attaching Images
+## Attaching Images for Vision Analysis
 
-After capturing, use `attach_image` tool:
+After capturing, use the `attach_image` **tool call** (NOT a Python function — call it directly like `terrain_data` or `manage_skills`):
 
-```python
+```
 attach_image(file_path="E:/Screenshots/Capture.png")
 ```
 
+- **This is a tool call**, not Python code. Do NOT put it inside `execute_python_code`.
 - Supported formats: PNG, JPG, BMP, GIF, WEBP
-- File must exist before attaching
-- Image appears in your next response for analysis
+- File must exist on disk before attaching
+- Image will be included in your **next** LLM request for vision analysis
+- Use this after screenshots, satellite images, or any image you need to visually analyze
+
+### Common Uses
+- **Screenshots**: Capture viewport → attach → analyze what you see
+- **Satellite images**: `terrain_data get_map_image` → attach → identify terrain features for material/painting
+- **Blueprint graphs**: Capture editor window → attach → review node layout
+- **Verification**: Capture result → attach → confirm changes look correct
