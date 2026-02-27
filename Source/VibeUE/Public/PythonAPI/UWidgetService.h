@@ -149,10 +149,10 @@ struct FWidgetRemoveComponentResult
  *
  * Provides 11 widget management actions:
  * - list_components: List all widget components in a Widget Blueprint
- * - add_component: Add a new widget component to a Widget Blueprint
+ * - add_component: Add a widget component to a Widget Blueprint (native types or custom WBPs by name)
  * - remove_component: Remove a widget component from a Widget Blueprint
  * - validate: Validate widget hierarchy for errors
- * - search_types: Get available widget types for creation
+ * - search_types: Get available widget types (native types + discovered WBPs for reference)
  * - get_component_properties: Get properties for a specific component
  * - get_property: Get a specific property value
  * - set_property: Set a specific property value
@@ -236,9 +236,10 @@ public:
 	/**
 	 * Get available widget types that can be created.
 	 * Maps to action="search_types"
+	 * Returns built-in native types plus discovered Widget Blueprints (prefixed with [WBP]).
 	 *
 	 * @param FilterText - Optional filter to narrow results
-	 * @return Array of widget type names (Button, TextBlock, etc.)
+	 * @return Array of widget type names (Button, TextBlock, etc.) and discovered WBPs
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
 	static TArray<FString> SearchTypes(const FString& FilterText = TEXT(""));
@@ -261,9 +262,12 @@ public:
 	/**
 	 * Add a new widget component to a Widget Blueprint.
 	 * Maps to action="add_component"
+	 * Supports both native widget types (TextBlock, Button, etc.) and custom Widget Blueprints by name.
+	 * Custom WBPs are resolved via the Asset Registry and compiled before use.
+	 * Circular references (a WBP containing itself) are detected and rejected.
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
-	 * @param ComponentType - Type of widget to add (Button, TextBlock, etc.)
+	 * @param ComponentType - Type of widget: native type name (e.g. "Button") or WBP asset name (e.g. "WBP_HealthBar")
 	 * @param ComponentName - Name for the new component
 	 * @param ParentName - Name of parent panel (empty for root)
 	 * @param bIsVariable - Whether to expose as a variable

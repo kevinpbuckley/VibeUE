@@ -51,10 +51,85 @@ SectionsPerComponent must be **1 or 2**
 
 Common setup: `QuadsPerSection=63, SectionsPerComponent=1, ComponentCount=8x8`
 
+### ⚠️ Performance: Landscape Creation Timeout
+
+Creating landscapes with many components is SLOW. Python execution has a 30-second timeout.
+
+**Safe configurations (under 30s):**
+- `ComponentCount=8x8` (505x505 resolution) — FAST
+- `ComponentCount=16x16` with `QuadsPerSection=63` — OK
+
+**Will TIMEOUT (avoid):**
+- `ComponentCount=36x36` or larger — too many components, takes minutes
+- `ComponentCount=72x72` — definitely exceeds timeout
+
+### ⚠️ Heightmap Import: Resolution MUST Exactly Match
+
+`import_heightmap()` requires the heightmap file resolution to **exactly match** the landscape resolution. **There is NO automatic scaling.** A size mismatch will fail or produce flat/corrupt terrain.
+
+**Landscape resolution formula:** `Resolution = (ComponentCount × QuadsPerSection × SectionsPerComponent) + 1`
+
+**Safe performant configs (common resolutions):**
+
+| Components | Quads | Sections | Resolution | km at scale=100 | Notes |
+|-----------|-------|----------|------------|-----------------|-------|
+| 8×8       | 63    | 1        | **505×505**    | ~0.5 km | Fast, good for prototypes |
+| 8×8       | 63    | 2        | **1009×1009**  | ~1.0 km | Good balance of detail/speed |
+| 16×16     | 63    | 1        | **1009×1009**  | ~1.0 km | Same resolution, more LOD components |
+| 8×8       | 127   | 1        | **1017×1017**  | ~1.0 km | Larger quads, fewer components |
+| 16×16     | 63    | 2        | **2017×2017**  | ~2.0 km | Epic recommended for medium landscapes |
+| 32×32     | 63    | 1        | **2017×2017**  | ~2.0 km | Same resolution, more LOD components |
+| 8×8       | 127   | 2        | **2033×2033**  | ~2.0 km | High detail, fewer components |
+| 16×16     | 127   | 1        | **2033×2033**  | ~2.0 km | High detail, more components |
+| 32×32     | 63    | 2        | **4033×4033**  | ~4.0 km | Large open world |
+| 32×32     | 127   | 2        | **8129×8129**  | ~8.1 km | Max single tile |
+
+**⚠️ 1081×1081 is NOT a valid performant config!** The only config producing 1081 is `36×36 components, 15 quads, 2 sections` — which has 1296 components and **will timeout**. Never request or assume 1081.
+
+### Heightmap ↔ Landscape Sizing Utilities
+
+Four Python utility functions help match heightmaps to landscapes:
+
+| Function | Purpose |
+|----------|---------|
+| `get_heightmap_dimensions(file_path)` | Read width/height/bitdepth of a PNG or RAW heightmap file |
+| `resize_heightmap(source, width, height, output)` | Bilinear resample a 16-bit heightmap to new dimensions |
+| `calculate_landscape_resolution(cx, cy, quads, sections)` | Compute resolution from landscape config parameters |
+| `find_landscape_config_for_resolution(width, height)` | Find the best landscape config that matches a given resolution |
+
+### ✅ Recommended Workflow: Request Matching Resolution
+
+**BEST approach — request the heightmap at the exact resolution you need:**
+
+1. Decide landscape config (e.g., 8×8 components, 63 quads, 2 sections)
+2. Calculate resolution: `(8 × 63 × 2) + 1 = 1009`
+3. Use `terrain_data generate_heightmap` with `resolution=1009` and `map_size=N`
+   - `map_size` controls how many real-world km are captured (default 17.28)
+   - Smaller `map_size` = more detail for a specific feature (e.g., 2-5 km for a single mountain)
+   - Larger `map_size` = wider area with less per-pixel detail (e.g., 10-20 km for a region)
+4. Create landscape with matching config
+5. Import heightmap — sizes match perfectly
+
+### ✅ Fallback Workflow: Resize After Download
+
+If you already have a heightmap at a non-matching resolution:
+
+1. Check dimensions: `get_heightmap_dimensions(file_path)`
+2. Either:
+   - Find a landscape config that matches: `find_landscape_config_for_resolution(width, height)`
+   - Or resize the heightmap to match your landscape: `resize_heightmap(source, target_w, target_h)`
+3. Create landscape / import resized heightmap
+
 ### Landscape Scale
 
 - Default scale `(100, 100, 100)` = 1 meter per unit
 - Larger Z scale = taller terrain range (e.g., Z=200 doubles height range)
+
+**⚠️ When importing real-world terrain from `terrain_data`, ALWAYS calculate Z scale:**
+```
+z_scale = 20000 / height_scale
+```
+Do NOT hardcode Z scale. The `height_scale` from `preview_elevation` determines the correct Z scale.
 
 ### Height Limits (uint16 Saturation)
 
@@ -176,6 +251,10 @@ Do this in separate steps:
 | Guessing random offset like 110000 for side-by-side | Calculate: `offset = (resolution - 1) * scale.x` e.g. (1009-1)*100 = 100800 |
 | Using `FoliageService.clear_all_foliage()` thinking it only clears one landscape | `clear_all_foliage()` removes ALL foliage from the ENTIRE level — use `remove_foliage_in_radius()` or `remove_all_foliage_of_type()` to target specific areas |
 | Manually scattering foliage to replicate a landscape that uses LandscapeGrassType | If foliage is procedural (from LandscapeGrassType on the material), just copy paint layers — foliage auto-generates from weights. Check if `list_foliage_types()` returns 0; if so, foliage is procedural. |
+| Using `terrain_data` without `resolution` and getting 1081×1081 | Always pass `resolution=N` matching your landscape. Common values: 505, 1009, 1017, 2033 |
+| Assuming 1081×1081 heightmap will fit any landscape | 1081 requires 36×36 components which WILL timeout. Use `resolution=1009` (8×8, 63q, 2s) instead |
+| Importing a heightmap without checking dimensions | Always call `get_heightmap_dimensions()` first, then `resize_heightmap()` if sizes don't match |
+| Creating landscape then downloading heightmap (wrong order) | Decide config → calculate resolution → download at that resolution → create landscape → import |
 
 ### LandscapeCreateResult (from create_landscape)
 
@@ -314,16 +393,82 @@ if info.actor_label:
     print(f"Material: {info.material_path}")
 ```
 
-### Import Heightmap
+### Import Heightmap (with Resolution Matching)
 
+**Recommended: Request heightmap at exact landscape resolution**
 ```python
 import unreal
 
-# RAW file must be 16-bit, matching landscape resolution
-# After import, the landscape visually updates immediately (collision + render rebuilt)
-success = unreal.LandscapeService.import_heightmap("MyTerrain", "C:/Heightmaps/terrain.raw")
-if success:
-    print("Heightmap imported successfully")
+# 1. Decide landscape config
+comp_x, comp_y = 8, 8
+quads = 63
+sections = 2
+
+# 2. Calculate required resolution
+res_info = unreal.LandscapeService.calculate_landscape_resolution(comp_x, comp_y, quads, sections)
+print(f"Need {res_info.resolution_x}x{res_info.resolution_y} heightmap")
+# → 1009×1009
+
+# 3. Use terrain_data MCP tool with resolution=1009 to download the heightmap
+# (The AI calls terrain_data generate_heightmap with resolution=1009)
+
+# 4. Create landscape
+result = unreal.LandscapeService.create_landscape(
+    location=unreal.Vector(0, 0, 0),
+    rotation=unreal.Rotator(0, 0, 0),
+    scale=unreal.Vector(100, 100, 200),  # Z=200 for mountainous terrain
+    sections_per_component=sections,
+    quads_per_section=quads,
+    component_count_x=comp_x,
+    component_count_y=comp_y,
+    landscape_label="MtFuji"
+)
+
+# 5. Import — sizes match perfectly
+import_result = unreal.LandscapeService.import_heightmap("MtFuji", "C:/Heightmaps/mt_fuji_1009x1009.png")
+if import_result.success:
+    print(f"Imported at {import_result.resolution}")
+else:
+    print(f"Import failed: {import_result.error_message}")
+```
+
+**Fallback: Resize existing heightmap to match landscape**
+```python
+import unreal
+
+# If you already have a heightmap at the wrong resolution
+dims = unreal.LandscapeService.get_heightmap_dimensions("C:/Heightmaps/terrain_1081x1081.png")
+print(f"Source: {dims.width}x{dims.height}")  # 1081×1081
+
+# Get the landscape's actual resolution
+info = unreal.LandscapeService.get_landscape_info("MyTerrain")
+target_w = info.resolution_x  # e.g. 1009
+target_h = info.resolution_y
+
+# Resize the heightmap (bilinear interpolation, preserves terrain shape)
+resize_result = unreal.LandscapeService.resize_heightmap(
+    "C:/Heightmaps/terrain_1081x1081.png",
+    target_w, target_h
+    # OutputPath auto-generated as terrain_1081x1081_1009x1009.png
+)
+if resize_result.success:
+    print(f"Resized to {resize_result.new_dimensions}")
+    print(f"Output: {resize_result.output_file}")
+    # Now import the resized file
+    unreal.LandscapeService.import_heightmap("MyTerrain", resize_result.output_file)
+```
+
+**Alternative: Find a landscape config that matches your heightmap**
+```python
+import unreal
+
+# If you want to create a landscape that matches an existing heightmap
+dims = unreal.LandscapeService.get_heightmap_dimensions("C:/Heightmaps/terrain_505x505.png")
+config = unreal.LandscapeService.find_landscape_config_for_resolution(dims.width, dims.height)
+if config.total_components > 0:
+    print(f"Config: {config.description}")
+    # e.g. "8x8 components, 63 quads/section, 1 section/component → 505x505"
+    # Create landscape using this config, then import directly
 ```
 
 ### Export Heightmap
@@ -827,6 +972,128 @@ if not unreal.LandscapeService.landscape_exists("MyTerrain"):
 
 if not unreal.LandscapeService.layer_exists("MyTerrain", "Grass"):
     unreal.LandscapeService.add_layer("MyTerrain", "/Game/Landscape/LI_Grass")
+```
+
+### Heightmap Sizing Utilities
+
+#### Get Heightmap Dimensions
+
+```python
+import unreal
+
+# Works with PNG (16-bit grayscale) and RAW (16-bit) files
+dims = unreal.LandscapeService.get_heightmap_dimensions("C:/Heightmaps/terrain.png")
+if dims.success:
+    print(f"Size: {dims.width}x{dims.height}, Bit depth: {dims.bit_depth}")
+else:
+    print(f"Error: {dims.error_message}")
+```
+
+#### Calculate Landscape Resolution
+
+```python
+import unreal
+
+# Pure math — compute what resolution a landscape config produces
+info = unreal.LandscapeService.calculate_landscape_resolution(
+    component_count_x=8, component_count_y=8,
+    quads_per_section=63, sections_per_component=2
+)
+print(f"Resolution: {info.resolution_x}x{info.resolution_y}")  # 1009×1009
+print(f"Total vertices: {info.total_vertices}")
+print(f"Total components: {info.total_components}")
+print(f"Description: {info.description}")
+```
+
+#### Find Landscape Config for Heightmap
+
+```python
+import unreal
+
+# Given a heightmap resolution, find the landscape config that matches
+config = unreal.LandscapeService.find_landscape_config_for_resolution(1009, 1009)
+if config.total_components > 0:
+    print(f"Match found: {config.description}")
+    # Use this config when calling create_landscape
+else:
+    print("No exact match — resize the heightmap instead")
+```
+
+#### Resize Heightmap
+
+```python
+import unreal
+
+# Bilinear resample — preserves terrain shape, works with 16-bit PNG and RAW
+result = unreal.LandscapeService.resize_heightmap(
+    "C:/Heightmaps/terrain_1081x1081.png",  # source
+    1009,  # target width
+    1009   # target height
+    # output path auto-generated if omitted
+)
+if result.success:
+    print(f"Resized: {result.original_dimensions} → {result.new_dimensions}")
+    print(f"Output: {result.output_file}")
+```
+
+#### Complete Terrain Import Workflow (terrain_data → landscape)
+
+```python
+import unreal
+
+# This shows the FULL recommended workflow for importing real-world terrain
+
+# Step 1: Choose landscape config
+comp_x, comp_y = 8, 8
+quads = 63
+sections = 2
+
+# Step 2: Calculate resolution
+res = unreal.LandscapeService.calculate_landscape_resolution(comp_x, comp_y, quads, sections)
+target_res = res.resolution_x  # 1009
+
+# Step 3: Request heightmap via terrain_data MCP tool with resolution=target_res
+# (AI calls: terrain_data generate_heightmap lat=X lon=Y resolution=1009)
+# IMPORTANT: Use the height_scale returned by preview_elevation
+
+# Step 4: Calculate Z scale from height_scale
+# ⚠️ ALWAYS calculate — do NOT guess or hardcode!
+height_scale = 250  # example: from preview_elevation suggested_height_scale
+z_scale = int(20000 / height_scale)  # = 80 for height_scale=250
+# For mountains (height_scale=27): z_scale = 741
+# For hills (height_scale=100): z_scale = 200
+# For flat/gentle (height_scale=250): z_scale = 80
+
+# Step 5: Verify downloaded heightmap dimensions
+heightmap_path = "C:/path/to/downloaded_heightmap.png"
+dims = unreal.LandscapeService.get_heightmap_dimensions(heightmap_path)
+print(f"Downloaded: {dims.width}x{dims.height}")
+
+# Step 5: Resize if needed (safety check)
+if dims.width != target_res or dims.height != target_res:
+    resize = unreal.LandscapeService.resize_heightmap(heightmap_path, target_res, target_res)
+    heightmap_path = resize.output_file
+    print(f"Resized to {target_res}x{target_res}")
+
+# Step 6: Create landscape
+result = unreal.LandscapeService.create_landscape(
+    location=unreal.Vector(0, 0, 0),
+    rotation=unreal.Rotator(0, 0, 0),
+    scale=unreal.Vector(100, 100, z_scale),
+    sections_per_component=sections,
+    quads_per_section=quads,
+    component_count_x=comp_x,
+    component_count_y=comp_y,
+    landscape_label="RealWorldTerrain"
+)
+
+# Step 7: Import
+if result.success:
+    import_result = unreal.LandscapeService.import_heightmap("RealWorldTerrain", heightmap_path)
+    if import_result.success:
+        print(f"Terrain imported successfully at {import_result.resolution}")
+    else:
+        print(f"Import failed: {import_result.error_message}")
 ```
 
 ---

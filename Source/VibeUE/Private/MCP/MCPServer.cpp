@@ -840,12 +840,23 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
             {
                 Arguments.Add(Pair.Key, Pair.Value->AsString());
             }
+            else if (Pair.Value->Type == EJson::Number)
+            {
+                // Serialize numbers directly — FJsonSerializer::Serialize with an identifier
+                // requires an open object context and produces empty output otherwise.
+                Arguments.Add(Pair.Key, FString::Printf(TEXT("%.10g"), Pair.Value->AsNumber()));
+            }
+            else if (Pair.Value->Type == EJson::Boolean)
+            {
+                Arguments.Add(Pair.Key, Pair.Value->AsBool() ? TEXT("true") : TEXT("false"));
+            }
             else
             {
-                // Convert non-string values to JSON string
+                // Arrays/objects — serialize as condensed JSON
                 FString JsonStr;
-                TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonStr);
-                FJsonSerializer::Serialize(Pair.Value.ToSharedRef(), TEXT(""), Writer);
+                TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
+                    TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonStr);
+                FJsonSerializer::Serialize(Pair.Value->AsArray(), Writer);
                 Arguments.Add(Pair.Key, JsonStr);
             }
         }
@@ -931,30 +942,66 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     }
     else
     {
-        // We're on a background thread, need to marshal to game thread
+        // We're on a background thread, need to marshal to game thread.
+        // Use shared state so the lambda never touches dangling stack references
+        // if the caller times out and its stack frame is destroyed.
         UE_LOG(LogMCPServer, Log, TEXT("Marshaling tool %s to game thread from socket thread"), *ToolName);
         
-        FEvent* CompletionEvent = FPlatformProcess::GetSynchEventFromPool(false);
-        TAtomic<bool> bExecutionStarted(false);
-        
-        AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, &ToolResult, CompletionEvent, &bExecutionStarted]()
+        struct FToolExecState
         {
-            bExecutionStarted = true;
+            FString Result;
+            TAtomic<bool> bStarted{false};
+            TAtomic<bool> bTimedOut{false};
+            FEvent* Event = nullptr;
+            
+            ~FToolExecState()
+            {
+                if (Event)
+                {
+                    FPlatformProcess::ReturnSynchEventToPool(Event);
+                    Event = nullptr;
+                }
+            }
+        };
+        
+        TSharedPtr<FToolExecState> State = MakeShared<FToolExecState>();
+        State->Event = FPlatformProcess::GetSynchEventFromPool(false);
+        
+        AsyncTask(ENamedThreads::GameThread, [ToolName, Arguments, State]()
+        {
+            State->bStarted = true;
+            
+            if (State->bTimedOut)
+            {
+                UE_LOG(LogMCPServer, Warning, TEXT("Tool %s: caller already timed out before execution, skipping"), *ToolName);
+                return;
+            }
+            
             UE_LOG(LogMCPServer, Log, TEXT("Tool %s execution starting on game thread"), *ToolName);
-            ToolResult = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
+            State->Result = FToolRegistry::Get().ExecuteTool(ToolName, Arguments);
             UE_LOG(LogMCPServer, Log, TEXT("Tool %s execution completed on game thread"), *ToolName);
-            CompletionEvent->Trigger();
+            
+            if (!State->bTimedOut && State->Event)
+            {
+                State->Event->Trigger();
+            }
         });
         
         // Wait for completion with timeout (60 seconds for MCP tool execution)
         // Python scripts and complex operations may need more time
         const double TimeoutSeconds = 60.0;
-        bool bCompleted = CompletionEvent->Wait(FTimespan::FromSeconds(TimeoutSeconds));
-        FPlatformProcess::ReturnSynchEventToPool(CompletionEvent);
+        bool bCompleted = State->Event->Wait(FTimespan::FromSeconds(TimeoutSeconds));
         
-        if (!bCompleted)
+        if (bCompleted)
         {
-            if (!bExecutionStarted)
+            ToolResult = MoveTemp(State->Result);
+        }
+        else
+        {
+            // Mark timeout so the lambda won't touch the event after we clean up
+            State->bTimedOut = true;
+            
+            if (!State->bStarted)
             {
                 UE_LOG(LogMCPServer, Error, TEXT("Tool %s execution never started (game thread blocked?) - timed out after %.1fs"), 
                     *ToolName, TimeoutSeconds);

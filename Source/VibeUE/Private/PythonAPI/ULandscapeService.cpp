@@ -399,35 +399,41 @@ bool ULandscapeService::DeleteLandscape(const FString& LandscapeNameOrLabel)
 // Heightmap Operations
 // =================================================================
 
-bool ULandscapeService::ImportHeightmap(
+FHeightmapImportResult ULandscapeService::ImportHeightmap(
 	const FString& LandscapeNameOrLabel,
 	const FString& FilePath)
 {
+	FHeightmapImportResult Result;
+
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
 	if (!Landscape)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: Landscape '%s' not found"), *LandscapeNameOrLabel);
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("Landscape '%s' not found"), *LandscapeNameOrLabel);
+		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+		return Result;
 	}
 
 	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
 	if (!LandscapeInfo)
 	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: No landscape info for '%s'"), *LandscapeNameOrLabel);
-		return false;
+		Result.ErrorMessage = FString::Printf(TEXT("No landscape info for '%s'"), *LandscapeNameOrLabel);
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+		return Result;
 	}
 
 	// Get landscape extent
 	int32 MinX, MinY, MaxX, MaxY;
 	if (!LandscapeInfo->GetLandscapeExtent(MinX, MinY, MaxX, MaxY))
 	{
-		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Failed to get landscape extent"));
-		return false;
+		Result.ErrorMessage = TEXT("Failed to get landscape extent");
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+		return Result;
 	}
 
 	int32 SizeX = MaxX - MinX + 1;
 	int32 SizeY = MaxY - MinY + 1;
 	int32 ExpectedBytes = SizeX * SizeY * sizeof(uint16);
+	Result.Resolution = FString::Printf(TEXT("%dx%d"), SizeX, SizeY);
 
 	// Load file data through Unreal's native Landscape file format importer
 	// (same import stack used by Landscape UI for PNG/RAW format handling).
@@ -441,16 +447,19 @@ bool ULandscapeService::ImportHeightmap(
 		const FLandscapeImportData<uint16> ImportData = HeightmapFormat->Import(*FilePath, FLandscapeFileResolution(SizeX, SizeY));
 		if (ImportData.ResultCode == ELandscapeImportResult::Error)
 		{
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Native import failed for '%s': %s"),
+			Result.ErrorMessage = FString::Printf(TEXT("Native import failed for '%s': %s"),
 				*FilePath, *ImportData.ErrorMessage.ToString());
-			return false;
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
 		}
 
 		if (ImportData.Data.Num() != SizeX * SizeY)
 		{
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Native import size mismatch. Expected %d samples, got %d samples"),
-				SizeX * SizeY, ImportData.Data.Num());
-			return false;
+			Result.ErrorMessage = FString::Printf(TEXT("Heightmap size mismatch: landscape is %dx%d (%d samples) but file has %d samples. "
+				"The heightmap file resolution must exactly match the landscape resolution."),
+				SizeX, SizeY, SizeX * SizeY, ImportData.Data.Num());
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
 		}
 
 		ImportedHeightData = ImportData.Data;
@@ -460,15 +469,18 @@ bool ULandscapeService::ImportHeightmap(
 		TArray<uint8> FileData;
 		if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
 		{
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: Failed to load RAW file '%s'"), *FilePath);
-			return false;
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to load RAW file '%s'"), *FilePath);
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
 		}
 
 		if (FileData.Num() != ExpectedBytes)
 		{
-			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: RAW file size mismatch. Expected %d bytes for %dx%d landscape, got %d bytes"),
+			Result.ErrorMessage = FString::Printf(TEXT("RAW file size mismatch: expected %d bytes for %dx%d landscape, got %d bytes. "
+				"The heightmap file resolution must exactly match the landscape resolution."),
 				ExpectedBytes, SizeX, SizeY, FileData.Num());
-			return false;
+			UE_LOG(LogTemp, Error, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
 		}
 
 		ImportedHeightData.SetNumUninitialized(SizeX * SizeY);
@@ -506,9 +518,10 @@ bool ULandscapeService::ImportHeightmap(
 	Landscape->RequestLayersContentUpdate(ELandscapeLayerUpdateMode::Update_Heightmap_All);
 	UpdateLandscapeAfterHeightEdit(Landscape);
 
+	Result.bSuccess = true;
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ImportHeightmap: Imported %s heightmap to '%s' (%dx%d)"),
 		*Extension.ToUpper(), *LandscapeNameOrLabel, SizeX, SizeY);
-	return true;
+	return Result;
 }
 
 bool ULandscapeService::ExportHeightmap(
@@ -561,6 +574,346 @@ bool ULandscapeService::ExportHeightmap(
 		bExportPng ? TEXT("PNG") : TEXT("RAW"), *LandscapeNameOrLabel, SizeX, SizeY, *FinalOutputPath);
 
 	return true;
+}
+
+// =================================================================
+// Heightmap Utility Operations
+// =================================================================
+
+FHeightmapDimensions ULandscapeService::GetHeightmapDimensions(const FString& FilePath)
+{
+	FHeightmapDimensions Result;
+
+	if (!FPaths::FileExists(FilePath))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("File not found: %s"), *FilePath);
+		return Result;
+	}
+
+	const FString Extension = FPaths::GetExtension(FilePath, false).ToLower();
+
+	if (Extension == TEXT("png"))
+	{
+		TArray<uint8> FileData;
+		if (!FFileHelper::LoadFileToArray(FileData, *FilePath))
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to load file: %s"), *FilePath);
+			return Result;
+		}
+
+		IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+		TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+		if (!ImageWrapper.IsValid())
+		{
+			Result.ErrorMessage = TEXT("Failed to create PNG image wrapper");
+			return Result;
+		}
+
+		if (!ImageWrapper->SetCompressed(FileData.GetData(), FileData.Num()))
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to parse PNG: %s"), *FilePath);
+			return Result;
+		}
+
+		Result.Width = ImageWrapper->GetWidth();
+		Result.Height = ImageWrapper->GetHeight();
+		Result.BitDepth = ImageWrapper->GetBitDepth();
+		Result.bSuccess = true;
+	}
+	else if (Extension == TEXT("raw") || Extension == TEXT("r16"))
+	{
+		// RAW files are flat uint16 arrays - infer dimensions from file size
+		IFileManager& FileManager = IFileManager::Get();
+		const int64 FileSize = FileManager.FileSize(*FilePath);
+		if (FileSize < 0)
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to get file size: %s"), *FilePath);
+			return Result;
+		}
+
+		// RAW heightmaps are uint16, so file size = width * height * 2
+		const int64 PixelCount = FileSize / 2;
+		// Assume square
+		const int32 Side = FMath::RoundToInt(FMath::Sqrt(static_cast<double>(PixelCount)));
+		if (static_cast<int64>(Side) * Side * 2 == FileSize)
+		{
+			Result.Width = Side;
+			Result.Height = Side;
+			Result.BitDepth = 16;
+			Result.bSuccess = true;
+		}
+		else
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("RAW file size %lld bytes does not form a square heightmap"), FileSize);
+			return Result;
+		}
+	}
+	else
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Unsupported heightmap format: .%s (use .png or .raw)"), *Extension);
+	}
+
+	return Result;
+}
+
+FHeightmapResizeResult ULandscapeService::ResizeHeightmap(
+	const FString& SourcePath,
+	int32 TargetWidth,
+	int32 TargetHeight,
+	const FString& OutputPath)
+{
+	FHeightmapResizeResult Result;
+
+	if (TargetWidth <= 0 || TargetHeight <= 0)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Invalid target dimensions: %dx%d"), TargetWidth, TargetHeight);
+		return Result;
+	}
+
+	// Get source dimensions
+	FHeightmapDimensions SrcDims = GetHeightmapDimensions(SourcePath);
+	if (!SrcDims.bSuccess)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to read source: %s"), *SrcDims.ErrorMessage);
+		return Result;
+	}
+
+	Result.OriginalDimensions = FString::Printf(TEXT("%dx%d"), SrcDims.Width, SrcDims.Height);
+	Result.NewDimensions = FString::Printf(TEXT("%dx%d"), TargetWidth, TargetHeight);
+
+	// Load the source heightmap as uint16 data
+	TArray<uint16> SourceData;
+	const FString Extension = FPaths::GetExtension(SourcePath, false).ToLower();
+
+	if (Extension == TEXT("png"))
+	{
+		// Use the Landscape editor's native PNG importer to get uint16 data
+		ILandscapeEditorModule& LandscapeEditorModule = FModuleManager::LoadModuleChecked<ILandscapeEditorModule>(TEXT("LandscapeEditor"));
+		const ILandscapeHeightmapFileFormat* HeightmapFormat = LandscapeEditorModule.GetHeightmapFormatByExtension(TEXT(".png"));
+		if (!HeightmapFormat)
+		{
+			Result.ErrorMessage = TEXT("No PNG heightmap format handler available");
+			return Result;
+		}
+
+		// Pass the source dimensions as the expected resolution (file is read at native size)
+		const FLandscapeImportData<uint16> ImportData = HeightmapFormat->Import(*SourcePath, FLandscapeFileResolution(SrcDims.Width, SrcDims.Height));
+		if (ImportData.ResultCode == ELandscapeImportResult::Error)
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to load PNG heightmap: %s"), *ImportData.ErrorMessage.ToString());
+			return Result;
+		}
+		SourceData = ImportData.Data;
+	}
+	else
+	{
+		// RAW: Load raw uint16 data directly
+		TArray<uint8> FileData;
+		if (!FFileHelper::LoadFileToArray(FileData, *SourcePath))
+		{
+			Result.ErrorMessage = FString::Printf(TEXT("Failed to load file: %s"), *SourcePath);
+			return Result;
+		}
+		SourceData.SetNumUninitialized(SrcDims.Width * SrcDims.Height);
+		FMemory::Memcpy(SourceData.GetData(), FileData.GetData(), FileData.Num());
+	}
+
+	if (SourceData.Num() != SrcDims.Width * SrcDims.Height)
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Source data size mismatch: expected %d pixels, got %d"),
+			SrcDims.Width * SrcDims.Height, SourceData.Num());
+		return Result;
+	}
+
+	// If source and target are the same size, just copy
+	if (SrcDims.Width == TargetWidth && SrcDims.Height == TargetHeight)
+	{
+		FString FinalOutput = OutputPath;
+		if (FinalOutput.IsEmpty())
+		{
+			FinalOutput = FPaths::GetPath(SourcePath) / FPaths::GetBaseFilename(SourcePath) + TEXT("_resized.png");
+		}
+		IFileManager::Get().Copy(*FinalOutput, *SourcePath);
+		Result.bSuccess = true;
+		Result.OutputFile = FinalOutput;
+		UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ResizeHeightmap: Source already matches target %dx%d, copied to %s"),
+			TargetWidth, TargetHeight, *FinalOutput);
+		return Result;
+	}
+
+	// Bilinear resample uint16 data
+	TArray<uint16> ResizedData;
+	ResizedData.SetNumUninitialized(TargetWidth * TargetHeight);
+
+	const float ScaleX = static_cast<float>(SrcDims.Width - 1) / static_cast<float>(TargetWidth - 1);
+	const float ScaleY = static_cast<float>(SrcDims.Height - 1) / static_cast<float>(TargetHeight - 1);
+
+	for (int32 Y = 0; Y < TargetHeight; Y++)
+	{
+		const float SrcY = Y * ScaleY;
+		const int32 Y0 = FMath::FloorToInt(SrcY);
+		const int32 Y1 = FMath::Min(Y0 + 1, SrcDims.Height - 1);
+		const float Fy = SrcY - static_cast<float>(Y0);
+
+		for (int32 X = 0; X < TargetWidth; X++)
+		{
+			const float SrcX = X * ScaleX;
+			const int32 X0 = FMath::FloorToInt(SrcX);
+			const int32 X1 = FMath::Min(X0 + 1, SrcDims.Width - 1);
+			const float Fx = SrcX - static_cast<float>(X0);
+
+			const float TL = static_cast<float>(SourceData[Y0 * SrcDims.Width + X0]);
+			const float TR = static_cast<float>(SourceData[Y0 * SrcDims.Width + X1]);
+			const float BL = static_cast<float>(SourceData[Y1 * SrcDims.Width + X0]);
+			const float BR = static_cast<float>(SourceData[Y1 * SrcDims.Width + X1]);
+
+			const float Interpolated = FMath::Lerp(FMath::Lerp(TL, TR, Fx), FMath::Lerp(BL, BR, Fx), Fy);
+			ResizedData[Y * TargetWidth + X] = static_cast<uint16>(FMath::Clamp(FMath::RoundToInt(Interpolated), 0, 65535));
+		}
+	}
+
+	// Write as 16-bit grayscale PNG
+	FString FinalOutput = OutputPath;
+	if (FinalOutput.IsEmpty())
+	{
+		FinalOutput = FPaths::GetPath(SourcePath) / FPaths::GetBaseFilename(SourcePath)
+			+ FString::Printf(TEXT("_%dx%d.png"), TargetWidth, TargetHeight);
+	}
+
+	// Convert uint16 big-endian for 16-bit PNG (PNG standard is network byte order = big-endian)
+	TArray<uint8> PngRawData;
+	PngRawData.SetNumUninitialized(TargetWidth * TargetHeight * 2);
+	for (int32 i = 0; i < TargetWidth * TargetHeight; i++)
+	{
+		PngRawData[i * 2]     = static_cast<uint8>(ResizedData[i] >> 8);    // high byte
+		PngRawData[i * 2 + 1] = static_cast<uint8>(ResizedData[i] & 0xFF); // low byte
+	}
+
+	IImageWrapperModule& ImageWrapperModule = FModuleManager::LoadModuleChecked<IImageWrapperModule>(FName("ImageWrapper"));
+	TSharedPtr<IImageWrapper> ImageWrapper = ImageWrapperModule.CreateImageWrapper(EImageFormat::PNG);
+	if (!ImageWrapper.IsValid())
+	{
+		Result.ErrorMessage = TEXT("Failed to create PNG image wrapper");
+		return Result;
+	}
+
+	ImageWrapper->SetRaw(PngRawData.GetData(), PngRawData.Num(), TargetWidth, TargetHeight, ERGBFormat::Gray, 16);
+	const TArray<uint8, FDefaultAllocator64>& CompressedData = ImageWrapper->GetCompressed(0);
+	TArray<uint8> CompressedCopy(CompressedData.GetData(), CompressedData.Num());
+
+	if (!FFileHelper::SaveArrayToFile(CompressedCopy, *FinalOutput))
+	{
+		Result.ErrorMessage = FString::Printf(TEXT("Failed to save resized heightmap to: %s"), *FinalOutput);
+		return Result;
+	}
+
+	Result.bSuccess = true;
+	Result.OutputFile = FinalOutput;
+	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::ResizeHeightmap: Resized %s from %dx%d to %dx%d, saved to %s"),
+		*SourcePath, SrcDims.Width, SrcDims.Height, TargetWidth, TargetHeight, *FinalOutput);
+	return Result;
+}
+
+FLandscapeResolutionInfo ULandscapeService::CalculateLandscapeResolution(
+	int32 ComponentCountX,
+	int32 ComponentCountY,
+	int32 QuadsPerSection,
+	int32 SectionsPerComponent)
+{
+	FLandscapeResolutionInfo Result;
+
+	// Validate inputs
+	TArray<int32> ValidQuads = { 7, 15, 31, 63, 127, 255 };
+	if (!ValidQuads.Contains(QuadsPerSection))
+	{
+		QuadsPerSection = 63; // Default
+	}
+	if (SectionsPerComponent != 1 && SectionsPerComponent != 2)
+	{
+		SectionsPerComponent = 1; // Default
+	}
+	ComponentCountX = FMath::Clamp(ComponentCountX, 1, 256);
+	ComponentCountY = FMath::Clamp(ComponentCountY, 1, 256);
+
+	const int32 ComponentSizeQuads = QuadsPerSection * SectionsPerComponent;
+	Result.ResolutionX = ComponentCountX * ComponentSizeQuads + 1;
+	Result.ResolutionY = ComponentCountY * ComponentSizeQuads + 1;
+	Result.TotalVertices = Result.ResolutionX * Result.ResolutionY;
+	Result.TotalComponents = ComponentCountX * ComponentCountY;
+	Result.Description = FString::Printf(TEXT("%dx%d components, %d quads/section, %d sections/component → %dx%d vertices (%d total)"),
+		ComponentCountX, ComponentCountY, QuadsPerSection, SectionsPerComponent,
+		Result.ResolutionX, Result.ResolutionY, Result.TotalVertices);
+
+	return Result;
+}
+
+FLandscapeResolutionInfo ULandscapeService::FindLandscapeConfigForResolution(
+	int32 TargetWidth,
+	int32 TargetHeight)
+{
+	FLandscapeResolutionInfo BestResult;
+
+	if (TargetWidth <= 1 || TargetHeight <= 1)
+	{
+		return BestResult;
+	}
+
+	// Search valid configurations, preferring fewer components (faster creation)
+	struct FCandidate
+	{
+		int32 CountX, CountY, Quads, Sections, TotalComponents;
+	};
+	TArray<FCandidate> Candidates;
+
+	TArray<int32> ValidQuads = { 7, 15, 31, 63, 127, 255 };
+	TArray<int32> ValidSections = { 1, 2 };
+
+	for (int32 Sections : ValidSections)
+	{
+		for (int32 Quads : ValidQuads)
+		{
+			const int32 ComponentQuads = Quads * Sections;
+			// Resolution = CountX * ComponentQuads + 1
+			// CountX = (TargetWidth - 1) / ComponentQuads
+			if ((TargetWidth - 1) % ComponentQuads != 0) continue;
+			if ((TargetHeight - 1) % ComponentQuads != 0) continue;
+
+			const int32 CountX = (TargetWidth - 1) / ComponentQuads;
+			const int32 CountY = (TargetHeight - 1) / ComponentQuads;
+
+			if (CountX < 1 || CountX > 256 || CountY < 1 || CountY > 256) continue;
+
+			FCandidate C;
+			C.CountX = CountX;
+			C.CountY = CountY;
+			C.Quads = Quads;
+			C.Sections = Sections;
+			C.TotalComponents = CountX * CountY;
+			Candidates.Add(C);
+		}
+	}
+
+	if (Candidates.Num() == 0)
+	{
+		return BestResult; // No valid config
+	}
+
+	// Sort by total components ascending (fewer = faster, less likely to timeout)
+	Candidates.Sort([](const FCandidate& A, const FCandidate& B) {
+		return A.TotalComponents < B.TotalComponents;
+	});
+
+	const FCandidate& Best = Candidates[0];
+	BestResult.ResolutionX = TargetWidth;
+	BestResult.ResolutionY = TargetHeight;
+	BestResult.TotalVertices = TargetWidth * TargetHeight;
+	BestResult.TotalComponents = Best.TotalComponents;
+	BestResult.Description = FString::Printf(
+		TEXT("Recommended: %dx%d components, quads_per_section=%d, sections_per_component=%d → %dx%d vertices (%d components)"),
+		Best.CountX, Best.CountY, Best.Quads, Best.Sections,
+		TargetWidth, TargetHeight, Best.TotalComponents);
+
+	return BestResult;
 }
 
 FLandscapeHeightSample ULandscapeService::GetHeightAtLocation(

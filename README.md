@@ -14,9 +14,9 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 23 specialized services with 700+ methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
+- **Python API Services** - 23 specialized services with 729 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
-- **MCP Discovery Tools** - 7 tools for exploring and executing Python in Unreal context
+- **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and Windsurf via MCP
 
@@ -26,8 +26,8 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Discovery & Execution Tools (7 tools)
-Lightweight MCP tools for exploring and executing Python:
+### 1. MCP Discovery & Execution Tools (9 tools)
+Lightweight MCP tools for AI interaction with Unreal:
 
 | Tool | Purpose |
 |------|---------|
@@ -38,8 +38,12 @@ Lightweight MCP tools for exploring and executing Python:
 | `list_python_subsystems` | List available UE editor subsystems |
 | `manage_skills` | Load domain-specific knowledge on demand |
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
+| `terrain_data` | Generate real-world heightmaps and map images from geographic coordinates |
+| `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
 
 **Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
+
+**Note:** The `terrain_data` and `deep_research` tools work together for real-world terrain workflows: geocode a place name → generate a heightmap → import into a landscape.
 
 #### MCP Tool Reference
 
@@ -112,7 +116,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `foliage`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
 
 ##### Log Reading Tool
 
@@ -164,6 +168,84 @@ read_logs(action="help")
 - `chat`, `vibeue` → Chat history log
 - `llm` → Raw LLM API log
 
+##### Terrain Data Tool
+
+**`terrain_data`**
+```python
+# Preview elevation stats and get suggested settings
+terrain_data(action="preview_elevation", lng=-122.4194, lat=37.7749)
+
+# Generate a heightmap matching your landscape resolution
+terrain_data(
+    action="generate_heightmap",
+    lng=-122.4194, lat=37.7749,
+    base_level=0,
+    height_scale=100,
+    resolution=1009,        # MUST match landscape resolution
+    format="png"
+)
+
+# Get a satellite or map reference image
+terrain_data(
+    action="get_map_image",
+    lng=-122.4194, lat=37.7749,
+    style="satellite-v9"    # satellite-v9, outdoors-v11, streets-v11, light-v10, dark-v10
+)
+
+# List available map image styles
+terrain_data(action="list_styles")
+```
+
+**Parameters (generate_heightmap):**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `action` | string | *(required)* | `generate_heightmap`, `preview_elevation`, `get_map_image`, `list_styles` |
+| `lng` | number | — | Longitude of center point |
+| `lat` | number | — | Latitude of center point |
+| `format` | string | `png` | Output: `png`, `raw`, `zip` |
+| `resolution` | number | 1081 | Output NxN pixels — MUST match landscape resolution |
+| `map_size` | number | 17.28 | Map size in km |
+| `base_level` | number | 0 | Base elevation offset in meters |
+| `height_scale` | number | 100 | Height scale % (1-250) |
+| `water_depth` | number | 40 | Water depth in C:S units |
+| `blur_passes` | number | 10 | Plains smoothing passes |
+| `sharpen` | boolean | true | Apply sharpening |
+| `save_path` | string | `Saved/Terrain/` | Custom output path |
+
+**Workflow:** `preview_elevation` → use suggested `base_level` and `height_scale` → `generate_heightmap` with `resolution` matching your landscape → `import_heightmap` via LandscapeService.
+
+##### Deep Research Tool
+
+**`deep_research`**
+```python
+# Web search (DuckDuckGo)
+deep_research(action="search", query="Unreal Engine landscape best practices")
+
+# Fetch URL as clean markdown
+deep_research(action="fetch_page", url="https://dev.epicgames.com/documentation/...")
+
+# Place name → GPS coordinates
+deep_research(action="geocode", query="Mount Fuji")
+
+# GPS coordinates → place name
+deep_research(action="reverse_geocode", lat=35.3606, lng=138.7274)
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | string | Yes | `search`, `fetch_page`, `geocode`, `reverse_geocode` |
+| `query` | string | For search/geocode | Search topic or place name |
+| `url` | string | For fetch_page | Full URL to fetch as markdown |
+| `lat` | number | For reverse_geocode | Latitude |
+| `lng` | number | For reverse_geocode | Longitude |
+
+**Typical workflows:**
+- Research: `search` → `fetch_page` on best URL → synthesize
+- Terrain: `geocode "Mount Fuji"` → pass lat/lng to `terrain_data`
+
 ### Log Reader Tool (`read_logs`)
 
 The `read_logs` MCP tool provides comprehensive log file access with filtering and analysis capabilities:
@@ -210,7 +292,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (23 services, 700+ methods)
+### 2. VibeUE Python API Services (23 services, 729 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -219,7 +301,7 @@ High-level services exposed to Python for common game development tasks:
 | `BlueprintService` | 75 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
-| `LandscapeService` | 64 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
+| `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `MaterialService` | 30 | Materials and material instances |
@@ -233,7 +315,7 @@ High-level services exposed to Python for common game development tasks:
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
 | `WidgetService` | 16 | UMG widget blueprints and components |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
-| `FoliageService` | 16 | Foliage type management, scatter placement, layer-aware painting, instance queries |
+| `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
@@ -411,7 +493,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `foliage`
+Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
 
 ### Using Skills
 
@@ -801,7 +883,7 @@ SkeletonService provides comprehensive skeleton and skeletal mesh manipulation:
 - `open_mesh_in_editor(path)` - Open skeletal mesh editor
 - `refresh_skeleton(path)` - Refresh after changes
 
-### LandscapeService (64 methods)
+### LandscapeService (68 methods)
 
 LandscapeService provides comprehensive landscape terrain manipulation including sculpting, weight layer painting, heightmap import/export, visibility holes, and spline-based road/path creation:
 
@@ -902,7 +984,7 @@ LandscapeMaterialService handles the creation and configuration of landscape-spe
 **Existence Checks:**
 - `landscape_material_exists(path)` / `layer_info_exists(path)` - Existence checks
 
-### FoliageService (16 methods)
+### FoliageService (15 methods)
 
 FoliageService provides foliage type management, instance scattering, layer-aware placement, and instance queries:
 
@@ -1243,6 +1325,37 @@ unreal.NiagaraService.set_rapid_iteration_param(
 # 6. Compile and save
 unreal.NiagaraService.compile_system(path)
 unreal.NiagaraService.save_system(path)
+```
+
+### Real-World Terrain to Landscape
+
+```python
+# 1. Geocode a place name to get GPS coordinates
+# MCP: deep_research(action="geocode", query="Mount Fuji")
+# → lat=35.3606, lng=138.7274
+
+# 2. Preview elevation to get suggested settings
+# MCP: terrain_data(action="preview_elevation", lng=138.7274, lat=35.3606)
+# → suggested_base_level=340, suggested_height_scale=27
+
+# 3. Generate heightmap matching your landscape resolution
+# MCP: terrain_data(
+#     action="generate_heightmap",
+#     lng=138.7274, lat=35.3606,
+#     base_level=340, height_scale=27,
+#     resolution=1009, format="png"
+# )
+# → file="C:/Project/Saved/Terrain/heightmap_35.3606_138.7274.png"
+
+# 4. Create landscape and import heightmap
+path = unreal.LandscapeService.create_landscape("MtFuji",
+    num_components_x=16, num_components_y=16,
+    quads_per_section=63, sections_per_component=1)
+unreal.LandscapeService.import_heightmap("MtFuji",
+    "C:/Project/Saved/Terrain/heightmap_35.3606_138.7274.png")
+
+# 5. Optionally get a satellite reference image
+# MCP: terrain_data(action="get_map_image", lng=138.7274, lat=35.3606, style="satellite-v9")
 ```
 
 ---

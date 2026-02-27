@@ -537,3 +537,373 @@ RVT asset assignment alone is not enough. Ensure each landscape has an RVT volum
 | Material instances/biome configuration | `landscape-auto-material` |
 | Material functions (non-landscape) | `materials` |
 | Full pipeline (terrain + auto-material + RVT) | `landscape` + `landscape-auto-material` |
+
+---
+
+## Auto-Layer Architecture Details
+
+### Function Chain
+
+```
+MF_AutoLayer_01 (orchestrator)
+│
+├── Reads: World Position (from VertexNormalWS / AbsoluteWorldPosition)
+├── Reads: World Normal (from VertexNormalWS)
+│
+├── Calls: MF_Altitude_Blend_01
+│   ├── Input: WorldPosition.Z
+│   ├── Parameter: Height Threshold (e.g., 5000 units)
+│   ├── Parameter: Blend Height (transition width, e.g., 500 units)
+│   └── Output: Height Mask (0.0 = below, 1.0 = above)
+│
+├── Calls: MF_Slope_Blend_01
+│   ├── Input: World Normal
+│   ├── Parameter: Slope Threshold (0.0-1.0, where 0.7 ≈ 45°)
+│   ├── Parameter: Slope Blend Width (e.g., 0.15)
+│   └── Output: Slope Mask (0.0 = flat, 1.0 = steep)
+│
+├── Combines masks:
+│   ├── SlopeMask → Rock layer weight
+│   ├── HeightMask → Snow layer weight
+│   ├── (1 - SlopeMask) * (1 - HeightMask) → Base layer weight (Grass)
+│   └── Optional: SlopeMask * HeightMask → Alpine Rock variant
+│
+└── Per-layer sampling:
+    ├── MF_Layer_Grass(weight=base) → Sampled BaseColor, Normal, Roughness
+    ├── MF_Layer_Rock(weight=slope) → Sampled BaseColor, Normal, Roughness
+    ├── MF_Layer_Snow(weight=height) → Sampled BaseColor, Normal, Roughness
+    └── Lerp/Blend all layers by weights → Final output
+```
+
+### How Masks Combine
+
+Auto-layer uses **multiplicative mask composition**:
+
+```
+base_weight  = (1.0 - slope_mask) * (1.0 - height_mask)
+slope_weight = slope_mask * (1.0 - height_mask)  // Rock on slopes but not peaks
+height_weight = height_mask                        // Snow on peaks regardless of slope
+```
+
+This ensures weights always sum to ~1.0 without explicit normalization.
+
+### Height Blend vs. Weight Blend
+
+- **Auto-layer weights** (from slope/altitude) use `LB_HeightBlend` for smooth transitions
+- **Painted layers** use `LB_WeightBlend` for artist control
+- When both exist on the same landscape, painted layers **override** auto-layer in painted regions
+
+### Creating the Slope Blend Function
+
+```python
+import unreal
+
+func = unreal.MaterialNodeService.create_material_function(
+    "MF_Slope_Blend", "/Game/Materials/Functions",
+    "Generates a slope mask from world normal", True, ["Landscape"])
+
+unreal.MaterialNodeService.add_function_input(
+    func.asset_path, "SlopeThreshold", "Scalar", 0, "Dot product threshold (0.7 ≈ 45°)")
+unreal.MaterialNodeService.add_function_input(
+    func.asset_path, "BlendWidth", "Scalar", 1, "Transition smoothness")
+
+unreal.MaterialNodeService.add_function_output(
+    func.asset_path, "SlopeMask", 0, "0=flat, 1=steep")
+
+unreal.EditorAssetLibrary.save_asset(func.asset_path)
+```
+
+### Creating the Altitude Blend Function
+
+```python
+import unreal
+
+func = unreal.MaterialNodeService.create_material_function(
+    "MF_Altitude_Blend", "/Game/Materials/Functions",
+    "Generates a height mask from world position Z", True, ["Landscape"])
+
+unreal.MaterialNodeService.add_function_input(
+    func.asset_path, "HeightThreshold", "Scalar", 0, "World Z height to start blending")
+unreal.MaterialNodeService.add_function_input(
+    func.asset_path, "BlendHeight", "Scalar", 1, "Height range for transition")
+
+unreal.MaterialNodeService.add_function_output(
+    func.asset_path, "HeightMask", 0, "0=below threshold, 1=above")
+
+unreal.EditorAssetLibrary.save_asset(func.asset_path)
+```
+
+### Extending the Auto-Layer System
+
+To add a new terrain condition (e.g., moisture/wetness):
+1. Create a new mask function `MF_Moisture_Blend`
+2. Add moisture mask to the `MF_AutoLayer` combiner
+3. Multiply into layer weights alongside slope/height
+4. Expose threshold parameters for instance override
+
+---
+
+## Biome Configuration Guide
+
+A **biome** is a specific landscape look defined entirely through a **material instance** of the master material. The master graph stays unchanged — biomes differ only in parameter values.
+
+### Biome Comparison Table
+
+| Parameter | Default | Island Variant | Mountain Variant |
+|-----------|---------|--------------|-----------------|
+| SlopeThreshold | 0.7 | 0.75 | 0.6 |
+| AltitudeThreshold | 5000 | 500 | 8000 |
+| EnableSnow | true | false | true |
+| Layer01 (base) | Grass | Tropical Grass | Alpine Grass |
+| Layer02 (slope) | Rock | Sandstone | Granite |
+| Layer03 (height) | Snow | Beach Sand | Snow |
+| ColorSaturation | 1.0 | 1.2 | 0.9 |
+| UVTiling | 0.01 | 0.01 | 0.008 |
+
+### Configure Feature Toggles via Static Switches
+
+```python
+count = unreal.MaterialService.set_instance_parameters_bulk(
+    inst_path,
+    ["EnableSnow", "EnableDisplacement", "EnableRVT", "EnableDistanceFades"],
+    ["StaticSwitch", "StaticSwitch", "StaticSwitch", "StaticSwitch"],
+    ["false", "true", "true", "true"]
+)
+```
+
+### Biome Naming Convention
+
+```
+MI_Landscape_<Region>_<Variant>_##
+```
+Examples:
+- `MI_Landscape_Default_01` — generic grassland
+- `MI_Landscape_Tropical_Island_01` — tropical island variant
+- `MI_Landscape_Alpine_Valley_01` — alpine valley
+- `MI_Landscape_Desert_Canyon_01` — desert canyon
+
+---
+
+## Layer Function Template
+
+A layer function encapsulates all texture sampling logic for a single terrain type. This makes per-terrain materials modular and reusable.
+
+### Standard Interface
+
+**Standard inputs** (every layer function should have these):
+
+```python
+# Texture inputs
+unreal.MaterialNodeService.add_function_input(
+    func_path, "BaseColorTexture", "Texture2D", 0,
+    "Albedo/diffuse texture for this terrain type")
+unreal.MaterialNodeService.add_function_input(
+    func_path, "NormalTexture", "Texture2D", 1,
+    "Normal map texture")
+unreal.MaterialNodeService.add_function_input(
+    func_path, "RoughnessTexture", "Texture2D", 2,
+    "Roughness texture (or RMA packed)")
+
+# Tiling control
+unreal.MaterialNodeService.add_function_input(
+    func_path, "UVTiling", "Scalar", 3,
+    "UV tiling scale (default 0.01 for landscapes)")
+
+# Optional: detail textures for close-up
+unreal.MaterialNodeService.add_function_input(
+    func_path, "DetailBaseColor", "Texture2D", 10,
+    "Close-up detail texture (optional)")
+unreal.MaterialNodeService.add_function_input(
+    func_path, "DetailScale", "Scalar", 11,
+    "Detail texture tiling multiplier")
+```
+
+**Standard outputs:**
+
+```python
+unreal.MaterialNodeService.add_function_output(
+    func_path, "BaseColor", 0, "Sampled albedo (RGB)")
+unreal.MaterialNodeService.add_function_output(
+    func_path, "Normal", 1, "Sampled normal (RGB)")
+unreal.MaterialNodeService.add_function_output(
+    func_path, "Roughness", 2, "Sampled roughness (Scalar)")
+```
+
+### Internal Graph Pattern
+
+```
+LandscapeLayerCoords (UV tiling)
+    ↓
+TextureSample (BaseColor) → Output: BaseColor
+TextureSample (Normal)    → Output: Normal
+TextureSample (Roughness) → Output: Roughness
+    ↓ (optional)
+DetailTextureSample → Lerp with base by distance → Final outputs
+```
+
+### Layer Function Catalog
+
+| Function | Terrain | Textures | Special Features |
+|----------|---------|----------|-----------------|
+| `MF_Layer_Grass` | Grassland | BC + N + H | Color variation |
+| `MF_Layer_Rock` | Rocky surfaces | BC + N + H | World-aligned UV |
+| `MF_Layer_Snow` | Snow/ice | BC + N | Sparkle overlay |
+| `MF_Layer_Dirt` | Bare earth | BC + N + H | Moisture darkening |
+| `MF_Layer_Forest` | Forest floor | BC + N + H | Leaf litter blend |
+| `MF_Layer_Beach` | Sand/beach | BC + N | Wet/dry transition |
+| `MF_Layer_Desert` | Desert sand | BC + N + H | Wind ripple normal |
+| `MF_Layer_Grass_Dry` | Dry grass | BC + N | Seasonal variant |
+| `MF_Layer_Rock_Desert` | Desert rock | BC + N + H | Eroded variant |
+
+### Layer Function Tips
+
+- **Keep functions focused**: One terrain type per function, one concern per function
+- **Use consistent pin naming**: `BaseColor`, `Normal`, `Roughness` for all output functions
+- **Sort priorities matter**: Keep consistent across all layer functions (0=BC, 1=Normal, 2=Roughness, 3=UV)
+- **Save before referencing**: Always `save_asset()` the function before creating a `MaterialExpressionMaterialFunctionCall` to it
+
+---
+
+## Parameter Reference
+
+### Layer Texture Parameters (per layer)
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `Layer##_BaseColor` | Texture | Albedo/diffuse texture for layer | None |
+| `Layer##_Normal` | Texture | Normal map for layer | FlatNormal |
+| `Layer##_Roughness` | Texture | Roughness (or RMA packed) | Gray |
+| `Layer##_Height` | Texture | Height map for height-blending | White |
+| `Layer##_UVTiling` | Scalar | UV tiling scale | 0.01 |
+| `Layer##_DetailBaseColor` | Texture | Close-up detail texture | None |
+| `Layer##_DetailScale` | Scalar | Detail texture tiling multiplier | 5.0 |
+| `Layer##_RoughnessMin` | Scalar | Roughness remap minimum | 0.0 |
+| `Layer##_RoughnessMax` | Scalar | Roughness remap maximum | 1.0 |
+
+*`##` = layer index: 01, 02, 03, etc.*
+
+### Auto-Blend Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `SlopeThreshold` | Scalar | Dot product threshold for slope detection (0.7 ≈ 45°) | 0.7 |
+| `SlopeBlendWidth` | Scalar | Slope transition smoothness | 0.15 |
+| `AltitudeThreshold` | Scalar | World Z height where altitude blend begins | 5000.0 |
+| `AltitudeBlendHeight` | Scalar | Height range for altitude transition | 500.0 |
+| `HeightBlendSharpness` | Scalar | Height-based layer transition sharpness | 10.0 |
+
+### Distance & LOD Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `NearDistance` | Scalar | Distance for full-detail rendering | 1000.0 |
+| `FarDistance` | Scalar | Distance for simplified rendering | 10000.0 |
+| `FadeDistance` | Scalar | Distance at which material fades completely | 50000.0 |
+| `DetailBlendDistance` | Scalar | Distance for detail texture fade-in | 500.0 |
+
+### Color Correction Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `ColorSaturation` | Scalar | Overall color saturation | 1.0 |
+| `ColorBrightness` | Scalar | Overall brightness multiplier | 1.0 |
+| `ColorContrast` | Scalar | Color contrast adjustment | 1.0 |
+| `ColorTint` | Vector | Per-biome color tint (RGB) | (1,1,1,1) |
+| `NormalIntensity` | Scalar | Normal map strength multiplier | 1.0 |
+| `RoughnessScale` | Scalar | Global roughness scaling | 1.0 |
+
+### Feature Toggles (Static Switches)
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `EnableSnow` | StaticSwitch | Enable snow layer (altitude blend) | true |
+| `EnableDisplacement` | StaticSwitch | Enable world position offset | false |
+| `EnableRVT` | StaticSwitch | Enable Runtime Virtual Texture output | true |
+| `EnableDistanceFades` | StaticSwitch | Enable distance-based LOD | true |
+| `EnableDetailTextures` | StaticSwitch | Enable close-up detail textures | true |
+| `EnableColorCorrection` | StaticSwitch | Enable per-biome color grading | true |
+| `EnableBumpOffset` | StaticSwitch | Enable parallax/bump offset | false |
+| `EnableWindSystem` | StaticSwitch | Enable vegetation wind animation | false |
+
+### Displacement / WPO Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `DisplacementScale` | Scalar | World position offset strength | 10.0 |
+| `DisplacementOffset` | Scalar | Displacement center offset | 0.0 |
+| `TessellationMultiplier` | Scalar | Tessellation density (if supported) | 1.0 |
+
+### RVT Parameters
+
+| Parameter | Type | Description | Default |
+|-----------|------|-------------|---------|
+| `RVT_VirtualTexture` | Texture | Runtime Virtual Texture asset reference | None |
+| `RVT_WorldHeight` | Scalar | Reference world height for RVT | 0.0 |
+
+### FindLandscapeTextures Suffix Matching
+
+The `FindLandscapeTextures` tool recognizes these suffixes when scanning directories:
+
+**Albedo/BaseColor:** `_Albedo`, `_Diffuse`, `_BaseColor`, `_D`, `_Color`, `_BC`, `_Base`
+
+**Normal:** `_Normal`, `_N`, `_NormalMap`, `_Norm`
+
+**Roughness:** `_Roughness`, `_R`, `_Rough`, `_RMA`, `_ORM`, `_ARM`
+
+**Terrain type inference from path keywords:**
+Grass, Rock, Snow, Dirt, Sand, Forest, Mud, Clay, Gravel, Moss, Bark, Ground, Soil, Stone, Pebble, Mountain, Alpine, Desert, Beach, Cliff, Tundra, Swamp, Wetland, Ice
+
+---
+
+## RVT Setup Guide
+
+### RVT Material Types
+
+| Type | Channels | Use Case |
+|------|----------|----------|
+| `BaseColor` | RGB | Color-only caching (simplest) |
+| `BaseColor_Normal_Roughness` | RGB + Normal + Roughness | Standard landscape (most common) |
+| `BaseColor_Normal_Specular` | RGB + Normal + Specular | For specular-heavy materials |
+| `WorldHeight` | Height only | For distance-based effects, atmosphere |
+
+**The RVT material type must match what your material actually outputs.**
+
+### RVT Sizing Guidelines
+
+| Landscape Size | TileCount | TileSize | Total Resolution |
+|----------------|-----------|----------|-----------------|
+| Small (1-4 km²) | 128 | 256 | 32K × 32K |
+| Medium (4-16 km²) | 256 | 256 | 64K × 64K |
+| Large (16+ km²) | 512 | 256 | 128K × 128K |
+
+**Notes:**
+- Higher tile count = more memory but better streaming
+- `bContinuousUpdate = true` re-renders every frame (expensive, only for dynamic materials)
+- `bSinglePhysicalSpace = true` disables streaming (entire VT in memory, fast but memory-heavy)
+
+### Inspecting Existing RVTs
+
+```python
+import unreal
+
+info = unreal.RuntimeVirtualTextureService.get_runtime_virtual_texture_info(
+    "/Game/VirtualTextures/RVT_Landscape_01")
+
+print(f"Type: {info.material_type}")
+print(f"Tiles: {info.tile_count} × {info.tile_size}px")
+print(f"Border: {info.tile_border_size}")
+print(f"Continuous: {info.continuous_update}")
+print(f"Single space: {info.single_physical_space}")
+```
+
+### Common RVT Issues
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| RVT Shows Black | Missing `bUsedWithVirtualTexturing = true` | Set property on material |
+| RVT Shows Black | RVT output node not connected | Connect matching pins |
+| RVT Shows Black | No RVT Volume actor in level | Create volume via `create_rvt_volume` |
+| RVT Shows Blurry | TileCount/TileSize too low | Increase values |
+| RVT Shows Blurry | Volume bounds don't match landscape | Recreate volume |
+| Performance Regression | `bContinuousUpdate` enabled unnecessarily | Disable unless material changes per-frame |
+| Performance Regression | Volume much larger than landscape | Resize to match |

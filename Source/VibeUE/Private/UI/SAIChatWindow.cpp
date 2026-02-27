@@ -2841,7 +2841,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
 void SAIChatWindow::FetchModelRatings()
 {
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
-    Request->SetURL(TEXT("https://vibeue.com/api/models/ratings"));
+    Request->SetURL(TEXT("https://www.vibeue.com/api/models/ratings"));
     Request->SetVerb(TEXT("GET"));
     Request->SetHeader(TEXT("Accept"), TEXT("application/json"));
     

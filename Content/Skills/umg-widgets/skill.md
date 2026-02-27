@@ -70,6 +70,35 @@ unreal.WidgetService.set_property(path, "Text", "Font.Size", "24")  # Not 24
 | `HorizontalBox` | Stack children horizontally |
 | `Overlay` | Stack children on top of each other |
 
+### ⚠️ Using Custom Widget Blueprints as Components
+
+You can add an existing Widget Blueprint as a sub-widget inside another WBP. **Always discover first** — use `list_widget_blueprints()` to find available WBPs, then pass the asset name (not the full path) as the `component_type`:
+
+```python
+import unreal
+
+# Step 1: discover what custom WBPs exist
+all_wbps = unreal.WidgetService.list_widget_blueprints("")
+# Returns paths like ["/Game/UI/WBP_HealthBar.WBP_HealthBar", ...]
+
+# Step 2: extract just the asset name to use as component_type
+# e.g. "WBP_HealthBar" from "/Game/UI/WBP_HealthBar.WBP_HealthBar"
+component_type = "WBP_HealthBar"
+
+# Step 3: add it like any other component
+path = "/Game/UI/WBP_HUD"
+unreal.WidgetService.add_component(path, component_type, "HealthBarWidget", "RootCanvas", True)
+unreal.EditorAssetLibrary.save_asset(path)
+```
+
+**Key rules:**
+- `search_types()` returns both built-in types and discovered WBPs (prefixed with `[WBP]`)
+- Use `list_widget_blueprints("")` to discover custom WBPs by path
+- Pass just the asset name (e.g. `"WBP_HealthBar"`), not the full package path
+- The custom WBP must already exist before adding it as a component
+- **Circular references are rejected** — a WBP cannot contain itself as a child
+- The parent WBP is automatically compiled after adding a custom WBP child
+
 ---
 
 ## Workflows
