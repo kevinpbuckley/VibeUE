@@ -292,7 +292,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (23 services, 729 methods)
+### 2. VibeUE Python API Services (23 services, 735 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -313,7 +313,7 @@ High-level services exposed to Python for common game development tasks:
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `AssetDiscoveryService` | 19 | Asset search, import/export, references |
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
-| `WidgetService` | 16 | UMG widget blueprints and components |
+| `WidgetService` | 22 | UMG widget blueprints, components, and MVVM ViewModel bindings |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
 | `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `DataTableService` | 15 | DataTable rows and structure |
@@ -351,6 +351,13 @@ Double-click to build:
 ```
 Plugins/VibeUE/BuildPlugin.bat
 ```
+
+Or specify your Unreal Engine path explicitly (skips auto-detection):
+```
+Plugins/VibeUE/BuildPlugin.bat "C:\Program Files\Epic Games\UE_5.7"
+```
+
+If the provided path is invalid, the script falls back to automatic detection.
 
 ### 3. Enable in Unreal
 
@@ -766,13 +773,19 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `connect_to_output(path, expr, output, property)` - Connect to material output
 - `create_parameter(...)` - Create parameter expression
 
-### WidgetService (16 methods)
+### WidgetService (22 methods)
 
 - `list_widget_blueprints(path)` - Find widget blueprints
 - `add_component(path, type, name, parent)` - Add widget
 - `get/set_property(path, component, property, value)` - Properties
 - `get_hierarchy(path)` - Get widget tree
 - `bind_event(path, event, function)` - Bind events
+- `add_view_model(path, class, name, creation_type)` - Add MVVM ViewModel
+- `remove_view_model(path, name)` - Remove ViewModel
+- `list_view_models(path)` - List ViewModels
+- `add_view_model_binding(path, vm, vm_prop, widget, widget_prop, mode)` - Bind ViewModel to widget
+- `remove_view_model_binding(path, index)` - Remove binding
+- `list_view_model_bindings(path)` - List all MVVM bindings
 
 ### InputService (23 methods)
 
