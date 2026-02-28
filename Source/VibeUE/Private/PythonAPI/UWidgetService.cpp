@@ -31,6 +31,15 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "UObject/PropertyIterator.h"
 #include "UObject/UnrealType.h"
+#include "MVVMBlueprintView.h"
+#include "MVVMBlueprintViewBinding.h"
+#include "MVVMBlueprintViewModelContext.h"
+#include "MVVMWidgetBlueprintExtension_View.h"
+#include "MVVMPropertyPath.h"
+#include "MVVMViewModelBase.h"
+#include "Types/MVVMFieldVariant.h"
+#include "ViewModel/MVVMViewModelBlueprint.h"
+#include "WidgetBlueprintExtension.h"
 
 // Static list of available widget types
 static const TArray<FString> GAvailableWidgetTypes = {
@@ -927,6 +936,599 @@ bool UWidgetService::BindEvent(
 	// Mark as modified
 	WidgetBP->Modify();
 	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+
+	return true;
+}
+
+// =================================================================
+// ViewModel Helper Methods
+// =================================================================
+
+// Helper to find an existing MVVM extension on a WidgetBlueprint (without creating one)
+static UMVVMWidgetBlueprintExtension_View* FindMVVMExtension(UWidgetBlueprint* WidgetBP)
+{
+	if (!WidgetBP)
+	{
+		return nullptr;
+	}
+
+	for (UBlueprintExtension* Extension : WidgetBP->GetExtensions())
+	{
+		if (UMVVMWidgetBlueprintExtension_View* ViewExt = Cast<UMVVMWidgetBlueprintExtension_View>(Extension))
+		{
+			return ViewExt;
+		}
+	}
+	return nullptr;
+}
+
+UClass* UWidgetService::FindViewModelClass(const FString& ClassName)
+{
+	// Normalize: strip trailing _C suffix if present (Blueprint class names end with _C)
+	FString NormalizedName = ClassName;
+	if (NormalizedName.EndsWith(TEXT("_C")))
+	{
+		NormalizedName = NormalizedName.LeftChop(2);
+	}
+
+	// 1. Try direct class lookup (C++ and loaded Blueprint ViewModel classes)
+	// Build candidate names to match against UClass::GetName()
+	FString NameWithU = NormalizedName;
+	if (!NameWithU.StartsWith(TEXT("U")))
+	{
+		NameWithU = TEXT("U") + NormalizedName;
+	}
+	// Blueprint-generated classes have _C suffix
+	FString NameWithC = NormalizedName + TEXT("_C");
+
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		UClass* TestClass = *It;
+		const FString& TestName = TestClass->GetName();
+		if (TestName == NormalizedName || TestName == NameWithU || TestName == NameWithC)
+		{
+			// Accept classes that inherit from UMVVMViewModelBase
+			if (TestClass->IsChildOf(UMVVMViewModelBase::StaticClass()))
+			{
+				return TestClass;
+			}
+		}
+	}
+
+	// 2. Try Asset Registry for dedicated MVVMViewModelBlueprint assets
+	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
+	{
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/ModelViewViewModelBlueprint.MVVMViewModelBlueprint")));
+		TArray<FAssetData> AssetDataList;
+		AssetRegistry.GetAssets(Filter, AssetDataList);
+
+		for (const FAssetData& AssetData : AssetDataList)
+		{
+			FString AssetName = AssetData.AssetName.ToString();
+			if (AssetName.Equals(NormalizedName, ESearchCase::IgnoreCase))
+			{
+				if (UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset()))
+				{
+					if (BP->GeneratedClass)
+					{
+						return BP->GeneratedClass;
+					}
+				}
+			}
+		}
+	}
+
+	// 3. Try Asset Registry for regular Blueprint assets whose parent is a ViewModel class
+	// This handles Blueprints created via BlueprintService.create_blueprint with MVVMViewModelBase parent
+	{
+		FARFilter Filter;
+		Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/Engine.Blueprint")));
+		TArray<FAssetData> AssetDataList;
+		AssetRegistry.GetAssets(Filter, AssetDataList);
+
+		for (const FAssetData& AssetData : AssetDataList)
+		{
+			FString AssetName = AssetData.AssetName.ToString();
+			if (AssetName.Equals(NormalizedName, ESearchCase::IgnoreCase))
+			{
+				if (UBlueprint* BP = Cast<UBlueprint>(AssetData.GetAsset()))
+				{
+					if (BP->GeneratedClass && BP->GeneratedClass->IsChildOf(UMVVMViewModelBase::StaticClass()))
+					{
+						return BP->GeneratedClass;
+					}
+				}
+			}
+		}
+	}
+
+	// 4. Try by full path (if user provides asset path like /Game/UI/Tests/VM_TestHUD)
+	FString PathToLoad = NormalizedName;
+	if (PathToLoad.StartsWith(TEXT("/")))
+	{
+		// Strip .ClassName suffix if present (e.g., /Game/UI/Tests/VM_TestHUD.VM_TestHUD)
+		int32 DotIndex;
+		if (PathToLoad.FindLastChar(TEXT('.'), DotIndex))
+		{
+			PathToLoad = PathToLoad.Left(DotIndex);
+		}
+
+		UObject* LoadedObj = UEditorAssetLibrary::LoadAsset(PathToLoad);
+		if (UBlueprint* BP = Cast<UBlueprint>(LoadedObj))
+		{
+			if (BP->GeneratedClass && BP->GeneratedClass->IsChildOf(UMVVMViewModelBase::StaticClass()))
+			{
+				return BP->GeneratedClass;
+			}
+		}
+	}
+
+	UE_LOG(LogTemp, Warning, TEXT("UWidgetService::FindViewModelClass: Class '%s' not found. "
+		"Tried: C++ classes ('%s', '%s', '%s'), MVVMViewModelBlueprint assets, regular Blueprint assets, "
+		"and full path loading. Ensure the ViewModel inherits from MVVMViewModelBase and is compiled."),
+		*ClassName, *NormalizedName, *NameWithU, *NameWithC);
+	return nullptr;
+}
+
+UMVVMBlueprintView* UWidgetService::GetOrCreateMVVMView(UWidgetBlueprint* WidgetBP)
+{
+	if (!WidgetBP)
+	{
+		return nullptr;
+	}
+
+	// Try to find existing MVVM extension
+	UMVVMWidgetBlueprintExtension_View* ViewExtension = FindMVVMExtension(WidgetBP);
+
+	// Create extension if not found
+	if (!ViewExtension)
+	{
+		ViewExtension = NewObject<UMVVMWidgetBlueprintExtension_View>(WidgetBP);
+		if (!ViewExtension)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService: Failed to create MVVM extension"));
+			return nullptr;
+		}
+		WidgetBP->AddExtension(ViewExtension);
+	}
+
+	UMVVMBlueprintView* View = ViewExtension->GetBlueprintView();
+	if (!View)
+	{
+		ViewExtension->CreateBlueprintViewInstance();
+		View = ViewExtension->GetBlueprintView();
+	}
+
+	return View;
+}
+
+FString UWidgetService::BindingModeToString(EMVVMBindingMode Mode)
+{
+	switch (Mode)
+	{
+	case EMVVMBindingMode::OneTimeToDestination: return TEXT("OneTimeToDestination");
+	case EMVVMBindingMode::OneWayToDestination: return TEXT("OneWayToDestination");
+	case EMVVMBindingMode::TwoWay: return TEXT("TwoWay");
+	case EMVVMBindingMode::OneTimeToSource: return TEXT("OneTimeToSource");
+	case EMVVMBindingMode::OneWayToSource: return TEXT("OneWayToSource");
+	default: return TEXT("Unknown");
+	}
+}
+
+EMVVMBindingMode UWidgetService::StringToBindingMode(const FString& ModeString)
+{
+	if (ModeString.Equals(TEXT("OneTimeToDestination"), ESearchCase::IgnoreCase))
+		return EMVVMBindingMode::OneTimeToDestination;
+	if (ModeString.Equals(TEXT("OneWayToDestination"), ESearchCase::IgnoreCase))
+		return EMVVMBindingMode::OneWayToDestination;
+	if (ModeString.Equals(TEXT("TwoWay"), ESearchCase::IgnoreCase))
+		return EMVVMBindingMode::TwoWay;
+	if (ModeString.Equals(TEXT("OneTimeToSource"), ESearchCase::IgnoreCase))
+		return EMVVMBindingMode::OneTimeToSource;
+	if (ModeString.Equals(TEXT("OneWayToSource"), ESearchCase::IgnoreCase))
+		return EMVVMBindingMode::OneWayToSource;
+
+	// Default
+	return EMVVMBindingMode::OneWayToDestination;
+}
+
+// =================================================================
+// ViewModel Management (MVVM)
+// =================================================================
+
+TArray<FWidgetViewModelInfo> UWidgetService::ListViewModels(const FString& WidgetPath)
+{
+	TArray<FWidgetViewModelInfo> Results;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return Results;
+	}
+
+	// Get the MVVM extension (don't create if not present)
+	UMVVMWidgetBlueprintExtension_View* ViewExtension = FindMVVMExtension(WidgetBP);
+	if (!ViewExtension)
+	{
+		return Results;
+	}
+
+	UMVVMBlueprintView* View = ViewExtension->GetBlueprintView();
+	if (!View)
+	{
+		return Results;
+	}
+
+	for (const FMVVMBlueprintViewModelContext& VMContext : View->GetViewModels())
+	{
+		FWidgetViewModelInfo Info;
+		Info.ViewModelName = VMContext.GetViewModelName().ToString();
+		Info.ViewModelId = VMContext.GetViewModelId().ToString();
+
+		if (UClass* VMClass = VMContext.GetViewModelClass())
+		{
+			Info.ViewModelClassName = VMClass->GetName();
+		}
+
+		switch (VMContext.CreationType)
+		{
+		case EMVVMBlueprintViewModelContextCreationType::Manual:
+			Info.CreationType = TEXT("Manual");
+			break;
+		case EMVVMBlueprintViewModelContextCreationType::CreateInstance:
+			Info.CreationType = TEXT("CreateInstance");
+			break;
+		case EMVVMBlueprintViewModelContextCreationType::GlobalViewModelCollection:
+			Info.CreationType = TEXT("GlobalViewModelCollection");
+			break;
+		case EMVVMBlueprintViewModelContextCreationType::PropertyPath:
+			Info.CreationType = TEXT("PropertyPath");
+			break;
+		case EMVVMBlueprintViewModelContextCreationType::Resolver:
+			Info.CreationType = TEXT("Resolver");
+			break;
+		}
+
+		Results.Add(Info);
+	}
+
+	return Results;
+}
+
+bool UWidgetService::AddViewModel(
+	const FString& WidgetPath,
+	const FString& ViewModelClassName,
+	const FString& ViewModelName,
+	const FString& CreationType)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModel: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	// Find the ViewModel class
+	UClass* VMClass = FindViewModelClass(ViewModelClassName);
+	if (!VMClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModel: ViewModel class '%s' not found"), *ViewModelClassName);
+		return false;
+	}
+
+	// Get or create the MVVM view
+	UMVVMBlueprintView* View = GetOrCreateMVVMView(WidgetBP);
+	if (!View)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModel: Failed to get/create MVVM view"));
+		return false;
+	}
+
+	// Check if a ViewModel with this name already exists
+	if (View->FindViewModel(FName(*ViewModelName)) != nullptr)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModel: ViewModel '%s' already exists"), *ViewModelName);
+		return false;
+	}
+
+	// Create the ViewModel context
+	FMVVMBlueprintViewModelContext NewContext(VMClass, FName(*ViewModelName));
+
+	// Set creation type
+	if (CreationType.Equals(TEXT("Manual"), ESearchCase::IgnoreCase))
+	{
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::Manual;
+	}
+	else if (CreationType.Equals(TEXT("CreateInstance"), ESearchCase::IgnoreCase))
+	{
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::CreateInstance;
+	}
+	else if (CreationType.Equals(TEXT("GlobalViewModelCollection"), ESearchCase::IgnoreCase))
+	{
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::GlobalViewModelCollection;
+	}
+	else if (CreationType.Equals(TEXT("PropertyPath"), ESearchCase::IgnoreCase))
+	{
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::PropertyPath;
+	}
+	else if (CreationType.Equals(TEXT("Resolver"), ESearchCase::IgnoreCase))
+	{
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::Resolver;
+	}
+	else
+	{
+		// Default to CreateInstance
+		NewContext.CreationType = EMVVMBlueprintViewModelContextCreationType::CreateInstance;
+	}
+
+	View->AddViewModel(NewContext);
+
+	// Mark as modified
+	WidgetBP->Modify();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::AddViewModel: Added ViewModel '%s' (class: %s) to '%s'"),
+		*ViewModelName, *ViewModelClassName, *WidgetPath);
+
+	return true;
+}
+
+bool UWidgetService::RemoveViewModel(
+	const FString& WidgetPath,
+	const FString& ViewModelName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModel: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	UMVVMWidgetBlueprintExtension_View* ViewExtension = FindMVVMExtension(WidgetBP);
+	if (!ViewExtension)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModel: No MVVM extension found"));
+		return false;
+	}
+
+	UMVVMBlueprintView* View = ViewExtension->GetBlueprintView();
+	if (!View)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModel: No MVVM view found"));
+		return false;
+	}
+
+	// Find the ViewModel by name
+	const FMVVMBlueprintViewModelContext* VMContext = View->FindViewModel(FName(*ViewModelName));
+	if (!VMContext)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModel: ViewModel '%s' not found"), *ViewModelName);
+		return false;
+	}
+
+	FGuid ViewModelId = VMContext->GetViewModelId();
+	bool bRemoved = View->RemoveViewModel(ViewModelId);
+
+	if (bRemoved)
+	{
+		WidgetBP->Modify();
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+		UE_LOG(LogTemp, Log, TEXT("UWidgetService::RemoveViewModel: Removed ViewModel '%s' from '%s'"),
+			*ViewModelName, *WidgetPath);
+	}
+
+	return bRemoved;
+}
+
+TArray<FWidgetViewModelBindingInfo> UWidgetService::ListViewModelBindings(const FString& WidgetPath)
+{
+	TArray<FWidgetViewModelBindingInfo> Results;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return Results;
+	}
+
+	UMVVMWidgetBlueprintExtension_View* ViewExtension = FindMVVMExtension(WidgetBP);
+	if (!ViewExtension)
+	{
+		return Results;
+	}
+
+	UMVVMBlueprintView* View = ViewExtension->GetBlueprintView();
+	if (!View)
+	{
+		return Results;
+	}
+
+	UClass* SelfContext = WidgetBP->GeneratedClass;
+
+	for (int32 i = 0; i < View->GetNumBindings(); ++i)
+	{
+		FMVVMBlueprintViewBinding* Binding = View->GetBindingAt(i);
+		if (!Binding)
+		{
+			continue;
+		}
+
+		FWidgetViewModelBindingInfo Info;
+		Info.BindingIndex = i;
+		Info.BindingMode = BindingModeToString(Binding->BindingType);
+		Info.bEnabled = Binding->bEnabled;
+		Info.BindingId = Binding->BindingId.ToString();
+
+		// Get display strings for source and destination paths
+		Info.SourcePath = Binding->SourcePath.GetPropertyPath(SelfContext);
+		Info.DestinationPath = Binding->DestinationPath.GetPropertyPath(SelfContext);
+
+		// If property path is empty, try display text
+		if (Info.SourcePath.IsEmpty())
+		{
+			Info.SourcePath = Binding->SourcePath.ToText(WidgetBP, false).ToString();
+		}
+		if (Info.DestinationPath.IsEmpty())
+		{
+			Info.DestinationPath = Binding->DestinationPath.ToText(WidgetBP, false).ToString();
+		}
+
+		Results.Add(Info);
+	}
+
+	return Results;
+}
+
+bool UWidgetService::AddViewModelBinding(
+	const FString& WidgetPath,
+	const FString& ViewModelName,
+	const FString& ViewModelProperty,
+	const FString& WidgetName,
+	const FString& WidgetProperty,
+	const FString& BindingMode)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	UMVVMBlueprintView* View = GetOrCreateMVVMView(WidgetBP);
+	if (!View)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: Failed to get/create MVVM view"));
+		return false;
+	}
+
+	// Find the ViewModel context
+	const FMVVMBlueprintViewModelContext* VMContext = View->FindViewModel(FName(*ViewModelName));
+	if (!VMContext)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: ViewModel '%s' not found. Add it first with add_view_model."), *ViewModelName);
+		return false;
+	}
+
+	UClass* VMClass = VMContext->GetViewModelClass();
+	if (!VMClass)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: ViewModel class is invalid"));
+		return false;
+	}
+
+	// Find the ViewModel property
+	FProperty* VMProp = VMClass->FindPropertyByName(FName(*ViewModelProperty));
+	if (!VMProp)
+	{
+		// Try case-insensitive
+		for (TFieldIterator<FProperty> It(VMClass); It; ++It)
+		{
+			if (It->GetName().Equals(ViewModelProperty, ESearchCase::IgnoreCase))
+			{
+				VMProp = *It;
+				break;
+			}
+		}
+	}
+	if (!VMProp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: Property '%s' not found on ViewModel class '%s'"),
+			*ViewModelProperty, *VMClass->GetName());
+		return false;
+	}
+
+	// Find the widget and its property
+	UWidget* TargetWidget = FindWidgetByName(WidgetBP, WidgetName);
+	if (!TargetWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: Widget '%s' not found"), *WidgetName);
+		return false;
+	}
+
+	FProperty* WidgetProp = TargetWidget->GetClass()->FindPropertyByName(FName(*WidgetProperty));
+	if (!WidgetProp)
+	{
+		// Try case-insensitive
+		for (TFieldIterator<FProperty> It(TargetWidget->GetClass()); It; ++It)
+		{
+			if (It->GetName().Equals(WidgetProperty, ESearchCase::IgnoreCase))
+			{
+				WidgetProp = *It;
+				break;
+			}
+		}
+	}
+	if (!WidgetProp)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::AddViewModelBinding: Property '%s' not found on widget '%s'"),
+			*WidgetProperty, *WidgetName);
+		return false;
+	}
+
+	// Create a new binding
+	FMVVMBlueprintViewBinding& NewBinding = View->AddDefaultBinding();
+
+	// Set binding mode
+	NewBinding.BindingType = StringToBindingMode(BindingMode);
+
+	// Set up source path (ViewModel property)
+	NewBinding.SourcePath.SetViewModelId(VMContext->GetViewModelId());
+	UE::MVVM::FMVVMConstFieldVariant SourceField(VMProp);
+	NewBinding.SourcePath.SetPropertyPath(WidgetBP, SourceField);
+
+	// Set up destination path (widget property)
+	NewBinding.DestinationPath.SetWidgetName(FName(*WidgetName));
+	UE::MVVM::FMVVMConstFieldVariant DestField(WidgetProp);
+	NewBinding.DestinationPath.SetPropertyPath(WidgetBP, DestField);
+
+	// Mark as modified
+	WidgetBP->Modify();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::AddViewModelBinding: Created binding %s.%s -> %s.%s (%s)"),
+		*ViewModelName, *ViewModelProperty, *WidgetName, *WidgetProperty, *BindingMode);
+
+	return true;
+}
+
+bool UWidgetService::RemoveViewModelBinding(
+	const FString& WidgetPath,
+	int32 BindingIndex)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModelBinding: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	UMVVMWidgetBlueprintExtension_View* ViewExtension = FindMVVMExtension(WidgetBP);
+	if (!ViewExtension)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModelBinding: No MVVM extension found"));
+		return false;
+	}
+
+	UMVVMBlueprintView* View = ViewExtension->GetBlueprintView();
+	if (!View)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModelBinding: No MVVM view found"));
+		return false;
+	}
+
+	if (BindingIndex < 0 || BindingIndex >= View->GetNumBindings())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RemoveViewModelBinding: Index %d out of range (0-%d)"),
+			BindingIndex, View->GetNumBindings() - 1);
+		return false;
+	}
+
+	View->RemoveBindingAt(BindingIndex);
+
+	WidgetBP->Modify();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::RemoveViewModelBinding: Removed binding at index %d"), BindingIndex);
 
 	return true;
 }

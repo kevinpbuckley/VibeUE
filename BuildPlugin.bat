@@ -7,6 +7,10 @@ REM   1. Place in project's Plugins/VibeUE/ folder - builds for that project
 REM   2. Standalone execution - builds as generic plugin
 REM   3. Multiple .uproject files - prompts user to choose
 REM
+REM Optional Parameters:
+REM   %1 - Full path to Unreal Engine installation (e.g., "C:\Program Files\Epic Games\UE_5.7")
+REM        If provided, skips automatic UE path detection
+REM
 REM Uses project-specific build when possible for maximum compatibility
 
 setlocal enabledelayedexpansion
@@ -20,6 +24,22 @@ echo.
 REM Get plugin directory (where this script is located)
 set "PLUGIN_DIR=%~dp0"
 set "PLUGIN_DIR=%PLUGIN_DIR:~0,-1%"
+
+REM Check if UE path was provided as parameter
+set "UE_PATH="
+if not "%~1"=="" (
+    echo Checking provided Unreal Engine path...
+    if exist "%~1\Engine\Build\BatchFiles\RunUAT.bat" (
+        set "UE_PATH=%~1"
+        echo Using provided UE path: !UE_PATH!
+        goto :ue_found
+    ) else (
+        echo WARNING: Provided path is not a valid Unreal Engine installation.
+        echo Expected to find: %~1\Engine\Build\BatchFiles\RunUAT.bat
+        echo Falling back to automatic detection...
+        echo.
+    )
+)
 
 REM Find .uplugin file
 set "UPLUGIN_PATH="
@@ -40,7 +60,6 @@ echo Found plugin: %PLUGIN_NAME%
 
 REM Search for Unreal Engine installation using registry (standard method)
 echo Searching for Unreal Engine installation...
-set "UE_PATH="
 
 REM First, check common UE 5.7 paths (prioritize before registry to find latest version)
 echo Checking for Unreal Engine 5.7 installations...

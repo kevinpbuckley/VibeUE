@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "UObject/NoExportTypes.h"
+#include "Types/MVVMBindingMode.h"
 #include "UWidgetService.generated.h"
 
 /**
@@ -145,20 +146,79 @@ struct FWidgetRemoveComponentResult
 };
 
 /**
+ * Information about a ViewModel registered on a Widget Blueprint
+ */
+USTRUCT(BlueprintType)
+struct FWidgetViewModelInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString ViewModelName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString ViewModelClassName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString CreationType;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString ViewModelId;
+};
+
+/**
+ * Information about an MVVM binding on a Widget Blueprint
+ */
+USTRUCT(BlueprintType)
+struct FWidgetViewModelBindingInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 BindingIndex = -1;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString SourcePath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString DestinationPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString BindingMode;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bEnabled = true;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString BindingId;
+};
+
+/**
  * Widget service exposed directly to Python.
  *
- * Provides 11 widget management actions:
+ * Provides 22 widget management actions:
+ * - list_widget_blueprints: List all Widget Blueprints in the project
+ * - get_hierarchy: Get widget hierarchy tree
+ * - get_root_widget: Get the root widget of a Widget Blueprint
  * - list_components: List all widget components in a Widget Blueprint
+ * - search_types: Get available widget types (native types + discovered WBPs for reference)
+ * - get_component_properties: Get properties for a specific component
  * - add_component: Add a widget component to a Widget Blueprint (native types or custom WBPs by name)
  * - remove_component: Remove a widget component from a Widget Blueprint
  * - validate: Validate widget hierarchy for errors
- * - search_types: Get available widget types (native types + discovered WBPs for reference)
- * - get_component_properties: Get properties for a specific component
  * - get_property: Get a specific property value
  * - set_property: Set a specific property value
  * - list_properties: List all editable properties of a component
  * - get_available_events: Get available events for a widget type
- * - bind_events: Bind events to functions
+ * - bind_event: Bind an event to a function
+ * - list_view_models: List all ViewModels registered on a Widget Blueprint
+ * - add_view_model: Add a ViewModel to a Widget Blueprint
+ * - remove_view_model: Remove a ViewModel from a Widget Blueprint
+ * - list_view_model_bindings: List all MVVM bindings on a Widget Blueprint
+ * - add_view_model_binding: Create a binding between a ViewModel property and a widget property
+ * - remove_view_model_binding: Remove an MVVM binding by index
+ * - widget_blueprint_exists: Check if a Widget Blueprint exists
+ * - widget_exists: Check if a widget component exists in a Widget Blueprint
  *
  * Python Usage:
  *   import unreal
@@ -183,6 +243,15 @@ struct FWidgetRemoveComponentResult
  *
  *   # Set property value
  *   unreal.WidgetService.set_property("/Game/UI/WBP_MainMenu", "MyButton", "Visibility", "Visible")
+ *
+ *   # List ViewModels
+ *   vms = unreal.WidgetService.list_view_models("/Game/UI/WBP_MainMenu")
+ *
+ *   # Add a ViewModel
+ *   unreal.WidgetService.add_view_model("/Game/UI/WBP_MainMenu", "MyHealthViewModel", "HealthVM")
+ *
+ *   # Add a ViewModel binding
+ *   unreal.WidgetService.add_view_model_binding("/Game/UI/WBP_MainMenu", "HealthVM", "CurrentHealth", "HealthBar", "Percent", "OneWayToDestination")
  *
  * @note This replaces the JSON-based manage_umg_widget MCP tool
  */
@@ -396,6 +465,97 @@ public:
 		const FString& FunctionName);
 
 	// =================================================================
+	// ViewModel Management (MVVM)
+	// =================================================================
+
+	/**
+	 * List all ViewModels registered on a Widget Blueprint.
+	 * Maps to action="list_view_models"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @return Array of ViewModel information
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static TArray<FWidgetViewModelInfo> ListViewModels(const FString& WidgetPath);
+
+	/**
+	 * Add a ViewModel to a Widget Blueprint.
+	 * Maps to action="add_view_model"
+	 * The ViewModel class must implement INotifyFieldValueChanged (typically inherits from UMVVMViewModelBase).
+	 * Classes are resolved by name from C++ or Blueprint ViewModel assets.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ViewModelClassName - Name of the ViewModel class (e.g. "MyHealthViewModel" or full path)
+	 * @param ViewModelName - Property name/alias for this ViewModel instance (e.g. "HealthVM")
+	 * @param CreationType - How the ViewModel is created: "CreateInstance" (default), "Manual", "GlobalViewModelCollection", "PropertyPath", "Resolver"
+	 * @return True if the ViewModel was added successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static bool AddViewModel(
+		const FString& WidgetPath,
+		const FString& ViewModelClassName,
+		const FString& ViewModelName,
+		const FString& CreationType = TEXT("CreateInstance"));
+
+	/**
+	 * Remove a ViewModel from a Widget Blueprint.
+	 * Maps to action="remove_view_model"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ViewModelName - Name of the ViewModel to remove
+	 * @return True if the ViewModel was removed successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static bool RemoveViewModel(
+		const FString& WidgetPath,
+		const FString& ViewModelName);
+
+	/**
+	 * List all MVVM bindings on a Widget Blueprint.
+	 * Maps to action="list_view_model_bindings"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @return Array of binding information
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static TArray<FWidgetViewModelBindingInfo> ListViewModelBindings(const FString& WidgetPath);
+
+	/**
+	 * Add an MVVM binding between a ViewModel property and a widget property.
+	 * Maps to action="add_view_model_binding"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ViewModelName - Name of the ViewModel (as registered via add_view_model)
+	 * @param ViewModelProperty - Property name on the ViewModel (e.g. "CurrentHealth")
+	 * @param WidgetName - Name of the target widget component (e.g. "HealthBar")
+	 * @param WidgetProperty - Property name on the widget (e.g. "Percent")
+	 * @param BindingMode - Binding direction: "OneWayToDestination" (default), "TwoWay", "OneTimeToDestination", "OneWayToSource", "OneTimeToSource"
+	 * @return True if binding was created successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static bool AddViewModelBinding(
+		const FString& WidgetPath,
+		const FString& ViewModelName,
+		const FString& ViewModelProperty,
+		const FString& WidgetName,
+		const FString& WidgetProperty,
+		const FString& BindingMode = TEXT("OneWayToDestination"));
+
+	/**
+	 * Remove an MVVM binding from a Widget Blueprint by index.
+	 * Maps to action="remove_view_model_binding"
+	 * Use list_view_model_bindings to get valid indices.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param BindingIndex - Index of the binding to remove (from list_view_model_bindings)
+	 * @return True if the binding was removed successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|ViewModel")
+	static bool RemoveViewModelBinding(
+		const FString& WidgetPath,
+		int32 BindingIndex);
+
+	// =================================================================
 	// Existence Checks
 	// =================================================================
 
@@ -435,4 +595,16 @@ private:
 	
 	/** Helper to create a widget class from type name */
 	static TSubclassOf<class UWidget> FindWidgetClass(const FString& TypeName);
+
+	/** Helper to find a ViewModel class by name (C++ or Blueprint ViewModel) */
+	static UClass* FindViewModelClass(const FString& ClassName);
+
+	/** Helper to get or create the MVVM Blueprint View for a Widget Blueprint */
+	static class UMVVMBlueprintView* GetOrCreateMVVMView(class UWidgetBlueprint* WidgetBP);
+
+	/** Helper to convert EMVVMBindingMode to string */
+	static FString BindingModeToString(EMVVMBindingMode Mode);
+
+	/** Helper to convert string to EMVVMBindingMode */
+	static EMVVMBindingMode StringToBindingMode(const FString& ModeString);
 };

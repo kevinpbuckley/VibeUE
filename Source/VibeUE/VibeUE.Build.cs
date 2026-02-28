@@ -85,7 +85,9 @@ public class VibeUE : ModuleRules
 				"InputBlueprintNodes",    // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
 				"Landscape",              // For ALandscape, ULandscapeInfo, ULandscapeComponent
 				"LandscapeEditor",        // For landscape editor factories and utilities
-				"Foliage"                 // Required by LandscapeEdit.h (InstancedFoliageActor)
+				"Foliage",                // Required by LandscapeEdit.h (InstancedFoliageActor)
+				"ModelViewViewModel",     // For MVVM ViewModel base classes (UMVVMViewModelBase)
+				"ModelViewViewModelBlueprint" // For MVVM Blueprint View and bindings
 			}
 		);
 		

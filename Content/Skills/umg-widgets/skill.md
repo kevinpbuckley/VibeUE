@@ -1,7 +1,7 @@
 ---
 name: umg-widgets
 display_name: UMG Widget Blueprints
-description: Create and modify Widget Blueprints for user interface elements
+description: Create and modify Widget Blueprints for user interface elements, including MVVM ViewModel support
 vibeue_classes:
   - WidgetService
   - BlueprintService
@@ -200,3 +200,138 @@ for widget in hierarchy:
 - `OnClicked` - Button clicked
 - `OnPressed` / `OnReleased` - Press/release
 - `OnHovered` / `OnUnhovered` - Mouse enter/leave
+
+---
+
+## MVVM ViewModel Support
+
+### ⚠️ ViewModel Rules
+
+1. **The ModelViewViewModel plugin must be enabled** in the project (VibeUE enables it automatically)
+2. **ViewModel classes must inherit from `UMVVMViewModelBase`** or implement `INotifyFieldValueChanged`
+3. **Add the ViewModel before creating bindings** — `add_view_model` must be called before `add_view_model_binding`
+4. **Widget must exist before binding** — the target widget component must already be in the hierarchy
+5. **Property names must match exactly** — use `list_properties` to discover available properties
+
+### ⚠️ ViewModel CreationType Options
+
+| Type | Purpose |
+|------|---------|
+| `CreateInstance` | Widget creates the ViewModel instance automatically (default, most common) |
+| `Manual` | ViewModel is set manually at runtime via code |
+| `GlobalViewModelCollection` | Shared ViewModel from the global collection |
+| `PropertyPath` | ViewModel obtained from a property path on the widget |
+| `Resolver` | Custom resolver class determines the ViewModel |
+
+### ⚠️ Binding Mode Options
+
+| Mode | Purpose |
+|------|---------|
+| `OneWayToDestination` | ViewModel → Widget (default, most common for display) |
+| `TwoWay` | ViewModel ↔ Widget (for editable inputs like sliders, text boxes) |
+| `OneTimeToDestination` | ViewModel → Widget (once on init, no updates) |
+| `OneWayToSource` | Widget → ViewModel (widget drives ViewModel) |
+| `OneTimeToSource` | Widget → ViewModel (once on init) |
+
+### ⚠️ FWidgetViewModelInfo Field Names
+
+| Field | Description |
+|-------|-------------|
+| `view_model_name` | Property name/alias of the ViewModel |
+| `view_model_class_name` | Class name of the ViewModel |
+| `creation_type` | How the ViewModel is created |
+| `view_model_id` | GUID identifier |
+
+### ⚠️ FWidgetViewModelBindingInfo Field Names
+
+| Field | Description |
+|-------|-------------|
+| `binding_index` | Index for use with remove_view_model_binding |
+| `source_path` | ViewModel property path |
+| `destination_path` | Widget property path |
+| `binding_mode` | Binding direction |
+| `b_enabled` | Whether binding is active |
+| `binding_id` | GUID identifier |
+
+### Workflow: Add ViewModel to Widget Blueprint
+
+```python
+import unreal
+
+path = "/Game/UI/WBP_HUD"
+
+# Add a ViewModel (class must exist and inherit UMVVMViewModelBase)
+unreal.WidgetService.add_view_model(path, "MyHealthViewModel", "HealthVM", "CreateInstance")
+
+# List ViewModels to verify
+vms = unreal.WidgetService.list_view_models(path)
+for vm in vms:
+    print(f"{vm.view_model_name} ({vm.view_model_class_name}) - {vm.creation_type}")
+```
+
+### Workflow: Bind ViewModel Property to Widget
+
+```python
+import unreal
+
+path = "/Game/UI/WBP_HUD"
+
+# Ensure ViewModel and widget exist first
+# Then create a binding: HealthVM.CurrentHealth → HealthBar.Percent
+unreal.WidgetService.add_view_model_binding(
+    path,
+    "HealthVM",          # ViewModel name (as registered)
+    "CurrentHealth",     # Property on the ViewModel
+    "HealthBar",         # Widget component name
+    "Percent",           # Property on the widget
+    "OneWayToDestination"  # Binding mode
+)
+
+# List bindings to verify
+bindings = unreal.WidgetService.list_view_model_bindings(path)
+for b in bindings:
+    print(f"[{b.binding_index}] {b.source_path} -> {b.destination_path} ({b.binding_mode})")
+```
+
+### Workflow: Full MVVM HUD Setup
+
+```python
+import unreal
+
+# Step 1: Create the Widget Blueprint
+factory = unreal.WidgetBlueprintFactory()
+factory.set_editor_property("parent_class", unreal.UserWidget)
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+widget_asset = asset_tools.create_asset("WBP_GameHUD", "/Game/UI", unreal.WidgetBlueprint, factory)
+
+path = "/Game/UI/WBP_GameHUD"
+
+# Step 2: Build the widget hierarchy
+unreal.WidgetService.add_component(path, "CanvasPanel", "RootCanvas", "", True)
+unreal.WidgetService.add_component(path, "ProgressBar", "HealthBar", "RootCanvas", True)
+unreal.WidgetService.add_component(path, "TextBlock", "HealthText", "RootCanvas", True)
+
+# Step 3: Add the ViewModel
+unreal.WidgetService.add_view_model(path, "GameHUDViewModel", "HudVM")
+
+# Step 4: Create bindings
+unreal.WidgetService.add_view_model_binding(path, "HudVM", "HealthPercent", "HealthBar", "Percent", "OneWayToDestination")
+unreal.WidgetService.add_view_model_binding(path, "HudVM", "HealthDisplayText", "HealthText", "Text", "OneWayToDestination")
+
+# Step 5: Save
+unreal.EditorAssetLibrary.save_asset(path)
+```
+
+### Workflow: Remove ViewModel and Bindings
+
+```python
+import unreal
+
+path = "/Game/UI/WBP_HUD"
+
+# Remove a specific binding by index
+unreal.WidgetService.remove_view_model_binding(path, 0)
+
+# Remove a ViewModel entirely (also invalidates its bindings)
+unreal.WidgetService.remove_view_model(path, "HealthVM")
+```

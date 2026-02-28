@@ -1,0 +1,132 @@
+---
+description: VibeUE - AI-powered Unreal Engine 5.7+ editor plugin with MCP integration
+alwaysApply: true
+---
+
+# VibeUE Plugin
+
+AI-powered Unreal Engine 5.7+ editor plugin providing In-Editor Chat Client and Model Context Protocol (MCP) integration. Exposes 14 multi-action tools with 177 total actions for manipulating Blueprints, UMG widgets, materials, assets, and more.
+
+## Essential Commands
+
+```bash
+./BuildPlugin.bat       # Quick build
+./buildandlaunch.ps1    # Build and launch Unreal Editor
+```
+
+If build fails: delete `Binaries/` and `Intermediate/` folders and retry.
+
+## Layered Architecture
+
+```
+UI Layer (Slate)
+    ↓
+Tools Layer (UFUNCTION-exposed multi-action tools)
+    ↓
+Commands Layer (parameter parsing, validation, JSON conversion)
+    ↓
+Service Layer (domain services with single responsibility)
+    ↓
+Core Infrastructure (TResult, ErrorCodes, ServiceContext)
+    ↓
+Unreal Engine Editor APIs
+```
+
+**Never bypass layers**: Tools → Commands → Services. No direct UE API calls from Tools.
+
+## Service-Oriented Design
+
+~30 focused services, each under 500 lines:
+- **Blueprint Services** (7): Lifecycle, Discovery, Property, Component, Function, Node, Graph
+- **UMG Services** (9): Lifecycle, Discovery, Hierarchy, Property, Reflection, Widget, Asset, Info, Event
+- **Material Services** (2): MaterialService, MaterialNodeService
+- **Asset Services** (3): Discovery, Import, Lifecycle
+- **Data Services** (4): DataAsset, DataTable
+- **Enhanced Input Services** (3): Actions, Mappings, Reflection
+- **Level Actor Services** (1): LevelActorService
+
+All services inherit from `FServiceBase` providing validation and logging helpers.
+
+## Type-Safe Error Handling
+
+ALL service operations return `TResult<T>`:
+
+```cpp
+TResult<UBlueprint*> CreateBlueprint(const FString& Name);
+TResult<void> CompileBlueprint(UBlueprint* Blueprint);
+
+// Success
+return TResult<T>::Success(value);
+
+// Error
+return TResult<T>::Error(ErrorCodes::BLUEPRINT_NOT_FOUND, "Blueprint not found");
+```
+
+## Error Codes (from ErrorCodes.h)
+
+Never use hardcoded error strings. Use constants:
+- 1000-1099: Parameter validation
+- 2000-2999: Blueprint domain
+- 3000-3999: UMG domain
+- 4000-4999: Asset domain
+- 5000-5999: Enhanced Input
+- 6000-6999: Level Actors
+- 7000-7999: Materials
+- 8000-8999: Data Assets/Tables
+
+## Multi-Action Tool Pattern
+
+14 tools with 177 total actions. Each tool is a "hub" for related operations:
+
+```cpp
+UFUNCTION()
+static FString ManageBlueprint(const FString& Action, const FString& ParamsJson);
+```
+
+Tools: `manage_asset`, `manage_blueprint`, `manage_blueprint_component`, `manage_blueprint_node`, `manage_blueprint_function`, `manage_blueprint_variable`, `manage_umg_widget`, `manage_enhanced_input`, `manage_level_actors`, `manage_material`, `manage_material_node`, `manage_data_asset`, `manage_data_table`, `check_unreal_connection`
+
+## MCP Integration
+
+VibeUE is **both MCP client AND server**:
+- **Client**: Connects to external MCP servers (stdio/HTTP)
+- **Server**: Exposes tools to VS Code, Claude Desktop, Cursor (port 8088, `/mcp`)
+
+## Key UE Patterns
+
+### Blueprint Compilation is Critical
+```cpp
+Blueprint->PostEditChange();
+FKismetEditorUtilities::CompileBlueprint(Blueprint);
+```
+
+### UMG Slot vs Widget Properties
+- Widget properties (Text, Color) → `UWidget`
+- Slot properties (Alignment, Padding) → `UPanelSlot`
+
+### Transaction System
+```cpp
+FScopedTransaction Transaction(LOCTEXT("CreateVariable", "Create Blueprint Variable"));
+Blueprint->Modify();
+```
+
+## Development Workflow
+
+1. Identify service domain (Blueprint, UMG, Material, etc.)
+2. Add/modify service methods in `Source/VibeUE/Public/Services/<Domain>/`
+3. Update DTOs in `Types/` subdirectory if needed
+4. Update command handlers in `Private/Commands/<Domain>Commands.cpp`
+5. Update tool actions in `Private/Tools/EditorTools.cpp`
+6. Rebuild and test with natural language prompts
+
+## Naming Conventions
+
+- Services: `F<Domain><Purpose>Service` (e.g., `FBlueprintLifecycleService`)
+- DTOs: `F<Domain><Type>Info` (e.g., `FBlueprintInfo`)
+- Commands: `F<Domain>Commands`
+- Error codes: `UPPER_SNAKE_CASE`
+- Tool names: `manage_<domain>`
+- Actions: `lowercase_snake_case`
+
+## Branch Strategy
+
+**ALWAYS USE THE DEV BRANCH** for development. Main branch is for stable releases only.
