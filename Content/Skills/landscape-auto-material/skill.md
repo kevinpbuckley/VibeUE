@@ -90,6 +90,27 @@ Material Instance (MI_Landscape_Biome_01)
 
 ## Critical Rules
 
+### 🚨 Inspect Before Modifying Existing Materials or Functions
+
+Before modifying an **existing** master material or material function, **MUST** export and review its current state:
+
+```python
+import unreal, json
+
+# For materials:
+graph = json.loads(unreal.MaterialNodeService.export_material_graph("/Game/Materials/M_Landscape_Master"))
+print(f"Expressions: {len(graph['expressions'])}, Connections: {len(graph['connections'])}")
+for expr in graph['expressions']:
+    name = expr.get('parameter_name') or expr.get('function_path') or expr.get('class')
+    print(f"  [{expr['id']}] {expr['class']} - {name}")
+
+# For material functions:
+func_info = unreal.MaterialNodeService.get_function_info("/Game/Functions/MF_AutoLayer")
+func_graph = json.loads(unreal.MaterialNodeService.export_function_graph("/Game/Functions/MF_AutoLayer"))
+```
+
+**Why:** Auto-material master graphs can have 50+ expressions and complex function call chains. Adding nodes without reviewing first creates duplicates, broken connections, and compilation failures. Always export → review → plan → modify.
+
 ### Four Services Work Together
 
 | Service | Role |

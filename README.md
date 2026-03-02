@@ -11,10 +11,12 @@ https://www.vibeue.com/
 
 **VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Control Blueprints, materials, UMG widgets, landscapes, foliage, and assets through natural language.
 
+> **🔑 A free VibeUE API key is required** for the MCP server and AI Chat to work. Get yours at **[vibeue.com/login](https://www.vibeue.com/login)** — then paste it into the VibeUE settings gear icon inside Unreal Editor. See the [AI Clients setup guide](https://www.vibeue.com/docs/ai-clients) for IDE configuration.
+
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 23 specialized services with 729 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
+- **Python API Services** - 23 specialized services with 738 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -38,12 +40,12 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `list_python_subsystems` | List available UE editor subsystems |
 | `manage_skills` | Load domain-specific knowledge on demand |
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
-| `terrain_data` | Generate real-world heightmaps and map images from geographic coordinates |
+| `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
 | `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
 
 **Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
 
-**Note:** The `terrain_data` and `deep_research` tools work together for real-world terrain workflows: geocode a place name → generate a heightmap → import into a landscape.
+**Note:** The `terrain_data` and `deep_research` tools work together for real-world terrain workflows: geocode a place name → generate a heightmap → import into a landscape → fetch water features.
 
 #### MCP Tool Reference
 
@@ -194,13 +196,20 @@ terrain_data(
 
 # List available map image styles
 terrain_data(action="list_styles")
+
+# Fetch water features (rivers, lakes, ponds) for the same area
+terrain_data(
+    action="get_water_features",
+    lng=-122.4194, lat=37.7749,
+    map_size=17.28
+)
 ```
 
 **Parameters (generate_heightmap):**
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `action` | string | *(required)* | `generate_heightmap`, `preview_elevation`, `get_map_image`, `list_styles` |
+| `action` | string | *(required)* | `generate_heightmap`, `preview_elevation`, `get_map_image`, `list_styles`, `get_water_features` |
 | `lng` | number | — | Longitude of center point |
 | `lat` | number | — | Latitude of center point |
 | `format` | string | `png` | Output: `png`, `raw`, `zip` |
@@ -214,6 +223,8 @@ terrain_data(action="list_styles")
 | `save_path` | string | `Saved/Terrain/` | Custom output path |
 
 **Workflow:** `preview_elevation` → use suggested `base_level` and `height_scale` → `generate_heightmap` with `resolution` matching your landscape → `import_heightmap` via LandscapeService.
+
+**Water workflow:** After importing a heightmap, call `get_water_features` with the same `lng`/`lat`/`map_size`. This saves a JSON file to `Saved/Terrain/` with rivers (`ue5_points`) and water bodies (`ue5_rings`) in origin-centered UE5 coordinates. Use the saved JSON to create landscape splines for rivers and mesh planes for lakes.
 
 ##### Deep Research Tool
 
@@ -292,7 +303,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (23 services, 735 methods)
+### 2. VibeUE Python API Services (23 services, 738 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -305,7 +316,7 @@ High-level services exposed to Python for common game development tasks:
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `MaterialService` | 30 | Materials and material instances |
-| `ActorService` | 24 | Level actor management |
+| `ActorService` | 27 | Level actor management, viewport camera control |
 | `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
@@ -370,8 +381,10 @@ If the provided path is invalid, the script falls back to automatic detection.
 
 1. Open **Tools > VibeUE > AI Chat**
 2. Click the ⚙️ gear icon
-3. Get a free API key at [vibeue.com](https://vibeue.com)
-4. Paste and save
+3. Get a free API key at [vibeue.com/login](https://www.vibeue.com/login)
+4. Paste the key into the **VibeUE API Key** field and click **Save**
+
+> **⚠️ Required for MCP tools:** The VibeUE API key is validated at startup. If no valid key is configured, all MCP tools will return an error. Get your free key at [vibeue.com/login](https://www.vibeue.com/login).
 
 ---
 
@@ -818,7 +831,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `get_row/update_row/remove_row(...)` - Row operations
 - `get_row_struct(path)` - Get column schema
 
-### ActorService (24 methods)
+### ActorService (27 methods)
 
 ActorService provides comprehensive level actor manipulation:
 - Actor discovery and queries
@@ -826,7 +839,12 @@ ActorService provides comprehensive level actor manipulation:
 - Selection management
 - Spawning and destruction
 - Property access
-- And more
+- Viewport camera control
+
+**Camera Control:**
+- `set_viewport_camera(location, rotation)` — Position the editor viewport camera directly
+- `get_actor_view_camera(name, direction, padding)` — Calculate and apply a camera view that frames an actor from a direction (Top, Bottom, Left, Right, Front, Back)
+- `calculate_actor_view(name, direction, padding)` — Calculate view info without moving the camera
 
 ### SkeletonService (53 methods)
 
@@ -1385,9 +1403,11 @@ In **Project Settings > Plugins > VibeUE**:
 |---------|---------|-------------|
 | **Enable MCP Server** | Enabled | Toggle HTTP server |
 | **Port** | 8088 | MCP endpoint port |
-| **API Key** | (empty) | Bearer token |
+| **Bearer Token** | (empty) | MCP clients must send this as `Authorization: Bearer <token>`. Leave empty to allow unauthenticated connections. |
 
 Server runs at `http://127.0.0.1:8088/mcp`
+
+> **⚠️ VibeUE API Key required:** The MCP server validates your **VibeUE API Key** (set in the AI Chat settings) against `vibeue.com` at startup. All MCP tool calls will fail with an error until a valid key is configured. Get your free key at [vibeue.com/login](https://www.vibeue.com/login).
 
 ### VS Code Configuration
 

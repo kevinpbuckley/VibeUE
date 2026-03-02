@@ -65,8 +65,7 @@ struct FEditorTabInfo
  * 
  * Usage from Python:
  *   import unreal
- *   service = unreal.ScreenshotService()
- *   result = service.capture_active_window("E:/Screenshots/capture.png")
+ *   result = unreal.ScreenshotService.capture_active_window("E:/Screenshots/capture.png")
  *   if result.success:
  *       print(f"Captured: {result.file_path}")
  */
@@ -87,7 +86,7 @@ public:
 	 * @return Screenshot result with success status and file info
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	FScreenshotResult CaptureViewport(const FString& FilePath, int32 Width = 1920, int32 Height = 1080);
+	static FScreenshotResult CaptureViewport(const FString& FilePath, int32 Width = 1920, int32 Height = 1080);
 
 	/**
 	 * Capture the entire Unreal Editor window to a file.
@@ -97,7 +96,7 @@ public:
 	 * @return Screenshot result with success status and file info
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	FScreenshotResult CaptureEditorWindow(const FString& FilePath);
+	static FScreenshotResult CaptureEditorWindow(const FString& FilePath);
 
 	/**
 	 * Capture the currently active/foreground window to a file.
@@ -106,7 +105,7 @@ public:
 	 * @return Screenshot result with success status and file info
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	FScreenshotResult CaptureActiveWindow(const FString& FilePath);
+	static FScreenshotResult CaptureActiveWindow(const FString& FilePath);
 
 	/**
 	 * Get information about open editor tabs.
@@ -114,28 +113,28 @@ public:
 	 * @return Array of editor tab information
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	TArray<FEditorTabInfo> GetOpenEditorTabs();
+	static TArray<FEditorTabInfo> GetOpenEditorTabs();
 
 	/**
 	 * Get the title of the currently focused window.
 	 * @return Window title string
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	FString GetActiveWindowTitle();
+	static FString GetActiveWindowTitle();
 
 	/**
 	 * Check if the Unreal Editor main window is in focus.
 	 * @return True if the editor is the foreground window
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
-	bool IsEditorWindowActive();
+	static bool IsEditorWindowActive();
 
 private:
 	/**
 	 * Find the Unreal Editor main window handle
 	 * @return Window handle or nullptr if not found
 	 */
-	void* FindEditorWindowHandle();
+	static void* FindEditorWindowHandle();
 
 	/**
 	 * Capture a window by its handle to a file
@@ -143,7 +142,7 @@ private:
 	 * @param FilePath - Output file path
 	 * @param OutResult - Result structure to populate
 	 */
-	void CaptureWindowToFile(void* WindowHandle, const FString& FilePath, FScreenshotResult& OutResult);
+	static void CaptureWindowToFile(void* WindowHandle, const FString& FilePath, FScreenshotResult& OutResult);
 
 	/**
 	 * Save raw bitmap data to PNG file
@@ -153,5 +152,5 @@ private:
 	 * @param FilePath - Output file path
 	 * @return True if save succeeded
 	 */
-	bool SaveBitmapAsPNG(const TArray<uint8>& BitmapData, int32 Width, int32 Height, const FString& FilePath);
+	static bool SaveBitmapAsPNG(const TArray<uint8>& BitmapData, int32 Width, int32 Height, const FString& FilePath);
 };

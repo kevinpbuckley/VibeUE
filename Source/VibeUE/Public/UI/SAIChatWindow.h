@@ -108,6 +108,9 @@ private:
     /** Map of message index to markdown text block for streaming updates */
     TMap<int32, TSharedPtr<SMarkdownTextBlock>> MessageTextBlocks;
 
+    /** Map of message index to model attribution badge (shown for auto-router responses) */
+    TMap<int32, TSharedPtr<STextBlock>> MessageModelBadges;
+
     // ============ Voice Input UI Components ============
 
     /** Microphone button for voice input */

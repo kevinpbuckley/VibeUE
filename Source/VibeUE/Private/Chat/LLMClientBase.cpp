@@ -278,6 +278,7 @@ void FLLMClientBase::ResetStreamingState()
 {
     StreamBuffer.Empty();
     AccumulatedContent.Empty();
+    LastResponseModel.Empty();
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
     bInToolCallBlock = false;
@@ -289,6 +290,8 @@ void FLLMClientBase::ResetStreamingState()
 
 void FLLMClientBase::CancelRequest()
 {
+    // Set flag BEFORE cancelling so the async completion callback ignores the result
+    bCancellationRequested = true;
     if (CurrentRequest.IsValid())
     {
         CurrentRequest->CancelRequest();
@@ -359,6 +362,9 @@ void FLLMClientBase::SendChatRequest(
     // Cancel any existing request
     CancelRequest();
 
+    // Clear cancellation flag now that we're starting a fresh request
+    bCancellationRequested = false;
+
     // Reset retry count for new request
     ConnectionRetryCount = 0;
 
@@ -421,6 +427,12 @@ void FLLMClientBase::SendChatRequest(
 
 void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
 {
+    // Request was cancelled by the user - ignore all callbacks
+    if (bCancellationRequested)
+    {
+        return;
+    }
+
     // Only process when we've actually received data
     if (BytesReceived == 0)
     {
@@ -1111,7 +1123,20 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         }
         return;
     }
-    
+
+    // Capture the actual model used (populated by OpenRouter when auto-routing)
+    JsonObject->TryGetStringField(TEXT("model"), LastResponseModel);
+    if (!LastResponseModel.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Actual model used: %s"), *LastResponseModel);
+        if (FChatSession::IsFileLoggingEnabled())
+        {
+            FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+            FString ModelLog = FString::Printf(TEXT("Routed to: %s\n"), *LastResponseModel);
+            FFileHelper::SaveStringToFile(ModelLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+        }
+    }
+
     // Get usage stats if present
     const TSharedPtr<FJsonObject>* UsageObj;
     if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj))
@@ -1548,6 +1573,13 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
 
 void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
 {
+    // Request was cancelled by the user - do not retry or fire any callbacks
+    if (bCancellationRequested)
+    {
+        bCancellationRequested = false;
+        return;
+    }
+
     // Check for timeout/connection failure first
     if (Request.IsValid())
     {

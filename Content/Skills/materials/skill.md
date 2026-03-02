@@ -20,6 +20,47 @@ keywords:
 
 ## Critical Rules
 
+### 🚨 Inspect Before Modifying Existing Materials
+
+Before adding, removing, or reconnecting nodes in an **existing** material, you **MUST** export and review the current graph first:
+
+```python
+import unreal, json
+
+path = "/Game/Materials/M_Existing"
+
+# Step 1: Get high-level info (blend mode, shading model)
+info = unreal.MaterialService.get_material_info(path)
+print(f"Blend: {info.blend_mode}, Shading: {info.shading_model}")
+
+# Step 2: Export the full node graph
+graph = json.loads(unreal.MaterialNodeService.export_material_graph(path))
+print(f"Expressions: {len(graph['expressions'])}")
+print(f"Connections: {len(graph['connections'])}")
+print(f"Output connections: {len(graph['output_connections'])}")
+
+# Step 3: Review what already exists
+for expr in graph['expressions']:
+    name = expr.get('parameter_name') or expr.get('class')
+    print(f"  [{expr['id']}] {expr['class']} - {name}")
+for oc in graph['output_connections']:
+    print(f"  Output '{oc['property']}' ← expr {oc['expression_id']}")
+```
+
+**Why this matters:**
+- The material may already have nodes connected to the output you want to modify
+- Blindly adding nodes creates duplicates and orphaned connections
+- You need to know what IDs exist so you can reconnect or replace, not just append
+- `export_material_graph` returns the ground truth — use it to plan your edits
+
+**Workflow for modifying existing materials:**
+1. **Export** the graph JSON and review expressions + connections
+2. **Plan** your changes — identify which nodes to keep, replace, or add
+3. **Disconnect** existing connections if needed before reconnecting
+4. **Add** only the new nodes that don't already exist
+5. **Reconnect** outputs to their correct sources
+6. **Compile** and save
+
 ### ⚠️ Two Services
 
 - **MaterialService** - Create materials, instances, manage properties

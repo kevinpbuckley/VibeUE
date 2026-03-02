@@ -556,6 +556,153 @@ bool UActorService::RefreshViewport()
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Camera View Operations
+// ═══════════════════════════════════════════════════════════════════
+
+FLevelEditorViewportClient* UActorService::GetPerspectiveViewportClient()
+{
+	if (!GEditor) return nullptr;
+
+	FLevelEditorViewportClient* ViewportClient = GCurrentLevelEditingViewportClient;
+	if (ViewportClient && ViewportClient->IsPerspective())
+	{
+		return ViewportClient;
+	}
+
+	for (FLevelEditorViewportClient* Client : GEditor->GetLevelViewportClients())
+	{
+		if (Client && Client->IsPerspective())
+		{
+			return Client;
+		}
+	}
+	return nullptr;
+}
+
+FCameraViewInfo UActorService::CalculateViewForActor(AActor* Actor, EViewDirection Direction, float PaddingMultiplier)
+{
+	FCameraViewInfo Result;
+	if (!Actor) return Result;
+
+	// Get actor bounds
+	FVector Origin, Extent;
+	Actor->GetActorBounds(false, Origin, Extent);
+
+	// Ensure minimum extent so we don't get degenerate views for flat objects
+	float MinExtent = 100.0f;
+	Extent.X = FMath::Max(Extent.X, MinExtent);
+	Extent.Y = FMath::Max(Extent.Y, MinExtent);
+	Extent.Z = FMath::Max(Extent.Z, MinExtent);
+
+	// Calculate view distance based on the face of the bounding box the camera sees
+	// Use a 60-degree FOV assumption (half-angle = 30 degrees, tan(30) ≈ 0.577)
+	float HalfFOVTangent = 0.577f; // tan(30 degrees)
+
+	float ViewDistance = 0.0f;
+	FVector CameraDirection = FVector::ZeroVector;
+	FRotator CameraRotation = FRotator::ZeroRotator;
+
+	switch (Direction)
+	{
+	case EViewDirection::Top:
+		// Looking down from above: camera sees XY extent
+		ViewDistance = FMath::Max(Extent.X, Extent.Y) / HalfFOVTangent;
+		CameraDirection = FVector(0, 0, 1);  // Camera is above, offset in +Z
+		CameraRotation = FRotator(-90, 0, 0); // Pitch straight down
+		break;
+
+	case EViewDirection::Bottom:
+		// Looking up from below: camera sees XY extent
+		ViewDistance = FMath::Max(Extent.X, Extent.Y) / HalfFOVTangent;
+		CameraDirection = FVector(0, 0, -1); // Camera is below, offset in -Z
+		CameraRotation = FRotator(90, 0, 0); // Pitch straight up
+		break;
+
+	case EViewDirection::Left:
+		// Looking from left side (-Y): camera sees XZ extent
+		ViewDistance = FMath::Max(Extent.X, Extent.Z) / HalfFOVTangent;
+		CameraDirection = FVector(0, -1, 0); // Camera is to the left (-Y)
+		CameraRotation = FRotator(0, 90, 0); // Yaw to look toward +Y
+		break;
+
+	case EViewDirection::Right:
+		// Looking from right side (+Y): camera sees XZ extent
+		ViewDistance = FMath::Max(Extent.X, Extent.Z) / HalfFOVTangent;
+		CameraDirection = FVector(0, 1, 0); // Camera is to the right (+Y)
+		CameraRotation = FRotator(0, -90, 0); // Yaw to look toward -Y
+		break;
+
+	case EViewDirection::Front:
+		// Looking from front (+X): camera sees YZ extent
+		ViewDistance = FMath::Max(Extent.Y, Extent.Z) / HalfFOVTangent;
+		CameraDirection = FVector(1, 0, 0); // Camera is in front (+X)
+		CameraRotation = FRotator(0, 180, 0); // Yaw to look toward -X
+		break;
+
+	case EViewDirection::Back:
+		// Looking from back (-X): camera sees YZ extent
+		ViewDistance = FMath::Max(Extent.Y, Extent.Z) / HalfFOVTangent;
+		CameraDirection = FVector(-1, 0, 0); // Camera is behind (-X)
+		CameraRotation = FRotator(0, 0, 0); // Yaw to look toward +X
+		break;
+	}
+
+	// Apply padding multiplier
+	ViewDistance *= FMath::Max(PaddingMultiplier, 0.5f);
+
+	// Ensure minimum distance
+	ViewDistance = FMath::Max(ViewDistance, 500.0f);
+
+	Result.bSuccess = true;
+	Result.CameraLocation = Origin + CameraDirection * ViewDistance;
+	Result.CameraRotation = CameraRotation;
+	Result.ViewDirection = Direction;
+	Result.ActorCenter = Origin;
+	Result.ActorExtent = Extent;
+	Result.ViewDistance = ViewDistance;
+
+	return Result;
+}
+
+bool UActorService::SetViewportCamera(FVector Location, FRotator Rotation)
+{
+	FLevelEditorViewportClient* ViewportClient = GetPerspectiveViewportClient();
+	if (!ViewportClient) return false;
+
+	ViewportClient->SetViewLocation(Location);
+	ViewportClient->SetViewRotation(Rotation);
+
+	RefreshViewport();
+	return true;
+}
+
+FCameraViewInfo UActorService::GetActorViewCamera(
+	const FString& ActorNameOrLabel,
+	EViewDirection Direction,
+	float PaddingMultiplier)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	FCameraViewInfo ViewInfo = CalculateViewForActor(Actor, Direction, PaddingMultiplier);
+
+	if (ViewInfo.bSuccess)
+	{
+		// Apply the calculated camera position to the viewport
+		SetViewportCamera(ViewInfo.CameraLocation, ViewInfo.CameraRotation);
+	}
+
+	return ViewInfo;
+}
+
+FCameraViewInfo UActorService::CalculateActorView(
+	const FString& ActorNameOrLabel,
+	EViewDirection Direction,
+	float PaddingMultiplier)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	return CalculateViewForActor(Actor, Direction, PaddingMultiplier);
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Property Operations
 // ═══════════════════════════════════════════════════════════════════
 

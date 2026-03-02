@@ -39,6 +39,33 @@ manage_skills(action="load", skill_name="landscape-auto-material")
 
 ## Critical Rules
 
+### 🚨 Inspect Before Modifying Existing Landscape Materials
+
+Before modifying an **existing** landscape material, you **MUST** export and review its current graph:
+
+```python
+import unreal, json
+
+path = "/Game/Materials/M_Terrain"
+
+# Step 1: Get material info
+info = unreal.MaterialService.get_material_info(path)
+print(f"Blend: {info.blend_mode}, Shading: {info.shading_model}")
+
+# Step 2: Export full graph to see what nodes and connections already exist
+graph = json.loads(unreal.MaterialNodeService.export_material_graph(path))
+for expr in graph['expressions']:
+    name = expr.get('parameter_name') or expr.get('class')
+    print(f"  [{expr['id']}] {expr['class']} - {name}")
+    if expr.get('landscape_layers'):
+        for layer in expr['landscape_layers']:
+            print(f"      Layer: {layer}")
+for oc in graph['output_connections']:
+    print(f"  Output '{oc['property']}' ← expr {oc['expression_id']}")
+```
+
+**Why:** Landscape materials often already have LayerBlend nodes, texture samplers, and connected outputs. Adding duplicate nodes without reviewing first creates orphaned expressions and broken connections. Always export → review → plan → modify.
+
 ### Two Services Work Together
 
 - **LandscapeMaterialService** - Landscape-specific nodes (LayerBlend, LayerCoords, LayerInfo)
