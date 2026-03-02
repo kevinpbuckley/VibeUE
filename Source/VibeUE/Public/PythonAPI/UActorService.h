@@ -7,6 +7,64 @@
 #include "UActorService.generated.h"
 
 /**
+ * View direction for camera positioning relative to an actor.
+ * Used with GetActorViewCamera to calculate camera position that frames an actor.
+ */
+UENUM(BlueprintType)
+enum class EViewDirection : uint8
+{
+	/** Camera looks down from above (+Z looking -Z) */
+	Top		UMETA(DisplayName = "Top"),
+	/** Camera looks up from below (-Z looking +Z) */
+	Bottom	UMETA(DisplayName = "Bottom"),
+	/** Camera looks from the left (-Y looking +Y) */
+	Left	UMETA(DisplayName = "Left"),
+	/** Camera looks from the right (+Y looking -Y) */
+	Right	UMETA(DisplayName = "Right"),
+	/** Camera looks from the front (+X looking -X) */
+	Front	UMETA(DisplayName = "Front"),
+	/** Camera looks from the back (-X looking +X) */
+	Back	UMETA(DisplayName = "Back")
+};
+
+/**
+ * Camera view information for positioning the viewport to frame an actor.
+ */
+USTRUCT(BlueprintType)
+struct FCameraViewInfo
+{
+	GENERATED_BODY()
+
+	/** Whether the view calculation succeeded */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	bool bSuccess = false;
+
+	/** Calculated camera location */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	FVector CameraLocation = FVector::ZeroVector;
+
+	/** Calculated camera rotation (looking at the actor) */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	FRotator CameraRotation = FRotator::ZeroRotator;
+
+	/** The view direction used */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	EViewDirection ViewDirection = EViewDirection::Front;
+
+	/** Actor bounds center that was framed */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	FVector ActorCenter = FVector::ZeroVector;
+
+	/** Actor bounds extent */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	FVector ActorExtent = FVector::ZeroVector;
+
+	/** Distance from camera to actor center */
+	UPROPERTY(BlueprintReadWrite, Category = "Camera")
+	float ViewDistance = 0.0f;
+};
+
+/**
  * Information about an actor in the level
  */
 USTRUCT(BlueprintType)
@@ -312,6 +370,59 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
 	static bool RefreshViewport();
 
+	/**
+	 * Set the viewport camera to a specific location and rotation.
+	 * Directly positions the editor viewport camera.
+	 *
+	 * @param Location - World location for the camera
+	 * @param Rotation - World rotation for the camera (Pitch, Yaw, Roll)
+	 * @return True if camera was positioned successfully
+	 *
+	 * Example:
+	 *   # Position camera at (1000, 2000, 500) looking down at 45 degrees
+	 *   unreal.ActorService.set_viewport_camera(unreal.Vector(1000, 2000, 500), unreal.Rotator(-45, 0, 0))
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool SetViewportCamera(FVector Location, FRotator Rotation);
+
+	/**
+	 * Calculate and apply a camera view that frames an actor from a specific direction.
+	 * Computes the camera position based on the actor's bounding box so the entire
+	 * actor fits in the viewport.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor to frame
+	 * @param Direction - View direction (Top, Bottom, Left, Right, Front, Back)
+	 * @param PaddingMultiplier - Extra distance multiplier (1.0 = tight fit, 1.5 = 50% padding). Default 1.2
+	 * @return Camera view info with the calculated and applied camera position
+	 *
+	 * Example:
+	 *   # Get a top-down view of "MyLandscape"
+	 *   view = unreal.ActorService.get_actor_view_camera("MyLandscape", unreal.EViewDirection.TOP)
+	 *   # Get a front view with extra padding
+	 *   view = unreal.ActorService.get_actor_view_camera("MyBuilding", unreal.EViewDirection.FRONT, 1.5)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static FCameraViewInfo GetActorViewCamera(
+		const FString& ActorNameOrLabel,
+		EViewDirection Direction = EViewDirection::Front,
+		float PaddingMultiplier = 1.2f);
+
+	/**
+	 * Calculate camera view info for an actor WITHOUT moving the viewport camera.
+	 * Use this to get the camera position/rotation for a specific view direction,
+	 * then apply it yourself with SetViewportCamera when ready.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor to frame
+	 * @param Direction - View direction (Top, Bottom, Left, Right, Front, Back)
+	 * @param PaddingMultiplier - Extra distance multiplier (1.0 = tight fit, 1.5 = 50% padding). Default 1.2
+	 * @return Camera view info with the calculated position (camera NOT moved)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static FCameraViewInfo CalculateActorView(
+		const FString& ActorNameOrLabel,
+		EViewDirection Direction = EViewDirection::Front,
+		float PaddingMultiplier = 1.2f);
+
 	// ═══════════════════════════════════════════════════════════════════
 	// Property Operations
 	// ═══════════════════════════════════════════════════════════════════
@@ -482,4 +593,10 @@ private:
 
 	/** Helper: End undo transaction */
 	static void EndTransaction();
+
+	/** Helper: Calculate camera position and rotation to frame an actor from a direction */
+	static FCameraViewInfo CalculateViewForActor(AActor* Actor, EViewDirection Direction, float PaddingMultiplier);
+
+	/** Helper: Get the active perspective viewport client */
+	static FLevelEditorViewportClient* GetPerspectiveViewportClient();
 };

@@ -222,6 +222,25 @@ static FTerrainHttpResult TerrainHttpGet(const FString& Url, const FString& ApiK
 }
 
 // ---------------------------------------------------------------------------
+// Coordinate conversion: lng/lat → UE5 world space
+//
+// Assumptions (standard VibeUE landscape import workflow):
+//   • Landscape actor is centered at world origin (0, 0, Z).
+//   • +X = East, +Y = North, 1 m = 100 UE units.
+// If the landscape actor is not at origin, add its Location from
+// ULandscapeService.get_landscape_info() to every ue5_point.
+// ---------------------------------------------------------------------------
+static FVector TerrainLngLatToUE5(double PointLng, double PointLat, double CenterLng, double CenterLat)
+{
+	const double METERS_PER_DEG = 111320.0;
+	const double CosLat         = FMath::Cos(FMath::DegreesToRadians(CenterLat));
+	return FVector(
+		(float)((PointLng - CenterLng) * METERS_PER_DEG * CosLat * 100.0),  // +X = East
+		(float)((PointLat - CenterLat) * METERS_PER_DEG             * 100.0),  // +Y = North
+		0.0f);
+}
+
+// ---------------------------------------------------------------------------
 // Save path resolution
 // ---------------------------------------------------------------------------
 static FString ResolveSavePath(const FString& RequestedPath, const FString& Filename)
@@ -231,6 +250,253 @@ static FString ResolveSavePath(const FString& RequestedPath, const FString& File
 	IPlatformFile& PF = FPlatformFileManager::Get().GetPlatformFile();
 	if (!PF.DirectoryExists(*Dir)) PF.CreateDirectory(*Dir);
 	return FPaths::Combine(Dir, Filename);
+}
+
+// ---------------------------------------------------------------------------
+// Action: get_water_features
+// ---------------------------------------------------------------------------
+static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
+{
+	const FString ApiKey = GetVibeUEApiKey();
+	if (ApiKey.IsEmpty())
+		return BuildErrorJson(TEXT("NO_API_KEY"), TEXT("No VibeUE API key configured. Set it in VibeUE chat settings."));
+
+	const double Lng = ExtractTerrainDouble(Params, TEXT("lng"), 0.0);
+	const double Lat = ExtractTerrainDouble(Params, TEXT("lat"), 0.0);
+	if (ExtractTerrainParam(Params, TEXT("lat")).IsEmpty())
+		return BuildErrorJson(TEXT("MISSING_PARAMS"), TEXT("lat and lng are required."));
+
+	const double MapSize = ExtractTerrainDouble(Params, TEXT("map_size"), 17.28);
+
+	TSharedRef<FJsonObject> Body = MakeShared<FJsonObject>();
+	Body->SetNumberField(TEXT("lng"),      Lng);
+	Body->SetNumberField(TEXT("lat"),      Lat);
+	Body->SetNumberField(TEXT("map_size"), MapSize);
+
+	FString BodyStr;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&BodyStr);
+	FJsonSerializer::Serialize(Body, Writer);
+
+	const FString Url = GetTerrainBaseUrl() + TEXT("/api/terrain/water-features");
+	// Use a longer timeout — PBF tiles may be fetched across multiple HTTP round-trips
+	const FTerrainHttpResult HttpResult = TerrainHttpPost(Url, ApiKey, BodyStr, 45.0f);
+
+	if (!HttpResult.bSuccess)
+		return BuildErrorJson(TEXT("HTTP_ERROR"), HttpResult.ErrorMessage);
+
+	if (HttpResult.ResponseCode != 200)
+	{
+		TArray<uint8> ContentCopy = HttpResult.Content;
+		ContentCopy.Add(0);
+		const FString ErrBody = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
+		return BuildErrorJson(
+			FString::Printf(TEXT("HTTP_%d"), HttpResult.ResponseCode),
+			ErrBody.IsEmpty() ? FString::Printf(TEXT("Server returned %d"), HttpResult.ResponseCode) : ErrBody);
+	}
+
+	// Parse the API response and inject UE5 world-space coordinates
+	TArray<uint8> ContentCopy = HttpResult.Content;
+	ContentCopy.Add(0);
+	const FString JsonStr = FString(UTF8_TO_TCHAR(reinterpret_cast<const char*>(ContentCopy.GetData())));
+
+	TSharedPtr<FJsonObject> ApiJson;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonStr);
+	if (!FJsonSerializer::Deserialize(Reader, ApiJson) || !ApiJson.IsValid())
+		return BuildErrorJson(TEXT("PARSE_ERROR"), TEXT("Failed to parse server response."));
+
+	// Inject ue5_points into each waterway
+	const TArray<TSharedPtr<FJsonValue>>* WaterwaysArray;
+	if (ApiJson->TryGetArrayField(TEXT("waterways"), WaterwaysArray))
+	{
+		for (const TSharedPtr<FJsonValue>& WwVal : *WaterwaysArray)
+		{
+			TSharedPtr<FJsonObject> Ww = WwVal->AsObject();
+			if (!Ww.IsValid()) continue;
+			const TArray<TSharedPtr<FJsonValue>>* PtsArray;
+			if (!Ww->TryGetArrayField(TEXT("points"), PtsArray)) continue;
+
+			TArray<TSharedPtr<FJsonValue>> UE5Pts;
+			UE5Pts.Reserve(PtsArray->Num());
+			for (const TSharedPtr<FJsonValue>& PtVal : *PtsArray)
+			{
+				TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
+				if (!Pt.IsValid()) continue;
+				double PtLng = 0.0, PtLat = 0.0;
+				Pt->TryGetNumberField(TEXT("lng"), PtLng);
+				Pt->TryGetNumberField(TEXT("lat"), PtLat);
+				FVector V = TerrainLngLatToUE5(PtLng, PtLat, Lng, Lat);
+				TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
+				UE5Pt->SetNumberField(TEXT("x"), V.X);
+				UE5Pt->SetNumberField(TEXT("y"), V.Y);
+				UE5Pt->SetNumberField(TEXT("z"), V.Z);
+				UE5Pts.Add(MakeShared<FJsonValueObject>(UE5Pt));
+			}
+			Ww->SetArrayField(TEXT("ue5_points"), UE5Pts);
+		}
+	}
+
+	// Inject ue5_rings into each water body
+	const TArray<TSharedPtr<FJsonValue>>* BodiesArray;
+	if (ApiJson->TryGetArrayField(TEXT("water_bodies"), BodiesArray))
+	{
+		for (const TSharedPtr<FJsonValue>& BdVal : *BodiesArray)
+		{
+			TSharedPtr<FJsonObject> Bd = BdVal->AsObject();
+			if (!Bd.IsValid()) continue;
+			const TArray<TSharedPtr<FJsonValue>>* RingsArray;
+			if (!Bd->TryGetArrayField(TEXT("rings"), RingsArray)) continue;
+
+			TArray<TSharedPtr<FJsonValue>> UE5Rings;
+			UE5Rings.Reserve(RingsArray->Num());
+			for (const TSharedPtr<FJsonValue>& RingVal : *RingsArray)
+			{
+				const TArray<TSharedPtr<FJsonValue>>* PtsArray;
+				if (!RingVal->TryGetArray(PtsArray)) continue;
+				TArray<TSharedPtr<FJsonValue>> UE5Ring;
+				UE5Ring.Reserve(PtsArray->Num());
+				for (const TSharedPtr<FJsonValue>& PtVal : *PtsArray)
+				{
+					TSharedPtr<FJsonObject> Pt = PtVal->AsObject();
+					if (!Pt.IsValid()) continue;
+					double PtLng = 0.0, PtLat = 0.0;
+					Pt->TryGetNumberField(TEXT("lng"), PtLng);
+					Pt->TryGetNumberField(TEXT("lat"), PtLat);
+					FVector V = TerrainLngLatToUE5(PtLng, PtLat, Lng, Lat);
+					TSharedRef<FJsonObject> UE5Pt = MakeShared<FJsonObject>();
+					UE5Pt->SetNumberField(TEXT("x"), V.X);
+					UE5Pt->SetNumberField(TEXT("y"), V.Y);
+					UE5Pt->SetNumberField(TEXT("z"), V.Z);
+					UE5Ring.Add(MakeShared<FJsonValueObject>(UE5Pt));
+				}
+				UE5Rings.Add(MakeShared<FJsonValueArray>(UE5Ring));
+			}
+			Bd->SetArrayField(TEXT("ue5_rings"), UE5Rings);
+		}
+	}
+
+	ApiJson->SetStringField(TEXT("ue5_coordinate_note"),
+		TEXT("+X=East +Y=North, landscape center at world origin. "
+		     "If landscape actor is offset, add its Location from "
+		     "ULandscapeService.get_landscape_info() to each ue5_point/ue5_ring vertex."));
+
+	// Serialize the full JSON (with injected UE5 coordinates)
+	FString FullJson;
+	{
+		TSharedRef<TJsonWriter<>> FullWriter = TJsonWriterFactory<>::Create(&FullJson);
+		FJsonSerializer::Serialize(ApiJson.ToSharedRef(), FullWriter);
+	}
+
+	// Save full JSON to file (same pattern as heightmap/map_image)
+	const FString SavePath = ExtractTerrainParam(Params, TEXT("save_path"));
+	const FString DefaultFilename = FString::Printf(TEXT("water_features_%.4f_%.4f_%gkm.json"), Lat, Lng, MapSize);
+	const FString FilePath = ResolveSavePath(SavePath, DefaultFilename);
+
+	if (!FFileHelper::SaveStringToFile(FullJson, *FilePath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+		return BuildErrorJson(TEXT("SAVE_ERROR"), FString::Printf(TEXT("Failed to save water features to: %s"), *FilePath));
+
+	// Build a compact summary to return (not the full JSON — that can be 200K+ tokens)
+	int32 NumWaterways = 0;
+	int32 TotalWaterwayPoints = 0;
+	int32 NumBodies = 0;
+	int32 TotalBodyPoints = 0;
+
+	// Track class breakdown for waterways
+	TMap<FString, int32> WaterwayClassCounts;
+
+	TArray<TSharedPtr<FJsonValue>> WaterwaySummaries;
+	if (ApiJson->TryGetArrayField(TEXT("waterways"), WaterwaysArray))
+	{
+		NumWaterways = WaterwaysArray->Num();
+		for (const TSharedPtr<FJsonValue>& WwVal : *WaterwaysArray)
+		{
+			TSharedPtr<FJsonObject> Ww = WwVal->AsObject();
+			if (!Ww.IsValid()) continue;
+			const TArray<TSharedPtr<FJsonValue>>* Pts;
+			int32 PtCount = 0;
+			if (Ww->TryGetArrayField(TEXT("ue5_points"), Pts)) PtCount = Pts->Num();
+			TotalWaterwayPoints += PtCount;
+
+			TSharedRef<FJsonObject> Summary = MakeShared<FJsonObject>();
+			FString Name; Ww->TryGetStringField(TEXT("name"), Name);
+			FString Class; Ww->TryGetStringField(TEXT("class"), Class);
+			double Width = 0; Ww->TryGetNumberField(TEXT("estimated_width_m"), Width);
+			Summary->SetStringField(TEXT("name"), Name);
+			Summary->SetStringField(TEXT("class"), Class);
+			Summary->SetNumberField(TEXT("estimated_width_m"), Width);
+			Summary->SetNumberField(TEXT("num_points"), PtCount);
+			WaterwaySummaries.Add(MakeShared<FJsonValueObject>(Summary));
+
+			// Track class counts
+			FString ClassKey = Class.IsEmpty() ? TEXT("unknown") : Class;
+			WaterwayClassCounts.FindOrAdd(ClassKey) += 1;
+		}
+	}
+
+	TArray<TSharedPtr<FJsonValue>> BodySummaries;
+	if (ApiJson->TryGetArrayField(TEXT("water_bodies"), BodiesArray))
+	{
+		NumBodies = BodiesArray->Num();
+		for (const TSharedPtr<FJsonValue>& BdVal : *BodiesArray)
+		{
+			TSharedPtr<FJsonObject> Bd = BdVal->AsObject();
+			if (!Bd.IsValid()) continue;
+			const TArray<TSharedPtr<FJsonValue>>* Rings;
+			int32 PtCount = 0;
+			if (Bd->TryGetArrayField(TEXT("ue5_rings"), Rings))
+			{
+				for (const TSharedPtr<FJsonValue>& R : *Rings)
+				{
+					const TArray<TSharedPtr<FJsonValue>>* RingPts;
+					if (R->TryGetArray(RingPts)) PtCount += RingPts->Num();
+				}
+			}
+			TotalBodyPoints += PtCount;
+
+			TSharedRef<FJsonObject> Summary = MakeShared<FJsonObject>();
+			FString Name; Bd->TryGetStringField(TEXT("name"), Name);
+			FString Class; Bd->TryGetStringField(TEXT("class"), Class);
+			double Area = 0; Bd->TryGetNumberField(TEXT("area_sq_m"), Area);
+			Summary->SetStringField(TEXT("name"), Name);
+			Summary->SetStringField(TEXT("class"), Class);
+			if (Area > 0) Summary->SetNumberField(TEXT("area_sq_m"), Area);
+			Summary->SetNumberField(TEXT("num_ring_points"), PtCount);
+			BodySummaries.Add(MakeShared<FJsonValueObject>(Summary));
+		}
+	}
+
+	// Build the compact result
+	TSharedRef<FJsonObject> Result = MakeShared<FJsonObject>();
+	Result->SetBoolField(TEXT("success"), true);
+	Result->SetStringField(TEXT("file"), FilePath);
+	Result->SetNumberField(TEXT("file_size_bytes"), FullJson.Len());
+	Result->SetNumberField(TEXT("num_waterways"), NumWaterways);
+	Result->SetNumberField(TEXT("total_waterway_points"), TotalWaterwayPoints);
+	Result->SetNumberField(TEXT("num_water_bodies"), NumBodies);
+	Result->SetNumberField(TEXT("total_water_body_points"), TotalBodyPoints);
+	Result->SetArrayField(TEXT("waterways"), WaterwaySummaries);
+	Result->SetArrayField(TEXT("water_bodies"), BodySummaries);
+
+	// Add waterway class breakdown so the AI knows what types of waterways exist
+	TSharedRef<FJsonObject> ClassBreakdown = MakeShared<FJsonObject>();
+	for (const auto& Pair : WaterwayClassCounts)
+	{
+		ClassBreakdown->SetNumberField(Pair.Key, Pair.Value);
+	}
+	Result->SetObjectField(TEXT("waterway_class_breakdown"), ClassBreakdown);
+
+	Result->SetStringField(TEXT("message"), FString::Printf(
+		TEXT("Water features saved to %s. Found %d waterways (%d points) and %d water bodies (%d points). "
+			 "Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered."),
+		*FilePath, NumWaterways, TotalWaterwayPoints, NumBodies, TotalBodyPoints, *FilePath));
+
+	Result->SetStringField(TEXT("ue5_coordinate_note"),
+		TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "
+			 "All ue5_points and ue5_rings are in this origin-centered space."));
+
+	FString Out;
+	TSharedRef<TJsonWriter<>> OutWriter = TJsonWriterFactory<>::Create(&Out);
+	FJsonSerializer::Serialize(Result, OutWriter);
+	return Out;
 }
 
 // ---------------------------------------------------------------------------
@@ -460,26 +726,28 @@ static FString ActionListStyles()
 // Tool registration
 // ---------------------------------------------------------------------------
 REGISTER_VIBEUE_TOOL(terrain_data,
-	"Generate heightmaps and map images from real-world terrain data for "
-	"Unreal Engine landscape import. Requires an active VibeUE API key. "
-	"Actions: generate_heightmap, preview_elevation, get_map_image, list_styles. "
+	"Generate heightmaps, map images, and water feature data from real-world terrain. "
+	"Requires an active VibeUE API key. "
+	"Actions: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features. "
 	"IMPORTANT: Use the 'resolution' parameter to match your landscape resolution. "
-	"Workflow: 1) Decide landscape config (e.g. 8x8 components, 63 quads, 1 section = 505x505). "
-	"2) Call preview_elevation for suggested settings. "
-	"3) Call generate_heightmap with resolution=505 to match your landscape. "
-	"4) Import via ULandscapeService.import_heightmap(). "
-	"If resolution is omitted, defaults to 1081 (Cities: Skylines standard). "
-	"You can also use ULandscapeService.resize_heightmap() to resize after generation.",
+	"Heightmap workflow: 1) preview_elevation for suggested settings (returns suggestedZScale, suggestedXYScales by resolution). "
+	"2) generate_heightmap with resolution matching your landscape. "
+	"3) Import via ULandscapeService.import_heightmap() (auto-creates a matching landscape if missing, but explicit create_landscape is recommended for real-world XY/Z scale control). "
+	"CRITICAL: Use suggestedXYScales[resolution] as the landscape X and Y scale — do NOT use the default 100. "
+	"Water workflow (after heightmap is imported): "
+	"1) get_water_features with the same lng/lat/map_size — saves JSON to Saved/Terrain/ and returns a summary with the file path. "
+	"2) Read the saved JSON file: json_str = open(file_path).read() "
+	"3) Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered.",
 	"Terrain",
 	TOOL_PARAMS(
-		TOOL_PARAM("action",          "Action: generate_heightmap | preview_elevation | get_map_image | list_styles", "string", true),
+		TOOL_PARAM("action",          "Action: generate_heightmap | preview_elevation | get_map_image | list_styles | get_water_features", "string", true),
 		TOOL_PARAM("lng",             "Longitude of center point (e.g. -122.4194 for San Francisco)", "number", false),
 		TOOL_PARAM("lat",             "Latitude of center point (e.g. 37.7749 for San Francisco)", "number", false),
+		TOOL_PARAM("map_size",        "Map size in km (default 17.28). Use the same value for heightmap and get_water_features.", "number", false),
 		TOOL_PARAM("format",          "Output format for generate_heightmap: png (default), raw, zip", "string", false),
 		TOOL_PARAM("resolution",      "Output resolution NxN pixels for generate_heightmap. MUST match landscape resolution. "
 		                               "Use ULandscapeService.calculate_landscape_resolution() to compute. "
 		                               "Common: 505 (8x8,63,1), 1009 (8x8,63,2 or 16x16,63,1), 1017 (8x8,127,1). Default: 1081", "number", false),
-		TOOL_PARAM("map_size",        "Map size in km (default 17.28 for Cities: Skylines)", "number", false),
 		TOOL_PARAM("base_level",      "Base elevation offset in meters (default 0; use preview_elevation for good value)", "number", false),
 		TOOL_PARAM("height_scale",    "Height scale percentage 1-250 (default 100; use preview_elevation for good value)", "number", false),
 		TOOL_PARAM("water_depth",     "Water depth in Cities: Skylines units (default 40)", "number", false),
@@ -498,14 +766,16 @@ REGISTER_VIBEUE_TOOL(terrain_data,
 		const FString Action = ExtractTerrainParam(Params, TEXT("action")).ToLower().TrimStartAndEnd();
 
 		if (Action.IsEmpty())
-			return BuildErrorJson(TEXT("MISSING_ACTION"), TEXT("'action' is required. Options: generate_heightmap, preview_elevation, get_map_image, list_styles"));
+			return BuildErrorJson(TEXT("MISSING_ACTION"),
+				TEXT("'action' is required. Options: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"));
 
 		if (Action == TEXT("generate_heightmap"))  return ActionGenerateHeightmap(Params);
 		if (Action == TEXT("preview_elevation"))   return ActionPreviewElevation(Params);
 		if (Action == TEXT("get_map_image"))       return ActionGetMapImage(Params);
 		if (Action == TEXT("list_styles"))         return ActionListStyles();
+		if (Action == TEXT("get_water_features"))  return ActionGetWaterFeatures(Params);
 
 		return BuildErrorJson(TEXT("UNKNOWN_ACTION"),
-			FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles"), *Action));
+			FString::Printf(TEXT("Unknown action: '%s'. Valid: generate_heightmap, preview_elevation, get_map_image, list_styles, get_water_features"), *Action));
 	}
 );

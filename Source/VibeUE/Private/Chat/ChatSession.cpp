@@ -181,7 +181,7 @@ void FChatSession::SendMessage(const FString& UserMessage)
     {
         VibeUEClient->SendChatRequest(
             ApiMessages,
-            CurrentModelId,  // Ignored by VibeUE client
+            CurrentModelId,
             Tools,
             FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
             FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
@@ -421,10 +421,21 @@ void FChatSession::OnStreamComplete(bool bSuccess)
                 Message.Content.Len(), *Message.Content);
         }
         
+        // Capture actual model used (populated by VibeUE backend when auto-routing)
+        if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+        {
+            const FString& ActualModel = VibeUEClient->GetLastResponseModel();
+            if (!ActualModel.IsEmpty())
+            {
+                Message.ModelUsed = ActualModel;
+                UE_LOG(LogChatSession, Log, TEXT("[AUTO-ROUTER] Response routed to: %s"), *ActualModel);
+            }
+        }
+
         Message.bIsStreaming = false;
         OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
     }
-    
+
     CurrentStreamingMessageIndex = INDEX_NONE;
 
     // Notify UI that LLM thinking has completed
@@ -1012,7 +1023,7 @@ void FChatSession::SendFollowUpAfterToolCall()
     {
         VibeUEClient->SendChatRequest(
             ApiMessages,
-            CurrentModelId,  // Ignored by VibeUE client
+            CurrentModelId,
             Tools,
             FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
             FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),

@@ -162,3 +162,29 @@ dup = subsys.duplicate_actor(actor)
 loc = dup.get_actor_location()
 dup.set_actor_location(unreal.Vector(loc.x + 200, loc.y, loc.z), False, False)
 ```
+
+### Camera View Methods (for screenshots and verification)
+
+Use `ActorService` to position the viewport camera to frame actors from specific directions:
+
+```python
+import unreal
+
+actor_service = unreal.ActorService
+
+# Move camera to view an actor from above (top-down)
+view = actor_service.get_actor_view_camera("MyLandscape", unreal.EViewDirection.TOP)
+
+# Move camera to view from front with extra padding
+view = actor_service.get_actor_view_camera("MyBuilding", unreal.EViewDirection.FRONT, 1.5)
+
+# Calculate view without moving camera
+view = actor_service.calculate_actor_view("MyActor", unreal.EViewDirection.RIGHT, 1.2)
+# view.camera_location, view.camera_rotation, view.view_distance
+
+# Directly set camera to any position/rotation
+actor_service.set_viewport_camera(unreal.Vector(1000, 2000, 500), unreal.Rotator(-45, 0, 0))
+```
+
+**Directions**: TOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+**Padding**: 1.0=tight, 1.2=default, 2.0=far

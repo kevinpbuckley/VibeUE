@@ -11,6 +11,8 @@ https://www.vibeue.com/
 
 **VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Control Blueprints, materials, UMG widgets, landscapes, foliage, and assets through natural language.
 
+> **🔑 A free VibeUE API key is required** for the MCP server and AI Chat to work. Get yours at **[vibeue.com/login](https://www.vibeue.com/login)** — then paste it into the VibeUE settings gear icon inside Unreal Editor. See the [AI Clients setup guide](https://www.vibeue.com/docs/ai-clients) for IDE configuration.
+
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
@@ -370,8 +372,10 @@ If the provided path is invalid, the script falls back to automatic detection.
 
 1. Open **Tools > VibeUE > AI Chat**
 2. Click the ⚙️ gear icon
-3. Get a free API key at [vibeue.com](https://vibeue.com)
-4. Paste and save
+3. Get a free API key at [vibeue.com/login](https://www.vibeue.com/login)
+4. Paste the key into the **VibeUE API Key** field and click **Save**
+
+> **⚠️ Required for MCP tools:** The VibeUE API key is validated at startup. If no valid key is configured, all MCP tools will return an error. Get your free key at [vibeue.com/login](https://www.vibeue.com/login).
 
 ---
 
@@ -1385,9 +1389,11 @@ In **Project Settings > Plugins > VibeUE**:
 |---------|---------|-------------|
 | **Enable MCP Server** | Enabled | Toggle HTTP server |
 | **Port** | 8088 | MCP endpoint port |
-| **API Key** | (empty) | Bearer token |
+| **Bearer Token** | (empty) | MCP clients must send this as `Authorization: Bearer <token>`. Leave empty to allow unauthenticated connections. |
 
 Server runs at `http://127.0.0.1:8088/mcp`
+
+> **⚠️ VibeUE API Key required:** The MCP server validates your **VibeUE API Key** (set in the AI Chat settings) against `vibeue.com` at startup. All MCP tool calls will fail with an error until a valid key is configured. Get your free key at [vibeue.com/login](https://www.vibeue.com/login).
 
 ### VS Code Configuration
 

@@ -12,8 +12,8 @@ To capture screenshots (including Blueprint graphs, Material editors, etc.), loa
 
 **When to use:**
 - After `terrain_data get_map_image` — attach the satellite image to see terrain colors/features before creating materials or painting
-- After `ScreenshotService.capture_viewport()` — attach to verify visual results
-- After `ScreenshotService.capture_editor_window()` — attach to review blueprints/materials
+- After `unreal.ScreenshotService.capture_viewport()` — attach to verify visual results
+- After `unreal.ScreenshotService.capture_editor_window()` — attach to review blueprints/materials
 - Any time you have an image file on disk that you need to visually analyze
 
 **Usage:**

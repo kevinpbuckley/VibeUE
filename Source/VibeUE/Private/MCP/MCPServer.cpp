@@ -9,6 +9,9 @@
 #include "Core/ToolRegistry.h"
 #include "Chat/MCPTypes.h"
 #include "Async/Async.h"
+#include "HttpModule.h"
+#include "Interfaces/IHttpRequest.h"
+#include "Interfaces/IHttpResponse.h"
 
 DEFINE_LOG_CATEGORY(LogMCPServer);
 
@@ -51,7 +54,7 @@ void FMCPServer::Initialize()
         Config.Port,
         Config.ApiKey.IsEmpty() ? TEXT("(none)") : TEXT("(set)"));
     
-    // Auto-start if enabled
+    // Auto-start if enabled (Start() will validate the VibeUE API key)
     if (Config.bEnabled)
     {
         Start();
@@ -75,6 +78,9 @@ bool FMCPServer::Start()
         UE_LOG(LogMCPServer, Warning, TEXT("MCP Server already running"));
         return true;
     }
+
+    // Re-validate VibeUE API key each time the server starts (picks up any key changes from settings)
+    ValidateVibeUEApiKeyAsync();
     
     UE_LOG(LogMCPServer, Log, TEXT("Starting MCP Server on port %d..."), Config.Port);
     
@@ -818,6 +824,20 @@ FString FMCPServer::HandleToolsList(TSharedPtr<FJsonObject> Params, const FStrin
 
 FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FString& RequestId)
 {
+    // Check VibeUE API key validity before executing any tool
+    if (!bIsVibeUEApiKeyValid)
+    {
+        TSharedPtr<FJsonObject> Result = MakeShared<FJsonObject>();
+        TArray<TSharedPtr<FJsonValue>> ContentArray;
+        TSharedPtr<FJsonObject> ContentItem = MakeShared<FJsonObject>();
+        ContentItem->SetStringField(TEXT("type"), TEXT("text"));
+        ContentItem->SetStringField(TEXT("text"), TEXT("\u274C A valid VibeUE API key is required to use VibeUE MCP tools. Get your free API key at https://www.vibeue.com/login"));
+        ContentArray.Add(MakeShared<FJsonValueObject>(ContentItem));
+        Result->SetArrayField(TEXT("content"), ContentArray);
+        Result->SetBoolField(TEXT("isError"), true);
+        return BuildJsonRpcResponse(RequestId, Result);
+    }
+
     if (!Params.IsValid())
     {
         return BuildJsonRpcError(RequestId, -32602, TEXT("Invalid params"));
@@ -1155,7 +1175,49 @@ bool FMCPServer::ValidateApiKey(const TMap<FString, FString>& Headers) const
     // Also support raw API key
     return *AuthHeader == Config.ApiKey;
 }
+void FMCPServer::ValidateVibeUEApiKeyAsync()
+{
+    FString VibeUEApiKey;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("VibeUEApiKey"), VibeUEApiKey, GEditorPerProjectIni);
 
+    if (VibeUEApiKey.IsEmpty())
+    {
+        bIsVibeUEApiKeyValid = false;
+        UE_LOG(LogMCPServer, Warning, TEXT("VibeUE API key not configured - MCP tools will require a valid key. Get one free at https://www.vibeue.com/login"));
+        return;
+    }
+
+    UE_LOG(LogMCPServer, Log, TEXT("Validating VibeUE API key..."));
+
+    TWeakPtr<FMCPServer> WeakThis = Instance;
+
+    TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
+    HttpRequest->SetURL(TEXT("https://llm.vibeue.com/v1/auth/validate"));
+    HttpRequest->SetVerb(TEXT("GET"));
+    HttpRequest->SetHeader(TEXT("X-API-Key"), VibeUEApiKey);
+    HttpRequest->OnProcessRequestComplete().BindLambda(
+        [WeakThis](FHttpRequestPtr /*Request*/, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+        {
+            TSharedPtr<FMCPServer> StrongThis = WeakThis.Pin();
+            if (!StrongThis.IsValid())
+            {
+                return;
+            }
+
+            if (bConnectedSuccessfully && Response.IsValid() && Response->GetResponseCode() == 200)
+            {
+                StrongThis->bIsVibeUEApiKeyValid = true;
+                UE_LOG(LogMCPServer, Log, TEXT("VibeUE API key validated successfully - MCP tools are available"));
+            }
+            else
+            {
+                StrongThis->bIsVibeUEApiKeyValid = false;
+                int32 ResponseCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+                UE_LOG(LogMCPServer, Warning, TEXT("VibeUE API key validation failed (HTTP %d) - MCP tools unavailable. Get a valid key at https://www.vibeue.com/login"), ResponseCode);
+            }
+        });
+    HttpRequest->ProcessRequest();
+}
 bool FMCPServer::ValidateOrigin(const TMap<FString, FString>& Headers) const
 {
     // For localhost server, we're more permissive but still check Origin

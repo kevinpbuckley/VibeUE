@@ -558,7 +558,7 @@ struct FLineTraceHit
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 64 landscape management actions:
+ * Provides 63 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
@@ -755,6 +755,13 @@ public:
 	/**
 	 * Import a heightmap from a 16-bit PNG (preferred) or RAW file.
 	 * Maps to action="import_heightmap"
+	 *
+	 * If the target landscape does not exist, this function will auto-create one
+	 * at world origin with scale (100,100,100), using a valid component/quads/
+	 * sections configuration that exactly matches the heightmap resolution.
+	 *
+	 * Resolution must still match exactly. This function does NOT resample; use
+	 * ResizeHeightmap first when needed.
 	 *
 	 * @param LandscapeNameOrLabel - Name or label of the landscape
 	 * @param FilePath - Absolute path to the heightmap file

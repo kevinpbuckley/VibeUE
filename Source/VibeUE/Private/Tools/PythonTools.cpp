@@ -12,10 +12,69 @@
 #include "Tools/PythonExecutionService.h"
 #include "Tools/PythonDiscoveryService.h"
 #include "Tools/PythonSchemaService.h"
+#include "WorldPartition/WorldPartition.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
 
 using namespace VibeUE;
+
+static bool ContainsWorldMutatingPythonPattern(const FString& Code)
+{
+	const FString CodeLower = Code.ToLower();
+	static const TArray<FString> DangerousPatterns = {
+		TEXT("destroy_actor("),
+		TEXT("delete_landscape("),
+		TEXT("create_landscape("),
+		TEXT("import_heightmap("),
+		TEXT("spawn_actor("),
+		TEXT("editoractorsubsystem"),
+		TEXT("get_all_level_actors("),
+		TEXT("apply_splines_to_landscape(")
+	};
+
+	for (const FString& Pattern : DangerousPatterns)
+	{
+		if (CodeLower.Contains(Pattern))
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
+static bool CanRunWorldMutatingPython(FString& OutReason)
+{
+	if (!GEditor)
+	{
+		OutReason = TEXT("Editor is not available yet.");
+		return false;
+	}
+
+	UWorld* EditorWorld = GEditor->GetEditorWorldContext().World();
+	if (!EditorWorld)
+	{
+		OutReason = TEXT("Editor world is not available yet.");
+		return false;
+	}
+
+	if (UWorldPartition* WorldPartition = EditorWorld->GetWorldPartition())
+	{
+		if (!WorldPartition->IsInitialized())
+		{
+			OutReason = TEXT("World Partition is not initialized yet.");
+			return false;
+		}
+
+		if (!WorldPartition->GetResolvingDataLayerManager())
+		{
+			OutReason = TEXT("World Partition data layers are still initializing.");
+			return false;
+		}
+	}
+
+	return true;
+}
 
 // Static service instances
 static TSharedPtr<FPythonExecutionService> ExecutionServiceInstance;
@@ -98,6 +157,24 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 			return TEXT("Unreal Engine Loading");
 		}
 		bEngineReady = true;
+	}
+
+	if (ContainsWorldMutatingPythonPattern(Code))
+	{
+		FString BlockReason;
+		if (!CanRunWorldMutatingPython(BlockReason))
+		{
+			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+			ErrorObj->SetBoolField(TEXT("success"), false);
+			ErrorObj->SetStringField(TEXT("error_code"), TEXT("WORLD_NOT_READY"));
+			ErrorObj->SetStringField(TEXT("error_message"), FString::Printf(
+				TEXT("Blocked world-mutating Python execution: %s Retry in a few seconds after the level finishes loading."),
+				*BlockReason));
+			FString JsonString;
+			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
+			return JsonString;
+		}
 	}
 
 	// Auto-save all dirty packages before executing Python code if enabled

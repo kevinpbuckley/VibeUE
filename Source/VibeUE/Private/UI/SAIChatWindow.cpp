@@ -598,6 +598,7 @@ void SAIChatWindow::RebuildMessageList()
 {
     MessageScrollBox->ClearChildren();
     MessageTextBlocks.Empty();
+    MessageModelBadges.Empty();
     ToolCallWidgets.Empty();  // Clear tool call widget references
     PendingToolCallKeys.Empty();  // Clear pending tool call queue
     
@@ -844,13 +845,42 @@ void SAIChatWindow::AddMessageWidget(const FChatMessage& Message, int32 Index)
             ]
         ];
     
+    // For assistant messages, wrap in a vertical box and add a model badge below
+    TSharedPtr<STextBlock> ModelBadgeBlock;
+    TSharedRef<SWidget> SlotContent = MessageContent;
+
+    if (Message.Role == TEXT("assistant"))
+    {
+        SAssignNew(ModelBadgeBlock, STextBlock)
+            .Text(Message.ModelUsed.IsEmpty()
+                ? FText::GetEmpty()
+                : FText::FromString(FString::Printf(TEXT("via %s"), *Message.ModelUsed)))
+            .ColorAndOpacity(FSlateColor(FLinearColor(0.45f, 0.45f, 0.45f, 1.f)))
+            .Justification(ETextJustify::Right);
+
+        SlotContent = SNew(SVerticalBox)
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            [
+                MessageContent
+            ]
+            + SVerticalBox::Slot()
+            .AutoHeight()
+            .Padding(FMargin(10, 2, 10, 0))
+            [
+                ModelBadgeBlock.ToSharedRef()
+            ];
+
+        MessageModelBadges.Add(Index, ModelBadgeBlock);
+    }
+
     // Both user and assistant messages fill available width
     MessageScrollBox->AddSlot()
     .Padding(10)
     [
-        MessageContent
+        SlotContent
     ];
-    
+
     // Store reference for streaming updates
     MessageTextBlocks.Add(Index, ContentMarkdownBlock);
 
@@ -1216,6 +1246,16 @@ void SAIChatWindow::UpdateMessageWidget(int32 Index, const FChatMessage& Message
         }
         (*MarkdownBlockPtr)->SetIsStreaming(Message.bIsStreaming);
         (*MarkdownBlockPtr)->SetText(FText::FromString(DisplayText));
+
+        // Update model attribution badge when streaming completes
+        if (!Message.bIsStreaming && !Message.ModelUsed.IsEmpty())
+        {
+            TSharedPtr<STextBlock>* BadgePtr = MessageModelBadges.Find(Index);
+            if (BadgePtr && BadgePtr->IsValid())
+            {
+                (*BadgePtr)->SetText(FText::FromString(FString::Printf(TEXT("via %s"), *Message.ModelUsed)));
+            }
+        }
     }
     else
     {
@@ -2299,14 +2339,14 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .MinDesiredWidth(100)
             ]
         ]
-        // MCP Server API Key
+        // MCP Server Bearer Token
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8, 4, 8, 0)
         [
             SNew(STextBlock)
-            .Text(FText::FromString(TEXT("API Key (optional):")))
-            .ToolTipText(FText::FromString(TEXT("Require this API key in requests. Leave empty for no authentication.")))
+            .Text(FText::FromString(TEXT("Bearer Token (optional):")))
+            .ToolTipText(FText::FromString(TEXT("MCP clients must send this as a Bearer token in the Authorization header. Leave empty to allow unauthenticated connections.")))
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
@@ -2315,7 +2355,7 @@ FReply SAIChatWindow::OnSettingsClicked()
             SAssignNew(MCPServerApiKeyInput, SEditableTextBox)
             .Text(FText::FromString(MCPServerApiKey))
             .IsPassword(true)
-            .HintText(FText::FromString(TEXT("Leave empty for no auth")))
+            .HintText(FText::FromString(TEXT("Leave empty for unauthenticated access")))
         ]
         // MCP Server Status
         + SVerticalBox::Slot()
@@ -2398,16 +2438,16 @@ FReply SAIChatWindow::OnSettingsClicked()
                 FMCPServer::SavePortToConfig(NewMCPServerPort);
                 FMCPServer::SaveApiKeyToConfig(NewMCPServerApiKey);
                 
-                // Restart MCP Server if settings changed
+                // Restart MCP Server to apply any setting changes
                 FMCPServer& MCPServer = FMCPServer::Get();
-                MCPServer.LoadConfig();
-                if (bNewMCPServerEnabled && !MCPServer.IsRunning())
-                {
-                    MCPServer.Start();
-                }
-                else if (!bNewMCPServerEnabled && MCPServer.IsRunning())
+                if (MCPServer.IsRunning())
                 {
                     MCPServer.StopServer();
+                }
+                MCPServer.LoadConfig();
+                if (bNewMCPServerEnabled)
+                {
+                    MCPServer.Start();
                 }
 
                 // Save Voice Input settings
@@ -3003,19 +3043,41 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
     }
     else
     {
-        // VibeUE - show single "VibeUE" option
+        // VibeUE provider — populate dropdown with auto-router first, then the fixed model
         AvailableModels.Empty();
         SelectedModel.Reset();
-        
+
+        // Auto-router entry — always first
+        TSharedPtr<FOpenRouterModel> AutoRouterPtr = MakeShared<FOpenRouterModel>();
+        AutoRouterPtr->Id = TEXT("vibeue/auto");
+        AutoRouterPtr->Name = TEXT("VibeUE Free Auto-Router");
+        AutoRouterPtr->bSupportsTools = true;
+        AutoRouterPtr->ContextLength = 131072;
+        AvailableModels.Add(AutoRouterPtr);
+
         // Create a single "VibeUE" model entry with default values
+        // Empty Id means no model field is sent — Worker uses its configured OPENAI_MODEL default
         TSharedPtr<FOpenRouterModel> VibeUEModelPtr = MakeShared<FOpenRouterModel>();
-        VibeUEModelPtr->Id = TEXT("vibeue");
+        VibeUEModelPtr->Id = TEXT("");
         VibeUEModelPtr->Name = TEXT("VibeUE");
         VibeUEModelPtr->bSupportsTools = true;
         VibeUEModelPtr->ContextLength = 131072; // Default, will be updated from API
-        
+
         AvailableModels.Add(VibeUEModelPtr);
-        SelectedModel = VibeUEModelPtr;
+
+        // Restore previously selected model if it's in the list
+        const FString& CurrentModelId = ChatSession->GetCurrentModel();
+        if (CurrentModelId == TEXT("vibeue/auto"))
+        {
+            SelectedModel = AutoRouterPtr;
+        }
+        else
+        {
+            SelectedModel = VibeUEModelPtr;
+        }
+
+        // Keep ChatSession in sync
+        ChatSession->SetCurrentModel(SelectedModel->Id);
         
         // Fetch actual model info from API to get real context length
         if (ChatSession.IsValid())

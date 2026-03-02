@@ -15,6 +15,8 @@
 #include "LandscapeFileFormatInterface.h"
 #include "EditorAssetLibrary.h"
 #include "Editor.h"
+#include "EditorSubsystem.h"
+#include "Subsystems/EditorActorSubsystem.h"
 #include "Engine/World.h"
 #include "EngineUtils.h"
 #include "Materials/MaterialInterface.h"
@@ -27,6 +29,8 @@
 #include "LandscapeSplineSegment.h"
 #include "IImageWrapper.h"
 #include "IImageWrapperModule.h"
+#include "Engine/StaticMeshActor.h"
+#include "Components/StaticMeshComponent.h"
 
 // =================================================================
 // Helper Methods
@@ -408,9 +412,112 @@ FHeightmapImportResult ULandscapeService::ImportHeightmap(
 	ALandscape* Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
 	if (!Landscape)
 	{
-		Result.ErrorMessage = FString::Printf(TEXT("Landscape '%s' not found"), *LandscapeNameOrLabel);
-		UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
-		return Result;
+		const FHeightmapDimensions Dims = GetHeightmapDimensions(FilePath);
+		if (!Dims.bSuccess || Dims.Width <= 1 || Dims.Height <= 1)
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("Landscape '%s' not found, and failed to read heightmap dimensions from '%s': %s"),
+				*LandscapeNameOrLabel,
+				*FilePath,
+				*Dims.ErrorMessage);
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
+		}
+
+		struct FAutoCreateCandidate
+		{
+			int32 CountX = 0;
+			int32 CountY = 0;
+			int32 Quads = 0;
+			int32 Sections = 0;
+			int32 TotalComponents = TNumericLimits<int32>::Max();
+		};
+
+		FAutoCreateCandidate Best;
+		const TArray<int32> ValidQuads = { 7, 15, 31, 63, 127, 255 };
+		const TArray<int32> ValidSections = { 1, 2 };
+
+		for (const int32 Sections : ValidSections)
+		{
+			for (const int32 Quads : ValidQuads)
+			{
+				const int32 ComponentQuads = Quads * Sections;
+				if ((Dims.Width - 1) % ComponentQuads != 0 || (Dims.Height - 1) % ComponentQuads != 0)
+				{
+					continue;
+				}
+
+				const int32 CountX = (Dims.Width - 1) / ComponentQuads;
+				const int32 CountY = (Dims.Height - 1) / ComponentQuads;
+				if (CountX < 1 || CountX > 256 || CountY < 1 || CountY > 256)
+				{
+					continue;
+				}
+
+				const int32 TotalComponents = CountX * CountY;
+				if (TotalComponents < Best.TotalComponents)
+				{
+					Best.CountX = CountX;
+					Best.CountY = CountY;
+					Best.Quads = Quads;
+					Best.Sections = Sections;
+					Best.TotalComponents = TotalComponents;
+				}
+			}
+		}
+
+		if (Best.TotalComponents == TNumericLimits<int32>::Max())
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("Landscape '%s' not found and heightmap resolution %dx%d has no valid UE landscape config. Resize the heightmap first."),
+				*LandscapeNameOrLabel,
+				Dims.Width,
+				Dims.Height);
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
+		}
+
+		const FLandscapeCreateResult CreateResult = CreateLandscape(
+			FVector::ZeroVector,
+			FRotator::ZeroRotator,
+			FVector(100.0f, 100.0f, 100.0f),
+			Best.Sections,
+			Best.Quads,
+			Best.CountX,
+			Best.CountY,
+			LandscapeNameOrLabel);
+
+		if (!CreateResult.bSuccess)
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("Landscape '%s' not found and auto-create failed for %dx%d heightmap: %s"),
+				*LandscapeNameOrLabel,
+				Dims.Width,
+				Dims.Height,
+				*CreateResult.ErrorMessage);
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
+		}
+
+		Landscape = FindLandscapeByIdentifier(LandscapeNameOrLabel);
+		if (!Landscape)
+		{
+			Result.ErrorMessage = FString::Printf(
+				TEXT("Landscape '%s' auto-created but could not be resolved for import"),
+				*LandscapeNameOrLabel);
+			UE_LOG(LogTemp, Warning, TEXT("ULandscapeService::ImportHeightmap: %s"), *Result.ErrorMessage);
+			return Result;
+		}
+
+		UE_LOG(LogTemp, Log,
+			TEXT("ULandscapeService::ImportHeightmap: Auto-created missing landscape '%s' (%dx%d, components=%dx%d, quads=%d, sections=%d, scale=100)") ,
+			*LandscapeNameOrLabel,
+			Dims.Width,
+			Dims.Height,
+			Best.CountX,
+			Best.CountY,
+			Best.Quads,
+			Best.Sections);
 	}
 
 	ULandscapeInfo* LandscapeInfo = Landscape->GetLandscapeInfo();
@@ -3828,6 +3935,50 @@ bool ULandscapeService::SetSplinePointMesh(
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::SetSplinePointMesh: Set mesh on point %d (mesh=%s, offset=%.1f)"),
 		PointIndex, *MeshPath, SegmentMeshOffset);
+	return true;
+}
+
+/**
+ * Compute the landscape heightmap world-space bounds using vertex extents.
+ *
+ * IMPORTANT: Do NOT use GetActorBounds() for auto-centering — it includes
+ * spline mesh geometry that can shift the center.
+ * Instead, use ULandscapeInfo::GetLandscapeExtent() which returns the raw
+ * heightmap vertex range, then convert to world space via actor transform.
+ *
+ * Returns true if successful. OutCenter/OutExtent behave like GetActorBounds:
+ *   OutCenter = world center of the heightmap area
+ *   OutExtent = half-size in each axis
+ */
+static bool GetLandscapeHeightmapBounds(ALandscape* Landscape, FVector& OutCenter, FVector& OutExtent)
+{
+	if (!Landscape) return false;
+
+	ULandscapeInfo* Info = Landscape->GetLandscapeInfo();
+	if (!Info) return false;
+
+	int32 MinVX, MinVY, MaxVX, MaxVY;
+	if (!Info->GetLandscapeExtent(MinVX, MinVY, MaxVX, MaxVY))
+		return false;
+
+	FVector ActorLoc = Landscape->GetActorLocation();
+	FVector ActorScale = Landscape->GetActorScale3D();
+
+	// Convert vertex indices to world XY
+	float WorldMinX = ActorLoc.X + MinVX * ActorScale.X;
+	float WorldMinY = ActorLoc.Y + MinVY * ActorScale.Y;
+	float WorldMaxX = ActorLoc.X + MaxVX * ActorScale.X;
+	float WorldMaxY = ActorLoc.Y + MaxVY * ActorScale.Y;
+
+	OutCenter = FVector(
+		(WorldMinX + WorldMaxX) * 0.5f,
+		(WorldMinY + WorldMaxY) * 0.5f,
+		ActorLoc.Z);
+	OutExtent = FVector(
+		(WorldMaxX - WorldMinX) * 0.5f,
+		(WorldMaxY - WorldMinY) * 0.5f,
+		0.0f);
+
 	return true;
 }
 

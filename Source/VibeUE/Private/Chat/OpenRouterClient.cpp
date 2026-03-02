@@ -60,8 +60,9 @@ void FOpenRouterClient::FetchModels(FOnLLMModelsFetched OnComplete)
     Request->SetURL(ModelsEndpoint);
     Request->SetVerb(TEXT("GET"));
     Request->SetHeader(AuthorizationHeader, FString::Printf(TEXT("Bearer %s"), *ApiKey));
-    Request->SetHeader(TEXT("HTTP-Referer"), TEXT("https://github.com/VibeUE"));
-    Request->SetHeader(TEXT("X-Title"), TEXT("VibeUE Plugin"));
+    Request->SetHeader(TEXT("HTTP-Referer"), TEXT("https://www.vibeue.com"));
+    Request->SetHeader(TEXT("X-OpenRouter-Title"), TEXT("VibeUE"));
+    Request->SetHeader(TEXT("X-OpenRouter-Categories"), TEXT("ide-extension"));
     
     Request->OnProcessRequestComplete().BindSP(this, &FOpenRouterClient::HandleModelsFetchComplete, OnComplete);
     Request->ProcessRequest();
@@ -200,8 +201,9 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     Request->SetVerb(TEXT("POST"));
     Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
     Request->SetHeader(AuthorizationHeader, FString::Printf(TEXT("Bearer %s"), *ApiKey));
-    Request->SetHeader(TEXT("HTTP-Referer"), TEXT("https://github.com/VibeUE"));
-    Request->SetHeader(TEXT("X-Title"), TEXT("VibeUE Plugin"));
+    Request->SetHeader(TEXT("HTTP-Referer"), TEXT("https://www.vibeue.com"));
+    Request->SetHeader(TEXT("X-OpenRouter-Title"), TEXT("VibeUE"));
+    Request->SetHeader(TEXT("X-OpenRouter-Categories"), TEXT("ide-extension"));
     Request->SetContentAsString(RequestBodyString);
     
     UE_LOG(LogOpenRouterClient, Log, TEXT("Sending chat request with model %s"), *ModelId);

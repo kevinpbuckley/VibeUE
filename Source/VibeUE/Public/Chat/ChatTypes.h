@@ -186,7 +186,11 @@ struct VIBEUE_API FChatMessage
     /** Tool call ID this message is responding to (for role="tool") */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FString ToolCallId;
-    
+
+    /** Actual model that generated this message (populated for assistant messages via auto-router) */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString ModelUsed;
+
     FChatMessage()
         : Role(TEXT("user"))
         , Content(TEXT(""))
@@ -285,6 +289,7 @@ struct VIBEUE_API FChatMessage
             Message.Role = JsonObject->GetStringField(TEXT("role"));
             JsonObject->TryGetStringField(TEXT("content"), Message.Content);
             JsonObject->TryGetStringField(TEXT("tool_call_id"), Message.ToolCallId);
+            JsonObject->TryGetStringField(TEXT("model_used"), Message.ModelUsed);
             
             FString TimestampStr;
             if (JsonObject->TryGetStringField(TEXT("timestamp"), TimestampStr))
@@ -323,6 +328,10 @@ struct VIBEUE_API FChatMessage
     {
         TSharedPtr<FJsonObject> JsonObject = ToJson();
         JsonObject->SetStringField(TEXT("timestamp"), Timestamp.ToIso8601());
+        if (!ModelUsed.IsEmpty())
+        {
+            JsonObject->SetStringField(TEXT("model_used"), ModelUsed);
+        }
         return JsonObject;
     }
 };

@@ -1,7 +1,7 @@
 ---
 name: terrain-data
 display_name: Real-World Terrain
-description: Generate heightmaps and map reference images from real-world elevation data using the terrain_data tool. Downloads Mapbox Terrain-RGB tiles server-side and produces Cities:Skylines / UE5-compatible 16-bit grayscale PNG heightmaps.
+description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps plus landscape splines for water bodies.
 keywords:
   - terrain
   - heightmap
@@ -23,21 +23,40 @@ keywords:
   - latitude
   - longitude
   - topo
+  - water
+  - river
+  - lake
+  - ocean
+  - waterway
+  - stream
+  - canal
+  - water features
+  - spline
+  - river spline
+  - lake spline
 ---
 
 # Real-World Terrain Skill
 
-Generates heightmaps from real geographic coordinates via the VibeUE terrain API. Requires an active VibeUE API key configured in chat settings.
+Generates heightmaps and water feature splines from real geographic coordinates via the VibeUE terrain API. Requires an active VibeUE API key configured in chat settings.
 
 ## Workflow
 
-**Always run in this order:**
+### Heightmap (always run first)
 
-1. `preview_elevation` — fetch elevation stats + suggested settings (costs 1 API call)
+1. `preview_elevation` — fetch elevation stats + suggested settings (costs 1 API call). Returns `suggestedZScale`, `suggestedXYScales` (resolution → XY scale), height range.
 2. `generate_heightmap` — generate the 16-bit PNG using suggested settings
 3. *(optional)* `get_map_image` — satellite/topo reference image for the same area
 4. **`attach_image`** — attach the satellite image so you can **see** the terrain colors and features for material/painting decisions
 5. Import into UE5 using the `landscape` skill
+
+**⚠️ CRITICAL — Landscape Scale:** When creating the landscape, use `suggestedXYScales[resolution]` from step 1 as the X and Y scale. Do NOT use the default value of 100. Use `suggestedZScale` for the Z scale. Example: `scale=unreal.Vector(suggestedXYScales["1009"], suggestedXYScales["1009"], suggestedZScale)`
+
+### Water features (after heightmap is imported)
+
+6. `get_water_features` — fetch rivers, lakes, and oceans for the same lng/lat/map_size. **Saves full JSON to `Saved/Terrain/` and returns a compact summary with the file path.**
+7. Read the saved JSON file: `json_str = open(file_path).read()`
+8. Water bodies use `ue5_rings`, waterways use `ue5_points`. Both are origin-centered.
 
 ---
 
@@ -78,10 +97,13 @@ Response:
   "suggested_base_level": 340,
   "suggested_height_scale": 27,
   "suggestedZScale": 741,
+  "suggestedXYScales": { "505": 3429, "1009": 1714, "2017": 857, "4033": 429, "8129": 213 },
   "tile_zoom": 13,
   "tile_count": 9
 }
 ```
+
+Use `suggestedXYScales["1009"]` (or whichever resolution you chose) as the X and Y scale when calling `create_landscape`. Use `suggestedZScale` for the Z scale.
 
 ### Step 2 — Generate heightmap using suggested values
 
@@ -145,9 +167,24 @@ After attaching, you will see the satellite image in your next response. Use it 
 ### Step 4 — Import into UE5
 
 Use the `landscape` skill to import the heightmap file:
-- Component setup: `QuadsPerSection=63, SectionsPerComponent=1, ComponentCount=8x8` → 505×505 quads → import at 1081×1081 fits the Cities: Skylines format
-- Z scale: set to match the `height_scale` used (lower scale = taller mountains need lower Z)
+- Component setup: `QuadsPerSection=63, SectionsPerComponent=2, ComponentCount=8x8` → 1009×1009 resolution
+- **X and Y scale**: Use `suggestedXYScales["1009"]` from preview (e.g. 1714 for a 17.28km map). **Do NOT use the default 100** — that makes the landscape ~17x too small!
+- **Z scale**: Use `suggestedZScale` from preview (e.g. 741 for Mount Fuji)
 - File: the `.png` path returned in step 2
+
+Example:
+```python
+result = unreal.LandscapeService.create_landscape(
+    location=unreal.Vector(0, 0, 0),
+    rotation=unreal.Rotator(0, 0, 0),
+    scale=unreal.Vector(1714, 1714, 741),  # XY from suggestedXYScales["1009"], Z from suggestedZScale
+    sections_per_component=2,
+    quads_per_section=63,
+    component_count_x=8,
+    component_count_y=8,
+    landscape_label="MyLandscape"
+)
+```
 
 ---
 
@@ -271,6 +308,42 @@ If you get a terrain that looks jagged/spiky when the real place is smooth:
 
 ---
 
+## Water Features Reference
+
+### get_water_features
+
+Fetches waterways and water bodies for a map area using the same Mapbox Vector Tile source as the heightmap. Use the **exact same `lng`, `lat`, and `map_size`** as your heightmap call.
+
+```
+terrain_data(action="get_water_features", lng=-105.0, lat=39.7, map_size=17.28)
+```
+
+Response includes:
+- `file` — path to the saved JSON file (e.g. `Saved/Terrain/water_features_42.9720_-71.3480_10km.json`)
+- `num_waterways` / `num_water_bodies` — counts
+- `waterway_class_breakdown` — object with class counts, e.g. `{"stream": 191, "river": 26, "ditch": 12}`
+- `waterways[]` — summary of each waterway: `name`, `class`, `estimated_width_m`, `num_points`
+- `water_bodies[]` — summary of each water body: `name`, `class`, `num_ring_points`
+- `message` — instructions on how to use the saved file, coordinate system info
+- `ue5_coordinate_note` — critical info about coordinate offset for water planes
+
+The **saved JSON file** contains the full data with:
+- `waterways[]` — rivers, streams, canals. Each has `name`, `class`, `estimated_width_m`, `points` (lng/lat array), **`ue5_points`** (array of `{x, y, z}` objects in UE5 coords)
+- `water_bodies[]` — lakes, ponds, oceans. Each has `name`, `class`, **`rings`** (lng/lat array of arrays), **`ue5_rings`** (array of arrays of `{x, y, z}` objects in UE5 coords)
+
+**⚠️ CRITICAL FIELD NAMES:**
+- Waterway positions: `ue5_points` (NOT `points` — those are lng/lat)
+- Water body polygons: `ue5_rings` (NOT `polygon` or `ring`)
+- Waterway type: `class` (NOT `waterway_class` or `type`)
+
+### Coordinate system
+
+`ue5_points` and `ue5_rings` are **landscape-center-relative** (origin-centered):
+- Map geographic center = **(0, 0, Z)** in UE5 space
+- **+X = East, +Y = North**, 1 meter = 100 UU
+
+---
+
 ## Troubleshooting
 
 | Issue | Fix |
@@ -282,3 +355,9 @@ If you get a terrain that looks jagged/spiky when the real place is smooth:
 | Jagged/spiky terrain | Increase `blur_passes` (20–40 for smooth terrain) and check Z scale formula |
 | Terrain doesn't match real place | Check terrain character guide — smooth places need high blur_passes |
 | Timeout | Large map sizes at high zoom may hit Vercel's 10s limit — try smaller `map_size` |
+| No waterways returned | Area may have no mapped water features (desert, urban grid) — check satellite image |
+| Landscape too small | You used XY scale=100 (default) instead of the correct value from `suggestedXYScales`. Recreate with the correct scale |
+| Black screenshots after camera move | Camera inside terrain. Use `ActorService.get_actor_view_camera()` to frame from TOP view instead of guessing Z height |
+| Water features timeout | PBF tile fetch uses 45s timeout — large map_size at high zoom may still be slow |
+| Field name errors | Use `ue5_points` (not `points`), `ue5_rings` (not `polygon`), `class` (not `waterway_class`) |
+

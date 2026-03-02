@@ -95,7 +95,13 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     // Build request body
     TSharedPtr<FJsonObject> RequestBody = MakeShareable(new FJsonObject());
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
-    
+
+    // Include model ID so the Worker API can route accordingly (e.g. "vibeue/auto" triggers auto-router)
+    if (!ModelId.IsEmpty())
+    {
+        RequestBody->SetStringField(TEXT("model"), ModelId);
+    }
+
     // Disable streaming for VibeUE - use non-streaming to avoid UE HTTP SSE race condition
     // (UE's OnProcessRequestComplete fires before OnRequestProgress delivers SSE data)
     RequestBody->SetBoolField(TEXT("stream"), false);
@@ -138,9 +144,11 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     {
         FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
         // Log summary instead of full body to avoid massive log files from tool schemas
-        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nMessages: %d, Tools: %d, Temperature: %.2f\n"),
+        FString ModelDisplay = ModelId.IsEmpty() ? TEXT("(server default)") : ModelId;
+        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nModel: %s\nMessages: %d, Tools: %d, Temperature: %.2f\n"),
             *FDateTime::Now().ToString(),
             *EndpointUrl,
+            *ModelDisplay,
             Messages.Num(),
             Tools.Num(),
             Temperature);

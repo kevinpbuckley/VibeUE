@@ -123,6 +123,9 @@ private:
     /** Accumulated content from response (for non-streaming or final content) */
     FString AccumulatedContent;
 
+    /** Actual model used by the backend (populated from response JSON "model" field) */
+    FString LastResponseModel;
+
     /** Accumulated tool calls during streaming */
     TMap<int32, FMCPToolCall> PendingToolCalls;
 
@@ -144,6 +147,9 @@ private:
     /** Completion tokens from the response (for debugging/detection) */
     int32 CompletionTokensInResponse;
 
+    /** Set to true by CancelRequest() so the async completion callback knows to ignore the result */
+    bool bCancellationRequested = false;
+
     /** Connection retry state */
     static constexpr int32 MaxConnectionRetries = 3;
     int32 ConnectionRetryCount;
@@ -159,6 +165,9 @@ private:
 public:
     /** Get the accumulated response content (for non-streaming summarization) */
     const FString& GetLastAccumulatedResponse() const { return AccumulatedContent; }
+
+    /** Get the actual model used by the backend (e.g. model chosen by auto-router) */
+    const FString& GetLastResponseModel() const { return LastResponseModel; }
     
     /** Check if the last response was incomplete (finish_reason: null with tool intent) */
     bool WasResponseIncomplete() const { return bResponseIncomplete; }

@@ -67,6 +67,8 @@ Creating landscapes with many components is SLOW. Python execution has a 30-seco
 
 `import_heightmap()` requires the heightmap file resolution to **exactly match** the landscape resolution. **There is NO automatic scaling.** A size mismatch will fail or produce flat/corrupt terrain.
 
+If the target landscape label does not exist, `import_heightmap()` now auto-creates a matching landscape at world origin with default scale `(100,100,100)` before importing. For real-world terrain workflows, explicitly creating the landscape first is still recommended so you can control XY/Z scale.
+
 **Landscape resolution formula:** `Resolution = (ComponentCount × QuadsPerSection × SectionsPerComponent) + 1`
 
 **Safe performant configs (common resolutions):**

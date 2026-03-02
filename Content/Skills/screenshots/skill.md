@@ -29,15 +29,64 @@ keywords:
 
 ## Camera Best Practices for Screenshots
 
-**Before taking a viewport screenshot, adjust the editor camera to get the best view of the subject.** This is critical for useful visual analysis.
+**Capture the current view by default — do NOT move the camera unless the user explicitly asks you to frame something a specific way.** Moving the camera is disruptive and requires the user to manually reset their view.
 
 ### When to Adjust Camera
-- **Always** before a viewport screenshot if you know what you're capturing
-- When verifying placement, scale, or visual appearance of actors/landscapes/effects
-- When the user asks to "show me" or "check" something — frame it well
-- When capturing issues — zoom in close enough to see the problem clearly
+- **Only** when the user explicitly says "show me X from above", "frame the landscape", or similar
+- When taking verification screenshots of specific actors (e.g., water planes, splines)
+- Never adjust the camera automatically as part of a general screenshot workflow
+- The user's current viewport position is intentional — respect it
 
-### How to Adjust Camera
+### Preferred: Use ActorService Camera View Methods
+
+The `ActorService` provides methods to calculate and apply camera positions that frame actors:
+
+```python
+import unreal
+
+actor_service = unreal.ActorService
+
+# Move viewport camera to frame an actor from a specific direction
+# Directions: TOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
+view = actor_service.get_actor_view_camera("MyLandscape", unreal.EViewDirection.TOP)
+# Camera is now positioned — take screenshot immediately
+
+# Calculate view without moving camera (for planning)
+view = actor_service.calculate_actor_view("MyActor", unreal.EViewDirection.FRONT, 1.5)
+# view.camera_location, view.camera_rotation available
+# Apply when ready:
+actor_service.set_viewport_camera(view.camera_location, view.camera_rotation)
+
+# Directly set camera to any position/rotation
+actor_service.set_viewport_camera(
+    unreal.Vector(1000, 2000, 500),
+    unreal.Rotator(-45, 0, 0)
+)
+```
+
+**View directions:**
+| Direction | Camera Position | Looking |
+|-----------|----------------|---------|
+| `TOP` | Above actor | Straight down (-Z) |
+| `BOTTOM` | Below actor | Straight up (+Z) |
+| `LEFT` | Left of actor (-Y) | Toward +Y |
+| `RIGHT` | Right of actor (+Y) | Toward -Y |
+| `FRONT` | Front of actor (+X) | Toward -X |
+| `BACK` | Behind actor (-X) | Toward +X |
+
+**Padding multiplier**: 1.0 = tight fit, 1.2 = 20% padding (default), 2.0 = double distance
+Camera distance is automatically calculated from the actor's bounding box to fit it in view.
+
+### FCameraViewInfo Result
+- `success` (bool) - Whether calculation succeeded
+- `camera_location` (Vector) - Calculated camera position
+- `camera_rotation` (Rotator) - Calculated camera rotation
+- `view_direction` (EViewDirection) - Direction used
+- `actor_center` (Vector) - Actor bounds center
+- `actor_extent` (Vector) - Actor bounds half-extent
+- `view_distance` (float) - Distance from camera to actor center
+
+### Legacy: Direct Camera Positioning (for custom angles)
 
 Use `UnrealEditorSubsystem` to get/set the viewport camera:
 
@@ -57,14 +106,7 @@ new_rotation = unreal.Rotator(pitch, yaw, roll)
 editor_subsys.set_level_viewport_camera_info(new_location, new_rotation)
 ```
 
-### Framing Guidelines
-- **Landscape/terrain**: Position camera above and angled down (pitch ~ -30 to -45) for a good overview
-- **Single actor**: Move camera to ~200-500 units away, facing the actor
-- **Small details/issues**: Zoom in close (100-200 units) to clearly show the problem
-- **Comparisons**: Frame both subjects in view, or take separate close-ups of each
-- **UI/Widgets**: Use `capture_editor_window` instead (no camera adjustment needed)
-
-### Focus on Actor Helper
+### Focus on Actor Helper (only use when explicitly requested)
 
 ```python
 import unreal
@@ -72,16 +114,16 @@ import unreal
 def frame_actor_for_screenshot(actor, distance=500.0, pitch=-25.0):
     """Position camera to look at an actor from a good angle."""
     editor_subsys = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
-    
+
     # Get actor bounds for center point
     origin, extent = actor.get_actor_bounds(False)
-    
+
     # Position camera behind and above, looking at the actor
     yaw = 0.0  # Face default direction; adjust as needed
     rot = unreal.Rotator(pitch, yaw, 0.0)
     forward = rot.get_forward_vector()
     cam_loc = origin - (forward * distance)
-    
+
     editor_subsys.set_level_viewport_camera_info(cam_loc, rot)
 ```
 
@@ -94,17 +136,9 @@ def frame_actor_for_screenshot(actor, distance=500.0, pitch=-25.0):
 ```python
 import unreal
 
-# Step 1: Adjust camera if capturing viewport (optional but recommended)
-editor_subsys = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem)
-editor_subsys.set_level_viewport_camera_info(
-    unreal.Vector(0, 0, 2000),       # position above scene
-    unreal.Rotator(-45.0, 0.0, 0.0)  # look down at 45 degrees
-)
-
-# Step 2: Capture
-service = unreal.ScreenshotService()
+# Capture the current view as-is — do not move the camera
 screenshot_path = "E:/Screenshots/Capture.png"
-result = service.capture_viewport(screenshot_path, 1920, 1080)
+result = unreal.ScreenshotService.capture_viewport(screenshot_path, 1920, 1080)
 
 if result.success:
     print(f"SCREENSHOT_SAVED: {result.file_path}")
@@ -118,9 +152,8 @@ After executing, use `attach_image(file_path=screenshot_path)` to analyze.
 ```python
 import unreal
 
-service = unreal.ScreenshotService()
 screenshot_path = "E:/Screenshots/EditorCapture.png"
-result = service.capture_editor_window(screenshot_path)
+result = unreal.ScreenshotService.capture_editor_window(screenshot_path)
 
 if result.success:
     print(f"SCREENSHOT_SAVED: {result.file_path}")
@@ -132,16 +165,14 @@ if result.success:
 ```python
 import unreal
 
-service = unreal.ScreenshotService()
-
-tabs = service.get_open_editor_tabs()
+tabs = unreal.ScreenshotService.get_open_editor_tabs()
 for tab in tabs:
     print(f"{tab.tab_label} ({tab.tab_type})")
 
-if service.is_editor_window_active():
+if unreal.ScreenshotService.is_editor_window_active():
     print("Editor is focused")
 else:
-    print(f"Focused: {service.get_active_window_title()}")
+    print(f"Focused: {unreal.ScreenshotService.get_active_window_title()}")
 ```
 
 ### Viewport Only Screenshot
@@ -149,8 +180,7 @@ else:
 ```python
 import unreal
 
-service = unreal.ScreenshotService()
-result = service.capture_viewport("E:/Screenshots/viewport.png", 1920, 1080)
+result = unreal.ScreenshotService.capture_viewport("E:/Screenshots/viewport.png", 1920, 1080)
 ```
 
 ⚠️ Only works when a level viewport is visible!
