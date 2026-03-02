@@ -1,4 +1,4 @@
-# Water Features Test — Issues Report
+﻿# Water Features Test — Issues Report
 
 **Test:** Tower Hill Pond, Auburn NH (02_water_features_tests.md)  
 **Date:** 2026-03-01  
@@ -56,9 +56,9 @@ When the AI printed the water features report, it showed names/classes as blank 
 The chat log claimed "244 streams/ditch/rivers processed into landscape splines" but **no river splines are visible in the viewport**. Looking at the screenshot, the terrain surface shows no carved channels or spline indicators.
 
 **Possible causes:**
-1. **Z-height sampling may have failed** — all `ue5_points` have `Z=0`, and if `CreateSplinePoint()` didn't properly snap control points to the landscape surface, splines may be far below or above the terrain
-2. **Coordinate offset miscalculation** — the `CreateRiverSplines` function auto-computes a landscape center offset by getting the landscape bounds center, then adds that to every point. If the landscape wasn't centered at the origin, this offset could be wrong
-3. **The AI may not have called `CreateRiverSplines` at all** — given the data quality issues, it may have attempted a Python-based approach instead that failed silently
+1. **Z-height sampling may have failed** — all `ue5_points` have `Z=0`, and if `LandscapeService.create_spline_from_points()` didn't properly snap control points to the landscape surface, splines may be far below or above the terrain
+2. **Coordinate offset miscalculation** — the AI must apply the landscape center offset to the origin-centered UE5 coordinates from `get_water_features`. If the landscape isn't at the origin, the AI needs to add its Location from `get_landscape_info()` to every point
+3. **The AI may not have created splines at all** — given the data quality issues, it may have attempted a Python-based approach instead that failed silently
 4. **82 of 244 waterways (34%) have only 2 points** — these are single line segments that would create minimal splines, but the remaining 162 waterways should still produce visible results
 
 **Coordinate ranges of waterway UE5 points:**
@@ -84,7 +84,7 @@ The user reports water planes are "bunched in one tiny corner" rather than sprea
 - Only bodies in the positive quadrant overlap with the landscape
 - Even those are shifted ~500K from where they should align on the landscape
 
-The `CreateRiverSplines` C++ function handles this offset by auto-centering, but the water plane placement was done by the AI via Python `execute_python_code` — and the AI likely **did not apply the same offset correction**, causing all planes to be placed at their raw (0,0)-centered coordinates.
+Water feature placement is done entirely by the AI via Python `execute_python_code` using `LandscapeService.create_spline_from_points()` for rivers and manual `StaticMeshActor` placement for lake planes. The AI likely **did not apply the landscape offset correction** to the origin-centered coordinates from `get_water_features`, causing all features to be placed at their raw (0,0)-centered coordinates.
 
 **Water body centers (UE5 coordinates, raw):**
 
@@ -191,5 +191,5 @@ The AI was looking for `polygon` but the data uses `rings` (arrays of ring array
 7. **attach_image path handling** — Normalize paths to use platform-appropriate separators.
 
 ### Fix the spline workflow:
-8. **Verify spline creation** — After `CreateRiverSplines`, return the actual world-space positions of created control points so the AI can confirm they're within landscape bounds.
+8. **Verify spline creation** — After creating river splines via `LandscapeService.create_spline_from_points()`, use `get_spline_info()` to confirm the world-space positions of created control points are within landscape bounds.
 9. **Filter junk waterways** — Skip waterways with only 2 points or class="ditch" to avoid cluttering the landscape with hundreds of tiny segments.

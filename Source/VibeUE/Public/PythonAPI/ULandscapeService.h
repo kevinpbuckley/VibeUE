@@ -558,7 +558,7 @@ struct FLineTraceHit
 /**
  * Landscape service exposed directly to Python.
  *
- * Provides 63 landscape management actions:
+ * Provides 68 landscape management actions:
  *
  * Discovery:
  * - list_landscapes: List all landscapes in the level
