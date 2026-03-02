@@ -1560,6 +1560,13 @@ int32 FChatSession::GetCurrentModelContextLength() const
         }
     }
     
+    // VibeUE Free model sends empty model ID — server picks the model
+    // Use the same 128K context as VibeUE Auto since the backend model supports it
+    if (CurrentModelId.IsEmpty() && CurrentProvider == ELLMProvider::VibeUE)
+    {
+        return 131072;
+    }
+    
     // Default context lengths for common models
     if (CurrentModelId.Contains(TEXT("vibeue")) || CurrentModelId.Contains(TEXT("qwen")))
     {
