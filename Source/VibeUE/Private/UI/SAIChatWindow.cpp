@@ -7,6 +7,7 @@
 #include "Chat/ChatSession.h"
 #include "Chat/MCPClient.h"
 #include "MCP/MCPServer.h"
+#include "Utils/VibeUEPaths.h"
 #include "Core/ToolRegistry.h"
 #include "Chat/ILLMClient.h"
 #include "Chat/VibeUEAPIClient.h"
@@ -2377,6 +2378,64 @@ FReply SAIChatWindow::OnSettingsClicked()
                     ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f)) 
                     : FSlateColor(VibeUEColors::TextMuted);
             })
+        ]
+        // Plugin Install Path
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 12, 8, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Plugin Install Path:")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 2, 8, 0)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot()
+            .FillWidth(1.0f)
+            .VAlign(VAlign_Center)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([]() -> FText {
+                    FString PluginDir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
+                    if (PluginDir.IsEmpty())
+                    {
+                        return FText::FromString(TEXT("(not found)"));
+                    }
+                    return FText::FromString(PluginDir);
+                })
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                .AutoWrapText(true)
+            ]
+            + SHorizontalBox::Slot()
+            .AutoWidth()
+            .Padding(8, 0, 0, 0)
+            .VAlign(VAlign_Center)
+            [
+                SNew(SButton)
+                .Text(FText::FromString(TEXT("Open Folder")))
+                .ToolTipText(FText::FromString(TEXT("Open the plugin folder in Explorer — find sample instruction files in Content/samples/")))
+                .OnClicked_Lambda([]() -> FReply {
+                    FString PluginDir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
+                    if (!PluginDir.IsEmpty())
+                    {
+                        FPlatformProcess::ExploreFolder(*PluginDir);
+                    }
+                    return FReply::Handled();
+                })
+            ]
+        ]
+        + SVerticalBox::Slot()
+        .AutoHeight()
+        .Padding(8, 2, 8, 0)
+        [
+            SNew(STextBlock)
+            .Text(FText::FromString(TEXT("Sample instructions: Content/samples/instructions.sample.md")))
+            .Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
+            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
         ]
         + SVerticalBox::Slot()
         .AutoHeight()
