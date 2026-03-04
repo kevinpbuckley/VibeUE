@@ -27,6 +27,28 @@
 #include "Components/ProgressBar.h"
 #include "Components/Spacer.h"
 #include "Components/RichTextBlock.h"
+#include "Components/ComboBoxString.h"
+#include "Components/SpinBox.h"
+#include "Components/MultiLineEditableText.h"
+#include "Components/MultiLineEditableTextBox.h"
+#include "Components/InputKeySelector.h"
+#include "Components/Border.h"
+#include "Components/SizeBox.h"
+#include "Components/ScaleBox.h"
+#include "Components/BackgroundBlur.h"
+#include "Components/SafeZone.h"
+#include "Components/UniformGridPanel.h"
+#include "Components/WrapBox.h"
+#include "Components/InvalidationBox.h"
+#include "Components/RetainerBox.h"
+#include "Components/Throbber.h"
+#include "Components/CircularThrobber.h"
+#include "Components/ListView.h"
+#include "Components/TreeView.h"
+#include "Components/TileView.h"
+#include "Components/ExpandableArea.h"
+#include "Components/MenuAnchor.h"
+#include "Components/NativeWidgetHost.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
 #include "UObject/PropertyIterator.h"
@@ -59,7 +81,29 @@ static const TArray<FString> GAvailableWidgetTypes = {
 	TEXT("VerticalBox"),
 	TEXT("ScrollBox"),
 	TEXT("GridPanel"),
-	TEXT("WidgetSwitcher")
+	TEXT("WidgetSwitcher"),
+	TEXT("ComboBoxString"),
+	TEXT("SpinBox"),
+	TEXT("MultiLineEditableText"),
+	TEXT("MultiLineEditableTextBox"),
+	TEXT("InputKeySelector"),
+	TEXT("Border"),
+	TEXT("SizeBox"),
+	TEXT("ScaleBox"),
+	TEXT("BackgroundBlur"),
+	TEXT("SafeZone"),
+	TEXT("UniformGridPanel"),
+	TEXT("WrapBox"),
+	TEXT("InvalidationBox"),
+	TEXT("RetainerBox"),
+	TEXT("Throbber"),
+	TEXT("CircularThrobber"),
+	TEXT("ListView"),
+	TEXT("TreeView"),
+	TEXT("TileView"),
+	TEXT("ExpandableArea"),
+	TEXT("MenuAnchor"),
+	TEXT("NativeWidgetHost")
 };
 
 // =================================================================
@@ -122,6 +166,28 @@ TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
 		WidgetClassMap.Add(TEXT("GridPanel"), UGridPanel::StaticClass());
 		WidgetClassMap.Add(TEXT("WidgetSwitcher"), UWidgetSwitcher::StaticClass());
 		WidgetClassMap.Add(TEXT("RichTextBlock"), URichTextBlock::StaticClass());
+		WidgetClassMap.Add(TEXT("ComboBoxString"), UComboBoxString::StaticClass());
+		WidgetClassMap.Add(TEXT("SpinBox"), USpinBox::StaticClass());
+		WidgetClassMap.Add(TEXT("MultiLineEditableText"), UMultiLineEditableText::StaticClass());
+		WidgetClassMap.Add(TEXT("MultiLineEditableTextBox"), UMultiLineEditableTextBox::StaticClass());
+		WidgetClassMap.Add(TEXT("InputKeySelector"), UInputKeySelector::StaticClass());
+		WidgetClassMap.Add(TEXT("Border"), UBorder::StaticClass());
+		WidgetClassMap.Add(TEXT("SizeBox"), USizeBox::StaticClass());
+		WidgetClassMap.Add(TEXT("ScaleBox"), UScaleBox::StaticClass());
+		WidgetClassMap.Add(TEXT("BackgroundBlur"), UBackgroundBlur::StaticClass());
+		WidgetClassMap.Add(TEXT("SafeZone"), USafeZone::StaticClass());
+		WidgetClassMap.Add(TEXT("UniformGridPanel"), UUniformGridPanel::StaticClass());
+		WidgetClassMap.Add(TEXT("WrapBox"), UWrapBox::StaticClass());
+		WidgetClassMap.Add(TEXT("InvalidationBox"), UInvalidationBox::StaticClass());
+		WidgetClassMap.Add(TEXT("RetainerBox"), URetainerBox::StaticClass());
+		WidgetClassMap.Add(TEXT("Throbber"), UThrobber::StaticClass());
+		WidgetClassMap.Add(TEXT("CircularThrobber"), UCircularThrobber::StaticClass());
+		WidgetClassMap.Add(TEXT("ListView"), UListView::StaticClass());
+		WidgetClassMap.Add(TEXT("TreeView"), UTreeView::StaticClass());
+		WidgetClassMap.Add(TEXT("TileView"), UTileView::StaticClass());
+		WidgetClassMap.Add(TEXT("ExpandableArea"), UExpandableArea::StaticClass());
+		WidgetClassMap.Add(TEXT("MenuAnchor"), UMenuAnchor::StaticClass());
+		WidgetClassMap.Add(TEXT("NativeWidgetHost"), UNativeWidgetHost::StaticClass());
 	}
 	
 	if (TSubclassOf<UWidget>* Found = WidgetClassMap.Find(TypeName))
@@ -909,6 +975,25 @@ TArray<FWidgetEventInfo> UWidgetService::GetAvailableEvents(
 		else if (WidgetType.Equals(TEXT("CheckBox"), ESearchCase::IgnoreCase))
 		{
 			Events.Add({ TEXT("OnCheckStateChanged"), TEXT("MulticastDelegate"), TEXT("Called when check state changes") });
+		}
+		else if (WidgetType.Equals(TEXT("ComboBoxString"), ESearchCase::IgnoreCase))
+		{
+			Events.Add({ TEXT("OnSelectionChanged"), TEXT("MulticastDelegate"), TEXT("Called when selection changes") });
+			Events.Add({ TEXT("OnOpening"), TEXT("MulticastDelegate"), TEXT("Called when the combo box opens") });
+		}
+		else if (WidgetType.Equals(TEXT("SpinBox"), ESearchCase::IgnoreCase))
+		{
+			Events.Add({ TEXT("OnValueChanged"), TEXT("MulticastDelegate"), TEXT("Called when the spin box value changes") });
+			Events.Add({ TEXT("OnValueCommitted"), TEXT("MulticastDelegate"), TEXT("Called when the value is committed") });
+		}
+		else if (WidgetType.Equals(TEXT("ExpandableArea"), ESearchCase::IgnoreCase))
+		{
+			Events.Add({ TEXT("OnExpansionChanged"), TEXT("MulticastDelegate"), TEXT("Called when expansion state changes") });
+		}
+		else if (WidgetType.Equals(TEXT("InputKeySelector"), ESearchCase::IgnoreCase))
+		{
+			Events.Add({ TEXT("OnKeySelected"), TEXT("MulticastDelegate"), TEXT("Called when a key is selected") });
+			Events.Add({ TEXT("OnIsSelectingKeyChanged"), TEXT("MulticastDelegate"), TEXT("Called when key selection mode changes") });
 		}
 	}
 
