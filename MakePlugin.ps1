@@ -127,7 +127,6 @@ $RequiredFiles = @(
 $RequiredDirs = @(
     "Source",
     "Content", 
-    "Resources",
     "Config"
 )
 
