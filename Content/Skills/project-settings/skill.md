@@ -6,12 +6,24 @@ vibeue_classes:
   - ProjectSettingsService
 unreal_classes:
   - EditorAssetLibrary
-  - EditorStyleSettings
 ---
 
 # Project Settings Skill
 
 ## Critical Rules
+
+### ⚠️ `EditorStyleSettings` is NOT a Python Class
+
+`EditorStyleSettings` is **not** discoverable via `discover_python_class('unreal.EditorStyleSettings')` — it will return `PYTHON_CLASS_NOT_FOUND`. It is only accessible as a **category string** through `ProjectSettingsService`:
+
+```python
+# ❌ WRONG — will fail
+discover_python_class('unreal.EditorStyleSettings')  # NOT FOUND
+
+# ✅ CORRECT — use as a category string
+settings = unreal.ProjectSettingsService.list_settings("EditorStyleSettings")
+result = unreal.ProjectSettingsService.set_setting("EditorStyleSettings", "AssetEditorOpenLocation", "MainWindow")
+```
 
 ### ⚠️ Use Correct Category Names
 
@@ -20,7 +32,7 @@ unreal_classes:
 | `general` | Project info (name, company, description) |
 | `maps` | Default maps and game modes |
 | `custom` | Direct INI access |
-| `editorstylesettings` | UI scale, toolbar icons, colors |
+| `EditorStyleSettings` | UI scale, toolbar icons, colors, asset editor open location |
 
 ### ⚠️ Map Paths Must Be Full Asset Paths
 
@@ -105,6 +117,24 @@ settings = unreal.ProjectSettingsService.list_settings("general")
 for s in settings:
     print(f"{s.key} = {s.value} ({s.type})")
 ```
+
+### Find a Setting by Keyword (When You Don't Know the Category)
+
+When you need to find a setting but don't know which category it belongs to, search across all discovered categories:
+
+```python
+import unreal
+
+keyword = "AssetEditor"  # partial match on setting key or display_name
+classes = unreal.ProjectSettingsService.discover_settings_classes()
+for c in classes:
+    settings = unreal.ProjectSettingsService.list_settings(c.class_name)
+    for s in settings:
+        if keyword.lower() in s.key.lower() or keyword.lower() in s.display_name.lower():
+            print(f"{c.class_name} -> {s.key} = {s.value}")
+```
+
+**Use this workflow instead of guessing Python class names.** Many settings classes (e.g., `EditorStyleSettings`) are NOT exposed as Python classes — they are only accessible as category strings through `ProjectSettingsService`.
 
 ### Direct INI Access
 

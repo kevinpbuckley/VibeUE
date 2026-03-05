@@ -87,7 +87,11 @@ public class VibeUE : ModuleRules
 				"LandscapeEditor",        // For landscape editor factories and utilities
 				"Foliage",                // Required by LandscapeEdit.h (InstancedFoliageActor)
 				"ModelViewViewModel",     // For MVVM ViewModel base classes (UMVVMViewModelBase)
-				"ModelViewViewModelBlueprint" // For MVVM Blueprint View and bindings
+				"ModelViewViewModelBlueprint", // For MVVM Blueprint View and bindings
+				"StateTreeModule",        // For UStateTree, UStateTreeEditorData, StateTree core types
+				"StateTreeEditorModule",  // For FStateTreeCompiler, UStateTreeState, StateTree editor types
+				"PropertyBindingUtils",    // For FPropertyBindingBindableStructDescriptor (base of FStateTreeBindableStructDesc)
+				"GameplayTags"            // For FGameplayTag (required by StateTree)
 			}
 		);
 		
