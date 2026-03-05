@@ -15,7 +15,42 @@ Add transitions: Idle → Walking on OnStateCompleted, Walking → Running on On
 Running → Idle on OnStateCompleted. Compile and save.
 ```
 
-**Expected**: 1 StateTree asset, Root subtree, 3 child states, tasks & transitions wired up, compiled successfully.
+**Expected**: 1 StateTree asset, Root subtree, 3 child states, tasks & transitions wired up, compiled successfully. Default schema `StateTreeComponentSchema` used.
+
+---
+
+### 1b. Create a StateTree in a subfolder with explicit Component schema
+
+```
+Create a StateTree at /Game/StateTree/MyComponentTree with schema StateTreeComponentSchema.
+Add a Root subtree and a single state called Idle under Root.
+Compile and save.
+```
+
+**Expected**: `create_state_tree` called with `schemaClass: "StateTreeComponentSchema"`. Asset created at `/Game/StateTree/MyComponentTree`. `get_state_tree_info` shows `schema_class: "StateTreeComponentSchema"`.
+
+---
+
+### 1c. Create a StateTree with AI Component schema
+
+```
+Create a StateTree at /Game/StateTree/MyAITree using the AIComponent schema.
+Add a Root subtree with two states: Patrol and Combat.
+Compile and save. Then inspect it and confirm the schema is StateTreeAIComponentSchema.
+```
+
+**Expected**: `create_state_tree` called with `schemaClass: "AIComponent"` (shorthand). `get_state_tree_info` returns `schema_class: "StateTreeAIComponentSchema"`.
+
+---
+
+### 1d. Create a StateTree with shorthand schema name
+
+```
+Create a StateTree at /Game/StateTree/ShorthandTest using schema "Component".
+Add a Root subtree. Compile and save.
+```
+
+**Expected**: Shorthand `"Component"` is expanded to `"StateTreeComponentSchema"` by the API. Asset created successfully.
 
 ---
 
