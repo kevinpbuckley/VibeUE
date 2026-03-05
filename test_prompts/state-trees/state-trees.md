@@ -27,7 +27,7 @@ Add a Root subtree and a single state called Idle under Root.
 Compile and save.
 ```
 
-**Expected**: `create_state_tree` called with `schemaClass: "StateTreeComponentSchema"`. Asset created at `/Game/StateTree/MyComponentTree`. `get_state_tree_info` shows `schema_class: "StateTreeComponentSchema"`.
+**Expected**: `create_state_tree` called with `schemaClass: "StateTreeComponentSchema"`. Asset created at `/Game/StateTree/MyComponentTree`. `get_state_tree_info` JSON shows `schemaClass: "StateTreeComponentSchema"`.
 
 ---
 
@@ -39,7 +39,7 @@ Add a Root subtree with two states: Patrol and Combat.
 Compile and save. Then inspect it and confirm the schema is StateTreeAIComponentSchema.
 ```
 
-**Expected**: `create_state_tree` called with `schemaClass: "AIComponent"` (shorthand). `get_state_tree_info` returns `schema_class: "StateTreeAIComponentSchema"`.
+**Expected**: `create_state_tree` called with `schemaClass: "AIComponent"` (shorthand). `get_state_tree_info` JSON returns `schemaClass: "StateTreeAIComponentSchema"`.
 
 ---
 
@@ -186,7 +186,7 @@ named Orphan that has a GotoState transition pointing to a non-existent state
 called Ghost. Try to compile and report the errors.
 ```
 
-**Expected**: `compile_state_tree` returns `b_success = false`, errors array populated.
+**Expected**: `compile_state_tree` returns `success = false`, errors array populated.
 
 ---
 
@@ -266,7 +266,7 @@ In /Game/AI/BasicMovement, add a transition to the Idle state:
 Compile and save, then verify with get_state_tree_info.
 ```
 
-**Expected**: `add_transition` called with type `NextSelectableState` (no target_path needed).
+**Expected**: `add_transition` called with type `NextSelectableState` (no `targetPath` needed).
 
 ---
 
@@ -294,7 +294,7 @@ Create a StateTree at /Game/AI/LinkedTreeTest.
 Add a Root subtree.
 Add a state named SubBehavior under Root with type "Subtree".
 Add a state named LinkedState under Root with type "Linked".
-Compile and save, then verify with get_state_tree_info that both show their correct state_type.
+Compile and save, then verify with get_state_tree_info that both show their correct `stateType`.
 ```
 
 **Expected**: `add_state` called with explicit `"Subtree"` and `"Linked"` type arguments; `get_state_tree_info` confirms state types.
@@ -310,7 +310,7 @@ In /Game/AI/BasicMovement, add a FStateTreeRunSubtreeTask to the Root state.
 Then compile and save.
 ```
 
-**Expected**: `add_task` called with `"FStateTreeRunSubtreeTask"` on the Root state.
+**Expected**: `StateTreeService.add_task` called with `"FStateTreeRunSubtreeTask"` on the Root state.
 
 ---
 
@@ -350,6 +350,108 @@ Write a Python script using unreal.StateTreeService that:
 
 ---
 
+## Transcript Coverage (S1 L5 -> S2 L4)
+
+These prompts are specifically derived from the transcript lessons and fill the remaining coverage gaps.
+
+### 22. Theme colors + state descriptions (S1 L5)
+
+```
+Using execute_python_code, update /Game/AI/BasicMovement so that:
+- Root has two child states: Idle and Rotating
+- Idle uses an "idle" theme color
+- Rotating uses a "rotating" theme color
+- Rotating has description: "The owning cube is rotating"
+Compile and save.
+```
+
+**Expected**: Script succeeds, tree compiles, and `get_state_tree_info` still shows correct structure. (Theme/description are editor metadata and should be visible in StateTree editor.)
+
+---
+
+### 23. Actor + StateTreeComponent wiring (S1 L6)
+
+```
+Using execute_python_code, create /Game/StateTree/BP_Cube as an Actor blueprint.
+Add a Cube static mesh component as root.
+Add a StateTreeComponent and assign /Game/AI/BasicMovement as its state tree asset.
+Ensure Start Logic Automatically is enabled.
+Compile and save BP_Cube.
+```
+
+**Expected**: Blueprint is created/configured successfully and compiles without errors.
+
+---
+
+### 24. Context actor class assignment (S1 L6)
+
+```
+Using execute_python_code, set /Game/AI/BasicMovement schema context actor class to BP_Cube.
+Recompile and save the StateTree.
+```
+
+**Expected**: StateTree compiles and context actor type is specialized for BP_Cube in editor.
+
+---
+
+### 25. Debug text task + reference actor binding (S2 L1)
+
+```
+In /Game/AI/BasicMovement:
+- Add FStateTreeDebugTextTask to Root using StateTreeService.add_task
+- Use execute_python_code to set task text to "Root task running"
+- Bind ReferenceActor input to the global actor context variable
+- Set Z offset to 100
+Compile and save.
+```
+
+**Expected**: Task exists in Root, compile succeeds, debug text appears at owning actor location in PIE.
+
+---
+
+### 26. Bindable text from actor variable (S2 L2)
+
+```
+Using execute_python_code:
+- Add string variable debug_text to BP_Cube
+- Bind Root debug text task BindableText to actor.debug_text
+- Make debug_text instance editable
+Compile/save BP_Cube and StateTree.
+```
+
+**Expected**: Different BP_Cube instances can show different debug text via binding.
+
+---
+
+### 27. Parameters + delay binding (S2 L4)
+
+```
+In /Game/AI/BasicMovement, using execute_python_code:
+- Add float parameters: idling_time and rotating_time (default 1.0)
+- Ensure Idle and Rotating each have FStateTreeDelayTask
+- Bind Idle delay duration to idling_time
+- Bind Rotating delay duration to rotating_time
+Compile and save.
+```
+
+**Expected**: Parameters are present in StateTree and delay durations are parameter-bound.
+
+---
+
+### 28. Per-instance parameter overrides (S2 L4)
+
+```
+Using execute_python_code:
+- Place two BP_Cube actors in the current level
+- Override StateTree parameters differently per instance
+  (example: CubeA idling=2.0 rotating=2.0, CubeB idling=0.5 rotating=2.0)
+Save level and verify values.
+```
+
+**Expected**: Parameter overrides differ per actor instance and are persisted.
+
+---
+
 ## Notes for Testers
 
 - All asset paths use the `/Game/...` format (content browser paths, NOT filesystem paths)
@@ -361,3 +463,5 @@ Write a Python script using unreal.StateTreeService that:
 - Available transition triggers: `OnStateCompleted`, `OnStateSucceeded`, `OnStateFailed`, `OnTick`, `OnEvent`
 - Available transition types: `GotoState`, `Succeeded`, `Failed`, `NextState`, `NextSelectableState`
 - Available priorities: `Low`, `Normal` (default), `Medium`, `High`, `Critical`
+- Use `StateTreeService.add_task` for adding tasks to individual states
+- Use `execute_python_code` for advanced editor-only operations not yet exposed as dedicated StateTree service methods (theme colors, descriptions, parameter bindings, context actor wiring)

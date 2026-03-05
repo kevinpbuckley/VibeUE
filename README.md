@@ -118,7 +118,7 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
+Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `state-trees`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
 
 ##### Log Reading Tool
 

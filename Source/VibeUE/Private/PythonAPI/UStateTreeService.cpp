@@ -5,9 +5,13 @@
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetToolsModule.h"
+#include "Engine/Blueprint.h"
+#include "GameFramework/Actor.h"
 #include "UObject/SavePackage.h"
 #include "UObject/Package.h"
+#include "UObject/UnrealType.h"
 #include "Misc/PackageName.h"
+#include "StructUtils/PropertyBag.h"
 
 // StateTree core
 #include "StateTree.h"
@@ -186,6 +190,262 @@ static UScriptStruct* FindNodeStruct(const FString& StructName)
 		if (Found)
 		{
 			return Found;
+		}
+	}
+
+	return nullptr;
+}
+
+static bool StructNameMatches(const UScriptStruct* Struct, const FString& ExpectedStructName)
+{
+	if (!Struct)
+	{
+		return false;
+	}
+
+	if (ExpectedStructName.IsEmpty())
+	{
+		return true;
+	}
+
+	const FString StructName = Struct->GetName();
+	if (StructName.Equals(ExpectedStructName, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	if (!ExpectedStructName.StartsWith(TEXT("F"))
+		&& StructName.Equals(TEXT("F") + ExpectedStructName, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	if (ExpectedStructName.StartsWith(TEXT("F")) && ExpectedStructName.Len() > 1
+		&& StructName.Equals(ExpectedStructName.RightChop(1), ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	return false;
+}
+
+static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const FString& TaskStructName, int32 TaskMatchIndex)
+{
+	if (!State)
+	{
+		return nullptr;
+	}
+
+	TArray<int32> MatchingTaskIndices;
+	for (int32 TaskIndex = 0; TaskIndex < State->Tasks.Num(); ++TaskIndex)
+	{
+		const UScriptStruct* NodeStruct = State->Tasks[TaskIndex].Node.GetScriptStruct();
+		if (StructNameMatches(NodeStruct, TaskStructName))
+		{
+			MatchingTaskIndices.Add(TaskIndex);
+		}
+	}
+
+	if (MatchingTaskIndices.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	const int32 SelectedMatchIndex = (TaskMatchIndex < 0) ? (MatchingTaskIndices.Num() - 1) : TaskMatchIndex;
+	if (!MatchingTaskIndices.IsValidIndex(SelectedMatchIndex))
+	{
+		return nullptr;
+	}
+
+	return &State->Tasks[MatchingTaskIndices[SelectedMatchIndex]];
+}
+
+static bool ResolvePropertyPath(const UStruct* RootStruct, void* RootValue, const FString& PropertyPath, FProperty*& OutProperty, void*& OutValuePtr)
+{
+	OutProperty = nullptr;
+	OutValuePtr = nullptr;
+
+	if (!RootStruct || !RootValue || PropertyPath.IsEmpty())
+	{
+		return false;
+	}
+
+	TArray<FString> Segments;
+	PropertyPath.ParseIntoArray(Segments, TEXT("."), true);
+	if (Segments.IsEmpty())
+	{
+		return false;
+	}
+
+	const UStruct* CurrentStruct = RootStruct;
+	void* CurrentValue = RootValue;
+
+	for (int32 SegmentIndex = 0; SegmentIndex < Segments.Num(); ++SegmentIndex)
+	{
+		const FString& Segment = Segments[SegmentIndex];
+		FProperty* Property = FindFProperty<FProperty>(CurrentStruct, *Segment);
+		if (!Property)
+		{
+			return false;
+		}
+
+		void* PropertyValue = Property->ContainerPtrToValuePtr<void>(CurrentValue);
+		if (SegmentIndex == Segments.Num() - 1)
+		{
+			OutProperty = Property;
+			OutValuePtr = PropertyValue;
+			return true;
+		}
+
+		FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+		if (!StructProperty || !StructProperty->Struct)
+		{
+			return false;
+		}
+
+		CurrentStruct = StructProperty->Struct;
+		CurrentValue = PropertyValue;
+	}
+
+	return false;
+}
+
+static bool ParseBoolString(const FString& Value, bool& OutValue)
+{
+	if (Value.Equals(TEXT("true"), ESearchCase::IgnoreCase) || Value == TEXT("1"))
+	{
+		OutValue = true;
+		return true;
+	}
+
+	if (Value.Equals(TEXT("false"), ESearchCase::IgnoreCase) || Value == TEXT("0"))
+	{
+		OutValue = false;
+		return true;
+	}
+
+	return false;
+}
+
+static bool SetPropertyValueFromString(FProperty* Property, void* ValuePtr, const FString& Value)
+{
+	if (!Property || !ValuePtr)
+	{
+		return false;
+	}
+
+	if (FTextProperty* TextProperty = CastField<FTextProperty>(Property))
+	{
+		TextProperty->SetPropertyValue(ValuePtr, FText::FromString(Value));
+		return true;
+	}
+
+	if (FStrProperty* StringProperty = CastField<FStrProperty>(Property))
+	{
+		StringProperty->SetPropertyValue(ValuePtr, Value);
+		return true;
+	}
+
+	if (FNameProperty* NameProperty = CastField<FNameProperty>(Property))
+	{
+		NameProperty->SetPropertyValue(ValuePtr, FName(*Value));
+		return true;
+	}
+
+	if (FBoolProperty* BoolProperty = CastField<FBoolProperty>(Property))
+	{
+		bool bParsedValue = false;
+		if (!ParseBoolString(Value, bParsedValue))
+		{
+			return false;
+		}
+		BoolProperty->SetPropertyValue(ValuePtr, bParsedValue);
+		return true;
+	}
+
+	if (FNumericProperty* NumericProperty = CastField<FNumericProperty>(Property))
+	{
+		NumericProperty->SetNumericPropertyValueFromString(ValuePtr, *Value);
+		return true;
+	}
+
+	return Property->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None) != nullptr;
+}
+
+static bool MakeBindingPath(const FGuid StructID, const FString& PropertyPath, FPropertyBindingPath& OutPath)
+{
+	OutPath = FPropertyBindingPath(StructID);
+	if (PropertyPath.IsEmpty())
+	{
+		return true;
+	}
+
+	return OutPath.FromString(PropertyPath);
+}
+
+static bool ResolveContextStructID(const UStateTree* StateTree, const FString& ContextName, FGuid& OutStructID)
+{
+	OutStructID.Invalidate();
+
+	if (!StateTree || !StateTree->GetSchema())
+	{
+		return false;
+	}
+
+	const TConstArrayView<FStateTreeExternalDataDesc> ContextDescs = StateTree->GetSchema()->GetContextDataDescs();
+	if (ContextDescs.IsEmpty())
+	{
+		return false;
+	}
+
+	if (ContextName.IsEmpty())
+	{
+		OutStructID = ContextDescs[0].ID;
+		return OutStructID.IsValid();
+	}
+
+	for (const FStateTreeExternalDataDesc& ContextDesc : ContextDescs)
+	{
+		if (ContextDesc.Name.ToString().Equals(ContextName, ESearchCase::IgnoreCase))
+		{
+			OutStructID = ContextDesc.ID;
+			return OutStructID.IsValid();
+		}
+	}
+
+	return false;
+}
+
+static UClass* ResolveActorClassPath(const FString& ActorClassPath)
+{
+	if (ActorClassPath.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	if (UClass* LoadedClass = StaticLoadClass(AActor::StaticClass(), nullptr, *ActorClassPath))
+	{
+		return LoadedClass;
+	}
+
+	if (!ActorClassPath.Contains(TEXT(".")))
+	{
+		const FString AssetName = FPackageName::GetShortName(ActorClassPath);
+		const FString GeneratedClassPath = FString::Printf(TEXT("%s.%s_C"), *ActorClassPath, *AssetName);
+		if (UClass* LoadedGeneratedClass = StaticLoadClass(AActor::StaticClass(), nullptr, *GeneratedClassPath))
+		{
+			return LoadedGeneratedClass;
+		}
+	}
+
+	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(ActorClassPath))
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+		{
+			if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf(AActor::StaticClass()))
+			{
+				return Blueprint->GeneratedClass;
+			}
 		}
 	}
 
@@ -762,6 +1022,192 @@ bool UStateTreeService::SetStateEnabled(const FString& AssetPath, const FString&
 #endif
 }
 
+bool UStateTreeService::SetStateDescription(const FString& AssetPath, const FString& StatePath, const FString& Description)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateDescription: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	State->Description = Description;
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::SetStateThemeColor(const FString& AssetPath, const FString& StatePath,
+	const FString& ColorName, const FLinearColor& Color)
+{
+	if (ColorName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateThemeColor: ColorName is empty"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateThemeColor: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorColor UpdatedColor;
+	bool bFoundExistingColor = false;
+	for (const FStateTreeEditorColor& ExistingColor : EditorData->Colors)
+	{
+		if (ExistingColor.DisplayName.Equals(ColorName, ESearchCase::IgnoreCase))
+		{
+			UpdatedColor = ExistingColor;
+			bFoundExistingColor = true;
+			break;
+		}
+	}
+
+	if (bFoundExistingColor)
+	{
+		EditorData->Colors.Remove(UpdatedColor);
+	}
+
+	UpdatedColor.DisplayName = ColorName;
+	UpdatedColor.Color = Color;
+	EditorData->Colors.Add(UpdatedColor);
+	State->ColorRef = UpdatedColor.ColorRef;
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetContextActorClass: Failed to load StateTree: %s"), *AssetPath);
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData || !EditorData->Schema)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetContextActorClass: Missing editor schema for %s"), *AssetPath);
+		return false;
+	}
+
+	UClass* ActorClass = ResolveActorClassPath(ActorClassPath);
+	if (!ActorClass || !ActorClass->IsChildOf(AActor::StaticClass()))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetContextActorClass: Could not resolve actor class path: %s"), *ActorClassPath);
+		return false;
+	}
+
+	FClassProperty* ContextActorClassProperty = FindFProperty<FClassProperty>(EditorData->Schema->GetClass(), TEXT("ContextActorClass"));
+	if (!ContextActorClassProperty)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetContextActorClass: Schema %s has no ContextActorClass property"),
+			*EditorData->Schema->GetClass()->GetName());
+		return false;
+	}
+
+	EditorData->Schema->Modify();
+	ContextActorClassProperty->SetPropertyValue_InContainer(EditorData->Schema, ActorClass);
+
+	// Keep first context descriptor in sync for schemas that cache context data entries.
+	TConstArrayView<FStateTreeExternalDataDesc> ContextDescs = EditorData->Schema->GetContextDataDescs();
+	if (!ContextDescs.IsEmpty())
+	{
+		FStateTreeExternalDataDesc& MutableDesc = const_cast<FStateTreeExternalDataDesc&>(ContextDescs[0]);
+		MutableDesc.Struct = ActorClass;
+	}
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::AddOrUpdateRootFloatParameter(const FString& AssetPath, const FString& ParameterName,
+	float DefaultValue)
+{
+	if (ParameterName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("AddOrUpdateRootFloatParameter: ParameterName is empty"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FInstancedPropertyBag& RootPropertyBag = const_cast<FInstancedPropertyBag&>(EditorData->GetRootParametersPropertyBag());
+	const FName ParameterFName(*ParameterName);
+
+	const FPropertyBagPropertyDesc* ExistingDesc = RootPropertyBag.FindPropertyDescByName(ParameterFName);
+	if (!ExistingDesc || ExistingDesc->ValueType != EPropertyBagPropertyType::Float || !ExistingDesc->ContainerTypes.IsEmpty())
+	{
+		if (RootPropertyBag.AddProperty(ParameterFName, EPropertyBagPropertyType::Float, nullptr, true) != EPropertyBagAlterationResult::Success)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddOrUpdateRootFloatParameter: Failed to add float parameter '%s'"), *ParameterName);
+			return false;
+		}
+	}
+
+	if (RootPropertyBag.SetValueFloat(ParameterFName, DefaultValue) != EPropertyBagResult::Success)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("AddOrUpdateRootFloatParameter: Failed to set default value for '%s'"), *ParameterName);
+		return false;
+	}
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::AddTask(const FString& AssetPath, const FString& StatePath,
                                  const FString& TaskStructName)
 {
@@ -810,6 +1256,201 @@ bool UStateTreeService::AddTask(const FString& AssetPath, const FString& StatePa
 	MarkStateTreeDirty(StateTree);
 	UE_LOG(LogStateTreeService, Log, TEXT("AddTask: Added '%s' to state '%s' in %s"),
 	       *TaskStructName, *StatePath, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::SetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& PropertyPath, const FString& Value, int32 TaskMatchIndex)
+{
+	if (PropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: PropertyPath is empty"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("SetTaskPropertyValue: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		return false;
+	}
+
+	if (!TaskNode->Instance.IsValid())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: Task instance is invalid"));
+		return false;
+	}
+
+	FProperty* Property = nullptr;
+	void* PropertyValuePtr = nullptr;
+	if (!ResolvePropertyPath(TaskNode->Instance.GetScriptStruct(), TaskNode->Instance.GetMutableMemory(),
+		PropertyPath, Property, PropertyValuePtr))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: Could not resolve property path '%s'"), *PropertyPath);
+		return false;
+	}
+
+	if (!SetPropertyValueFromString(Property, PropertyValuePtr, Value))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("SetTaskPropertyValue: Failed to set property '%s' with value '%s'"), *PropertyPath, *Value);
+		return false;
+	}
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindTaskPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& TaskPropertyPath, const FString& ParameterPath, int32 TaskMatchIndex)
+{
+	if (TaskPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToRootParameter: TaskPropertyPath and ParameterPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToRootParameter: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToRootParameter: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(EditorData->GetRootParametersGuid(), ParameterPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToRootParameter: Invalid parameter path: %s"), *ParameterPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(TaskNode->ID, TaskPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToRootParameter: Invalid task property path: %s"), *TaskPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindTaskPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& TaskPropertyPath, const FString& ContextName,
+	const FString& ContextPropertyPath, int32 TaskMatchIndex)
+{
+	if (TaskPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: TaskPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToContext: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		return false;
+	}
+
+	FGuid ContextStructID;
+	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: Context '%s' not found"), *ContextName);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(ContextStructID, ContextPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: Invalid context property path: %s"), *ContextPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(TaskNode->ID, TaskPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: Invalid task property path: %s"), *TaskPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
 	return true;
 #else
 	return false;
