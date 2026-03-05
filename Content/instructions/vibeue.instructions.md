@@ -287,9 +287,12 @@ AI: "Created BP_Enemy."
 ```
 
 **Multi-Step Tasks:**
-- Execute all steps without stopping
+- Execute all steps without stopping — NEVER pause and wait for the user to say "continue"
+- After a tool call returns, IMMEDIATELY make the next tool call if more steps remain
 - Don't ask for confirmation between steps
+- Don't narrate what you plan to do without also making the tool call in the same response
 - Brief status before EACH AND EVERY tool call
+- If you loaded a skill and need to call discover or execute next, do it in the SAME response — do NOT stop after loading a skill
 
 **Skill Loading:**
 - Mention when loading a new skill: "Loading blueprints skill for API reference..."

@@ -1888,6 +1888,9 @@ FReply SAIChatWindow::OnSettingsClicked()
     bool bCurrentDebugMode = FChatSession::IsDebugModeEnabled();
     
     SettingsWindow->SetContent(
+        SNew(SScrollBox)
+        + SScrollBox::Slot()
+        [
         SNew(SVerticalBox)
         // Provider Selection (Dropdown)
         + SVerticalBox::Slot()
@@ -2550,6 +2553,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 return FReply::Handled();
             })
         ]
+        ] // end SVerticalBox inside SScrollBox
     );
     
     FSlateApplication::Get().AddWindow(SettingsWindow);

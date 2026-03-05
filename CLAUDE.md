@@ -53,6 +53,44 @@ VibeUE uses **manual integration testing** with natural language prompts instead
 - Level actors: `test_prompts/level_actors/`
 - Data assets/tables: `test_prompts/data_asset/`, `test_prompts/data_table/`
 
+### Skills System (AI Chat / MCP Workflows)
+
+**Before executing any domain-specific task in the AI Chat or via MCP, load the relevant skill first:**
+
+```python
+manage_skills(action="load", skill_name="blueprints")
+```
+
+Skills contain battle-tested workflows that prevent common failures. Never guess APIs — always discover first.
+
+**Required skill → task mapping:**
+
+| Task Domain | Skill Name | Why Critical |
+|---|---|---|
+| Animation Blueprints | `animation-blueprint` | Requires skeleton reference |
+| Blueprints | `blueprints` | Correct API names, compilation steps |
+| UMG Widgets | `umg-widgets` | Widget hierarchy, canvas panel ops |
+| Materials | `materials` | Node connections, compilation |
+| Niagara Systems | `niagara-systems` | System lifecycle, emitter management |
+| Niagara Emitters | `niagara-emitters` | Module ordering, renderer setup |
+| Data Assets | `data-assets` | Property management, asset creation |
+| Data Tables | `data-tables` | Row operations, struct definitions |
+| Enhanced Input | `enhanced-input` | Action/mapping context relationships |
+| Level Actors | `level-actors` | Subsystem usage, actor manipulation |
+| Asset Management | `asset-management` | Find/open/save/delete patterns |
+
+**Python discovery workflow** (never guess APIs):
+```python
+# 1. Load skill
+manage_skills(action="load", skill_name="blueprints")
+# 2. Discover class
+discover_python_class("unreal.BlueprintEditorLibrary")
+# 3. Execute with correct signatures from discovery
+execute_python_code(code="...")
+```
+
+Skills live in `Content/Skills/<domain>/skill.md`.
+
 ### Development Workflow
 
 **Typical workflow when adding a new feature**:
@@ -328,6 +366,39 @@ if (AssetRegistry.IsLoadingAssets()) {
 }
 ```
 
+### Deprecated APIs (UE 5.7+)
+
+**`unreal.EditorLevelLibrary` is DEPRECATED**. Replace with `unreal.EditorActorSubsystem`:
+
+```python
+# DEPRECATED - DO NOT USE
+actors = unreal.EditorLevelLibrary.get_all_level_actors()
+
+# CORRECT
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+actors = actor_subsys.get_all_level_actors()
+```
+
+The entire Editor Scripting Utilities Plugin is deprecated in 5.7+. If you see `EditorLevelLibrary` anywhere, replace it.
+
+### CDO Safety
+
+**Never modify Class Default Objects (CDOs) — causes crashes**. CDOs are read-only:
+
+```cpp
+// WRONG - crashes
+CDO->SomeProperty = NewValue;
+
+// RIGHT - use Blueprint variable system or service layer
+BlueprintPropertyService->SetVariable(Blueprint, VariableName, Value);
+```
+
+In Python: never call `cdo.set_editor_property()` — read from CDOs only.
+
+### Opening UI Windows from Python
+
+Avoid opening UI windows directly from Python code — this causes access violations. Defer to the game thread or use async patterns.
+
 ### Transaction System for Undo/Redo
 
 **Wrap editor modifications in FScopedTransaction**:
@@ -481,14 +552,41 @@ for (UClass* Class = MyClass; Class; Class = Class->GetSuperClass()) {
 
 **ALWAYS USE THE DEV BRANCH** for development work. The main branch is for stable releases only.
 
-### File Organization
+### Key Directories
 
-- **Public headers**: `Source/VibeUE/Public/<Category>/`
-- **Private implementation**: `Source/VibeUE/Private/<Category>/`
-- **DTOs**: `Source/VibeUE/Public/Services/<Domain>/Types/`
-- **Tests**: `test_prompts/<domain>/`
-- **Help files**: `Content/Help/<tool_name>/<action>.md`
-- **Configuration**: `Config/`
+```
+Source/VibeUE/
+├── Public/
+│   ├── Core/            # TResult<T>, ErrorCodes, ServiceContext
+│   ├── Services/        # ~30 domain services
+│   │   ├── Blueprint/   # 7 services + Types/
+│   │   ├── UMG/         # 9 services + Types/
+│   │   ├── Material/    # 2 services + Types/
+│   │   ├── Asset/       # 3 services
+│   │   └── ...
+│   └── Tools/           # EditorTools.h (UFUNCTION declarations)
+├── Private/
+│   ├── Commands/        # JSON-RPC handlers (BlueprintCommands.cpp, etc.)
+│   ├── Tools/           # EditorTools.cpp (action routing)
+│   ├── Services/        # Service implementations
+│   ├── MCP/             # MCP server (HTTP + SSE)
+│   ├── Chat/            # Slate chat UI (SChatWindow, SChatMessage, SChatInput)
+│   └── Utils/           # JSON helpers, validation
+Content/
+├── Skills/              # AI workflow skills (<domain>/skill.md)
+├── instructions/        # AI system prompt (vibeue.instructions.md)
+├── Help/                # Tool help files (<tool>/<action>.md)
+└── examples/            # Python code examples
+Config/
+├── Instructions/        # User project context (loaded into AI chat)
+└── vibeue.mcp.json      # External MCP server configuration
+test_prompts/            # Integration test prompts (.md files)
+```
+
+**Reference files for architecture examples**:
+- `Source/VibeUE/Private/Commands/BlueprintCommands.cpp` — full command layer example
+- `Source/VibeUE/Public/Services/Blueprint/BlueprintLifecycleService.h` — service pattern
+- `Content/instructions/vibeue.instructions.md` — AI assistant behavior (discovery-first)
 
 ### Naming Conventions
 
@@ -570,6 +668,14 @@ Logs are appended during the session and rotated on editor restart.
 - Verify Unreal Editor is running
 - Enable debug mode and check HTTP logs
 - Confirm API key matches client configuration
+
+**Python code fails with AttributeError**:
+- Use `discover_python_class` / `discover_python_module` before executing — never guess method names
+- Load the domain skill first: `manage_skills(action="load", skill_name="<domain>")`
+
+**Assets not saved before BuildAndLaunch**:
+- Call `manage_asset` with `action="save_all"` before running `buildandlaunch.ps1`
+- The script does NOT auto-save dirty assets
 
 ## Resources
 
