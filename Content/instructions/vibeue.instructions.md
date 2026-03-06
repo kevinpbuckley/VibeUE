@@ -144,6 +144,7 @@ json_str = json.dumps(data)
 - `project-settings`
 - `screenshots`
 - `skeleton`
+- `state-trees`
 - `umg-widgets`
 
 ---

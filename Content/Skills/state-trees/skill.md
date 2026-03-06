@@ -205,6 +205,22 @@ result = unreal.StateTreeService.compile_state_tree("/Game/AI/MyBehavior")
 unreal.StateTreeService.save_state_tree("/Game/AI/MyBehavior")
 ```
 
+### Advanced Editor Config (Use execute_python_code)
+
+Use `unreal.StateTreeService` for structure + compile/save. For transcript-level editor workflows
+(S1 L5 -> S2 L4), use `execute_python_code` for advanced edits that are not currently first-class service methods:
+
+- Set schema context actor class
+- Configure state descriptions and theme colors
+- Add/edit StateTree parameters and default values
+- Bind task properties (e.g. debug text bindable text, delay duration bindings)
+- Configure StateTree component overrides on Blueprint instances
+
+Recommended pattern:
+
+1. Use `unreal.StateTreeService` methods (`create_state_tree`, `add_state`, `add_task`, `add_transition`, `compile_state_tree`, `save_state_tree`) for structure.
+2. Use `execute_python_code` for advanced editor metadata, component wiring, and bindings.
+
 ## COMMON_MISTAKES
 
 ### ⚠️ Forgetting to Compile

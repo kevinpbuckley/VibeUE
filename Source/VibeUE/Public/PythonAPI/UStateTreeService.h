@@ -232,6 +232,26 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetStateEnabled(const FString& AssetPath, const FString& StatePath, bool bEnabled);
 
+	/** Set an editor description string for a state. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateDescription(const FString& AssetPath, const FString& StatePath, const FString& Description);
+
+	/**
+	 * Set a state's theme color by display name. Creates or updates the named color entry if needed.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateThemeColor(const FString& AssetPath, const FString& StatePath,
+	                              const FString& ColorName, const FLinearColor& Color);
+
+	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath);
+
+	/** Add or update a root float parameter and set its default value. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool AddOrUpdateRootFloatParameter(const FString& AssetPath, const FString& ParameterName,
+	                                         float DefaultValue = 0.0f);
+
 	// ---- Task Management ----
 
 	/**
@@ -242,6 +262,36 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTask(const FString& AssetPath, const FString& StatePath,
 	                    const FString& TaskStructName);
+
+	/**
+	 * Set a task instance-data property value using a property path (e.g. "Duration", "Text", "Offset.Z").
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
+	                                 const FString& TaskStructName, const FString& PropertyPath,
+	                                 const FString& Value, int32 TaskMatchIndex = -1);
+
+	/**
+	 * Bind a task property to a root parameter path (e.g. parameter "idling_time" -> task property "Duration").
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTaskPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	                                           const FString& TaskStructName, const FString& TaskPropertyPath,
+	                                           const FString& ParameterPath, int32 TaskMatchIndex = -1);
+
+	/**
+	 * Bind a task property to context data (e.g. context "Actor" path "debug_text" -> task property "BindableText").
+	 * Leave ContextPropertyPath empty to bind the whole context object.
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTaskPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	                                     const FString& TaskStructName, const FString& TaskPropertyPath,
+	                                     const FString& ContextName = TEXT("Actor"),
+	                                     const FString& ContextPropertyPath = TEXT(""),
+	                                     int32 TaskMatchIndex = -1);
 
 	// ---- Evaluator / Global Task Management ----
 
