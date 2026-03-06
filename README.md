@@ -16,7 +16,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 23 specialized services with 738 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, Project/Engine Settings, and more
+- **Python API Services** - 24 specialized services with 759 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -303,7 +303,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (23 services, 738 methods)
+### 2. VibeUE Python API Services (24 services, 759 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -331,6 +331,7 @@ High-level services exposed to Python for common game development tasks:
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
+| `StateTreeService` | 21 | StateTree asset creation, state hierarchy, tasks, evaluators, transitions, compile/save |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
