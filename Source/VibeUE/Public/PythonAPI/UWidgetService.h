@@ -62,6 +62,94 @@ struct FWidgetPropertyInfo
 };
 
 /**
+ * Slot layout data for a widget component.
+ * SlotType indicates which fields are populated:
+ *   "Canvas"        -> AnchorMin/Max, Offsets, Alignment, ZOrder, bAutoSize
+ *   "VerticalBox"   -> SizeRule, SizeValue, Padding, HorizontalAlignment, VerticalAlignment
+ *   "HorizontalBox" -> SizeRule, SizeValue, Padding, HorizontalAlignment, VerticalAlignment
+ *   "Overlay"       -> Padding, HorizontalAlignment, VerticalAlignment
+ *   "None"          -> root widget (no parent slot)
+ */
+USTRUCT(BlueprintType)
+struct FWidgetSlotInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString SlotType; // "Canvas", "VerticalBox", "HorizontalBox", "Overlay", "None", or raw class name
+
+	// Canvas slot fields
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FVector2D AnchorMin = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FVector2D AnchorMax = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FMargin Offsets; // position+size (or margins) depending on anchor mode
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FVector2D Alignment = FVector2D::ZeroVector;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	int32 ZOrder = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bAutoSize = false;
+
+	// Box slot fields (VerticalBox / HorizontalBox)
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString SizeRule; // "Fill" or "Automatic"
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	float SizeValue = 1.0f; // Fill coefficient
+
+	// Box + Overlay slot fields
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FMargin Padding;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TEnumAsByte<EHorizontalAlignment> HorizontalAlignment = HAlign_Fill;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TEnumAsByte<EVerticalAlignment> VerticalAlignment = VAlign_Fill;
+};
+
+/**
+ * Full state snapshot of a single widget component.
+ * Combines hierarchy info, slot layout, and all properties in one struct.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetComponentSnapshot
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString WidgetName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString WidgetClass;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FString ParentWidget;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bIsRootWidget = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	bool bIsVariable = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TArray<FString> Children;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	FWidgetSlotInfo SlotInfo;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget")
+	TArray<FWidgetPropertyInfo> Properties;
+};
+
+/**
  * Information about a widget event
  */
 USTRUCT(BlueprintType)
@@ -556,6 +644,32 @@ public:
 		int32 BindingIndex);
 
 	// =================================================================
+	// Snapshot API (get_widget_snapshot, get_component_snapshot)
+	// =================================================================
+
+	/**
+	 * Get a full snapshot of all widget components in a Widget Blueprint.
+	 * Single-call replacement for get_hierarchy + list_properties per component.
+	 * Returns hierarchy order with slot layout and all properties for each widget.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @return Array of component snapshots in hierarchy order
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
+	static TArray<FWidgetComponentSnapshot> GetWidgetSnapshot(const FString& WidgetPath);
+
+	/**
+	 * Get a snapshot of a single widget component by name.
+	 * Returns hierarchy info, slot layout, and all properties for one widget.
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @return Component snapshot (default/empty if not found)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
+	static FWidgetComponentSnapshot GetComponentSnapshot(const FString& WidgetPath, const FString& ComponentName);
+
+	// =================================================================
 	// Existence Checks
 	// =================================================================
 
@@ -587,6 +701,12 @@ public:
 	static bool WidgetExists(const FString& WidgetPath, const FString& ComponentName);
 
 private:
+	/** Build slot info by casting Widget->Slot to the concrete slot type */
+	static FWidgetSlotInfo BuildSlotInfo(class UWidget* Widget);
+
+	/** Collect all properties from a widget (all flags, not editable-only) */
+	static TArray<FWidgetPropertyInfo> CollectWidgetProperties(class UWidget* Widget);
+
 	/** Helper to load and validate a Widget Blueprint */
 	static class UWidgetBlueprint* LoadWidgetBlueprint(const FString& WidgetPath);
 	

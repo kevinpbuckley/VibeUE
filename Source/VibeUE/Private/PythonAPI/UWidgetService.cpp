@@ -12,8 +12,11 @@
 #include "Components/CanvasPanelSlot.h"
 #include "Components/CanvasPanel.h"
 #include "Components/VerticalBox.h"
+#include "Components/VerticalBoxSlot.h"
 #include "Components/HorizontalBox.h"
+#include "Components/HorizontalBoxSlot.h"
 #include "Components/Overlay.h"
+#include "Components/OverlaySlot.h"
 #include "Components/ScrollBox.h"
 #include "Components/GridPanel.h"
 #include "Components/WidgetSwitcher.h"
@@ -1645,4 +1648,196 @@ bool UWidgetService::WidgetExists(const FString& WidgetPath, const FString& Comp
 	}
 
 	return FindWidgetByName(WidgetBP, ComponentName) != nullptr;
+}
+
+// =================================================================
+// Snapshot API
+// =================================================================
+
+FWidgetSlotInfo UWidgetService::BuildSlotInfo(UWidget* Widget)
+{
+	FWidgetSlotInfo SlotInfo;
+
+	if (!Widget || !Widget->Slot)
+	{
+		SlotInfo.SlotType = TEXT("None");
+		return SlotInfo;
+	}
+
+	if (UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Widget->Slot))
+	{
+		SlotInfo.SlotType = TEXT("Canvas");
+		FAnchorData Layout = CanvasSlot->GetLayout();
+		SlotInfo.AnchorMin = Layout.Anchors.Minimum;
+		SlotInfo.AnchorMax = Layout.Anchors.Maximum;
+		SlotInfo.Offsets = Layout.Offsets;
+		SlotInfo.Alignment = Layout.Alignment;
+		SlotInfo.ZOrder = CanvasSlot->GetZOrder();
+		SlotInfo.bAutoSize = CanvasSlot->GetAutoSize();
+	}
+	else if (UVerticalBoxSlot* VBoxSlot = Cast<UVerticalBoxSlot>(Widget->Slot))
+	{
+		SlotInfo.SlotType = TEXT("VerticalBox");
+		FSlateChildSize Size = VBoxSlot->GetSize();
+		SlotInfo.SizeRule = (Size.SizeRule == ESlateSizeRule::Fill) ? TEXT("Fill") : TEXT("Automatic");
+		SlotInfo.SizeValue = Size.Value;
+		SlotInfo.Padding = VBoxSlot->GetPadding();
+		SlotInfo.HorizontalAlignment = VBoxSlot->GetHorizontalAlignment();
+		SlotInfo.VerticalAlignment = VBoxSlot->GetVerticalAlignment();
+	}
+	else if (UHorizontalBoxSlot* HBoxSlot = Cast<UHorizontalBoxSlot>(Widget->Slot))
+	{
+		SlotInfo.SlotType = TEXT("HorizontalBox");
+		FSlateChildSize Size = HBoxSlot->GetSize();
+		SlotInfo.SizeRule = (Size.SizeRule == ESlateSizeRule::Fill) ? TEXT("Fill") : TEXT("Automatic");
+		SlotInfo.SizeValue = Size.Value;
+		SlotInfo.Padding = HBoxSlot->GetPadding();
+		SlotInfo.HorizontalAlignment = HBoxSlot->GetHorizontalAlignment();
+		SlotInfo.VerticalAlignment = HBoxSlot->GetVerticalAlignment();
+	}
+	else if (UOverlaySlot* OverlaySlot = Cast<UOverlaySlot>(Widget->Slot))
+	{
+		SlotInfo.SlotType = TEXT("Overlay");
+		SlotInfo.Padding = OverlaySlot->GetPadding();
+		SlotInfo.HorizontalAlignment = OverlaySlot->GetHorizontalAlignment();
+		SlotInfo.VerticalAlignment = OverlaySlot->GetVerticalAlignment();
+	}
+	else
+	{
+		// Unknown slot type — store class name so caller knows what it is
+		SlotInfo.SlotType = Widget->Slot->GetClass()->GetName();
+	}
+
+	return SlotInfo;
+}
+
+TArray<FWidgetPropertyInfo> UWidgetService::CollectWidgetProperties(UWidget* Widget)
+{
+	TArray<FWidgetPropertyInfo> Properties;
+
+	for (TFieldIterator<FProperty> It(Widget->GetClass()); It; ++It)
+	{
+		FProperty* Property = *It;
+		if (!Property)
+		{
+			continue;
+		}
+
+		FWidgetPropertyInfo Info;
+		Info.PropertyName = Property->GetName();
+		Info.PropertyType = Property->GetCPPType();
+		Info.bIsEditable = Property->HasAnyPropertyFlags(CPF_Edit);
+		Info.bIsBlueprintVisible = Property->HasAnyPropertyFlags(CPF_BlueprintVisible);
+		Info.Category = Property->GetMetaData(TEXT("Category"));
+
+		void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Widget);
+		Property->ExportTextItem_Direct(Info.CurrentValue, ValuePtr, nullptr, Widget, PPF_None);
+
+		Properties.Add(Info);
+	}
+
+	return Properties;
+}
+
+TArray<FWidgetComponentSnapshot> UWidgetService::GetWidgetSnapshot(const FString& WidgetPath)
+{
+	TArray<FWidgetComponentSnapshot> Snapshots;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		return Snapshots;
+	}
+
+	UWidget* RootWidget = WidgetBP->WidgetTree->RootWidget;
+	if (!RootWidget)
+	{
+		return Snapshots;
+	}
+
+	TFunction<void(UWidget*, const FString&)> BuildSnapshot;
+	BuildSnapshot = [&](UWidget* Widget, const FString& ParentName)
+	{
+		if (!Widget)
+		{
+			return;
+		}
+
+		FWidgetComponentSnapshot Snapshot;
+		Snapshot.WidgetName = Widget->GetName();
+		Snapshot.WidgetClass = Widget->GetClass()->GetName();
+		Snapshot.ParentWidget = ParentName;
+		Snapshot.bIsRootWidget = (Widget == RootWidget);
+		Snapshot.bIsVariable = Widget->bIsVariable;
+		Snapshot.SlotInfo = BuildSlotInfo(Widget);
+		Snapshot.Properties = CollectWidgetProperties(Widget);
+
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				if (UWidget* Child = Panel->GetChildAt(i))
+				{
+					Snapshot.Children.Add(Child->GetName());
+				}
+			}
+		}
+
+		Snapshots.Add(Snapshot);
+
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				BuildSnapshot(Panel->GetChildAt(i), Snapshot.WidgetName);
+			}
+		}
+	};
+
+	BuildSnapshot(RootWidget, FString());
+
+	return Snapshots;
+}
+
+FWidgetComponentSnapshot UWidgetService::GetComponentSnapshot(const FString& WidgetPath, const FString& ComponentName)
+{
+	FWidgetComponentSnapshot Snapshot;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		return Snapshot;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return Snapshot;
+	}
+
+	UWidget* RootWidget = WidgetBP->WidgetTree->RootWidget;
+	Snapshot.WidgetName = Widget->GetName();
+	Snapshot.WidgetClass = Widget->GetClass()->GetName();
+	Snapshot.bIsRootWidget = (Widget == RootWidget);
+	Snapshot.bIsVariable = Widget->bIsVariable;
+	Snapshot.SlotInfo = BuildSlotInfo(Widget);
+	Snapshot.Properties = CollectWidgetProperties(Widget);
+
+	if (Widget->Slot && Widget->Slot->Parent)
+	{
+		Snapshot.ParentWidget = Widget->Slot->Parent->GetName();
+	}
+
+	if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+	{
+		for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+		{
+			if (UWidget* Child = Panel->GetChildAt(i))
+			{
+				Snapshot.Children.Add(Child->GetName());
+			}
+		}
+	}
+
+	return Snapshot;
 }
