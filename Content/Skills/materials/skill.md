@@ -61,6 +61,33 @@ for oc in graph['output_connections']:
 5. **Reconnect** outputs to their correct sources
 6. **Compile** and save
 
+### 🚨 Return Types — Read `.asset_path` and `.id`, NOT the Raw Return Value
+
+All create methods return **result objects**, not raw strings. Always extract the field you need:
+
+```python
+# create_material → MaterialCreateResult
+result = unreal.MaterialService.create_material("M_MyMat", "/Game/Materials/")
+if not result.success:
+    print(f"FAILED: {result.error_message}")
+path = result.asset_path  # ← use this, NOT result itself
+
+# create_instance → MaterialCreateResult  (same pattern)
+result = unreal.MaterialService.create_instance("/Game/Materials/M_Base", "MI_Red", "/Game/Materials/")
+instance_path = result.asset_path
+
+# create_parameter / create_expression / create_function_call → MaterialExpressionInfo
+expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "1,0,0,1", -400, 0)
+node_id = expr.id  # ← use .id, NOT expr itself
+
+expr2 = unreal.MaterialNodeService.create_expression(path, "Multiply", -200, 0)
+mult_id = expr2.id
+```
+
+> ⚠️ Passing a result object where a string is expected gives:
+> `TypeError: Nativize: Cannot nativize 'MaterialCreateResult' as 'String'`
+> `TypeError: Nativize: Cannot nativize 'MaterialExpressionInfo' as 'String'`
+
 ### ⚠️ Two Services
 
 - **MaterialService** - Create materials, instances, manage properties
@@ -69,8 +96,8 @@ for oc in graph['output_connections']:
 ### ⚠️ Compile After Graph Changes
 
 ```python
-unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", ...)
-unreal.MaterialNodeService.connect_to_output(path, node_id, "", "BaseColor")
+expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", ...)
+unreal.MaterialNodeService.connect_to_output(path, expr.id, "", "BaseColor")  # use expr.id
 unreal.MaterialService.compile_material(path)  # REQUIRED
 unreal.EditorAssetLibrary.save_asset(path)
 ```
@@ -118,15 +145,20 @@ Use `discover_python_class()` first:
 ```python
 import unreal
 
-path = unreal.MaterialService.create_material("Character", "/Game/Materials/")
+# create_material returns MaterialCreateResult — extract .asset_path
+result = unreal.MaterialService.create_material("M_Character", "/Game/Materials/")
+if not result.success:
+    print(f"FAILED: {result.error_message}")
+path = result.asset_path
 
-# Add color parameter (default_value formats: "R,G,B" or "R,G,B,A" or "(R=1.0,G=0.0,B=0.0,A=1.0)")
-node_id = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "0.8,0.2,0.2,1.0", -500, 0)
-unreal.MaterialNodeService.connect_to_output(path, node_id, "", "BaseColor")
+# create_parameter returns MaterialExpressionInfo — extract .id
+# default_value formats: "R,G,B" or "R,G,B,A" or "(R=1.0,G=0.0,B=0.0,A=1.0)"
+color_expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "0.8,0.2,0.2,1.0", -500, 0)
+unreal.MaterialNodeService.connect_to_output(path, color_expr.id, "", "BaseColor")
 
 # Add roughness
-rough_id = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Roughness", "Surface", "0.5", -500, 100)
-unreal.MaterialNodeService.connect_to_output(path, rough_id, "", "Roughness")
+rough_expr = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Roughness", "Surface", "0.5", -500, 100)
+unreal.MaterialNodeService.connect_to_output(path, rough_expr.id, "", "Roughness")
 
 unreal.MaterialService.compile_material(path)
 unreal.EditorAssetLibrary.save_asset(path)
@@ -140,10 +172,15 @@ unreal.MaterialNodeService.layout_expressions(path)
 ```python
 import unreal
 
-instance = unreal.MaterialService.create_instance("/Game/Materials/M_Character", "PlayerRed", "/Game/Materials/")
-unreal.MaterialService.set_instance_vector_parameter(instance, "BaseColor", 1.0, 0.0, 0.0, 1.0)
-unreal.MaterialService.set_instance_scalar_parameter(instance, "Roughness", 0.3)
-unreal.EditorAssetLibrary.save_asset(instance)
+# create_instance returns MaterialCreateResult — extract .asset_path
+result = unreal.MaterialService.create_instance("/Game/Materials/M_Character", "MI_PlayerRed", "/Game/Materials/")
+if not result.success:
+    print(f"FAILED: {result.error_message}")
+instance_path = result.asset_path
+
+unreal.MaterialService.set_instance_vector_parameter(instance_path, "BaseColor", 1.0, 0.0, 0.0, 1.0)
+unreal.MaterialService.set_instance_scalar_parameter(instance_path, "Roughness", 0.3)
+unreal.EditorAssetLibrary.save_asset(instance_path)
 ```
 
 ### Add Texture Parameter
@@ -151,8 +188,8 @@ unreal.EditorAssetLibrary.save_asset(instance)
 ```python
 import unreal
 
-tex_id = unreal.MaterialNodeService.create_parameter(path, "Texture", "DiffuseMap", "Textures", "", -500, 0)
-unreal.MaterialNodeService.connect_to_output(path, tex_id, "", "BaseColor")
+tex_expr = unreal.MaterialNodeService.create_parameter(path, "Texture", "DiffuseMap", "Textures", "", -500, 0)
+unreal.MaterialNodeService.connect_to_output(path, tex_expr.id, "", "BaseColor")
 unreal.MaterialService.compile_material(path)
 ```
 
@@ -163,13 +200,14 @@ import unreal
 
 path = "/Game/Materials/M_Tint"
 
-color_id = unreal.MaterialNodeService.create_parameter(path, "Vector", "TintColor", "Surface", "", -600, 0)
-mult_id = unreal.MaterialNodeService.create_expression(path, "Multiply", -300, 0)
-intensity_id = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Intensity", "Surface", "1.0", -600, 100)
+# All create_* calls return expression info objects — use .id
+color_expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "TintColor", "Surface", "", -600, 0)
+mult_expr = unreal.MaterialNodeService.create_expression(path, "Multiply", -300, 0)
+intensity_expr = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Intensity", "Surface", "1.0", -600, 100)
 
-unreal.MaterialNodeService.connect_expressions(path, color_id, "", mult_id, "A")
-unreal.MaterialNodeService.connect_expressions(path, intensity_id, "", mult_id, "B")
-unreal.MaterialNodeService.connect_to_output(path, mult_id, "", "BaseColor")
+unreal.MaterialNodeService.connect_expressions(path, color_expr.id, "", mult_expr.id, "A")
+unreal.MaterialNodeService.connect_expressions(path, intensity_expr.id, "", mult_expr.id, "B")
+unreal.MaterialNodeService.connect_to_output(path, mult_expr.id, "", "BaseColor")
 unreal.MaterialService.compile_material(path)
 ```
 
@@ -203,15 +241,15 @@ import unreal
 
 path = "/Game/Materials/M_Complex"
 
-# Create a material function call — auto-creates correct input/output pins
-func_id = unreal.MaterialNodeService.create_function_call(
+# create_function_call returns MaterialExpressionInfo — use .id
+func_expr = unreal.MaterialNodeService.create_function_call(
     path,
     "/Engine/Functions/Engine_MaterialFunctions02/Utility/BlendAngleCorrectedNormals",
     -600, 0
 )
 
 # Connect like any other node
-unreal.MaterialNodeService.connect_to_output(path, func_id, "", "Normal")
+unreal.MaterialNodeService.connect_to_output(path, func_expr.id, "", "Normal")
 unreal.MaterialService.compile_material(path)
 ```
 
@@ -222,8 +260,8 @@ import unreal
 
 path = "/Game/Materials/M_Custom"
 
-# Create custom HLSL code node
-custom_id = unreal.MaterialNodeService.create_custom_expression(
+# create_custom_expression returns MaterialExpressionInfo — use .id
+custom_expr = unreal.MaterialNodeService.create_custom_expression(
     path,
     "return sin(Time * Speed);",     # HLSL code
     "SineWave",                       # Description
@@ -233,7 +271,7 @@ custom_id = unreal.MaterialNodeService.create_custom_expression(
 )
 
 # Connect inputs and outputs normally
-unreal.MaterialNodeService.connect_to_output(path, custom_id, "", "EmissiveColor")
+unreal.MaterialNodeService.connect_to_output(path, custom_expr.id, "", "EmissiveColor")
 unreal.MaterialService.compile_material(path)
 ```
 
@@ -246,15 +284,15 @@ import unreal
 
 path = "/Game/Materials/M_Global"
 
-# Reference a parameter from a collection asset
-coll_id = unreal.MaterialNodeService.create_collection_parameter(
+# create_collection_parameter returns MaterialExpressionInfo — use .id
+coll_expr = unreal.MaterialNodeService.create_collection_parameter(
     path,
     "/Game/Materials/MPC_GlobalParams",   # collection asset path
     "WindStrength",                        # parameter name in collection
     -500, 0
 )
 
-unreal.MaterialNodeService.connect_expressions(path, coll_id, "", some_mult_id, "B")
+unreal.MaterialNodeService.connect_expressions(path, coll_expr.id, "", some_mult_id, "B")
 unreal.MaterialService.compile_material(path)
 ```
 
@@ -431,8 +469,9 @@ import unreal, json
 source_json = unreal.MaterialNodeService.export_material_graph("/Game/Materials/M_Source")
 graph = json.loads(source_json)
 
-# 2. Create new material
-new_path = unreal.MaterialService.create_material("M_Source_Copy", "/Game/Materials/")
+# 2. Create new material — extract .asset_path from result
+result = unreal.MaterialService.create_material("M_Source_Copy", "/Game/Materials/")
+new_path = result.asset_path
 
 # 3. Set material properties
 mat = graph['material']

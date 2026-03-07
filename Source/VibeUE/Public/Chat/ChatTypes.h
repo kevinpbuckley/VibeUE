@@ -178,7 +178,11 @@ struct VIBEUE_API FChatMessage
     /** True while the message is still being streamed from the API */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     bool bIsStreaming = false;
-    
+
+    /** If true, ToJson() wraps this message's content with an Anthropic cache_control
+     *  breakpoint (ephemeral). Not persisted — set at request-build time only. */
+    bool bCacheBreakpoint = false;
+
     /** Tool calls made by the assistant (for role="assistant") */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     TArray<FChatToolCall> ToolCalls;
@@ -265,13 +269,34 @@ struct VIBEUE_API FChatMessage
         else if (IsMultimodal())
         {
             TArray<TSharedPtr<FJsonValue>> ContentArray;
-            for (const FContentPart& Part : ContentParts)
+            for (int32 i = 0; i < ContentParts.Num(); ++i)
             {
-                ContentArray.Add(MakeShared<FJsonValueObject>(Part.ToJson()));
+                TSharedPtr<FJsonObject> PartJson = ContentParts[i].ToJson();
+                // Add cache_control to the last part when this message is a breakpoint
+                if (bCacheBreakpoint && i == ContentParts.Num() - 1)
+                {
+                    TSharedPtr<FJsonObject> CacheControl = MakeShared<FJsonObject>();
+                    CacheControl->SetStringField(TEXT("type"), TEXT("ephemeral"));
+                    PartJson->SetObjectField(TEXT("cache_control"), CacheControl);
+                }
+                ContentArray.Add(MakeShared<FJsonValueObject>(PartJson));
             }
             JsonObject->SetArrayField(TEXT("content"), ContentArray);
         }
-        // Standard text content (backwards compatible)
+        // Standard text content — wrap as a content-parts array when a cache
+        // breakpoint is requested, otherwise use the backwards-compatible string form.
+        else if (bCacheBreakpoint && !Content.IsEmpty())
+        {
+            TSharedPtr<FJsonObject> TextPart = MakeShared<FJsonObject>();
+            TextPart->SetStringField(TEXT("type"), TEXT("text"));
+            TextPart->SetStringField(TEXT("text"), Content);
+            TSharedPtr<FJsonObject> CacheControl = MakeShared<FJsonObject>();
+            CacheControl->SetStringField(TEXT("type"), TEXT("ephemeral"));
+            TextPart->SetObjectField(TEXT("cache_control"), CacheControl);
+            TArray<TSharedPtr<FJsonValue>> ContentArray;
+            ContentArray.Add(MakeShared<FJsonValueObject>(TextPart));
+            JsonObject->SetArrayField(TEXT("content"), ContentArray);
+        }
         else
         {
             JsonObject->SetStringField(TEXT("content"), Content);

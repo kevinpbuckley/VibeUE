@@ -8,6 +8,9 @@
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
+#include "HAL/FileManager.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
 
 DEFINE_LOG_CATEGORY(LogVibeUEAPIClient);
 
@@ -139,21 +142,20 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
 
     UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Sending chat request to VibeUE API: %s"), *EndpointUrl);
     
-    // Log request summary to dedicated file for debugging (if file logging enabled)
+    // Log full request body to dedicated file for debugging (if file logging enabled)
     if (FChatSession::IsFileLoggingEnabled())
     {
         FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
-        // Log summary instead of full body to avoid massive log files from tool schemas
         FString ModelDisplay = ModelId.IsEmpty() ? TEXT("(server default)") : ModelId;
-        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nModel: %s\nMessages: %d, Tools: %d, Temperature: %.2f\n"),
+        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nModel: %s, Messages: %d, Tools: %d, Temperature: %.2f\n%s\n"),
             *FDateTime::Now().ToString(),
             *EndpointUrl,
             *ModelDisplay,
             Messages.Num(),
             Tools.Num(),
-            Temperature);
+            Temperature,
+            *RequestBodyString);
         FFileHelper::SaveStringToFile(RequestLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
-        UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("Request summary logged to: %s"), *RawLogPath);
     }
 
     // Create HTTP request

@@ -17,6 +17,38 @@ unreal_classes:
 
 **DO NOT use `unreal.EditorLevelLibrary`.** The entire Editor Scripting Utilities Plugin is deprecated in UE 5.7+. Use `unreal.EditorActorSubsystem` via `unreal.get_editor_subsystem()` for all level actor operations.
 
+### 🚨 NEVER Use `ActorService.add_actor` for Static Mesh Actors
+
+`ActorService.add_actor()` + `set_property("StaticMesh", ...)` creates actors with **zero-extent bounds** — they are completely invisible in the viewport even though `get_property` reports the mesh is set. This is a known limitation.
+
+**ALWAYS use `spawn_actor_from_class` + `comp.set_static_mesh()`:**
+
+```python
+import unreal
+
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+mesh = unreal.load_asset("/Engine/BasicShapes/Cube")
+material = unreal.load_asset("/Game/Materials/M_MyMat")
+
+actor = actor_subsys.spawn_actor_from_class(
+    unreal.StaticMeshActor,
+    unreal.Vector(0, 0, 100),
+    unreal.Rotator(0, 0, 0)
+)
+actor.set_actor_label("MyMeshActor")
+actor.set_actor_scale3d(unreal.Vector(2, 2, 2))
+
+comp = actor.static_mesh_component
+comp.set_static_mesh(mesh)
+comp.set_material(0, material)   # Optional
+
+# Verify it has real bounds (not 0,0,0)
+bounds = actor.get_actor_bounds(False)
+print(f"Bounds extent: {bounds[1].x:.0f}, {bounds[1].y:.0f}, {bounds[1].z:.0f}")
+```
+
+If bounds extent is `0, 0, 0` after spawning, the mesh was not applied correctly.
+
 ### ⚠️ Get Subsystem Instance First
 
 ```python
@@ -165,7 +197,9 @@ dup.set_actor_location(unreal.Vector(loc.x + 200, loc.y, loc.z), False, False)
 
 ### Camera View Methods (for screenshots and verification)
 
-Use `ActorService` to position the viewport camera to frame actors from specific directions:
+Use `ActorService` to position the viewport camera to frame actors from specific directions.
+
+> ⚠️ **NEVER guess camera coordinates with `set_viewport_camera`.** Manual positions almost always point at sky or empty space. Always use `get_actor_view_camera` which auto-calculates position from the actor's bounding box.
 
 ```python
 import unreal
@@ -173,18 +207,27 @@ import unreal
 actor_service = unreal.ActorService
 
 # Move camera to view an actor from above (top-down)
-view = actor_service.get_actor_view_camera("MyLandscape", unreal.EViewDirection.TOP)
+view = actor_service.get_actor_view_camera("MyLandscape", unreal.ViewDirection.TOP)
 
 # Move camera to view from front with extra padding
-view = actor_service.get_actor_view_camera("MyBuilding", unreal.EViewDirection.FRONT, 1.5)
+view = actor_service.get_actor_view_camera("MyBuilding", unreal.ViewDirection.FRONT, 1.5)
 
 # Calculate view without moving camera
-view = actor_service.calculate_actor_view("MyActor", unreal.EViewDirection.RIGHT, 1.2)
+view = actor_service.calculate_actor_view("MyActor", unreal.ViewDirection.RIGHT, 1.2)
 # view.camera_location, view.camera_rotation, view.view_distance
-
-# Directly set camera to any position/rotation
-actor_service.set_viewport_camera(unreal.Vector(1000, 2000, 500), unreal.Rotator(-45, 0, 0))
 ```
 
 **Directions**: TOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
-**Padding**: 1.0=tight, 1.2=default, 2.0=far
+**Padding**: 1.0=tight, 1.2=default, 2.0=far, 3.0=very far (use for large structures)
+
+#### Choosing the Right View
+
+| Goal | Use |
+|------|-----|
+| Overview of a large structure | `TOP` with padding 2.0–3.0 |
+| See the front face | `FRONT` with padding 1.5–2.5 |
+| Full castle/building view | `FRONT` padding 3.0, or `TOP` padding 2.5 |
+| Check layout from above | `TOP` padding 1.5 |
+| Profile view | `LEFT` or `RIGHT` |
+
+> ⚠️ **Do NOT switch to `set_viewport_camera` with manual coordinates to get a "better angle".** Manual positions almost always miss the subject and point at sky or empty space. If the view isn't wide enough, **increase the padding** or switch to `TOP`. There is no need for a diagonal camera — `TOP` and `FRONT` with adequate padding cover every screenshot use case.
