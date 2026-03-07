@@ -26,35 +26,13 @@ static ECacheStrategy DetectCacheStrategy(const FString& ModelId)
 
 static void ApplyPromptCaching(TArray<FChatMessage>& Messages)
 {
-    // 1. Mark the system message (index 0) as a cache breakpoint
-    //    System prompt is large (~7K tokens) and never changes — always gets cache hits.
+    // Mark the system message as an explicit cache breakpoint.
+    // System prompt is large (~7K tokens) and never changes — always gets cache hits.
+    // The growing conversation tail is handled by top-level automatic caching
+    // (cache_control on the request body), so no rolling user-message breakpoints needed.
     if (Messages.Num() > 0 && Messages[0].Role == TEXT("system"))
     {
         Messages[0].bCacheBreakpoint = true;
-    }
-
-    // 2. Mark the 4th-to-last user message as a cache breakpoint
-    //    This section of history is stable for ~2 turns, giving it time to actually hit cache.
-    // 3. Mark the 2nd-to-last user message as a cache breakpoint
-    //    Caches the most recent completed turn's tool results.
-    //
-    //    Two rolling breakpoints = two cache segments refreshing at different rates,
-    //    covering more of the growing conversation history.
-    int32 UserCount = 0;
-    for (int32 i = Messages.Num() - 1; i >= 0; --i)
-    {
-        if (Messages[i].Role == TEXT("user"))
-        {
-            ++UserCount;
-            if (UserCount == 2 || UserCount == 4)
-            {
-                Messages[i].bCacheBreakpoint = true;
-            }
-            if (UserCount >= 4)
-            {
-                break;
-            }
-        }
     }
 }
 
@@ -210,6 +188,15 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     TSharedPtr<FJsonObject> RequestBody = MakeShared<FJsonObject>();
     RequestBody->SetStringField(TEXT("model"), ModelId);
     RequestBody->SetBoolField(TEXT("stream"), true);
+
+    // Anthropic automatic caching: top-level cache_control auto-applies a breakpoint
+    // to the last cacheable block, so the growing conversation tail is always cached.
+    if (bAnthropicCaching)
+    {
+        TSharedPtr<FJsonObject> CacheControl = MakeShared<FJsonObject>();
+        CacheControl->SetStringField(TEXT("type"), TEXT("ephemeral"));
+        RequestBody->SetObjectField(TEXT("cache_control"), CacheControl);
+    }
 
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Message : CachedMessages)
