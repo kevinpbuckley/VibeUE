@@ -153,7 +153,10 @@ bool FMCPServer::Start()
     );
     
     UE_LOG(LogMCPServer, Log, TEXT("MCP Server started at %s"), *GetServerUrl());
-    
+
+    // Export manifest so the proxy can serve tool definitions when UE is not running
+    ExportToolManifest();
+
     return true;
 }
 
@@ -1317,6 +1320,60 @@ TArray<FMCPTool> FMCPServer::GetInternalTools() const
     }
     
     return Result;
+}
+
+void FMCPServer::ExportToolManifest() const
+{
+    TArray<FMCPTool> Tools = GetInternalTools();
+
+    // Build JSON array matching the tools/list schema
+    TArray<TSharedPtr<FJsonValue>> ToolsArray;
+    for (const FMCPTool& Tool : Tools)
+    {
+        TSharedPtr<FJsonObject> ToolObj = MakeShared<FJsonObject>();
+        ToolObj->SetStringField(TEXT("name"), Tool.Name);
+        ToolObj->SetStringField(TEXT("description"), Tool.Description);
+
+        if (Tool.InputSchema.IsValid())
+        {
+            ToolObj->SetObjectField(TEXT("inputSchema"), Tool.InputSchema);
+        }
+        else
+        {
+            TSharedPtr<FJsonObject> EmptySchema = MakeShared<FJsonObject>();
+            EmptySchema->SetStringField(TEXT("type"), TEXT("object"));
+            EmptySchema->SetObjectField(TEXT("properties"), MakeShared<FJsonObject>());
+            ToolObj->SetObjectField(TEXT("inputSchema"), EmptySchema);
+        }
+
+        ToolsArray.Add(MakeShared<FJsonValueObject>(ToolObj));
+    }
+
+    FString JsonString;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+    FJsonSerializer::Serialize(ToolsArray, Writer);
+
+    // Write to %APPDATA%/VibeUE/tools-manifest.json
+    FString AppData = FPlatformMisc::GetEnvironmentVariable(TEXT("APPDATA"));
+    if (AppData.IsEmpty())
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("ExportToolManifest: APPDATA env var not set, skipping export"));
+        return;
+    }
+
+    FString ManifestDir = AppData / TEXT("VibeUE");
+    FString ManifestPath = ManifestDir / TEXT("tools-manifest.json");
+
+    IFileManager::Get().MakeDirectory(*ManifestDir, /*Tree=*/true);
+
+    if (FFileHelper::SaveStringToFile(JsonString, *ManifestPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM))
+    {
+        UE_LOG(LogMCPServer, Log, TEXT("Exported %d tools to %s"), Tools.Num(), *ManifestPath);
+    }
+    else
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("ExportToolManifest: Failed to write %s"), *ManifestPath);
+    }
 }
 
 void FMCPServer::ProcessPendingRequests()
