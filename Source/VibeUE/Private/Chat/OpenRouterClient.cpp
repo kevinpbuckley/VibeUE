@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Chat/OpenRouterClient.h"
+#include "Chat/ChatSession.h"
 #include "HttpModule.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
@@ -10,6 +11,52 @@
 #include "Misc/Paths.h"
 
 DEFINE_LOG_CATEGORY(LogOpenRouterClient);
+
+enum class ECacheStrategy : uint8 { AnthropicExplicit, Auto };
+
+static ECacheStrategy DetectCacheStrategy(const FString& ModelId)
+{
+    FString Lower = ModelId.ToLower();
+    if (Lower.StartsWith(TEXT("anthropic/")) || Lower == TEXT("openrouter/auto"))
+    {
+        return ECacheStrategy::AnthropicExplicit;
+    }
+    return ECacheStrategy::Auto;
+}
+
+static void ApplyPromptCaching(TArray<FChatMessage>& Messages)
+{
+    // 1. Mark the system message (index 0) as a cache breakpoint
+    //    System prompt is large (~7K tokens) and never changes — always gets cache hits.
+    if (Messages.Num() > 0 && Messages[0].Role == TEXT("system"))
+    {
+        Messages[0].bCacheBreakpoint = true;
+    }
+
+    // 2. Mark the 4th-to-last user message as a cache breakpoint
+    //    This section of history is stable for ~2 turns, giving it time to actually hit cache.
+    // 3. Mark the 2nd-to-last user message as a cache breakpoint
+    //    Caches the most recent completed turn's tool results.
+    //
+    //    Two rolling breakpoints = two cache segments refreshing at different rates,
+    //    covering more of the growing conversation history.
+    int32 UserCount = 0;
+    for (int32 i = Messages.Num() - 1; i >= 0; --i)
+    {
+        if (Messages[i].Role == TEXT("user"))
+        {
+            ++UserCount;
+            if (UserCount == 2 || UserCount == 4)
+            {
+                Messages[i].bCacheBreakpoint = true;
+            }
+            if (UserCount >= 4)
+            {
+                break;
+            }
+        }
+    }
+}
 
 const FString FOpenRouterClient::ModelsEndpoint = TEXT("https://openrouter.ai/api/v1/models");
 const FString FOpenRouterClient::ChatEndpoint = TEXT("https://openrouter.ai/api/v1/chat/completions");
@@ -151,13 +198,21 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
         return nullptr;
     }
     
+    // Apply prompt caching for Anthropic models
+    TArray<FChatMessage> CachedMessages = Messages;
+    const bool bAnthropicCaching = DetectCacheStrategy(ModelId) == ECacheStrategy::AnthropicExplicit;
+    if (bAnthropicCaching)
+    {
+        ApplyPromptCaching(CachedMessages);
+    }
+
     // Build request body
     TSharedPtr<FJsonObject> RequestBody = MakeShared<FJsonObject>();
     RequestBody->SetStringField(TEXT("model"), ModelId);
     RequestBody->SetBoolField(TEXT("stream"), true);
-    
+
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
-    for (const FChatMessage& Message : Messages)
+    for (const FChatMessage& Message : CachedMessages)
     {
         // Create a sanitized copy to remove NUL characters and other problematic bytes
         FChatMessage SanitizedMessage = Message;
@@ -181,6 +236,21 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
             ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
         UE_LOG(LogOpenRouterClient, Warning, TEXT("=== END TOOLS (%d total) ==="), Tools.Num());
+
+        // Cache tool definitions for Anthropic models — add cache_control to the last tool.
+        // Anthropic caches everything up to and including the breakpoint, so marking the
+        // last tool covers the entire tools array on every subsequent request.
+        if (bAnthropicCaching && ToolsArray.Num() > 0)
+        {
+            TSharedPtr<FJsonObject> LastTool = ToolsArray.Last()->AsObject();
+            if (LastTool.IsValid())
+            {
+                TSharedPtr<FJsonObject> CacheControl = MakeShared<FJsonObject>();
+                CacheControl->SetStringField(TEXT("type"), TEXT("ephemeral"));
+                LastTool->SetObjectField(TEXT("cache_control"), CacheControl);
+            }
+        }
+
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
         
         // Control parallel tool calls - when false, model makes one tool call at a time
@@ -195,6 +265,20 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&RequestBodyString);
     FJsonSerializer::Serialize(RequestBody.ToSharedRef(), Writer);
     
+    // Log full request body to dedicated file for debugging (if file logging enabled)
+    if (FChatSession::IsFileLoggingEnabled())
+    {
+        FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+        FString RequestLog = FString::Printf(TEXT("\n========== REQUEST [%s] ==========\nURL: %s\nModel: %s, Messages: %d, Tools: %d\n%s\n"),
+            *FDateTime::Now().ToString(),
+            *ChatEndpoint,
+            *ModelId,
+            CachedMessages.Num(),
+            Tools.Num(),
+            *RequestBodyString);
+        FFileHelper::SaveStringToFile(RequestLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+    }
+
     // Create HTTP request
     TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(ChatEndpoint);
@@ -205,8 +289,8 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
     Request->SetHeader(TEXT("X-OpenRouter-Title"), TEXT("VibeUE"));
     Request->SetHeader(TEXT("X-OpenRouter-Categories"), TEXT("ide-extension"));
     Request->SetContentAsString(RequestBodyString);
-    
+
     UE_LOG(LogOpenRouterClient, Log, TEXT("Sending chat request with model %s"), *ModelId);
-    
+
     return Request;
 }

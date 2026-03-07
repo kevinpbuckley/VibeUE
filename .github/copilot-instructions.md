@@ -77,7 +77,7 @@ If you see `EditorLevelLibrary` in any code, system prompt, or skill - it must b
 
 ### Core Capabilities
 - **In-Editor AI Chat**: Slate-based chat interface running inside Unreal Editor
-- **MCP Server**: HTTP server exposing tools to external AI IDEs (VS Code, Claude Desktop, Cursor, Windsurf)
+- **MCP Server**: HTTP server exposing tools to external AI IDEs (VS Code, Claude Desktop, Cursor, AntiGravity)
 - **Python Execution**: Execute Python code in Unreal Editor with full API access
 - **14 Multi-Action Tools**: Blueprint, UMG, Material, Asset, Level Actor, Data Asset, Data Table, Enhanced Input, Python, Search, File operations, and more
 - **Custom Instructions**: Project-specific context via markdown files in `Config/Instructions/`

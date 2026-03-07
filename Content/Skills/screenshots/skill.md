@@ -47,22 +47,29 @@ import unreal
 actor_service = unreal.ActorService
 
 # Move viewport camera to frame an actor from a specific direction
+# Use unreal.ViewDirection (NOT unreal.EViewDirection — that prefix does not exist)
 # Directions: TOP, BOTTOM, LEFT, RIGHT, FRONT, BACK
-view = actor_service.get_actor_view_camera("MyLandscape", unreal.EViewDirection.TOP)
+view = actor_service.get_actor_view_camera("MyLandscape", unreal.ViewDirection.TOP)
 # Camera is now positioned — take screenshot immediately
 
 # Calculate view without moving camera (for planning)
-view = actor_service.calculate_actor_view("MyActor", unreal.EViewDirection.FRONT, 1.5)
+view = actor_service.calculate_actor_view("MyActor", unreal.ViewDirection.FRONT, 1.5)
 # view.camera_location, view.camera_rotation available
 # Apply when ready:
 actor_service.set_viewport_camera(view.camera_location, view.camera_rotation)
 
-# Directly set camera to any position/rotation
+# Directly set camera to any position/rotation (avoid this — easy to miss the subject)
 actor_service.set_viewport_camera(
     unreal.Vector(1000, 2000, 500),
     unreal.Rotator(-45, 0, 0)
 )
 ```
+
+> ⚠️ **Critical**: Always use `unreal.ViewDirection.FRONT` — **never** `unreal.EViewDirection.FRONT`. The `E` prefix does **not** exist and will raise `AttributeError`.
+>
+> ⚠️ **Avoid guessing camera coordinates** with `set_viewport_camera`. Manual positions like `Vector(1200,-1200,600)` almost always capture only sky or empty space. Always prefer `get_actor_view_camera` which auto-calculates position from the actor's bounding box.
+>
+> For a diagonal/3-quarter view, use `calculate_actor_view` to get real bounds first, then offset from that position using trig — **never** guess coordinates. See the `level-actors` skill for the diagonal camera pattern.
 
 **View directions:**
 | Direction | Camera Position | Looking |
@@ -81,7 +88,7 @@ Camera distance is automatically calculated from the actor's bounding box to fit
 - `success` (bool) - Whether calculation succeeded
 - `camera_location` (Vector) - Calculated camera position
 - `camera_rotation` (Rotator) - Calculated camera rotation
-- `view_direction` (EViewDirection) - Direction used
+- `view_direction` (ViewDirection) - Direction used
 - `actor_center` (Vector) - Actor bounds center
 - `actor_extent` (Vector) - Actor bounds half-extent
 - `view_distance` (float) - Distance from camera to actor center
@@ -146,6 +153,13 @@ if result.success:
 ```
 
 After executing, use `attach_image(file_path=screenshot_path)` to analyze.
+
+> ⚠️ **`capture_viewport` is async** — the file may not exist on disk immediately after the call returns. If `attach_image` reports "File not found", wait briefly and retry:
+> ```python
+> import time
+> time.sleep(1)
+> # then attach_image
+> ```
 
 ### Take Editor Window Screenshot (No Camera Needed)
 

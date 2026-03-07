@@ -581,7 +581,24 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
         int32 CompletionTokens = 0;
         (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
         (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
-        
+
+        // Log cache stats if present (Anthropic prompt caching)
+        int32 CachedTokens = 0;
+        int32 CacheWriteTokens = 0;
+        const TSharedPtr<FJsonObject>* PromptDetailsObj;
+        if ((*UsageObj)->TryGetObjectField(TEXT("prompt_tokens_details"), PromptDetailsObj))
+        {
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cached_tokens"), CachedTokens);
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cache_write_tokens"), CacheWriteTokens);
+        }
+        if (CachedTokens > 0 || CacheWriteTokens > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[CACHE] prompt=%d, cached=%d (%.0f%%), written=%d, completion=%d"),
+                PromptTokens, CachedTokens,
+                PromptTokens > 0 ? 100.0f * CachedTokens / PromptTokens : 0.0f,
+                CacheWriteTokens, CompletionTokens);
+        }
+
         if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
         {
             CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
@@ -1146,7 +1163,24 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
         (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
         CompletionTokensInResponse = CompletionTokens;  // Save for later check
-        
+
+        // Log cache stats if present (Anthropic prompt caching)
+        int32 CachedTokens = 0;
+        int32 CacheWriteTokens = 0;
+        const TSharedPtr<FJsonObject>* PromptDetailsObj;
+        if ((*UsageObj)->TryGetObjectField(TEXT("prompt_tokens_details"), PromptDetailsObj))
+        {
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cached_tokens"), CachedTokens);
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cache_write_tokens"), CacheWriteTokens);
+        }
+        if (CachedTokens > 0 || CacheWriteTokens > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[CACHE] prompt=%d, cached=%d (%.0f%%), written=%d, completion=%d"),
+                PromptTokens, CachedTokens,
+                PromptTokens > 0 ? 100.0f * CachedTokens / PromptTokens : 0.0f,
+                CacheWriteTokens, CompletionTokens);
+        }
+
         if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
         {
             UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Usage: prompt=%d, completion=%d"), PromptTokens, CompletionTokens);

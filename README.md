@@ -20,7 +20,7 @@ https://www.vibeue.com/
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
-- **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and Windsurf via MCP
+- **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and AntiGravity via MCP
 
 ---
 
@@ -1394,7 +1394,7 @@ unreal.LandscapeService.import_heightmap("MtFuji",
 
 ## 🌐 External IDE Integration
 
-Connect VS Code, Claude Desktop, Cursor, or Windsurf to control Unreal via MCP.
+Connect VS Code, Claude Desktop, Cursor, or AntiGravity to control Unreal via MCP.
 
 ### Enable MCP Server
 
@@ -1428,7 +1428,7 @@ Create `.vscode/mcp.json`:
 }
 ```
 
-### Claude Desktop / Cursor / Windsurf
+### Claude Desktop / Cursor / AntiGravity
 
 ```json
 {

@@ -1,6 +1,6 @@
 🚀 VibeUE - AI-Powered Unreal Engine Development
 
-Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Desktop, Cursor, and Windsurf.
+Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Desktop, Cursor, and AntiGravity.
 
 
 ✨ WHAT MAKES VIBEUE SPECIAL:

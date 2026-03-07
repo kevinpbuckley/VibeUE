@@ -84,6 +84,7 @@ $ExcludeDevFiles = @(
     "BuildPlugin.bat",
     "MCP-Inspector.bat",
     "MakePlugin.ps1",        # Build script not needed by end users
+    "BuildAndLaunchGame.ps1", # Game-specific launch script not needed by end users
     "AddCopyrights.ps1",     # Development script not needed by end users
     "FAB-DESCRIPTION.md",    # Development file not needed by end users
     "FAB-Checklist.md",      # Internal checklist not needed by end users
