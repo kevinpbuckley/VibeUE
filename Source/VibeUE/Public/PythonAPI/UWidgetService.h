@@ -80,16 +80,16 @@ struct FWidgetSlotInfo
 
 	// Canvas slot fields
 	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FVector2D AnchorMin;
+	FVector2D AnchorMin = FVector2D::ZeroVector;
 
 	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FVector2D AnchorMax;
+	FVector2D AnchorMax = FVector2D::ZeroVector;
 
 	UPROPERTY(BlueprintReadWrite, Category = "Widget")
 	FMargin Offsets; // position+size (or margins) depending on anchor mode
 
 	UPROPERTY(BlueprintReadWrite, Category = "Widget")
-	FVector2D Alignment;
+	FVector2D Alignment = FVector2D::ZeroVector;
 
 	UPROPERTY(BlueprintReadWrite, Category = "Widget")
 	int32 ZOrder = 0;
