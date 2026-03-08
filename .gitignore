@@ -82,7 +82,7 @@ ehthumbs.db
 Thumbs.db
 
 # Python-specific (for MCP tools)
-python/
+/python/
 __pycache__/
 *.py[cod]
 *$py.class
