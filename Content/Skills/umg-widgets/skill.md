@@ -182,6 +182,81 @@ for widget in hierarchy:
     print(f"  Parent: {widget.parent_widget}, Is Root: {widget.is_root_widget}")
 ```
 
+### Get Full Widget Snapshot (preferred for UI inspection)
+
+Use `get_widget_snapshot` instead of `get_hierarchy` + per-widget `list_properties` calls.
+Returns hierarchy order with slot layout and all properties in a single call.
+
+```python
+import unreal
+
+path = "/Game/UI/WBP_MainMenu"
+snapshots = unreal.WidgetService.get_widget_snapshot(path)
+
+for s in snapshots:
+    print(f"{s.widget_name} ({s.widget_class})")
+    print(f"  Parent: {s.parent_widget}, Root: {s.is_root_widget}, Children: {s.children}")
+
+    slot = s.slot_info
+    print(f"  SlotType: {slot.slot_type}")
+    if slot.slot_type == "Canvas":
+        print(f"    Anchors: {slot.anchor_min} -> {slot.anchor_max}")
+        print(f"    Offsets: {slot.offsets}, Alignment: {slot.alignment}")
+        print(f"    ZOrder: {slot.z_order}, AutoSize: {slot.auto_size}")
+    elif slot.slot_type in ("VerticalBox", "HorizontalBox"):
+        print(f"    Size: {slot.size_rule} ({slot.size_value})")
+        print(f"    Padding: {slot.padding}, HAlign: {slot.horizontal_alignment}, VAlign: {slot.vertical_alignment}")
+    elif slot.slot_type == "Overlay":
+        print(f"    Padding: {slot.padding}, HAlign: {slot.horizontal_alignment}, VAlign: {slot.vertical_alignment}")
+
+    for prop in s.properties:
+        if prop.is_editable:
+            print(f"  {prop.property_name} = {prop.current_value}")
+```
+
+### Get Single Component Snapshot
+
+```python
+import unreal
+
+snapshot = unreal.WidgetService.get_component_snapshot("/Game/UI/WBP_MainMenu", "PlayButton")
+print(f"Class: {snapshot.widget_class}, Parent: {snapshot.parent_widget}")
+slot = snapshot.slot_info
+print(f"SlotType: {slot.slot_type}")
+for prop in snapshot.properties:
+    print(f"  {prop.property_name} ({prop.property_type}) = {prop.current_value}")
+```
+
+### FWidgetSlotInfo Field Names
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `slot_type` | str | "Canvas", "VerticalBox", "HorizontalBox", "Overlay", "None" |
+| `anchor_min` | Vector2D | Canvas: anchor minimum |
+| `anchor_max` | Vector2D | Canvas: anchor maximum |
+| `offsets` | Margin | Canvas: position+size or margins |
+| `alignment` | Vector2D | Canvas: pivot alignment |
+| `z_order` | int | Canvas: Z-order |
+| `auto_size` | bool | Canvas: auto-size to content |
+| `size_rule` | str | Box: "Fill" or "Automatic" |
+| `size_value` | float | Box: fill coefficient |
+| `padding` | Margin | Box/Overlay: slot padding |
+| `horizontal_alignment` | EHorizontalAlignment | Box/Overlay: horizontal alignment |
+| `vertical_alignment` | EVerticalAlignment | Box/Overlay: vertical alignment |
+
+### FWidgetComponentSnapshot Field Names
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `widget_name` | str | Component name |
+| `widget_class` | str | UE class name (e.g. "TextBlock") |
+| `parent_widget` | str | Parent component name (empty for root) |
+| `is_root_widget` | bool | True if this is the root |
+| `is_variable` | bool | Exposed as Blueprint variable |
+| `children` | list[str] | Child component names |
+| `slot_info` | FWidgetSlotInfo | Slot layout data |
+| `properties` | list[FWidgetPropertyInfo] | All widget properties |
+
 ---
 
 ## Common Properties
