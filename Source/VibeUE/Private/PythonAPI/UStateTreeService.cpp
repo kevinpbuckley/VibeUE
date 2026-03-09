@@ -665,11 +665,33 @@ static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStat
 
 static void MarkStateTreeDirty(UStateTree* StateTree)
 {
-	if (StateTree && StateTree->GetPackage())
+	if (!StateTree)
 	{
-		StateTree->GetPackage()->SetDirtyFlag(true);
-		StateTree->Modify();
+		return;
 	}
+
+	StateTree->MarkPackageDirty();
+	StateTree->Modify();
+
+#if WITH_EDITORONLY_DATA
+	if (UStateTreeEditorData* EditorData = GetEditorData(StateTree))
+	{
+		EditorData->Modify();
+		EditorData->PostEditChange();
+
+#if WITH_EDITOR
+		FPropertyChangedEvent PropertyChangedEvent(nullptr);
+		EditorData->PostEditChangeProperty(PropertyChangedEvent);
+#endif
+	}
+#endif
+
+	StateTree->PostEditChange();
+
+#if WITH_EDITOR
+	FPropertyChangedEvent PropertyChangedEvent(nullptr);
+	StateTree->PostEditChangeProperty(PropertyChangedEvent);
+#endif
 }
 
 } // namespace UStateTreeServiceHelpers
@@ -1102,6 +1124,57 @@ bool UStateTreeService::SetStateThemeColor(const FString& AssetPath, const FStri
 	UpdatedColor.Color = Color;
 	EditorData->Colors.Add(UpdatedColor);
 	State->ColorRef = UpdatedColor.ColorRef;
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName)
+{
+	if (OldColorName.IsEmpty() || NewColorName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RenameThemeColor: OldColorName and NewColorName must not be empty"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FStateTreeEditorColor FoundColor;
+	bool bFound = false;
+	for (const FStateTreeEditorColor& ExistingColor : EditorData->Colors)
+	{
+		if (ExistingColor.DisplayName.Equals(OldColorName, ESearchCase::IgnoreCase))
+		{
+			FoundColor = ExistingColor;
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RenameThemeColor: Color '%s' not found in %s"), *OldColorName, *AssetPath);
+		return false;
+	}
+
+	// Remove old entry, update display name, re-add — ColorRef UUID is preserved so state references remain valid
+	EditorData->Colors.Remove(FoundColor);
+	FoundColor.DisplayName = NewColorName;
+	EditorData->Colors.Add(FoundColor);
 
 	MarkStateTreeDirty(StateTree);
 	return true;

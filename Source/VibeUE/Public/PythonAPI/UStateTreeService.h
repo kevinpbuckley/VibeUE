@@ -243,6 +243,16 @@ public:
 	static bool SetStateThemeColor(const FString& AssetPath, const FString& StatePath,
 	                              const FString& ColorName, const FLinearColor& Color);
 
+	/**
+	 * Rename an existing theme color entry in the global color table.
+	 * Preserves the ColorRef UUID so all states already using this color remain correctly linked.
+	 * @param AssetPath    Content path to the StateTree
+	 * @param OldColorName Current display name of the color entry (e.g. "Default Color")
+	 * @param NewColorName New display name to assign (e.g. "Idle")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName);
+
 	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath);
