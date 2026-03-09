@@ -1820,7 +1820,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Show API key input dialog
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(500, 900))
+        .ClientSize(FVector2D(550, 990))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
     

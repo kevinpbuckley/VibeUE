@@ -313,6 +313,56 @@ TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString&
 		Components.Add(CompInfo);
 	}
 
+	// Also expose inherited/native components from the parent C++ class.
+	// These are the "grayed out" components the Blueprint Editor shows but that are NOT SCS nodes.
+	// The AI must know they exist; it cannot delete them — it should call set_root_component() instead.
+	if (Blueprint->ParentClass)
+	{
+		UObject* ParentCDO = Blueprint->ParentClass->GetDefaultObject(false);
+		if (AActor* ParentActor = Cast<AActor>(ParentCDO))
+		{
+			TArray<UActorComponent*> NativeComponents;
+			ParentActor->GetComponents(NativeComponents, false);
+
+			// Build a set of SCS component names to avoid duplicates
+			TSet<FString> SCSNames;
+			for (const FBlueprintComponentInfo& C : Components)
+			{
+				SCSNames.Add(C.ComponentName);
+			}
+
+			for (UActorComponent* NativeComp : NativeComponents)
+			{
+				if (!NativeComp)
+				{
+					continue;
+				}
+
+				FString NativeName = NativeComp->GetName();
+				if (SCSNames.Contains(NativeName))
+				{
+					continue;
+				}
+
+				FBlueprintComponentInfo InheritedInfo;
+				InheritedInfo.ComponentName  = NativeName;
+				InheritedInfo.ComponentClass = NativeComp->GetClass()->GetName();
+				InheritedInfo.bIsSceneComponent = NativeComp->IsA<USceneComponent>();
+				InheritedInfo.bIsInherited   = true;
+
+				if (USceneComponent* NativeSC = Cast<USceneComponent>(NativeComp))
+				{
+					if (ParentActor->GetRootComponent() == NativeSC)
+					{
+						InheritedInfo.bIsRootComponent = true;
+					}
+				}
+
+				Components.Add(InheritedInfo);
+			}
+		}
+	}
+
 	return Components;
 }
 
@@ -778,21 +828,92 @@ bool UBlueprintService::SetComponentProperty(
 	
 	// Set value from string
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Component);
-	
+
 	// Mark component and blueprint as modified before making changes
+	Component->PreEditChange(Property);
 	Component->Modify();
 	Blueprint->Modify();
-	
-	if (!Property->ImportText_Direct(*PropertyValue, ValuePtr, Component, PPF_None))
+
+	// Special handling: struct properties wrapping asset references (e.g. StateTreeReference).
+	// When the value looks like an asset path ("/Game/..."), ImportText_Direct expects the full
+	// struct-text format "(FieldName=Value)" and silently does nothing with a bare path.
+	// Instead, find the first soft-object or object property inside the struct and set it directly.
+	bool bHandledAsStruct = false;
+	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
-		UE_LOG(LogTemp, Error, TEXT("SetComponentProperty: Failed to set property '%s' to '%s'"), *PropertyName, *PropertyValue);
-		return false;
+		const bool bLooksLikePath = PropertyValue.StartsWith(TEXT("/"));
+		if (bLooksLikePath)
+		{
+			for (TFieldIterator<FProperty> It(StructProp->Struct); It; ++It)
+			{
+				if (FSoftObjectProperty* SoftProp = CastField<FSoftObjectProperty>(*It))
+				{
+					void* InnerPtr = SoftProp->ContainerPtrToValuePtr<void>(ValuePtr);
+					FSoftObjectPath SoftPath(PropertyValue);
+					FSoftObjectPtr SoftRef(SoftPath);
+					SoftProp->SetPropertyValue(InnerPtr, SoftRef);
+					bHandledAsStruct = true;
+					break;
+				}
+				if (FObjectProperty* ObjProp = CastField<FObjectProperty>(*It))
+				{
+					void* InnerPtr = ObjProp->ContainerPtrToValuePtr<void>(ValuePtr);
+					UObject* Loaded = StaticLoadObject(ObjProp->PropertyClass, nullptr, *PropertyValue);
+					if (Loaded)
+					{
+						ObjProp->SetObjectPropertyValue(InnerPtr, Loaded);
+						bHandledAsStruct = true;
+					}
+					break;
+				}
+			}
+			if (!bHandledAsStruct)
+			{
+				UE_LOG(LogTemp, Warning,
+					TEXT("SetComponentProperty: No inner soft-object/object property found in struct '%s' for path '%s'. Falling back to ImportText."),
+					*StructProp->Struct->GetName(), *PropertyValue);
+			}
+		}
 	}
-	
-	// Mark blueprint as modified and recompile
-	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	if (!bHandledAsStruct)
+	{
+		if (!Property->ImportText_Direct(*PropertyValue, ValuePtr, Component, PPF_None))
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetComponentProperty: Failed to set property '%s' to '%s'"), *PropertyName, *PropertyValue);
+			return false;
+		}
+
+		// For object properties, verify the asset was actually loaded (not silently set to null).
+		// This catches invalid paths like "/Engine/BasicShapes.Cube" that ImportText_Direct accepts
+		// syntactically but which resolve to no asset, reporting a false success.
+		if (FObjectPropertyBase* ObjProp = CastField<FObjectPropertyBase>(Property))
+		{
+			UObject* LoadedObj = ObjProp->GetObjectPropertyValue(ValuePtr);
+			const bool bWasNoneIntent = PropertyValue.IsEmpty()
+				|| PropertyValue.Equals(TEXT("None"), ESearchCase::IgnoreCase)
+				|| PropertyValue.Equals(TEXT("null"),  ESearchCase::IgnoreCase);
+
+			if (!LoadedObj && !bWasNoneIntent)
+			{
+				UE_LOG(LogTemp, Error,
+					TEXT("SetComponentProperty: Object property '%s' resolved to null — path '%s' is invalid. "
+					     "Use the full object path format: /Package/Folder/AssetName.AssetName"),
+					*PropertyName, *PropertyValue);
+				return false;
+			}
+		}
+	}
+
+	// Notify the component template that its property changed so the Blueprint Editor
+	// Details panel and viewport refresh correctly.
+	FPropertyChangedEvent PropertyChangedEvent(Property, EPropertyChangeType::ValueSet);
+	Component->PostEditChangeProperty(PropertyChangedEvent);
+
+	// Mark blueprint as structurally modified (covers mesh/component visual changes) and recompile.
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	FKismetEditorUtilities::CompileBlueprint(Blueprint);
-	
+
 	UE_LOG(LogTemp, Log, TEXT("SetComponentProperty: Set '%s.%s' = '%s'"), *ComponentName, *PropertyName, *PropertyValue);
 	return true;
 }

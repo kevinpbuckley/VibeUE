@@ -205,12 +205,35 @@ result = unreal.StateTreeService.compile_state_tree("/Game/AI/MyBehavior")
 unreal.StateTreeService.save_state_tree("/Game/AI/MyBehavior")
 ```
 
+### Setting the Context Actor Class
+
+```python
+# Pass the Blueprint ASSET path (no _C suffix) — StateTreeService resolves the generated class.
+unreal.StateTreeService.set_context_actor_class("/Game/AI/ST_MyBehavior", "/Game/Blueprints/BP_MyActor")
+unreal.StateTreeService.compile_state_tree("/Game/AI/ST_MyBehavior")
+unreal.StateTreeService.save_state_tree("/Game/AI/ST_MyBehavior")
+```
+
+### Assigning a StateTree to a StateTreeComponent on a Blueprint
+
+`StateTreeComponent` has **two** properties that look related — only `StateTreeRef` is shown in the
+editor Details panel. Always set `StateTreeRef`, never `StateTree`.
+
+```python
+# WRONG — sets the internal TObjectPtr; the Details panel still shows None
+unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTree", st_path)
+
+# CORRECT — sets the FStateTreeReference struct that the editor reads
+unreal.BlueprintService.set_component_property(bp_path, "StateTree", "StateTreeRef", st_path)
+unreal.BlueprintService.compile_blueprint(bp_path)
+unreal.EditorAssetLibrary.save_asset(bp_path)
+```
+
 ### Advanced Editor Config (Use execute_python_code)
 
 Use `unreal.StateTreeService` for structure + compile/save. For transcript-level editor workflows
 (S1 L5 -> S2 L4), use `execute_python_code` for advanced edits that are not currently first-class service methods:
 
-- Set schema context actor class
 - Configure state descriptions and theme colors
 - Add/edit StateTree parameters and default values
 - Bind task properties (e.g. debug text bindable text, delay duration bindings)
@@ -275,6 +298,19 @@ unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "G
 
 # CORRECT
 unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "GotoState", "Root/Walking")
+```
+
+### ⚠️ Use `StateTreeRef` Not `StateTree` on StateTreeComponent
+
+`StateTreeComponent` has two related properties. The editor Details panel reads `StateTreeRef`.
+Setting `StateTree` silently succeeds but the value does not appear in the editor.
+
+```python
+# WRONG — Details panel still shows None
+unreal.BlueprintService.set_component_property(bp, "StateTree", "StateTree", st_path)
+
+# CORRECT
+unreal.BlueprintService.set_component_property(bp, "StateTree", "StateTreeRef", st_path)
 ```
 
 ### ⚠️ Task Struct Names Include "F" Prefix

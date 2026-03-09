@@ -423,11 +423,13 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 		return nullptr;
 	}
 
+	// 1. Direct class load — handles native classes and Blueprint generated classes already in memory.
 	if (UClass* LoadedClass = StaticLoadClass(AActor::StaticClass(), nullptr, *ActorClassPath))
 	{
 		return LoadedClass;
 	}
 
+	// 2. Path without a dot — assume it's a plain Blueprint asset path; construct the generated class path.
 	if (!ActorClassPath.Contains(TEXT(".")))
 	{
 		const FString AssetName = FPackageName::GetShortName(ActorClassPath);
@@ -438,13 +440,32 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 		}
 	}
 
-	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(ActorClassPath))
+	// 3. Strip any object suffix (e.g. ".BP_Cube_C" or ".BP_Cube") to get the Blueprint asset path,
+	//    then load the Blueprint and return its generated class.
+	//    This handles paths like "/Game/Foo/BP_Bar.BP_Bar_C" that StaticLoadClass can't resolve
+	//    when the generated class hasn't been registered yet.
+	FString BlueprintAssetPath = ActorClassPath;
+	int32 DotIdx = INDEX_NONE;
+	if (BlueprintAssetPath.FindLastChar(TEXT('.'), DotIdx))
+	{
+		BlueprintAssetPath = BlueprintAssetPath.Left(DotIdx);
+	}
+
+	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(BlueprintAssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
 			if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf(AActor::StaticClass()))
 			{
 				return Blueprint->GeneratedClass;
+			}
+		}
+		// Also handle when the path already pointed directly at the generated class object.
+		if (UClass* DirectClass = Cast<UClass>(LoadedAsset))
+		{
+			if (DirectClass->IsChildOf(AActor::StaticClass()))
+			{
+				return DirectClass;
 			}
 		}
 	}
