@@ -79,13 +79,10 @@ public:
 
 	/**
 	 * Capture the level viewport to a file.
-	 * This uses Unreal's built-in screenshot functionality and only works for level viewports.
-	 * @param FilePath - Output file path (PNG format recommended)
-	 * @param Width - Desired width (0 for viewport size)
-	 * @param Height - Desired height (0 for viewport size)
-	 * @return Screenshot result with success status and file info
+	 * NOTE: Not exposed to Python or Blueprint — FScreenshotRequest is asynchronous and the file
+	 * will never be written during a Python execute call (requires an engine render tick).
+	 * Use CaptureEditorWindow() instead, which captures synchronously via Windows GDI/DWM.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
 	static FScreenshotResult CaptureViewport(const FString& FilePath, int32 Width = 1920, int32 Height = 1080);
 
 	/**
@@ -130,6 +127,13 @@ public:
 	static bool IsEditorWindowActive();
 
 private:
+	/**
+	 * Normalize a user-supplied save path:
+	 * - If no directory prefix, defaults to ProjectSaved/Screenshots/
+	 * - If no extension, appends .png
+	 */
+	static FString NormalizeSavePath(const FString& FilePath);
+
 	/**
 	 * Find the Unreal Editor main window handle
 	 * @return Window handle or nullptr if not found

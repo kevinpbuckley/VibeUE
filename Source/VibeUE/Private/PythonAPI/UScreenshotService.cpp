@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UScreenshotService.h"
+#include "Utils/VibeUEPaths.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/FileHelper.h"
 #include "Misc/Paths.h"
@@ -28,13 +29,34 @@ UScreenshotService::UScreenshotService()
 {
 }
 
+FString UScreenshotService::NormalizeSavePath(const FString& FilePath)
+{
+	FString Result = FilePath;
+
+	// If no directory prefix, default to the VibeUE screenshots directory
+	if (!Result.Contains(TEXT("/")) && !Result.Contains(TEXT("\\")))
+	{
+		Result = FVibeUEPaths::GetScreenshotsDir() / Result;
+	}
+
+	// If no extension, add .png
+	if (FPaths::GetExtension(Result).IsEmpty())
+	{
+		Result += TEXT(".png");
+	}
+
+	FPaths::NormalizeFilename(Result);
+	return Result;
+}
+
 FScreenshotResult UScreenshotService::CaptureViewport(const FString& FilePath, int32 Width, int32 Height)
 {
+	FString NormalizedPath = NormalizeSavePath(FilePath);
 	FScreenshotResult Result;
-	Result.FilePath = FilePath;
+	Result.FilePath = NormalizedPath;
 
 	// Ensure directory exists
-	FString Directory = FPaths::GetPath(FilePath);
+	FString Directory = FPaths::GetPath(NormalizedPath);
 	if (!Directory.IsEmpty())
 	{
 		IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
@@ -49,11 +71,14 @@ FScreenshotResult UScreenshotService::CaptureViewport(const FString& FilePath, i
 	if (Width <= 0) Width = 1920;
 	if (Height <= 0) Height = 1080;
 
-	// Request the screenshot through the viewport
-	FScreenshotRequest::RequestScreenshot(FilePath, true, false);
-	
-	Result.bSuccess = true;
-	Result.Message = TEXT("Viewport screenshot requested. Note: This only captures the level viewport, not editor UI.");
+	// IMPORTANT: FScreenshotRequest is asynchronous — the file is written after the next engine render
+	// frame, which will NOT occur while Python is executing on the game thread. The file will never
+	// appear on disk during a Python execute_python_code call. Use capture_editor_window() instead,
+	// which captures synchronously via the Windows GDI/DWM API.
+	FScreenshotRequest::RequestScreenshot(NormalizedPath, true, false);
+
+	Result.bSuccess = false;
+	Result.Message = TEXT("capture_viewport is asynchronous and cannot be used from Python — the engine render frame will not tick while Python is running. Use capture_editor_window() instead, which captures synchronously.");
 	Result.Width = Width;
 	Result.Height = Height;
 	Result.CapturedWindowTitle = TEXT("Level Viewport");
@@ -63,14 +88,15 @@ FScreenshotResult UScreenshotService::CaptureViewport(const FString& FilePath, i
 
 FScreenshotResult UScreenshotService::CaptureEditorWindow(const FString& FilePath)
 {
+	FString NormalizedPath = NormalizeSavePath(FilePath);
 	FScreenshotResult Result;
-	Result.FilePath = FilePath;
+	Result.FilePath = NormalizedPath;
 
 #if PLATFORM_WINDOWS
 	void* WindowHandle = FindEditorWindowHandle();
 	if (WindowHandle)
 	{
-		CaptureWindowToFile(WindowHandle, FilePath, Result);
+		CaptureWindowToFile(WindowHandle, NormalizedPath, Result);
 	}
 	else
 	{
@@ -87,14 +113,15 @@ FScreenshotResult UScreenshotService::CaptureEditorWindow(const FString& FilePat
 
 FScreenshotResult UScreenshotService::CaptureActiveWindow(const FString& FilePath)
 {
+	FString NormalizedPath = NormalizeSavePath(FilePath);
 	FScreenshotResult Result;
-	Result.FilePath = FilePath;
+	Result.FilePath = NormalizedPath;
 
 #if PLATFORM_WINDOWS
 	HWND ForegroundWindow = GetForegroundWindow();
 	if (ForegroundWindow)
 	{
-		CaptureWindowToFile(ForegroundWindow, FilePath, Result);
+		CaptureWindowToFile(ForegroundWindow, NormalizedPath, Result);
 	}
 	else
 	{

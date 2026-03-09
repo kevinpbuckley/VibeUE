@@ -423,11 +423,13 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 		return nullptr;
 	}
 
+	// 1. Direct class load — handles native classes and Blueprint generated classes already in memory.
 	if (UClass* LoadedClass = StaticLoadClass(AActor::StaticClass(), nullptr, *ActorClassPath))
 	{
 		return LoadedClass;
 	}
 
+	// 2. Path without a dot — assume it's a plain Blueprint asset path; construct the generated class path.
 	if (!ActorClassPath.Contains(TEXT(".")))
 	{
 		const FString AssetName = FPackageName::GetShortName(ActorClassPath);
@@ -438,13 +440,32 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 		}
 	}
 
-	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(ActorClassPath))
+	// 3. Strip any object suffix (e.g. ".BP_Cube_C" or ".BP_Cube") to get the Blueprint asset path,
+	//    then load the Blueprint and return its generated class.
+	//    This handles paths like "/Game/Foo/BP_Bar.BP_Bar_C" that StaticLoadClass can't resolve
+	//    when the generated class hasn't been registered yet.
+	FString BlueprintAssetPath = ActorClassPath;
+	int32 DotIdx = INDEX_NONE;
+	if (BlueprintAssetPath.FindLastChar(TEXT('.'), DotIdx))
+	{
+		BlueprintAssetPath = BlueprintAssetPath.Left(DotIdx);
+	}
+
+	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(BlueprintAssetPath))
 	{
 		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
 		{
 			if (Blueprint->GeneratedClass && Blueprint->GeneratedClass->IsChildOf(AActor::StaticClass()))
 			{
 				return Blueprint->GeneratedClass;
+			}
+		}
+		// Also handle when the path already pointed directly at the generated class object.
+		if (UClass* DirectClass = Cast<UClass>(LoadedAsset))
+		{
+			if (DirectClass->IsChildOf(AActor::StaticClass()))
+			{
+				return DirectClass;
 			}
 		}
 	}
@@ -665,11 +686,33 @@ static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStat
 
 static void MarkStateTreeDirty(UStateTree* StateTree)
 {
-	if (StateTree && StateTree->GetPackage())
+	if (!StateTree)
 	{
-		StateTree->GetPackage()->SetDirtyFlag(true);
-		StateTree->Modify();
+		return;
 	}
+
+	StateTree->MarkPackageDirty();
+	StateTree->Modify();
+
+#if WITH_EDITORONLY_DATA
+	if (UStateTreeEditorData* EditorData = GetEditorData(StateTree))
+	{
+		EditorData->Modify();
+		EditorData->PostEditChange();
+
+#if WITH_EDITOR
+		FPropertyChangedEvent PropertyChangedEvent(nullptr);
+		EditorData->PostEditChangeProperty(PropertyChangedEvent);
+#endif
+	}
+#endif
+
+	StateTree->PostEditChange();
+
+#if WITH_EDITOR
+	FPropertyChangedEvent PropertyChangedEvent(nullptr);
+	StateTree->PostEditChangeProperty(PropertyChangedEvent);
+#endif
 }
 
 } // namespace UStateTreeServiceHelpers
@@ -1102,6 +1145,57 @@ bool UStateTreeService::SetStateThemeColor(const FString& AssetPath, const FStri
 	UpdatedColor.Color = Color;
 	EditorData->Colors.Add(UpdatedColor);
 	State->ColorRef = UpdatedColor.ColorRef;
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName)
+{
+	if (OldColorName.IsEmpty() || NewColorName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RenameThemeColor: OldColorName and NewColorName must not be empty"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FStateTreeEditorColor FoundColor;
+	bool bFound = false;
+	for (const FStateTreeEditorColor& ExistingColor : EditorData->Colors)
+	{
+		if (ExistingColor.DisplayName.Equals(OldColorName, ESearchCase::IgnoreCase))
+		{
+			FoundColor = ExistingColor;
+			bFound = true;
+			break;
+		}
+	}
+
+	if (!bFound)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RenameThemeColor: Color '%s' not found in %s"), *OldColorName, *AssetPath);
+		return false;
+	}
+
+	// Remove old entry, update display name, re-add — ColorRef UUID is preserved so state references remain valid
+	EditorData->Colors.Remove(FoundColor);
+	FoundColor.DisplayName = NewColorName;
+	EditorData->Colors.Add(FoundColor);
 
 	MarkStateTreeDirty(StateTree);
 	return true;

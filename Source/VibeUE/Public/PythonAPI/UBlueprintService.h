@@ -292,6 +292,12 @@ struct FBlueprintComponentInfo
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	bool bIsSceneComponent = false;
 
+	/** True if this component comes from a parent C++ class and cannot be removed via Python APIs.
+	 *  These are the "grayed out" components shown in the Blueprint Editor Components panel.
+	 *  To replace an inherited root (e.g. DefaultSceneRoot), call set_root_component() instead. */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bIsInherited = false;
+
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	TArray<FString> Children;
 };

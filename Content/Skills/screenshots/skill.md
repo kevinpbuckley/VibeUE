@@ -19,11 +19,11 @@ keywords:
 
 | Method | Use Case |
 |--------|----------|
-| `capture_editor_window(path)` | Blueprint, Material, Widget BP, any editor tab |
-| `capture_viewport(path, w, h)` | Level viewport only (not blueprints!) |
-| `capture_active_window(path)` | Whatever window is focused |
+| `capture_editor_window(path)` | **DEFAULT — use this for everything.** Synchronous. Captures the whole editor window including any open tab (level viewport, Blueprint, Material, etc.) |
+| `capture_active_window(path)` | Whatever window is currently focused |
 | `get_active_window_title()` | Check what's in focus |
 | `get_open_editor_tabs()` | List open asset editors |
+| `capture_viewport(path, w, h)` | ❌ **DO NOT USE from Python** — asynchronous, file never appears on disk during a Python call. Returns `success=False` with an explanation. |
 
 ---
 
@@ -138,41 +138,25 @@ def frame_actor_for_screenshot(actor, distance=500.0, pitch=-25.0):
 
 ## Workflows
 
-### Take Screenshot and Analyze (Recommended)
+### Take Screenshot and Analyze (Recommended — use this every time)
 
 ```python
 import unreal
 
-# Capture the current view as-is — do not move the camera
-screenshot_path = "E:/Screenshots/Capture.png"
-result = unreal.ScreenshotService.capture_viewport(screenshot_path, 1920, 1080)
+# capture_editor_window is synchronous — file is ready immediately after the call
+result = unreal.ScreenshotService.capture_editor_window("my_capture")
+# Path is auto-normalized: saves to ProjectSaved/VibeUE/Screenshots/my_capture.png
 
 if result.success:
     print(f"SCREENSHOT_SAVED: {result.file_path}")
-    print(f"Size: {result.width}x{result.height}")
 ```
 
-After executing, use `attach_image(file_path=screenshot_path)` to analyze.
+After executing, use `attach_image(file_path=result.file_path)` to analyze.
 
-> ⚠️ **`capture_viewport` is async** — the file may not exist on disk immediately after the call returns. If `attach_image` reports "File not found", wait briefly and retry:
-> ```python
-> import time
-> time.sleep(1)
-> # then attach_image
-> ```
-
-### Take Editor Window Screenshot (No Camera Needed)
-
-```python
-import unreal
-
-screenshot_path = "E:/Screenshots/EditorCapture.png"
-result = unreal.ScreenshotService.capture_editor_window(screenshot_path)
-
-if result.success:
-    print(f"SCREENSHOT_SAVED: {result.file_path}")
-    print(f"Size: {result.width}x{result.height}")
-```
+> ⚠️ **NEVER use `capture_viewport` from Python.** It queues a write for the next engine render frame,
+> which will not occur while Python is running on the game thread. The file will never appear on disk.
+> `capture_viewport` now returns `success=False` with an explanation — if you see that, switch to
+> `capture_editor_window` immediately. **Do NOT retry `capture_viewport`.**
 
 ### Check What User Is Viewing
 
@@ -188,16 +172,6 @@ if unreal.ScreenshotService.is_editor_window_active():
 else:
     print(f"Focused: {unreal.ScreenshotService.get_active_window_title()}")
 ```
-
-### Viewport Only Screenshot
-
-```python
-import unreal
-
-result = unreal.ScreenshotService.capture_viewport("E:/Screenshots/viewport.png", 1920, 1080)
-```
-
-⚠️ Only works when a level viewport is visible!
 
 ---
 
