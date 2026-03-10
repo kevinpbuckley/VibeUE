@@ -1019,7 +1019,7 @@ bool UStateTreeService::CreateStateTree(const FString& AssetPath, const FString&
 	UClass* SchemaClass = nullptr;
 	for (TObjectIterator<UClass> It; It; ++It)
 	{
-		if (*It && It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
+		if (It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
 		{
 			if (It->GetName() == SchemaName)
 			{
@@ -1034,7 +1034,7 @@ bool UStateTreeService::CreateStateTree(const FString& AssetPath, const FString&
 		UE_LOG(LogStateTreeService, Warning, TEXT("CreateStateTree: Schema class not found: %s. Available schemas:"), *SchemaName);
 		for (TObjectIterator<UClass> It; It; ++It)
 		{
-			if (*It && It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
+			if (It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
 			{
 				UE_LOG(LogStateTreeService, Warning, TEXT("  - %s"), *It->GetName());
 			}
