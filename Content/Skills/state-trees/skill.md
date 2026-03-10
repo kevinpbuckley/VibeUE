@@ -144,6 +144,125 @@ unreal.StateTreeService.add_task("/Game/AI/MyBehavior", "Root/Idle", "FStateTree
 unreal.StateTreeService.add_task("/Game/AI/MyBehavior", "Root", "FStateTreeRunSubtreeTask")
 ```
 
+#### ⚠️ Always check before adding — tasks accumulate and don't auto-deduplicate
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+state_path = "Root/Idle"
+task_struct = "FStateTreeDelayTask"
+
+# WRONG — adds a duplicate if task already exists
+unreal.StateTreeService.add_task(st_path, state_path, task_struct)
+
+# CORRECT — check first
+info = unreal.StateTreeService.get_state_tree_info(st_path)
+for state in info.all_states:
+    if state.path == state_path:
+        existing = [t.struct_type for t in state.tasks]
+        print(f"Existing tasks: {existing}")
+        if "StateTreeDelayTask" not in existing:
+            unreal.StateTreeService.add_task(st_path, state_path, task_struct)
+            print("ADDED task")
+        else:
+            print("Task already exists, skipping add")
+```
+
+#### `StateTreeDebugTextTask` in UE5.7
+
+In UE5.7, `FStateTreeDebugTextTask` exposes editable properties across both the task node struct and the task instance data. Common properties include:
+- `Text` (FString)
+- `TextColor` (FColor)
+- `FontScale` (float)
+- `Offset` (FVector) and dotted child paths like `Offset.Z`
+- `bEnabled` (bool)
+- `BindableText` (FString)
+- `ReferenceActor` (TObjectPtr<AActor>)
+
+Always call `get_task_property_names` first and use the exact returned property names. Do not guess aliases like `Color` when the real property name is `TextColor`.
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+props = unreal.StateTreeService.get_task_property_names(st_path, "Root", "FStateTreeDebugTextTask")
+for p in props:
+    print(f"  {p.name}: {p.type} = {p.current_value!r}")
+# Example UE5.7 output:
+#   Text: FString = ""
+#   TextColor: FColor = (B=255,G=255,R=255,A=255)
+#   FontScale: float = 1.000000
+#   Offset: FVector = (X=0.000000,Y=0.000000,Z=0.000000)
+#   Offset.Z: double = 0.000000
+#   bEnabled: bool = True
+#   ReferenceActor: TObjectPtr<AActor> = None
+#   BindableText: FString = ""
+
+# Set the display text and text color
+result = unreal.StateTreeService.set_task_property_value_detailed(
+    st_path, "Root", "FStateTreeDebugTextTask", "Text", "Hello from Root")
+assert result.success, result.error_message
+
+result = unreal.StateTreeService.set_task_property_value_detailed(
+    st_path, "Root", "FStateTreeDebugTextTask", "TextColor", "(R=255,G=105,B=180,A=255)")
+assert result.success, result.error_message
+result = unreal.StateTreeService.compile_state_tree(st_path)
+assert result.success
+unreal.StateTreeService.save_state_tree(st_path)
+```
+
+### Setting Task Properties — Deterministic Pattern
+
+Use the service first. Do not guess property names, and do not target duplicate tasks implicitly.
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+state_path = "Root"
+
+# Step 1: Inspect the exact tasks on the state and count duplicate struct matches.
+info = unreal.StateTreeService.get_state_tree_info(st_path)
+matching_tasks = []
+for state in info.all_states:
+    if state.path == state_path:
+        running_index_by_struct = {}
+        for task in state.tasks:
+            struct_type = task.struct_type
+            match_index = running_index_by_struct.get(struct_type, 0)
+            running_index_by_struct[struct_type] = match_index + 1
+            print(f"Task match {match_index}: {task.name} ({struct_type})")
+            if struct_type == "FStateTreeDebugTextTask":
+                matching_tasks.append(match_index)
+
+task_match_index = matching_tasks[-1] if matching_tasks else -1
+assert task_match_index != -1, "Root has no FStateTreeDebugTextTask"
+
+# Step 2: Discover valid property paths for that exact task match.
+props = unreal.StateTreeService.get_task_property_names(
+    st_path, state_path, "FStateTreeDebugTextTask", task_match_index)
+for p in props:
+    print(f"  {p.name}: {p.type} = {p.current_value!r}")
+# Step 3: Set a property using the detailed result API.
+set_result = unreal.StateTreeService.set_task_property_value_detailed(
+    st_path, state_path, "FStateTreeDebugTextTask",
+    "Text", "Hello from Root", task_match_index)
+
+assert set_result.success, set_result.error_message
+print(f"Previous value: {set_result.previous_value!r}")
+print(f"New value: {set_result.new_value!r}")
+
+# Step 4: Compile and save.
+compile_result = unreal.StateTreeService.compile_state_tree(st_path)
+assert compile_result.success, compile_result.errors
+unreal.StateTreeService.save_state_tree(st_path)
+print("Done")
+```
+
+For nested struct properties, use the exact dotted path returned by `get_task_property_names`
+(for example `Offset.Z`) instead of inventing it.
+
 ### Evaluators & Global Tasks
 
 ```python
@@ -229,20 +348,25 @@ unreal.BlueprintService.compile_blueprint(bp_path)
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
-### Advanced Editor Config (Use execute_python_code)
+### Advanced Editor Config (Use service first)
 
-Use `unreal.StateTreeService` for structure + compile/save. For transcript-level editor workflows
-(S1 L5 -> S2 L4), use `execute_python_code` for advanced edits that are not currently first-class service methods:
+Use `unreal.StateTreeService` for StateTree asset edits first. The service layer now covers:
 
 - Configure state descriptions and theme colors
 - Add/edit StateTree parameters and default values
 - Bind task properties (e.g. debug text bindable text, delay duration bindings)
-- Configure StateTree component overrides on Blueprint instances
+- Set the context actor class
+
+Reserve `execute_python_code` for Blueprint or level-instance operations outside the StateTree asset itself, such as:
+
+- Adding Blueprint variables or components
+- Making Blueprint properties instance-editable
+- Overriding StateTree component data on placed actors
 
 Recommended pattern:
 
-1. Use `unreal.StateTreeService` methods (`create_state_tree`, `add_state`, `add_task`, `add_transition`, `compile_state_tree`, `save_state_tree`) for structure.
-2. Use `execute_python_code` for advanced editor metadata, component wiring, and bindings.
+1. Use `unreal.StateTreeService` methods for structure, descriptions, colors, parameters, property edits, bindings, compile, and save.
+2. Use `execute_python_code` only for Blueprint or level-instance work that sits outside the StateTree asset.
 
 ## COMMON_MISTAKES
 
@@ -321,6 +445,30 @@ unreal.StateTreeService.add_task(path, "Root/Idle", "StateTreeDelayTask")
 
 # CORRECT
 unreal.StateTreeService.add_task(path, "Root/Idle", "FStateTreeDelayTask")
+```
+
+### ⚠️ Never Guess Task Property Names or Value Formats
+
+`set_task_property_value` silently returns `False` when the property name or value format is wrong. Prefer the detailed result API and always:
+
+1. Read `task.struct_type` from `get_state_tree_info()` to get the exact struct name
+2. Inspect the struct's actual properties via `get_task_property_names()` before calling a setter
+3. If duplicate task structs exist on the same state, pass `task_match_index` explicitly
+4. Check the result object or read the value back before compiling
+
+```python
+# WRONG — guessing property names and ignoring the bool result
+unreal.StateTreeService.set_task_property_value(path, "Root", "FStateTreeDebugTextTask", "Color", "(R=1.0,...)")
+unreal.StateTreeService.compile_state_tree(path)  # compiles even if nothing changed
+
+# CORRECT — inspect first, then use the detailed result API
+props = unreal.StateTreeService.get_task_property_names(path, "Root", "FStateTreeDebugTextTask")
+for p in props:
+    print(f"{p.name}: {p.type} = {p.current_value}")  # exact names + correct value format
+
+result = unreal.StateTreeService.set_task_property_value_detailed(
+    path, "Root", "FStateTreeDebugTextTask", "BindableText", "Hello from Root")
+assert result.success, result.error_message
 ```
 
 ### ⚠️ Bool Properties Drop the `b` Prefix in Python

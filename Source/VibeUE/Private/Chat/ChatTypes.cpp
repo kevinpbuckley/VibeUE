@@ -65,13 +65,21 @@ FString FChatHistory::ToJsonString() const
     TSharedPtr<FJsonObject> RootObject = MakeShared<FJsonObject>();
     RootObject->SetNumberField(TEXT("version"), Version);
     RootObject->SetStringField(TEXT("lastModel"), LastModel);
-    
+
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Message : Messages)
     {
         MessagesArray.Add(MakeShared<FJsonValueObject>(Message.ToJsonForPersistence()));
     }
     RootObject->SetArrayField(TEXT("messages"), MessagesArray);
+
+    TArray<TSharedPtr<FJsonValue>> SkillNamesArray;
+    for (const FString& Name : LoadedSkillNames)
+    {
+        SkillNamesArray.Add(MakeShared<FJsonValueString>(Name));
+    }
+    RootObject->SetArrayField(TEXT("loadedSkillNames"), SkillNamesArray);
+    RootObject->SetStringField(TEXT("activeSkillsContent"), ActiveSkillsContent);
     
     FString OutputString;
     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutputString);
@@ -103,7 +111,20 @@ FChatHistory FChatHistory::FromJsonString(const FString& JsonString)
                 }
             }
         }
+
+        const TArray<TSharedPtr<FJsonValue>>* SkillNamesArray;
+        if (RootObject->TryGetArrayField(TEXT("loadedSkillNames"), SkillNamesArray))
+        {
+            for (const TSharedPtr<FJsonValue>& Value : *SkillNamesArray)
+            {
+                if (Value.IsValid())
+                {
+                    History.LoadedSkillNames.Add(Value->AsString());
+                }
+            }
+        }
+        RootObject->TryGetStringField(TEXT("activeSkillsContent"), History.ActiveSkillsContent);
     }
-    
+
     return History;
 }
