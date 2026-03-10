@@ -168,6 +168,60 @@ struct FStateTreeCompileResult
 };
 
 /**
+ * Info about a single editable task property discovered on either the task node struct or its instance data
+ */
+USTRUCT(BlueprintType)
+struct FStateTreePropertyInfo
+{
+	GENERATED_BODY()
+
+	/** Property name as it appears in C++ (case-sensitive, use this in set_task_property_value) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Name;
+
+	/** C++ type name, e.g. "FText", "float", "FLinearColor", "FVector", "bool", "FString" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Type;
+
+	/** Current value exported to string (UE text format, e.g. "(R=1.0,G=0.0,B=0.0,A=1.0)" for FLinearColor) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString CurrentValue;
+};
+
+/**
+ * Detailed result of setting a task property value
+ */
+USTRUCT(BlueprintType)
+struct FStateTreeTaskPropertySetResult
+{
+	GENERATED_BODY()
+
+	/** Whether the property was set successfully */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bSuccess = false;
+
+	/** Error message when the set fails */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString ErrorMessage;
+
+	/** C++ type name of the resolved property */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString PropertyType;
+
+	/** Value before the write, exported as a string */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString PreviousValue;
+
+	/** Value after the write, exported as a string */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString NewValue;
+
+	/** Which matching task instance was targeted for the struct type */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	int32 ResolvedTaskMatchIndex = INDEX_NONE;
+};
+
+/**
  * VibeUE service for creating, inspecting, and editing StateTree assets.
  * Exposed to Python as unreal.StateTreeService
  *
@@ -274,13 +328,46 @@ public:
 	                    const FString& TaskStructName);
 
 	/**
-	 * Set a task instance-data property value using a property path (e.g. "Duration", "Text", "Offset.Z").
+	 * Get all editable properties on a task, including properties declared directly on the task node struct
+	 * and properties declared on its instance data, with name, type, and current value.
+	 * Nested struct leaf properties are returned using dotted paths (e.g. "Offset.Z").
+	 * Use this to discover property names before calling set_task_property_value — never guess.
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetTaskPropertyNames(const FString& AssetPath, const FString& StatePath,
+	                                                           const FString& TaskStructName, int32 TaskMatchIndex = -1);
+
+	/**
+	 * Read the current value of a single task property as a string.
+	 * Returns empty string if the property path is invalid.
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static FString GetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
+	                                    const FString& TaskStructName, const FString& PropertyPath,
+	                                    int32 TaskMatchIndex = -1);
+
+	/**
+	 * Set a task property value using a property path (e.g. "Duration", "Text", "Offset.Z").
+	 * Call get_task_property_names first to discover valid property names — never guess.
+	 * Use set_task_property_value_detailed if you need the failure reason and readback value in Python.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                 const FString& TaskStructName, const FString& PropertyPath,
 	                                 const FString& Value, int32 TaskMatchIndex = -1);
+
+	/**
+	 * Set a task property value and return a structured result with failure reason and readback value.
+	 * Prefer this over the bool-only setter for agent-facing workflows.
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static FStateTreeTaskPropertySetResult SetTaskPropertyValueDetailed(const FString& AssetPath, const FString& StatePath,
+	                                                                   const FString& TaskStructName, const FString& PropertyPath,
+	                                                                   const FString& Value, int32 TaskMatchIndex = -1);
 
 	/**
 	 * Bind a task property to a root parameter path (e.g. parameter "idling_time" -> task property "Duration").

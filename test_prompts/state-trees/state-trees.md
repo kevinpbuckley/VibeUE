@@ -399,22 +399,22 @@ Recompile and save the StateTree.
 ```
 In /Game/AI/BasicMovement:
 - Add FStateTreeDebugTextTask to Root using StateTreeService.add_task
-- Use execute_python_code to set task text to "Root task running"
-- Bind ReferenceActor input to the global actor context variable
-- Set Z offset to 100
+- Use StateTreeService.get_task_property_names to confirm the task exposes Text, TextColor, FontScale, Offset, BindableText, and ReferenceActor
+- Use StateTreeService.set_task_property_value_detailed to set BindableText to "Root task running"
+- Bind ReferenceActor to the Actor context using StateTreeService.bind_task_property_to_context
 Compile and save.
 ```
 
-**Expected**: Task exists in Root, compile succeeds, debug text appears at owning actor location in PIE.
+**Expected**: Task exists in Root, editable task-node and instance-data properties are discoverable, BindableText is set, ReferenceActor is bound to Actor context, and compile succeeds.
 
 ---
 
 ### 26. Bindable text from actor variable (S2 L2)
 
 ```
-Using execute_python_code:
+Using execute_python_code + StateTreeService:
 - Add string variable debug_text to BP_Cube
-- Bind Root debug text task BindableText to actor.debug_text
+- Bind Root debug text task BindableText to actor.debug_text using StateTreeService.bind_task_property_to_context
 - Make debug_text instance editable
 Compile/save BP_Cube and StateTree.
 ```
@@ -426,11 +426,11 @@ Compile/save BP_Cube and StateTree.
 ### 27. Parameters + delay binding (S2 L4)
 
 ```
-In /Game/AI/BasicMovement, using execute_python_code:
-- Add float parameters: idling_time and rotating_time (default 1.0)
+In /Game/AI/BasicMovement, using StateTreeService:
+- Add or update float parameters: idling_time and rotating_time (default 1.0)
 - Ensure Idle and Rotating each have FStateTreeDelayTask
-- Bind Idle delay duration to idling_time
-- Bind Rotating delay duration to rotating_time
+- Bind Idle delay Duration to idling_time
+- Bind Rotating delay Duration to rotating_time
 Compile and save.
 ```
 
@@ -452,6 +452,71 @@ Save level and verify values.
 
 ---
 
+## ST_Cube Debug Task Scenarios
+
+### 29. Add debug text task to ST_Cube root
+
+```
+Add a debug text task to the root state of the ST_Cube StateTree.
+Set the text color to pink and the z-offset to 100.
+Set the text to "Root Task Running".
+Set the font scale to 2.0.
+```
+
+**Expected**: `StateTreeService.add_task` called with `FStateTreeDebugTextTask` on Root. Properties set: text color = pink, z-offset = 100, text = "Root Task Running", font scale = 2.0.
+
+---
+
+### 30. Compile and save ST_Cube StateTree
+
+```
+Compile and save the ST_Cube StateTree.
+```
+
+**Expected**: `StateTreeService.compile_state_tree` called, `result.success` is True, then `StateTreeService.save_state_tree` called. No errors reported.
+
+---
+
+### 31. Add BP_Cube to level in front of player start
+
+```
+Add our BP_Cube to our level in front of our player start.
+```
+
+**Expected**: Finds the player start actor in the current level, places a BP_Cube actor at a position in front of it (offset along forward vector), saves the level.
+
+---
+
+### 32. Set reference actor on ST_Cube debug task to Actor context
+
+```
+Set our reference Actor on the task to the "Actor" on the debug task for ST_Cube.
+```
+
+**Expected**: `StateTreeService.bind_task_property_to_context` called to bind `ReferenceActor` on the `FStateTreeDebugTextTask` in Root to the `Actor` context object. Compile and save.
+
+---
+
+### 33. Disable the debug text task
+
+```
+Disable the debug text task on the Root state of ST_Cube.
+```
+
+**Expected**: `StateTreeService.set_task_enabled` (or equivalent property setter) called with `enabled = False` on the `FStateTreeDebugTextTask` in Root. Compile and save.
+
+---
+
+### 34. Enable the debug text task
+
+```
+Enable the debug text task on the Root state of ST_Cube.
+```
+
+**Expected**: `StateTreeService.set_task_enabled` (or equivalent property setter) called with `enabled = True` on the `FStateTreeDebugTextTask` in Root. Compile and save.
+
+---
+
 ## Notes for Testers
 
 - All asset paths use the `/Game/...` format (content browser paths, NOT filesystem paths)
@@ -464,4 +529,5 @@ Save level and verify values.
 - Available transition types: `GotoState`, `Succeeded`, `Failed`, `NextState`, `NextSelectableState`
 - Available priorities: `Low`, `Normal` (default), `Medium`, `High`, `Critical`
 - Use `StateTreeService.add_task` for adding tasks to individual states
-- Use `execute_python_code` for advanced editor-only operations not yet exposed as dedicated StateTree service methods (theme colors, descriptions, parameter bindings, context actor wiring)
+- Use `StateTreeService` for StateTree asset operations, including theme colors, descriptions, root parameters, task property edits, task bindings, context actor class, compile, and save
+- Use `execute_python_code` only for Blueprint or level-instance operations outside the StateTree asset itself

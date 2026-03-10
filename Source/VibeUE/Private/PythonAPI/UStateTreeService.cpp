@@ -229,7 +229,8 @@ static bool StructNameMatches(const UScriptStruct* Struct, const FString& Expect
 	return false;
 }
 
-static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const FString& TaskStructName, int32 TaskMatchIndex)
+static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const FString& TaskStructName,
+	int32 TaskMatchIndex, int32* OutResolvedTaskMatchIndex = nullptr)
 {
 	if (!State)
 	{
@@ -257,7 +258,150 @@ static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const 
 		return nullptr;
 	}
 
+	if (OutResolvedTaskMatchIndex)
+	{
+		*OutResolvedTaskMatchIndex = SelectedMatchIndex;
+	}
+
 	return &State->Tasks[MatchingTaskIndices[SelectedMatchIndex]];
+}
+
+static void AppendPropertyInfo(FProperty* Property, void* ContainerValue, const FString& Prefix,
+	TArray<FStateTreePropertyInfo>& OutProperties, TSet<FString>* SeenPropertyPaths = nullptr)
+{
+	if (!Property || !ContainerValue)
+	{
+		return;
+	}
+
+	void* PropertyValuePtr = Property->ContainerPtrToValuePtr<void>(ContainerValue);
+	if (!PropertyValuePtr)
+	{
+		return;
+	}
+
+	const FString PropertyPath = Prefix.IsEmpty() ? Property->GetName() : Prefix + TEXT(".") + Property->GetName();
+	if (SeenPropertyPaths && SeenPropertyPaths->Contains(PropertyPath))
+	{
+		return;
+	}
+
+	FStateTreePropertyInfo Info;
+	Info.Name = PropertyPath;
+	Info.Type = Property->GetCPPType();
+	Property->ExportText_Direct(Info.CurrentValue, PropertyValuePtr, PropertyValuePtr, nullptr, PPF_None);
+	OutProperties.Add(MoveTemp(Info));
+	if (SeenPropertyPaths)
+	{
+		SeenPropertyPaths->Add(PropertyPath);
+	}
+
+	if (const FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+	{
+		if (const UScriptStruct* Struct = StructProperty->Struct)
+		{
+			for (TFieldIterator<FProperty> It(Struct); It; ++It)
+			{
+				FProperty* ChildProperty = *It;
+				if (!ChildProperty)
+				{
+					continue;
+				}
+
+				AppendPropertyInfo(ChildProperty, PropertyValuePtr, PropertyPath, OutProperties, SeenPropertyPaths);
+			}
+		}
+	}
+}
+
+static void AppendEditableProperties(const UStruct* RootStruct, void* RootValue,
+	TArray<FStateTreePropertyInfo>& OutProperties, TSet<FString>* SeenPropertyPaths = nullptr)
+{
+	if (!RootStruct || !RootValue)
+	{
+		return;
+	}
+
+	for (TFieldIterator<FProperty> It(RootStruct, EFieldIterationFlags::IncludeSuper); It; ++It)
+	{
+		FProperty* Property = *It;
+		if (!Property || Property->GetOwnerStruct() != RootStruct)
+		{
+			continue;
+		}
+
+		AppendPropertyInfo(Property, RootValue, TEXT(""), OutProperties, SeenPropertyPaths);
+	}
+}
+
+static bool GetTaskNodeData(FStateTreeEditorNode* TaskNode, const UStruct*& OutStruct, void*& OutMemory)
+{
+	if (!TaskNode || !TaskNode->Node.IsValid())
+	{
+		return false;
+	}
+
+	OutStruct = TaskNode->Node.GetScriptStruct();
+	OutMemory = TaskNode->Node.GetMutableMemory();
+	return OutStruct != nullptr && OutMemory != nullptr;
+}
+
+/**
+ * Resolve the instance data for a task node, handling both struct-based (FInstancedStruct)
+ * and UObject-based (InstanceObject) instance data patterns.
+ * UE5.5+ tasks may use either — we must handle both.
+ */
+static bool GetTaskInstanceData(FStateTreeEditorNode* TaskNode, const UStruct*& OutStruct, void*& OutMemory)
+{
+	if (!TaskNode)
+	{
+		return false;
+	}
+
+	// Struct-based instance data (classic pattern, UE5.4 and earlier tasks)
+	if (TaskNode->Instance.IsValid())
+	{
+		OutStruct = TaskNode->Instance.GetScriptStruct();
+		OutMemory = TaskNode->Instance.GetMutableMemory();
+		return OutStruct != nullptr && OutMemory != nullptr;
+	}
+
+	// UObject-based instance data (UE5.5+ pattern)
+	if (IsValid(TaskNode->InstanceObject))
+	{
+		OutStruct = TaskNode->InstanceObject->GetClass();
+		OutMemory = TaskNode->InstanceObject;
+		return OutStruct != nullptr && OutMemory != nullptr;
+	}
+
+	return false;
+}
+
+static bool ResolvePropertyPath(const UStruct* RootStruct, void* RootValue, const FString& PropertyPath,
+	FProperty*& OutProperty, void*& OutValuePtr);
+
+static bool ResolveTaskPropertyPath(FStateTreeEditorNode* TaskNode, const FString& PropertyPath,
+	FProperty*& OutProperty, void*& OutValuePtr)
+{
+	const UStruct* NodeStruct = nullptr;
+	void* NodeMemory = nullptr;
+	if (GetTaskNodeData(TaskNode, NodeStruct, NodeMemory)
+		&& ResolvePropertyPath(NodeStruct, NodeMemory, PropertyPath, OutProperty, OutValuePtr))
+	{
+		return true;
+	}
+
+	const UStruct* InstanceStruct = nullptr;
+	void* InstanceMemory = nullptr;
+	if (GetTaskInstanceData(TaskNode, InstanceStruct, InstanceMemory)
+		&& ResolvePropertyPath(InstanceStruct, InstanceMemory, PropertyPath, OutProperty, OutValuePtr))
+	{
+		return true;
+	}
+
+	OutProperty = nullptr;
+	OutValuePtr = nullptr;
+	return false;
 }
 
 static bool ResolvePropertyPath(const UStruct* RootStruct, void* RootValue, const FString& PropertyPath, FProperty*& OutProperty, void*& OutValuePtr)
@@ -1359,67 +1503,176 @@ bool UStateTreeService::AddTask(const FString& AssetPath, const FString& StatePa
 bool UStateTreeService::SetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, const FString& PropertyPath, const FString& Value, int32 TaskMatchIndex)
 {
+	return SetTaskPropertyValueDetailed(AssetPath, StatePath, TaskStructName, PropertyPath, Value, TaskMatchIndex).bSuccess;
+}
+
+FStateTreeTaskPropertySetResult UStateTreeService::SetTaskPropertyValueDetailed(const FString& AssetPath,
+	const FString& StatePath, const FString& TaskStructName, const FString& PropertyPath,
+	const FString& Value, int32 TaskMatchIndex)
+{
+	FStateTreeTaskPropertySetResult Result;
+
+	auto Fail = [&Result](const FString& Message, int32 ResolvedTaskMatchIndex = INDEX_NONE)
+	{
+		Result.bSuccess = false;
+		Result.ErrorMessage = Message;
+		Result.ResolvedTaskMatchIndex = ResolvedTaskMatchIndex;
+		return Result;
+	};
+
 	if (PropertyPath.IsEmpty())
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: PropertyPath is empty"));
-		return false;
+		const FString Message = TEXT("SetTaskPropertyValueDetailed: PropertyPath is empty");
+		UE_LOG(LogStateTreeService, Warning, TEXT("%s"), *Message);
+		return Fail(Message);
 	}
 
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree)
 	{
-		return false;
+		return Fail(FString::Printf(TEXT("SetTaskPropertyValueDetailed: StateTree asset not found: %s"), *AssetPath));
 	}
 
 #if WITH_EDITORONLY_DATA
 	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
 	if (!EditorData)
 	{
-		return false;
+		return Fail(FString::Printf(TEXT("SetTaskPropertyValueDetailed: Editor data unavailable for %s"), *AssetPath));
 	}
 
 	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
 	if (!State)
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: State not found: %s"), *StatePath);
-		return false;
+		const FString Message = FString::Printf(TEXT("SetTaskPropertyValueDetailed: State not found: %s"), *StatePath);
+		UE_LOG(LogStateTreeService, Warning, TEXT("%s"), *Message);
+		return Fail(Message);
+	}
+
+	int32 ResolvedTaskMatchIndex = INDEX_NONE;
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex, &ResolvedTaskMatchIndex);
+	if (!TaskNode)
+	{
+		const FString Message = FString::Printf(
+			TEXT("SetTaskPropertyValueDetailed: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		UE_LOG(LogStateTreeService, Warning, TEXT("%s"), *Message);
+		return Fail(Message);
+	}
+
+	Result.ResolvedTaskMatchIndex = ResolvedTaskMatchIndex;
+
+	FProperty* Property = nullptr;
+	void* PropertyValuePtr = nullptr;
+	if (!ResolveTaskPropertyPath(TaskNode, PropertyPath, Property, PropertyValuePtr))
+	{
+		const FString Message = FString::Printf(
+			TEXT("SetTaskPropertyValueDetailed: Could not resolve property path '%s' on '%s'. The property may live on the task node struct or its instance data. Call get_task_property_names to inspect valid paths."),
+			*PropertyPath, *TaskStructName);
+		UE_LOG(LogStateTreeService, Warning, TEXT("%s"), *Message);
+		return Fail(Message, ResolvedTaskMatchIndex);
+	}
+
+	Result.PropertyType = Property->GetCPPType();
+	Property->ExportText_Direct(Result.PreviousValue, PropertyValuePtr, PropertyValuePtr, nullptr, PPF_None);
+
+	if (!SetPropertyValueFromString(Property, PropertyValuePtr, Value))
+	{
+		const FString Message = FString::Printf(
+			TEXT("SetTaskPropertyValueDetailed: Failed to set property '%s' with value '%s'"),
+			*PropertyPath, *Value);
+		UE_LOG(LogStateTreeService, Warning, TEXT("%s"), *Message);
+		return Fail(Message, ResolvedTaskMatchIndex);
+	}
+
+	Property->ExportText_Direct(Result.NewValue, PropertyValuePtr, PropertyValuePtr, nullptr, PPF_None);
+	MarkStateTreeDirty(StateTree);
+	Result.bSuccess = true;
+	return Result;
+#else
+	return Fail(TEXT("SetTaskPropertyValueDetailed: StateTree editing requires WITH_EDITORONLY_DATA"));
+#endif
+}
+
+TArray<FStateTreePropertyInfo> UStateTreeService::GetTaskPropertyNames(const FString& AssetPath,
+	const FString& StatePath, const FString& TaskStructName, int32 TaskMatchIndex)
+{
+	TArray<FStateTreePropertyInfo> Result;
+
+#if WITH_EDITORONLY_DATA
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return Result; }
+
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return Result; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetTaskPropertyNames: State not found: %s"), *StatePath);
+		return Result;
 	}
 
 	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
 	if (!TaskNode)
 	{
-		UE_LOG(LogStateTreeService, Warning,
-			TEXT("SetTaskPropertyValue: Task not found in %s for struct '%s' at match index %d"),
-			*StatePath, *TaskStructName, TaskMatchIndex);
-		return false;
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetTaskPropertyNames: Task '%s' not found in state '%s'"),
+			*TaskStructName, *StatePath);
+		return Result;
 	}
 
-	if (!TaskNode->Instance.IsValid())
+	TSet<FString> SeenPropertyPaths;
+
+	const UStruct* NodeStruct = nullptr;
+	void* NodeMemory = nullptr;
+	if (GetTaskNodeData(TaskNode, NodeStruct, NodeMemory))
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: Task instance is invalid"));
-		return false;
+		AppendEditableProperties(NodeStruct, NodeMemory, Result, &SeenPropertyPaths);
 	}
+
+	const UStruct* InstanceStruct = nullptr;
+	void* InstanceMemory = nullptr;
+	if (GetTaskInstanceData(TaskNode, InstanceStruct, InstanceMemory))
+	{
+		AppendEditableProperties(InstanceStruct, InstanceMemory, Result, &SeenPropertyPaths);
+	}
+
+	UE_LOG(LogStateTreeService, Log, TEXT("GetTaskPropertyNames: Found %d editable properties on task '%s'"),
+		Result.Num(), *TaskStructName);
+#endif
+
+	return Result;
+}
+
+FString UStateTreeService::GetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& PropertyPath, int32 TaskMatchIndex)
+{
+#if WITH_EDITORONLY_DATA
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return FString(); }
+
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return FString(); }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State) { return FString(); }
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode) { return FString(); }
 
 	FProperty* Property = nullptr;
 	void* PropertyValuePtr = nullptr;
-	if (!ResolvePropertyPath(TaskNode->Instance.GetScriptStruct(), TaskNode->Instance.GetMutableMemory(),
-		PropertyPath, Property, PropertyValuePtr))
-	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("SetTaskPropertyValue: Could not resolve property path '%s'"), *PropertyPath);
-		return false;
-	}
-
-	if (!SetPropertyValueFromString(Property, PropertyValuePtr, Value))
+	if (!ResolveTaskPropertyPath(TaskNode, PropertyPath, Property, PropertyValuePtr))
 	{
 		UE_LOG(LogStateTreeService, Warning,
-			TEXT("SetTaskPropertyValue: Failed to set property '%s' with value '%s'"), *PropertyPath, *Value);
-		return false;
+			TEXT("GetTaskPropertyValue: Could not resolve property path '%s'"), *PropertyPath);
+		return FString();
 	}
 
-	MarkStateTreeDirty(StateTree);
-	return true;
+	FString ExportedValue;
+	Property->ExportText_Direct(ExportedValue, PropertyValuePtr, PropertyValuePtr, nullptr, PPF_None);
+	return ExportedValue;
 #else
-	return false;
+	return FString();
 #endif
 }
 
