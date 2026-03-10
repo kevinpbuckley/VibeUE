@@ -26,6 +26,7 @@ import pathlib
 import sys
 import urllib.request
 import urllib.error
+import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime, timezone
 
@@ -40,8 +41,15 @@ UE_URL     = f"http://127.0.0.1:{UE_PORT}/mcp"
 APPDATA = os.environ.get("APPDATA", str(pathlib.Path.home()))
 MANIFEST_PATH = pathlib.Path(APPDATA) / "VibeUE" / "tools-manifest.json"
 
-# Bearer token is passed through from the incoming MCP client request
-# to UE, so no separate config is needed.
+# Load bearer token from vibeue-proxy.json (same directory as this script).
+# This token is injected into every outbound request to UE, so the MCP client
+# does not need to send auth — UE is still protected.
+_PROXY_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / "vibeue-proxy.json"
+try:
+    with open(_PROXY_CONFIG_PATH) as _f:
+        _UE_BEARER_TOKEN = json.load(_f).get("bearer_token", "")
+except Exception:
+    _UE_BEARER_TOKEN = ""
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -69,13 +77,25 @@ def load_manifest() -> list:
 
 
 def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
-    """Try to forward a raw request body to UE. Returns (success, response_bytes)."""
+    """Try to forward a raw request body to UE. Returns (success, response_bytes).
+
+    success=True  → UE returned a 2xx; response_bytes is valid JSON-RPC to forward as-is.
+    success=False → UE unreachable OR returned an error; response_bytes is a plain-text
+                    description of the problem (may be empty if connection failed outright).
+                    Caller must wrap this in a proper JSON-RPC error envelope.
+    """
     forward_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
     }
-    # Pass through Authorization and MCP headers from the incoming request
-    for key in ("authorization", "mcp-protocol-version", "mcp-session-id"):
+    # Inject the UE bearer token directly from vibeue-proxy.json — do not rely on
+    # the MCP client forwarding it, as some clients (e.g. Claude Code) omit auth headers.
+    if _UE_BEARER_TOKEN:
+        forward_headers["Authorization"] = f"Bearer {_UE_BEARER_TOKEN}"
+    # Pass through MCP protocol version from the incoming request.
+    # Do NOT forward mcp-session-id — the proxy answers initialize itself and has no
+    # session with UE, so a client session ID forwarded verbatim would be rejected by UE.
+    for key in ("mcp-protocol-version",):
         if key in headers:
             forward_headers[key] = headers[key]
 
@@ -88,25 +108,34 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
         )
         with urllib.request.urlopen(req, timeout=10) as resp:
             return True, resp.read()
-    except Exception:
+    except urllib.error.HTTPError as e:
+        # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
+        # Return failure with the UE error text so the caller can surface it clearly.
+        body = e.read()
+        log(f"UE returned HTTP {e.code}: {body[:200]}")
+        return False, body
+    except (urllib.error.URLError, socket.timeout, OSError):
         return False, b""
 
 
-def ue_error_response(req_id, tool_name: str) -> dict:
+def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
+    if ue_message:
+        text = (
+            f"Unreal Engine rejected the request: {ue_message}\n"
+            f"Check that the API token in ~/.claude/mcp.json matches "
+            f"Project Settings → Plugins → VibeUE → API Key."
+        )
+    else:
+        text = (
+            f"Unreal Engine is not running.\n"
+            f"Please launch UE with the VibeUE plugin enabled, "
+            f"then retry '{tool_name}'."
+        )
     return {
         "jsonrpc": "2.0",
         "id": req_id,
         "result": {
-            "content": [
-                {
-                    "type": "text",
-                    "text": (
-                        f"Unreal Engine is not running.\n"
-                        f"Please launch UE with the VibeUE plugin enabled, "
-                        f"then retry '{tool_name}'."
-                    ),
-                }
-            ],
+            "content": [{"type": "text", "text": text}],
             "isError": True,
         },
     }
@@ -116,6 +145,8 @@ def ue_error_response(req_id, tool_name: str) -> dict:
 # ---------------------------------------------------------------------------
 
 class ProxyHandler(BaseHTTPRequestHandler):
+
+    protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
         # Suppress default access log; we do our own
@@ -201,10 +232,11 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.wfile.write(response_bytes)
             log(f"{method} -> forwarded to UE")
         else:
-            log(f"{method} -> UE not running")
+            ue_msg = response_bytes.decode(errors="replace").strip() if response_bytes else ""
+            log(f"{method} -> UE error: {ue_msg or '(no response — UE not running or unreachable)'}")
             if method == "tools/call":
                 tool_name = (rpc.get("params") or {}).get("name", "unknown")
-                self._raw_json(ue_error_response(req_id, tool_name))
+                self._raw_json(ue_error_response(req_id, tool_name, ue_msg))
             else:
                 # ping, resources/list, etc. — return empty success
                 self._jsonrpc(req_id, {})
@@ -242,6 +274,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if not _PROXY_CONFIG_PATH.exists():
+        log(f"WARNING: vibeue-proxy.json not found at {_PROXY_CONFIG_PATH}")
+        log("Create it with {\"bearer_token\": \"<your-token>\"} to match UE Project Settings → VibeUE → API Key.")
+        log("Without it, requests to UE will be sent without auth and will fail if an API Key is set.")
+    elif not _UE_BEARER_TOKEN:
+        log(f"WARNING: vibeue-proxy.json exists but 'bearer_token' is empty — UE requests will be unauthenticated.")
+    else:
+        log(f"Bearer token loaded from vibeue-proxy.json")
+
     if not MANIFEST_PATH.exists():
         log(f"Note: manifest not found at {MANIFEST_PATH}")
         log("Launch Unreal Engine with VibeUE once to generate it.")

@@ -6,6 +6,161 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 VibeUE is an Unreal Engine 5.7+ editor plugin that provides AI-powered development capabilities through an In-Editor Chat Client and Model Context Protocol (MCP) integration. The plugin exposes 14 multi-action tools with 177 total actions for manipulating Blueprints, UMG widgets, materials, assets, and more through natural language.
 
+## Connecting Claude Code to VibeUE (External MCP Clients)
+
+This section is for **any Claude Code session** working in a project that has VibeUE installed as a plugin.
+
+### Architecture
+
+There are two ways to connect — direct or via the optional proxy:
+
+```
+# Direct (simpler, requires UE to be running)
+Claude Code  →  Unreal Engine (port 8088)
+
+# Via proxy (optional, recommended for persistent setups)
+Claude Code  →  VibeUE Proxy (port 8089)  →  Unreal Engine (port 8088)
+```
+
+- **UE MCP server** (port 8088): available when the editor is running with VibeUE enabled
+- **Proxy** (port 8089, optional): serves tool definitions even when UE is closed; injects the bearer token so MCP clients don't need to handle auth
+- **Proxy script**: `<PluginRoot>/Content/Python/vibeue-proxy.py` (stdlib only, no pip dependencies)
+- **Tool manifest**: written by UE on startup to `%APPDATA%\VibeUE\tools-manifest.json` (Windows) or `~/Library/Application Support/VibeUE/tools-manifest.json` (Mac)
+
+### Option A — Direct Connection (no proxy)
+
+Point your MCP client straight at UE. UE must be running for any tool calls to work.
+
+**`~/.claude/mcp.json`:**
+```json
+{
+  "mcpServers": {
+    "VibeUE": {
+      "type": "http",
+      "url": "http://127.0.0.1:8088/mcp",
+      "headers": {
+        "Authorization": "Bearer <your-token>"
+      }
+    }
+  }
+}
+```
+
+The token must match Project Settings → Plugins → VibeUE → API Key. If no API Key is set in UE, omit the `headers` block.
+
+### Option B — Via Proxy (recommended)
+
+The proxy adds two benefits: tool definitions are available even when UE is closed, and it handles bearer token injection so MCP clients need no auth config.
+
+**1. Set the bearer token**
+
+Create `vibeue-proxy.json` in the plugin root (next to the `.uplugin` file):
+
+```json
+{
+  "bearer_token": "<your-token>"
+}
+```
+
+This must match Project Settings → Plugins → VibeUE → API Key. If `vibeue-proxy.json` is missing or `bearer_token` is empty, the proxy warns on startup and forwards requests without auth.
+
+**2. Start the proxy**
+
+```powershell
+# Windows — runs silently in background
+Start-Process -FilePath 'pythonw.exe' -ArgumentList '<PluginRoot>\Content\Python\vibeue-proxy.py' -WindowStyle Hidden
+
+# Mac / Linux
+python3 <PluginRoot>/Content/Python/vibeue-proxy.py &
+```
+
+**Optional — auto-start on Windows login:** add a shortcut to `<PluginRoot>\Content\Python\start-vibeue-proxy.bat` in `shell:startup` (Win+R → `shell:startup`). The bat file kills any existing instance before starting, so duplicates are not an issue.
+
+**3. Point your MCP client at the proxy**
+
+**`~/.claude/mcp.json`:**
+```json
+{
+  "mcpServers": {
+    "VibeUE": {
+      "type": "http",
+      "url": "http://127.0.0.1:8089/mcp"
+    }
+  }
+}
+```
+
+No `Authorization` header needed — the proxy injects the token from `vibeue-proxy.json`.
+
+**4. Launch Unreal Engine** with your project and VibeUE plugin enabled.
+
+### Diagnosing and Fixing Connection Problems
+
+**Direct connection (Option A):**
+
+```bash
+curl -s -X POST http://127.0.0.1:8088/mcp \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-token>" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1.0"},"capabilities":{}}}'
+```
+- ✅ Got JSON with `"VibeUE"` → connected
+- ❌ `Connection refused` → UE is not running
+- ❌ `Invalid or missing API key` → token mismatch — check `~/.claude/mcp.json` vs Project Settings → VibeUE → API Key
+
+**Proxy connection (Option B) — run checks in order:**
+
+**Check 1 — Is the proxy running?**
+```bash
+curl -s -X POST http://127.0.0.1:8089/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","clientInfo":{"name":"test","version":"1.0"},"capabilities":{}}}'
+```
+- ✅ Got JSON with `"VibeUE-Proxy"` → proxy is running, continue to Check 2
+- ❌ `Connection refused` → proxy is not running → start it (see Option B above)
+
+**Check 2 — Does the proxy have tools?**
+```bash
+curl -s -X POST http://127.0.0.1:8089/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(f'{len(d[\"result\"][\"tools\"])} tools loaded')"
+```
+- ✅ `N tools loaded` (N > 0) → manifest exists, continue to Check 3
+- ❌ `0 tools loaded` → manifest is missing → launch UE with VibeUE at least once to generate it
+
+**Check 3 — Is UE reachable through the proxy?**
+```bash
+curl -s -X POST http://127.0.0.1:8089/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"execute_python_code","arguments":{"code":"print(1)"}}}'
+```
+- ✅ Got `"success": true` → full stack working
+- ❌ `"Unreal Engine is not running"` → launch the Unreal Editor with VibeUE enabled
+- ❌ `"Unreal Engine rejected the request: Invalid or missing API key"` → token mismatch — check `vibeue-proxy.json` vs Project Settings → VibeUE → API Key, then restart the proxy
+
+**Check 4 — Stale proxy instance?**
+
+If the proxy fails to start because port 8089 is already in use:
+```powershell
+# Windows — find and kill stale proxy
+Get-NetTCPConnection -LocalPort 8089 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+# Then start the proxy again
+```
+
+Note: if Claude Code is diagnosing connection problems, also check `memory/MEMORY.md` — a stale token cached there can cause misleading curl test results.
+
+### Verifying the Full Stack
+
+```bash
+curl -s -X POST http://127.0.0.1:8089/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}' \
+  | python3 -c "import sys,json; tools=json.load(sys.stdin)['result']['tools']; print('\n'.join(t['name'] for t in tools))"
+```
+
+---
+
 ## Essential Commands
 
 ### Building the Plugin
