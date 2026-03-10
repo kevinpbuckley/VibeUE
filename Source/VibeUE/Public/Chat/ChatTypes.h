@@ -490,10 +490,18 @@ struct VIBEUE_API FChatHistory
     /** All messages in the conversation */
     UPROPERTY()
     TArray<FChatMessage> Messages;
-    
+
+    /** Names of skills currently injected into the system prompt */
+    UPROPERTY()
+    TArray<FString> LoadedSkillNames;
+
+    /** Accumulated skill documentation injected into the system prompt */
+    UPROPERTY()
+    FString ActiveSkillsContent;
+
     /** Convert to JSON for file storage */
     FString ToJsonString() const;
-    
+
     /** Load from JSON file content */
     static FChatHistory FromJsonString(const FString& JsonString);
 };

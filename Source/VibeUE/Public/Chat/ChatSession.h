@@ -407,6 +407,24 @@ public:
     FOnToolCallApprovalRequired OnToolCallApprovalRequired;
     FOnTaskListUpdated OnTaskListUpdated;
 
+    // ============ Loaded Skills (System Prompt Injection) ============
+
+    /**
+     * Inject skill content into the system prompt (in-editor chat only).
+     * Called by the manage_skills tool when running in the editor context.
+     * Deduplicates by SkillNames — content is only appended for newly loaded skills.
+     */
+    void InjectSkillIntoSystemPrompt(const TArray<FString>& SkillNames, const FString& SkillContent);
+
+    /** Check if a skill (by directory name) is already injected into the system prompt */
+    bool IsSkillLoaded(const FString& SkillName) const;
+
+    /** Get names of all skills currently loaded into the system prompt */
+    const TArray<FString>& GetLoadedSkillNames() const { return LoadedSkillNames; }
+
+    /** Clear all loaded skills (called on chat reset) */
+    void ClearLoadedSkills();
+
     // ============ Task List ============
 
     /** Update the task list (called by manage_tasks tool) */
@@ -649,6 +667,12 @@ private:
 
     /** Current task list managed by manage_tasks tool */
     TArray<FVibeUETaskItem> TaskList;
+
+    /** Names of skills currently injected into the system prompt */
+    TArray<FString> LoadedSkillNames;
+
+    /** Accumulated skill documentation appended to the system prompt */
+    FString ActiveSkillsContent;
 
     // Loop detection is handled via prompt-based self-awareness instructions
     // See vibeue.instructions.md for details

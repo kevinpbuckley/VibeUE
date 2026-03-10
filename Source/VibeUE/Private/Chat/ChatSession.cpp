@@ -1098,6 +1098,56 @@ void FChatSession::ClearTaskList()
     OnTaskListUpdated.ExecuteIfBound(TaskList);
 }
 
+void FChatSession::InjectSkillIntoSystemPrompt(const TArray<FString>& SkillNames, const FString& SkillContent)
+{
+    bool bAnyNew = false;
+    for (const FString& Name : SkillNames)
+    {
+        if (!IsSkillLoaded(Name))
+        {
+            LoadedSkillNames.Add(Name);
+            bAnyNew = true;
+        }
+    }
+
+    if (bAnyNew)
+    {
+        if (!ActiveSkillsContent.IsEmpty())
+        {
+            ActiveSkillsContent += TEXT("\n\n");
+        }
+        ActiveSkillsContent += SkillContent;
+
+        SaveHistory();
+
+        UE_LOG(LogChatSession, Log, TEXT("Injected skills into system prompt: [%s]. Total loaded: %d"),
+            *FString::Join(SkillNames, TEXT(", ")), LoadedSkillNames.Num());
+    }
+    else
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Skills already loaded, skipping injection: [%s]"),
+            *FString::Join(SkillNames, TEXT(", ")));
+    }
+}
+
+bool FChatSession::IsSkillLoaded(const FString& SkillName) const
+{
+    for (const FString& Loaded : LoadedSkillNames)
+    {
+        if (Loaded.Equals(SkillName, ESearchCase::IgnoreCase))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+void FChatSession::ClearLoadedSkills()
+{
+    LoadedSkillNames.Empty();
+    ActiveSkillsContent.Empty();
+}
+
 void FChatSession::ResetChat()
 {
     CancelRequest();
@@ -1112,6 +1162,9 @@ void FChatSession::ResetChat()
 
     // Clear task list
     ClearTaskList();
+
+    // Clear loaded skills (removed from system prompt after reset)
+    ClearLoadedSkills();
 
     // Delete history file
     FString HistoryPath = GetHistoryFilePath();
@@ -1297,13 +1350,17 @@ void FChatSession::LoadHistory()
     
     FChatHistory History = FChatHistory::FromJsonString(JsonContent);
     Messages = History.Messages;
-    
+
     if (!History.LastModel.IsEmpty())
     {
         CurrentModelId = History.LastModel;
     }
-    
-    UE_LOG(LogChatSession, Log, TEXT("Loaded %d messages from chat history"), Messages.Num());
+
+    LoadedSkillNames = History.LoadedSkillNames;
+    ActiveSkillsContent = History.ActiveSkillsContent;
+
+    UE_LOG(LogChatSession, Log, TEXT("Loaded %d messages from chat history, %d skills in system prompt"),
+        Messages.Num(), LoadedSkillNames.Num());
 }
 
 void FChatSession::SaveHistory()
@@ -1320,6 +1377,8 @@ void FChatSession::SaveHistory()
     FChatHistory History;
     History.LastModel = CurrentModelId;
     History.Messages = Messages;
+    History.LoadedSkillNames = LoadedSkillNames;
+    History.ActiveSkillsContent = ActiveSkillsContent;
     
     FString JsonContent = History.ToJsonString();
     
@@ -1595,6 +1654,7 @@ int32 FChatSession::GetCurrentModelContextLength() const
 int32 FChatSession::GetEstimatedTokenCount() const
 {
     int32 TotalTokens = EstimateTokenCount(SystemPrompt);
+    TotalTokens += EstimateTokenCount(ActiveSkillsContent);
 
     for (const FChatMessage& Msg : Messages)
     {
@@ -1620,8 +1680,13 @@ void FChatSession::GetAccurateTokenCount(TFunction<void(bool bSuccess, int32 Tok
     // Build messages for counting (same as BuildApiMessages but without truncation)
     TArray<FChatMessage> AllMessages;
 
-    // Add system prompt
-    AllMessages.Add(FChatMessage(TEXT("system"), SystemPrompt));
+    // Add system prompt (with injected skill content)
+    FString FullSystemPrompt = SystemPrompt;
+    if (!ActiveSkillsContent.IsEmpty())
+    {
+        FullSystemPrompt += TEXT("\n\n<loaded_skills>\n") + ActiveSkillsContent + TEXT("\n</loaded_skills>");
+    }
+    AllMessages.Add(FChatMessage(TEXT("system"), FullSystemPrompt));
 
     // Add conversation summary if present
     if (!ConversationSummary.IsEmpty())
@@ -2055,13 +2120,17 @@ TArray<FChatMessage> FChatSession::BuildApiMessages() const
 {
     TArray<FChatMessage> ApiMessages;
     
-    // Build full system prompt with optional tool instructions
+    // Build full system prompt, appending any skills injected this session
     FString FullSystemPrompt = SystemPrompt;
+    if (!ActiveSkillsContent.IsEmpty())
+    {
+        FullSystemPrompt += TEXT("\n\n<loaded_skills>\n") + ActiveSkillsContent + TEXT("\n</loaded_skills>");
+    }
 
     int32 AvailableTokens = GetCurrentModelContextLength() - ReservedResponseTokens;
     int32 UsedTokens = EstimateTokenCount(FullSystemPrompt);
 
-    // Always include system prompt (with task list context appended)
+    // Always include system prompt (with skill content and task list context appended)
     ApiMessages.Add(FChatMessage(TEXT("system"), FullSystemPrompt));
     
     // If we have a conversation summary, add it after system prompt

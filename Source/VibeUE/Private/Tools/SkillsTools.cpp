@@ -1,6 +1,7 @@
 // Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Core/ToolRegistry.h"
+#include "Chat/ChatSession.h"
 #include "Utils/VibeUEPaths.h"
 #include "Tools/PythonTools.h"
 #include "Tools/PythonDiscoveryService.h"
@@ -1333,7 +1334,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 		{
 			// Build skill names list from either parameter
 			TArray<FString> SkillNames = ExtractSkillNamesArray(Params);
-			
+
 			// If no array provided, check for single skill_name
 			if (SkillNames.Num() == 0)
 			{
@@ -1348,7 +1349,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 					SkillNames.Add(SkillName);
 				}
 			}
-			
+
 			if (SkillNames.Num() == 0)
 			{
 				TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
@@ -1361,6 +1362,153 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 				return ErrorJson;
 			}
 
+			// In-editor chat: inject skill content into the system prompt instead of
+			// returning it as a large tool result (which degrades over long conversations).
+			// MCP callers (external tools) get the full content as before.
+			FChatSession* Session = FToolRegistry::Get().GetCurrentSession();
+			if (Session != nullptr)
+			{
+				// Filter out skills already in the system prompt (best-effort by input name)
+				TArray<FString> NewSkillNames;
+				TArray<FString> AlreadyLoadedNames;
+				for (const FString& Name : SkillNames)
+				{
+					if (Session->IsSkillLoaded(Name))
+					{
+						AlreadyLoadedNames.Add(Name);
+					}
+					else
+					{
+						NewSkillNames.Add(Name);
+					}
+				}
+
+				if (NewSkillNames.IsEmpty())
+				{
+					// All requested skills are already injected
+					TSharedPtr<FJsonObject> ConfirmObj = MakeShared<FJsonObject>();
+					ConfirmObj->SetBoolField(TEXT("success"), true);
+					ConfirmObj->SetStringField(TEXT("message"), FString::Printf(
+						TEXT("All requested skills are already loaded in the system prompt: %s"),
+						*FString::Join(AlreadyLoadedNames, TEXT(", "))));
+
+					TArray<TSharedPtr<FJsonValue>> InPromptArray;
+					for (const FString& Name : Session->GetLoadedSkillNames())
+					{
+						InPromptArray.Add(MakeShared<FJsonValueString>(Name));
+					}
+					ConfirmObj->SetArrayField(TEXT("skills_in_system_prompt"), InPromptArray);
+
+					FString ConfirmJson;
+					TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ConfirmJson);
+					FJsonSerializer::Serialize(ConfirmObj.ToSharedRef(), Writer);
+					return ConfirmJson;
+				}
+
+				// Load only the skills that aren't already in the prompt
+				FString FullResult = LoadSkills(NewSkillNames);
+
+				TSharedPtr<FJsonObject> ResultObj;
+				TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(FullResult);
+				if (FJsonSerializer::Deserialize(Reader, ResultObj) && ResultObj.IsValid()
+					&& ResultObj->GetBoolField(TEXT("success")))
+				{
+					// Collect actual resolved directory names from the result.
+					// LoadSingleSkill uses "skill_name" (string); LoadMultipleSkills uses "skills_loaded" (array).
+					TArray<FString> ActuallyLoadedNames;
+					const TArray<TSharedPtr<FJsonValue>>* SkillsLoadedArray;
+					if (ResultObj->TryGetArrayField(TEXT("skills_loaded"), SkillsLoadedArray))
+					{
+						for (const TSharedPtr<FJsonValue>& V : *SkillsLoadedArray)
+						{
+							ActuallyLoadedNames.Add(V->AsString());
+						}
+					}
+					else
+					{
+						// Single-skill format: "skill_name" string field
+						FString SingleName;
+						if (ResultObj->TryGetStringField(TEXT("skill_name"), SingleName) && !SingleName.IsEmpty())
+						{
+							ActuallyLoadedNames.Add(SingleName);
+						}
+					}
+
+					// Inject content into system prompt (persisted to disk)
+					FString SkillContent = ResultObj->GetStringField(TEXT("content"));
+					Session->InjectSkillIntoSystemPrompt(ActuallyLoadedNames, SkillContent);
+
+					// Return a lightweight confirmation — full docs are now in the system prompt
+					TSharedPtr<FJsonObject> ConfirmObj = MakeShared<FJsonObject>();
+					ConfirmObj->SetBoolField(TEXT("success"), true);
+					ConfirmObj->SetBoolField(TEXT("injected_into_system_prompt"), true);
+
+					// skills_loaded array (normalised — works for both single and multiple skill formats)
+					TArray<TSharedPtr<FJsonValue>> LoadedArr;
+					for (const FString& Name : ActuallyLoadedNames)
+					{
+						LoadedArr.Add(MakeShared<FJsonValueString>(Name));
+					}
+					ConfirmObj->SetArrayField(TEXT("skills_loaded"), LoadedArr);
+					ConfirmObj->SetStringField(TEXT("message"),
+						TEXT("Skill documentation has been injected into the system prompt. "
+							 "It will persist for this conversation and survive editor restarts. "
+							 "Use discover_python_class to get exact method signatures before writing code."));
+					ConfirmObj->SetStringField(TEXT("IMPORTANT"), ResultObj->GetStringField(TEXT("IMPORTANT")));
+
+					// Keep COMMON_MISTAKES and class lists for immediate AI reference
+					FString CommonMistakes;
+					if (ResultObj->TryGetStringField(TEXT("COMMON_MISTAKES"), CommonMistakes))
+					{
+						ConfirmObj->SetStringField(TEXT("COMMON_MISTAKES"), CommonMistakes);
+					}
+
+					const TArray<TSharedPtr<FJsonValue>>* VibeUEClassesArray;
+					if (ResultObj->TryGetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray))
+					{
+						ConfirmObj->SetArrayField(TEXT("vibeue_classes"), *VibeUEClassesArray);
+					}
+					FString VibeUEClassesUsage;
+					if (ResultObj->TryGetStringField(TEXT("vibeue_classes_usage"), VibeUEClassesUsage))
+					{
+						ConfirmObj->SetStringField(TEXT("vibeue_classes_usage"), VibeUEClassesUsage);
+					}
+
+					const TArray<TSharedPtr<FJsonValue>>* UnrealClassesArray;
+					if (ResultObj->TryGetArrayField(TEXT("unreal_classes"), UnrealClassesArray))
+					{
+						ConfirmObj->SetArrayField(TEXT("unreal_classes"), *UnrealClassesArray);
+					}
+
+					// Report all skills now in the system prompt
+					TArray<TSharedPtr<FJsonValue>> AllInPromptArray;
+					for (const FString& Name : Session->GetLoadedSkillNames())
+					{
+						AllInPromptArray.Add(MakeShared<FJsonValueString>(Name));
+					}
+					ConfirmObj->SetArrayField(TEXT("all_skills_in_system_prompt"), AllInPromptArray);
+
+					if (!AlreadyLoadedNames.IsEmpty())
+					{
+						TArray<TSharedPtr<FJsonValue>> AlreadyArray;
+						for (const FString& Name : AlreadyLoadedNames)
+						{
+							AlreadyArray.Add(MakeShared<FJsonValueString>(Name));
+						}
+						ConfirmObj->SetArrayField(TEXT("already_loaded"), AlreadyArray);
+					}
+
+					FString ConfirmJson;
+					TSharedRef<TJsonWriter<>> ConfirmWriter = TJsonWriterFactory<>::Create(&ConfirmJson);
+					FJsonSerializer::Serialize(ConfirmObj.ToSharedRef(), ConfirmWriter);
+					return ConfirmJson;
+				}
+
+				// Parse failed or skill not found — return original error
+				return FullResult;
+			}
+
+			// MCP caller: return full content as before
 			return LoadSkills(SkillNames);
 		}
 		else
