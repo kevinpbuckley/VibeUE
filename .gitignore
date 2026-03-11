@@ -11,6 +11,8 @@ vibe_ue.log
 # AI-related files
 .cursorrules
 .cursorignore
+/.cursor/
+/.github/
 /CLAUDE.md
 Claude/*
 
