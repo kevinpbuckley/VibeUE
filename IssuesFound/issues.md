@@ -160,3 +160,38 @@ On dismiss, write `proxy_nudge_dismissed = true` to `Saved/Config/VibeUE.ini` so
 - Flag lives in `Saved/Config/VibeUE.ini` (same pattern as disabled tools config in `ToolRegistry.cpp`)
 - Notification can use `FNotificationManager::Get().AddNotification()` (Slate) or a simple `UE_LOG` if UI is out of scope
 - Should fire once per machine, not once per session
+
+---
+
+## 13. No security warning when MCP server runs without an API key
+
+**Severity:** High (security)
+**Location:** `FMCPServer::ValidateApiKey` / `FMCPServer::Start()` (`MCPServer.cpp`)
+
+When no API key is configured, `ValidateApiKey` silently returns `true` and all inbound connections are accepted with no warning.
+
+**What IS protected (even without an API key):**
+- External network access — server binds to `127.0.0.1` only
+- Browser CSRF from external sites — `ValidateOrigin` rejects any `Origin` that isn't localhost/127.0.0.1/vscode/file
+- DNS rebinding — attacker's domain origin is rejected by `ValidateOrigin`
+
+**What is NOT protected without an API key:**
+- Any local process on the machine — scripts, malware, browser extensions, other tools — can send requests with no `Origin` header. `ValidateOrigin` explicitly returns `true` for no-Origin requests (line 1231: `// likely a non-browser client like curl or an IDE`). Without an API key, these have full unauthenticated access to Python execution and asset manipulation inside UE.
+
+This is a meaningful local attack surface. If the developer's machine has any compromised or untrusted software, their UE project can be freely manipulated or arbitrary Python executed inside the editor with no authentication required. External network and browser-based attacks are well-defended; it is the machine trust model that is the gap.
+
+**Proposed fix:** In `FMCPServer::Start()`, after loading config, check if `Config.ApiKey` is empty and log at `Error` severity — every session, not just once:
+
+```
+SECURITY WARNING: VibeUE MCP server is running on port 8088 with NO API key set.
+Any local process on this machine can connect and execute tools without authentication
+— including file access, asset changes, and arbitrary Python code execution inside
+Unreal Engine. Set an API key in Project Settings → Plugins → VibeUE → API Key
+to restrict access.
+```
+
+**Notes:**
+- Must be `UE_LOG(LogMCPServer, Error, ...)` — not Warning, not Log. Needs to be impossible to miss in the output log
+- Must fire every session while the key is unset — not a one-time dismissable. The exposure is active every time UE runs
+- Consider also surfacing as a red editor notification bar entry so it is visible without opening the output log
+- `Access-Control-Allow-Origin: *` throughout the server is also worth revisiting — should be tightened to match the `ValidateOrigin` allowlist rather than wildcarded
