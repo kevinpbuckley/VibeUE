@@ -1444,6 +1444,71 @@ Create `.vscode/mcp.json`:
 }
 ```
 
+### Optional: Use the VibeUE Proxy (recommended for persistent setups)
+
+The proxy is optional and runs on `http://127.0.0.1:8089/mcp`.
+
+Use it when you want:
+
+- Tool definitions available even while Unreal Editor is closed
+- MCP clients without local `Authorization` header management
+
+#### 1) Set proxy bearer token
+
+Create `Plugins/VibeUE/vibeue-proxy.json`:
+
+```json
+{
+  "bearer_token": "YOUR_API_KEY"
+}
+```
+
+`YOUR_API_KEY` must match **Project Settings > Plugins > VibeUE > API Key**.
+
+#### 2) Start the proxy
+
+```powershell
+# Windows (silent background process)
+Start-Process -FilePath 'pythonw.exe' -ArgumentList 'Plugins/VibeUE/Content/Python/vibeue-proxy.py' -WindowStyle Hidden
+```
+
+```bash
+# Mac / Linux
+python3 Plugins/VibeUE/Content/Python/vibeue-proxy.py &
+```
+
+Optional Windows auto-start: add a shortcut to `Plugins/VibeUE/Content/Python/start-vibeue-proxy.bat` in `shell:startup`.
+
+#### 3) Point your MCP client to proxy (no auth header needed)
+
+VS Code `.vscode/mcp.json`:
+
+```json
+{
+  "servers": {
+    "VibeUE": {
+      "type": "http",
+      "url": "http://127.0.0.1:8089/mcp"
+    }
+  }
+}
+```
+
+Claude Desktop / Cursor / AntiGravity:
+
+```json
+{
+  "mcpServers": {
+    "VibeUE": {
+      "type": "http",
+      "url": "http://127.0.0.1:8089/mcp"
+    }
+  }
+}
+```
+
+The proxy injects the token from `vibeue-proxy.json` when forwarding requests to Unreal.
+
 ---
 
 ## 📝 Custom Instructions
