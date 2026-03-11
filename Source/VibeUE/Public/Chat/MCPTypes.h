@@ -193,6 +193,9 @@ struct VIBEUE_API FMCPToolCall
     
     /** Raw arguments JSON string (for streaming accumulation) */
     FString ArgumentsJson;
+
+    /** True when ArgumentsJson was non-empty but failed to parse into Arguments */
+    bool bArgumentsParseError = false;
     
     /** Parse from OpenRouter tool_calls array element */
     static FMCPToolCall FromOpenRouterJson(TSharedPtr<FJsonObject> JsonObj)
@@ -209,11 +212,16 @@ struct VIBEUE_API FMCPToolCall
             FString ArgumentsStr;
             if ((*FunctionObj)->TryGetStringField(TEXT("arguments"), ArgumentsStr))
             {
+                Call.ArgumentsJson = ArgumentsStr;
                 TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ArgumentsStr);
                 TSharedPtr<FJsonObject> ArgsObj;
                 if (FJsonSerializer::Deserialize(Reader, ArgsObj))
                 {
                     Call.Arguments = ArgsObj;
+                }
+                else if (!ArgumentsStr.IsEmpty())
+                {
+                    Call.bArgumentsParseError = true;
                 }
             }
         }

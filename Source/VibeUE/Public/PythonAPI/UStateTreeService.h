@@ -61,6 +61,27 @@ struct FStateTreeTransitionInfo
 };
 
 /**
+ * Info about a theme color entry in a StateTree's global color table
+ */
+USTRUCT(BlueprintType)
+struct FStateTreeThemeColorInfo
+{
+	GENERATED_BODY()
+
+	/** Display name of the color entry (e.g. "Idle", "Rotation") */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString DisplayName;
+
+	/** The color value */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FLinearColor Color = FLinearColor(0.4f, 0.4f, 0.4f);
+
+	/** State paths that reference this color */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FString> UsedByStates;
+};
+
+/**
  * Info about a state in the StateTree
  */
 USTRUCT(BlueprintType)
@@ -87,6 +108,14 @@ struct FStateTreeStateInfo
 	/** Whether this state is enabled */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	bool bEnabled = true;
+
+	/** Theme color display name assigned to this state (empty if none) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString ThemeColor;
+
+	/** Whether this state is expanded in the editor tree view */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bExpanded = true;
 
 	/** Tasks assigned to this state */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
@@ -306,6 +335,23 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName);
+
+	/**
+	 * Get all theme colors defined in the StateTree's global color table.
+	 * Returns each color's display name, color value, and which states reference it.
+	 * @param AssetPath Content path to the StateTree
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreeThemeColorInfo> GetThemeColors(const FString& AssetPath);
+
+	/**
+	 * Set whether a state is expanded or collapsed in the editor tree view.
+	 * @param AssetPath Content path to the StateTree
+	 * @param StatePath Path of the state (e.g. "Root" or "Root/Walking")
+	 * @param bExpanded true to expand, false to collapse
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateExpanded(const FString& AssetPath, const FString& StatePath, bool bExpanded);
 
 	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
