@@ -647,6 +647,9 @@ private:
     /** Execute the next tool in the queue (sequential execution) */
     void ExecuteNextToolInQueue();
     
+    /** Track tool results for consecutive-failure loop detection */
+    void TrackToolResultForLoopDetection(const FString& ToolName, const FString& ResultContent);
+
     /** Number of tool call iterations (follow-up rounds) */
     int32 ToolCallIterationCount = 0;
     
@@ -674,8 +677,17 @@ private:
     /** Accumulated skill documentation appended to the system prompt */
     FString ActiveSkillsContent;
 
-    // Loop detection is handled via prompt-based self-awareness instructions
-    // See vibeue.instructions.md for details
+    // Loop detection: prompt-based self-awareness + consecutive-failure circuit breaker
+    // See vibeue.instructions.md for prompt-level guidelines
+
+    /** Tracks the last tool error signature (ToolName + Result hash) for consecutive failure detection */
+    FString LastToolErrorSignature;
+
+    /** Count of consecutive identical tool error results */
+    int32 ConsecutiveIdenticalErrorCount = 0;
+
+    /** Maximum consecutive identical errors before breaking the loop */
+    static constexpr int32 MaxConsecutiveIdenticalErrors = 3;
 
     // ============ Voice Input (Private) ============
 

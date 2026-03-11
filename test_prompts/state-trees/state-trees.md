@@ -531,3 +531,57 @@ Enable the debug text task on the Root state of ST_Cube.
 - Use `StateTreeService.add_task` for adding tasks to individual states
 - Use `StateTreeService` for StateTree asset operations, including theme colors, descriptions, root parameters, task property edits, task bindings, context actor class, compile, and save
 - Use `execute_python_code` only for Blueprint or level-instance operations outside the StateTree asset itself
+
+---
+
+## Theme Colors
+
+### List theme colors
+
+```
+What theme colors are defined on /Game/StateTree/ST_Cube? Show me each color name and which states use it.
+```
+
+**Expected**: AI calls `get_theme_colors` and reports each entry's `display_name`, `color` (RGBA), and `used_by_states`.
+
+---
+
+### Rename a theme color
+
+```
+Rename the theme color "Default Color" to "Active" on /Game/StateTree/ST_Cube.
+```
+
+**Expected**: AI calls `get_theme_colors` first to verify "Default Color" exists, then calls `rename_theme_color`. Does NOT load materials skill. Does NOT look for material parameters.
+
+---
+
+### Set a state's theme color
+
+```
+Set the Root state on /Game/StateTree/ST_Cube to use a blue theme color called "Idle".
+```
+
+**Expected**: AI calls `set_state_theme_color` with a blue `LinearColor`. Creates "Idle" color entry if it doesn't exist. Assigns it to "Root" state.
+
+---
+
+## Expand / Collapse
+
+### Collapse a state
+
+```
+Collapse the Root state in /Game/StateTree/ST_Cube.
+```
+
+**Expected**: AI calls `set_state_expanded("/Game/StateTree/ST_Cube", "Root", False)`. Does NOT attempt `discover_python_class` looking for a collapse method.
+
+---
+
+### Expand a state
+
+```
+Expand the Root/Walking state in /Game/StateTree/ST_Cube.
+```
+
+**Expected**: AI calls `set_state_expanded("/Game/StateTree/ST_Cube", "Root/Walking", True)`.

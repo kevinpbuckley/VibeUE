@@ -782,7 +782,8 @@ static FStateTreeTransitionInfo TransitionInfoFromTransition(const FStateTreeTra
 	return Info;
 }
 
-static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStateInfo>& OutStates)
+static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStateInfo>& OutStates,
+                            const UStateTreeEditorData* EditorData = nullptr)
 {
 	if (!State)
 	{
@@ -795,6 +796,16 @@ static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStat
 	Info.StateType = StateTypeToString(State->Type);
 	Info.SelectionBehavior = SelectionBehaviorToString(State->SelectionBehavior);
 	Info.bEnabled = State->bEnabled;
+	Info.bExpanded = State->bExpanded;
+
+	// Resolve theme color display name from ColorRef
+	if (EditorData && State->ColorRef.ID.IsValid())
+	{
+		if (const FStateTreeEditorColor* FoundColor = EditorData->FindColor(State->ColorRef))
+		{
+			Info.ThemeColor = FoundColor->DisplayName;
+		}
+	}
 
 	for (const FStateTreeEditorNode& TaskNode : State->Tasks)
 	{
@@ -824,7 +835,7 @@ static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStat
 	// Recurse into children
 	for (const UStateTreeState* Child : State->Children)
 	{
-		CollectStateInfo(Child, OutStates);
+		CollectStateInfo(Child, OutStates, EditorData);
 	}
 }
 
@@ -924,7 +935,7 @@ bool UStateTreeService::GetStateTreeInfo(const FString& AssetPath, FStateTreeInf
 
 		for (const UStateTreeState* SubTree : EditorData->SubTrees)
 		{
-			CollectStateInfo(SubTree, OutInfo.AllStates);
+			CollectStateInfo(SubTree, OutInfo.AllStates, EditorData);
 		}
 	}
 #endif
@@ -1341,6 +1352,91 @@ bool UStateTreeService::RenameThemeColor(const FString& AssetPath, const FString
 	FoundColor.DisplayName = NewColorName;
 	EditorData->Colors.Add(FoundColor);
 
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+TArray<FStateTreeThemeColorInfo> UStateTreeService::GetThemeColors(const FString& AssetPath)
+{
+	TArray<FStateTreeThemeColorInfo> Result;
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetThemeColors: Failed to load StateTree: %s"), *AssetPath);
+		return Result;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return Result;
+	}
+
+	// Build result array from the global color table
+	TMap<FGuid, int32> ColorRefToIndex;
+	for (const FStateTreeEditorColor& ColorEntry : EditorData->Colors)
+	{
+		FStateTreeThemeColorInfo Info;
+		Info.DisplayName = ColorEntry.DisplayName;
+		Info.Color = ColorEntry.Color;
+		int32 Idx = Result.Add(Info);
+		ColorRefToIndex.Add(ColorEntry.ColorRef.ID, Idx);
+	}
+
+	// Walk all states to populate UsedByStates
+	TArray<FStateTreeStateInfo> AllStates;
+	for (const UStateTreeState* SubTree : EditorData->SubTrees)
+	{
+		CollectStateInfo(SubTree, AllStates, EditorData);
+	}
+	for (const FStateTreeStateInfo& StateInfo : AllStates)
+	{
+		if (!StateInfo.ThemeColor.IsEmpty())
+		{
+			for (int32 i = 0; i < Result.Num(); ++i)
+			{
+				if (Result[i].DisplayName.Equals(StateInfo.ThemeColor, ESearchCase::IgnoreCase))
+				{
+					Result[i].UsedByStates.Add(StateInfo.Path);
+					break;
+				}
+			}
+		}
+	}
+#endif
+
+	return Result;
+}
+
+bool UStateTreeService::SetStateExpanded(const FString& AssetPath, const FString& StatePath, bool bExpanded)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateExpanded: Failed to load StateTree: %s"), *AssetPath);
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateExpanded: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	State->bExpanded = bExpanded;
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else

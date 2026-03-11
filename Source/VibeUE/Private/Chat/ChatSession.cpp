@@ -132,6 +132,8 @@ void FChatSession::SendMessage(const FString& UserMessage)
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
+    ConsecutiveIdenticalErrorCount = 0;
+    LastToolErrorSignature.Empty();
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
@@ -241,6 +243,8 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
+    ConsecutiveIdenticalErrorCount = 0;
+    LastToolErrorSignature.Empty();
 
     // Create user message with multimodal content
     FChatMessage UserMsg;
@@ -631,6 +635,45 @@ void FChatSession::ExecuteNextToolInQueue()
     
     UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
     
+    // === MALFORMED ARGUMENTS CHECK ===
+    // If the LLM sent invalid JSON for tool arguments, return an immediate error
+    // so the LLM knows WHY the call failed and can fix its syntax.
+    if (ToolCall.bArgumentsParseError)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("Tool %s has malformed arguments JSON - returning parse error to LLM"), *ToolCall.ToolName);
+        
+        FString ErrorResult = FString::Printf(
+            TEXT("ERROR: Your tool call arguments contained malformed JSON that could not be parsed. ")
+            TEXT("Raw arguments received: %s\n")
+            TEXT("Please fix the JSON syntax and retry. Ensure all keys and string values are properly quoted, ")
+            TEXT("and special characters are correctly escaped."),
+            *ToolCall.ArgumentsJson.Left(500));
+        
+        FChatMessage ToolResultMsg(TEXT("tool"), ErrorResult);
+        ToolResultMsg.ToolCallId = ToolCall.Id;
+        Messages.Add(ToolResultMsg);
+        OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: false, Result: malformed arguments JSON"), 
+            *ToolCall.ToolName, *ToolCall.Id);
+        
+        // Track consecutive identical errors for loop detection
+        TrackToolResultForLoopDetection(ToolCall.ToolName, ErrorResult);
+        
+        PendingToolCallCount--;
+        
+        // Defer to next tick for consistency with normal tool execution
+        TWeakPtr<FChatSession> WeakSession = AsShared();
+        AsyncTask(ENamedThreads::GameThread, [WeakSession]()
+        {
+            if (TSharedPtr<FChatSession> StrongSession = WeakSession.Pin())
+            {
+                StrongSession->ExecuteNextToolInQueue();
+            }
+        });
+        return;
+    }
+    
     // === PYTHON CODE PREVIEW / APPROVAL ===
     // Always show code preview for execute_python_code before execution.
     // If YOLO mode is off, pause and wait for user approval.
@@ -822,6 +865,9 @@ void FChatSession::ExecuteNextToolInQueue()
         Messages.Add(ToolResultMsg);
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
         
+        // Track consecutive identical errors for loop detection
+        TrackToolResultForLoopDetection(ToolCall.ToolName, ResultContent);
+        
         PendingToolCallCount--;
         UE_LOG(LogChatSession, Log, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
         
@@ -858,6 +904,9 @@ void FChatSession::ExecuteNextToolInQueue()
         ToolResultMsg.ToolCallId = ToolCall.Id;
         Messages.Add(ToolResultMsg);
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
+        
+        // Track consecutive identical errors for loop detection
+        TrackToolResultForLoopDetection(ToolCall.ToolName, ErrorResult.ErrorMessage);
         
         PendingToolCallCount--;
         ExecuteNextToolInQueue();
@@ -904,8 +953,9 @@ void FChatSession::ExecuteNextToolInQueue()
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
             
-            // Loop detection is now handled via prompt-based self-awareness instructions
-            // The model follows guidelines in vibeue.instructions.md to self-limit retries
+            // Loop detection: prompt-based self-awareness (vibeue.instructions.md) +
+            // consecutive-failure circuit breaker (TrackToolResultForLoopDetection) +
+            // malformed JSON detection (bArgumentsParseError in LLMClientBase)
             
             // Debug log tool result content
             if (IsDebugModeEnabled())
@@ -931,9 +981,30 @@ void FChatSession::ExecuteNextToolInQueue()
             ToolResultMsg.Role = TEXT("tool");
             ToolResultMsg.ToolCallId = ToolCallCopy.Id;
             ToolResultMsg.Content = TruncatedContent;
+
+            // Track consecutive identical errors for loop detection
+            TrackToolResultForLoopDetection(ToolCallCopy.ToolName, bSuccess ? Result.Content : Result.ErrorMessage);
 			
             ExecuteNextToolInQueue();
         }));
+}
+
+void FChatSession::TrackToolResultForLoopDetection(const FString& ToolName, const FString& ResultContent)
+{
+    // Build a signature from tool name + first 200 chars of result (enough to identify repeats)
+    FString Signature = ToolName + TEXT("|") + ResultContent.Left(200);
+    
+    if (Signature == LastToolErrorSignature)
+    {
+        ConsecutiveIdenticalErrorCount++;
+        UE_LOG(LogChatSession, Log, TEXT("Consecutive identical tool result #%d for %s"), 
+            ConsecutiveIdenticalErrorCount, *ToolName);
+    }
+    else
+    {
+        LastToolErrorSignature = Signature;
+        ConsecutiveIdenticalErrorCount = 1;
+    }
 }
 
 void FChatSession::SendFollowUpAfterToolCall()
@@ -971,6 +1042,27 @@ void FChatSession::SendFollowUpAfterToolCall()
         bWaitingForUserToContinue = true;
         OnToolIterationLimitReached.ExecuteIfBound(ToolCallIterationCount, MaxToolCallIterations);
         return; // Wait for user to call ContinueAfterIterationLimit() or send new message
+    }
+    
+    // Circuit breaker: stop if the same tool keeps returning the same result consecutively
+    if (ConsecutiveIdenticalErrorCount >= MaxConsecutiveIdenticalErrors)
+    {
+        UE_LOG(LogChatSession, Warning, TEXT("Circuit breaker: %d consecutive identical tool results detected - stopping agentic loop"), 
+            ConsecutiveIdenticalErrorCount);
+        
+        // Add an assistant message explaining the stop
+        FChatMessage StopMsg(TEXT("assistant"), 
+            FString::Printf(TEXT("I've been getting the same result from the same tool call %d times in a row, which indicates I'm stuck in a loop. ")
+                TEXT("Please check the tool error above and try rephrasing your request, or provide additional context."),
+                ConsecutiveIdenticalErrorCount));
+        StopMsg.bIsStreaming = false;
+        Messages.Add(StopMsg);
+        OnMessageAdded.ExecuteIfBound(StopMsg);
+        
+        // Reset tracking
+        ConsecutiveIdenticalErrorCount = 0;
+        LastToolErrorSignature.Empty();
+        return;
     }
     
     // Create a new assistant message for the follow-up response
@@ -1159,6 +1251,8 @@ void FChatSession::ResetChat()
     // Reset iteration tracking
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
+    ConsecutiveIdenticalErrorCount = 0;
+    LastToolErrorSignature.Empty();
 
     // Clear task list
     ClearTaskList();
@@ -2845,8 +2939,9 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
     return FString::Join(ThinkingParts, TEXT("\n---\n"));
 }
 
-// Loop detection removed - now using prompt-based self-awareness instructions
-// See vibeue.instructions.md for the loop prevention guidelines the model follows
+// Loop detection: prompt-based self-awareness (vibeue.instructions.md) +
+// consecutive-failure circuit breaker (TrackToolResultForLoopDetection) +
+// malformed JSON detection (bArgumentsParseError in LLMClientBase)
 
 void FChatSession::InitializeInternalTools()
 {
