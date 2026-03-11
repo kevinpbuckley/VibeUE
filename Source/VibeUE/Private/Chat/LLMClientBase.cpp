@@ -1089,7 +1089,12 @@ void FLLMClientBase::FirePendingToolCalls()
         if (!ToolCall.ArgumentsJson.IsEmpty())
         {
             TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
-            FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+            if (!FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments) || !ToolCall.Arguments.IsValid())
+            {
+                UE_LOG(LogLLMClientBase, Warning, TEXT("Failed to parse tool arguments JSON for %s: %s"), 
+                    *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(500));
+                ToolCall.bArgumentsParseError = true;
+            }
         }
         
         if (IsDebugLoggingEnabled())
@@ -1304,7 +1309,12 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
                 
                 // Parse arguments JSON
                 TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
-                FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+                if (!FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments) || !ToolCall.Arguments.IsValid())
+                {
+                    UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse tool arguments JSON for %s: %s"), 
+                        *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(500));
+                    ToolCall.bArgumentsParseError = true;
+                }
             }
             
             UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Tool call %d: %s (id=%s)"), i, *ToolCall.ToolName, *ToolCall.Id);

@@ -20,6 +20,11 @@ keywords:
   - evaluator
   - task
   - condition
+  - color
+  - theme color
+  - theme
+  - expand
+  - collapse
 ---
 
 # StateTree Skill
@@ -103,6 +108,8 @@ info = unreal.StateTreeService.get_state_tree_info("/Game/AI/MyBehavior")
 
 # Each FStateTreeStateInfo has:
 #   .name, .path, .state_type, .selection_behavior, .enabled
+#   .theme_color (display name of assigned color, empty if none)
+#   .b_expanded (whether state is expanded in editor tree view)
 #   .tasks, .enter_conditions, .transitions, .child_paths
 ```
 
@@ -131,6 +138,15 @@ unreal.StateTreeService.remove_state("/Game/AI/MyBehavior", "Root/Walking")
 
 # Enable/disable
 unreal.StateTreeService.set_state_enabled("/Game/AI/MyBehavior", "Root/Idle", True)
+
+# Theme colors — list, set, rename (see Theme Colors section below for details)
+colors = unreal.StateTreeService.get_theme_colors("/Game/AI/MyBehavior")
+unreal.StateTreeService.set_state_theme_color("/Game/AI/MyBehavior", "Root/Idle", "Idle", unreal.LinearColor(r=0.2, g=0.6, b=1.0, a=1.0))
+unreal.StateTreeService.rename_theme_color("/Game/AI/MyBehavior", "Default Color", "Active")
+
+# Expand/collapse states in editor tree view
+unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root/Walking", False)  # collapse
+unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root/Walking", True)   # expand
 ```
 
 ### Tasks
@@ -348,11 +364,55 @@ unreal.BlueprintService.compile_blueprint(bp_path)
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
+### Theme Colors (Global Color Table)
+
+StateTree assets have a **global color table** — named color entries that can be assigned to states
+for visual organization in the editor. These are NOT material colors or rendering colors.
+
+When a user says "color", "rename color", "change color", or "theme color" in a StateTree context,
+they mean **StateTree theme colors** (editor-only visual labels), not material parameters.
+
+**List all theme colors:**
+```python
+colors = unreal.StateTreeService.get_theme_colors("/Game/AI/ST_MyBehavior")
+for c in colors:
+    print(f"{c.display_name}: R={c.color.r}, G={c.color.g}, B={c.color.b} — used by: {[s for s in c.used_by_states]}")
+```
+
+**Set a state's theme color (creates the color entry if it doesn't exist):**
+```python
+color = unreal.LinearColor(r=0.2, g=0.6, b=1.0, a=1.0)
+unreal.StateTreeService.set_state_theme_color("/Game/AI/ST_MyBehavior", "Root/Idle", "Idle", color)
+```
+
+**Rename a theme color entry (preserves all state references):**
+```python
+unreal.StateTreeService.rename_theme_color("/Game/AI/ST_MyBehavior", "Default Color", "Active")
+```
+
+**Workflow:** Always call `get_theme_colors` first to see what exists before renaming or modifying.
+
+### Expand / Collapse States
+
+Control whether states are expanded or collapsed in the editor tree view:
+
+```python
+# Collapse a state in the editor
+unreal.StateTreeService.set_state_expanded("/Game/AI/ST_MyBehavior", "Root/Walking", False)
+
+# Expand a state
+unreal.StateTreeService.set_state_expanded("/Game/AI/ST_MyBehavior", "Root/Walking", True)
+```
+
+The current expand/collapse state is also returned in `get_state_tree_info` results via `b_expanded`.
+
 ### Advanced Editor Config (Use service first)
 
 Use `unreal.StateTreeService` for StateTree asset edits first. The service layer now covers:
 
-- Configure state descriptions and theme colors
+- List, set, and rename theme colors (`get_theme_colors`, `set_state_theme_color`, `rename_theme_color`)
+- Expand/collapse states in the editor tree view (`set_state_expanded`)
+- Configure state descriptions
 - Add/edit StateTree parameters and default values
 - Bind task properties (e.g. debug text bindable text, delay duration bindings)
 - Set the context actor class
@@ -369,6 +429,12 @@ Recommended pattern:
 2. Use `execute_python_code` only for Blueprint or level-instance work that sits outside the StateTree asset.
 
 ## COMMON_MISTAKES
+
+### ⚠️ "Color" Means Theme Color, Not Materials
+
+When a user asks to rename, change, or list "colors" on a StateTree, they mean **theme colors** —
+the editor-only color labels in the StateTree's global color table. Do NOT load the materials skill
+or look for material parameters. Use `get_theme_colors`, `set_state_theme_color`, and `rename_theme_color`.
 
 ### ⚠️ Forgetting to Compile
 
