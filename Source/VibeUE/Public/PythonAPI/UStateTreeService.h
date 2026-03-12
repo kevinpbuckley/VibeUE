@@ -7,6 +7,27 @@
 #include "UStateTreeService.generated.h"
 
 /**
+ * Info about a root parameter in the StateTree property bag
+ */
+USTRUCT(BlueprintType)
+struct FStateTreeParameterInfo
+{
+	GENERATED_BODY()
+
+	/** Parameter name */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Name;
+
+	/** Type string: "Bool", "Int32", "Int64", "Float", "Double", "Name", "String", "Text", "Enum", "Struct", "Object", "SoftObject", "Class", "SoftClass" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Type;
+
+	/** Current default value exported as string */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString DefaultValue;
+};
+
+/**
  * Info about a single task, evaluator, or condition node inside a StateTree
  */
 USTRUCT(BlueprintType)
@@ -25,6 +46,14 @@ struct FStateTreeNodeInfo
 	/** Whether this node is enabled */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	bool bEnabled = true;
+
+	/** Whether this task's completion contributes to the owning state's completion (tasks only) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bConsideredForCompletion = true;
+
+	/** Condition operand: "Copy" (first), "And", "Or" (conditions only) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Operand;
 };
 
 /**
@@ -58,6 +87,34 @@ struct FStateTreeTransitionInfo
 	/** Whether this transition is enabled */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	bool bEnabled = true;
+
+	/** Zero-based index of this transition in the state's Transitions array */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	int32 Index = 0;
+
+	/** Whether transition has a delay */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bDelayTransition = false;
+
+	/** Delay duration in seconds */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	float DelayDuration = 0.0f;
+
+	/** Random variance added to the delay duration */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	float DelayRandomVariance = 0.0f;
+
+	/** Required gameplay event tag to trigger this transition (empty if none) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString RequiredEventTag;
+
+	/** Conditions that must be true for this transition to fire */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FStateTreeNodeInfo> Conditions;
+
+	/** Operand per condition: "Copy" (first), "And", "Or" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FString> ConditionOperands;
 };
 
 /**
@@ -132,6 +189,38 @@ struct FStateTreeStateInfo
 	/** Paths of direct child states */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	TArray<FString> ChildPaths;
+
+	/** Gameplay tag for this state (empty if none) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Tag;
+
+	/** Editor description */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString Description;
+
+	/** Utility AI weight (used when parent SelectionBehavior is Utility-based) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	float Weight = 1.0f;
+
+	/** Task completion mode: "Any" or "All" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString TasksCompletion;
+
+	/** Whether this state uses a custom tick rate */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	bool bHasCustomTickRate = false;
+
+	/** Custom tick rate (ticks per second) if bHasCustomTickRate is true */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	float CustomTickRate = 0.0f;
+
+	/** Required gameplay event tag to enter this state (empty if none) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString RequiredEventTag;
+
+	/** Operand per enter condition: "Copy" (first), "And", "Or" */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FString> EnterConditionOperands;
 };
 
 /**
@@ -161,6 +250,10 @@ struct FStateTreeInfo
 	/** Global tasks */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	TArray<FStateTreeNodeInfo> GlobalTasks;
+
+	/** Root parameters (property bag) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FStateTreeParameterInfo> RootParameters;
 
 	/** All states (flattened hierarchy) */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
@@ -362,6 +455,88 @@ public:
 	static bool AddOrUpdateRootFloatParameter(const FString& AssetPath, const FString& ParameterName,
 	                                         float DefaultValue = 0.0f);
 
+	// ---- State Properties ----
+
+	/** Set the selection behavior of a state (how children are selected). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetSelectionBehavior(const FString& AssetPath, const FString& StatePath, const FString& Behavior);
+
+	/** Set task completion mode: "Any" (default) or "All". */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTasksCompletion(const FString& AssetPath, const FString& StatePath, const FString& Completion);
+
+	/** Rename a state. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RenameState(const FString& AssetPath, const FString& StatePath, const FString& NewName);
+
+	/** Set a gameplay tag on a state (pass empty string to clear). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateTag(const FString& AssetPath, const FString& StatePath, const FString& GameplayTag);
+
+	/** Set the utility weight on a state (used when parent uses Utility-based selection). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateWeight(const FString& AssetPath, const FString& StatePath, float Weight);
+
+	/** Set whether a task's completion contributes to the owning state's completion. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTaskConsideredForCompletion(const FString& AssetPath, const FString& StatePath,
+	                                           const FString& TaskStructName, int32 TaskMatchIndex, bool bConsideredForCompletion);
+
+	// ---- Parameters ----
+
+	/** Get all root parameters with their name, type, and current default value. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreeParameterInfo> GetRootParameters(const FString& AssetPath);
+
+	/**
+	 * Add or update a root parameter of any type.
+	 * @param Type  "Bool", "Int32", "Int64", "Float", "Double", "Name", "String", "Text"
+	 * @param DefaultValue  Initial/default value as a string (e.g. "3.14", "true", "Hello")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool AddOrUpdateRootParameter(const FString& AssetPath, const FString& Name,
+	                                     const FString& Type, const FString& DefaultValue = TEXT(""));
+
+	/** Remove a root parameter by name. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveRootParameter(const FString& AssetPath, const FString& Name);
+
+	/** Rename a root parameter without breaking existing bindings. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RenameRootParameter(const FString& AssetPath, const FString& OldName, const FString& NewName);
+
+	// ---- Transition Editing ----
+
+	/**
+	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority means "don't change".
+	 * @param TransitionIndex  Zero-based index in the state's Transitions array (from GetStateTreeInfo)
+	 * @param Trigger          "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent" — empty = no change
+	 * @param TransitionType   "GotoState", "Succeeded", "Failed", "NextState", "NextSelectableState" — empty = no change
+	 * @param TargetPath       Target state path, only used when TransitionType is "GotoState" — empty = no change
+	 * @param Priority         "Low", "Normal", "Medium", "High", "Critical" — empty = no change
+	 * @param bSetEnabled      Whether to update the enabled state
+	 * @param bEnabled         New enabled value (only applied when bSetEnabled is true)
+	 * @param bSetDelay        Whether to update delay settings
+	 * @param bDelayTransition Whether the transition has a delay (only applied when bSetDelay is true)
+	 * @param DelayDuration    Delay duration in seconds
+	 * @param DelayRandomVariance Random variance added to delay duration
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UpdateTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex,
+	                             const FString& Trigger = TEXT(""), const FString& TransitionType = TEXT(""),
+	                             const FString& TargetPath = TEXT(""), const FString& Priority = TEXT(""),
+	                             bool bSetEnabled = false, bool bEnabled = true,
+	                             bool bSetDelay = false, bool bDelayTransition = false,
+	                             float DelayDuration = 0.0f, float DelayRandomVariance = 0.0f);
+
+	/** Remove a transition by index. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex);
+
+	/** Reorder a transition within the state's Transitions array. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool MoveTransition(const FString& AssetPath, const FString& StatePath, int32 FromIndex, int32 ToIndex);
+
 	// ---- Task Management ----
 
 	/**
@@ -436,6 +611,21 @@ public:
 	                                     const FString& ContextPropertyPath = TEXT(""),
 	                                     int32 TaskMatchIndex = -1);
 
+	/** Remove a task from a state by struct type name. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveTask(const FString& AssetPath, const FString& StatePath,
+	                       const FString& TaskStructName, int32 TaskMatchIndex = -1);
+
+	/** Move a task to a different index within the state's Tasks array. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool MoveTask(const FString& AssetPath, const FString& StatePath,
+	                     const FString& TaskStructName, int32 TaskMatchIndex, int32 NewIndex);
+
+	/** Enable or disable a task without removing it. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTaskEnabled(const FString& AssetPath, const FString& StatePath,
+	                           const FString& TaskStructName, int32 TaskMatchIndex, bool bEnabled);
+
 	// ---- Evaluator / Global Task Management ----
 
 	/**
@@ -451,6 +641,90 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddGlobalTask(const FString& AssetPath, const FString& TaskStructName);
+
+	/** Get all registered condition struct names discoverable from class iteration. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FString> GetAvailableConditionTypes();
+
+	/** Add an enter condition to a state. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool AddEnterCondition(const FString& AssetPath, const FString& StatePath, const FString& ConditionStructName);
+
+	/** Remove an enter condition by index. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveEnterCondition(const FString& AssetPath, const FString& StatePath, int32 ConditionIndex);
+
+	/** Set the And/Or operand on an enter condition. First condition should be "Copy", others "And" or "Or". */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetEnterConditionOperand(const FString& AssetPath, const FString& StatePath,
+	                                     int32 ConditionIndex, const FString& Operand);
+
+	/** Get all editable properties on an enter condition node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetEnterConditionPropertyNames(const FString& AssetPath, const FString& StatePath,
+	                                                                      const FString& ConditionStructName, int32 ConditionMatchIndex = -1);
+
+	/** Set a property on an enter condition node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetEnterConditionPropertyValue(const FString& AssetPath, const FString& StatePath,
+	                                           const FString& ConditionStructName, const FString& PropertyPath,
+	                                           const FString& Value, int32 ConditionMatchIndex = -1);
+
+	/** Add a condition to an existing transition. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
+	                                   int32 TransitionIndex, const FString& ConditionStructName);
+
+	/** Remove a condition from a transition by condition index. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveTransitionCondition(const FString& AssetPath, const FString& StatePath,
+	                                      int32 TransitionIndex, int32 ConditionIndex);
+
+	/** Set the And/Or operand on a transition condition. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTransitionConditionOperand(const FString& AssetPath, const FString& StatePath,
+	                                          int32 TransitionIndex, int32 ConditionIndex, const FString& Operand);
+
+	/** Get all editable properties on a transition condition node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetTransitionConditionPropertyNames(const FString& AssetPath, const FString& StatePath,
+	                                                                           int32 TransitionIndex, const FString& ConditionStructName,
+	                                                                           int32 ConditionMatchIndex = -1);
+
+	/** Set a property on a transition condition node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetTransitionConditionPropertyValue(const FString& AssetPath, const FString& StatePath,
+	                                                int32 TransitionIndex, const FString& ConditionStructName,
+	                                                const FString& PropertyPath, const FString& Value,
+	                                                int32 ConditionMatchIndex = -1);
+
+	/** Remove an evaluator by struct type name. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveEvaluator(const FString& AssetPath, const FString& EvaluatorStructName, int32 MatchIndex = -1);
+
+	/** Get all editable properties on a global evaluator node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetEvaluatorPropertyNames(const FString& AssetPath,
+	                                                                  const FString& EvaluatorStructName, int32 MatchIndex = -1);
+
+	/** Set a property on a global evaluator node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetEvaluatorPropertyValue(const FString& AssetPath, const FString& EvaluatorStructName,
+	                                      const FString& PropertyPath, const FString& Value, int32 MatchIndex = -1);
+
+	/** Remove a global task by struct type name. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveGlobalTask(const FString& AssetPath, const FString& TaskStructName, int32 MatchIndex = -1);
+
+	/** Get all editable properties on a global task node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetGlobalTaskPropertyNames(const FString& AssetPath,
+	                                                                   const FString& TaskStructName, int32 MatchIndex = -1);
+
+	/** Set a property on a global task node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetGlobalTaskPropertyValue(const FString& AssetPath, const FString& TaskStructName,
+	                                       const FString& PropertyPath, const FString& Value, int32 MatchIndex = -1);
 
 	// ---- Transitions ----
 
