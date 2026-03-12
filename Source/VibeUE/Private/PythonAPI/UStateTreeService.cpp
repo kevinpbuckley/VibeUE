@@ -769,8 +769,10 @@ static FStateTreeNodeInfo NodeInfoFromEditorNode(const FStateTreeEditorNode& Edi
 		Info.StructType = EditorNode.Node.GetScriptStruct()->GetName();
 		if (const FStateTreeTaskBase* TaskBase = EditorNode.Node.GetPtr<FStateTreeTaskBase>())
 		{
-			Info.bConsideredForCompletion = TaskBase->bConsideredForCompletion;
 			Info.bEnabled = TaskBase->bTaskEnabled;
+#if WITH_EDITORONLY_DATA
+			Info.bConsideredForCompletion = TaskBase->bConsideredForCompletion;
+#endif
 		}
 	}
 	return Info;
@@ -2122,7 +2124,9 @@ bool UStateTreeService::SetTaskConsideredForCompletion(const FString& AssetPath,
 		return false;
 	}
 
+#if WITH_EDITORONLY_DATA
 	TaskBase->bConsideredForCompletion = bConsideredForCompletion;
+#endif
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else
