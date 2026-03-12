@@ -505,6 +505,44 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool RenameRootParameter(const FString& AssetPath, const FString& OldName, const FString& NewName);
 
+	// ---- Level Actor Component Parameter Overrides ----
+
+	/**
+	 * Get the game-content path of the StateTree asset linked to an actor's StateTreeComponent.
+	 * Use this to discover parameters available to override before calling set_component_parameter_override.
+	 * Then pass the returned path to get_root_parameters() to list all available parameter names and types.
+	 * @param ActorNameOrLabel  Name or label of the actor in the current level
+	 * @return Game path like "/Game/StateTrees/ST_Cube", or empty string if not found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static FString GetComponentStateTreePath(const FString& ActorNameOrLabel);
+
+	/**
+	 * Get the current parameter override values on a placed actor's StateTreeComponent.
+	 * Returns the same structure as get_root_parameters but reflects instance-level values.
+	 * Use this to inspect what values are set per-instance before or after calling set_component_parameter_override.
+	 * @param ActorNameOrLabel  Name or label of the actor in the current level
+	 * @return List of parameters with name, type, and current override value. Empty if actor or component not found.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreeParameterInfo> GetComponentParameterOverrides(const FString& ActorNameOrLabel);
+
+	/**
+	 * Set a per-instance parameter override on a placed actor's StateTreeComponent.
+	 * The parameter type is resolved from the linked StateTree asset — no type argument needed.
+	 * Supports all primitive types: Bool, Int32, Int64, Float, Double, Name, String, Text.
+	 * Value format matches add_or_update_root_parameter: "3.14", "true", "Hello", etc.
+	 * Call save_level (or use unreal.EditorLoadingAndSavingUtils) after setting overrides to persist.
+	 * @param ActorNameOrLabel  Name or label of the actor in the current level
+	 * @param ParameterName     Name of the root parameter to override (must exist in the linked StateTree)
+	 * @param Value             New value as a string (e.g. "3.14", "true", "Hello")
+	 * @return true if the override was applied successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetComponentParameterOverride(const FString& ActorNameOrLabel,
+	                                          const FString& ParameterName,
+	                                          const FString& Value);
+
 	// ---- Transition Editing ----
 
 	/**

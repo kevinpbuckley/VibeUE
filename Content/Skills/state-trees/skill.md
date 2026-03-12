@@ -605,6 +605,64 @@ unreal.StateTreeService.remove_root_parameter(path, "my_float")
 unreal.StateTreeService.rename_root_parameter(path, "old_name", "new_name")
 ```
 
+### Per-Instance Parameter Overrides (Level Actors)
+
+StateTree parameters defined on the asset are the *defaults*. Placed actors have their own
+`StateTreeComponent` instance that can override each parameter value independently.
+
+**⚠️ LOAD THIS SKILL FIRST** — Do not attempt raw discovery of StateTreeComponent parameters.
+`set_component_parameter_override` handles type resolution automatically.
+
+#### Full Discovery Workflow
+
+When the user asks to set StateTree parameters on placed actors, follow this order:
+
+```python
+import unreal
+
+# Step 1: Find the exact actor names in the level
+actors = unreal.ActorService.list_level_actors()
+for a in actors:
+    print(f"{a.name}: {a.class_name}")
+# Look for actors whose class_name contains your Blueprint (e.g. "BP_Cube_C")
+
+# Step 2: Find the linked StateTree asset path for the actor
+st_path = unreal.StateTreeService.get_component_state_tree_path("bp_cube1")
+print(f"StateTree asset: {st_path}")
+# Returns something like: /Game/StateTree/ST_Cube
+
+# Step 3: Discover what parameters are available (names + types live in the asset)
+params = unreal.StateTreeService.get_root_parameters(st_path)
+for p in params:
+    print(f"{p.name}: {p.type} = {p.default_value!r}")
+# Output example: IdlingTime: Float = '2.0'   RotatingTime: Float = '1.0'
+
+# Step 4: Set per-instance overrides — type resolved automatically from the linked StateTree
+unreal.StateTreeService.set_component_parameter_override("bp_cube1", "IdlingTime", "3.0")
+unreal.StateTreeService.set_component_parameter_override("bp_cube1", "RotatingTime", "1.5")
+unreal.StateTreeService.set_component_parameter_override("bp_cube2", "IdlingTime", "1.0")
+unreal.StateTreeService.set_component_parameter_override("bp_cube2", "RotatingTime", "4.0")
+
+# Step 5: Save the level to persist overrides
+unreal.EditorLoadingAndSavingUtils.save_current_level()
+```
+
+#### Read Back Current Instance Values
+
+```python
+# Get current override values on a placed actor's StateTreeComponent
+overrides = unreal.StateTreeService.get_component_parameter_overrides("bp_cube1")
+for p in overrides:
+    print(f"{p.name}: {p.type} = {p.default_value!r}")
+```
+
+**Important notes:**
+- The actor name must match the in-level instance label (e.g. `bp_cube1`), NOT the Blueprint
+  class name. Use `ActorService.list_level_actors()` to discover exact names.
+- Parameter names are defined in the StateTree asset, NOT as Blueprint variables. Always use
+  `get_component_state_tree_path` + `get_root_parameters` to discover available names and types.
+- Value format is identical to `add_or_update_root_parameter`: `"3.14"`, `"true"`, `"Hello"`.
+
 ### Transition Editing
 
 ```python
