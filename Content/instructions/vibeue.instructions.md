@@ -52,8 +52,28 @@ See the **Available Skills** section below for the full list.
 **Automatically load when:**
 - User mentions a domain ("create a blueprint", "add material parameter")
 - User asks to "see", "look at", or take a "screenshot"
-- User references asset prefixes (BP_, WBP_, IA_, IMC_, DT_, M_, MI_)
+- User references asset prefixes (BP_, WBP_, IA_, IMC_, DT_, M_, MI_, **ST_**)
 - You need service-specific API documentation
+- **You discover an actor has a `StateTreeComponent`** → load `state-trees` immediately
+- User mentions "state machine", "StateTree", "state transitions", or "parameters on an actor" where the actor has a StateTree
+
+**Quick Skill Mapping:**
+
+| Domain / Trigger | Skill to Load |
+|---|---|
+| BP_, Blueprint, Blueprint variables/functions/components | `blueprints` |
+| M_, MI_, Material, Material instance | `materials` |
+| DT_, DataTable, row | `data-tables` |
+| DA_, Data Asset | `data-assets` |
+| WBP_, Widget, UMG, HUD | `umg-widgets` |
+| IA_, IMC_, Input Action, Enhanced Input | `enhanced-input` |
+| Niagara, particle system, VFX | `niagara-systems` or `niagara-emitters` |
+| **ST_, StateTree, StateTreeComponent, state machine parameters** | **`state-trees`** |
+| Landscape, terrain | `landscape` |
+| Skeleton, skeleton asset | `skeleton` |
+| Level actor, place actor, spawn actor | `level-actors` |
+| Animation Blueprint | `animation-blueprint` |
+| Screenshot, capture, viewport | `screenshots` |
 
 **How to load:**
 ```python
@@ -75,6 +95,11 @@ manage_skills(action="load", skill_name="blueprints")
 User: "Create BP_Enemy with a Health variable"
 → Load "blueprints" skill
 → Use BlueprintService from skill docs
+
+User: "Set the IdlingTime parameter on bp_cube1 to 3.0"
+→ Recognise: actor + parameter → likely StateTree component parameter
+→ Load "state-trees" skill FIRST
+→ Use StateTreeService.set_component_parameter_override from skill docs
 ```
 
 ---

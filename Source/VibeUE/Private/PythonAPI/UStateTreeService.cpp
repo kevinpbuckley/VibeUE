@@ -16,6 +16,7 @@
 // StateTree core
 #include "StateTree.h"
 #include "StateTreeTypes.h"
+#include "StateTreeReference.h"
 #include "StateTreeTaskBase.h"
 #include "StateTreeEvaluatorBase.h"
 #include "StateTreeConditionBase.h"
@@ -31,6 +32,7 @@
 #include "UObject/UObjectIterator.h"
 
 #include "GameplayTagContainer.h"
+#include "PythonAPI/UActorService.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogStateTreeService, Log, All);
 
@@ -1946,6 +1948,206 @@ bool UStateTreeService::RenameRootParameter(const FString& AssetPath, const FStr
 
 	SetPropertyBagValueFromString(Bag, NewFName, BagType, CurrentValue);
 	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+// ============================================================
+// Component-level parameter overrides (level actor instances)
+// ============================================================
+
+namespace
+{
+	/** Find UStateTreeComponent class dynamically — avoids requiring GameplayStateTreeModule as a hard header dep. */
+	static UClass* GetStateTreeComponentClass()
+	{
+		static UClass* Cached = nullptr;
+		if (!Cached)
+		{
+			Cached = FindObject<UClass>(nullptr, TEXT("/Script/GameplayStateTreeModule.StateTreeComponent"));
+		}
+		return Cached;
+	}
+
+	/** Access the FStateTreeReference on a component via reflection (the property is protected). */
+	static FStateTreeReference* GetStateTreeRefFromComp(UActorComponent* Comp)
+	{
+		FStructProperty* Prop = FindFProperty<FStructProperty>(Comp->GetClass(), TEXT("StateTreeRef"));
+		if (!Prop || Prop->Struct != FStateTreeReference::StaticStruct())
+		{
+			return nullptr;
+		}
+		return Prop->ContainerPtrToValuePtr<FStateTreeReference>(Comp);
+	}
+} // anonymous namespace
+
+FString UStateTreeService::GetComponentStateTreePath(const FString& ActorNameOrLabel)
+{
+	AActor* Actor = UActorService::FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) { return FString(); }
+
+	UClass* STCompClass = GetStateTreeComponentClass();
+	if (!STCompClass) { return FString(); }
+
+	UActorComponent* Comp = Actor->GetComponentByClass(STCompClass);
+	if (!Comp) { return FString(); }
+
+	FStateTreeReference* STRef = GetStateTreeRefFromComp(Comp);
+	if (!STRef || !STRef->IsValid()) { return FString(); }
+
+	const UStateTree* Tree = STRef->GetStateTree();
+	if (!Tree) { return FString(); }
+
+	// Convert object path to game content path (strip _C suffix, convert /Game/... format)
+	FString PackagePath = Tree->GetPackage()->GetName();
+	return PackagePath;
+}
+
+TArray<FStateTreeParameterInfo> UStateTreeService::GetComponentParameterOverrides(const FString& ActorNameOrLabel)
+{
+	TArray<FStateTreeParameterInfo> Result;
+
+	AActor* Actor = UActorService::FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetComponentParameterOverrides: Actor not found: %s"), *ActorNameOrLabel);
+		return Result;
+	}
+
+	UClass* STCompClass = GetStateTreeComponentClass();
+	if (!STCompClass)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetComponentParameterOverrides: StateTreeComponent class not available"));
+		return Result;
+	}
+
+	UActorComponent* Comp = Actor->GetComponentByClass(STCompClass);
+	if (!Comp)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetComponentParameterOverrides: Actor '%s' has no StateTreeComponent"), *ActorNameOrLabel);
+		return Result;
+	}
+
+	FStateTreeReference* STRef = GetStateTreeRefFromComp(Comp);
+	if (!STRef || !STRef->IsValid())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("GetComponentParameterOverrides: StateTreeRef not set on actor '%s'"), *ActorNameOrLabel);
+		return Result;
+	}
+
+	const FInstancedPropertyBag& Bag = STRef->GetParameters();
+	const UPropertyBag* BagStruct = Bag.GetPropertyBagStruct();
+	if (!BagStruct)
+	{
+		return Result;
+	}
+
+	using namespace UStateTreeServiceHelpers;
+	for (const FPropertyBagPropertyDesc& Desc : BagStruct->GetPropertyDescs())
+	{
+		FStateTreeParameterInfo Info;
+		Info.Name = Desc.Name.ToString();
+		Info.Type = PropertyBagTypeToString(Desc.ValueType);
+		Info.DefaultValue = ExportPropertyBagValue(Bag, Desc.Name);
+		Result.Add(Info);
+	}
+	return Result;
+}
+
+bool UStateTreeService::SetComponentParameterOverride(const FString& ActorNameOrLabel,
+	const FString& ParameterName, const FString& Value)
+{
+	if (ParameterName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: ParameterName is empty"));
+		return false;
+	}
+
+	AActor* Actor = UActorService::FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Actor not found: %s"), *ActorNameOrLabel);
+		return false;
+	}
+
+	UClass* STCompClass = GetStateTreeComponentClass();
+	if (!STCompClass)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: StateTreeComponent class not available"));
+		return false;
+	}
+
+	UActorComponent* Comp = Actor->GetComponentByClass(STCompClass);
+	if (!Comp)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Actor '%s' has no StateTreeComponent"), *ActorNameOrLabel);
+		return false;
+	}
+
+	FStateTreeReference* STRef = GetStateTreeRefFromComp(Comp);
+	if (!STRef || !STRef->IsValid())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: StateTreeRef not set on actor '%s'"), *ActorNameOrLabel);
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	// Resolve the parameter type from the linked StateTree asset's schema
+	UStateTree* LinkedTree = STRef->GetMutableStateTree();
+	UStateTreeEditorData* EditorData = GetEditorData(LinkedTree);
+	if (!EditorData)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Could not get editor data for linked StateTree on actor '%s'"), *ActorNameOrLabel);
+		return false;
+	}
+
+	const FInstancedPropertyBag& AssetBag = EditorData->GetRootParametersPropertyBag();
+	const FName ParamFName(*ParameterName);
+	const FPropertyBagPropertyDesc* AssetDesc = AssetBag.FindPropertyDescByName(ParamFName);
+	if (!AssetDesc)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Parameter '%s' not found in linked StateTree '%s'"),
+			*ParameterName, *LinkedTree->GetName());
+		return false;
+	}
+
+	const EPropertyBagPropertyType BagType = AssetDesc->ValueType;
+	const FGuid ParamGuid = AssetDesc->ID;  // Needed to mark as overridden
+
+	// Get (or lazily sync) the instance-level parameter bag
+	FInstancedPropertyBag& InstanceBag = STRef->GetMutableParameters();
+
+	// Ensure the instance bag has the property — sync with asset schema if stale
+	if (!InstanceBag.FindPropertyDescByName(ParamFName))
+	{
+		STRef->SetStateTree(LinkedTree); // triggers SyncParameters()
+		if (!InstanceBag.FindPropertyDescByName(ParamFName))
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Parameter '%s' not in instance bag after sync"), *ParameterName);
+			return false;
+		}
+	}
+
+	using namespace UStateTreeServiceHelpers;
+	if (!SetPropertyBagValueFromString(InstanceBag, ParamFName, BagType, Value))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetComponentParameterOverride: Failed to set '%s' = '%s' on actor '%s'"),
+			*ParameterName, *Value, *ActorNameOrLabel);
+		return false;
+	}
+
+	// IMPORTANT: Mark this parameter as overridden so the instance value takes effect at runtime.
+	// Non-overridden parameters inherit from the StateTree asset defaults and ignore the bag value.
+	STRef->SetPropertyOverridden(ParamGuid, true);
+
+	// Mark dirty so the override is persisted when the level is saved
+	Comp->Modify();
+	Actor->Modify();
+
+	UE_LOG(LogStateTreeService, Log, TEXT("SetComponentParameterOverride: '%s' = '%s' on actor '%s'"),
+		*ParameterName, *Value, *ActorNameOrLabel);
 	return true;
 #else
 	return false;
