@@ -27,7 +27,7 @@ import sys
 import urllib.request
 import urllib.error
 import socket
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -166,19 +166,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # SSE / health — try UE, otherwise 503
-        success, body = forward_to_ue(b"", self._lower_headers())
-        if success:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self._send_cors()
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_response(503)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"Unreal Engine is not running")
+        # Health check only — UE speaks JSON-RPC POST, not GET/SSE
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self._send_cors()
+        self.end_headers()
+        self.wfile.write(b"VibeUE proxy running")
 
     def do_POST(self):
         if self.path != "/mcp":
@@ -293,7 +286,7 @@ if __name__ == "__main__":
     log(f"VibeUE MCP Proxy listening on http://127.0.0.1:{PROXY_PORT}/mcp")
     log(f"Forwarding tool calls to UE at http://127.0.0.1:{UE_PORT}/mcp")
 
-    server = HTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
