@@ -106,7 +106,7 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
             headers=forward_headers,
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=10) as resp:
+        with urllib.request.urlopen(req, timeout=120) as resp:
             return True, resp.read()
     except urllib.error.HTTPError as e:
         # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
