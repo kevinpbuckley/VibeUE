@@ -146,8 +146,6 @@ def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
 
 class ProxyHandler(BaseHTTPRequestHandler):
 
-    protocol_version = "HTTP/1.1"
-
     def log_message(self, fmt, *args):
         # Suppress default access log; we do our own
         pass
@@ -201,9 +199,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         # --- initialize: answer directly, no UE needed ---
         if method == "initialize":
-            log(f"initialize (offline-capable)")
+            # Echo back the client's requested protocol version so Claude Code
+            # doesn't reject the handshake due to a version it doesn't recognise.
+            client_version = (rpc.get("params") or {}).get("protocolVersion", "2024-11-05")
+            log(f"initialize (offline-capable, protocol {client_version})")
             self._jsonrpc(req_id, {
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": client_version,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "VibeUE-Proxy", "version": "1.0.0"},
             })
