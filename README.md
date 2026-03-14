@@ -1540,6 +1540,7 @@ Use it when you want:
 
 - Tool definitions available even while Unreal Editor is closed
 - MCP clients without local `Authorization` header management
+- AI agent tools (Claude Code, Cursor, Windsurf) that cannot set `Authorization` headers per-request
 
 #### 1) Set proxy bearer token
 
@@ -1556,16 +1557,25 @@ Create `Plugins/VibeUE/vibeue-proxy.json`:
 #### 2) Start the proxy
 
 ```powershell
-# Windows (silent background process)
+# Windows (silent background process — interactive shells / Explorer)
 Start-Process -FilePath 'pythonw.exe' -ArgumentList 'Plugins/VibeUE/Content/Python/vibeue-proxy.py' -WindowStyle Hidden
 ```
+
+> **AI agent / headless shells (Claude Code, Cursor, Windsurf):** `pythonw` and `start /B` fail silently in headless contexts — errors are swallowed and the proxy never starts. Use `python` directly instead:
+>
+> ```bash
+> # Windows — AI agent / headless shell
+> python Plugins/VibeUE/Content/Python/vibeue-proxy.py &
+> ```
 
 ```bash
 # Mac / Linux
 python3 Plugins/VibeUE/Content/Python/vibeue-proxy.py &
 ```
 
-Optional Windows auto-start: add a shortcut to `Plugins/VibeUE/Content/Python/start-vibeue-proxy.bat` in `shell:startup`.
+**The proxy survives session close.** Once started, it keeps running until the machine restarts or it is killed manually — no need to restart it each AI session.
+
+Optional Windows auto-start: add a shortcut to `Plugins/VibeUE/Content/Python/start-vibeue-proxy.bat` in `shell:startup`. The bat kills any existing proxy instance before starting a fresh one, so it is safe to re-run if something goes wrong.
 
 #### 3) Point your MCP client to proxy (no auth header needed)
 
@@ -1596,6 +1606,18 @@ Claude Desktop / Cursor / AntiGravity:
 ```
 
 The proxy injects the token from `vibeue-proxy.json` when forwarding requests to Unreal.
+
+**Verify the proxy is running** before wiring up your MCP client:
+
+```bash
+# Windows
+netstat -ano | findstr :8089
+
+# Mac / Linux
+lsof -i :8089
+```
+
+A `LISTENING` result on port 8089 confirms the proxy is up. If nothing appears, check that `vibeue-proxy.json` exists and Python is on your PATH.
 
 ---
 

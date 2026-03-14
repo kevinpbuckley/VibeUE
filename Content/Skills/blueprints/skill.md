@@ -328,3 +328,75 @@ For `add_function_call_node(path, graph, class, func, x, y)`:
 - **KismetSystemLibrary** - System (PrintString, Delay)
 - **GameplayStatics** - Game (GetPlayerController, SpawnActor)
 - **Actor** - Actor (GetActorLocation, SetActorLocation)
+
+---
+
+## Blueprint Introspection — What Works and What Doesn't (UE 5.7)
+
+### Getting Level Actors
+
+```python
+# CORRECT
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+actors = actor_subsys.get_all_level_actors()
+
+# WRONG — deprecated, blocked by VibeUE in UE 5.7
+unreal.EditorLevelLibrary.get_all_level_actors()
+```
+
+### Finding Blueprint Assets
+
+```python
+# CORRECT — use package_name or package_path
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+assets = ar.get_assets_by_path('/Game', recursive=True)
+print(assets[0].package_name)   # /Game/Blueprints/BP_MyActor
+print(assets[0].package_path)   # /Game/Blueprints
+
+# WRONG — object_path does not exist on AssetData in UE 5.7
+assets[0].object_path  # AttributeError
+```
+
+### Inspecting Blueprint Components
+
+Direct Blueprint introspection APIs are largely missing or protected in UE 5.7 Python:
+
+| What you might try | Result |
+|---|---|
+| `bp.get_editor_property('simple_construction_script')` | Blocked — protected property |
+| `BlueprintEditorLibrary.get_blueprint_component_names()` | Doesn't exist in UE 5.7 |
+| `BlueprintEditorLibrary.get_blueprint_variable_names()` | Doesn't exist in UE 5.7 |
+| `bp.generated_class().get_default_object()` | Blocked by VibeUE CDO safety guard |
+
+**Working pattern — spawn, read, destroy:**
+
+```python
+import unreal
+
+bp_path = "/Game/Blueprints/BP_MyActor"
+bp = unreal.load_asset(bp_path)
+gen_class = bp.generated_class()
+
+# Spawn at a safe location off-screen
+location = unreal.Vector(999999, 999999, 999999)
+actor = unreal.EditorLevelLibrary.spawn_actor_from_class(gen_class, location)
+
+# Read components
+for comp in actor.get_components_by_class(unreal.ActorComponent):
+    print(f"{comp.get_class().get_name()}: {comp.get_name()}")
+
+# Clean up
+unreal.EditorLevelLibrary.destroy_actor(actor)
+```
+
+This is the only reliable path for inspecting BP component setup from Python.
+
+### Material Parameters
+
+```python
+# Works cleanly
+import unreal
+mat = unreal.load_asset('/Game/Materials/M_MyMaterial')
+names = unreal.MaterialEditingLibrary.get_scalar_parameter_names(mat)
+print(names)
+```
