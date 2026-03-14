@@ -572,10 +572,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors|Exists")
 	static bool ActorExistsByTag(const FString& Tag);
 
-private:
-	/** Helper: Find actor by name or label */
+	/** Find an actor in the current level by name or label (case-insensitive, falls back to contains-match). */
 	static AActor* FindActorByIdentifier(const FString& NameOrLabel);
 
+private:
 	/** Helper: Get the current editor world */
 	static UWorld* GetEditorWorld();
 

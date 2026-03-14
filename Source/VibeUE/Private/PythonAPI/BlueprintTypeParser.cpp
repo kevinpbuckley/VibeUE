@@ -5,6 +5,10 @@
 #include "UObject/UObjectIterator.h"
 #include "UObject/Class.h"
 #include "UObject/StructOnScope.h"
+#include "AssetRegistry/AssetRegistryModule.h"
+#include "AssetRegistry/IAssetRegistry.h"
+#include "Engine/Blueprint.h"
+#include "Misc/Paths.h"
 
 const TMap<FString, FName>& FBlueprintTypeParser::GetBasicTypeMap()
 {
@@ -131,6 +135,67 @@ UClass* FBlueprintTypeParser::FindClassByName(const FString& ClassName)
 		if (Class->GetName() == ClassName || Class->GetPrefixCPP() + Class->GetName() == ClassName)
 		{
 			return Class;
+		}
+	}
+
+	return nullptr;
+}
+
+UClass* FBlueprintTypeParser::TryFindBlueprintClass(const FString& TypeString)
+{
+	if (TypeString.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	// 1. Try direct class name search — handles "BP_Cube_C" if the Blueprint is already loaded
+	UClass* Found = FindClassByName(TypeString);
+	if (Found)
+	{
+		return Found;
+	}
+
+	// 2. Try appending _C suffix — handles "BP_Cube" when the generated class is already loaded
+	if (!TypeString.EndsWith(TEXT("_C")))
+	{
+		Found = FindClassByName(TypeString + TEXT("_C"));
+		if (Found)
+		{
+			return Found;
+		}
+	}
+
+	// Strip _C suffix to get the Blueprint asset name
+	FString AssetName = TypeString.EndsWith(TEXT("_C")) ? TypeString.LeftChop(2) : TypeString;
+
+	// 3. For full asset paths (/Game/...), load the Blueprint asset directly
+	if (AssetName.StartsWith(TEXT("/Game/")) || AssetName.StartsWith(TEXT("/"))) 
+	{
+		FString ObjectPath = AssetName + TEXT(".") + FPaths::GetBaseFilename(AssetName);
+		UBlueprint* BP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *ObjectPath, nullptr, LOAD_Quiet | LOAD_NoWarn));
+		if (BP && BP->GeneratedClass)
+		{
+			return BP->GeneratedClass;
+		}
+	}
+
+	// 4. Search asset registry by short name — handles "BP_Cube" without knowing the full path
+	if (!AssetName.Contains(TEXT("/")))
+	{
+		IAssetRegistry& Registry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+		TArray<FAssetData> Assets;
+		Registry.GetAssetsByClass(UBlueprint::StaticClass()->GetClassPathName(), Assets);
+		for (const FAssetData& Asset : Assets)
+		{
+			if (Asset.AssetName == FName(*AssetName))
+			{
+				UBlueprint* BP = Cast<UBlueprint>(Asset.GetAsset());
+				if (BP && BP->GeneratedClass)
+				{
+					return BP->GeneratedClass;
+				}
+				break;
+			}
 		}
 	}
 
@@ -324,8 +389,23 @@ bool FBlueprintTypeParser::ParseTypeString(
 	}
 	else
 	{
-		OutErrorMessage = FString::Printf(TEXT("Unknown type '%s' - not a basic type, struct, class, object, or enum"), *ResolvedType);
-		return false;
+		// Fallback: try to resolve as a Blueprint-generated class.
+		// Handles "BP_Cube", "BP_Cube_C", and "/Game/Path/BP_Cube" (asset paths).
+		UClass* BlueprintClass = TryFindBlueprintClass(ResolvedType);
+		if (BlueprintClass)
+		{
+			OutPinType.PinCategory = UEdGraphSchema_K2::PC_Object;
+			OutPinType.PinSubCategoryObject = BlueprintClass;
+			bSuccess = true;
+		}
+		else
+		{
+			OutErrorMessage = FString::Printf(
+				TEXT("Unknown type '%s' - not a basic type, struct, class, object, enum, or Blueprint asset. "
+					 "For Blueprint variables, use the Blueprint name (e.g. 'BP_Cube') or asset path (e.g. '/Game/StateTree/BP_Cube')."),
+				*ResolvedType);
+			return false;
+		}
 	}
 
 	if (!bSuccess)

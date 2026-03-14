@@ -56,15 +56,14 @@ Returns `False` for class reference properties. Same root cause as issue #3 — 
 
 ---
 
-## 5. `connect_nodes` fails when source is a default K2Node_Event
+## 5. ~~`connect_nodes` fails when source is a default K2Node_Event~~ — FIXED
 
-**Severity:** High
+**Severity:** ~~High~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
 **Method:** `BlueprintService.connect_nodes`
-**Affected nodes:** `Event BeginPlay`, `Event Tick` (default auto-generated event nodes)
 
-Every exec output pin name tried returns `False`: `then`, `Exec`, `execute`, `Then`, `""`, etc. The source node ID resolves correctly but the pin cannot be connected from.
+`AllocateDefaultPins()` is now called on any node with an empty Pins array before pin lookup. Default auto-placed K2Node_Event nodes (BeginPlay, Tick) now connect correctly.
 
-**Workaround:** Use `add_event_node('ReceiveTick')` or `add_event_node('ReceiveBeginPlay')` to add user-created event override nodes. These return valid GUIDs and connect normally.
+~~**Workaround:** Use `add_event_node('ReceiveTick')` or `add_event_node('ReceiveBeginPlay')` to add user-created event override nodes. These return valid GUIDs and connect normally.~~
 
 ---
 
@@ -74,37 +73,36 @@ Every exec output pin name tried returns `False`: `then`, `Exec`, `execute`, `Th
 **Method:** `BlueprintService.add_set_variable_node`, `BlueprintService.add_get_variable_node`
 **Affected type:** Object reference variables (e.g. `ATurnManager*`)
 
-Both methods return an empty string (failure) for variables of object reference type, even when the variable exists and `list_variables` confirms it. The variable type is reported as `object` by `list_variables` regardless of the actual class.
+Both methods return an empty string (failure) for variables of object reference type, even when the variable exists and `list_variables` confirms it. ~~The variable type is reported as `object` by `list_variables` regardless of the actual class.~~ — Fixed by issue #9 fix (PR #330). `list_variables` now returns the correct class name.
 
 **Note:** `add_get_variable_node` works correctly for **component** references (e.g. a `UStaticMeshComponent` added via `add_component`).
 
 ---
 
-## 7. `get_node_pins` returns empty for default K2Node_Event nodes
+## 7. ~~`get_node_pins` returns empty for default K2Node_Event nodes~~ — FIXED
 
-**Severity:** Low
+**Severity:** ~~Low~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
 **Method:** `BlueprintService.get_node_pins`
-**Affected nodes:** `Event BeginPlay`, `Event Tick`
 
-Returns 0 pins despite `get_nodes_in_graph` reporting e.g. 3 pins on the same node. Purely a read issue — `connect_nodes` attempts on these nodes (issue #5) are the real blocker.
+Same `AllocateDefaultPins()` fix as issue #5. Pins are now correctly returned for default event nodes.
 
 ---
 
-## 8. Undocumented Branch exec pin names
+## 8. ~~Undocumented Branch exec pin names~~ — FIXED
 
-**Severity:** Low (documentation gap)
+**Severity:** ~~Low~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
 **Method:** `BlueprintService.connect_nodes`
 
-The Branch node's exec output pins are named `then` (True path) and `else` (False path) internally — not `True` and `False` as displayed in the editor. Using `True`/`False` silently fails.
+`connect_nodes` now normalises `True → then` and `False → else` (case-insensitive). Both the editor-visible names and internal names are accepted.
 
 ---
 
-## 9. `add_variable` always reports type as `object` or `int`
+## 9. ~~`add_variable` always reports type as `object` or `int`~~ — FIXED
 
-**Severity:** Low (cosmetic/diagnostic)
-**Method:** `BlueprintService.add_variable`, `BlueprintService.list_variables`
+**Severity:** ~~Low~~ — Fixed in commit `013ee6c` (Mar 13 2026), PR #330
+**Method:** `BlueprintService.list_variables`, `BlueprintService.get_variable_info`
 
-Variables added with an actor class type (e.g. `ATurnManager`) are created but `list_variables` reports their type as `object` or `int`. The actual underlying type may be correct but the display is misleading.
+`ListVariables` and `GetVariableInfo` now use `FBlueprintTypeParser::GetFriendlyTypeName` instead of raw `PinCategory.ToString()`. Types now report correctly (e.g. `float` not `real`, struct names instead of `struct`).
 
 ---
 

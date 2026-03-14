@@ -27,7 +27,7 @@ import sys
 import urllib.request
 import urllib.error
 import socket
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from datetime import datetime, timezone
 
 # ---------------------------------------------------------------------------
@@ -87,6 +87,11 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
     forward_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
+        # Tell Python and UE not to reuse the connection.  Without this, Python's
+        # urllib reuses the keep-alive socket from the previous call; UE's server
+        # closes it on its end, so the next request hits a stale socket and raises
+        # OSError / RemoteDisconnected, which was reported as "UE is not running".
+        "Connection": "close",
     }
     # Inject the UE bearer token directly from vibeue-proxy.json — do not rely on
     # the MCP client forwarding it, as some clients (e.g. Claude Code) omit auth headers.
@@ -99,23 +104,30 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
         if key in headers:
             forward_headers[key] = headers[key]
 
-    try:
-        req = urllib.request.Request(
-            UE_URL,
-            data=body_bytes,
-            headers=forward_headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return True, resp.read()
-    except urllib.error.HTTPError as e:
-        # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
-        # Return failure with the UE error text so the caller can surface it clearly.
-        body = e.read()
-        log(f"UE returned HTTP {e.code}: {body[:200]}")
-        return False, body
-    except (urllib.error.URLError, socket.timeout, OSError):
-        return False, b""
+    last_exc = None
+    for attempt in range(2):          # retry once on stale-connection errors
+        try:
+            req = urllib.request.Request(
+                UE_URL,
+                data=body_bytes,
+                headers=forward_headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                return True, resp.read()
+        except urllib.error.HTTPError as e:
+            # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
+            # Return failure with the UE error text so the caller can surface it clearly.
+            body = e.read()
+            log(f"UE returned HTTP {e.code}: {body[:200]}")
+            return False, body
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                log(f"Connection error (attempt {attempt + 1}), retrying: {exc}")
+            continue
+    log(f"UE unreachable after 2 attempts: {last_exc}")
+    return False, b""
 
 
 def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
@@ -146,8 +158,6 @@ def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
 
 class ProxyHandler(BaseHTTPRequestHandler):
 
-    protocol_version = "HTTP/1.1"
-
     def log_message(self, fmt, *args):
         # Suppress default access log; we do our own
         pass
@@ -166,19 +176,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # SSE / health — try UE, otherwise 503
-        success, body = forward_to_ue(b"", self._lower_headers())
-        if success:
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self._send_cors()
-            self.end_headers()
-            self.wfile.write(body)
-        else:
-            self.send_response(503)
-            self.send_header("Content-Type", "text/plain")
-            self.end_headers()
-            self.wfile.write(b"Unreal Engine is not running")
+        # Health check only — UE speaks JSON-RPC POST, not GET/SSE
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self._send_cors()
+        self.end_headers()
+        self.wfile.write(b"VibeUE proxy running")
 
     def do_POST(self):
         if self.path != "/mcp":
@@ -201,9 +204,12 @@ class ProxyHandler(BaseHTTPRequestHandler):
 
         # --- initialize: answer directly, no UE needed ---
         if method == "initialize":
-            log(f"initialize (offline-capable)")
+            # Echo back the client's requested protocol version so Claude Code
+            # doesn't reject the handshake due to a version it doesn't recognise.
+            client_version = (rpc.get("params") or {}).get("protocolVersion", "2024-11-05")
+            log(f"initialize (offline-capable, protocol {client_version})")
             self._jsonrpc(req_id, {
-                "protocolVersion": "2025-11-25",
+                "protocolVersion": client_version,
                 "capabilities": {"tools": {}},
                 "serverInfo": {"name": "VibeUE-Proxy", "version": "1.0.0"},
             })
@@ -293,7 +299,7 @@ if __name__ == "__main__":
     log(f"VibeUE MCP Proxy listening on http://127.0.0.1:{PROXY_PORT}/mcp")
     log(f"Forwarding tool calls to UE at http://127.0.0.1:{UE_PORT}/mcp")
 
-    server = HTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
+    server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

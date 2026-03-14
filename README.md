@@ -16,7 +16,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 24 specialized services with 759 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 24 specialized services with 798 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
 - **Custom Instructions** - Add project-specific context via markdown files
@@ -303,7 +303,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (24 services, 759 methods)
+### 2. VibeUE Python API Services (24 services, 798 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -331,7 +331,7 @@ High-level services exposed to Python for common game development tasks:
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
-| `StateTreeService` | 21 | StateTree asset creation, state hierarchy, tasks, evaluators, transitions, compile/save |
+| `StateTreeService` | 60 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, compile/save |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -1183,6 +1183,94 @@ EngineSettingsService controls core engine configuration across multiple domains
 - `get/set_gc_setting(setting, value)` - Configure garbage collection behavior
 - `list_gc_settings()` - List available GC settings
 
+### StateTreeService (60 methods)
+
+StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, theme colors, and compilation.
+
+**Discovery & Info:**
+- `list_state_trees(directory_path)` - List all StateTree assets under a content path
+- `get_state_tree_info(asset_path)` - Get full structural info (states, tasks, transitions, parameters, compile status)
+- `get_available_task_types()` - List all registered task struct names
+- `get_available_evaluator_types()` - List all registered evaluator struct names
+- `get_available_condition_types()` - List all registered condition struct names
+
+**Asset Creation:**
+- `create_state_tree(asset_path, schema_class_name)` - Create a new StateTree asset (schema: `StateTreeComponentSchema`, `StateTreeAIComponentSchema`, etc.)
+
+**State Management:**
+- `add_state(asset_path, parent_path, state_name, state_type)` - Add a state (`"State"`, `"Group"`, `"Subtree"`, `"Linked"`, `"LinkedAsset"`)
+- `remove_state(asset_path, state_path)` - Remove a state and all its children
+- `rename_state(asset_path, state_path, new_name)` - Rename a state
+- `set_state_enabled(asset_path, state_path, enabled)` - Enable or disable a state
+- `set_state_description(asset_path, state_path, description)` - Set editor description
+- `set_state_tag(asset_path, state_path, gameplay_tag)` - Set gameplay tag (pass empty to clear)
+- `set_state_weight(asset_path, state_path, weight)` - Set utility weight for utility-based selection
+- `set_state_expanded(asset_path, state_path, expanded)` - Expand or collapse in editor tree view
+- `set_context_actor_class(asset_path, actor_class_path)` - Set ContextActorClass on the schema
+
+**State Properties:**
+- `set_selection_behavior(asset_path, state_path, behavior)` - How children are selected (`TrySelectChildrenInOrder`, `TrySelectChildrenAtRandom`, etc.)
+- `set_tasks_completion(asset_path, state_path, completion)` - Task completion mode: `"Any"` or `"All"`
+
+**Theme Colors:**
+- `get_theme_colors(asset_path)` - List all named theme colors and which states use them
+- `set_state_theme_color(asset_path, state_path, color_name, color)` - Assign a named color to a state
+- `rename_theme_color(asset_path, old_color_name, new_color_name)` - Rename a color entry
+
+**Parameters:**
+- `get_root_parameters(asset_path)` - Get all root parameters (name, type, default value)
+- `add_or_update_root_parameter(asset_path, name, type, default_value)` - Add/update a parameter (`"Bool"`, `"Int32"`, `"Float"`, `"Double"`, `"String"`, etc.)
+- `add_or_update_root_float_parameter(asset_path, parameter_name, default_value)` - Convenience: add/update a float parameter
+- `remove_root_parameter(asset_path, name)` - Remove a parameter by name
+- `rename_root_parameter(asset_path, old_name, new_name)` - Rename a parameter
+
+**Tasks:**
+- `add_task(asset_path, state_path, task_struct_name)` - Add a task by C++ struct name (e.g. `"FStateTreeDelayTask"`)
+- `remove_task(asset_path, state_path, task_struct_name, task_match_index)` - Remove a task
+- `move_task(asset_path, state_path, task_struct_name, task_match_index, new_index)` - Reorder a task
+- `set_task_enabled(asset_path, state_path, task_struct_name, task_match_index, enabled)` - Enable/disable a task
+- `set_task_considered_for_completion(asset_path, state_path, task_struct_name, task_match_index, considered)` - Whether task counts toward state completion
+- `get_task_property_names(asset_path, state_path, task_struct_name, task_match_index)` - Discover all editable task properties
+- `get_task_property_value(asset_path, state_path, task_struct_name, property_path, task_match_index)` - Read a task property value
+- `set_task_property_value(asset_path, state_path, task_struct_name, property_path, value, task_match_index)` - Set a task property value
+- `set_task_property_value_detailed(...)` - Set task property with structured result (failure reason + readback value)
+- `bind_task_property_to_root_parameter(asset_path, state_path, task_struct_name, task_property_path, parameter_path, task_match_index)` - Bind task property to a root parameter
+- `bind_task_property_to_context(asset_path, state_path, task_struct_name, task_property_path, context_name, context_property_path, task_match_index)` - Bind task property to context data
+
+**Evaluators & Global Tasks:**
+- `add_evaluator(asset_path, evaluator_struct_name)` - Add a global evaluator
+- `remove_evaluator(asset_path, evaluator_struct_name, match_index)` - Remove an evaluator
+- `get_evaluator_property_names(asset_path, evaluator_struct_name, match_index)` - Get evaluator properties
+- `set_evaluator_property_value(asset_path, evaluator_struct_name, property_path, value, match_index)` - Set evaluator property
+- `add_global_task(asset_path, task_struct_name)` - Add a global task
+- `remove_global_task(asset_path, task_struct_name, match_index)` - Remove a global task
+- `get_global_task_property_names(asset_path, task_struct_name, match_index)` - Get global task properties
+- `set_global_task_property_value(asset_path, task_struct_name, property_path, value, match_index)` - Set global task property
+
+**Enter Conditions:**
+- `add_enter_condition(asset_path, state_path, condition_struct_name)` - Add an enter condition to a state
+- `remove_enter_condition(asset_path, state_path, condition_index)` - Remove an enter condition by index
+- `set_enter_condition_operand(asset_path, state_path, condition_index, operand)` - Set `"And"` / `"Or"` / `"Copy"` operand
+- `get_enter_condition_property_names(asset_path, state_path, condition_struct_name, condition_match_index)` - Discover condition properties
+- `set_enter_condition_property_value(asset_path, state_path, condition_struct_name, property_path, value, condition_match_index)` - Set a condition property
+
+**Transitions:**
+- `add_transition(asset_path, state_path, trigger, transition_type, target_path, priority)` - Add a transition (`"OnStateCompleted"`, `"GotoState"`, etc.)
+- `update_transition(asset_path, state_path, transition_index, ...)` - Modify trigger, type, target, priority, enabled, or delay settings
+- `remove_transition(asset_path, state_path, transition_index)` - Remove a transition by index
+- `move_transition(asset_path, state_path, from_index, to_index)` - Reorder a transition
+
+**Transition Conditions:**
+- `add_transition_condition(asset_path, state_path, transition_index, condition_struct_name)` - Add a condition to a transition
+- `remove_transition_condition(asset_path, state_path, transition_index, condition_index)` - Remove a transition condition
+- `set_transition_condition_operand(asset_path, state_path, transition_index, condition_index, operand)` - Set operand
+- `get_transition_condition_property_names(asset_path, state_path, transition_index, condition_struct_name, condition_match_index)` - Discover properties
+- `set_transition_condition_property_value(asset_path, state_path, transition_index, condition_struct_name, property_path, value, condition_match_index)` - Set property
+
+**Compile & Save:**
+- `compile_state_tree(asset_path)` - Compile the asset; returns success flag, errors, and warnings
+- `save_state_tree(asset_path)` - Save to disk
+
 ---
 
 ## 🔧 Common Workflows
@@ -1452,6 +1540,7 @@ Use it when you want:
 
 - Tool definitions available even while Unreal Editor is closed
 - MCP clients without local `Authorization` header management
+- AI agent tools (Claude Code, Cursor, Windsurf) that cannot set `Authorization` headers per-request
 
 #### 1) Set proxy bearer token
 
@@ -1468,16 +1557,25 @@ Create `Plugins/VibeUE/vibeue-proxy.json`:
 #### 2) Start the proxy
 
 ```powershell
-# Windows (silent background process)
+# Windows (silent background process — interactive shells / Explorer)
 Start-Process -FilePath 'pythonw.exe' -ArgumentList 'Plugins/VibeUE/Content/Python/vibeue-proxy.py' -WindowStyle Hidden
 ```
+
+> **AI agent / headless shells (Claude Code, Cursor, Windsurf):** `pythonw` and `start /B` fail silently in headless contexts — errors are swallowed and the proxy never starts. Use `python` directly instead:
+>
+> ```bash
+> # Windows — AI agent / headless shell
+> python Plugins/VibeUE/Content/Python/vibeue-proxy.py &
+> ```
 
 ```bash
 # Mac / Linux
 python3 Plugins/VibeUE/Content/Python/vibeue-proxy.py &
 ```
 
-Optional Windows auto-start: add a shortcut to `Plugins/VibeUE/Content/Python/start-vibeue-proxy.bat` in `shell:startup`.
+**The proxy survives session close.** Once started, it keeps running until the machine restarts or it is killed manually — no need to restart it each AI session.
+
+Optional Windows auto-start: add a shortcut to `Plugins/VibeUE/Content/Python/start-vibeue-proxy.bat` in `shell:startup`. The bat kills any existing proxy instance before starting a fresh one, so it is safe to re-run if something goes wrong.
 
 #### 3) Point your MCP client to proxy (no auth header needed)
 
@@ -1508,6 +1606,18 @@ Claude Desktop / Cursor / AntiGravity:
 ```
 
 The proxy injects the token from `vibeue-proxy.json` when forwarding requests to Unreal.
+
+**Verify the proxy is running** before wiring up your MCP client:
+
+```bash
+# Windows
+netstat -ano | findstr :8089
+
+# Mac / Linux
+lsof -i :8089
+```
+
+A `LISTENING` result on port 8089 confirms the proxy is up. If nothing appears, check that `vibeue-proxy.json` exists and Python is on your PATH.
 
 ---
 

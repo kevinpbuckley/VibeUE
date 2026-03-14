@@ -1234,6 +1234,10 @@ struct FSanitizedAction
 {
 	FString Action;
 	TMap<FString, FString> RecoveredParams;
+	// True when the raw action value was malformed (embedded params, escaped quotes, etc.)
+	bool bWasMalformed = false;
+	// Keys detected with no associated value (e.g. skill_name: with no value)
+	TArray<FString> KeysWithNoValue;
 };
 
 static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
@@ -1248,18 +1252,33 @@ static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
 	// We sanitize by:
 	// 1. Extracting embedded parameters from the corrupted string
 	// 2. Truncating action at first quote/comma to get the real action
-	if (Result.Action.Contains(TEXT("\"")))
+	if (Result.Action.Contains(TEXT("\"")) || Result.Action.Contains(TEXT(":")))
 	{
-		// Try to parse embedded key-value pairs from the corrupted action string
-		// Pattern: load", "skill_name": "landscape"  →  skill_name=landscape
-		FRegexPattern Pattern(TEXT("\"(\\w+)\"\\s*:\\s*\"([^\"]+)\""));
-		FRegexMatcher Matcher(Pattern, Result.Action);
-		while (Matcher.FindNext())
+		Result.bWasMalformed = true;
+
+		// Pattern 1: quoted key + quoted value — e.g. "skill_name": "landscape"
+		FRegexPattern QuotedPattern(TEXT("\"(\\w+)\"\\s*:\\s*\"([^\"]+)\""));
+		FRegexMatcher QuotedMatcher(QuotedPattern, Result.Action);
+		while (QuotedMatcher.FindNext())
 		{
-			FString Key = Matcher.GetCaptureGroup(1);
-			FString Value = Matcher.GetCaptureGroup(2);
+			FString Key = QuotedMatcher.GetCaptureGroup(1);
+			FString Value = QuotedMatcher.GetCaptureGroup(2);
 			Result.RecoveredParams.Add(Key, Value);
 			UE_LOG(LogTemp, Warning, TEXT("manage_skills: Recovered embedded param '%s'='%s' from malformed action string"), *Key, *Value);
+		}
+
+		// Pattern 2: unquoted key with no useful value — e.g. skill_name: (end of string or empty quotes)
+		// Handles: {"action":"load\",skill_name:"} → action value = load",skill_name:
+		FRegexPattern UnquotedPattern(TEXT("(\\w+):\\s*(?:\"\")?\\s*$"));
+		FRegexMatcher UnquotedMatcher(UnquotedPattern, Result.Action);
+		while (UnquotedMatcher.FindNext())
+		{
+			FString Key = UnquotedMatcher.GetCaptureGroup(1);
+			if (!Result.RecoveredParams.Contains(Key))
+			{
+				Result.KeysWithNoValue.AddUnique(Key);
+				UE_LOG(LogTemp, Warning, TEXT("manage_skills: Detected key '%s' with no value in malformed action string"), *Key);
+			}
 		}
 
 		// Truncate action at first quote/comma
@@ -1284,7 +1303,8 @@ static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
 		{
 			Result.Action = Result.Action.Left(TruncateAt).TrimEnd();
 		}
-		UE_LOG(LogTemp, Warning, TEXT("manage_skills: Sanitized malformed action to '%s' (recovered %d embedded params)"), *Result.Action, Result.RecoveredParams.Num());
+		UE_LOG(LogTemp, Warning, TEXT("manage_skills: Sanitized malformed action to '%s' (recovered %d embedded params, %d keys-without-value)"),
+			*Result.Action, Result.RecoveredParams.Num(), Result.KeysWithNoValue.Num());
 	}
 
 	return Result;
@@ -1354,7 +1374,27 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 			{
 				TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
 				ErrorObj->SetBoolField(TEXT("success"), false);
-				ErrorObj->SetStringField(TEXT("error"), TEXT("Either 'skill_name' or 'skill_names' parameter required for 'load' action"));
+
+				// Give a corrective message when the LLM generated malformed JSON
+				// (e.g. {"action":"load\",skill_name:"}) so it self-corrects instead
+				// of retrying the same broken arguments and entering an infinite loop.
+				if (Sanitized.bWasMalformed && Sanitized.KeysWithNoValue.Contains(TEXT("skill_name")))
+				{
+					ErrorObj->SetStringField(TEXT("error"),
+						TEXT("MALFORMED JSON: 'skill_name' key was detected but had no value. "
+							 "Your JSON arguments were malformed (likely an escaped quote issue). "
+							 "Retry with properly formatted JSON: {\"action\": \"load\", \"skill_name\": \"<name>\"}"));
+				}
+				else if (Sanitized.bWasMalformed)
+				{
+					ErrorObj->SetStringField(TEXT("error"),
+						TEXT("MALFORMED JSON: manage_skills arguments were malformed — parameters were embedded in the action value. "
+							 "Retry with properly formatted JSON: {\"action\": \"load\", \"skill_name\": \"<name>\"}"));
+				}
+				else
+				{
+					ErrorObj->SetStringField(TEXT("error"), TEXT("Either 'skill_name' or 'skill_names' parameter required for 'load' action"));
+				}
 
 				FString ErrorJson;
 				TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ErrorJson);
