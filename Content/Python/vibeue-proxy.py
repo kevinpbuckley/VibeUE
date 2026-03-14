@@ -165,12 +165,34 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # Health check only — UE speaks JSON-RPC POST, not GET/SSE
+        accept = self.headers.get("Accept", "")
+        if "text/event-stream" not in accept:
+            # Plain health check
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self._send_cors()
+            self.end_headers()
+            self.wfile.write(b"VibeUE proxy running")
+            return
+
+        # SSE stream — hold the connection open with heartbeats so the client
+        # doesn't reconnect in a loop. Tool call responses still come back inline
+        # on POST; this stream exists to stop the reconnect flood (issue #327).
+        log("SSE stream opened")
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
         self._send_cors()
         self.end_headers()
-        self.wfile.write(b"VibeUE proxy running")
+
+        try:
+            while True:
+                self.wfile.write(b": heartbeat\n\n")
+                self.wfile.flush()
+                time.sleep(15)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            log("SSE stream closed")
 
     def do_POST(self):
         if self.path != "/mcp":
