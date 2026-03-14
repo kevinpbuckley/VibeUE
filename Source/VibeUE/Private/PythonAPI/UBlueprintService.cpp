@@ -3237,13 +3237,34 @@ bool UBlueprintService::ConnectNodes(
 		return false;
 	}
 
+	// Ensure pins are allocated — default auto-placed K2Node_Event nodes (BeginPlay, Tick)
+	// may have an empty Pins array until AllocateDefaultPins() is called explicitly.
+	if (SourceNode->Pins.Num() == 0)
+	{
+		SourceNode->AllocateDefaultPins();
+	}
+	if (TargetNode->Pins.Num() == 0)
+	{
+		TargetNode->AllocateDefaultPins();
+	}
+
+	// Normalise Branch node pin name aliases: editor shows True/False, internal names are then/else.
+	auto NormalisePinName = [](const FString& Name) -> FString
+	{
+		if (Name.Equals(TEXT("True"), ESearchCase::IgnoreCase))  return TEXT("then");
+		if (Name.Equals(TEXT("False"), ESearchCase::IgnoreCase)) return TEXT("else");
+		return Name;
+	};
+	const FString ResolvedSourcePin = NormalisePinName(SourcePinName);
+	const FString ResolvedTargetPin = NormalisePinName(TargetPinName);
+
 	// Find source pin (output)
 	UEdGraphPin* SourcePin = nullptr;
 	for (UEdGraphPin* Pin : SourceNode->Pins)
 	{
 		if (Pin && Pin->Direction == EGPD_Output &&
-			(Pin->PinName.ToString().Equals(SourcePinName, ESearchCase::IgnoreCase) ||
-			 Pin->PinName == FName(*SourcePinName)))
+			(Pin->PinName.ToString().Equals(ResolvedSourcePin, ESearchCase::IgnoreCase) ||
+			 Pin->PinName == FName(*ResolvedSourcePin)))
 		{
 			SourcePin = Pin;
 			break;
@@ -3261,8 +3282,8 @@ bool UBlueprintService::ConnectNodes(
 	for (UEdGraphPin* Pin : TargetNode->Pins)
 	{
 		if (Pin && Pin->Direction == EGPD_Input &&
-			(Pin->PinName.ToString().Equals(TargetPinName, ESearchCase::IgnoreCase) ||
-			 Pin->PinName == FName(*TargetPinName)))
+			(Pin->PinName.ToString().Equals(ResolvedTargetPin, ESearchCase::IgnoreCase) ||
+			 Pin->PinName == FName(*ResolvedTargetPin)))
 		{
 			TargetPin = Pin;
 			break;
@@ -3734,6 +3755,12 @@ TArray<FBlueprintPinInfo> UBlueprintService::GetNodePins(
 	{
 		UE_LOG(LogTemp, Error, TEXT("GetNodePins: Node '%s' not found"), *NodeId);
 		return PinInfos;
+	}
+
+	// Default auto-placed event nodes may have an empty Pins array — allocate if needed.
+	if (Node->Pins.Num() == 0)
+	{
+		Node->AllocateDefaultPins();
 	}
 
 	for (UEdGraphPin* Pin : Node->Pins)
