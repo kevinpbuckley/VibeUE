@@ -690,6 +690,30 @@ struct FBlueprintNodeTypeInfo
 };
 
 /**
+ * Result of compiling a blueprint - includes success status and any error/warning messages.
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintCompileResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NumErrors = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NumWarnings = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Errors;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Warnings;
+};
+
+/**
  * Comprehensive blueprint information
  */
 USTRUCT(BlueprintType)
@@ -1959,16 +1983,19 @@ public:
 	);
 
 	/**
-	 * Compile a blueprint.
+	 * Compile a blueprint and return detailed results including any errors and warnings.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
-	 * @return True if successful
+	 * @return FBlueprintCompileResult with success status, error count, warning count, and message strings
 	 *
 	 * Example:
-	 *   unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
+	 *   result = unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
+	 *   print(f"Success: {result.b_success}, Errors: {result.num_errors}")
+	 *   for err in result.errors:
+	 *       print(f"  ERROR: {err}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
-	static bool CompileBlueprint(const FString& BlueprintPath);
+	static FBlueprintCompileResult CompileBlueprint(const FString& BlueprintPath);
 
 	/**
 	 * Get a property value from a blueprint's Class Default Object (CDO).

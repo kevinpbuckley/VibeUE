@@ -10,6 +10,8 @@
 #include "EditorAssetLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/CompilerResultsLog.h"
+#include "Logging/TokenizedMessage.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
 #include "K2Node_VariableGet.h"
@@ -3367,18 +3369,48 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 	return NodeInfos;
 }
 
-bool UBlueprintService::CompileBlueprint(const FString& BlueprintPath)
+FBlueprintCompileResult UBlueprintService::CompileBlueprint(const FString& BlueprintPath)
 {
+	FBlueprintCompileResult Result;
+
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
 		UE_LOG(LogTemp, Error, TEXT("CompileBlueprint: Failed to load blueprint: %s"), *BlueprintPath);
-		return false;
+		Result.Errors.Add(FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath));
+		Result.NumErrors = 1;
+		return Result;
 	}
 
-	FKismetEditorUtilities::CompileBlueprint(Blueprint);
-	UE_LOG(LogTemp, Log, TEXT("CompileBlueprint: Compiled %s"), *BlueprintPath);
-	return true;
+	FCompilerResultsLog CompileResults;
+	CompileResults.bSilentMode = false;
+	CompileResults.bLogInfoOnly = false;
+	FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::None, &CompileResults);
+
+	Result.bSuccess = (Blueprint->Status != BS_Error);
+	Result.NumErrors = CompileResults.NumErrors;
+	Result.NumWarnings = CompileResults.NumWarnings;
+
+	for (const TSharedRef<FTokenizedMessage>& Msg : CompileResults.Messages)
+	{
+		const FString MsgText = Msg->ToText().ToString();
+		if (Msg->GetSeverity() == EMessageSeverity::Error)
+		{
+			Result.Errors.Add(MsgText);
+		}
+		else if (Msg->GetSeverity() == EMessageSeverity::Warning || Msg->GetSeverity() == EMessageSeverity::PerformanceWarning)
+		{
+			Result.Warnings.Add(MsgText);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("CompileBlueprint: Compiled %s - Success: %s, Errors: %d, Warnings: %d"),
+		*BlueprintPath,
+		Result.bSuccess ? TEXT("true") : TEXT("false"),
+		Result.NumErrors,
+		Result.NumWarnings);
+
+	return Result;
 }
 
 // ============================================================================
