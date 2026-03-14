@@ -261,7 +261,7 @@ uint32 FMCPServer::Run()
                 {
                     UE_LOG(LogMCPServer, Log, TEXT("MCP: New connection accepted"));
                     HandleConnection(ClientSocket);
-                    UE_LOG(LogMCPServer, Log, TEXT("MCP: Connection handling completed"));
+                    UE_LOG(LogMCPServer, Verbose, TEXT("MCP: Connection handling completed"));
                 }
             }
         }
@@ -392,9 +392,9 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
             }
             else
             {
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Sending HTTP response"));
+                UE_LOG(LogMCPServer, Verbose, TEXT("MCP POST: Sending HTTP response"));
                 SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Response sent"));
+                UE_LOG(LogMCPServer, Verbose, TEXT("MCP POST: Response sent"));
             }
         }
     }
