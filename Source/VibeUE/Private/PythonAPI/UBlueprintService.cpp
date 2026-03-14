@@ -104,7 +104,7 @@ TArray<FBlueprintVariableInfo> UBlueprintService::ListVariables(const FString& B
 	{
 		FBlueprintVariableInfo VarInfo;
 		VarInfo.VariableName = VarDesc.VarName.ToString();
-		VarInfo.VariableType = VarDesc.VarType.PinCategory.ToString();
+		VarInfo.VariableType = FBlueprintTypeParser::GetFriendlyTypeName(VarDesc.VarType);
 		VarInfo.Category = VarDesc.Category.ToString();
 		VarInfo.bIsPublic = (VarDesc.PropertyFlags & CPF_DisableEditOnInstance) == 0;
 		VarInfo.bIsExposed = (VarDesc.PropertyFlags & CPF_ExposeOnSpawn) != 0;
@@ -1465,7 +1465,7 @@ bool UBlueprintService::GetVariableInfo(
 		if (VarDesc.VarName.ToString() == VariableName)
 		{
 			OutInfo.VariableName = VarDesc.VarName.ToString();
-			OutInfo.VariableType = VarDesc.VarType.PinCategory.ToString();
+			OutInfo.VariableType = FBlueprintTypeParser::GetFriendlyTypeName(VarDesc.VarType);
 			OutInfo.Category = VarDesc.Category.ToString();
 			OutInfo.DefaultValue = VarDesc.DefaultValue;
 
