@@ -290,6 +290,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
 # Entry point
 # ---------------------------------------------------------------------------
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Suppress noisy tracebacks from normal client disconnects."""
+    def handle_error(self, request, client_address):
+        exc_type = sys.exc_info()[0]
+        if exc_type in (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
     if not _PROXY_CONFIG_PATH.exists():
         log(f"WARNING: vibeue-proxy.json not found at {_PROXY_CONFIG_PATH}")
@@ -310,7 +319,7 @@ if __name__ == "__main__":
     log(f"VibeUE MCP Proxy listening on http://127.0.0.1:{PROXY_PORT}/mcp")
     log(f"Forwarding tool calls to UE at http://127.0.0.1:{UE_PORT}/mcp")
 
-    server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
+    server = QuietThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
