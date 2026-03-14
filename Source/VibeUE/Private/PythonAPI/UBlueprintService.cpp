@@ -10,6 +10,8 @@
 #include "EditorAssetLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Kismet2/CompilerResultsLog.h"
+#include "Logging/TokenizedMessage.h"
 #include "K2Node_FunctionEntry.h"
 #include "K2Node_FunctionResult.h"
 #include "K2Node_VariableGet.h"
@@ -2694,6 +2696,165 @@ FString UBlueprintService::AddGetVariableNode(
 	return GetNode->NodeGuid.ToString();
 }
 
+FString UBlueprintService::AddMemberGetNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& TargetClass,
+	const FString& MemberName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberGetNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = nullptr;
+	UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(Blueprint);
+	if (AnimBP && GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberGetNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Resolve the target class — TObjectIterator search (finds engine, plugin, and project classes)
+	UClass* OwnerClass = nullptr;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		if (It->GetName() == TargetClass)
+		{
+			OwnerClass = *It;
+			break;
+		}
+	}
+
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberGetNode: Class '%s' not found"), *TargetClass);
+		return FString();
+	}
+
+	// Verify the member exists on the class
+	FProperty* MemberProp = FindFProperty<FProperty>(OwnerClass, FName(*MemberName));
+	if (!MemberProp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMemberGetNode: Member '%s' not found on class '%s'"), *MemberName, *TargetClass);
+		return FString();
+	}
+
+	// Create the variable get node with an external member reference
+	UK2Node_VariableGet* GetNode = NewObject<UK2Node_VariableGet>(Graph);
+	GetNode->VariableReference.SetExternalMember(FName(*MemberName), OwnerClass);
+
+	Graph->AddNode(GetNode, false, false);
+	GetNode->CreateNewGuid();
+	GetNode->PostPlacedNewNode();
+	GetNode->AllocateDefaultPins();
+
+	GetNode->NodePosX = PosX;
+	GetNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddMemberGetNode: Added member get for '%s::%s' in %s"), *TargetClass, *MemberName, *GraphName);
+
+	return GetNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddValidatedGetNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& VariableName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddValidatedGetNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	// Special handling for Animation Blueprints and EventGraph
+	UEdGraph* Graph = nullptr;
+	UAnimBlueprint* AnimBP = Cast<UAnimBlueprint>(Blueprint);
+	if (AnimBP && GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+	{
+		for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+		{
+			if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+			{
+				Graph = UberGraph;
+				break;
+			}
+		}
+	}
+
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddValidatedGetNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Find the variable property
+	FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName));
+	if (!Property)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddValidatedGetNode: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
+		return FString();
+	}
+
+	// Create the get variable node
+	UK2Node_VariableGet* GetNode = NewObject<UK2Node_VariableGet>(Graph);
+	GetNode->VariableReference.SetSelfMember(FName(*VariableName));
+
+	// Set to non-pure (impure) variation before AllocateDefaultPins so the node
+	// gets execution pins. AllocateDefaultPins -> CreateImpurePins will auto-
+	// select ValidatedObject for object references (or Branch for primitives).
+	if (FEnumProperty* VariationProp = FindFProperty<FEnumProperty>(UK2Node_VariableGet::StaticClass(), TEXT("CurrentVariation")))
+	{
+		FNumericProperty* UnderlyingProp = VariationProp->GetUnderlyingProperty();
+		void* PropContainer = VariationProp->ContainerPtrToValuePtr<void>(GetNode);
+		UnderlyingProp->SetIntPropertyValue(PropContainer, (int64)EGetNodeVariation::ValidatedObject);
+	}
+
+	// Add to graph
+	Graph->AddNode(GetNode, false, false);
+	GetNode->CreateNewGuid();
+	GetNode->PostPlacedNewNode();
+	GetNode->AllocateDefaultPins();
+
+	// Set position
+	GetNode->NodePosX = PosX;
+	GetNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddValidatedGetNode: Added validated get for '%s' in %s"), *VariableName, *GraphName);
+
+	return GetNode->NodeGuid.ToString();
+}
+
 FString UBlueprintService::AddSetVariableNode(
 	const FString& BlueprintPath,
 	const FString& GraphName,
@@ -3208,18 +3369,48 @@ TArray<FBlueprintNodeInfo> UBlueprintService::GetNodesInGraph(
 	return NodeInfos;
 }
 
-bool UBlueprintService::CompileBlueprint(const FString& BlueprintPath)
+FBlueprintCompileResult UBlueprintService::CompileBlueprint(const FString& BlueprintPath)
 {
+	FBlueprintCompileResult Result;
+
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
 	{
 		UE_LOG(LogTemp, Error, TEXT("CompileBlueprint: Failed to load blueprint: %s"), *BlueprintPath);
-		return false;
+		Result.Errors.Add(FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath));
+		Result.NumErrors = 1;
+		return Result;
 	}
 
-	FKismetEditorUtilities::CompileBlueprint(Blueprint);
-	UE_LOG(LogTemp, Log, TEXT("CompileBlueprint: Compiled %s"), *BlueprintPath);
-	return true;
+	FCompilerResultsLog CompileResults;
+	CompileResults.bSilentMode = false;
+	CompileResults.bLogInfoOnly = false;
+	FKismetEditorUtilities::CompileBlueprint(Blueprint, EBlueprintCompileOptions::None, &CompileResults);
+
+	Result.bSuccess = (Blueprint->Status != BS_Error);
+	Result.NumErrors = CompileResults.NumErrors;
+	Result.NumWarnings = CompileResults.NumWarnings;
+
+	for (const TSharedRef<FTokenizedMessage>& Msg : CompileResults.Messages)
+	{
+		const FString MsgText = Msg->ToText().ToString();
+		if (Msg->GetSeverity() == EMessageSeverity::Error)
+		{
+			Result.Errors.Add(MsgText);
+		}
+		else if (Msg->GetSeverity() == EMessageSeverity::Warning || Msg->GetSeverity() == EMessageSeverity::PerformanceWarning)
+		{
+			Result.Warnings.Add(MsgText);
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("CompileBlueprint: Compiled %s - Success: %s, Errors: %d, Warnings: %d"),
+		*BlueprintPath,
+		Result.bSuccess ? TEXT("true") : TEXT("false"),
+		Result.NumErrors,
+		Result.NumWarnings);
+
+	return Result;
 }
 
 // ============================================================================
@@ -3803,7 +3994,7 @@ FString UBlueprintService::CreateBlueprint(
 		}
 		else
 		{
-			// Try to find the class by name
+			// Try to find the class by full path first
 			ParentClassPtr = FindObject<UClass>(nullptr, *ParentClass);
 			if (!ParentClassPtr)
 			{
@@ -3813,8 +4004,24 @@ FString UBlueprintService::CreateBlueprint(
 			}
 			if (!ParentClassPtr)
 			{
-				UE_LOG(LogTemp, Warning, TEXT("CreateBlueprint: Parent class '%s' not found, defaulting to Actor"), *ParentClass);
-				ParentClassPtr = AActor::StaticClass();
+				// Search all loaded UClass objects by short name (catches plugin classes like StateTreeTaskBlueprintBase)
+				for (TObjectIterator<UClass> It; It; ++It)
+				{
+					if (It->GetName().Equals(ParentClass, ESearchCase::IgnoreCase) ||
+						It->GetName().Equals(FString(TEXT("U")) + ParentClass, ESearchCase::IgnoreCase) ||
+						It->GetName().Equals(FString(TEXT("A")) + ParentClass, ESearchCase::IgnoreCase))
+					{
+						ParentClassPtr = *It;
+						UE_LOG(LogTemp, Log, TEXT("CreateBlueprint: Resolved parent class '%s' via object search to '%s'"), *ParentClass, *It->GetPathName());
+						break;
+					}
+				}
+			}
+			if (!ParentClassPtr)
+			{
+				// Return error rather than silently creating with wrong parent
+				UE_LOG(LogTemp, Error, TEXT("CreateBlueprint: Parent class '%s' not found. Use the full class path (e.g. '/Script/ModuleName.ClassName') or ensure the module is loaded."), *ParentClass);
+				return FString();
 			}
 		}
 	}
@@ -4008,13 +4215,28 @@ bool UBlueprintService::ReparentBlueprint(
 	}
 	else
 	{
-		// Try to find by name
+		// Try to find by full path first
 		NewParent = FindObject<UClass>(nullptr, *NewParentClass);
 		if (!NewParent)
 		{
 			// Try with /Script/Engine. prefix
 			FString FullPath = FString::Printf(TEXT("/Script/Engine.%s"), *NewParentClass);
 			NewParent = FindObject<UClass>(nullptr, *FullPath);
+		}
+		if (!NewParent)
+		{
+			// Search all loaded UClass objects by short name (catches plugin classes like StateTreeTaskBlueprintBase)
+			for (TObjectIterator<UClass> It; It; ++It)
+			{
+				if (It->GetName().Equals(NewParentClass, ESearchCase::IgnoreCase) ||
+					It->GetName().Equals(FString(TEXT("U")) + NewParentClass, ESearchCase::IgnoreCase) ||
+					It->GetName().Equals(FString(TEXT("A")) + NewParentClass, ESearchCase::IgnoreCase))
+				{
+					NewParent = *It;
+					UE_LOG(LogTemp, Log, TEXT("ReparentBlueprint: Resolved parent class '%s' via object search to '%s'"), *NewParentClass, *It->GetPathName());
+					break;
+				}
+			}
 		}
 	}
 

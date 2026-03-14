@@ -6,6 +6,7 @@
 #include "Json.h"
 #include "JsonUtilities.h"
 #include "Chat/ChatSession.h"
+#include "Core/ErrorCodes.h"
 #include "FileHelpers.h"
 
 // Include service headers after PythonTypes
@@ -17,6 +18,10 @@
 DEFINE_LOG_CATEGORY_STATIC(LogPythonTools, Log, All);
 
 using namespace VibeUE;
+
+// Track whether the last Python execution crashed (SEH-caught).
+// When true, skip auto-save to avoid serializing potentially corrupt assets.
+static bool bLastPythonExecutionCrashed = false;
 
 static bool ContainsWorldMutatingPythonPattern(const FString& Code)
 {
@@ -180,8 +185,11 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	// Auto-save all dirty packages before executing Python code if enabled
 	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
 	{
-		// Validate GEditor is available before attempting to save
-		if (!GEditor)
+		if (bLastPythonExecutionCrashed)
+		{
+			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
+		}
+		else if (!GEditor)
 		{
 			UE_LOG(LogPythonTools, Warning, TEXT("Cannot auto-save: GEditor is not available"));
 		}
@@ -250,6 +258,12 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 
 	if (Result.IsError())
 	{
+		// Track crash state so next auto-save is skipped (corrupt assets)
+		if (Result.GetErrorCode() == FString(ErrorCodes::PYTHON_RUNTIME_ERROR))
+		{
+			bLastPythonExecutionCrashed = true;
+		}
+
 		TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
 		ErrorObj->SetBoolField(TEXT("success"), false);
 		ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
@@ -259,6 +273,9 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
 		return JsonString;
 	}
+
+	// Successful execution — safe to auto-save again
+	bLastPythonExecutionCrashed = false;
 
 	return ConvertExecutionResultToJson(Result.GetValue());
 }
