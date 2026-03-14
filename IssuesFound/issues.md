@@ -137,7 +137,7 @@ The VibeUE `CLAUDE.md` states the plugin exposes "14 multi-action tools with 177
 
 ## 12. ~~No first-run nudge when MCP client connects directly (bypassing proxy)~~ — FIXED
 
-**Severity:** ~~Low~~ — Fixed in commit `0dc70c8` (Mar 14 2026), PR #332
+**Severity:** ~~Low~~ — Fixed in commit `0dc70c8` (Mar 14 2026), PR #332 (closes GitHub #314)
 **Location:** Module startup / MCP server initialisation (C++)
 
 When a user connects directly to UE on port 8088, they get no indication that a proxy exists or why they might want it. The practical consequence: they work in Claude Code, launch UE mid-session, and find their AI tools are broken because Claude Code loaded with 0 tools at startup (before UE was running). Restarting Claude Code is the only fix in that scenario — but if they'd been pointed at the proxy, it would have worked transparently.
@@ -163,7 +163,7 @@ On dismiss, write `proxy_nudge_dismissed = true` to `Saved/Config/VibeUE.ini` so
 
 ## 13. ~~No security warning when MCP server runs without an API key~~ — FIXED
 
-**Severity:** ~~High~~ — Fixed in commit `6740f93` (Mar 14 2026), PR #333
+**Severity:** ~~High~~ — Fixed in commit `6740f93` (Mar 14 2026), PR #332 (closes GitHub #315)
 **Location:** `FMCPServer::ValidateApiKey` / `FMCPServer::Start()` (`MCPServer.cpp`)
 
 When no API key is configured, `ValidateApiKey` silently returns `true` and all inbound connections are accepted with no warning.
