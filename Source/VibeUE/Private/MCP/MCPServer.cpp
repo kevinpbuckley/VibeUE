@@ -81,7 +81,16 @@ bool FMCPServer::Start()
 
     // Re-validate VibeUE API key each time the server starts (picks up any key changes from settings)
     ValidateVibeUEApiKeyAsync();
-    
+
+    if (Config.ApiKey.IsEmpty())
+    {
+        UE_LOG(LogMCPServer, Error, TEXT(
+            "SECURITY WARNING: VibeUE MCP server is starting with NO API key set. "
+            "Any local process on this machine can connect and execute tools without authentication "
+            "-- including file access, asset changes, and arbitrary Python code execution inside Unreal Engine. "
+            "Set an API key in Project Settings -> Plugins -> VibeUE -> API Key to restrict access."));
+    }
+
     UE_LOG(LogMCPServer, Log, TEXT("Starting MCP Server on port %d..."), Config.Port);
     
     // Create TCP listener socket
