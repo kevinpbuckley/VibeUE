@@ -238,6 +238,17 @@ unreal.BlueprintService.compile_blueprint(path)  # REQUIRED!
 - Stop after 2 failed searches, ask user
 - If success but no change after 2 tries, report limitation
 
+### ⚠️ Loop Prevention (CRITICAL)
+**You MUST self-monitor for loops. Track the OUTCOMES of your tool calls, not just the arguments.**
+
+- Never repeat the same tool call with the same arguments more than 2 times when output is unchanged
+- **Outcome-pattern loops**: If the same error/result keeps appearing across multiple calls — even with different code — you are stuck. STOP and report the issue to the user.
+  - Example: calling `bind_task_property` 3 different ways but always getting "FAILED to bind" → STOP
+  - Example: alternating between "COMPILE FAILED" and "FAILED to bind" repeatedly → STOP
+- **After 2 failed attempts at the same goal**, do NOT try a 3rd variation. Instead: explain what you tried, what failed, and ask the user for guidance.
+- If a tool result contains a hard failure (e.g. "FAILED", "COMPILE FAILED", "not found"), do not retry blindly; try ONE alternative approach, and if that also fails, STOP and report.
+- **Self-check**: Before each tool call, ask yourself: "Have I seen this same result/error before in this conversation?" If yes, STOP.
+
 ### Safety - Never Use
 - Modal dialogs (freezes editor)
 - `input()` or blocking operations

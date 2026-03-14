@@ -58,6 +58,14 @@ public:
 	static UClass* FindClassByName(const FString& ClassName);
 	static UEnum* FindEnumByName(const FString& EnumName);
 
+	/**
+	 * Resolve a Blueprint asset reference to its generated UClass.
+	 * Handles: short names ("BP_Cube"), generated class names ("BP_Cube_C"),
+	 * and full asset paths ("/Game/Path/BP_Cube").
+	 * Returns nullptr if not found.
+	 */
+	static UClass* TryFindBlueprintClass(const FString& TypeString);
+
 private:
 
 	// Parse basic types

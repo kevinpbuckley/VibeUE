@@ -87,6 +87,11 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
     forward_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
+        # Tell Python and UE not to reuse the connection.  Without this, Python's
+        # urllib reuses the keep-alive socket from the previous call; UE's server
+        # closes it on its end, so the next request hits a stale socket and raises
+        # OSError / RemoteDisconnected, which was reported as "UE is not running".
+        "Connection": "close",
     }
     # Inject the UE bearer token directly from vibeue-proxy.json — do not rely on
     # the MCP client forwarding it, as some clients (e.g. Claude Code) omit auth headers.
@@ -99,23 +104,30 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
         if key in headers:
             forward_headers[key] = headers[key]
 
-    try:
-        req = urllib.request.Request(
-            UE_URL,
-            data=body_bytes,
-            headers=forward_headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return True, resp.read()
-    except urllib.error.HTTPError as e:
-        # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
-        # Return failure with the UE error text so the caller can surface it clearly.
-        body = e.read()
-        log(f"UE returned HTTP {e.code}: {body[:200]}")
-        return False, body
-    except (urllib.error.URLError, socket.timeout, OSError):
-        return False, b""
+    last_exc = None
+    for attempt in range(2):          # retry once on stale-connection errors
+        try:
+            req = urllib.request.Request(
+                UE_URL,
+                data=body_bytes,
+                headers=forward_headers,
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                return True, resp.read()
+        except urllib.error.HTTPError as e:
+            # UE responded but rejected the request (e.g. 401 bad token, 404 unknown session).
+            # Return failure with the UE error text so the caller can surface it clearly.
+            body = e.read()
+            log(f"UE returned HTTP {e.code}: {body[:200]}")
+            return False, body
+        except (urllib.error.URLError, socket.timeout, OSError) as exc:
+            last_exc = exc
+            if attempt == 0:
+                log(f"Connection error (attempt {attempt + 1}), retrying: {exc}")
+            continue
+    log(f"UE unreachable after 2 attempts: {last_exc}")
+    return False, b""
 
 
 def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
