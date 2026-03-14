@@ -217,20 +217,20 @@ to restrict access.
 
 ---
 
-## 15. Delegate bind nodes (`UK2Node_AddDelegate`) cannot be created
+## ~~15. Delegate bind nodes (`UK2Node_AddDelegate`) cannot be created~~ — FIXED
 
-**Severity:** High
-**Method:** `BlueprintService.create_node_by_key`, `BlueprintService.discover_nodes`
-**Context:** Widget Blueprint (WBP) graphs, any delegate binding pattern
+**Severity:** High → FIXED
+**Fix:** Added `BlueprintService.add_delegate_bind_node(blueprint_path, graph_name, target_class, delegate_name, x, y)`
 
-`UK2Node_AddDelegate` nodes (the "Assign OnHealthChanged" / "Bind Event to X" pattern) cannot be created via any API method:
+`UK2Node_AddDelegate` nodes (the "Bind Event to X" pattern) can now be created directly:
 
-- `discover_nodes("Bind")` / `"Assign"` / `"Delegate"` / `"HealthChanged"` — no results
-- `create_node_by_key("UK2Node_AddDelegate OnHealthChanged")` and full path variants — all failed
+```python
+node_id = unreal.BlueprintService.add_delegate_bind_node(
+    "/Game/WBP_HUD", "EventGraph", "Actor", "OnActorBeginOverlap", 200, 100)
+# Returns valid GUID; node has pins: execute, then, self, Delegate
+```
 
-**Impact:** The entire delegate binding pattern is inaccessible via MCP. Any widget that needs to subscribe to a delegate (e.g. binding a UI element to a gameplay event) cannot be wired programmatically.
-
-**Workaround:** Add delegate binding nodes manually in the Blueprint editor.
+Pass `"Self"` or `""` as `target_class` to bind to a delegate on the blueprint's own class.
 
 ---
 

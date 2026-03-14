@@ -21,6 +21,7 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
+#include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -5419,4 +5420,89 @@ bool UBlueprintService::FunctionCallExists(
 	}
 
 	return false;
+}
+
+FString UBlueprintService::AddDelegateBindNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& TargetClass,
+	const FString& DelegateName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Resolve the target class
+	UClass* OwnerClass = nullptr;
+	bool bSelfContext = false;
+
+	if (TargetClass.IsEmpty() || TargetClass.Equals(TEXT("Self"), ESearchCase::IgnoreCase))
+	{
+		OwnerClass = Blueprint->GeneratedClass;
+		bSelfContext = true;
+	}
+	else
+	{
+		OwnerClass = FindFirstObject<UClass>(*TargetClass, EFindFirstObjectOptions::ExactClass);
+		if (!OwnerClass)
+		{
+			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
+		}
+		if (!OwnerClass)
+		{
+			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
+		}
+	}
+
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Class '%s' not found"), *TargetClass);
+		return FString();
+	}
+
+	// Find the multicast delegate property on the class
+	FMulticastDelegateProperty* DelegateProp = nullptr;
+	for (TFieldIterator<FMulticastDelegateProperty> PropIt(OwnerClass); PropIt; ++PropIt)
+	{
+		if (PropIt->GetName().Equals(DelegateName, ESearchCase::IgnoreCase))
+		{
+			DelegateProp = *PropIt;
+			break;
+		}
+	}
+
+	if (!DelegateProp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Delegate '%s' not found on class '%s'"), *DelegateName, *OwnerClass->GetName());
+		return FString();
+	}
+
+	// Create and configure the AddDelegate node
+	UK2Node_AddDelegate* DelegateNode = NewObject<UK2Node_AddDelegate>(Graph);
+	DelegateNode->SetFromProperty(DelegateProp, bSelfContext, OwnerClass);
+
+	Graph->AddNode(DelegateNode, false, false);
+	DelegateNode->CreateNewGuid();
+	DelegateNode->PostPlacedNewNode();
+	DelegateNode->AllocateDefaultPins();
+
+	DelegateNode->NodePosX = PosX;
+	DelegateNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddDelegateBindNode: Added bind node for %s::%s in %s"), *OwnerClass->GetName(), *DelegateName, *GraphName);
+
+	return DelegateNode->NodeGuid.ToString();
 }
