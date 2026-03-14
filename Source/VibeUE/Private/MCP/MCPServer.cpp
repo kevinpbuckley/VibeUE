@@ -1210,7 +1210,7 @@ void FMCPServer::ShowProxyNudgeIfNeeded()
 
         Info.ButtonDetails.Add(FNotificationButtonInfo(
             FText::FromString(TEXT("Got it, don't show again")),
-            FText::FromString(TEXT("Dismiss and remember this choice")),
+            FText::FromString(TEXT("Dismiss permanently")),
             FSimpleDelegate::CreateLambda([WeakItemHolder]()
             {
                 GConfig->SetBool(TEXT("VibeUE.MCPServer"), TEXT("ProxyNudgeDismissed"), true, GEditorPerProjectIni);
@@ -1223,7 +1223,20 @@ void FMCPServer::ShowProxyNudgeIfNeeded()
             })
         ));
 
-        TSharedPtr<SNotificationItem> Item = FNotificationManager::Get().AddNotification(Info);
+        Info.ButtonDetails.Add(FNotificationButtonInfo(
+            FText::FromString(TEXT("Maybe later")),
+            FText::FromString(TEXT("Close for now, remind me next session")),
+            FSimpleDelegate::CreateLambda([WeakItemHolder]()
+            {
+                if (TSharedPtr<SNotificationItem> Item = WeakItemHolder->Pin())
+                {
+                    Item->SetCompletionState(SNotificationItem::CS_None);
+                    Item->ExpireAndFadeout();
+                }
+            })
+        ));
+
+        TSharedPtr<SNotificationItem> Item = FSlateNotificationManager::Get().AddNotification(Info);
         if (Item.IsValid())
         {
             *WeakItemHolder = Item;
