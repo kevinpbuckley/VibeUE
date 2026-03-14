@@ -88,6 +88,7 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
     forward_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "X-VibeUE-Proxy": "true",  # Identifies this request as proxy-forwarded (issue #314)
     }
     # Inject the UE bearer token directly from vibeue-proxy.json — do not rely on
     # the MCP client forwarding it, as some clients (e.g. Claude Code) omit auth headers.
