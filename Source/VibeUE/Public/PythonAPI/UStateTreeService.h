@@ -243,6 +243,10 @@ struct FStateTreeInfo
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString SchemaClass;
 
+	/** Context actor class name (empty if not set — call set_context_actor_class to assign one) */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString ContextActorClass;
+
 	/** Global evaluators */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	TArray<FStateTreeNodeInfo> Evaluators;
@@ -367,7 +371,10 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool GetStateTreeInfo(const FString& AssetPath, FStateTreeInfo& OutInfo);
 
-	/** Get all registered task struct names discoverable from class iteration. */
+	/**
+	 * Get all registered task type names.
+	 * Returns both struct-backed task types (e.g. "FStateTreeDelayTask") and blueprint task classes (e.g. "STT_Rotate_C").
+	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static TArray<FString> GetAvailableTaskTypes();
 
@@ -578,9 +585,13 @@ public:
 	// ---- Task Management ----
 
 	/**
-	 * Add a task to a state by C++ struct type name.
+	 * Add a task to a state.
 	 * @param StatePath      Path of the target state (e.g. "Root/Walking")
-	 * @param TaskStructName FStateTreeTaskBase-derived struct name (e.g. "FStateTreeDelayTask")
+	 * @param TaskStructName Task type identifier. Supports:
+	 *                       - Struct-backed task types (e.g. "FStateTreeDelayTask")
+	 *                       - Blueprint task class names (e.g. "STT_Rotate_C")
+	 *                       - Blueprint class object paths (e.g. "/Game/StateTree/STT_Rotate.STT_Rotate_C")
+	 *                       - Blueprint asset paths (e.g. "/Game/StateTree/STT_Rotate")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTask(const FString& AssetPath, const FString& StatePath,
@@ -648,6 +659,16 @@ public:
 	                                     const FString& ContextName = TEXT("Actor"),
 	                                     const FString& ContextPropertyPath = TEXT(""),
 	                                     int32 TaskMatchIndex = -1);
+
+	/**
+	 * Remove the property binding on a task property (unbind it).
+	 * After unbinding, the property reverts to its default/unbound value.
+	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
+	                               const FString& TaskStructName, const FString& TaskPropertyPath,
+	                               int32 TaskMatchIndex = -1);
 
 	/** Remove a task from a state by struct type name. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")

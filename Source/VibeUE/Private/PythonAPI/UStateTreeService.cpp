@@ -27,6 +27,7 @@
 #include "StateTreeSchema.h"
 #include "StateTreeCompiler.h"
 #include "StateTreeCompilerLog.h"
+#include "Blueprint/StateTreeTaskBlueprintBase.h"
 
 // For class discovery
 #include "UObject/UObjectIterator.h"
@@ -233,6 +234,75 @@ static bool StructNameMatches(const UScriptStruct* Struct, const FString& Expect
 	return false;
 }
 
+/**
+ * Check if an editor node is a StateTreeBlueprintTaskWrapper whose TaskClass
+ * or display name matches the user-provided name.  This lets callers pass
+ * "STT_Rotate_C", "STT_Rotate", or the display name instead of the raw
+ * wrapper struct name.
+ */
+static bool BlueprintWrapperMatchesName(const FStateTreeEditorNode& EditorNode, const FString& ExpectedName)
+{
+	const UScriptStruct* NodeStruct = EditorNode.Node.GetScriptStruct();
+	if (!NodeStruct || !NodeStruct->GetName().Equals(TEXT("StateTreeBlueprintTaskWrapper"), ESearchCase::IgnoreCase))
+	{
+		return false;
+	}
+
+	// Check display name (e.g. "STT Rotate")
+	const FString DisplayName = EditorNode.GetName().ToString();
+	if (DisplayName.Equals(ExpectedName, ESearchCase::IgnoreCase)
+		|| DisplayName.Replace(TEXT(" "), TEXT("_")).Equals(ExpectedName, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	// Read the TaskClass property to get the Blueprint class path
+	const void* NodeMemory = EditorNode.Node.GetMemory();
+	if (!NodeMemory)
+	{
+		return false;
+	}
+
+	const FProperty* TaskClassProp = FindFProperty<FProperty>(NodeStruct, TEXT("TaskClass"));
+	if (!TaskClassProp)
+	{
+		return false;
+	}
+
+	FString TaskClassStr;
+	TaskClassProp->ExportTextItem_Direct(TaskClassStr, TaskClassProp->ContainerPtrToValuePtr<void>(NodeMemory), nullptr, nullptr, 0);
+	if (TaskClassStr.IsEmpty())
+	{
+		return false;
+	}
+
+	// TaskClassStr is something like "/Script/Engine.BlueprintGeneratedClass'/Game/StateTree/STT_Rotate.STT_Rotate_C'"
+	// Extract the class name after the last dot or slash
+	FString ClassName;
+	if (TaskClassStr.Split(TEXT("."), nullptr, &ClassName, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+	{
+		ClassName.RemoveFromEnd(TEXT("'"));
+	}
+	else
+	{
+		ClassName = TaskClassStr;
+	}
+
+	// Match against "STT_Rotate_C" or "STT_Rotate" (without _C suffix)
+	if (ClassName.Equals(ExpectedName, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+	FString ClassNameNoSuffix = ClassName;
+	ClassNameNoSuffix.RemoveFromEnd(TEXT("_C"));
+	if (ClassNameNoSuffix.Equals(ExpectedName, ESearchCase::IgnoreCase))
+	{
+		return true;
+	}
+
+	return false;
+}
+
 static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const FString& TaskStructName,
 	int32 TaskMatchIndex, int32* OutResolvedTaskMatchIndex = nullptr)
 {
@@ -245,7 +315,8 @@ static FStateTreeEditorNode* FindTaskNodeByStruct(UStateTreeState* State, const 
 	for (int32 TaskIndex = 0; TaskIndex < State->Tasks.Num(); ++TaskIndex)
 	{
 		const UScriptStruct* NodeStruct = State->Tasks[TaskIndex].Node.GetScriptStruct();
-		if (StructNameMatches(NodeStruct, TaskStructName))
+		if (StructNameMatches(NodeStruct, TaskStructName)
+			|| BlueprintWrapperMatchesName(State->Tasks[TaskIndex], TaskStructName))
 		{
 			MatchingTaskIndices.Add(TaskIndex);
 		}
@@ -535,12 +606,29 @@ static bool ResolveContextStructID(const UStateTree* StateTree, const FString& C
 {
 	OutStructID.Invalidate();
 
-	if (!StateTree || !StateTree->GetSchema())
+	if (!StateTree)
 	{
 		return false;
 	}
 
-	const TConstArrayView<FStateTreeExternalDataDesc> ContextDescs = StateTree->GetSchema()->GetContextDataDescs();
+	// Try runtime schema first, then fall back to editor schema (for uncompiled trees)
+	const UStateTreeSchema* Schema = StateTree->GetSchema();
+#if WITH_EDITORONLY_DATA
+	if (!Schema)
+	{
+		if (const UStateTreeEditorData* EditorData = Cast<UStateTreeEditorData>(StateTree->EditorData))
+		{
+			Schema = EditorData->Schema;
+		}
+	}
+#endif
+
+	if (!Schema)
+	{
+		return false;
+	}
+
+	const TConstArrayView<FStateTreeExternalDataDesc> ContextDescs = Schema->GetContextDataDescs();
 	if (ContextDescs.IsEmpty())
 	{
 		return false;
@@ -621,14 +709,356 @@ static UClass* ResolveActorClassPath(const FString& ActorClassPath)
 	return nullptr;
 }
 
+static bool IsValidBlueprintTaskClass(UClass* InClass)
+{
+	const UClass* BlueprintTaskBaseClass = UStateTreeTaskBlueprintBase::StaticClass();
+	if (!InClass || !BlueprintTaskBaseClass)
+	{
+		return false;
+	}
+
+	if (!InClass->IsChildOf(BlueprintTaskBaseClass) || InClass == BlueprintTaskBaseClass)
+	{
+		return false;
+	}
+
+	if (InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+	{
+		return false;
+	}
+
+	return true;
+}
+
+static UClass* TryResolveBlueprintTaskClassFromObjectPath(const FString& ObjectPath)
+{
+	if (ObjectPath.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *ObjectPath))
+	{
+		if (IsValidBlueprintTaskClass(LoadedClass))
+		{
+			return LoadedClass;
+		}
+	}
+
+	if (UClass* FoundClass = FindFirstObject<UClass>(*ObjectPath, EFindFirstObjectOptions::None))
+	{
+		if (IsValidBlueprintTaskClass(FoundClass))
+		{
+			return FoundClass;
+		}
+	}
+
+	return nullptr;
+}
+
+static UClass* TryResolveBlueprintTaskClassFromAssetPath(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath))
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+		{
+			if (IsValidBlueprintTaskClass(Blueprint->GeneratedClass))
+			{
+				return Blueprint->GeneratedClass;
+			}
+		}
+
+		if (UClass* LoadedClass = Cast<UClass>(LoadedAsset))
+		{
+			if (IsValidBlueprintTaskClass(LoadedClass))
+			{
+				return LoadedClass;
+			}
+		}
+	}
+
+	const FString AssetName = FPackageName::GetShortName(AssetPath);
+	if (!AssetName.IsEmpty())
+	{
+		const FString GeneratedClassPath = FString::Printf(TEXT("%s.%s_C"), *AssetPath, *AssetName);
+		if (UClass* GeneratedClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassPath))
+		{
+			return GeneratedClass;
+		}
+	}
+
+	return nullptr;
+}
+
+static UClass* ResolveBlueprintTaskClass(const FString& TaskIdentifier)
+{
+	FString Identifier = TaskIdentifier;
+	Identifier.TrimStartAndEndInline();
+	if (Identifier.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	if (!Identifier.Contains(TEXT("/")))
+	{
+		if (UClass* LoadedClass = FindFirstObject<UClass>(*Identifier, EFindFirstObjectOptions::None))
+		{
+			if (IsValidBlueprintTaskClass(LoadedClass))
+			{
+				return LoadedClass;
+			}
+		}
+
+		if (!Identifier.EndsWith(TEXT("_C")))
+		{
+			if (UClass* LoadedClass = FindFirstObject<UClass>(*(Identifier + TEXT("_C")), EFindFirstObjectOptions::None))
+			{
+				if (IsValidBlueprintTaskClass(LoadedClass))
+				{
+					return LoadedClass;
+				}
+			}
+		}
+	}
+
+	if (Identifier.StartsWith(TEXT("/")))
+	{
+		if (Identifier.Contains(TEXT(".")))
+		{
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(Identifier))
+			{
+				return TaskClass;
+			}
+
+			FString PackagePath;
+			FString ObjectName;
+			if (Identifier.Split(TEXT("."), &PackagePath, &ObjectName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+			{
+				if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(PackagePath))
+				{
+					return TaskClass;
+				}
+
+				if (!ObjectName.EndsWith(TEXT("_C")))
+				{
+					if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C")))
+					{
+						return TaskClass;
+					}
+				}
+			}
+		}
+		else
+		{
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(Identifier))
+			{
+				return TaskClass;
+			}
+		}
+	}
+
+	FString TargetBlueprintName = Identifier;
+	if (TargetBlueprintName.Contains(TEXT(".")))
+	{
+		FString LeftPart;
+		FString RightPart;
+		if (TargetBlueprintName.Split(TEXT("."), &LeftPart, &RightPart, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+		{
+			TargetBlueprintName = RightPart;
+		}
+	}
+	if (TargetBlueprintName.Contains(TEXT("/")))
+	{
+		TargetBlueprintName = FPackageName::GetShortName(TargetBlueprintName);
+	}
+	if (TargetBlueprintName.EndsWith(TEXT("_C")))
+	{
+		TargetBlueprintName.LeftChopInline(2);
+	}
+
+	if (TargetBlueprintName.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.PackagePaths.Add(FName(TEXT("/Game")));
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> BlueprintAssets;
+	AssetRegistry.Get().GetAssets(Filter, BlueprintAssets);
+
+	for (const FAssetData& AssetData : BlueprintAssets)
+	{
+		if (!AssetData.AssetName.ToString().Equals(TargetBlueprintName, ESearchCase::IgnoreCase))
+		{
+			continue;
+		}
+
+		if (UClass* TaskClass = TryResolveBlueprintTaskClassFromAssetPath(AssetData.PackageName.ToString()))
+		{
+			return TaskClass;
+		}
+
+		const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
+		if (GeneratedClassTag.IsSet())
+		{
+			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
+			if (UClass* TaskClass = TryResolveBlueprintTaskClassFromObjectPath(GeneratedClassObjectPath))
+			{
+				return TaskClass;
+			}
+		}
+	}
+
+	return nullptr;
+}
+
+static bool SetBlueprintTaskClassOnWrapperNode(FStateTreeEditorNode& InOutNode, UClass* BlueprintTaskClass, UObject* Outer)
+{
+	if (!BlueprintTaskClass || !IsValidBlueprintTaskClass(BlueprintTaskClass))
+	{
+		return false;
+	}
+
+	if (Outer == nullptr)
+	{
+		Outer = GetTransientPackage();
+	}
+
+	const UScriptStruct* NodeStruct = InOutNode.Node.GetScriptStruct();
+	void* NodeMemory = InOutNode.Node.GetMutableMemory();
+	if (!NodeStruct || !NodeMemory)
+	{
+		return false;
+	}
+
+	FProperty* TaskClassProperty = FindFProperty<FProperty>(NodeStruct, TEXT("TaskClass"));
+	if (!TaskClassProperty)
+	{
+		return false;
+	}
+
+	void* TaskClassValuePtr = TaskClassProperty->ContainerPtrToValuePtr<void>(NodeMemory);
+	if (!TaskClassValuePtr)
+	{
+		return false;
+	}
+
+	if (FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(TaskClassProperty))
+	{
+		ObjectProperty->SetObjectPropertyValue(TaskClassValuePtr, BlueprintTaskClass);
+	}
+	else if (!SetPropertyValueFromString(TaskClassProperty, TaskClassValuePtr, BlueprintTaskClass->GetPathName()))
+	{
+		return false;
+	}
+
+	// TaskClass controls wrapper instance type. Refresh instance containers after assignment.
+	InOutNode.Instance.Reset();
+	InOutNode.InstanceObject = nullptr;
+	InOutNode.ExecutionRuntimeData.Reset();
+	InOutNode.ExecutionRuntimeDataObject = nullptr;
+
+	if (const FStateTreeNodeBase* NodeBase = InOutNode.Node.GetPtr<FStateTreeNodeBase>())
+	{
+		if (const UScriptStruct* InstanceType = Cast<const UScriptStruct>(NodeBase->GetInstanceDataType()))
+		{
+			InOutNode.Instance.InitializeAs(InstanceType);
+		}
+		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase->GetInstanceDataType()))
+		{
+			InOutNode.InstanceObject = NewObject<UObject>(Outer, InstanceClass);
+		}
+
+		if (const UScriptStruct* RuntimeType = Cast<const UScriptStruct>(NodeBase->GetExecutionRuntimeDataType()))
+		{
+			InOutNode.ExecutionRuntimeData.InitializeAs(RuntimeType);
+		}
+		else if (const UClass* RuntimeClass = Cast<const UClass>(NodeBase->GetExecutionRuntimeDataType()))
+		{
+			InOutNode.ExecutionRuntimeDataObject = NewObject<UObject>(Outer, RuntimeClass);
+		}
+	}
+
+	return InOutNode.Instance.IsValid() || InOutNode.InstanceObject != nullptr;
+}
+
+static void AppendBlueprintTaskTypes(TArray<FString>& InOutResults)
+{
+	TSet<FString> UniqueTypes(InOutResults);
+	const UClass* BlueprintTaskBaseClass = UStateTreeTaskBlueprintBase::StaticClass();
+	if (!BlueprintTaskBaseClass)
+	{
+		return;
+	}
+
+	auto AddTypeNameIfBlueprintTask = [&UniqueTypes](UClass* CandidateClass)
+	{
+		if (IsValidBlueprintTaskClass(CandidateClass))
+		{
+			UniqueTypes.Add(CandidateClass->GetName());
+		}
+	};
+
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		AddTypeNameIfBlueprintTask(*It);
+	}
+
+	FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.PackagePaths.Add(FName(TEXT("/Game")));
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> BlueprintAssets;
+	AssetRegistry.Get().GetAssets(Filter, BlueprintAssets);
+
+	for (const FAssetData& AssetData : BlueprintAssets)
+	{
+		const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
+		if (!GeneratedClassTag.IsSet())
+		{
+			continue;
+		}
+
+		const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
+		if (GeneratedClassObjectPath.IsEmpty())
+		{
+			continue;
+		}
+
+		if (UClass* GeneratedClass = LoadObject<UClass>(nullptr, *GeneratedClassObjectPath))
+		{
+			AddTypeNameIfBlueprintTask(GeneratedClass);
+		}
+	}
+
+	InOutResults = UniqueTypes.Array();
+	InOutResults.Sort();
+}
+
 /**
  * Initialize an FStateTreeEditorNode from an FStateTreeNodeBase-derived struct type.
  */
-static bool InitEditorNodeFromStruct(FStateTreeEditorNode& OutNode, UScriptStruct* NodeStruct)
+static bool InitEditorNodeFromStruct(FStateTreeEditorNode& OutNode, UScriptStruct* NodeStruct, UObject* Outer = nullptr)
 {
 	if (!NodeStruct)
 	{
 		return false;
+	}
+
+	if (Outer == nullptr)
+	{
+		Outer = GetTransientPackage();
 	}
 
 	OutNode.Reset();
@@ -642,9 +1072,17 @@ static bool InitEditorNodeFromStruct(FStateTreeEditorNode& OutNode, UScriptStruc
 		{
 			OutNode.Instance.InitializeAs(InstanceType);
 		}
+		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase->GetInstanceDataType()))
+		{
+			OutNode.InstanceObject = NewObject<UObject>(Outer, InstanceClass);
+		}
 		if (const UScriptStruct* RuntimeType = Cast<const UScriptStruct>(NodeBase->GetExecutionRuntimeDataType()))
 		{
 			OutNode.ExecutionRuntimeData.InitializeAs(RuntimeType);
+		}
+		else if (const UClass* RuntimeClass = Cast<const UClass>(NodeBase->GetExecutionRuntimeDataType()))
+		{
+			OutNode.ExecutionRuntimeDataObject = NewObject<UObject>(Outer, RuntimeClass);
 		}
 	}
 
@@ -1011,7 +1449,8 @@ static FStateTreeEditorNode* FindEditorNodeByStructInArray(TArray<FStateTreeEdit
 	for (int32 i = 0; i < Nodes.Num(); ++i)
 	{
 		const UScriptStruct* NodeStruct = Nodes[i].Node.GetScriptStruct();
-		if (StructNameMatches(NodeStruct, StructName))
+		if (StructNameMatches(NodeStruct, StructName)
+			|| BlueprintWrapperMatchesName(Nodes[i], StructName))
 		{
 			MatchingIndices.Add(i);
 		}
@@ -1159,10 +1598,39 @@ bool UStateTreeService::GetStateTreeInfo(const FString& AssetPath, FStateTreeInf
 	if (const UStateTreeSchema* Schema = StateTree->GetSchema())
 	{
 		OutInfo.SchemaClass = Schema->GetClass()->GetName();
+
+		// Report context actor class so the AI can see if it needs to be set
+		FClassProperty* CtxProp = FindFProperty<FClassProperty>(Schema->GetClass(), TEXT("ContextActorClass"));
+		if (CtxProp)
+		{
+			UClass* CtxClass = Cast<UClass>(CtxProp->GetPropertyValue_InContainer(Schema));
+			if (CtxClass)
+			{
+				OutInfo.ContextActorClass = CtxClass->GetPathName();
+			}
+		}
 	}
 
 #if WITH_EDITORONLY_DATA
 	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+
+	// If runtime schema was null (uncompiled tree), try the editor schema instead
+	if (OutInfo.SchemaClass.IsEmpty() && EditorData && EditorData->Schema)
+	{
+		const UStateTreeSchema* EdSchema = EditorData->Schema;
+		OutInfo.SchemaClass = EdSchema->GetClass()->GetName();
+
+		FClassProperty* CtxProp = FindFProperty<FClassProperty>(EdSchema->GetClass(), TEXT("ContextActorClass"));
+		if (CtxProp)
+		{
+			UClass* CtxClass = Cast<UClass>(CtxProp->GetPropertyValue_InContainer(EdSchema));
+			if (CtxClass)
+			{
+				OutInfo.ContextActorClass = CtxClass->GetPathName();
+			}
+		}
+	}
+
 	if (EditorData)
 	{
 		for (const FStateTreeEditorNode& EvalNode : EditorData->Evaluators)
@@ -1220,7 +1688,7 @@ TArray<FString> UStateTreeService::GetAvailableTaskTypes()
 		}
 	}
 
-	Results.Sort();
+	AppendBlueprintTaskTypes(Results);
 	return Results;
 }
 
@@ -1733,13 +2201,26 @@ bool UStateTreeService::SetContextActorClass(const FString& AssetPath, const FSt
 	EditorData->Schema->Modify();
 	ContextActorClassProperty->SetPropertyValue_InContainer(EditorData->Schema, ActorClass);
 
-	// Keep first context descriptor in sync for schemas that cache context data entries.
+	// Notify schema about the property change so it rebuilds context data descriptors.
+	// This mirrors what the editor Details panel does — PostEditChangeChainProperty
+	// triggers the schema to sync ContextDataDescs[0].Struct from ContextActorClass.
+#if WITH_EDITOR
+	{
+		FEditPropertyChain PropertyChain;
+		PropertyChain.AddHead(ContextActorClassProperty);
+		FPropertyChangedEvent InnerEvent(ContextActorClassProperty, EPropertyChangeType::ValueSet);
+		FPropertyChangedChainEvent ChainEvent(PropertyChain, InnerEvent);
+		EditorData->Schema->PostEditChangeChainProperty(ChainEvent);
+	}
+#else
+	// Fallback: manual sync for non-editor builds
 	TConstArrayView<FStateTreeExternalDataDesc> ContextDescs = EditorData->Schema->GetContextDataDescs();
 	if (!ContextDescs.IsEmpty())
 	{
 		FStateTreeExternalDataDesc& MutableDesc = const_cast<FStateTreeExternalDataDesc&>(ContextDescs[0]);
 		MutableDesc.Struct = ActorClass;
 	}
+#endif
 
 	MarkStateTreeDirty(StateTree);
 	return true;
@@ -2505,29 +2986,62 @@ bool UStateTreeService::AddTask(const FString& AssetPath, const FString& StatePa
 	}
 
 	UScriptStruct* TaskStruct = FindNodeStruct(TaskStructName);
-	if (!TaskStruct)
-	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Task struct not found: %s"), *TaskStructName);
-		return false;
-	}
+	UClass* BlueprintTaskClass = nullptr;
 
-	// Verify it derives from FStateTreeTaskBase
-	if (!TaskStruct->IsChildOf(FStateTreeTaskBase::StaticStruct()))
+	if (TaskStruct)
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Struct '%s' is not a FStateTreeTaskBase"), *TaskStructName);
-		return false;
+		// Verify struct-backed task derives from FStateTreeTaskBase
+		if (!TaskStruct->IsChildOf(FStateTreeTaskBase::StaticStruct()))
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Struct '%s' is not a FStateTreeTaskBase"), *TaskStructName);
+			return false;
+		}
+	}
+	else
+	{
+		BlueprintTaskClass = ResolveBlueprintTaskClass(TaskStructName);
+		if (!BlueprintTaskClass)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Task struct/class not found: %s"), *TaskStructName);
+			return false;
+		}
+
+		TaskStruct = FindNodeStruct(TEXT("StateTreeBlueprintTaskWrapper"));
+		if (!TaskStruct)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: StateTreeBlueprintTaskWrapper struct not found while adding blueprint task '%s'"), *TaskStructName);
+			return false;
+		}
 	}
 
 	FStateTreeEditorNode& NewNode = State->Tasks.AddDefaulted_GetRef();
-	if (!InitEditorNodeFromStruct(NewNode, TaskStruct))
+	if (!InitEditorNodeFromStruct(NewNode, TaskStruct, EditorData))
 	{
 		State->Tasks.RemoveAt(State->Tasks.Num() - 1);
 		return false;
 	}
 
+	if (BlueprintTaskClass)
+	{
+		if (!SetBlueprintTaskClassOnWrapperNode(NewNode, BlueprintTaskClass, EditorData))
+		{
+			State->Tasks.RemoveAt(State->Tasks.Num() - 1);
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddTask: Failed to set blueprint task class '%s' on wrapper"), *BlueprintTaskClass->GetName());
+			return false;
+		}
+	}
+
 	MarkStateTreeDirty(StateTree);
-	UE_LOG(LogStateTreeService, Log, TEXT("AddTask: Added '%s' to state '%s' in %s"),
-	       *TaskStructName, *StatePath, *AssetPath);
+	if (BlueprintTaskClass)
+	{
+		UE_LOG(LogStateTreeService, Log, TEXT("AddTask: Added blueprint task '%s' to state '%s' in %s"),
+		       *BlueprintTaskClass->GetName(), *StatePath, *AssetPath);
+	}
+	else
+	{
+		UE_LOG(LogStateTreeService, Log, TEXT("AddTask: Added '%s' to state '%s' in %s"),
+		       *TaskStructName, *StatePath, *AssetPath);
+	}
 	return true;
 #else
 	return false;
@@ -2934,7 +3448,26 @@ bool UStateTreeService::BindTaskPropertyToContext(const FString& AssetPath, cons
 	FGuid ContextStructID;
 	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToContext: Context '%s' not found"), *ContextName);
+		const TConstArrayView<FStateTreeExternalDataDesc> CtxDescs = StateTree->GetSchema()->GetContextDataDescs();
+		if (CtxDescs.IsEmpty())
+		{
+			UE_LOG(LogStateTreeService, Warning,
+				TEXT("BindTaskPropertyToContext: Context '%s' not found — this StateTree has NO context actor class set. "
+				     "Call set_context_actor_class() first to assign one, then retry the bind."),
+				*ContextName);
+		}
+		else
+		{
+			FString Available;
+			for (const FStateTreeExternalDataDesc& Desc : CtxDescs)
+			{
+				if (!Available.IsEmpty()) Available += TEXT(", ");
+				Available += Desc.Name.ToString();
+			}
+			UE_LOG(LogStateTreeService, Warning,
+				TEXT("BindTaskPropertyToContext: Context '%s' not found. Available contexts: [%s]"),
+				*ContextName, *Available);
+		}
 		return false;
 	}
 
@@ -2953,6 +3486,65 @@ bool UStateTreeService::BindTaskPropertyToContext(const FString& AssetPath, cons
 	}
 
 	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& TaskPropertyPath, int32 TaskMatchIndex)
+{
+	if (TaskPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindTaskProperty: TaskPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindTaskProperty: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("UnbindTaskProperty: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(TaskNode->ID, TaskPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindTaskProperty: Invalid task property path: %s"), *TaskPropertyPath);
+		return false;
+	}
+
+	FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
+	if (!Bindings)
+	{
+		return false;
+	}
+
+	Bindings->RemoveBindings(TargetPath);
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else

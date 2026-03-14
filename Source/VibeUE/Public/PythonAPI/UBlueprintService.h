@@ -690,6 +690,30 @@ struct FBlueprintNodeTypeInfo
 };
 
 /**
+ * Result of compiling a blueprint - includes success status and any error/warning messages.
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintCompileResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NumErrors = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NumWarnings = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Errors;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Warnings;
+};
+
+/**
  * Comprehensive blueprint information
  */
 USTRUCT(BlueprintType)
@@ -1034,7 +1058,14 @@ public:
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param VariableName - Name of the variable
-	 * @param VariableType - Type string (e.g., "float", "FVector", "AActor", "TSubclassOf<AActor>")
+	 * @param VariableType - Type string. Supported formats:
+	 *   - Primitives: "float", "bool", "int", "FString", "FVector", "FRotator", "FTransform"
+	 *   - UE objects:  "AActor", "UStaticMeshComponent" (U/A prefix required for C++ classes)
+	 *   - Subclass:    "TSubclassOf<AActor>"
+	 *   - Enum:        "EMyEnum" (E prefix)
+	 *   - Struct:      "FMyStruct" (F prefix)
+	 *   - Blueprint:   "BP_Cube" or "BP_Cube_C" or "/Game/Path/BP_Cube" (asset path)
+	 *                  Blueprint class references are resolved automatically via asset search.
 	 * @param DefaultValue - Default value as a string (optional)
 	 * @param bIsArray - Whether this is an array type
 	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
@@ -1044,6 +1075,7 @@ public:
 	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Health", "float", "100.0")
 	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Location", "FVector", "(X=0,Y=0,Z=100)")
 	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Items", "AActor", "", bIsArray=True, ContainerType="Array")
+	 *   unreal.BlueprintService.add_variable("/Game/STT_Rotate", "Cube", "BP_Cube")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static bool AddVariable(
@@ -1464,6 +1496,79 @@ public:
 	);
 
 	/**
+	 * Add a member variable getter node to a graph — reads a property or component
+	 * of another class (not self). Creates a UK2Node_VariableGet with a Target input pin.
+	 *
+	 * Use this when you have a variable of type BP_Foo and want to access a property
+	 * or component declared on BP_Foo (e.g. get the StaticMeshComponent named "CubeMesh"
+	 * from a variable of type BP_Cube).
+	 *
+	 * The resulting node pins:
+	 *   - "self"       (input)  — the object to read from (the outer variable)
+	 *   - MemberName   (output) — the value of the member property
+	 *
+	 * @param BlueprintPath  - Full path to the blueprint that contains the graph
+	 * @param GraphName      - Name of the graph
+	 * @param TargetClass    - Short class name that owns the member (e.g. "BP_Cube_C",
+	 *                         "StaticMeshActor"). Resolved the same way as create_blueprint.
+	 * @param MemberName     - Name of the property/component to access (e.g. "CubeMesh")
+	 * @param PosX           - X position in the graph
+	 * @param PosY           - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   # Get the CubeMesh component from a "Cube" variable of type BP_Cube
+	 *   node_id = unreal.BlueprintService.add_member_get_node("/Game/STT_Rotate", "EventGraph", "BP_Cube_C", "CubeMesh", 400, 0)
+	 *   # Target input pin name: "self"   — connect from the Cube getter output
+	 *   # Data output pin name:  "CubeMesh" — connect to whatever needs the component
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddMemberGetNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TargetClass,
+		const FString& MemberName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a validated get variable node to a graph.
+	 * Unlike add_get_variable_node (pure), this node has execution pins:
+	 *   - Input exec: "execute"
+	 *   - Output exec (object valid): "then"  (labeled "Is Valid" in editor)
+	 *   - Output exec (object null): "else"   (labeled "Is Not Valid" in editor)
+	 *   - Data output: variable name (e.g., "Cube")
+	 *
+	 * Only supported for Object/Actor reference variables. The variable must be
+	 * an object reference type (UObject subclass) — primitives (int, float, bool)
+	 * don't support validated get and will fall back to a branch-style impure node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param VariableName - Name of the variable to get with validation
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_validated_get_node("/Game/STT_Rotate", "EventGraph", "Cube", 200, 0)
+	 *   # Connecting the exec flow
+	 *   connect_nodes(bp, graph, tick_id, "then", node_id, "execute")
+	 *   connect_nodes(bp, graph, node_id, "then", next_id, "execute")  # Is Valid path
+	 *   # Connecting the data output
+	 *   connect_nodes(bp, graph, node_id, "Cube", target_id, "self")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddValidatedGetNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& VariableName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
 	 * Add a variable setter node to a graph.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -1594,14 +1699,27 @@ public:
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param GraphName - Name of the graph
-	 * @param EventName - Name of the event (e.g., "ReceiveBeginPlay", "ReceiveTick", "BlueprintInitializeAnimation")
+	 * @param EventName - Name of the event function in the parent class.
+	 *                    For Actor blueprints: "ReceiveBeginPlay", "ReceiveActorBeginOverlap", etc.
+	 *                    For AnimBlueprints: "BlueprintInitializeAnimation"
+	 *
+	 *                    STATETREE TASK BLUEPRINTS (StateTreeTaskBlueprintBase):
+	 *                      "ReceiveLatentTick"        — Tick (new, use this)
+	 *                      "ReceiveLatentEnterState"  — Enter State (new, use this)
+	 *                      "ReceiveExitState"         — Exit State
+	 *                      "ReceiveStateCompleted"    — State Completed
+	 *                    NEVER use "ReceiveTick" or "ReceiveEnterState" — those are deprecated
+	 *                    on StateTreeTaskBlueprintBase and will cause compile errors.
+	 *
 	 * @param PosX - X position in the graph
 	 * @param PosY - Y position in the graph
 	 * @return Node ID (GUID) if successful, empty string otherwise
 	 *
-	 * Example:
+	 * Example (Actor Blueprint):
 	 *   node_id = unreal.BlueprintService.add_event_node("/Game/BP_Player", "EventGraph", "ReceiveBeginPlay", 0, 0)
-	 *   node_id = unreal.BlueprintService.add_event_node("/Game/ABP_Character", "EventGraph", "BlueprintInitializeAnimation", 0, 0)
+	 * Example (StateTree Task Blueprint):
+	 *   node_id = unreal.BlueprintService.add_event_node("/Game/STT_MyTask", "EventGraph", "ReceiveLatentTick", 0, 0)
+	 *   node_id = unreal.BlueprintService.add_event_node("/Game/STT_MyTask", "EventGraph", "ReceiveLatentEnterState", 0, 200)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static FString AddEventNode(
@@ -1847,12 +1965,15 @@ public:
 	 * Create a new blueprint from a parent class.
 	 *
 	 * @param BlueprintName - Name of the blueprint to create
-	 * @param ParentClass - Parent class name or path (e.g., "Actor", "Character", "/Script/Engine.Actor")
+	 * @param ParentClass - Parent class name or path (e.g., "Actor", "Character", "StateTreeTaskBlueprintBase", "/Script/Engine.Actor")
+	 *                      Short names like "StateTreeTaskBlueprintBase" are resolved via object search across all loaded modules.
+	 *                      Returns empty string (error) if the class cannot be found.
 	 * @param BlueprintPath - Directory path where blueprint will be created (e.g., "/Game/Blueprints")
 	 * @return Full path to created blueprint, or empty string on failure
 	 *
 	 * Example:
 	 *   path = unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
+	 *   path = unreal.BlueprintService.create_blueprint("STT_MyTask", "StateTreeTaskBlueprintBase", "/Game/StateTree")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static FString CreateBlueprint(
@@ -1862,16 +1983,19 @@ public:
 	);
 
 	/**
-	 * Compile a blueprint.
+	 * Compile a blueprint and return detailed results including any errors and warnings.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
-	 * @return True if successful
+	 * @return FBlueprintCompileResult with success status, error count, warning count, and message strings
 	 *
 	 * Example:
-	 *   unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
+	 *   result = unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
+	 *   print(f"Success: {result.b_success}, Errors: {result.num_errors}")
+	 *   for err in result.errors:
+	 *       print(f"  ERROR: {err}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
-	static bool CompileBlueprint(const FString& BlueprintPath);
+	static FBlueprintCompileResult CompileBlueprint(const FString& BlueprintPath);
 
 	/**
 	 * Get a property value from a blueprint's Class Default Object (CDO).

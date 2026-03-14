@@ -132,8 +132,8 @@ void FChatSession::SendMessage(const FString& UserMessage)
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
-    ConsecutiveIdenticalErrorCount = 0;
-    LastToolErrorSignature.Empty();
+    MaxSignatureFrequency = 0;
+    RecentToolSignatures.Empty();
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
@@ -243,8 +243,8 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
-    ConsecutiveIdenticalErrorCount = 0;
-    LastToolErrorSignature.Empty();
+    MaxSignatureFrequency = 0;
+    RecentToolSignatures.Empty();
 
     // Create user message with multimodal content
     FChatMessage UserMsg;
@@ -994,16 +994,30 @@ void FChatSession::TrackToolResultForLoopDetection(const FString& ToolName, cons
     // Build a signature from tool name + first 200 chars of result (enough to identify repeats)
     FString Signature = ToolName + TEXT("|") + ResultContent.Left(200);
     
-    if (Signature == LastToolErrorSignature)
+    // Add to ring buffer, evicting oldest if full
+    RecentToolSignatures.Add(Signature);
+    if (RecentToolSignatures.Num() > LoopDetectionWindowSize)
     {
-        ConsecutiveIdenticalErrorCount++;
-        UE_LOG(LogChatSession, Log, TEXT("Consecutive identical tool result #%d for %s"), 
-            ConsecutiveIdenticalErrorCount, *ToolName);
+        RecentToolSignatures.RemoveAt(0);
     }
-    else
+    
+    // Count how many times this signature appears in the window
+    int32 Count = 0;
+    for (const FString& Recent : RecentToolSignatures)
     {
-        LastToolErrorSignature = Signature;
-        ConsecutiveIdenticalErrorCount = 1;
+        if (Recent == Signature)
+        {
+            Count++;
+        }
+    }
+    
+    // Store the max frequency so SendFollowUpAfterToolCall can check it
+    MaxSignatureFrequency = FMath::Max(MaxSignatureFrequency, Count);
+    
+    if (Count > 1)
+    {
+        UE_LOG(LogChatSession, Log, TEXT("Tool result signature appeared %d/%d times in window for %s"), 
+            Count, MaxConsecutiveIdenticalErrors, *ToolName);
     }
 }
 
@@ -1044,24 +1058,25 @@ void FChatSession::SendFollowUpAfterToolCall()
         return; // Wait for user to call ContinueAfterIterationLimit() or send new message
     }
     
-    // Circuit breaker: stop if the same tool keeps returning the same result consecutively
-    if (ConsecutiveIdenticalErrorCount >= MaxConsecutiveIdenticalErrors)
+    // Circuit breaker: stop if the same tool result appears too many times in the recent window
+    // This catches alternating patterns (A,B,A,B) not just consecutive duplicates
+    if (MaxSignatureFrequency >= MaxConsecutiveIdenticalErrors)
     {
-        UE_LOG(LogChatSession, Warning, TEXT("Circuit breaker: %d consecutive identical tool results detected - stopping agentic loop"), 
-            ConsecutiveIdenticalErrorCount);
+        UE_LOG(LogChatSession, Warning, TEXT("Circuit breaker: tool result appeared %d times in recent %d calls - stopping agentic loop"), 
+            MaxSignatureFrequency, LoopDetectionWindowSize);
         
         // Add an assistant message explaining the stop
         FChatMessage StopMsg(TEXT("assistant"), 
-            FString::Printf(TEXT("I've been getting the same result from the same tool call %d times in a row, which indicates I'm stuck in a loop. ")
-                TEXT("Please check the tool error above and try rephrasing your request, or provide additional context."),
-                ConsecutiveIdenticalErrorCount));
+            FString::Printf(TEXT("I've been getting the same tool result %d times in the last %d calls, which indicates I'm stuck in a loop. ")
+                TEXT("Please check the tool output above and try rephrasing your request, or provide additional context."),
+                MaxSignatureFrequency, LoopDetectionWindowSize));
         StopMsg.bIsStreaming = false;
         Messages.Add(StopMsg);
         OnMessageAdded.ExecuteIfBound(StopMsg);
         
         // Reset tracking
-        ConsecutiveIdenticalErrorCount = 0;
-        LastToolErrorSignature.Empty();
+        MaxSignatureFrequency = 0;
+        RecentToolSignatures.Empty();
         return;
     }
     
@@ -1251,8 +1266,8 @@ void FChatSession::ResetChat()
     // Reset iteration tracking
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
-    ConsecutiveIdenticalErrorCount = 0;
-    LastToolErrorSignature.Empty();
+    MaxSignatureFrequency = 0;
+    RecentToolSignatures.Empty();
 
     // Clear task list
     ClearTaskList();

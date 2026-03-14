@@ -678,15 +678,19 @@ private:
     FString ActiveSkillsContent;
 
     // Loop detection: prompt-based self-awareness + consecutive-failure circuit breaker
+    // Uses a ring buffer to catch alternating patterns (A,B,A,B) not just consecutive duplicates
     // See vibeue.instructions.md for prompt-level guidelines
 
-    /** Tracks the last tool error signature (ToolName + Result hash) for consecutive failure detection */
-    FString LastToolErrorSignature;
+    /** Ring buffer of recent tool result signatures for loop detection */
+    TArray<FString> RecentToolSignatures;
 
-    /** Count of consecutive identical tool error results */
-    int32 ConsecutiveIdenticalErrorCount = 0;
+    /** Maximum frequency count observed in the current window (updated by TrackToolResultForLoopDetection) */
+    int32 MaxSignatureFrequency = 0;
 
-    /** Maximum consecutive identical errors before breaking the loop */
+    /** Size of the ring buffer window for loop detection */
+    static constexpr int32 LoopDetectionWindowSize = 10;
+
+    /** How many times a signature must appear in the window to trigger the circuit breaker */
     static constexpr int32 MaxConsecutiveIdenticalErrors = 3;
 
     // ============ Voice Input (Private) ============

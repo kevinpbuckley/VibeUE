@@ -1058,9 +1058,12 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
     TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ToolResult);
     if (FJsonSerializer::Deserialize(Reader, ResultJson) && ResultJson.IsValid())
     {
-        // Check if success field is false, or if error field has content
-        bool bSuccess = ResultJson->GetBoolField(TEXT("success"));
-        FString ErrorMsg = ResultJson->GetStringField(TEXT("error"));
+        // Check if success field is false, or if error field has content.
+        // Use TryGet variants to avoid LogJson warnings when fields are absent.
+        bool bSuccess = true;
+        ResultJson->TryGetBoolField(TEXT("success"), bSuccess);
+        FString ErrorMsg;
+        ResultJson->TryGetStringField(TEXT("error"), ErrorMsg);
         bIsError = !bSuccess || !ErrorMsg.IsEmpty();
     }
     else
