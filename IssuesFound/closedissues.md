@@ -4,6 +4,43 @@ Archived from `issues.md`. See that file for open issues.
 
 ---
 
+## 14. ~~`add_function_call_node` fails for `UUserWidget::GetOwningActor`~~ — INVALID
+
+**Verdict:** False issue — `UUserWidget::GetOwningActor` does not exist in UE 5.7.
+Investigated 2026-03-15: confirmed `GetOwningActor` is not a UFUNCTION on `UUserWidget` or `UWidget`.
+
+The functions people actually want are:
+- `GetOwningPlayer` → `APlayerController*` — works via `add_function_call_node("UserWidget", "GetOwningPlayer")`
+- `GetOwningPlayerPawn` → `APawn*` — works via `add_function_call_node("UserWidget", "GetOwningPlayerPawn")`
+
+---
+
+## 3. ~~`set_node_pin_value` silently fails on class reference pins~~ — FIXED
+
+**Fixed:** 2026-03-15, PR #335
+Class reference pins (`TSubclassOf<>`) now route through `TrySetDefaultObject` with U/A prefix fallbacks.
+
+---
+
+## 4. ~~`configure_node` fails on class reference properties~~ — FIXED
+
+**Fixed:** 2026-03-15, PR #335
+`FClassProperty` branch now uses `FindFirstObject` with U/A prefix chain.
+
+---
+
+## 10. ~~`check_unreal_connection` tool does not exist~~ — INVALID (already documented)
+
+CLAUDE.md already correctly states this tool doesn't exist. Issue was stale — closed 2026-03-15.
+
+---
+
+## 11. ~~CLAUDE.md documents 14 tools~~ — INVALID (already fixed)
+
+CLAUDE.md already correctly documents 9 tools. Issue was stale — closed 2026-03-15.
+
+---
+
 ## 5. ~~`connect_nodes` fails when source is a default K2Node_Event~~ — FIXED
 
 **Severity:** ~~High~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326

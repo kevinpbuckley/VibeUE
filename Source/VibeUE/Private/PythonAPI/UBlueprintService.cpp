@@ -2670,9 +2670,25 @@ FString UBlueprintService::AddGetVariableNode(
 		return FString();
 	}
 
-	// Find the variable property
-	FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName));
-	if (!Property)
+	// Validate variable exists — check compiled GeneratedClass first, fall back to NewVariables
+	// (uncompiled BPs won't have the property in GeneratedClass yet)
+	bool bVariableFound = false;
+	if (Blueprint->GeneratedClass && FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName)))
+	{
+		bVariableFound = true;
+	}
+	if (!bVariableFound)
+	{
+		for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+		{
+			if (VarDesc.VarName == FName(*VariableName))
+			{
+				bVariableFound = true;
+				break;
+			}
+		}
+	}
+	if (!bVariableFound)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddGetVariableNode: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
 		return FString();
@@ -2898,9 +2914,25 @@ FString UBlueprintService::AddSetVariableNode(
 		return FString();
 	}
 
-	// Find the variable property
-	FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName));
-	if (!Property)
+	// Validate variable exists — check compiled GeneratedClass first, fall back to NewVariables
+	// (uncompiled BPs won't have the property in GeneratedClass yet)
+	bool bVariableFound = false;
+	if (Blueprint->GeneratedClass && FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName)))
+	{
+		bVariableFound = true;
+	}
+	if (!bVariableFound)
+	{
+		for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+		{
+			if (VarDesc.VarName == FName(*VariableName))
+			{
+				bVariableFound = true;
+				break;
+			}
+		}
+	}
+	if (!bVariableFound)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddSetVariableNode: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
 		return FString();

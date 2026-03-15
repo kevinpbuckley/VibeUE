@@ -1,6 +1,6 @@
 # VibeUE — Open Issues
 
-_Last updated: 2026-03-15_
+_Last updated: 2026-03-15 (session 2)_
 
 Fixed/closed issues are archived in [closedissues.md](closedissues.md).
 
@@ -34,33 +34,6 @@ Nodes created with a null GUID (see issue #1) cannot be removed via the API. `de
 
 ---
 
-### 3. `set_node_pin_value` silently fails on class reference pins
-
-**Severity:** High
-**Method:** `BlueprintService.set_node_pin_value`
-**Affected pin type:** `TSubclassOf<>` (e.g. the `Actor Class` pin on `GetActorOfClass`)
-
-Returns `True` regardless of the value passed, but the pin value is never applied. Tried all formats:
-- `"ATurnManager"`
-- `"TurnManager"`
-- `"/Script/InvasionTactical.ATurnManager"`
-- `"Class /Script/InvasionTactical.ATurnManager"`
-
-All return `True`, readback always shows `''`.
-
-**Workaround:** Set class reference pins manually in the Blueprint editor dropdown.
-
----
-
-### 4. `configure_node` fails on class reference properties
-
-**Severity:** Medium
-**Method:** `BlueprintService.configure_node`
-
-Returns `False` for class reference properties. Same root cause as issue #3 — class reference types are not handled.
-
----
-
 ### 6. `add_set_variable_node` / `add_get_variable_node` fail for object reference variables
 
 **Severity:** Medium
@@ -70,45 +43,6 @@ Returns `False` for class reference properties. Same root cause as issue #3 — 
 Both methods return an empty string (failure) for variables of object reference type, even when the variable exists and `list_variables` confirms it.
 
 **Note:** `add_get_variable_node` works correctly for **component** references (e.g. a `UStaticMeshComponent` added via `add_component`).
-
----
-
-### 10. `check_unreal_connection` tool does not exist in C++ source
-
-**Severity:** Medium (documentation/diagnostic)
-
-The VibeUE `CLAUDE.md` references `check_unreal_connection` as a diagnostic tool. It is **not registered anywhere in the C++ codebase**. Calling it returns the proxy's generic "UE not running" fallback — it is not a real tool.
-
-**Workaround:** Diagnose UE connectivity by attempting any Python tool call (e.g. `execute_python_code`).
-
----
-
-### 11. CLAUDE.md documents 14 tools — current architecture has 9
-
-**Severity:** Low (documentation staleness)
-
-The upstream README states the plugin exposes "14 multi-action tools". The current implementation registers **9 tools** only. The manage_* tool layer was replaced by the Python-based approach.
-
----
-
-### 14. `add_function_call_node` fails for `UUserWidget::GetOwningActor`
-
-**Severity:** High
-**Method:** `BlueprintService.add_function_call_node`, `BlueprintService.create_node_by_key`
-**Context:** Widget Blueprint (WBP) graphs
-
-`UUserWidget::GetOwningActor` is a `UFUNCTION(BlueprintCallable)` but cannot be placed via the API. All attempted forms return empty string / null GUID:
-
-- `add_function_call_node("UserWidget", "GetOwningActor")`
-- `add_function_call_node("Widget", "GetOwningActor")`
-- `add_function_call_node("UUserWidget", "GetOwningActor")`
-- `add_function_call_node("Actor", "GetOwningActor")`
-- `create_node_by_key("FUNC UserWidget::GetOwningActor")`
-- `discover_nodes("GetOwningActor")` / `discover_nodes("Owning Actor")` — no results
-
-**Impact:** Cannot retrieve the owning actor from within a WBP graph via MCP — a very common widget pattern.
-
-**Workaround:** Place the node manually in the Blueprint editor.
 
 ---
 
