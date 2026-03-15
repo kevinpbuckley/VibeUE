@@ -135,9 +135,9 @@ The VibeUE `CLAUDE.md` states the plugin exposes "14 multi-action tools with 177
 
 ---
 
-## 12. No first-run nudge when MCP client connects directly (bypassing proxy)
+## 12. ~~No first-run nudge when MCP client connects directly (bypassing proxy)~~ — FIXED
 
-**Severity:** Low (UX / discoverability)
+**Severity:** ~~Low~~ — Fixed in commit `0dc70c8` (Mar 14 2026), PR #332 (closes GitHub #314)
 **Location:** Module startup / MCP server initialisation (C++)
 
 When a user connects directly to UE on port 8088, they get no indication that a proxy exists or why they might want it. The practical consequence: they work in Claude Code, launch UE mid-session, and find their AI tools are broken because Claude Code loaded with 0 tools at startup (before UE was running). Restarting Claude Code is the only fix in that scenario — but if they'd been pointed at the proxy, it would have worked transparently.
@@ -161,9 +161,9 @@ On dismiss, write `proxy_nudge_dismissed = true` to `Saved/Config/VibeUE.ini` so
 
 ---
 
-## 13. No security warning when MCP server runs without an API key
+## 13. ~~No security warning when MCP server runs without an API key~~ — FIXED
 
-**Severity:** High (security)
+**Severity:** ~~High~~ — Fixed in commit `6740f93` (Mar 14 2026), PR #332 (closes GitHub #315)
 **Location:** `FMCPServer::ValidateApiKey` / `FMCPServer::Start()` (`MCPServer.cpp`)
 
 When no API key is configured, `ValidateApiKey` silently returns `true` and all inbound connections are accepted with no warning.
@@ -193,3 +193,59 @@ to restrict access.
 - Must fire every session while the key is unset — not a one-time dismissable. The exposure is active every time UE runs
 - Consider also surfacing as a red editor notification bar entry so it is visible without opening the output log
 - `Access-Control-Allow-Origin: *` throughout the server is also worth revisiting — should be tightened to match the `ValidateOrigin` allowlist rather than wildcarded
+
+---
+
+## 14. `add_function_call_node` fails for `UUserWidget::GetOwningActor`
+
+**Severity:** High
+**Method:** `BlueprintService.add_function_call_node`, `BlueprintService.create_node_by_key`
+**Context:** Widget Blueprint (WBP) graphs
+
+`UUserWidget::GetOwningActor` is a `UFUNCTION(BlueprintCallable)` but cannot be placed via the API. All attempted forms return empty string / null GUID:
+
+- `add_function_call_node("UserWidget", "GetOwningActor")`
+- `add_function_call_node("Widget", "GetOwningActor")`
+- `add_function_call_node("UUserWidget", "GetOwningActor")`
+- `add_function_call_node("Actor", "GetOwningActor")`
+- `create_node_by_key("FUNC UserWidget::GetOwningActor")`
+- `discover_nodes("GetOwningActor")` / `discover_nodes("Owning Actor")` — no results
+
+**Impact:** Cannot retrieve the owning actor from within a WBP graph via MCP — a very common widget pattern.
+
+**Workaround:** Place the node manually in the Blueprint editor.
+
+---
+
+## 15. Delegate bind nodes (`UK2Node_AddDelegate`) cannot be created
+
+**Severity:** High
+**Method:** `BlueprintService.create_node_by_key`, `BlueprintService.discover_nodes`
+**Context:** Widget Blueprint (WBP) graphs, any delegate binding pattern
+
+`UK2Node_AddDelegate` nodes (the "Assign OnHealthChanged" / "Bind Event to X" pattern) cannot be created via any API method:
+
+- `discover_nodes("Bind")` / `"Assign"` / `"Delegate"` / `"HealthChanged"` — no results
+- `create_node_by_key("UK2Node_AddDelegate OnHealthChanged")` and full path variants — all failed
+
+**Impact:** The entire delegate binding pattern is inaccessible via MCP. Any widget that needs to subscribe to a delegate (e.g. binding a UI element to a gameplay event) cannot be wired programmatically.
+
+**Workaround:** Add delegate binding nodes manually in the Blueprint editor.
+
+---
+
+## 16. `discover_nodes` does not surface widget component functions (WBP context)
+
+**Severity:** Medium
+**Method:** `BlueprintService.discover_nodes`
+**Context:** Widget Blueprint (WBP) graphs
+
+Functions on widget components (e.g. `SetPercent` on a `ProgressBar`) are not returned by `discover_nodes` in WBP context, even though they are valid Blueprint-callable functions.
+
+`add_function_call_node("ProgressBar", "SetPercent")` works correctly once the component name is known — the function exists and executes — but cannot be found via discovery first.
+
+**Note:** The component name in the asset may differ from the class name (e.g. `ProgressBar_40` vs `ProgressBar`). `add_function_call_node` accepts the class name, not the instance name.
+
+**Impact:** AI-assisted WBP authoring requires the agent to guess or already know component function names rather than discovering them from the graph/asset context.
+
+**Workaround:** Use `add_function_call_node(class_name, function_name)` directly if the class name is known.

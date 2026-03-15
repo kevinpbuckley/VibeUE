@@ -24,6 +24,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 import urllib.request
 import urllib.error
 import socket
@@ -87,6 +88,7 @@ def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
     forward_headers = {
         "Content-Type": "application/json",
         "Accept": "application/json",
+        "X-VibeUE-Proxy": "true",  # Identifies this request as proxy-forwarded (issue #314)
         # Tell Python and UE not to reuse the connection.  Without this, Python's
         # urllib reuses the keep-alive socket from the previous call; UE's server
         # closes it on its end, so the next request hits a stale socket and raises
@@ -176,12 +178,34 @@ class ProxyHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        # Health check only — UE speaks JSON-RPC POST, not GET/SSE
+        accept = self.headers.get("Accept", "")
+        if "text/event-stream" not in accept:
+            # Plain health check
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain")
+            self._send_cors()
+            self.end_headers()
+            self.wfile.write(b"VibeUE proxy running")
+            return
+
+        # SSE stream — hold the connection open with heartbeats so the client
+        # doesn't reconnect in a loop. Tool call responses still come back inline
+        # on POST; this stream exists to stop the reconnect flood (issue #327).
+        log("SSE stream opened")
         self.send_response(200)
-        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
         self._send_cors()
         self.end_headers()
-        self.wfile.write(b"VibeUE proxy running")
+
+        try:
+            while True:
+                self.wfile.write(b": heartbeat\n\n")
+                self.wfile.flush()
+                time.sleep(15)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            log("SSE stream closed")
 
     def do_POST(self):
         if self.path != "/mcp":
@@ -279,6 +303,15 @@ class ProxyHandler(BaseHTTPRequestHandler):
 # Entry point
 # ---------------------------------------------------------------------------
 
+class QuietThreadingHTTPServer(ThreadingHTTPServer):
+    """Suppress noisy tracebacks from normal client disconnects."""
+    def handle_error(self, request, client_address):
+        exc_type = sys.exc_info()[0]
+        if exc_type in (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+            return
+        super().handle_error(request, client_address)
+
+
 if __name__ == "__main__":
     if not _PROXY_CONFIG_PATH.exists():
         log(f"WARNING: vibeue-proxy.json not found at {_PROXY_CONFIG_PATH}")
@@ -299,7 +332,7 @@ if __name__ == "__main__":
     log(f"VibeUE MCP Proxy listening on http://127.0.0.1:{PROXY_PORT}/mcp")
     log(f"Forwarding tool calls to UE at http://127.0.0.1:{UE_PORT}/mcp")
 
-    server = ThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
+    server = QuietThreadingHTTPServer(("127.0.0.1", PROXY_PORT), ProxyHandler)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

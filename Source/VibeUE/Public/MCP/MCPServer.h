@@ -167,6 +167,9 @@ private:
     /** Parse Accept header to check for SSE support */
     bool AcceptsSSE(const TMap<FString, FString>& Headers) const;
     
+    /** Show one-time proxy nudge toast if client is connected directly (no proxy header) */
+    void ShowProxyNudgeIfNeeded();
+
     /** Handle individual JSON-RPC methods */
     FString HandleInitialize(TSharedPtr<FJsonObject> Params, const FString& RequestId);
     FString HandleToolsList(TSharedPtr<FJsonObject> Params, const FString& RequestId);
