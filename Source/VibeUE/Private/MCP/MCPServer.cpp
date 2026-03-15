@@ -9,6 +9,8 @@
 #include "Core/ToolRegistry.h"
 #include "Chat/MCPTypes.h"
 #include "Async/Async.h"
+#include "Framework/Notifications/NotificationManager.h"
+#include "Widgets/Notifications/SNotificationList.h"
 #include "HttpModule.h"
 #include "Interfaces/IHttpRequest.h"
 #include "Interfaces/IHttpResponse.h"
@@ -81,7 +83,16 @@ bool FMCPServer::Start()
 
     // Re-validate VibeUE API key each time the server starts (picks up any key changes from settings)
     ValidateVibeUEApiKeyAsync();
-    
+
+    if (Config.ApiKey.IsEmpty())
+    {
+        UE_LOG(LogMCPServer, Error, TEXT(
+            "SECURITY WARNING: VibeUE MCP server is starting with NO API key set. "
+            "Any local process on this machine can connect and execute tools without authentication "
+            "-- including file access, asset changes, and arbitrary Python code execution inside Unreal Engine. "
+            "Set an API key in Project Settings -> Plugins -> VibeUE -> API Key to restrict access."));
+    }
+
     UE_LOG(LogMCPServer, Log, TEXT("Starting MCP Server on port %d..."), Config.Port);
     
     // Create TCP listener socket
@@ -250,7 +261,7 @@ uint32 FMCPServer::Run()
                 {
                     UE_LOG(LogMCPServer, Log, TEXT("MCP: New connection accepted"));
                     HandleConnection(ClientSocket);
-                    UE_LOG(LogMCPServer, Log, TEXT("MCP: Connection handling completed"));
+                    UE_LOG(LogMCPServer, Verbose, TEXT("MCP: Connection handling completed"));
                 }
             }
         }
@@ -332,7 +343,13 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
     if (Method == TEXT("POST"))
     {
         UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Processing JSON-RPC request"));
-        
+
+        // Nudge direct connections toward the proxy (fires once, on first initialize)
+        if (!Headers.Contains(TEXT("x-vibeue-proxy")) && Body.Contains(TEXT("\"initialize\"")))
+        {
+            ShowProxyNudgeIfNeeded();
+        }
+
         // Process JSON-RPC request (SessionId already retrieved above)
         bool bIsNotification = false;
         FString Response = HandleMCPRequest(Body, SessionId, bIsNotification);
@@ -375,9 +392,9 @@ bool FMCPServer::HandleConnection(FSocket* ClientSocket)
             }
             else
             {
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Sending HTTP response"));
+                UE_LOG(LogMCPServer, Verbose, TEXT("MCP POST: Sending HTTP response"));
                 SendHttpResponse(ClientSocket, 200, TEXT("OK"), TEXT("application/json"), Response, ResponseHeaders);
-                UE_LOG(LogMCPServer, Log, TEXT("MCP POST: Response sent"));
+                UE_LOG(LogMCPServer, Verbose, TEXT("MCP POST: Response sent"));
             }
         }
     }
@@ -1153,6 +1170,79 @@ FString FMCPServer::BuildJsonRpcError(const FString& RequestId, int32 Code, cons
     FJsonSerializer::Serialize(Response.ToSharedRef(), Writer);
     
     return Output;
+}
+
+// ============ Proxy Nudge ============
+
+void FMCPServer::ShowProxyNudgeIfNeeded()
+{
+    // Prevent duplicate toasts within the same session
+    static bool bShownThisSession = false;
+    if (bShownThisSession)
+    {
+        return;
+    }
+
+    // Check if user has permanently dismissed it
+    bool bDismissed = false;
+    GConfig->GetBool(TEXT("VibeUE.MCPServer"), TEXT("ProxyNudgeDismissed"), bDismissed, GEditorPerProjectIni);
+    if (bDismissed)
+    {
+        return;
+    }
+
+    bShownThisSession = true;
+
+    // Must run on game thread — we're on the socket thread here
+    AsyncTask(ENamedThreads::GameThread, []()
+    {
+        TSharedPtr<TWeakPtr<SNotificationItem>> WeakItemHolder = MakeShared<TWeakPtr<SNotificationItem>>();
+
+        FNotificationInfo Info(FText::FromString(
+            TEXT("Your AI client is connected directly to VibeUE (port 8088).\n\n")
+            TEXT("The VibeUE proxy keeps your tools available even when Unreal Editor ")
+            TEXT("is closed — so you can open your AI tool first without losing MCP tools. ")
+            TEXT("See the plugin docs to set it up.")));
+        Info.bFireAndForget = false;
+        Info.bUseThrobber = false;
+        Info.ExpireDuration = 0.0f;
+        Info.FadeOutDuration = 1.0f;
+
+        Info.ButtonDetails.Add(FNotificationButtonInfo(
+            FText::FromString(TEXT("Got it, don't show again")),
+            FText::FromString(TEXT("Dismiss permanently")),
+            FSimpleDelegate::CreateLambda([WeakItemHolder]()
+            {
+                GConfig->SetBool(TEXT("VibeUE.MCPServer"), TEXT("ProxyNudgeDismissed"), true, GEditorPerProjectIni);
+                GConfig->Flush(false, GEditorPerProjectIni);
+                if (TSharedPtr<SNotificationItem> Item = WeakItemHolder->Pin())
+                {
+                    Item->SetCompletionState(SNotificationItem::CS_None);
+                    Item->ExpireAndFadeout();
+                }
+            })
+        ));
+
+        Info.ButtonDetails.Add(FNotificationButtonInfo(
+            FText::FromString(TEXT("Maybe later")),
+            FText::FromString(TEXT("Close for now, remind me next session")),
+            FSimpleDelegate::CreateLambda([WeakItemHolder]()
+            {
+                if (TSharedPtr<SNotificationItem> Item = WeakItemHolder->Pin())
+                {
+                    Item->SetCompletionState(SNotificationItem::CS_None);
+                    Item->ExpireAndFadeout();
+                }
+            })
+        ));
+
+        TSharedPtr<SNotificationItem> Item = FSlateNotificationManager::Get().AddNotification(Info);
+        if (Item.IsValid())
+        {
+            *WeakItemHolder = Item;
+            Item->SetCompletionState(SNotificationItem::CS_Pending);
+        }
+    });
 }
 
 // ============ Security ============
