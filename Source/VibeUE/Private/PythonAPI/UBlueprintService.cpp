@@ -22,6 +22,7 @@
 #include "K2Node_Event.h"
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
 #include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
+#include "K2Node_CreateDelegate.h"       // For create event nodes (add_create_delegate_node)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -5505,4 +5506,42 @@ FString UBlueprintService::AddDelegateBindNode(
 	UE_LOG(LogTemp, Log, TEXT("AddDelegateBindNode: Added bind node for %s::%s in %s"), *OwnerClass->GetName(), *DelegateName, *GraphName);
 
 	return DelegateNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddCreateDelegateNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& FunctionName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateDelegateNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateDelegateNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	UK2Node_CreateDelegate* Node = NewObject<UK2Node_CreateDelegate>(Graph);
+	Node->SelectedFunctionName = FName(*FunctionName);
+
+	Graph->AddNode(Node, false, false);
+	Node->CreateNewGuid();
+	Node->PostPlacedNewNode();
+	Node->AllocateDefaultPins();
+
+	Node->NodePosX = PosX;
+	Node->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCreateDelegateNode: Created delegate node for function '%s' in %s"), *FunctionName, *GraphName);
+
+	return Node->NodeGuid.ToString();
 }
