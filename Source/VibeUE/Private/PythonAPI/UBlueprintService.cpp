@@ -7,6 +7,7 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "WidgetBlueprint.h"
+#include "Blueprint/WidgetTree.h"       // For WBP widget component class discovery
 #include "EditorAssetLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -4597,9 +4598,43 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("DiscoverNodes: Found %d nodes matching '%s' in category '%s'"), 
+	// 5. For Widget Blueprints: scan the widget tree and add functions from each widget class
+	if (UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(Blueprint))
+	{
+		if (WidgetBP->WidgetTree)
+		{
+			TSet<UClass*> SeenWidgetClasses;
+			WidgetBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+			{
+				if (!Widget || Results.Num() >= MaxResults) return;
+
+				UClass* WidgetClass = Widget->GetClass();
+				if (!WidgetClass || SeenWidgetClasses.Contains(WidgetClass)) return;
+				SeenWidgetClasses.Add(WidgetClass);
+
+				FString WidgetCategory = FString::Printf(TEXT("Widget: %s"), *WidgetClass->GetName());
+
+				// Walk the widget class hierarchy (stop at UWidget/UObject)
+				UClass* WalkClass = WidgetClass;
+				while (WalkClass && Results.Num() < MaxResults)
+				{
+					FString WalkCategory = FString::Printf(TEXT("Widget: %s"), *WalkClass->GetName());
+					for (TFieldIterator<UFunction> It(WalkClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+					{
+						if (Results.Num() >= MaxResults) break;
+						AddFunctionToResults(*It, WalkCategory, WalkClass->GetName());
+					}
+					WalkClass = WalkClass->GetSuperClass();
+					if (WalkClass && (WalkClass->GetName() == TEXT("Widget") || WalkClass->GetName() == TEXT("Object")))
+						break;
+				}
+			});
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("DiscoverNodes: Found %d nodes matching '%s' in category '%s'"),
 		Results.Num(), *SearchTerm, *Category);
-	
+
 	return Results;
 }
 
