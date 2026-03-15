@@ -4,6 +4,20 @@ Archived from `issues.md`. See that file for open issues.
 
 ---
 
+## 6. ~~`add_set_variable_node` / `add_get_variable_node` fail for object reference variables~~ — FIXED
+
+**Fixed:** 2026-03-15, PR #335
+Root cause: guard used `FindFProperty(GeneratedClass)` which returns null for uncompiled BPs. Added `NewVariables` fallback so both methods work before compile. Affects all variable types, not just object references.
+
+---
+
+## 16. ~~`discover_nodes` does not surface widget component functions (WBP context)~~ — FIXED
+
+**Fixed:** 2026-03-15, PR #335
+Added a widget tree walk for `UWidgetBlueprint`: `WidgetTree->ForEachWidget` collects unique widget classes and iterates their functions. Discovery now reflects the actual widgets in the WBP dynamically.
+
+---
+
 ## 1. ~~`create_node_by_key` returns null GUID for most FUNC nodes~~ — FIXED
 
 **Fixed:** 2026-03-15, session 3

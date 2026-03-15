@@ -8,31 +8,7 @@ Fixed/closed issues are archived in [closedissues.md](closedissues.md).
 
 ## Local Bug Tracker
 
-### 6. `add_set_variable_node` / `add_get_variable_node` fail for object reference variables
-
-**Severity:** Medium
-**Method:** `BlueprintService.add_set_variable_node`, `BlueprintService.add_get_variable_node`
-**Affected type:** Object reference variables (e.g. `ATurnManager*`)
-
-Both methods return an empty string (failure) for variables of object reference type, even when the variable exists and `list_variables` confirms it.
-
-**Note:** `add_get_variable_node` works correctly for **component** references (e.g. a `UStaticMeshComponent` added via `add_component`).
-
----
-
-### 16. `discover_nodes` does not surface widget component functions (WBP context)
-
-**Severity:** Medium
-**Method:** `BlueprintService.discover_nodes`
-**Context:** Widget Blueprint (WBP) graphs
-
-Functions on widget components (e.g. `SetPercent` on a `ProgressBar`) are not returned by `discover_nodes` in WBP context, even though they are valid Blueprint-callable functions.
-
-`add_function_call_node("ProgressBar", "SetPercent")` works correctly once the class name is known — but cannot be found via discovery first.
-
-**Note:** The component name in the asset may differ from the class name (e.g. `ProgressBar_40` vs `ProgressBar`). `add_function_call_node` accepts the class name, not the instance name.
-
-**Workaround:** Use `add_function_call_node(class_name, function_name)` directly if the class name is known.
+_No open local bugs._ All known issues have been fixed or closed. See [closedissues.md](closedissues.md) for the full archive.
 
 ---
 
