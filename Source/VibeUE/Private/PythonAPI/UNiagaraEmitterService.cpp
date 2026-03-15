@@ -156,9 +156,25 @@ static FString GetStaticSwitchValue(UNiagaraNodeFunctionCall* FunctionCall, cons
 		FString PinName = Pin->PinName.ToString();
 		if (PinName.Contains(SwitchName.ToString(), ESearchCase::IgnoreCase))
 		{
-			// Return the default value
 			if (!Pin->DefaultValue.IsEmpty())
 			{
+				// Resolve enum display names (UserDefinedEnums store internal names like "NewEnumerator0")
+				FNiagaraTypeDefinition TypeDef = UEdGraphSchema_Niagara::PinToTypeDefinition(Pin);
+				if (TypeDef.IsEnum())
+				{
+					if (UEnum* Enum = TypeDef.GetEnum())
+					{
+						int32 Index = Enum->GetIndexByNameString(Pin->DefaultValue);
+						if (Index != INDEX_NONE)
+						{
+							FText DisplayName = Enum->GetDisplayNameTextByIndex(Index);
+							if (!DisplayName.IsEmpty())
+							{
+								return DisplayName.ToString();
+							}
+						}
+					}
+				}
 				return Pin->DefaultValue;
 			}
 		}
