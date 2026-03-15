@@ -1,0 +1,68 @@
+# VibeUE — Closed / Fixed Issues
+
+Archived from `issues.md`. See that file for open issues.
+
+---
+
+## 5. ~~`connect_nodes` fails when source is a default K2Node_Event~~ — FIXED
+
+**Severity:** ~~High~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
+**Method:** `BlueprintService.connect_nodes`
+
+`AllocateDefaultPins()` is now called on any node with an empty Pins array before pin lookup. Default auto-placed K2Node_Event nodes (BeginPlay, Tick) now connect correctly.
+
+~~**Workaround:** Use `add_event_node('ReceiveTick')` or `add_event_node('ReceiveBeginPlay')` to add user-created event override nodes. These return valid GUIDs and connect normally.~~
+
+---
+
+## 7. ~~`get_node_pins` returns empty for default K2Node_Event nodes~~ — FIXED
+
+**Severity:** ~~Low~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
+**Method:** `BlueprintService.get_node_pins`
+
+Same `AllocateDefaultPins()` fix as issue #5. Pins are now correctly returned for default event nodes.
+
+---
+
+## 8. ~~Undocumented Branch exec pin names~~ — FIXED
+
+**Severity:** ~~Low~~ — Fixed in commit `1973086` (Mar 13 2026), PR #326
+**Method:** `BlueprintService.connect_nodes`
+
+`connect_nodes` now normalises `True → then` and `False → else` (case-insensitive). Both the editor-visible names and internal names are accepted.
+
+---
+
+## 9. ~~`add_variable` always reports type as `object` or `int`~~ — FIXED
+
+**Severity:** ~~Low~~ — Fixed in commit `013ee6c` (Mar 13 2026), PR #330
+**Method:** `BlueprintService.list_variables`, `BlueprintService.get_variable_info`
+
+`ListVariables` and `GetVariableInfo` now use `FBlueprintTypeParser::GetFriendlyTypeName` instead of raw `PinCategory.ToString()`. Types now report correctly (e.g. `float` not `real`, struct names instead of `struct`).
+
+---
+
+## 12. ~~No first-run nudge when MCP client connects directly (bypassing proxy)~~ — FIXED
+
+**Severity:** ~~Low~~ — Fixed in commit `0dc70c8` (Mar 14 2026), PR #332 (closes GitHub #314)
+**Location:** Module startup / MCP server initialisation (C++)
+
+On first `initialize` request without `X-VibeUE-Proxy` header, UE now fires a one-time Slate toast pointing the user at the proxy with a "Got it, don't show again" dismiss button. Proxy adds `X-VibeUE-Proxy: true` to all forwarded requests so the two connection types are distinguishable.
+
+---
+
+## 13. ~~No security warning when MCP server runs without an API key~~ — FIXED
+
+**Severity:** ~~High~~ — Fixed in commit `6740f93` (Mar 14 2026), PR #332 (closes GitHub #315)
+**Location:** `FMCPServer::Start()` (`MCPServer.cpp`)
+
+`FMCPServer::Start()` now logs at `Error` severity every session when `Config.ApiKey` is empty, making the unauthenticated exposure impossible to miss in the output log.
+
+---
+
+## 15. ~~Delegate bind nodes (`UK2Node_AddDelegate`) cannot be created~~ — FIXED
+
+**Severity:** ~~High~~ — Fixed in commit `ad621ea` (Mar 14 2026), closes GitHub #15
+**Method:** `BlueprintService.add_delegate_bind_node`
+
+Added `BlueprintService.add_delegate_bind_node(blueprint_path, graph_name, target_class, delegate_name, x, y)`. Returns a valid GUID; node has exec, then, self, and Delegate pins. Pass `"Self"` or `""` as `target_class` to bind to a delegate on the blueprint's own class.
