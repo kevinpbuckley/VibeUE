@@ -4,6 +4,20 @@ Archived from `issues.md`. See that file for open issues.
 
 ---
 
+## 1. ~~`create_node_by_key` returns null GUID for most FUNC nodes~~ — FIXED
+
+**Fixed:** 2026-03-15, session 3
+**Root cause:** `CreateNewGuid()` and `PostPlacedNewNode()` were never called in either the `FUNC` or `NODE` branch. The correct initialization order (matching `AddFunctionCallNode`) is: `AddNode` → `CreateNewGuid` → `PostPlacedNewNode` → `AllocateDefaultPins`.
+
+---
+
+## 2. ~~Ghost `00000000` nodes cannot be deleted~~ — FIXED
+
+**Fixed:** 2026-03-15, session 3 (same fix as #1)
+Nodes created by `create_node_by_key` now receive valid GUIDs so `delete_node` and `set_node_position` work correctly.
+
+---
+
 ## 14. ~~`add_function_call_node` fails for `UUserWidget::GetOwningActor`~~ — INVALID
 
 **Verdict:** False issue — `UUserWidget::GetOwningActor` does not exist in UE 5.7.

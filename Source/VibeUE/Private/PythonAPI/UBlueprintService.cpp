@@ -5261,8 +5261,10 @@ FString UBlueprintService::CreateNodeByKey(
 		FuncNode->SetFromFunction(Function);
 		FuncNode->NodePosX = PosX;
 		FuncNode->NodePosY = PosY;
+		Graph->AddNode(FuncNode, false, false);
+		FuncNode->CreateNewGuid();
+		FuncNode->PostPlacedNewNode();
 		FuncNode->AllocateDefaultPins();
-		Graph->AddNode(FuncNode, true, false);
 		NewNode = FuncNode;
 	}
 	else if (KeyType.Equals(TEXT("NODE"), ESearchCase::IgnoreCase))
@@ -5278,8 +5280,10 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode = NewObject<UEdGraphNode>(Graph, NodeClass);
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
+		Graph->AddNode(NewNode, false, false);
+		NewNode->CreateNewGuid();
+		NewNode->PostPlacedNewNode();
 		NewNode->AllocateDefaultPins();
-		Graph->AddNode(NewNode, true, false);
 	}
 	else
 	{

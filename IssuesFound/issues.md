@@ -1,38 +1,12 @@
 # VibeUE — Open Issues
 
-_Last updated: 2026-03-15 (session 2)_
+_Last updated: 2026-03-15 (session 3)_
 
 Fixed/closed issues are archived in [closedissues.md](closedissues.md).
 
 ---
 
 ## Local Bug Tracker
-
-### 1. `create_node_by_key` returns null GUID for most FUNC nodes
-
-**Severity:** High
-**Method:** `BlueprintService.create_node_by_key`
-**Spawner key format:** `FUNC ClassName::FunctionName`
-
-Nodes are created in the graph but assigned a GUID of `00000000`. This means:
-- They cannot be referenced for subsequent `connect_nodes` calls
-- They cannot be deleted via `delete_node`
-- They accumulate as permanent ghost nodes in the graph
-
-**Workaround:** Use `add_function_call_node(bp, graph, class_name, function_name, x, y)` instead — this consistently returns valid GUIDs.
-
----
-
-### 2. Ghost `00000000` nodes cannot be deleted
-
-**Severity:** High
-**Method:** `BlueprintService.delete_node`
-
-Nodes created with a null GUID (see issue #1) cannot be removed via the API. `delete_node` returns `False`. They also cannot be repositioned via `set_node_position`.
-
-**Workaround:** In the Blueprint editor, right-click the graph → **Select All Disconnected Nodes → Delete**.
-
----
 
 ### 6. `add_set_variable_node` / `add_get_variable_node` fail for object reference variables
 
