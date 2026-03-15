@@ -4780,19 +4780,63 @@ bool UBlueprintService::SetNodePinValue(
 		return false;
 	}
 
-	// Set the default value
+	// Set the default value — class/object reference pins use DefaultObject, not DefaultValue
 	const UEdGraphSchema* Schema = Graph->GetSchema();
-	if (Schema)
+	const UEdGraphSchema_K2* K2Schema = Cast<UEdGraphSchema_K2>(Schema);
+	const FName PinCategory = Pin->PinType.PinCategory;
+
+	if (PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass)
 	{
-		Schema->TrySetDefaultValue(*Pin, Value);
+		// Resolve the class with U/A prefix fallbacks
+		UClass* ResolvedClass = LoadObject<UClass>(nullptr, *Value);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+
+		if (ResolvedClass)
+		{
+			if (K2Schema)
+				K2Schema->TrySetDefaultObject(*Pin, ResolvedClass);
+			else
+				Pin->DefaultObject = ResolvedClass;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Could not resolve class '%s' for class reference pin '%s'"), *Value, *PinName);
+			return false;
+		}
+	}
+	else if (PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject)
+	{
+		// Load object by path and set DefaultObject
+		UObject* ResolvedObject = LoadObject<UObject>(nullptr, *Value);
+		if (ResolvedObject)
+		{
+			if (K2Schema)
+				K2Schema->TrySetDefaultObject(*Pin, ResolvedObject);
+			else
+				Pin->DefaultObject = ResolvedObject;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Could not load object '%s' for object reference pin '%s'"), *Value, *PinName);
+			return false;
+		}
 	}
 	else
 	{
-		Pin->DefaultValue = Value;
+		// Primitive/string/enum/struct — use schema string path
+		if (Schema)
+			Schema->TrySetDefaultValue(*Pin, Value);
+		else
+			Pin->DefaultValue = Value;
 	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-	
+
 	UE_LOG(LogTemp, Log, TEXT("SetNodePinValue: Set pin '%s' on node '%s' to '%s'"), *PinName, *NodeId, *Value);
 	return true;
 }
@@ -5045,13 +5089,15 @@ bool UBlueprintService::ConfigureNode(
 	// Handle special cases for class/object references
 	if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
 	{
-		// Load class from path
+		// Resolve with full path first, then U/A prefix fallbacks
 		UClass* LoadedClass = LoadObject<UClass>(nullptr, *Value);
 		if (!LoadedClass)
-		{
-			// Try finding by name
-			LoadedClass = FindObject<UClass>(nullptr, *Value);
-		}
+			LoadedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
+		if (!LoadedClass)
+			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
+		if (!LoadedClass)
+			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+
 		if (LoadedClass)
 		{
 			ClassProp->SetPropertyValue(PropertyAddr, LoadedClass);
