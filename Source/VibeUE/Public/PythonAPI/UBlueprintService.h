@@ -148,6 +148,49 @@ struct FBlueprintFunctionParameterInfo
 };
 
 /**
+ * Information about a function that can be overridden in a blueprint.
+ * Returned by list_overridable_functions — one entry per overridable parent function.
+ */
+USTRUCT(BlueprintType)
+struct FOverridableFunctionInfo
+{
+	GENERATED_BODY()
+
+	/** Function name (also the graph name when overridden) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString FunctionName;
+
+	/** C++ class that declares the function (e.g. "StateTreeTaskBlueprintBase") */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString OwnerClass;
+
+	/** Whether this function is already overridden in this blueprint */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bAlreadyOverridden = false;
+
+	/** True for BlueprintNativeEvent (has C++ default), false for BlueprintImplementableEvent */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bIsNativeEvent = false;
+
+	/**
+	 * True if this override should be created as an event node in the EventGraph
+	 * (void/latent functions with FUNC_Event flag — e.g. EnterState, StateCompleted, Tick).
+	 * False if it should be a function graph with a return node (e.g. GetDescription).
+	 * override_function() uses this automatically — no need to check manually.
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bIsEventStyle = false;
+
+	/** Return type as string (e.g. "FText", "bool", "void") */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString ReturnType;
+
+	/** Parameter names and types as "Name:Type" strings */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Parameters;
+};
+
+/**
  * Information about a blueprint function
  */
 USTRUCT(BlueprintType)
@@ -1731,6 +1774,53 @@ public:
 	);
 
 	/**
+	 * Add a Custom Event node to a graph.
+	 * This creates the same event-style node exposed by the Blueprint editor's
+	 * "Add Custom Event..." action and returns the resulting node GUID.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (typically "EventGraph")
+	 * @param EventName - Desired custom event name. Leave empty to let Unreal pick a unique name.
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_custom_event_node("/Game/STT_Rotate", "EventGraph", "OnTimerFinished", 600, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCustomEventNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& EventName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a Create Event node (implemented as UK2Node_CreateDelegate) to a graph.
+	 * Use this for delegate workflows where a function name must be converted into a delegate value.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph
+	 * @param FunctionName - Optional function name to preselect on the node. Leave empty to add an unconfigured node.
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_create_event_node("/Game/STT_Rotate", "EventGraph", "OnTimerFinished", 300, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCreateEventNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& FunctionName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
 	 * Add an Enhanced Input Action event node to a graph.
 	 * This creates a node that responds to an Enhanced Input Action asset (IA_*).
 	 *
@@ -1794,6 +1884,57 @@ public:
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const FString& FunctionOwnerClass,
+		const FString& FunctionName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a delegate bind node (AddDelegate) to a graph.
+	 * This creates the "Bind Event to <DelegateName>" node used to subscribe a function to a multicast delegate.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (e.g. "EventGraph")
+	 * @param TargetClass - Class that owns the delegate. Use "Self" or "" for the blueprint's own class.
+	 * @param DelegateName - Name of the multicast delegate property (e.g. "OnActorBeginOverlap")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/BP_Player", "EventGraph", "Self", "OnDamageTaken", 200, 100)
+	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/WBP_HUD", "EventGraph", "UButton", "OnClicked", 300, 200)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddDelegateBindNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TargetClass,
+		const FString& DelegateName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a "Create Event" node (K2Node_CreateDelegate) to a graph.
+	 * This wraps a named function as a delegate reference, for connection to the
+	 * Delegate pin of a Bind Event node (add_delegate_bind_node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (e.g. "EventGraph")
+	 * @param FunctionName - Name of the function (must match the delegate signature)
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   create_id = unreal.BlueprintService.add_create_delegate_node("/Game/BP_Player", "EventGraph", "OnVibeEventReceived", 200, -150)
+	 *   unreal.BlueprintService.connect_nodes("/Game/BP_Player", "EventGraph", create_id, "OutputDelegate", bind_id, "Delegate")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCreateDelegateNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
 		const FString& FunctionName,
 		float PosX = 0.0f,
 		float PosY = 0.0f
@@ -2075,7 +2216,8 @@ public:
 
 	/**
 	 * Discover available node types that can be created in a blueprint.
-	 * Mimics the Blueprint editor's "Add Node" context menu.
+	 * Mimics the Blueprint editor's "Add Node" context menu and includes
+	 * Blueprint action database event spawners such as Add Custom Event and parent event overrides.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint (for context-aware suggestions)
 	 * @param SearchTerm - Search term to filter nodes (partial match)
@@ -2234,11 +2376,12 @@ public:
 
 	/**
 	 * Create a node by spawner key (discovered via discover_nodes).
-	 * This is the most flexible node creation method.
+	 * This is the most flexible node creation method and supports function-call,
+	 * generic node-class, and event-spawner keys.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param GraphName - Name of the graph
-	 * @param SpawnerKey - Spawner key from discover_nodes (e.g., "UK2Node_CallFunction /Script/Engine.KismetMathLibrary:Clamp")
+	 * @param SpawnerKey - Spawner key from discover_nodes (for example "FUNC KismetMathLibrary::Clamp", "NODE K2Node_CreateDelegate", or "EVENT StateTreeTaskBlueprintBase::ReceiveLatentEnterState")
 	 * @param PosX - X position in the graph
 	 * @param PosY - Y position in the graph
 	 * @return Node ID (GUID) if successful, empty string otherwise
@@ -2443,6 +2586,57 @@ public:
 		const FString& GraphName,
 		const FString& FunctionName
 	);
+
+	// ============================================================================
+	// FUNCTION OVERRIDES
+	// ============================================================================
+
+	/**
+	 * List all functions from the parent class hierarchy that can be overridden
+	 * in this blueprint (BlueprintImplementableEvent / BlueprintNativeEvent).
+	 * Each entry reports whether the override already exists in this blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @return Array of overridable function info
+	 *
+	 * Example:
+	 *   funcs = unreal.BlueprintService.list_overridable_functions("/Game/StateTree/STT_Rotate")
+	 *   for f in funcs:
+	 *       print(f"{f.function_name} ({f.owner_class}) overridden={f.b_already_overridden}")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Functions")
+	static TArray<FOverridableFunctionInfo> ListOverridableFunctions(const FString& BlueprintPath);
+
+	/**
+	 * Override a parent-class BlueprintImplementableEvent or BlueprintNativeEvent.
+	 * Equivalent to selecting a function from the "Override" dropdown in the editor.
+	 *
+	 * Automatically chooses the correct mechanism:
+	 *   - Functions with FUNC_Event (void/latent — EnterState, StateCompleted, Tick etc.)
+	 *     → adds an event node to the EventGraph (same as add_event_node)
+	 *   - Functions that return a value (GetDescription etc.)
+	 *     → creates a function graph with entry + result nodes
+	 *
+	 * Idempotent — safe to call if the override already exists.
+	 *
+	 * After calling this:
+	 *   - Event-style: use get_nodes_in_graph(bp_path, "EventGraph") to find the node
+	 *   - Function-style: use get_nodes_in_graph(bp_path, function_name) to find entry/result
+	 *
+	 * @param BlueprintPath  - Full path to the blueprint
+	 * @param FunctionName   - Exact name as returned by list_overridable_functions (case-sensitive)
+	 * @return True if the override was created (or already existed)
+	 *
+	 * Example — function with return value:
+	 *   unreal.BlueprintService.override_function(bp, "ReceiveGetDescription")
+	 *   nodes = unreal.BlueprintService.get_nodes_in_graph(bp, "ReceiveGetDescription")
+	 *
+	 * Example — event style:
+	 *   unreal.BlueprintService.override_function(bp, "ReceiveLatentEnterState")
+	 *   nodes = unreal.BlueprintService.get_nodes_in_graph(bp, "EventGraph")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Functions")
+	static bool OverrideFunction(const FString& BlueprintPath, const FString& FunctionName);
 
 private:
 	/** Helper to load blueprint from path */

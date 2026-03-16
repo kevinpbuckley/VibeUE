@@ -2242,7 +2242,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .MinDesiredWidth(100)
             ]
         ]
-        // Max Tool Iterations (like Copilot's maxRequests)
+        // Max Tool Iterations
         + SVerticalBox::Slot()
         .AutoHeight()
         .Padding(8, 4)
@@ -2254,15 +2254,15 @@ FReply SAIChatWindow::OnSettingsClicked()
             [
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Max Tool Iterations:")))
-                .ToolTipText(FText::FromString(TEXT("Max tool call rounds before confirmation prompt. Range: 10-500. Default: 200 (like Copilot)")))
+                .ToolTipText(FText::FromString(TEXT("Max tool call rounds before confirmation prompt. Range: 5-200. Default: 15.")))
             ]
             + SHorizontalBox::Slot()
             .FillWidth(0.6f)
             [
                 SAssignNew(MaxToolIterationsSpinBox, SSpinBox<int32>)
-                .MinValue(10)
-                .MaxValue(500)
-                .Delta(10)
+                .MinValue(5)
+                .MaxValue(200)
+                .Delta(5)
                 .Value(CurrentMaxToolIterations)
                 .MinDesiredWidth(100)
             ]
@@ -3286,9 +3286,9 @@ void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int3
 {
     CHAT_LOG(Warning, TEXT("Tool iteration limit reached: %d/%d"), CurrentIteration, MaxIterations);
     
-    // Calculate what the new limit will be (50% increase, like Copilot)
+    // Calculate what the new limit will be after a user-approved continuation
     int32 NewLimit = FMath::RoundToInt(MaxIterations * 1.5f);
-    NewLimit = FMath::Clamp(NewLimit, 10, 500);
+    NewLimit = FMath::Clamp(NewLimit, 5, 200);
     
     // Show a system message asking if user wants to continue
     FString Message = FString::Printf(
