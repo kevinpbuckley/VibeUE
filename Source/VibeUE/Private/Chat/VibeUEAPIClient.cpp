@@ -105,16 +105,15 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         RequestBody->SetStringField(TEXT("model"), ModelId);
     }
 
-    // Disable streaming for VibeUE - use non-streaming to avoid UE HTTP SSE race condition
-    // (UE's OnProcessRequestComplete fires before OnRequestProgress delivers SSE data)
-    RequestBody->SetBoolField(TEXT("stream"), false);
-    
+    // Enable SSE streaming - LLMClientBase handles SSE parsing and chunk routing
+    RequestBody->SetBoolField(TEXT("stream"), true);
+
     // LLM generation parameters
     RequestBody->SetNumberField(TEXT("temperature"), Temperature);
     RequestBody->SetNumberField(TEXT("top_p"), TopP);
     RequestBody->SetNumberField(TEXT("max_tokens"), MaxTokens);
-    
-    UE_LOG(LogVibeUEAPIClient, Log, TEXT("LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=false"), 
+
+    UE_LOG(LogVibeUEAPIClient, Log, TEXT("LLM params: temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=true"),
         Temperature, TopP, MaxTokens);
 
     // Add tools if provided (use same format as OpenRouter)
