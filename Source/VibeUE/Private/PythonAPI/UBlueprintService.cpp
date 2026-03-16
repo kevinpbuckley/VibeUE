@@ -5924,7 +5924,6 @@ bool UBlueprintService::FunctionCallExists(
 	return false;
 }
 
-<<<<<<< HEAD
 FString UBlueprintService::AddDelegateBindNode(
 	const FString& BlueprintPath,
 	const FString& GraphName,
@@ -5947,7 +5946,6 @@ FString UBlueprintService::AddDelegateBindNode(
 		return FString();
 	}
 
-	// Resolve the target class
 	UClass* OwnerClass = nullptr;
 	bool bSelfContext = false;
 
@@ -5975,169 +5973,22 @@ FString UBlueprintService::AddDelegateBindNode(
 		return FString();
 	}
 
-	// Find the multicast delegate property on the class
 	FMulticastDelegateProperty* DelegateProp = nullptr;
 	for (TFieldIterator<FMulticastDelegateProperty> PropIt(OwnerClass); PropIt; ++PropIt)
 	{
 		if (PropIt->GetName().Equals(DelegateName, ESearchCase::IgnoreCase))
 		{
 			DelegateProp = *PropIt;
-=======
-// ============================================================================
-// FUNCTION OVERRIDES
-// ============================================================================
-
-TArray<FOverridableFunctionInfo> UBlueprintService::ListOverridableFunctions(const FString& BlueprintPath)
-{
-	TArray<FOverridableFunctionInfo> Result;
-
-	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
-	if (!Blueprint || !Blueprint->ParentClass)
-	{
-		return Result;
-	}
-
-	// Collect existing override graph names for fast lookup
-	TSet<FName> ExistingGraphNames;
-	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-	{
-		if (Graph)
-		{
-			ExistingGraphNames.Add(Graph->GetFName());
-		}
-	}
-
-	// Walk parent class hierarchy looking for BlueprintImplementableEvent / BlueprintNativeEvent
-	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
-	{
-		for (TFieldIterator<UFunction> FuncIt(Class, EFieldIterationFlags::None); FuncIt; ++FuncIt)
-		{
-			UFunction* Func = *FuncIt;
-			if (!Func)
-			{
-				continue;
-			}
-
-			// Only surface functions defined directly on this class (not re-inherited)
-			if (Func->GetOwnerClass() != Class)
-			{
-				continue;
-			}
-
-			// FUNC_BlueprintEvent = overridable in Blueprint (both ImplementableEvent and NativeEvent)
-			// FUNC_Native distinguishes NativeEvent (has C++ _Implementation) from ImplementableEvent
-			if (!Func->HasAnyFunctionFlags(FUNC_BlueprintEvent))
-			{
-				continue;
-			}
-
-			const bool bIsNativeEvent = Func->HasAnyFunctionFlags(FUNC_Native);
-
-			// Return type — must be resolved before determining event vs function style
-			FProperty* RetProp = Func->GetReturnProperty();
-
-			// Event-style: void functions with FUNC_Event go to EventGraph as event nodes.
-			// Functions with a return value MUST use a function graph regardless of FUNC_Event.
-			const bool bHasReturnValue = (RetProp != nullptr);
-			const bool bIsEventStyle   = !bHasReturnValue && Func->HasAnyFunctionFlags(FUNC_Event);
-
-			// Already-overridden:
-			// - Function-style overrides produce a named graph in FunctionGraphs.
-			// - Event-style overrides produce an event node in the EventGraph (no named graph).
-			bool bAlreadyOverridden = ExistingGraphNames.Contains(Func->GetFName());
-			if (!bAlreadyOverridden && bIsEventStyle)
-			{
-				for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
-				{
-					if (!UberGraph) { continue; }
-					for (UEdGraphNode* Node : UberGraph->Nodes)
-					{
-						if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
-						{
-							if (EventNode->EventReference.GetMemberName() == Func->GetFName())
-							{
-								bAlreadyOverridden = true;
-								break;
-							}
-						}
-					}
-					if (bAlreadyOverridden) { break; }
-				}
-			}
-
-			FOverridableFunctionInfo Info;
-			Info.FunctionName       = Func->GetName();
-			Info.OwnerClass         = Class->GetName();
-			Info.bIsNativeEvent     = bIsNativeEvent;
-			Info.bIsEventStyle      = bIsEventStyle;
-			Info.bAlreadyOverridden = bAlreadyOverridden;
-			Info.ReturnType         = RetProp ? RetProp->GetCPPType() : TEXT("void");
-
-			// Parameters (exclude return)
-			for (TFieldIterator<FProperty> PropIt(Func); PropIt && PropIt->HasAnyPropertyFlags(CPF_Parm); ++PropIt)
-			{
-				if (PropIt->HasAnyPropertyFlags(CPF_ReturnParm))
-				{
-					continue;
-				}
-				Info.Parameters.Add(FString::Printf(TEXT("%s:%s"), *PropIt->GetName(), *PropIt->GetCPPType()));
-			}
-
-			Result.Add(Info);
-		}
-	}
-
-	return Result;
-}
-
-bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FString& FunctionName)
-{
-	if (FunctionName.IsEmpty())
-	{
-		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: FunctionName is empty"));
-		return false;
-	}
-
-	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
-	if (!Blueprint || !Blueprint->ParentClass)
-	{
-		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: Failed to load blueprint or no parent class: %s"), *BlueprintPath);
-		return false;
-	}
-
-	// Check if override graph already exists (idempotent)
-	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
-	{
-		if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
-		{
-			UE_LOG(LogTemp, Log, TEXT("OverrideFunction: '%s' already overridden in %s"), *FunctionName, *BlueprintPath);
-			return true;
-		}
-	}
-
-	// Find the UFunction in parent hierarchy
-	UFunction* TargetFunc     = nullptr;
-	UClass*    FuncOwnerClass = nullptr;
-	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
-	{
-		UFunction* Found = Class->FindFunctionByName(FName(*FunctionName), EIncludeSuperFlag::ExcludeSuper);
-		if (Found)
-		{
-			TargetFunc     = Found;
-			FuncOwnerClass = Class;
->>>>>>> e732de3 (Add blueprint graph editing support and skill guidance)
 			break;
 		}
 	}
 
-<<<<<<< HEAD
 	if (!DelegateProp)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Delegate '%s' not found on class '%s'"), *DelegateName, *OwnerClass->GetName());
 		return FString();
 	}
 
-	// Create and configure the AddDelegate node
 	UK2Node_AddDelegate* DelegateNode = NewObject<UK2Node_AddDelegate>(Graph);
 	DelegateNode->SetFromProperty(DelegateProp, bSelfContext, OwnerClass);
 
@@ -6191,7 +6042,147 @@ FString UBlueprintService::AddCreateDelegateNode(
 	UE_LOG(LogTemp, Log, TEXT("AddCreateDelegateNode: Created delegate node for function '%s' in %s"), *FunctionName, *GraphName);
 
 	return Node->NodeGuid.ToString();
-=======
+}
+
+// ============================================================================
+// FUNCTION OVERRIDES
+// ============================================================================
+
+TArray<FOverridableFunctionInfo> UBlueprintService::ListOverridableFunctions(const FString& BlueprintPath)
+{
+	TArray<FOverridableFunctionInfo> Result;
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint || !Blueprint->ParentClass)
+	{
+		return Result;
+	}
+
+	TSet<FName> ExistingGraphNames;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph)
+		{
+			ExistingGraphNames.Add(Graph->GetFName());
+		}
+	}
+
+	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
+	{
+		for (TFieldIterator<UFunction> FuncIt(Class, EFieldIterationFlags::None); FuncIt; ++FuncIt)
+		{
+			UFunction* Func = *FuncIt;
+			if (!Func)
+			{
+				continue;
+			}
+
+			if (Func->GetOwnerClass() != Class)
+			{
+				continue;
+			}
+
+			if (!Func->HasAnyFunctionFlags(FUNC_BlueprintEvent))
+			{
+				continue;
+			}
+
+			const bool bIsNativeEvent = Func->HasAnyFunctionFlags(FUNC_Native);
+			FProperty* RetProp = Func->GetReturnProperty();
+			const bool bHasReturnValue = (RetProp != nullptr);
+			const bool bIsEventStyle = !bHasReturnValue && Func->HasAnyFunctionFlags(FUNC_Event);
+
+			bool bAlreadyOverridden = ExistingGraphNames.Contains(Func->GetFName());
+			if (!bAlreadyOverridden && bIsEventStyle)
+			{
+				for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+				{
+					if (!UberGraph)
+					{
+						continue;
+					}
+
+					for (UEdGraphNode* Node : UberGraph->Nodes)
+					{
+						if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+						{
+							if (EventNode->EventReference.GetMemberName() == Func->GetFName())
+							{
+								bAlreadyOverridden = true;
+								break;
+							}
+						}
+					}
+
+					if (bAlreadyOverridden)
+					{
+						break;
+					}
+				}
+			}
+
+			FOverridableFunctionInfo Info;
+			Info.FunctionName = Func->GetName();
+			Info.OwnerClass = Class->GetName();
+			Info.bIsNativeEvent = bIsNativeEvent;
+			Info.bIsEventStyle = bIsEventStyle;
+			Info.bAlreadyOverridden = bAlreadyOverridden;
+			Info.ReturnType = RetProp ? RetProp->GetCPPType() : TEXT("void");
+
+			for (TFieldIterator<FProperty> PropIt(Func); PropIt && PropIt->HasAnyPropertyFlags(CPF_Parm); ++PropIt)
+			{
+				if (PropIt->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					continue;
+				}
+
+				Info.Parameters.Add(FString::Printf(TEXT("%s:%s"), *PropIt->GetName(), *PropIt->GetCPPType()));
+			}
+
+			Result.Add(Info);
+		}
+	}
+
+	return Result;
+}
+
+bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FString& FunctionName)
+{
+	if (FunctionName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: FunctionName is empty"));
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint || !Blueprint->ParentClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: Failed to load blueprint or no parent class: %s"), *BlueprintPath);
+		return false;
+	}
+
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogTemp, Log, TEXT("OverrideFunction: '%s' already overridden in %s"), *FunctionName, *BlueprintPath);
+			return true;
+		}
+	}
+
+	UFunction* TargetFunc = nullptr;
+	UClass* FuncOwnerClass = nullptr;
+	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
+	{
+		UFunction* Found = Class->FindFunctionByName(FName(*FunctionName), EIncludeSuperFlag::ExcludeSuper);
+		if (Found)
+		{
+			TargetFunc = Found;
+			FuncOwnerClass = Class;
+			break;
+		}
+	}
+
 	if (!TargetFunc)
 	{
 		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: '%s' not found in parent hierarchy of %s"), *FunctionName, *BlueprintPath);
@@ -6204,21 +6195,13 @@ FString UBlueprintService::AddCreateDelegateNode(
 		return false;
 	}
 
-	// Event-style overrides (void FUNC_Event functions like EnterState, StateCompleted, Tick)
-	// go into the EventGraph as event nodes, exactly like the editor's Override dropdown does.
-	// Functions with a return value (like GetDescription) MUST use a function graph, even if
-	// they have FUNC_Event set — they cannot be represented as event nodes.
 	const bool bHasReturnValue = (TargetFunc->GetReturnProperty() != nullptr);
 	if (!bHasReturnValue && TargetFunc->HasAnyFunctionFlags(FUNC_Event))
 	{
 		UEdGraph* EventGraph = FindGraph(Blueprint, TEXT("EventGraph"));
-		if (!EventGraph)
+		if (!EventGraph && Blueprint->UbergraphPages.Num() > 0)
 		{
-			// Fallback: first ubergraph page
-			if (Blueprint->UbergraphPages.Num() > 0)
-			{
-				EventGraph = Blueprint->UbergraphPages[0];
-			}
+			EventGraph = Blueprint->UbergraphPages[0];
 		}
 
 		if (!EventGraph)
@@ -6227,7 +6210,6 @@ FString UBlueprintService::AddCreateDelegateNode(
 			return false;
 		}
 
-		// Check if event node already exists
 		for (UEdGraphNode* Node : EventGraph->Nodes)
 		{
 			if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
@@ -6254,7 +6236,6 @@ FString UBlueprintService::AddCreateDelegateNode(
 		return true;
 	}
 
-	// Function-style override — create a dedicated function graph with entry + result nodes.
 	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
 		Blueprint,
 		FName(*FunctionName),
@@ -6268,10 +6249,9 @@ FString UBlueprintService::AddCreateDelegateNode(
 		return false;
 	}
 
-	FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, /*bIsUserCreated=*/false, FuncOwnerClass);
+	FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, false, FuncOwnerClass);
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Created override function graph '%s' in %s"), *FunctionName, *BlueprintPath);
 	return true;
->>>>>>> e732de3 (Add blueprint graph editing support and skill guidance)
 }
