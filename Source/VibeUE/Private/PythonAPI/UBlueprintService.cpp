@@ -7,6 +7,7 @@
 #include "Engine/SimpleConstructionScript.h"
 #include "Engine/SCS_Node.h"
 #include "WidgetBlueprint.h"
+#include "Blueprint/WidgetTree.h"       // For WBP widget component class discovery
 #include "EditorAssetLibrary.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
@@ -21,6 +22,8 @@
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
+#include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
+#include "K2Node_CreateDelegate.h"       // For create event nodes (add_create_delegate_node)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -2668,9 +2671,25 @@ FString UBlueprintService::AddGetVariableNode(
 		return FString();
 	}
 
-	// Find the variable property
-	FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName));
-	if (!Property)
+	// Validate variable exists — check compiled GeneratedClass first, fall back to NewVariables
+	// (uncompiled BPs won't have the property in GeneratedClass yet)
+	bool bVariableFound = false;
+	if (Blueprint->GeneratedClass && FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName)))
+	{
+		bVariableFound = true;
+	}
+	if (!bVariableFound)
+	{
+		for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+		{
+			if (VarDesc.VarName == FName(*VariableName))
+			{
+				bVariableFound = true;
+				break;
+			}
+		}
+	}
+	if (!bVariableFound)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddGetVariableNode: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
 		return FString();
@@ -2896,9 +2915,25 @@ FString UBlueprintService::AddSetVariableNode(
 		return FString();
 	}
 
-	// Find the variable property
-	FProperty* Property = FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName));
-	if (!Property)
+	// Validate variable exists — check compiled GeneratedClass first, fall back to NewVariables
+	// (uncompiled BPs won't have the property in GeneratedClass yet)
+	bool bVariableFound = false;
+	if (Blueprint->GeneratedClass && FindFProperty<FProperty>(Blueprint->GeneratedClass, FName(*VariableName)))
+	{
+		bVariableFound = true;
+	}
+	if (!bVariableFound)
+	{
+		for (const FBPVariableDescription& VarDesc : Blueprint->NewVariables)
+		{
+			if (VarDesc.VarName == FName(*VariableName))
+			{
+				bVariableFound = true;
+				break;
+			}
+		}
+	}
+	if (!bVariableFound)
 	{
 		UE_LOG(LogTemp, Error, TEXT("AddSetVariableNode: Variable '%s' not found in %s"), *VariableName, *BlueprintPath);
 		return FString();
@@ -4563,9 +4598,43 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		}
 	}
 	
-	UE_LOG(LogTemp, Log, TEXT("DiscoverNodes: Found %d nodes matching '%s' in category '%s'"), 
+	// 5. For Widget Blueprints: scan the widget tree and add functions from each widget class
+	if (UWidgetBlueprint* WidgetBP = Cast<UWidgetBlueprint>(Blueprint))
+	{
+		if (WidgetBP->WidgetTree)
+		{
+			TSet<UClass*> SeenWidgetClasses;
+			WidgetBP->WidgetTree->ForEachWidget([&](UWidget* Widget)
+			{
+				if (!Widget || Results.Num() >= MaxResults) return;
+
+				UClass* WidgetClass = Widget->GetClass();
+				if (!WidgetClass || SeenWidgetClasses.Contains(WidgetClass)) return;
+				SeenWidgetClasses.Add(WidgetClass);
+
+				FString WidgetCategory = FString::Printf(TEXT("Widget: %s"), *WidgetClass->GetName());
+
+				// Walk the widget class hierarchy (stop at UWidget/UObject)
+				UClass* WalkClass = WidgetClass;
+				while (WalkClass && Results.Num() < MaxResults)
+				{
+					FString WalkCategory = FString::Printf(TEXT("Widget: %s"), *WalkClass->GetName());
+					for (TFieldIterator<UFunction> It(WalkClass, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+					{
+						if (Results.Num() >= MaxResults) break;
+						AddFunctionToResults(*It, WalkCategory, WalkClass->GetName());
+					}
+					WalkClass = WalkClass->GetSuperClass();
+					if (WalkClass && (WalkClass->GetName() == TEXT("Widget") || WalkClass->GetName() == TEXT("Object")))
+						break;
+				}
+			});
+		}
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("DiscoverNodes: Found %d nodes matching '%s' in category '%s'"),
 		Results.Num(), *SearchTerm, *Category);
-	
+
 	return Results;
 }
 
@@ -4778,19 +4847,63 @@ bool UBlueprintService::SetNodePinValue(
 		return false;
 	}
 
-	// Set the default value
+	// Set the default value — class/object reference pins use DefaultObject, not DefaultValue
 	const UEdGraphSchema* Schema = Graph->GetSchema();
-	if (Schema)
+	const UEdGraphSchema_K2* K2Schema = Cast<UEdGraphSchema_K2>(Schema);
+	const FName PinCategory = Pin->PinType.PinCategory;
+
+	if (PinCategory == UEdGraphSchema_K2::PC_Class || PinCategory == UEdGraphSchema_K2::PC_SoftClass)
 	{
-		Schema->TrySetDefaultValue(*Pin, Value);
+		// Resolve the class with U/A prefix fallbacks
+		UClass* ResolvedClass = LoadObject<UClass>(nullptr, *Value);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
+		if (!ResolvedClass)
+			ResolvedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+
+		if (ResolvedClass)
+		{
+			if (K2Schema)
+				K2Schema->TrySetDefaultObject(*Pin, ResolvedClass);
+			else
+				Pin->DefaultObject = ResolvedClass;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Could not resolve class '%s' for class reference pin '%s'"), *Value, *PinName);
+			return false;
+		}
+	}
+	else if (PinCategory == UEdGraphSchema_K2::PC_Object || PinCategory == UEdGraphSchema_K2::PC_SoftObject)
+	{
+		// Load object by path and set DefaultObject
+		UObject* ResolvedObject = LoadObject<UObject>(nullptr, *Value);
+		if (ResolvedObject)
+		{
+			if (K2Schema)
+				K2Schema->TrySetDefaultObject(*Pin, ResolvedObject);
+			else
+				Pin->DefaultObject = ResolvedObject;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("SetNodePinValue: Could not load object '%s' for object reference pin '%s'"), *Value, *PinName);
+			return false;
+		}
 	}
 	else
 	{
-		Pin->DefaultValue = Value;
+		// Primitive/string/enum/struct — use schema string path
+		if (Schema)
+			Schema->TrySetDefaultValue(*Pin, Value);
+		else
+			Pin->DefaultValue = Value;
 	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-	
+
 	UE_LOG(LogTemp, Log, TEXT("SetNodePinValue: Set pin '%s' on node '%s' to '%s'"), *PinName, *NodeId, *Value);
 	return true;
 }
@@ -5043,13 +5156,15 @@ bool UBlueprintService::ConfigureNode(
 	// Handle special cases for class/object references
 	if (FClassProperty* ClassProp = CastField<FClassProperty>(Property))
 	{
-		// Load class from path
+		// Resolve with full path first, then U/A prefix fallbacks
 		UClass* LoadedClass = LoadObject<UClass>(nullptr, *Value);
 		if (!LoadedClass)
-		{
-			// Try finding by name
-			LoadedClass = FindObject<UClass>(nullptr, *Value);
-		}
+			LoadedClass = FindFirstObject<UClass>(*Value, EFindFirstObjectOptions::ExactClass);
+		if (!LoadedClass)
+			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *Value), EFindFirstObjectOptions::ExactClass);
+		if (!LoadedClass)
+			LoadedClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *Value), EFindFirstObjectOptions::ExactClass);
+
 		if (LoadedClass)
 		{
 			ClassProp->SetPropertyValue(PropertyAddr, LoadedClass);
@@ -5146,8 +5261,10 @@ FString UBlueprintService::CreateNodeByKey(
 		FuncNode->SetFromFunction(Function);
 		FuncNode->NodePosX = PosX;
 		FuncNode->NodePosY = PosY;
+		Graph->AddNode(FuncNode, false, false);
+		FuncNode->CreateNewGuid();
+		FuncNode->PostPlacedNewNode();
 		FuncNode->AllocateDefaultPins();
-		Graph->AddNode(FuncNode, true, false);
 		NewNode = FuncNode;
 	}
 	else if (KeyType.Equals(TEXT("NODE"), ESearchCase::IgnoreCase))
@@ -5163,8 +5280,10 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode = NewObject<UEdGraphNode>(Graph, NodeClass);
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
+		Graph->AddNode(NewNode, false, false);
+		NewNode->CreateNewGuid();
+		NewNode->PostPlacedNewNode();
 		NewNode->AllocateDefaultPins();
-		Graph->AddNode(NewNode, true, false);
 	}
 	else
 	{
@@ -5419,4 +5538,127 @@ bool UBlueprintService::FunctionCallExists(
 	}
 
 	return false;
+}
+
+FString UBlueprintService::AddDelegateBindNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& TargetClass,
+	const FString& DelegateName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Resolve the target class
+	UClass* OwnerClass = nullptr;
+	bool bSelfContext = false;
+
+	if (TargetClass.IsEmpty() || TargetClass.Equals(TEXT("Self"), ESearchCase::IgnoreCase))
+	{
+		OwnerClass = Blueprint->GeneratedClass;
+		bSelfContext = true;
+	}
+	else
+	{
+		OwnerClass = FindFirstObject<UClass>(*TargetClass, EFindFirstObjectOptions::ExactClass);
+		if (!OwnerClass)
+		{
+			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
+		}
+		if (!OwnerClass)
+		{
+			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
+		}
+	}
+
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Class '%s' not found"), *TargetClass);
+		return FString();
+	}
+
+	// Find the multicast delegate property on the class
+	FMulticastDelegateProperty* DelegateProp = nullptr;
+	for (TFieldIterator<FMulticastDelegateProperty> PropIt(OwnerClass); PropIt; ++PropIt)
+	{
+		if (PropIt->GetName().Equals(DelegateName, ESearchCase::IgnoreCase))
+		{
+			DelegateProp = *PropIt;
+			break;
+		}
+	}
+
+	if (!DelegateProp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindNode: Delegate '%s' not found on class '%s'"), *DelegateName, *OwnerClass->GetName());
+		return FString();
+	}
+
+	// Create and configure the AddDelegate node
+	UK2Node_AddDelegate* DelegateNode = NewObject<UK2Node_AddDelegate>(Graph);
+	DelegateNode->SetFromProperty(DelegateProp, bSelfContext, OwnerClass);
+
+	Graph->AddNode(DelegateNode, false, false);
+	DelegateNode->CreateNewGuid();
+	DelegateNode->PostPlacedNewNode();
+	DelegateNode->AllocateDefaultPins();
+
+	DelegateNode->NodePosX = PosX;
+	DelegateNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddDelegateBindNode: Added bind node for %s::%s in %s"), *OwnerClass->GetName(), *DelegateName, *GraphName);
+
+	return DelegateNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddCreateDelegateNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& FunctionName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateDelegateNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateDelegateNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	UK2Node_CreateDelegate* Node = NewObject<UK2Node_CreateDelegate>(Graph);
+	Node->SelectedFunctionName = FName(*FunctionName);
+
+	Graph->AddNode(Node, false, false);
+	Node->CreateNewGuid();
+	Node->PostPlacedNewNode();
+	Node->AllocateDefaultPins();
+
+	Node->NodePosX = PosX;
+	Node->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCreateDelegateNode: Created delegate node for function '%s' in %s"), *FunctionName, *GraphName);
+
+	return Node->NodeGuid.ToString();
 }

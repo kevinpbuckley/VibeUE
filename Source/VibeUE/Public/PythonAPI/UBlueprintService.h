@@ -1800,6 +1800,57 @@ public:
 	);
 
 	/**
+	 * Add a delegate bind node (AddDelegate) to a graph.
+	 * This creates the "Bind Event to <DelegateName>" node used to subscribe a function to a multicast delegate.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (e.g. "EventGraph")
+	 * @param TargetClass - Class that owns the delegate. Use "Self" or "" for the blueprint's own class.
+	 * @param DelegateName - Name of the multicast delegate property (e.g. "OnActorBeginOverlap")
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/BP_Player", "EventGraph", "Self", "OnDamageTaken", 200, 100)
+	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/WBP_HUD", "EventGraph", "UButton", "OnClicked", 300, 200)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddDelegateBindNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TargetClass,
+		const FString& DelegateName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a "Create Event" node (K2Node_CreateDelegate) to a graph.
+	 * This wraps a named function as a delegate reference, for connection to the
+	 * Delegate pin of a Bind Event node (add_delegate_bind_node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph (e.g. "EventGraph")
+	 * @param FunctionName - Name of the function (must match the delegate signature)
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   create_id = unreal.BlueprintService.add_create_delegate_node("/Game/BP_Player", "EventGraph", "OnVibeEventReceived", 200, -150)
+	 *   unreal.BlueprintService.connect_nodes("/Game/BP_Player", "EventGraph", create_id, "OutputDelegate", bind_id, "Delegate")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCreateDelegateNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& FunctionName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
 	 * Add a comparison node to a graph (convenience method).
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
