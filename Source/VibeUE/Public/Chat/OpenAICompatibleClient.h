@@ -47,6 +47,18 @@ public:
     void SetStreamingEnabled(bool bInStreaming) { bStreamingEnabled = bInStreaming; }
     bool IsStreamingEnabled() const { return bStreamingEnabled; }
 
+    void SetTemperature(float InTemp) { Temperature = InTemp; }
+    float GetTemperature() const { return Temperature; }
+
+    void SetTopP(float InTopP) { TopP = InTopP; }
+    float GetTopP() const { return TopP; }
+
+    void SetMaxTokens(int32 InMaxTokens) { MaxTokens = InMaxTokens; }
+    int32 GetMaxTokens() const { return MaxTokens; }
+
+    void SetParallelToolCalls(bool bInParallel) { bParallelToolCalls = bInParallel; }
+    bool GetParallelToolCalls() const { return bParallelToolCalls; }
+
     /** Default endpoint — Ollama's standard local address */
     static const FString DefaultEndpoint;
 
@@ -67,6 +79,10 @@ private:
     ECustomAuthMode AuthMode = ECustomAuthMode::Bearer;
     FString ConfiguredModelId;
     bool bStreamingEnabled = true;
+    float Temperature = 0.2f;
+    float TopP = 0.95f;
+    int32 MaxTokens = 8192;
+    bool bParallelToolCalls = true;
 
     /** Derive /v1/models URL from the chat completions URL */
     FString GetModelsUrl() const;
