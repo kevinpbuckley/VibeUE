@@ -1847,6 +1847,11 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SCheckBox>        MCPServerEnabledCheckBox;
     TSharedPtr<SSpinBox<int32>>  MCPServerPortSpinBox;
     TSharedPtr<SEditableTextBox> MCPServerApiKeyInput;
+    // MCP Proxy sub-section
+    TSharedPtr<SCheckBox>        ProxyEnabledCheckBox;
+    TSharedPtr<SSpinBox<int32>>  ProxyPortSpinBox;
+    TSharedPtr<SEditableTextBox> ProxyPythonPathInput;
+    TSharedPtr<SCheckBox>        ProxyAutoStartCheckBox;
 
     // ---- Load config values ----
     float   CfgTemperature      = FChatSession::GetTemperatureFromConfig();
@@ -1860,6 +1865,10 @@ FReply SAIChatWindow::OnSettingsClicked()
     bool    bMCPEnabled         = FMCPServer::GetEnabledFromConfig();
     int32   MCPPort             = FMCPServer::GetPortFromConfig();
     FString MCPApiKey           = FMCPServer::GetApiKeyFromConfig();
+    bool    bProxyEnabled       = FMCPServer::GetProxyEnabledFromConfig();
+    int32   ProxyPort           = FMCPServer::GetProxyPortFromConfig();
+    FString ProxyPythonPath     = FMCPServer::GetProxyPythonPathFromConfig();
+    bool    bProxyAutoStart     = FMCPServer::GetProxyAutoStartFromConfig();
     FString CfgCustomEndpoint   = FChatSession::GetCustomEndpointFromConfig();
     FString CfgCustomApiKey     = FChatSession::GetCustomApiKeyFromConfig();
     ECustomAuthMode CfgAuthMode = FChatSession::GetCustomAuthModeFromConfig();
@@ -1988,7 +1997,8 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .Text(FText::FromString(TEXT("Quick Setup:")))
                 .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 16)
+            // Row 1: Ollama, LM Studio, vLLM, OpenAI
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
             [
                 SNew(SHorizontalBox)
                 + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
@@ -2038,6 +2048,59 @@ FReply SAIChatWindow::OnSettingsClicked()
                             CustomModelIdInput->SetText(FText::FromString(TEXT("gpt-4o")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("Bearer")) { *SelectedAuthModePtr = Opt; break; }
+                        return FReply::Handled();
+                    })
+                ]
+            ]
+            // Row 2: SGLang, llama.cpp, oobabooga, LocalAI
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 16)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
+                [
+                    SNew(SButton).Text(FText::FromString(TEXT("SGLang")))
+                    .ToolTipText(FText::FromString(TEXT("SGLang high-throughput server — localhost:30000, no auth")))
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                        if (CustomEndpointInput.IsValid())
+                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:30000/v1/chat/completions")));
+                        for (auto& Opt : *AuthModeOptions)
+                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        return FReply::Handled();
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
+                [
+                    SNew(SButton).Text(FText::FromString(TEXT("llama.cpp")))
+                    .ToolTipText(FText::FromString(TEXT("llama.cpp server — localhost:8080, no auth")))
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                        if (CustomEndpointInput.IsValid())
+                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
+                        for (auto& Opt : *AuthModeOptions)
+                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        return FReply::Handled();
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
+                [
+                    SNew(SButton).Text(FText::FromString(TEXT("oobabooga")))
+                    .ToolTipText(FText::FromString(TEXT("text-generation-webui (oobabooga) — localhost:5000, no auth")))
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                        if (CustomEndpointInput.IsValid())
+                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:5000/v1/chat/completions")));
+                        for (auto& Opt : *AuthModeOptions)
+                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        return FReply::Handled();
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SNew(SButton).Text(FText::FromString(TEXT("LocalAI")))
+                    .ToolTipText(FText::FromString(TEXT("LocalAI OpenAI drop-in — localhost:8080, no auth")))
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                        if (CustomEndpointInput.IsValid())
+                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
+                        for (auto& Opt : *AuthModeOptions)
+                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
                         return FReply::Handled();
                     })
                 ]
@@ -2358,11 +2421,18 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     // TAB 4: MCP Server
     // ============================================================
+
+    // Pre-build ProxyEnabledCheckBox so the sub-section visibility lambda can capture it
+    SAssignNew(ProxyEnabledCheckBox, SCheckBox)
+        .IsChecked(bProxyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked);
+
     TSharedRef<SWidget> Tab_MCPServer =
         SNew(SScrollBox)
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
             SNew(SVerticalBox)
+
+            // ---- MCP Server Enable ----
             + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 12)
             [
                 SNew(SHorizontalBox)
@@ -2378,6 +2448,8 @@ FReply SAIChatWindow::OnSettingsClicked()
                     .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Desktop, etc.")))
                 ]
             ]
+
+            // ---- Port ----
             + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
             [
                 SNew(SHorizontalBox)
@@ -2389,34 +2461,186 @@ FReply SAIChatWindow::OnSettingsClicked()
                     .MinValue(1024).MaxValue(65535).Delta(1).Value(MCPPort).MinDesiredWidth(100)
                 ]
             ]
+
+            // ---- Bearer Token ----
             + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
             [
                 SNew(STextBlock)
                 .Text(FText::FromString(TEXT("Bearer Token (optional):")))
-                .ToolTipText(FText::FromString(TEXT("MCP clients must send this as a Bearer token. Leave empty for unauthenticated connections.")))
+                .ToolTipText(FText::FromString(TEXT("MCP clients must send this token as Authorization: Bearer. Leave empty for unauthenticated connections.")))
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
             [
                 SAssignNew(MCPServerApiKeyInput, SEditableTextBox)
                 .Text(FText::FromString(MCPApiKey))
                 .IsPassword(true)
                 .HintText(FText::FromString(TEXT("Leave empty for unauthenticated access")))
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
             [
                 SNew(STextBlock)
-                .Text_Lambda([]() -> FText {
-                    FMCPServer& Server = FMCPServer::Get();
-                    return Server.IsRunning()
-                        ? FText::FromString(FString::Printf(TEXT("Status: Running at %s"), *Server.GetServerUrl()))
-                        : FText::FromString(TEXT("Status: Not running"));
-                })
-                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-                .ColorAndOpacity_Lambda([]() -> FSlateColor {
-                    return FMCPServer::Get().IsRunning()
-                        ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f))
-                        : FSlateColor(VibeUEColors::TextMuted);
-                })
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                .Text(FText::FromString(TEXT("Changes to port or token take effect after Save (server restarts automatically).")))
+            ]
+
+            // ---- MCP Server Status + Copy URL ----
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 16)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([]() -> FText {
+                        FMCPServer& Server = FMCPServer::Get();
+                        return Server.IsRunning()
+                            ? FText::FromString(FString::Printf(TEXT("Status: Running at %s"), *Server.GetServerUrl()))
+                            : FText::FromString(TEXT("Status: Not running"));
+                    })
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                    .ColorAndOpacity_Lambda([]() -> FSlateColor {
+                        return FMCPServer::Get().IsRunning()
+                            ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f))
+                            : FSlateColor(VibeUEColors::TextMuted);
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .ContentPadding(FMargin(8, 3))
+                    .IsEnabled_Lambda([]() { return FMCPServer::Get().IsRunning(); })
+                    .OnClicked_Lambda([]() -> FReply {
+                        FString Url = FMCPServer::Get().GetServerUrl();
+                        FPlatformApplicationMisc::ClipboardCopy(*Url);
+                        return FReply::Handled();
+                    })
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Copy URL")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                    ]
+                ]
+            ]
+
+            // ================================================================
+            // MCP Proxy sub-section
+            // ================================================================
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+            [
+                SNew(SBorder)
+                .BorderImage(FCoreStyle::Get().GetBrush("ToolPanel.GroupBorder"))
+                .Padding(FMargin(10, 8))
+                [
+                    SNew(SVerticalBox)
+
+                    // Header: Enable MCP Proxy
+                    + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+                    [
+                        SNew(SHorizontalBox)
+                        + SHorizontalBox::Slot().AutoWidth()
+                        [ ProxyEnabledCheckBox.ToSharedRef() ]
+                        + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                        [
+                            SNew(STextBlock)
+                            .Text(FText::FromString(TEXT("Enable MCP Proxy")))
+                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
+                            .ToolTipText(FText::FromString(TEXT("Run the Python proxy (port 8089 → 8088) so Claude Code can reach UE tools.")))
+                        ]
+                    ]
+
+                    // Proxy sub-fields — shown only when proxy is enabled
+                    + SVerticalBox::Slot().AutoHeight()
+                    [
+                        SNew(SVerticalBox)
+                        .Visibility_Lambda([ProxyEnabledCheckBox]() -> EVisibility {
+                            return (ProxyEnabledCheckBox.IsValid() && ProxyEnabledCheckBox->IsChecked())
+                                ? EVisibility::Visible : EVisibility::Collapsed;
+                        })
+
+                        // Port
+                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)
+                            [ SNew(STextBlock).Text(FText::FromString(TEXT("Proxy Port:"))).ToolTipText(FText::FromString(TEXT("Port the proxy listens on. Default: 8089. Claude Code MCP config must match."))) ]
+                            + SHorizontalBox::Slot().FillWidth(0.6f)
+                            [
+                                SAssignNew(ProxyPortSpinBox, SSpinBox<int32>)
+                                .MinValue(1024).MaxValue(65535).Delta(1).Value(ProxyPort).MinDesiredWidth(100)
+                            ]
+                        ]
+
+                        // Python path
+                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 2)
+                        [ SNew(STextBlock).Text(FText::FromString(TEXT("Python Path:"))).ToolTipText(FText::FromString(TEXT("Path to the python executable. Leave empty to use 'python' from system PATH."))) ]
+                        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+                        [
+                            SAssignNew(ProxyPythonPathInput, SEditableTextBox)
+                            .Text(FText::FromString(ProxyPythonPath))
+                            .HintText(FText::FromString(TEXT("python  (leave empty for system default)")))
+                        ]
+
+                        // Auto-start
+                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 8)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot().AutoWidth()
+                            [
+                                SAssignNew(ProxyAutoStartCheckBox, SCheckBox)
+                                .IsChecked(bProxyAutoStart ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                            ]
+                            + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                            [
+                                SNew(STextBlock)
+                                .Text(FText::FromString(TEXT("Auto-start when editor opens")))
+                                .ToolTipText(FText::FromString(TEXT("Automatically launch the proxy when Unreal Editor starts. Skips start if already running.")))
+                            ]
+                        ]
+
+                        // Proxy status + Start/Stop buttons
+                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+                        [
+                            SNew(SHorizontalBox)
+                            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                            [
+                                SNew(STextBlock)
+                                .Text_Lambda([]() -> FText {
+                                    bool bUp = FMCPServer::Get().IsProxyRunning();
+                                    int32 Port = FMCPServer::GetProxyPortFromConfig();
+                                    return bUp
+                                        ? FText::FromString(FString::Printf(TEXT("Proxy: Running (port %d)"), Port))
+                                        : FText::FromString(TEXT("Proxy: Not running"));
+                                })
+                                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                                .ColorAndOpacity_Lambda([]() -> FSlateColor {
+                                    return FMCPServer::Get().IsProxyRunning()
+                                        ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f))
+                                        : FSlateColor(VibeUEColors::TextMuted);
+                                })
+                            ]
+                            + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 4, 0)
+                            [
+                                SNew(SButton)
+                                .ContentPadding(FMargin(8, 3))
+                                .OnClicked_Lambda([]() -> FReply {
+                                    FMCPServer::Get().StartProxy();
+                                    return FReply::Handled();
+                                })
+                                [ SNew(STextBlock).Text(FText::FromString(TEXT("Start"))).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9)) ]
+                            ]
+                            + SHorizontalBox::Slot().AutoWidth()
+                            [
+                                SNew(SButton)
+                                .ContentPadding(FMargin(8, 3))
+                                .OnClicked_Lambda([]() -> FReply {
+                                    FMCPServer::Get().StopProxy();
+                                    return FReply::Handled();
+                                })
+                                [ SNew(STextBlock).Text(FText::FromString(TEXT("Stop"))).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9)) ]
+                            ]
+                        ]
+                    ]
+                ]
             ]
         ];
 
@@ -2509,6 +2733,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
         TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
         MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput,
+        ProxyEnabledCheckBox, ProxyPortSpinBox, ProxyPythonPathInput, ProxyAutoStartCheckBox,
         SettingsWindow]() mutable -> FReply
     {
         // ---- API Keys ----
@@ -2579,6 +2804,15 @@ FReply SAIChatWindow::OnSettingsClicked()
         if (MCPServer.IsRunning()) MCPServer.StopServer();
         MCPServer.LoadConfig();
         if (bNewMCPEnabled) MCPServer.Start();
+
+        // ---- MCP Proxy ----
+        bool bNewProxyEnabled = ProxyEnabledCheckBox->IsChecked();
+        FMCPServer::SaveProxyEnabledToConfig(bNewProxyEnabled);
+        if (ProxyPortSpinBox.IsValid())    FMCPServer::SaveProxyPortToConfig(ProxyPortSpinBox->GetValue());
+        if (ProxyPythonPathInput.IsValid()) FMCPServer::SaveProxyPythonPathToConfig(ProxyPythonPathInput->GetText().ToString());
+        if (ProxyAutoStartCheckBox.IsValid()) FMCPServer::SaveProxyAutoStartToConfig(ProxyAutoStartCheckBox->IsChecked());
+        // Sync vibeue-proxy.json so a running proxy picks up token/port changes on next start
+        MCPServer.WriteProxyConfigJson();
 
         // ---- Voice ----
         FSpeechToTextService::SaveVoiceInputEnabledToConfig(VoiceInputEnabledCheckBox->IsChecked());
