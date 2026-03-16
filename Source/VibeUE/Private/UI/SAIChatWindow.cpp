@@ -2229,7 +2229,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 + SHorizontalBox::Slot().FillWidth(0.55f)
                 [
                     SAssignNew(MaxToolIterationsSpinBox, SSpinBox<int32>)
-                    .MinValue(10).MaxValue(500).Delta(10).Value(CfgMaxIterations).MinDesiredWidth(100)
+                    .MinValue(5).MaxValue(200).Delta(5).Value(CfgMaxIterations).MinDesiredWidth(100)
                 ]
             ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
@@ -3386,9 +3386,9 @@ void SAIChatWindow::HandleToolIterationLimitReached(int32 CurrentIteration, int3
 {
     CHAT_LOG(Warning, TEXT("Tool iteration limit reached: %d/%d"), CurrentIteration, MaxIterations);
     
-    // Calculate what the new limit will be (50% increase, like Copilot)
+    // Calculate what the new limit will be after a user-approved continuation
     int32 NewLimit = FMath::RoundToInt(MaxIterations * 1.5f);
-    NewLimit = FMath::Clamp(NewLimit, 10, 500);
+    NewLimit = FMath::Clamp(NewLimit, 5, 200);
     
     // Show a system message asking if user wants to continue
     FString Message = FString::Printf(

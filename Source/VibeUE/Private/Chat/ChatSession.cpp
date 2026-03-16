@@ -157,8 +157,6 @@ void FChatSession::SendMessage(const FString& UserMessage)
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
-    MaxSignatureFrequency = 0;
-    RecentToolSignatures.Empty();
     
     // Add user message
     FChatMessage UserMsg(TEXT("user"), UserMessage);
@@ -267,8 +265,6 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
     bWasCancelled = false;
-    MaxSignatureFrequency = 0;
-    RecentToolSignatures.Empty();
 
     // Create user message with multimodal content
     FChatMessage UserMsg;
@@ -492,60 +488,9 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             bWasIncomplete = OpenRouterClient->WasResponseIncomplete();
         }
         
-        if (bWasIncomplete && !bWasCancelled && ToolCallIterationCount < MaxToolCallIterations)
+        if (bWasIncomplete && !bWasCancelled)
         {
-            UE_LOG(LogChatSession, Log, TEXT("[AUTO-CONTINUE] Detected incomplete response - sending follow-up to continue"));
-            
-            // Increment iteration counter to prevent infinite loops
-            ToolCallIterationCount++;
-            
-            // Add a synthetic user message to prompt continuation
-            FChatMessage ContinueMsg(TEXT("user"), TEXT("Please continue with the tool call you mentioned."));
-            Messages.Add(ContinueMsg);
-            
-            // Create new streaming message for response
-            FChatMessage AssistantMsg(TEXT("assistant"), TEXT(""));
-            AssistantMsg.bIsStreaming = true;
-            CurrentStreamingMessageIndex = Messages.Add(AssistantMsg);
-            OnMessageAdded.ExecuteIfBound(AssistantMsg);
-            
-            // Build messages and send request
-            TArray<FChatMessage> ApiMessages = BuildApiMessages();
-            TArray<FMCPTool> Tools = GetAllEnabledTools();
-            
-            // Notify UI that LLM thinking has started again
-            OnLLMThinkingStarted.ExecuteIfBound();
-            
-            auto UsageCallbackCont = FOnLLMUsageReceived::CreateLambda([this](int32 P, int32 C) { UpdateUsageStats(P, C); });
-            if (CurrentProvider == ELLMProvider::OpenAICompatible)
-            {
-                CustomClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-                    FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-                    FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-                    FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-                    FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-                    UsageCallbackCont);
-            }
-            else if (CurrentProvider == ELLMProvider::VibeUE)
-            {
-                VibeUEClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-                    FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-                    FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-                    FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-                    FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-                    UsageCallbackCont);
-            }
-            else
-            {
-                OpenRouterClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-                    FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-                    FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-                    FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-                    FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-                    UsageCallbackCont);
-            }
-
-            UsageStats.RequestCount++;
+            UE_LOG(LogChatSession, Warning, TEXT("[AUTO-CONTINUE] Detected incomplete response, but leaving the partial response in place instead of synthesizing a continue turn"));
         }
     }
 }
@@ -683,9 +628,6 @@ void FChatSession::ExecuteNextToolInQueue()
         
         CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: false, Result: malformed arguments JSON"), 
             *ToolCall.ToolName, *ToolCall.Id);
-        
-        // Track consecutive identical errors for loop detection
-        TrackToolResultForLoopDetection(ToolCall.ToolName, ErrorResult);
         
         PendingToolCallCount--;
         
@@ -892,9 +834,6 @@ void FChatSession::ExecuteNextToolInQueue()
         Messages.Add(ToolResultMsg);
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
         
-        // Track consecutive identical errors for loop detection
-        TrackToolResultForLoopDetection(ToolCall.ToolName, ResultContent);
-        
         PendingToolCallCount--;
         UE_LOG(LogChatSession, Log, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
         
@@ -931,9 +870,6 @@ void FChatSession::ExecuteNextToolInQueue()
         ToolResultMsg.ToolCallId = ToolCall.Id;
         Messages.Add(ToolResultMsg);
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
-        
-        // Track consecutive identical errors for loop detection
-        TrackToolResultForLoopDetection(ToolCall.ToolName, ErrorResult.ErrorMessage);
         
         PendingToolCallCount--;
         ExecuteNextToolInQueue();
@@ -980,10 +916,6 @@ void FChatSession::ExecuteNextToolInQueue()
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
                 *ToolCallCopy.Id, bSuccess, Result.Content.Len());
             
-            // Loop detection: prompt-based self-awareness (vibeue.instructions.md) +
-            // consecutive-failure circuit breaker (TrackToolResultForLoopDetection) +
-            // malformed JSON detection (bArgumentsParseError in LLMClientBase)
-            
             // Debug log tool result content
             if (IsDebugModeEnabled())
             {
@@ -1008,44 +940,11 @@ void FChatSession::ExecuteNextToolInQueue()
             ToolResultMsg.Role = TEXT("tool");
             ToolResultMsg.ToolCallId = ToolCallCopy.Id;
             ToolResultMsg.Content = TruncatedContent;
-
-            // Track consecutive identical errors for loop detection
-            TrackToolResultForLoopDetection(ToolCallCopy.ToolName, bSuccess ? Result.Content : Result.ErrorMessage);
+            Messages.Add(ToolResultMsg);
+            OnMessageAdded.ExecuteIfBound(ToolResultMsg);
 			
             ExecuteNextToolInQueue();
         }));
-}
-
-void FChatSession::TrackToolResultForLoopDetection(const FString& ToolName, const FString& ResultContent)
-{
-    // Build a signature from tool name + first 200 chars of result (enough to identify repeats)
-    FString Signature = ToolName + TEXT("|") + ResultContent.Left(200);
-    
-    // Add to ring buffer, evicting oldest if full
-    RecentToolSignatures.Add(Signature);
-    if (RecentToolSignatures.Num() > LoopDetectionWindowSize)
-    {
-        RecentToolSignatures.RemoveAt(0);
-    }
-    
-    // Count how many times this signature appears in the window
-    int32 Count = 0;
-    for (const FString& Recent : RecentToolSignatures)
-    {
-        if (Recent == Signature)
-        {
-            Count++;
-        }
-    }
-    
-    // Store the max frequency so SendFollowUpAfterToolCall can check it
-    MaxSignatureFrequency = FMath::Max(MaxSignatureFrequency, Count);
-    
-    if (Count > 1)
-    {
-        UE_LOG(LogChatSession, Log, TEXT("Tool result signature appeared %d/%d times in window for %s"), 
-            Count, MaxConsecutiveIdenticalErrors, *ToolName);
-    }
 }
 
 void FChatSession::SendFollowUpAfterToolCall()
@@ -1083,28 +982,6 @@ void FChatSession::SendFollowUpAfterToolCall()
         bWaitingForUserToContinue = true;
         OnToolIterationLimitReached.ExecuteIfBound(ToolCallIterationCount, MaxToolCallIterations);
         return; // Wait for user to call ContinueAfterIterationLimit() or send new message
-    }
-    
-    // Circuit breaker: stop if the same tool result appears too many times in the recent window
-    // This catches alternating patterns (A,B,A,B) not just consecutive duplicates
-    if (MaxSignatureFrequency >= MaxConsecutiveIdenticalErrors)
-    {
-        UE_LOG(LogChatSession, Warning, TEXT("Circuit breaker: tool result appeared %d times in recent %d calls - stopping agentic loop"), 
-            MaxSignatureFrequency, LoopDetectionWindowSize);
-        
-        // Add an assistant message explaining the stop
-        FChatMessage StopMsg(TEXT("assistant"), 
-            FString::Printf(TEXT("I've been getting the same tool result %d times in the last %d calls, which indicates I'm stuck in a loop. ")
-                TEXT("Please check the tool output above and try rephrasing your request, or provide additional context."),
-                MaxSignatureFrequency, LoopDetectionWindowSize));
-        StopMsg.bIsStreaming = false;
-        Messages.Add(StopMsg);
-        OnMessageAdded.ExecuteIfBound(StopMsg);
-        
-        // Reset tracking
-        MaxSignatureFrequency = 0;
-        RecentToolSignatures.Empty();
-        return;
     }
     
     // Create a new assistant message for the follow-up response
@@ -1289,8 +1166,6 @@ void FChatSession::ResetChat()
     // Reset iteration tracking
     ToolCallIterationCount = 0;
     bWaitingForUserToContinue = false;
-    MaxSignatureFrequency = 0;
-    RecentToolSignatures.Empty();
 
     // Clear task list
     ClearTaskList();
@@ -1317,10 +1192,10 @@ void FChatSession::ContinueAfterIterationLimit()
         return;
     }
     
-    // Copilot-style: increase limit by 50% when user continues
+    // Increase limit by 50% when user explicitly chooses to continue
     int32 OldLimit = MaxToolCallIterations;
     MaxToolCallIterations = FMath::RoundToInt(MaxToolCallIterations * 1.5f);
-    MaxToolCallIterations = FMath::Clamp(MaxToolCallIterations, 10, 500);
+    MaxToolCallIterations = FMath::Clamp(MaxToolCallIterations, 5, 200);
     
     UE_LOG(LogChatSession, Log, TEXT("User chose to continue after iteration limit - increased limit from %d to %d"), OldLimit, MaxToolCallIterations);
     bWaitingForUserToContinue = false;
@@ -2770,21 +2645,21 @@ void FChatSession::SaveMaxTokensToConfig(int32 MaxTokens)
 
 int32 FChatSession::GetMaxToolCallIterationsFromConfig()
 {
-    int32 MaxIterations = DefaultMaxToolCallIterations; // Default 200 (like Copilot)
+    int32 MaxIterations = DefaultMaxToolCallIterations;
     GConfig->GetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
-    return FMath::Clamp(MaxIterations, 10, 500);
+    return FMath::Clamp(MaxIterations, 5, 200);
 }
 
 void FChatSession::SaveMaxToolCallIterationsToConfig(int32 MaxIterations)
 {
-    MaxIterations = FMath::Clamp(MaxIterations, 10, 500);
+    MaxIterations = FMath::Clamp(MaxIterations, 5, 200);
     GConfig->SetInt(TEXT("VibeUE"), TEXT("MaxToolCallIterations"), MaxIterations, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
 void FChatSession::SetMaxToolCallIterations(int32 NewMax)
 {
-    MaxToolCallIterations = FMath::Clamp(NewMax, 10, 500);
+    MaxToolCallIterations = FMath::Clamp(NewMax, 5, 200);
     UE_LOG(LogChatSession, Log, TEXT("Max tool call iterations set to %d for current session"), MaxToolCallIterations);
 }
 
@@ -3093,9 +2968,7 @@ FString FChatSession::ExtractThinkingContent(const FString& Text)
     return FString::Join(ThinkingParts, TEXT("\n---\n"));
 }
 
-// Loop detection: prompt-based self-awareness (vibeue.instructions.md) +
-// consecutive-failure circuit breaker (TrackToolResultForLoopDetection) +
-// malformed JSON detection (bArgumentsParseError in LLMClientBase)
+// Malformed JSON detection for tool arguments is handled in LLMClientBase.
 
 void FChatSession::InitializeInternalTools()
 {

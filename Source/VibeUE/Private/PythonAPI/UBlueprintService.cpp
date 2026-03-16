@@ -19,6 +19,8 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_CreateDelegate.h"
+#include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
 #include "K2Node_Event.h"
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
@@ -52,6 +54,90 @@
 // For OpenFunctionGraph - Blueprint Editor navigation
 #include "Subsystems/AssetEditorSubsystem.h"
 #include "BlueprintEditor.h"
+
+namespace
+{
+	static UEdGraph* ResolveBlueprintGraph(UBlueprint* Blueprint, const FString& GraphName)
+	{
+		if (!Blueprint)
+		{
+			return nullptr;
+		}
+
+		if (GraphName.Equals(TEXT("EventGraph"), ESearchCase::IgnoreCase))
+		{
+			for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+			{
+				if (UberGraph && UberGraph->GetFName() == UEdGraphSchema_K2::GN_EventGraph)
+				{
+					return UberGraph;
+				}
+			}
+		}
+
+		TArray<UEdGraph*> Graphs;
+		Blueprint->GetAllGraphs(Graphs);
+
+		for (UEdGraph* Graph : Graphs)
+		{
+			if (Graph && Graph->GetName().Equals(GraphName, ESearchCase::IgnoreCase))
+			{
+				return Graph;
+			}
+		}
+
+		return nullptr;
+	}
+
+	static UClass* ResolveClassByName(const FString& ClassName)
+	{
+		if (ClassName.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		if (UClass* FoundClass = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::ExactClass))
+		{
+			return FoundClass;
+		}
+
+		if (!ClassName.StartsWith(TEXT("U"), ESearchCase::CaseSensitive))
+		{
+			if (UClass* FoundClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *ClassName), EFindFirstObjectOptions::ExactClass))
+			{
+				return FoundClass;
+			}
+		}
+
+		if (UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.%s"), *ClassName)))
+		{
+			return FoundClass;
+		}
+
+		return nullptr;
+	}
+
+	static FString BuildEventSpawnerKey(const UBlueprintEventNodeSpawner* EventSpawner)
+	{
+		if (!EventSpawner)
+		{
+			return FString();
+		}
+
+		if (EventSpawner->IsForCustomEvent())
+		{
+			return TEXT("EVENT CUSTOM");
+		}
+
+		const UFunction* EventFunction = EventSpawner->GetEventFunction();
+		if (!EventFunction || !EventFunction->GetOwnerClass())
+		{
+			return FString();
+		}
+
+		return FString::Printf(TEXT("EVENT %s::%s"), *EventFunction->GetOwnerClass()->GetName(), *EventFunction->GetName());
+	}
+}
 
 UBlueprint* UBlueprintService::LoadBlueprint(const FString& BlueprintPath)
 {
@@ -3123,6 +3209,90 @@ FString UBlueprintService::AddEventNode(
 	return EventNode->NodeGuid.ToString();
 }
 
+FString UBlueprintService::AddCustomEventNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& EventName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	const FName CustomEventName = EventName.IsEmpty() ? NAME_None : FName(*EventName);
+	UBlueprintEventNodeSpawner* EventSpawner = UBlueprintEventNodeSpawner::Create(UK2Node_CustomEvent::StaticClass(), CustomEventName);
+	if (!EventSpawner)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventNode: Failed to create event spawner for '%s'"), *EventName);
+		return FString();
+	}
+
+	UEdGraphNode* SpawnedNode = EventSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
+	if (!SpawnedNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventNode: Failed to spawn custom event '%s'"), *EventName);
+		return FString();
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCustomEventNode: Added custom event '%s' in %s"), *EventName, *GraphName);
+
+	return SpawnedNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddCreateEventNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& FunctionName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateEventNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCreateEventNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	UK2Node_CreateDelegate* CreateDelegateNode = NewObject<UK2Node_CreateDelegate>(Graph);
+
+	Graph->AddNode(CreateDelegateNode, false, false);
+	CreateDelegateNode->CreateNewGuid();
+	CreateDelegateNode->PostPlacedNewNode();
+	CreateDelegateNode->AllocateDefaultPins();
+
+	if (!FunctionName.IsEmpty())
+	{
+		CreateDelegateNode->SetFunction(FName(*FunctionName));
+	}
+
+	CreateDelegateNode->NodePosX = PosX;
+	CreateDelegateNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCreateEventNode: Added create event node for '%s' in %s"), *FunctionName, *GraphName);
+
+	return CreateDelegateNode->NodeGuid.ToString();
+}
+
 FString UBlueprintService::AddInputActionNode(
 	const FString& BlueprintPath,
 	const FString& GraphName,
@@ -4400,6 +4570,7 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 	
 	// Track seen spawner keys to avoid duplicates
 	TSet<FString> SeenSpawnerKeys;
+	UEdGraph* EventGraph = ResolveBlueprintGraph(Blueprint, TEXT("EventGraph"));
 	
 	// Helper lambda to add a function to results
 	auto AddFunctionToResults = [&](UFunction* Func, const FString& InCategory, const FString& OwnerClassName) -> bool
@@ -4482,6 +4653,88 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		Results.Add(Info);
 		return true;
 	};
+
+	auto AddNodeSpawnerToResults = [&](UBlueprintNodeSpawner* NodeSpawner) -> bool
+	{
+		if (!NodeSpawner || Results.Num() >= MaxResults)
+		{
+			return false;
+		}
+
+		UBlueprintEventNodeSpawner* EventSpawner = Cast<UBlueprintEventNodeSpawner>(NodeSpawner);
+		if (!EventSpawner)
+		{
+			return false;
+		}
+
+		if (EventSpawner->IsForCustomEvent())
+		{
+			return false;
+		}
+
+		const UFunction* EventFunction = EventSpawner->GetEventFunction();
+		if (EventFunction)
+		{
+			UClass* OwnerClass = EventFunction->GetOwnerClass();
+			if (!OwnerClass || !Blueprint->ParentClass || !Blueprint->ParentClass->IsChildOf(OwnerClass))
+			{
+				return false;
+			}
+		}
+
+		const FString SpawnerKey = BuildEventSpawnerKey(EventSpawner);
+		if (SpawnerKey.IsEmpty() || SeenSpawnerKeys.Contains(SpawnerKey))
+		{
+			return false;
+		}
+
+		UEdGraph* UiGraph = EventGraph;
+		if (!UiGraph && Blueprint->UbergraphPages.Num() > 0)
+		{
+			UiGraph = Blueprint->UbergraphPages[0].Get();
+		}
+
+		const FBlueprintActionUiSpec& UiSpec = NodeSpawner->PrimeDefaultUiSpec(UiGraph);
+		const FString DisplayName = UiSpec.MenuName.ToString();
+		const FString Keywords = UiSpec.Keywords.ToString();
+		const FString MenuCategory = UiSpec.Category.ToString();
+
+		if (!CategoryLower.IsEmpty() && !MenuCategory.ToLower().Contains(CategoryLower))
+		{
+			return false;
+		}
+
+		if (!SearchLower.IsEmpty())
+		{
+			const FString EventFunctionName = EventFunction ? EventFunction->GetName() : FString(TEXT("Custom Event"));
+			const bool bMatches = DisplayName.ToLower().Contains(SearchLower) ||
+				EventFunctionName.ToLower().Contains(SearchLower) ||
+				Keywords.ToLower().Contains(SearchLower);
+
+			if (!bMatches)
+			{
+				return false;
+			}
+		}
+
+		SeenSpawnerKeys.Add(SpawnerKey);
+
+		FBlueprintNodeTypeInfo Info;
+		Info.DisplayName = DisplayName;
+		Info.Category = MenuCategory.IsEmpty() ? TEXT("Add Event") : MenuCategory;
+		Info.NodeClass = NodeSpawner->NodeClass ? NodeSpawner->NodeClass->GetName() : TEXT("K2Node_Event");
+		Info.SpawnerKey = SpawnerKey;
+		Info.bIsPure = false;
+		Info.bIsLatent = false;
+		Info.Tooltip = UiSpec.Tooltip.ToString();
+
+		TArray<FString> ParsedKeywords;
+		Keywords.ParseIntoArrayWS(ParsedKeywords);
+		Info.Keywords = MoveTemp(ParsedKeywords);
+
+		Results.Add(Info);
+		return true;
+	};
 	
 	// 1. Add blueprint's own functions (Self functions)
 	if (UBlueprintGeneratedClass* GenClass = Cast<UBlueprintGeneratedClass>(Blueprint->GeneratedClass))
@@ -4515,6 +4768,84 @@ TArray<FBlueprintNodeTypeInfo> UBlueprintService::DiscoverNodes(
 		if (CurrentClass && CurrentClass->GetName() == TEXT("Object"))
 		{
 			break;
+		}
+	}
+
+	// 2.5 Add event spawners from the Blueprint action database.
+	{
+		const FBlueprintActionDatabase::FActionRegistry& ActionRegistry = FBlueprintActionDatabase::Get().GetAllActions();
+		for (const TPair<FObjectKey, FBlueprintActionDatabase::FActionList>& Entry : ActionRegistry)
+		{
+			if (Results.Num() >= MaxResults)
+			{
+				break;
+			}
+
+			for (UBlueprintNodeSpawner* NodeSpawner : Entry.Value)
+			{
+				if (Results.Num() >= MaxResults)
+				{
+					break;
+				}
+
+				AddNodeSpawnerToResults(NodeSpawner);
+			}
+		}
+	}
+
+	// 2.6 Surface Add Custom Event with a stable key.
+	{
+		const FString DisplayName = TEXT("Add Custom Event...");
+		const FString Keywords = TEXT("Custom Event Add Event Delegate");
+		const FString SpawnerKey = TEXT("EVENT CUSTOM");
+		const FString EventCategory = TEXT("Add Event");
+
+		const bool bCategoryMatches = CategoryLower.IsEmpty() || EventCategory.ToLower().Contains(CategoryLower);
+		const bool bSearchMatches = SearchLower.IsEmpty() || DisplayName.ToLower().Contains(SearchLower) || Keywords.ToLower().Contains(SearchLower);
+
+		if (bCategoryMatches && bSearchMatches && !SeenSpawnerKeys.Contains(SpawnerKey) && Results.Num() < MaxResults)
+		{
+			SeenSpawnerKeys.Add(SpawnerKey);
+
+			FBlueprintNodeTypeInfo Info;
+			Info.DisplayName = DisplayName;
+			Info.Category = EventCategory;
+			Info.NodeClass = TEXT("K2Node_CustomEvent");
+			Info.SpawnerKey = SpawnerKey;
+			Info.bIsPure = false;
+			Info.bIsLatent = false;
+			Info.Tooltip = TEXT("Add a new custom event entry point to the graph.");
+			Info.Keywords = { TEXT("Custom"), TEXT("Event"), TEXT("Delegate") };
+
+			Results.Add(Info);
+		}
+	}
+
+	// 2.7 Surface Create Event / Create Delegate for delegate workflows.
+	{
+		const FString DisplayName = TEXT("Create Event");
+		const FString Keywords = TEXT("Create Delegate Delegate Event");
+		const FString SpawnerKey = TEXT("NODE K2Node_CreateDelegate");
+		const FString DelegateCategory = TEXT("Delegates");
+
+		const bool bCategoryMatches = CategoryLower.IsEmpty() || DelegateCategory.ToLower().Contains(CategoryLower);
+		const bool bSearchMatches = SearchLower.IsEmpty() || DisplayName.ToLower().Contains(SearchLower) || Keywords.ToLower().Contains(SearchLower);
+
+		if (bCategoryMatches && bSearchMatches && !SeenSpawnerKeys.Contains(SpawnerKey) && Results.Num() < MaxResults)
+		{
+			SeenSpawnerKeys.Add(SpawnerKey);
+
+			FBlueprintNodeTypeInfo Info;
+			Info.DisplayName = DisplayName;
+			Info.Category = DelegateCategory;
+			Info.NodeClass = TEXT("K2Node_CreateDelegate");
+			Info.SpawnerKey = SpawnerKey;
+			Info.bIsPure = true;
+			Info.bIsLatent = false;
+			Info.Tooltip = TEXT("Create a delegate value from a function reference.");
+			Info.Keywords = { TEXT("Create"), TEXT("Delegate"), TEXT("Event") };
+
+			Results.Add(Info);
 		}
 	}
 	
@@ -5215,7 +5546,7 @@ FString UBlueprintService::CreateNodeByKey(
 		return FString();
 	}
 
-	// Parse spawner key - format: "FUNC ClassName::FunctionName" or "NODE NodeClassName"
+	// Parse spawner key - format: "FUNC ClassName::FunctionName", "NODE NodeClassName", or "EVENT ClassName::FunctionName"
 	FString KeyType, KeyValue;
 	if (!SpawnerKey.Split(TEXT(" "), &KeyType, &KeyValue))
 	{
@@ -5267,6 +5598,59 @@ FString UBlueprintService::CreateNodeByKey(
 		FuncNode->AllocateDefaultPins();
 		NewNode = FuncNode;
 	}
+	else if (KeyType.Equals(TEXT("EVENT"), ESearchCase::IgnoreCase))
+	{
+		UBlueprintEventNodeSpawner* EventSpawner = nullptr;
+
+		if (KeyValue.Equals(TEXT("CUSTOM"), ESearchCase::IgnoreCase) || KeyValue.StartsWith(TEXT("CUSTOM::"), ESearchCase::IgnoreCase))
+		{
+			FName CustomEventName = NAME_None;
+			if (KeyValue.StartsWith(TEXT("CUSTOM::"), ESearchCase::IgnoreCase))
+			{
+				const FString RequestedName = KeyValue.RightChop(8);
+				if (!RequestedName.IsEmpty())
+				{
+					CustomEventName = FName(*RequestedName);
+				}
+			}
+
+			EventSpawner = UBlueprintEventNodeSpawner::Create(UK2Node_CustomEvent::StaticClass(), CustomEventName);
+		}
+		else
+		{
+			FString ClassName;
+			FString FunctionName;
+			if (!KeyValue.Split(TEXT("::"), &ClassName, &FunctionName))
+			{
+				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Invalid event key format: %s"), *KeyValue);
+				return FString();
+			}
+
+			UClass* OwnerClass = ResolveClassByName(ClassName);
+			if (!OwnerClass)
+			{
+				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Event class '%s' not found"), *ClassName);
+				return FString();
+			}
+
+			UFunction* EventFunction = OwnerClass->FindFunctionByName(*FunctionName);
+			if (!EventFunction)
+			{
+				UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Event function '%s' not found in class '%s'"), *FunctionName, *ClassName);
+				return FString();
+			}
+
+			EventSpawner = UBlueprintEventNodeSpawner::Create(EventFunction);
+		}
+
+		if (!EventSpawner)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Failed to create event spawner for key '%s'"), *SpawnerKey);
+			return FString();
+		}
+
+		NewNode = EventSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
+	}
 	else if (KeyType.Equals(TEXT("NODE"), ESearchCase::IgnoreCase))
 	{
 		// Generic node creation - find the node class
@@ -5278,12 +5662,12 @@ FString UBlueprintService::CreateNodeByKey(
 		}
 
 		NewNode = NewObject<UEdGraphNode>(Graph, NodeClass);
-		NewNode->NodePosX = PosX;
-		NewNode->NodePosY = PosY;
 		Graph->AddNode(NewNode, false, false);
 		NewNode->CreateNewGuid();
 		NewNode->PostPlacedNewNode();
 		NewNode->AllocateDefaultPins();
+		NewNode->NodePosX = PosX;
+		NewNode->NodePosY = PosY;
 	}
 	else
 	{
@@ -5562,7 +5946,6 @@ FString UBlueprintService::AddDelegateBindNode(
 		return FString();
 	}
 
-	// Resolve the target class
 	UClass* OwnerClass = nullptr;
 	bool bSelfContext = false;
 
@@ -5590,7 +5973,6 @@ FString UBlueprintService::AddDelegateBindNode(
 		return FString();
 	}
 
-	// Find the multicast delegate property on the class
 	FMulticastDelegateProperty* DelegateProp = nullptr;
 	for (TFieldIterator<FMulticastDelegateProperty> PropIt(OwnerClass); PropIt; ++PropIt)
 	{
@@ -5607,7 +5989,6 @@ FString UBlueprintService::AddDelegateBindNode(
 		return FString();
 	}
 
-	// Create and configure the AddDelegate node
 	UK2Node_AddDelegate* DelegateNode = NewObject<UK2Node_AddDelegate>(Graph);
 	DelegateNode->SetFromProperty(DelegateProp, bSelfContext, OwnerClass);
 
@@ -5661,4 +6042,216 @@ FString UBlueprintService::AddCreateDelegateNode(
 	UE_LOG(LogTemp, Log, TEXT("AddCreateDelegateNode: Created delegate node for function '%s' in %s"), *FunctionName, *GraphName);
 
 	return Node->NodeGuid.ToString();
+}
+
+// ============================================================================
+// FUNCTION OVERRIDES
+// ============================================================================
+
+TArray<FOverridableFunctionInfo> UBlueprintService::ListOverridableFunctions(const FString& BlueprintPath)
+{
+	TArray<FOverridableFunctionInfo> Result;
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint || !Blueprint->ParentClass)
+	{
+		return Result;
+	}
+
+	TSet<FName> ExistingGraphNames;
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph)
+		{
+			ExistingGraphNames.Add(Graph->GetFName());
+		}
+	}
+
+	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
+	{
+		for (TFieldIterator<UFunction> FuncIt(Class, EFieldIterationFlags::None); FuncIt; ++FuncIt)
+		{
+			UFunction* Func = *FuncIt;
+			if (!Func)
+			{
+				continue;
+			}
+
+			if (Func->GetOwnerClass() != Class)
+			{
+				continue;
+			}
+
+			if (!Func->HasAnyFunctionFlags(FUNC_BlueprintEvent))
+			{
+				continue;
+			}
+
+			const bool bIsNativeEvent = Func->HasAnyFunctionFlags(FUNC_Native);
+			FProperty* RetProp = Func->GetReturnProperty();
+			const bool bHasReturnValue = (RetProp != nullptr);
+			const bool bIsEventStyle = !bHasReturnValue && Func->HasAnyFunctionFlags(FUNC_Event);
+
+			bool bAlreadyOverridden = ExistingGraphNames.Contains(Func->GetFName());
+			if (!bAlreadyOverridden && bIsEventStyle)
+			{
+				for (UEdGraph* UberGraph : Blueprint->UbergraphPages)
+				{
+					if (!UberGraph)
+					{
+						continue;
+					}
+
+					for (UEdGraphNode* Node : UberGraph->Nodes)
+					{
+						if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+						{
+							if (EventNode->EventReference.GetMemberName() == Func->GetFName())
+							{
+								bAlreadyOverridden = true;
+								break;
+							}
+						}
+					}
+
+					if (bAlreadyOverridden)
+					{
+						break;
+					}
+				}
+			}
+
+			FOverridableFunctionInfo Info;
+			Info.FunctionName = Func->GetName();
+			Info.OwnerClass = Class->GetName();
+			Info.bIsNativeEvent = bIsNativeEvent;
+			Info.bIsEventStyle = bIsEventStyle;
+			Info.bAlreadyOverridden = bAlreadyOverridden;
+			Info.ReturnType = RetProp ? RetProp->GetCPPType() : TEXT("void");
+
+			for (TFieldIterator<FProperty> PropIt(Func); PropIt && PropIt->HasAnyPropertyFlags(CPF_Parm); ++PropIt)
+			{
+				if (PropIt->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					continue;
+				}
+
+				Info.Parameters.Add(FString::Printf(TEXT("%s:%s"), *PropIt->GetName(), *PropIt->GetCPPType()));
+			}
+
+			Result.Add(Info);
+		}
+	}
+
+	return Result;
+}
+
+bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FString& FunctionName)
+{
+	if (FunctionName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: FunctionName is empty"));
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint || !Blueprint->ParentClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: Failed to load blueprint or no parent class: %s"), *BlueprintPath);
+		return false;
+	}
+
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
+	{
+		if (Graph && Graph->GetName().Equals(FunctionName, ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogTemp, Log, TEXT("OverrideFunction: '%s' already overridden in %s"), *FunctionName, *BlueprintPath);
+			return true;
+		}
+	}
+
+	UFunction* TargetFunc = nullptr;
+	UClass* FuncOwnerClass = nullptr;
+	for (UClass* Class = Blueprint->ParentClass; Class && Class != UObject::StaticClass(); Class = Class->GetSuperClass())
+	{
+		UFunction* Found = Class->FindFunctionByName(FName(*FunctionName), EIncludeSuperFlag::ExcludeSuper);
+		if (Found)
+		{
+			TargetFunc = Found;
+			FuncOwnerClass = Class;
+			break;
+		}
+	}
+
+	if (!TargetFunc)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: '%s' not found in parent hierarchy of %s"), *FunctionName, *BlueprintPath);
+		return false;
+	}
+
+	if (!TargetFunc->HasAnyFunctionFlags(FUNC_BlueprintEvent))
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: '%s' is not a BlueprintEvent (not overridable)"), *FunctionName);
+		return false;
+	}
+
+	const bool bHasReturnValue = (TargetFunc->GetReturnProperty() != nullptr);
+	if (!bHasReturnValue && TargetFunc->HasAnyFunctionFlags(FUNC_Event))
+	{
+		UEdGraph* EventGraph = FindGraph(Blueprint, TEXT("EventGraph"));
+		if (!EventGraph && Blueprint->UbergraphPages.Num() > 0)
+		{
+			EventGraph = Blueprint->UbergraphPages[0];
+		}
+
+		if (!EventGraph)
+		{
+			UE_LOG(LogTemp, Error, TEXT("OverrideFunction: EventGraph not found in %s"), *BlueprintPath);
+			return false;
+		}
+
+		for (UEdGraphNode* Node : EventGraph->Nodes)
+		{
+			if (UK2Node_Event* EventNode = Cast<UK2Node_Event>(Node))
+			{
+				if (EventNode->EventReference.GetMemberName().ToString().Equals(FunctionName, ESearchCase::IgnoreCase))
+				{
+					UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Event node '%s' already exists in EventGraph of %s"), *FunctionName, *BlueprintPath);
+					return true;
+				}
+			}
+		}
+
+		UK2Node_Event* EventNode = NewObject<UK2Node_Event>(EventGraph);
+		EventNode->EventReference.SetExternalMember(FName(*FunctionName), FuncOwnerClass);
+		EventNode->bOverrideFunction = true;
+
+		EventGraph->AddNode(EventNode, false, false);
+		EventNode->CreateNewGuid();
+		EventNode->PostPlacedNewNode();
+		EventNode->AllocateDefaultPins();
+
+		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+		UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Added event node '%s' to EventGraph of %s"), *FunctionName, *BlueprintPath);
+		return true;
+	}
+
+	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint,
+		FName(*FunctionName),
+		UEdGraph::StaticClass(),
+		UEdGraphSchema_K2::StaticClass()
+	);
+
+	if (!NewGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("OverrideFunction: Failed to create graph for '%s'"), *FunctionName);
+		return false;
+	}
+
+	FBlueprintEditorUtils::AddFunctionGraph<UClass>(Blueprint, NewGraph, false, FuncOwnerClass);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Created override function graph '%s' in %s"), *FunctionName, *BlueprintPath);
+	return true;
 }
