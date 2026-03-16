@@ -353,7 +353,7 @@ public:
     static int32 GetMaxTokensFromConfig();
     static void SaveMaxTokensToConfig(int32 MaxTokens);
     
-    /** Get/Set max tool call iterations (10-500, default 200 like Copilot) */
+    /** Get/Set max tool call iterations (5-200, default 15) */
     static int32 GetMaxToolCallIterationsFromConfig();
     static void SaveMaxToolCallIterationsToConfig(int32 MaxIterations);
     
@@ -646,15 +646,12 @@ private:
     
     /** Execute the next tool in the queue (sequential execution) */
     void ExecuteNextToolInQueue();
-    
-    /** Track tool results for consecutive-failure loop detection */
-    void TrackToolResultForLoopDetection(const FString& ToolName, const FString& ResultContent);
 
     /** Number of tool call iterations (follow-up rounds) */
     int32 ToolCallIterationCount = 0;
     
-    /** Maximum allowed tool call iterations (soft limit - shows warning but continues) */
-    int32 MaxToolCallIterations = 200;
+    /** Maximum allowed tool call iterations before user confirmation is required */
+    int32 MaxToolCallIterations = 15;
     
     /** Whether we're waiting for user to decide if they want to continue after hitting iteration limit */
     bool bWaitingForUserToContinue = false;
@@ -662,8 +659,8 @@ private:
     /** Set when the user explicitly clicks Stop - prevents auto-continue and follow-up requests until a new user message arrives */
     bool bWasCancelled = false;
     
-    /** Default value for MaxToolCallIterations - same as Copilot (200) */
-    static constexpr int32 DefaultMaxToolCallIterations = 200;
+    /** Default value for MaxToolCallIterations - matches Copilot Chat's normal tool loop budget */
+    static constexpr int32 DefaultMaxToolCallIterations = 15;
     
     /** Usage statistics tracking */
     FLLMUsageStats UsageStats;
@@ -676,22 +673,6 @@ private:
 
     /** Accumulated skill documentation appended to the system prompt */
     FString ActiveSkillsContent;
-
-    // Loop detection: prompt-based self-awareness + consecutive-failure circuit breaker
-    // Uses a ring buffer to catch alternating patterns (A,B,A,B) not just consecutive duplicates
-    // See vibeue.instructions.md for prompt-level guidelines
-
-    /** Ring buffer of recent tool result signatures for loop detection */
-    TArray<FString> RecentToolSignatures;
-
-    /** Maximum frequency count observed in the current window (updated by TrackToolResultForLoopDetection) */
-    int32 MaxSignatureFrequency = 0;
-
-    /** Size of the ring buffer window for loop detection */
-    static constexpr int32 LoopDetectionWindowSize = 10;
-
-    /** How many times a signature must appear in the window to trigger the circuit breaker */
-    static constexpr int32 MaxConsecutiveIdenticalErrors = 3;
 
     // ============ Voice Input (Private) ============
 

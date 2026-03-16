@@ -1,7 +1,7 @@
 ---
 name: blueprints
 display_name: Blueprint System
-description: Create and modify Blueprint assets, variables, functions, components, and node graphs
+description: Create and modify Blueprint assets, variables, functions, and components
 vibeue_classes:
   - BlueprintService
   - AssetDiscoveryService
@@ -9,14 +9,18 @@ unreal_classes:
   - EditorAssetLibrary
 keywords:
   - blueprint
-  - function
+  - create blueprint
   - variable
-  - node
-  - graph
   - component
+  - compile
+  - introspection
+related_skills:
+  - blueprint-graphs
 ---
 
 # Blueprint System Skill
+
+> **For node-level graph editing** (adding nodes, connecting pins, wiring logic, timers, layout), load the `blueprint-graphs` skill.
 
 ## Critical Rules
 
@@ -54,7 +58,6 @@ The type system resolves Blueprint names automatically via asset search.
 | WRONG | CORRECT |
 |-------|---------|
 | `add_function()` | `create_function()` |
-| `list_nodes()` | `get_nodes_in_graph()` |
 | `get_component_info(path, name)` | `get_component_info(type)` - takes ONLY type! |
 
 ### ⚠️ Property Name Gotchas
@@ -62,110 +65,7 @@ The type system resolves Blueprint names automatically via asset search.
 | WRONG | CORRECT |
 |-------|---------|
 | `info.inputs` | `info.input_parameters` |
-| `node.node_name` | `node.node_title` |
-| `pin.is_linked` | `pin.is_connected` |
 | `var.name` | `var.variable_name` |
-
-### ⚠️ Branch Node Pin Names
-
-Use **`then`** and **`else`**, NOT `true`/`false`:
-
-```python
-# WRONG
-connect_nodes(path, func, branch_id, "true", target_id, "execute")
-
-# CORRECT
-connect_nodes(path, func, branch_id, "then", target_id, "execute")
-connect_nodes(path, func, branch_id, "else", target_id, "execute")
-```
-
-### ⚠️ UE5.7 Uses Doubles for Math
-
-| WRONG | CORRECT |
-|-------|---------|
-| `Greater_FloatFloat` | `Greater_DoubleDouble` |
-| `Add_FloatFloat` | `Add_DoubleDouble` |
-
-### ⚠️ Compile Before Using Variables in Nodes
-
-```python
-unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
-unreal.BlueprintService.compile_blueprint(path)  # REQUIRED before adding nodes
-unreal.BlueprintService.add_get_variable_node(path, func, "Health", x, y)
-```
-
-### Accessing Members of Another Blueprint (`add_member_get_node`)
-
-Use `add_member_get_node` to read a property or component that belongs to another class
-(not the current Blueprint). This creates a getter node with a **Target** input pin.
-
-```
-Target (input) — the object reference (e.g. your BP_Cube variable output)
-MemberName (output) — the property value (e.g. the CubeMesh component)
-```
-
-```python
-# Get the CubeMesh component from a "Cube" variable of type BP_Cube
-mesh_id = unreal.BlueprintService.add_member_get_node(
-    bp_path, graph, "BP_Cube_C", "CubeMesh", 400, 0)
-
-# Connect: Cube (from validated get) -> Target of the member getter
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "Cube", mesh_id, "self")
-# Output pin name matches the member name: "CubeMesh"
-unreal.BlueprintService.connect_nodes(bp_path, graph, mesh_id, "CubeMesh", next_id, "Target")
-```
-
-The `TargetClass` must be the generated class name (`BP_Cube_C`, not `BP_Cube`). The function
-resolves it via the same 3-step fallback as `create_blueprint`.
-
-### Validated Get Nodes (`add_validated_get_node`)
-
-Use `add_validated_get_node` to create a **Validated Get** — a variable getter with execution
-pins that only continues on the valid path if the object reference is non-null.
-This is significantly cleaner than a plain Get + IsValid + Branch combination.
-
-Pin names produced:
-
-| Pin | Name | Direction |
-|-----|------|-----------|
-| Execution in | `"execute"` | input |
-| Is Valid (object non-null) | `"then"` | output exec |
-| Is Not Valid (object null) | `"else"` | output exec |
-| Variable data | variable name e.g. `"MyObject"` | output data |
-
-```python
-import unreal
-
-bp_path = "/Game/BP_MyActor"
-graph = "EventGraph"
-
-# Compile first so the variable type is resolved
-unreal.BlueprintService.compile_blueprint(bp_path)
-
-# Add BeginPlay + validated get + some function call
-begin_id = unreal.BlueprintService.add_event_node(bp_path, graph, "ReceiveBeginPlay", 0, 0)
-val_get_id = unreal.BlueprintService.add_validated_get_node(bp_path, graph, "MyObject", 300, 0)
-call_id = unreal.BlueprintService.add_function_call_node(bp_path, graph, "MyObject", "SomeFunction", 700, 0)
-
-# Execution flow: BeginPlay -> ValidatedGet (Is Valid path) -> SomeFunction
-unreal.BlueprintService.connect_nodes(bp_path, graph, begin_id, "then", val_get_id, "execute")
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "then", call_id, "execute")
-
-# Data flow: MyObject output -> function Target
-unreal.BlueprintService.connect_nodes(bp_path, graph, val_get_id, "MyObject", call_id, "self")
-
-unreal.BlueprintService.compile_blueprint(bp_path)
-unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
-> Only Object/Actor reference variables support Validated Get (`ValidatedObject` variation).
-> Primitive types (int, float, bool) produce a Branch-style impure get instead.
-
-### ⚠️ Entry/Result Node IDs
-
-- **Entry Node** = ID 0
-- **Result Node** = ID 1
-- Custom nodes start at ID 2+
 
 ---
 
@@ -185,49 +85,6 @@ if not existing:
     unreal.EditorAssetLibrary.save_asset(path)
 ```
 
-### Create Function with Logic
-
-```python
-import unreal
-
-bp_path = "/Game/BP_Player"
-
-# Create function with parameters
-unreal.BlueprintService.create_function(bp_path, "TakeDamage", is_pure=False)
-unreal.BlueprintService.add_function_input(bp_path, "TakeDamage", "Amount", "float", "0.0")
-unreal.BlueprintService.add_function_output(bp_path, "TakeDamage", "NewHealth", "float")
-unreal.BlueprintService.compile_blueprint(bp_path)
-
-# Add nodes (entry=0, result=1)
-get_health = unreal.BlueprintService.add_get_variable_node(bp_path, "TakeDamage", "Health", -400, -100)
-subtract = unreal.BlueprintService.add_math_node(bp_path, "TakeDamage", "Subtract", "Float", -200, 0)
-set_health = unreal.BlueprintService.add_set_variable_node(bp_path, "TakeDamage", "Health", 200, 0)
-
-# Connect nodes
-unreal.BlueprintService.connect_nodes(bp_path, "TakeDamage", 0, "then", set_health, "execute")
-unreal.BlueprintService.compile_blueprint(bp_path)
-unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
-### Inspect Blueprint
-
-```python
-import unreal
-
-bp_path = "/Game/BP_Player"
-
-info = unreal.BlueprintService.get_blueprint_info(bp_path)
-print(f"Parent: {info.parent_class}")
-
-vars = unreal.BlueprintService.list_variables(bp_path)
-for v in vars:
-    print(f"Variable: {v.variable_name} ({v.variable_type})")
-
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "TakeDamage")
-for node in nodes:
-    print(f"Node {node.node_id}: {node.node_type}")
-```
-
 ### Add Component with Properties
 
 ```python
@@ -243,91 +100,6 @@ unreal.BlueprintService.set_component_property(bp_path, "BodyMesh", "bVisible", 
 unreal.BlueprintService.set_component_property(bp_path, "Glow", "Intensity", "5000.0")
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
-
-### Add Enhanced Input Action Node
-
-Use `add_input_action_node()` to create an Enhanced Input Action event node in a Blueprint:
-
-```python
-import unreal
-
-bp_path = "/Game/BP_ThirdPersonCharacter"
-ia_path = "/Game/Input/IA_Ragdoll"
-
-# Create the Enhanced Input Action node
-node_id = unreal.BlueprintService.add_input_action_node(bp_path, "EventGraph", ia_path, -800, 2500)
-
-if node_id:
-    # Connect to other nodes - Output pins are: Started, Ongoing, Triggered, Completed, Canceled
-    set_physics = unreal.BlueprintService.add_function_call_node(bp_path, "EventGraph", "PrimitiveComponent", "SetSimulatePhysics", -400, 2500)
-    unreal.BlueprintService.connect_nodes(bp_path, "EventGraph", node_id, "Started", set_physics, "execute")
-    
-    unreal.BlueprintService.compile_blueprint(bp_path)
-    unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
-**Important**: The Input Action asset must exist first. Create it with `InputService.create_action()` if needed.
-
----
-
-## Node Layout Best Practices
-
-### Layout Constants
-
-```python
-GRID_H = 200   # Horizontal spacing
-GRID_V = 150   # Vertical spacing
-DATA_ROW = -150  # Data getters above execution
-EXEC_ROW = 0     # Main execution row
-```
-
-### Execution Flow (Left to Right)
-
-```python
-# Entry (0,0) → Branch (200,0) → SetVar (400,0) → Return (800,0)
-```
-
-### Data Flow (Above Execution)
-
-```python
-# Getters at Y=-150, math at Y=-75, execution at Y=0
-get_health = add_get_variable_node(bp_path, func, "Health", 200, -150)
-subtract = add_math_node(bp_path, func, "Subtract", "Float", 200, -75)
-branch = add_branch_node(bp_path, func, 200, 0)
-```
-
-### Branch Layout (True/False Paths)
-
-```python
-# True path: Y=0 (same row)
-# False path: Y=150 (offset down)
-set_armor = add_set_variable_node(bp_path, func, "Armor", 400, 0)    # True
-set_health = add_set_variable_node(bp_path, func, "Health", 400, 150)  # False
-```
-
-### Reposition Entry/Result (CRITICAL)
-
-Entry and Result nodes are stacked at (0,0) by default:
-
-```python
-nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, func_name)
-for node in nodes:
-    if "FunctionEntry" in node.node_type:
-        unreal.BlueprintService.set_node_position(bp_path, func_name, node.node_id, 0, 0)
-    elif "FunctionResult" in node.node_type:
-        unreal.BlueprintService.set_node_position(bp_path, func_name, node.node_id, 800, 0)
-```
-
----
-
-## Common Function Call Classes
-
-For `add_function_call_node(path, graph, class, func, x, y)`:
-
-- **KismetMathLibrary** - Math (Add, Multiply, Sin, Sqrt)
-- **KismetSystemLibrary** - System (PrintString, Delay)
-- **GameplayStatics** - Game (GetPlayerController, SpawnActor)
-- **Actor** - Actor (GetActorLocation, SetActorLocation)
 
 ---
 

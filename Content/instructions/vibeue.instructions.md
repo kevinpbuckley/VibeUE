@@ -61,7 +61,8 @@ See the **Available Skills** section below for the full list.
 
 | Domain / Trigger | Skill to Load |
 |---|---|
-| BP_, Blueprint, Blueprint variables/functions/components | `blueprints` |
+| BP_, Blueprint, Blueprint variables/components | `blueprints` |
+| Node, graph, wire, connect, pin, timer, event graph, function graph | `blueprint-graphs` |
 | M_, MI_, Material, Material instance | `materials` |
 | DT_, DataTable, row | `data-tables` |
 | DA_, Data Asset | `data-assets` |
@@ -154,6 +155,7 @@ json_str = json.dumps(data)
 - `animation-montage`
 - `animsequence`
 - `asset-management`
+- `blueprint-graphs`
 - `blueprints`
 - `data-assets`
 - `data-tables`
@@ -231,6 +233,22 @@ if not unreal.BlueprintService.blueprint_exists("/Game/Blueprints/BP_Enemy"):
 # After adding variables, functions, components, or changing structure:
 unreal.BlueprintService.compile_blueprint(path)  # REQUIRED!
 ```
+
+### Success Claims Require Verification Evidence
+
+For Blueprint, Widget, Material, AnimGraph, and StateTree graph edits, a successful tool call is **not** enough.
+
+Before claiming a graph edit is complete, you must re-read the edited asset and verify the result from the asset state itself:
+
+1. Re-list the relevant graph nodes with `get_nodes_in_graph()`.
+2. Re-list the actual wiring with `get_connections()`.
+3. If specific pins matter, inspect them with `get_node_pins()`.
+4. Compile and inspect `compile_blueprint(...).success` and errors.
+5. Only then describe the graph as complete.
+
+If any claimed node is missing, any required connection is absent, or any required pin is still unconnected, treat the operation as a failure even if compile succeeds.
+
+When reporting success for graph work, include brief evidence such as the verified node titles, the verified connection lines, and the compile result. Do not say a graph was wired correctly based only on create/connect return values.
 
 ### Error Recovery
 - Max 3 attempts at same operation

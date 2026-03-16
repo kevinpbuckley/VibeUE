@@ -25,12 +25,80 @@ keywords:
   - theme
   - expand
   - collapse
+  - blueprint task
+  - stt
+  - override function
+  - get description
+  - override
 ---
 
 # StateTree Skill
 
 StateTree is Unreal Engine's hierarchical state machine system for AI behavior and game logic.
 This skill covers creating and editing StateTree assets via `unreal.StateTreeService`.
+
+## ⚠️ StateTree Blueprint Tasks Require the Blueprints Skill
+
+**StateTree Tasks prefixed `STT_` (e.g. `STT_Rotate`, `STT_Move`) are Blueprint assets.**
+They are edited with `BlueprintService`, not `StateTreeService`.
+
+**Always load the `blueprints` skill** when the user asks to:
+- Add or edit variables on an STT task
+- Override functions (`GetDescription`, `ReceiveLatentTick`, `ReceiveLatentEnterState`, etc.)
+- Add Blueprint nodes or connect pins inside an STT task graph
+- Inspect or modify STT task logic
+
+**Also load the `blueprint-graphs` skill** when the task involves node wiring, timers, custom events,
+pin names, or EventGraph layout inside an `STT_*` Blueprint.
+
+```
+StateTreeService  → edits the StateTree ASSET (states, tasks list, transitions, parameters)
+BlueprintService  → edits the STT Blueprint CONTENT (variables, function graphs, node wiring)
+```
+
+Use `manage_skills(action='load', skill_name='blueprints')` before writing any code that
+touches an `STT_*` Blueprint's internals.
+
+If the request mentions timers, delayed completion, event callbacks, or screenshots of Blueprint graphs,
+also load:
+
+```python
+manage_skills(action='load', skill_name='blueprint-graphs')
+```
+
+## ⚠️ STT Graph Editing Rules
+
+When editing `STT_*` Blueprint task graphs:
+
+1. Use `override_function()` for StateTree task events like `ReceiveLatentEnterState`.
+2. Find the created event node by its **graph title** such as `Event EnterState`, not by the raw function name.
+3. For non-blocking waits, prefer `Set Timer by Event` + `Custom Event`, not `Delay`.
+4. Use `FinishTask` with pin name `bSucceeded`.
+5. After wiring, always inspect `get_nodes_in_graph()`, `get_connections()`, and `compile_blueprint(...).success` before claiming success.
+6. If you claim you created a callback event, prove it exists by title in a fresh node listing and prove its delegate/exec wiring from fresh connection output.
+
+This is especially important for tasks like `STT_Rotate`, where the desired graph often looks like:
+
+```text
+Event EnterState -> Set Timer by Event
+Custom Event OutputDelegate -> Set Timer by Event Delegate
+Custom Event then -> Finish Task
+```
+
+### STT Completion Contract
+
+For `STT_*` graph edits, do not report success until the output explicitly shows:
+
+1. `Event EnterState` exists.
+2. `Set Timer by Event` exists.
+3. The callback event node exists by title.
+4. `Event EnterState.then -> Set Timer by Event.execute` exists.
+5. `CallbackEvent.OutputDelegate -> Set Timer by Event.Delegate` exists.
+6. `CallbackEvent.then -> Finish Task.execute` exists.
+7. `Finish Task.bSucceeded` is set correctly.
+8. Compile succeeds.
+
+If compile succeeds but any of the checks above fail, the graph is still wrong.
 
 ## Key Concepts
 
@@ -39,7 +107,8 @@ This skill covers creating and editing StateTree assets via `unreal.StateTreeSer
 | **StateTree Asset** | The `.uasset` file containing the tree definition |
 | **Subtree / Root State** | Top-level state (usually named "Root") — created with empty `parent_path` |
 | **State** | A node in the tree; can have tasks, enter conditions, transitions, and child states |
-| **Task** | Logic that runs while a state is active (e.g. move, delay, play animation) |
+| **Task** | Logic that runs while a state is active. Can be a C++ struct (`FStateTreeDelayTask`) or a **Blueprint asset** (`STT_MyTask`) |
+| **Blueprint Task** | An `STT_*` Blueprint asset extending `StateTreeTaskBlueprintBase` — edited with `BlueprintService` |
 | **Evaluator** | Global computation that runs every tick; provides data to all states |
 | **Global Task** | Task that runs as long as the StateTree is active |
 | **Transition** | Rule that moves execution from one state to another |
@@ -888,9 +957,17 @@ props = unreal.StateTreeService.get_global_task_property_names(path, "FMyGlobalT
 unreal.StateTreeService.set_global_task_property_value(path, "FMyGlobalTask", "SomeProperty", "Hello")
 ```
 
-## Creating StateTree Blueprint Tasks
+## Creating & Editing StateTree Blueprint Tasks
 
-StateTree tasks can be written as Blueprints. The parent class must be the StateTree task base class.
+StateTree tasks can be written as Blueprints (`STT_*` assets, parent class `StateTreeTaskBlueprintBase`).
+**Load the `blueprints` skill before doing any of the following** — `StateTreeService` cannot
+edit Blueprint internals:
+
+- Creating a new STT Blueprint
+- Adding variables or components
+- Overriding functions (`GetDescription`, `ReceiveLatentTick`, `ReceiveLatentEnterState`, etc.)
+- Adding nodes or wiring pins in a function graph
+
 **Always discover the exact class name first** — the same discovery pattern works for both
 `create_blueprint` and `reparent_blueprint`.
 

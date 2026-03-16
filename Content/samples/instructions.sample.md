@@ -34,6 +34,7 @@ manage_skills(action="load", skill_names=["blueprints", "umg-widgets"])
 | Domain | Skill Name |
 |--------|------------|
 | Blueprints (BP_) | `blueprints` |
+| Blueprint Graphs / Node Wiring | `blueprint-graphs` |
 | UMG Widgets (WBP_) | `umg-widgets` |
 | Enhanced Input (IA_, IMC_) | `enhanced-input` |
 | Enums & Structs | `enum-struct` |
@@ -55,6 +56,7 @@ manage_skills(action="load", skill_names=["blueprints", "umg-widgets"])
 | Screenshots | `screenshots` |
 | Project Settings | `project-settings` |
 | Engine Settings | `engine-settings` |
+| State Trees (ST_) | `state-trees` |
 
 ### Skill Response Usage
 - `vibeue_apis` - Use for method signatures (auto-discovered at runtime)
