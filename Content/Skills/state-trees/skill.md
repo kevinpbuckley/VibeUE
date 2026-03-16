@@ -72,18 +72,11 @@ When editing `STT_*` Blueprint task graphs:
 
 1. Use `override_function()` for StateTree task events like `ReceiveLatentEnterState`.
 2. Find the created event node by its **graph title** such as `Event EnterState`, not by the raw function name.
-3. For non-blocking waits, prefer `Set Timer by Event` + `Custom Event`, not `Delay`.
-4. Use `FinishTask` with pin name `bSucceeded`.
-5. After wiring, always inspect `get_nodes_in_graph()`, `get_connections()`, and `compile_blueprint(...).success` before claiming success.
-6. If you claim you created a callback event, prove it exists by title in a fresh node listing and prove its delegate/exec wiring from fresh connection output.
-
-This is especially important for tasks like `STT_Rotate`, where the desired graph often looks like:
-
-```text
-Event EnterState -> Set Timer by Event
-Custom Event OutputDelegate -> Set Timer by Event Delegate
-Custom Event then -> Finish Task
-```
+3. For node wiring, timer callbacks, and custom events, follow the detailed workflow in the `blueprint-graphs` skill.
+4. For non-blocking waits, prefer `Set Timer by Event`, not `Delay`.
+5. If the requested callback is a custom event, the callback must exist as a real `Custom Event` node in `EventGraph`, not as a `Create Event` delegate node plus a separate function graph.
+6. Use `FinishTask` with pin name `bSucceeded`.
+7. After wiring, always inspect `get_nodes_in_graph()`, `get_connections()`, and `compile_blueprint(...).success` before claiming success.
 
 ### STT Completion Contract
 
@@ -91,12 +84,10 @@ For `STT_*` graph edits, do not report success until the output explicitly shows
 
 1. `Event EnterState` exists.
 2. `Set Timer by Event` exists.
-3. The callback event node exists by title.
-4. `Event EnterState.then -> Set Timer by Event.execute` exists.
-5. `CallbackEvent.OutputDelegate -> Set Timer by Event.Delegate` exists.
-6. `CallbackEvent.then -> Finish Task.execute` exists.
-7. `Finish Task.bSucceeded` is set correctly.
-8. Compile succeeds.
+3. The callback event node exists in a fresh node listing and is the requested node type.
+4. The expected execution and delegate connections exist.
+5. `Finish Task.bSucceeded` is set correctly.
+6. Compile succeeds.
 
 If compile succeeds but any of the checks above fail, the graph is still wrong.
 

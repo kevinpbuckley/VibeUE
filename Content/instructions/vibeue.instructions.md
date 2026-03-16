@@ -248,6 +248,13 @@ Before claiming a graph edit is complete, you must re-read the edited asset and 
 
 If any claimed node is missing, any required connection is absent, or any required pin is still unconnected, treat the operation as a failure even if compile succeeds.
 
+For `Set Timer by Event` workflows that use `add_custom_event_node(...)`, apply these extra rules:
+
+1. Re-read the graph immediately after creation and re-find the callback by the returned node GUID.
+2. Do not assume the displayed title equals the raw event name.
+3. Call `get_node_pins()` on that exact callback node before wiring and use the observed pin names.
+4. Keep the detailed timer callback wiring rules in the `blueprint-graphs` skill rather than duplicating them here.
+
 When reporting success for graph work, include brief evidence such as the verified node titles, the verified connection lines, and the compile result. Do not say a graph was wired correctly based only on create/connect return values.
 
 ### Error Recovery

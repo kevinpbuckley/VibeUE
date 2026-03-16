@@ -112,6 +112,10 @@ When a user asks for a "timer" or "timed delay" in a Blueprint, **use `Set Timer
 
 The pattern for `Set Timer by Event` requires a **Custom Event**:
 
+Important: after `add_custom_event_node(...)`, immediately re-read the graph and re-find that callback by the returned `node_id`. Do **not** assume the title will be exactly the event name you passed in. Unreal can display custom event titles as multi-line labels such as `OnTimerFinished` + `Custom Event`.
+
+Do **not** silently substitute a `Create Event` / `Create Delegate` node plus a separate function graph when the user asked for a `Custom Event` node or when the target graph should visibly contain the callback in `EventGraph`. A `Create Event` delegate can compile and still be the wrong implementation for the requested graph shape.
+
 ```python
 import unreal
 
@@ -149,8 +153,10 @@ For `STT_*` Blueprint tasks, do **not** guess event titles or pin names. The sta
 
 1. `override_function(bp, "ReceiveLatentEnterState")`
 2. `get_nodes_in_graph(bp, "EventGraph")` and locate the event by title `Event EnterState`
-3. `get_node_pins()` on every newly created node
-4. Wire using the **actual pin names returned by the graph**
+3. After `add_custom_event_node(...)`, call `get_nodes_in_graph()` again and re-find the callback by the returned GUID
+4. Treat the callback title as display-only evidence; custom event titles can be multi-line and should not be your primary lookup key
+5. `get_node_pins()` on every newly created node
+6. Wire using the **actual pin names returned by the graph**
 
 Current UE 5.7 / VibeUE graph details for this workflow:
 
@@ -160,6 +166,8 @@ Current UE 5.7 / VibeUE graph details for this workflow:
 | `Custom Event` | `OutputDelegate`, `then` |
 | `Set Timer by Event` | `execute`, `Delegate`, `Time`, `bLooping`, `bMaxOncePerFrame` |
 | `Finish Task` | `execute`, `bSucceeded` |
+
+Success for this workflow also requires the callback node in `EventGraph` to be a real custom event node, typically `K2Node_CustomEvent` in a fresh node listing. `K2Node_CreateDelegate` is a different node type and should not be treated as equivalent when the requested outcome is a visible custom event callback in the graph.
 
 ```python
 import unreal
@@ -178,18 +186,26 @@ finish_id = unreal.BlueprintService.add_function_call_node(
 
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
 enter_node = next((n for n in nodes if n.node_title == "Event EnterState"), None)
+custom_node = next((n for n in nodes if n.node_id == custom_id), None)
 assert enter_node, "Event EnterState not found"
+assert custom_node, f"Custom event {custom_id} not found after create"
+
+custom_pins = unreal.BlueprintService.get_node_pins(bp_path, graph, custom_node.node_id)
+print("CUSTOM EVENT TITLE:", custom_node.node_title)
+print("CUSTOM EVENT PINS:", [p.pin_name for p in custom_pins])
 
 unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "Time", "1.0")
 unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "bLooping", "false")
 unreal.BlueprintService.set_node_pin_value(bp_path, graph, finish_id, "bSucceeded", "true")
 
 assert unreal.BlueprintService.connect_nodes(bp_path, graph, enter_node.node_id, "then", timer_id, "execute")
-assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_id, "OutputDelegate", timer_id, "Delegate")
-assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_id, "then", finish_id, "execute")
+assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_node.node_id, "OutputDelegate", timer_id, "Delegate")
+assert unreal.BlueprintService.connect_nodes(bp_path, graph, custom_node.node_id, "then", finish_id, "execute")
 ```
 
 Use `add_create_event_node()` only when you need a **Create Event / Create Delegate** node. For `Set Timer by Event`, a `Custom Event` node is the simpler callback source and matches the Blueprint editor workflow shown in screenshots.
+
+If a previous attempt already inserted a `Create Event` node for this timer callback, treat that as the wrong graph shape when the request is for a custom event. Remove the wrong node, remove any stale callback function graph that only existed to support that delegate node, then create the real `Custom Event` node and verify it by node ID and node type.
 
 ### ⚠️ Verification Is Mandatory Before Claiming Success
 
@@ -200,6 +216,13 @@ After any graph edit, verify all three layers:
 3. **Compile**: inspect `compile_blueprint(...).success`, `num_errors`, and `errors`.
 
 For any node you claim you created, also re-read the graph with `get_nodes_in_graph()` and confirm that node actually exists in the graph after the edit. A returned node ID from a create call is not enough.
+
+For `Custom Event` timer callbacks, verify both of these before wiring:
+
+1. The returned GUID appears in a fresh `get_nodes_in_graph()` result.
+2. `get_node_pins()` on that exact node shows the pins you intend to use, typically `OutputDelegate` and `then` for the callback path.
+
+Also verify that the node type is the expected custom event form rather than `K2Node_CreateDelegate`.
 
 ```python
 result = unreal.BlueprintService.compile_blueprint(bp_path)
