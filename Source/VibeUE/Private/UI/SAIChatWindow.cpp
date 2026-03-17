@@ -1828,13 +1828,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     // API Keys tab
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
-    // Self-Hosted tab — pre-declare so preset buttons can reference them before SAssignNew runs
-    TSharedPtr<SEditableTextBox> CustomEndpointInput;
-    TSharedPtr<SEditableTextBox> CustomApiKeyInput;
-    TSharedPtr<SEditableTextBox> CustomModelIdInput;
-    TSharedPtr<SCheckBox>        CustomStreamingCheckBox;
-    TSharedPtr<STextBlock>       TestConnectionStatusText;
-    TSharedPtr<SCheckBox>        UseAsActiveProviderCheckBox;
     // General tab
     TSharedPtr<SCheckBox>        DebugModeCheckBox;
     TSharedPtr<SCheckBox>        AutoSaveBeforePythonCheckBox;
@@ -1848,11 +1841,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SCheckBox>        MCPServerEnabledCheckBox;
     TSharedPtr<SSpinBox<int32>>  MCPServerPortSpinBox;
     TSharedPtr<SEditableTextBox> MCPServerApiKeyInput;
-    // MCP Proxy sub-section
-    TSharedPtr<SCheckBox>        ProxyEnabledCheckBox;
-    TSharedPtr<SSpinBox<int32>>  ProxyPortSpinBox;
-    TSharedPtr<SEditableTextBox> ProxyPythonPathInput;
-    TSharedPtr<SCheckBox>        ProxyAutoStartCheckBox;
 
     // ---- Load config values ----
     float   CfgTemperature      = FChatSession::GetTemperatureFromConfig();
@@ -1866,16 +1854,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     bool    bMCPEnabled         = FMCPServer::GetEnabledFromConfig();
     int32   MCPPort             = FMCPServer::GetPortFromConfig();
     FString MCPApiKey           = FMCPServer::GetApiKeyFromConfig();
-    bool    bProxyEnabled       = FMCPServer::GetProxyEnabledFromConfig();
-    int32   ProxyPort           = FMCPServer::GetProxyPortFromConfig();
-    FString ProxyPythonPath     = FMCPServer::GetProxyPythonPathFromConfig();
-    bool    bProxyAutoStart     = FMCPServer::GetProxyAutoStartFromConfig();
-    FString CfgCustomEndpoint   = FChatSession::GetCustomEndpointFromConfig();
-    FString CfgCustomApiKey     = FChatSession::GetCustomApiKeyFromConfig();
-    ECustomAuthMode CfgAuthMode = FChatSession::GetCustomAuthModeFromConfig();
-    FString CfgCustomModelId    = FChatSession::GetCustomModelIdFromConfig();
-    bool    bCfgCustomStreaming = FChatSession::GetCustomStreamingFromConfig();
-
     // ---- Provider dropdown data ----
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
     TSharedPtr<TArray<TSharedPtr<FString>>> ProviderOptions = MakeShared<TArray<TSharedPtr<FString>>>();
@@ -1883,8 +1861,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         ProviderOptions->Add(MakeShared<FString>(Info.DisplayName));
 
     ELLMProvider CurrentProvider = FChatSession::GetProviderFromConfig();
-    FString CurrentProviderName = CurrentProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter")
-        : CurrentProvider == ELLMProvider::OpenAICompatible ? TEXT("OpenAI Compatible") : TEXT("VibeUE");
+    FString CurrentProviderName = CurrentProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") : TEXT("VibeUE");
     TSharedPtr<FString> SelectedProvider;
     for (const TSharedPtr<FString>& Opt : *ProviderOptions)
         if (Opt.IsValid() && *Opt == CurrentProviderName) { SelectedProvider = Opt; break; }
@@ -1892,41 +1869,8 @@ FReply SAIChatWindow::OnSettingsClicked()
         SelectedProvider = (*ProviderOptions)[0];
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
 
-    // ---- Auth mode dropdown data ----
-    TSharedPtr<TArray<TSharedPtr<FString>>> AuthModeOptions = MakeShared<TArray<TSharedPtr<FString>>>();
-    AuthModeOptions->Add(MakeShared<FString>(TEXT("Bearer")));
-    AuthModeOptions->Add(MakeShared<FString>(TEXT("X-API-Key")));
-    AuthModeOptions->Add(MakeShared<FString>(TEXT("None (local)")));
-    FString CfgAuthModeStr = CfgAuthMode == ECustomAuthMode::Bearer ? TEXT("Bearer")
-        : CfgAuthMode == ECustomAuthMode::XApiKey ? TEXT("X-API-Key") : TEXT("None (local)");
-    TSharedPtr<FString> SelectedAuthMode;
-    for (const TSharedPtr<FString>& Opt : *AuthModeOptions)
-        if (Opt.IsValid() && *Opt == CfgAuthModeStr) { SelectedAuthMode = Opt; break; }
-    if (!SelectedAuthMode.IsValid()) SelectedAuthMode = (*AuthModeOptions)[2];
-    TSharedPtr<TSharedPtr<FString>> SelectedAuthModePtr = MakeShared<TSharedPtr<FString>>(SelectedAuthMode);
-
     // ---- Tab state ----
     TSharedPtr<int32> ActiveTab = MakeShared<int32>(0);
-
-    // ---- Pre-build Self-Hosted widgets so preset button lambdas can reference them ----
-    SAssignNew(CustomEndpointInput, SEditableTextBox)
-        .Text(FText::FromString(CfgCustomEndpoint))
-        .HintText(FText::FromString(TEXT("http://localhost:11434/v1/chat/completions")));
-    SAssignNew(CustomApiKeyInput, SEditableTextBox)
-        .Text(FText::FromString(CfgCustomApiKey))
-        .IsPassword(true);
-    SAssignNew(CustomModelIdInput, SEditableTextBox)
-        .Text(FText::FromString(CfgCustomModelId))
-        .HintText(FText::FromString(TEXT("e.g. llama3.2, mistral, gpt-4o")));
-    SAssignNew(CustomStreamingCheckBox, SCheckBox)
-        .IsChecked(bCfgCustomStreaming ? ECheckBoxState::Checked : ECheckBoxState::Unchecked);
-    SAssignNew(TestConnectionStatusText, STextBlock)
-        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10));
-    TSharedPtr<STextBlock> PresetInfoText;
-    SAssignNew(PresetInfoText, STextBlock)
-        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
-        .ColorAndOpacity(FLinearColor(0.7f, 0.85f, 1.0f, 1.0f))
-        .AutoWrapText(true);
 
     // ============================================================
     // TAB 0: API Keys
@@ -1988,341 +1932,9 @@ FReply SAIChatWindow::OnSettingsClicked()
             ]
         ];
 
-    // ============================================================
-    // TAB 1: Self-Hosted (OpenAI-compatible endpoint)
-    // ============================================================
-    TSharedRef<SWidget> Tab_SelfHosted =
-        SNew(SScrollBox)
-        + SScrollBox::Slot().Padding(12, 12, 12, 0)
-        [
-            SNew(SVerticalBox)
-            // Active-provider toggle — placed first so it is never missed
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 14)
-            [
-                SNew(SBorder)
-                .BorderBackgroundColor(FLinearColor(0.08f, 0.18f, 0.08f, 1.0f))
-                .Padding(10, 8)
-                [
-                    SNew(SHorizontalBox)
-                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
-                    [
-                        SAssignNew(UseAsActiveProviderCheckBox, SCheckBox)
-                        .IsChecked(CurrentProvider == ELLMProvider::OpenAICompatible
-                            ? ECheckBoxState::Checked
-                            : ECheckBoxState::Unchecked)
-                    ]
-                    + SHorizontalBox::Slot().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
-                    [
-                        SNew(STextBlock)
-                        .Text(FText::FromString(TEXT("Use Self-Hosted as active LLM provider")))
-                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-                        .ToolTipText(FText::FromString(TEXT("When checked, VibeUE sends messages to your configured endpoint below. Uncheck to fall back to the provider selected on the General tab.")))
-                    ]
-                ]
-            ]
-            // Quick presets row
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Quick Setup:")))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-            ]
-            // Row 1: Ollama, LM Studio, vLLM, OpenAI
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("Ollama")))
-                    .ToolTipText(FText::FromString(TEXT("Ollama local server — localhost:11434, no auth. Defaults to llama3.1:8b (128K context, reliable tool calling). Run: ollama pull llama3.1:8b")))
-                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:11434/v1/chat/completions")));
-                        if (CustomModelIdInput.IsValid())
-                            CustomModelIdInput->SetText(FText::FromString(TEXT("llama3.1:8b")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(
-                                TEXT("Install Ollama from ollama.com, then run in a terminal:\n")
-                                TEXT("  ollama pull llama3.1:8b    (~4.7 GB, recommended)\n\n")
-                                TEXT("Other supported models: llama3.1, llama3.3:70b, qwen2.5:7b, qwen2.5-coder:7b, mistral-nemo:12b\n")
-                                TEXT("Hit \"Test Connection\" after Ollama is running to verify.")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("LM Studio")))
-                    .ToolTipText(FText::FromString(TEXT("LM Studio local server — localhost:1234, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:1234/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("Download LM Studio from lmstudio.ai — load a model, then start the local server from the Developer tab.")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("vLLM")))
-                    .ToolTipText(FText::FromString(TEXT("vLLM server — localhost:8000, Bearer auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8000/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("Bearer")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("pip install vllm — start with: python -m vllm.entrypoints.openai.api_server --model <model-name>")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth()
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("OpenAI")))
-                    .ToolTipText(FText::FromString(TEXT("OpenAI API — api.openai.com, Bearer auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("https://api.openai.com/v1/chat/completions")));
-                        if (CustomModelIdInput.IsValid() && CustomModelIdInput->GetText().IsEmpty())
-                            CustomModelIdInput->SetText(FText::FromString(TEXT("gpt-4o")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("Bearer")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("Paste your OpenAI API key in the API Key field below. Get one at platform.openai.com/api-keys")));
-                        return FReply::Handled();
-                    })
-                ]
-            ]
-            // Row 2: SGLang, llama.cpp, oobabooga, LocalAI
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 16)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("SGLang")))
-                    .ToolTipText(FText::FromString(TEXT("SGLang high-throughput server — localhost:30000, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:30000/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("pip install sglang — start with: python -m sglang.launch_server --model-path <model>")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("llama.cpp")))
-                    .ToolTipText(FText::FromString(TEXT("llama.cpp server — localhost:8080, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("Build llama.cpp then run: ./llama-server -m <model.gguf> --port 8080 -c 16384")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("oobabooga")))
-                    .ToolTipText(FText::FromString(TEXT("text-generation-webui (oobabooga) — localhost:5000, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:5000/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("In text-generation-webui: enable OpenAI extension and start the server with --extensions openai")));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().AutoWidth()
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("LocalAI")))
-                    .ToolTipText(FText::FromString(TEXT("LocalAI OpenAI drop-in — localhost:8080, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
-                        if (CustomEndpointInput.IsValid())
-                            CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
-                        for (auto& Opt : *AuthModeOptions)
-                            if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
-                        if (PresetInfoText.IsValid())
-                            PresetInfoText->SetText(FText::FromString(TEXT("localai.io — run with Docker: docker run -p 8080:8080 localai/localai:latest")));
-                        return FReply::Handled();
-                    })
-                ]
-            ]
-            // Preset info text (shown when a preset button is clicked)
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 10)
-            [ PresetInfoText.ToSharedRef() ]
-            // Endpoint URL
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Endpoint URL:")))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
-            [ CustomEndpointInput.ToSharedRef() ]
-            // Auth Mode
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Authentication:")))
-                .ToolTipText(FText::FromString(TEXT("Bearer = Authorization: Bearer <key>  |  X-API-Key = X-API-Key: <key>  |  None = no auth (Ollama, LM Studio)")))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
-            [
-                SNew(SComboBox<TSharedPtr<FString>>)
-                .OptionsSource(AuthModeOptions.Get())
-                .InitiallySelectedItem(*SelectedAuthModePtr)
-                .OnSelectionChanged_Lambda([SelectedAuthModePtr, AuthModeOptions](TSharedPtr<FString> NewSel, ESelectInfo::Type)
-                {
-                    if (NewSel.IsValid()) *SelectedAuthModePtr = NewSel;
-                })
-                .OnGenerateWidget_Lambda([AuthModeOptions](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
-                {
-                    return SNew(STextBlock).Text(Item.IsValid() ? FText::FromString(*Item) : FText::GetEmpty());
-                })
-                .Content()
-                [
-                    SNew(STextBlock)
-                    .Text_Lambda([SelectedAuthModePtr]() -> FText {
-                        return SelectedAuthModePtr->IsValid() ? FText::FromString(**SelectedAuthModePtr) : FText::GetEmpty();
-                    })
-                ]
-            ]
-            // API Key
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("API Key (leave empty for None auth):")))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
-            [ CustomApiKeyInput.ToSharedRef() ]
-            // Model ID
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Model ID (optional — overrides model selector):")))
-                .ToolTipText(FText::FromString(TEXT("Force a specific model. Leave empty to use the model dropdown above the chat.")))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
-            [ CustomModelIdInput.ToSharedRef() ]
-            // Streaming toggle
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 12)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()
-                [ CustomStreamingCheckBox.ToSharedRef() ]
-                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("Enable Streaming (SSE)")))
-                    .ToolTipText(FText::FromString(TEXT("Stream tokens as they are generated. Disable if your server doesn't support SSE.")))
-                ]
-            ]
-            // Test Connection
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
-            [
-                SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 10, 0)
-                [
-                    SNew(SButton).Text(FText::FromString(TEXT("Test Connection")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, CustomApiKeyInput, TestConnectionStatusText]() -> FReply
-                    {
-                        if (TestConnectionStatusText.IsValid())
-                            TestConnectionStatusText->SetText(FText::FromString(TEXT("Testing...")));
-                        TSharedPtr<FOpenAICompatibleClient> TempClient = MakeShared<FOpenAICompatibleClient>();
-                        TempClient->SetEndpointUrl(CustomEndpointInput.IsValid() ? CustomEndpointInput->GetText().ToString() : TEXT(""));
-                        TempClient->SetApiKey(CustomApiKeyInput.IsValid() ? CustomApiKeyInput->GetText().ToString() : TEXT(""));
-                        if (SelectedAuthModePtr->IsValid())
-                        {
-                            FString AuthStr = **SelectedAuthModePtr;
-                            if      (AuthStr == TEXT("Bearer"))    TempClient->SetAuthMode(ECustomAuthMode::Bearer);
-                            else if (AuthStr == TEXT("X-API-Key")) TempClient->SetAuthMode(ECustomAuthMode::XApiKey);
-                            else                                   TempClient->SetAuthMode(ECustomAuthMode::None);
-                        }
-                        TempClient->FetchModels(FOnLLMModelsFetched::CreateLambda(
-                            [TestConnectionStatusText, TempClient](bool bSuccess, const TArray<FOpenRouterModel>& Models)
-                            {
-                                if (!TestConnectionStatusText.IsValid()) return;
-                                if (bSuccess && Models.Num() > 0)
-                                {
-                                    // Check if any detected model is known to support tool calling
-                                    static const TArray<FString> ToolCapablePatterns = {
-                                        TEXT("llama3.1"), TEXT("llama3.2"), TEXT("llama3.3"),
-                                        TEXT("qwen2.5"), TEXT("qwen2"),
-                                        TEXT("mistral"), TEXT("command-r"),
-                                        TEXT("phi4"), TEXT("phi3.5"),
-                                        TEXT("gpt-"), TEXT("claude-"),
-                                        TEXT("firefunction"), TEXT("nemotron"),
-                                        TEXT("smollm2"), TEXT("deepseek")
-                                    };
-                                    bool bHasSupportedModel = false;
-                                    for (const FOpenRouterModel& M : Models)
-                                    {
-                                        for (const FString& Pattern : ToolCapablePatterns)
-                                        {
-                                            if (M.Id.Contains(Pattern, ESearchCase::IgnoreCase))
-                                            {
-                                                bHasSupportedModel = true;
-                                                break;
-                                            }
-                                        }
-                                        if (bHasSupportedModel) break;
-                                    }
-
-                                    // Show up to 3 model names
-                                    FString ModelList;
-                                    int32 ShowCount = FMath::Min(Models.Num(), 3);
-                                    for (int32 i = 0; i < ShowCount; i++)
-                                    {
-                                        if (i > 0) ModelList += TEXT(", ");
-                                        ModelList += Models[i].Id;
-                                    }
-                                    if (Models.Num() > 3)
-                                        ModelList += FString::Printf(TEXT(" (+%d more)"), Models.Num() - 3);
-
-                                    if (bHasSupportedModel)
-                                    {
-                                        TestConnectionStatusText->SetText(FText::FromString(
-                                            FString::Printf(TEXT("✅ Connected — %s"), *ModelList)));
-                                    }
-                                    else
-                                    {
-                                        TestConnectionStatusText->SetText(FText::FromString(
-                                            FString::Printf(TEXT("⚠️ Connected but no tool-capable models found (%s).\nRun: ollama pull llama3.1:8b"), *ModelList)));
-                                    }
-                                }
-                                else if (bSuccess && Models.Num() == 0)
-                                {
-                                    // Server is up but no models installed yet
-                                    TestConnectionStatusText->SetText(FText::FromString(
-                                        TEXT("⚠️ Server running — no models installed.\nRun: ollama pull llama3.1:8b")));
-                                }
-                                else
-                                {
-                                    TestConnectionStatusText->SetText(FText::FromString(
-                                        TEXT("❌ Cannot connect — is the server running?\nCheck the Endpoint URL or start your local server first.")));
-                                }
-                            }
-                        ));
-                        return FReply::Handled();
-                    })
-                ]
-                + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
-                [ TestConnectionStatusText.ToSharedRef() ]
-            ]
-        ];
 
     // ============================================================
-    // TAB 2: General
+    // TAB 1: General
     // ============================================================
     TSharedRef<SWidget> Tab_General =
         SNew(SScrollBox)
@@ -2533,10 +2145,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     // TAB 4: MCP Server
     // ============================================================
 
-    // Pre-build ProxyEnabledCheckBox so the sub-section visibility lambda can capture it
-    SAssignNew(ProxyEnabledCheckBox, SCheckBox)
-        .IsChecked(bProxyEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked);
-
     TSharedRef<SWidget> Tab_MCPServer =
         SNew(SScrollBox)
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
@@ -2633,126 +2241,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 ]
             ]
 
-            // ================================================================
-            // MCP Proxy sub-section
-            // ================================================================
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
-            [
-                SNew(SBorder)
-                .BorderImage(FCoreStyle::Get().GetBrush("ToolPanel.GroupBorder"))
-                .Padding(FMargin(10, 8))
-                [
-                    SNew(SVerticalBox)
-
-                    // Header: Enable MCP Proxy
-                    + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
-                    [
-                        SNew(SHorizontalBox)
-                        + SHorizontalBox::Slot().AutoWidth()
-                        [ ProxyEnabledCheckBox.ToSharedRef() ]
-                        + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
-                        [
-                            SNew(STextBlock)
-                            .Text(FText::FromString(TEXT("Enable MCP Proxy")))
-                            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
-                            .ToolTipText(FText::FromString(TEXT("Run the Python proxy (port 8089 → 8088) so Claude Code can reach UE tools.")))
-                        ]
-                    ]
-
-                    // Proxy sub-fields — shown only when proxy is enabled
-                    + SVerticalBox::Slot().AutoHeight()
-                    [
-                        SNew(SVerticalBox)
-                        .Visibility_Lambda([ProxyEnabledCheckBox]() -> EVisibility {
-                            return (ProxyEnabledCheckBox.IsValid() && ProxyEnabledCheckBox->IsChecked())
-                                ? EVisibility::Visible : EVisibility::Collapsed;
-                        })
-
-                        // Port
-                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
-                        [
-                            SNew(SHorizontalBox)
-                            + SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)
-                            [ SNew(STextBlock).Text(FText::FromString(TEXT("Proxy Port:"))).ToolTipText(FText::FromString(TEXT("Port the proxy listens on. Default: 8089. Claude Code MCP config must match."))) ]
-                            + SHorizontalBox::Slot().FillWidth(0.6f)
-                            [
-                                SAssignNew(ProxyPortSpinBox, SSpinBox<int32>)
-                                .MinValue(1024).MaxValue(65535).Delta(1).Value(ProxyPort).MinDesiredWidth(100)
-                            ]
-                        ]
-
-                        // Python path
-                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 2)
-                        [ SNew(STextBlock).Text(FText::FromString(TEXT("Python Path:"))).ToolTipText(FText::FromString(TEXT("Path to the python executable. Leave empty to use 'python' from system PATH."))) ]
-                        + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
-                        [
-                            SAssignNew(ProxyPythonPathInput, SEditableTextBox)
-                            .Text(FText::FromString(ProxyPythonPath))
-                            .HintText(FText::FromString(TEXT("python  (leave empty for system default)")))
-                        ]
-
-                        // Auto-start
-                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 8)
-                        [
-                            SNew(SHorizontalBox)
-                            + SHorizontalBox::Slot().AutoWidth()
-                            [
-                                SAssignNew(ProxyAutoStartCheckBox, SCheckBox)
-                                .IsChecked(bProxyAutoStart ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-                            ]
-                            + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
-                            [
-                                SNew(STextBlock)
-                                .Text(FText::FromString(TEXT("Auto-start when editor opens")))
-                                .ToolTipText(FText::FromString(TEXT("Automatically launch the proxy when Unreal Editor starts. Skips start if already running.")))
-                            ]
-                        ]
-
-                        // Proxy status + Start/Stop buttons
-                        + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
-                        [
-                            SNew(SHorizontalBox)
-                            + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
-                            [
-                                SNew(STextBlock)
-                                .Text_Lambda([]() -> FText {
-                                    bool bUp = FMCPServer::Get().IsProxyRunning();
-                                    int32 Port = FMCPServer::GetProxyPortFromConfig();
-                                    return bUp
-                                        ? FText::FromString(FString::Printf(TEXT("Proxy: Running (port %d)"), Port))
-                                        : FText::FromString(TEXT("Proxy: Not running"));
-                                })
-                                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-                                .ColorAndOpacity_Lambda([]() -> FSlateColor {
-                                    return FMCPServer::Get().IsProxyRunning()
-                                        ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f))
-                                        : FSlateColor(VibeUEColors::TextMuted);
-                                })
-                            ]
-                            + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 4, 0)
-                            [
-                                SNew(SButton)
-                                .ContentPadding(FMargin(8, 3))
-                                .OnClicked_Lambda([]() -> FReply {
-                                    FMCPServer::Get().StartProxy();
-                                    return FReply::Handled();
-                                })
-                                [ SNew(STextBlock).Text(FText::FromString(TEXT("Start"))).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9)) ]
-                            ]
-                            + SHorizontalBox::Slot().AutoWidth()
-                            [
-                                SNew(SButton)
-                                .ContentPadding(FMargin(8, 3))
-                                .OnClicked_Lambda([]() -> FReply {
-                                    FMCPServer::Get().StopProxy();
-                                    return FReply::Handled();
-                                })
-                                [ SNew(STextBlock).Text(FText::FromString(TEXT("Stop"))).Font(FCoreStyle::GetDefaultFontStyle("Regular", 9)) ]
-                            ]
-                        ]
-                    ]
-                ]
-            ]
+            // TODO: MCP Proxy sub-section — stripped out temporarily, to be re-added and fleshed out
         ];
 
     // ============================================================
@@ -2808,7 +2297,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     TSharedPtr<SWidgetSwitcher> TabSwitcher = SNew(SWidgetSwitcher)
         + SWidgetSwitcher::Slot()[ Tab_APIKeys ]
-        + SWidgetSwitcher::Slot()[ Tab_SelfHosted ]
         + SWidgetSwitcher::Slot()[ Tab_General ]
         + SWidgetSwitcher::Slot()[ Tab_Voice ]
         + SWidgetSwitcher::Slot()[ Tab_MCPServer ]
@@ -2839,61 +2327,26 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Save lambda — captures all widget pointers
     // ============================================================
     auto SaveLambda = [this, VibeUEApiKeyInput, OpenRouterApiKeyInput,
-        CustomEndpointInput, CustomApiKeyInput, CustomModelIdInput, CustomStreamingCheckBox,
-        UseAsActiveProviderCheckBox,
-        SelectedAuthModePtr, AuthModeOptions, SelectedProviderPtr, AvailableProvidersList,
+        SelectedProviderPtr, AvailableProvidersList,
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
         TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
         MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput,
-        ProxyEnabledCheckBox, ProxyPortSpinBox, ProxyPythonPathInput, ProxyAutoStartCheckBox,
         SettingsWindow]() mutable -> FReply
     {
         // ---- API Keys ----
         ChatSession->SetVibeUEApiKey(VibeUEApiKeyInput->GetText().ToString());
         ChatSession->SetApiKey(OpenRouterApiKeyInput->GetText().ToString());
 
-        // ---- Self-Hosted / Custom client ----
-        FString NewEndpoint = CustomEndpointInput->GetText().ToString();
-        FChatSession::SaveCustomEndpointToConfig(NewEndpoint);
-        ChatSession->GetCustomClient()->SetEndpointUrl(NewEndpoint);
-
-        ChatSession->SetCustomApiKey(CustomApiKeyInput->GetText().ToString());
-
-        if (SelectedAuthModePtr->IsValid())
-        {
-            FString AuthStr = **SelectedAuthModePtr;
-            ECustomAuthMode NewAuthMode = ECustomAuthMode::None;
-            if      (AuthStr == TEXT("Bearer"))    NewAuthMode = ECustomAuthMode::Bearer;
-            else if (AuthStr == TEXT("X-API-Key")) NewAuthMode = ECustomAuthMode::XApiKey;
-            FChatSession::SaveCustomAuthModeToConfig(NewAuthMode);
-            ChatSession->GetCustomClient()->SetAuthMode(NewAuthMode);
-        }
-
-        FString NewModelId = CustomModelIdInput->GetText().ToString();
-        FChatSession::SaveCustomModelIdToConfig(NewModelId);
-        ChatSession->GetCustomClient()->SetConfiguredModelId(NewModelId);
-
-        bool bNewStreaming = CustomStreamingCheckBox->IsChecked();
-        FChatSession::SaveCustomStreamingToConfig(bNewStreaming);
-        ChatSession->GetCustomClient()->SetStreamingEnabled(bNewStreaming);
-
         // ---- Provider ----
-        // The Self-Hosted checkbox takes precedence: if it is ticked the user clearly
-        // intends to use their configured endpoint regardless of what the General tab shows.
         ELLMProvider NewProvider = ELLMProvider::VibeUE;
-        if (UseAsActiveProviderCheckBox.IsValid() && UseAsActiveProviderCheckBox->IsChecked())
-        {
-            NewProvider = ELLMProvider::OpenAICompatible;
-        }
-        else if (SelectedProviderPtr->IsValid())
+        if (SelectedProviderPtr->IsValid())
         {
             FString SelName = **SelectedProviderPtr;
             for (const FLLMProviderInfo& Info : AvailableProvidersList)
             {
                 if (Info.DisplayName == SelName)
                 {
-                    if      (Info.Id == TEXT("OpenRouter"))        NewProvider = ELLMProvider::OpenRouter;
-                    else if (Info.Id == TEXT("OpenAICompatible"))  NewProvider = ELLMProvider::OpenAICompatible;
+                    if (Info.Id == TEXT("OpenRouter")) NewProvider = ELLMProvider::OpenRouter;
                     break;
                 }
             }
@@ -2923,12 +2376,6 @@ FReply SAIChatWindow::OnSettingsClicked()
         MCPServer.LoadConfig();
         if (bNewMCPEnabled) MCPServer.Start();
 
-        // ---- MCP Proxy ----
-        bool bNewProxyEnabled = ProxyEnabledCheckBox->IsChecked();
-        FMCPServer::SaveProxyEnabledToConfig(bNewProxyEnabled);
-        if (ProxyPortSpinBox.IsValid())    FMCPServer::SaveProxyPortToConfig(ProxyPortSpinBox->GetValue());
-        if (ProxyPythonPathInput.IsValid()) FMCPServer::SaveProxyPythonPathToConfig(ProxyPythonPathInput->GetText().ToString());
-        if (ProxyAutoStartCheckBox.IsValid()) FMCPServer::SaveProxyAutoStartToConfig(ProxyAutoStartCheckBox->IsChecked());
         // Sync vibeue-proxy.json so a running proxy picks up token/port changes on next start
         MCPServer.WriteProxyConfigJson();
 
@@ -2955,8 +2402,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         GConfig->Flush(false, GEditorPerProjectIni);
         UpdateModelDropdownForProvider();
 
-        FString ProviderName = NewProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter")
-            : NewProvider == ELLMProvider::OpenAICompatible ? TEXT("OpenAI Compatible") : TEXT("VibeUE API");
+        FString ProviderName = NewProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") : TEXT("VibeUE API");
         AddSystemNotification(FString::Printf(TEXT("✅ Settings saved — using %s"), *ProviderName));
 
         SettingsWindow->RequestDestroyWindow();
@@ -2976,12 +2422,11 @@ FReply SAIChatWindow::OnSettingsClicked()
             .BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f))
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),    0) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Self-Hosted"), 1) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),     2) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),       3) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"),  4) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),       5) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),   0) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),    1) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),      2) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"), 3) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),      4) ]
             ]
         ]
         // Tab content
@@ -3131,7 +2576,7 @@ FText SAIChatWindow::GetSelectedModelText() const
 
 void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
 {
-    UE_LOG(LogAIChatWindow, Log, TEXT("[HandleMessageAdded] Role: %s, Content length: %d"), *Message.Role, Message.Content.Len());
+    UE_LOG(LogAIChatWindow, Verbose, TEXT("[HandleMessageAdded] Role: %s, Content length: %d"), *Message.Role, Message.Content.Len());
     
     // Don't process empty streaming assistant messages - they're just placeholders
     if (Message.Role == TEXT("assistant") && Message.bIsStreaming && Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
@@ -3551,10 +2996,7 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
     }
 
     // ---- OpenAI Compatible -----------------------------------------------
-    // Model is entered manually in the Self-Hosted settings tab; we do not
-    // hit /v1/models because many local servers (Ollama, LM Studio, etc.)
-    // either do not implement it or return non-standard schemas.  Show a
-    // single stub entry whose display name reflects the configured model ID.
+    // Model ID is configured via config; show a single stub entry.
     if (ChatSession->GetCurrentProvider() == ELLMProvider::OpenAICompatible)
     {
         AvailableModels.Empty();
@@ -3566,7 +3008,7 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
         TSharedPtr<FOpenRouterModel> CustomModelPtr = MakeShared<FOpenRouterModel>();
         CustomModelPtr->Id            = ConfiguredId;
         CustomModelPtr->Name          = ConfiguredId.IsEmpty()
-            ? TEXT("Self-Hosted (set Model ID in Settings → Self-Hosted)")
+            ? TEXT("OpenAI Compatible (no model configured)")
             : ConfiguredId;
         CustomModelPtr->bSupportsTools = true;
         CustomModelPtr->ContextLength  = 0; // Unknown for arbitrary custom servers
@@ -3797,7 +3239,7 @@ void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, co
     // Check YOLO mode to determine if we need approval buttons or just a code preview
     bool bYoloMode = FChatSession::IsYoloModeEnabled();
     
-    CHAT_LOG(Log, TEXT("Tool call code preview: %s (id=%s, yolo=%s)"), *ToolCall.ToolName, *ToolCallId, bYoloMode ? TEXT("on") : TEXT("off"));
+    CHAT_LOG(Verbose, TEXT("Tool call code preview: %s (id=%s, yolo=%s)"), *ToolCall.ToolName, *ToolCallId, bYoloMode ? TEXT("on") : TEXT("off"));
     
     if (!bYoloMode)
     {

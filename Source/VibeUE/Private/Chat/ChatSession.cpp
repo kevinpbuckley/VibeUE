@@ -163,7 +163,7 @@ void FChatSession::SendMessage(const FString& UserMessage)
     Messages.Add(UserMsg);
     
     // Log user message content
-    CHAT_SESSION_LOG(Log, TEXT("[USER MESSAGE] %s"), *UserMessage);
+    CHAT_SESSION_LOG(Verbose, TEXT("[USER MESSAGE] %s"), *UserMessage);
     
     if (IsDebugModeEnabled())
     {
@@ -192,11 +192,6 @@ void FChatSession::SendMessage(const FString& UserMessage)
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
     
-    // Log the actual tool names being sent
-    for (const FMCPTool& Tool : Tools)
-    {
-        CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
-    }
 
     // Notify UI that LLM thinking has started
     OnLLMThinkingStarted.ExecuteIfBound();
@@ -288,7 +283,7 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     Messages.Add(UserMsg);
 
     // Log user message content
-    CHAT_SESSION_LOG(Log, TEXT("[USER MESSAGE WITH IMAGE] %s"), *UserMsg.Content);
+    CHAT_SESSION_LOG(Verbose, TEXT("[USER MESSAGE WITH IMAGE] %s"), *UserMsg.Content);
 
     if (IsDebugModeEnabled())
     {
@@ -317,11 +312,6 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM WITH IMAGE] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
 
-    // Log the actual tool names being sent
-    for (const FMCPTool& Tool : Tools)
-    {
-        CHAT_SESSION_LOG(Log, TEXT("  -> Tool: %s"), *Tool.Name);
-    }
 
     // Notify UI that LLM thinking has started
     OnLLMThinkingStarted.ExecuteIfBound();
@@ -429,7 +419,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
 
             if (!Accumulated.IsEmpty())
             {
-                UE_LOG(LogChatSession, Log, TEXT("Populating assistant message from accumulated response (%d chars)"), Accumulated.Len());
+                UE_LOG(LogChatSession, Verbose, TEXT("Populating assistant message from accumulated response (%d chars)"), Accumulated.Len());
                 Message.Content = Accumulated;
             }
         }
@@ -441,11 +431,12 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             Message.Content = TEXT("No response received from the model.");
         }
 
-        // Log complete assistant response
+        // Log assistant response (truncated)
         if (!Message.Content.IsEmpty())
         {
-            CHAT_SESSION_LOG(Log, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s"), 
-                Message.Content.Len(), *Message.Content);
+            CHAT_SESSION_LOG(Verbose, TEXT("[ASSISTANT RESPONSE] Complete content (%d chars): %s%s"),
+                Message.Content.Len(), *Message.Content.Left(120),
+                Message.Content.Len() > 120 ? TEXT("…") : TEXT(""));
         }
         
         // Capture actual model used (populated by VibeUE backend when auto-routing)
@@ -514,9 +505,9 @@ void FChatSession::OnStreamError(const FString& ErrorMessage)
 
 void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
 {
-    // Log tool call with full details
-    CHAT_SESSION_LOG(Log, TEXT("[TOOL CALL] Tool: %s, ID: %s, Arguments: %s"), 
-        *ToolCall.ToolName, *ToolCall.Id, *ToolCall.ArgumentsJson);
+    CHAT_SESSION_LOG(Verbose, TEXT("[TOOL CALL] Tool: %s, ID: %s, Args: %s%s"),
+        *ToolCall.ToolName, *ToolCall.Id, *ToolCall.ArgumentsJson.Left(120),
+        ToolCall.ArgumentsJson.Len() > 120 ? TEXT("…") : TEXT(""));
     
     if (IsDebugModeEnabled())
     {
@@ -524,14 +515,14 @@ void FChatSession::OnToolCall(const FMCPToolCall& ToolCall)
     }
     else
     {
-        UE_LOG(LogChatSession, Log, TEXT("Tool call received: %s"), *ToolCall.ToolName);
+        UE_LOG(LogChatSession, Verbose, TEXT("Tool call received: %s"), *ToolCall.ToolName);
     }
     
     // Increment pending tool call count
     // Note: Don't check MCPClient here - reflection tools work without it
     // ExecuteNextToolInQueue will route to the appropriate handler
     PendingToolCallCount++;
-    UE_LOG(LogChatSession, Log, TEXT("Pending tool calls: %d (queue size: %d)"), PendingToolCallCount, ToolCallQueue.Num() + 1);
+    UE_LOG(LogChatSession, Verbose, TEXT("Pending tool calls: %d (queue size: %d)"), PendingToolCallCount, ToolCallQueue.Num() + 1);
     
     // Update the current assistant message to include tool call info
     if (CurrentStreamingMessageIndex != INDEX_NONE && Messages.IsValidIndex(CurrentStreamingMessageIndex))
@@ -572,20 +563,20 @@ void FChatSession::ExecuteNextToolInQueue()
     {
         bIsExecutingTool = false;
         
-        UE_LOG(LogChatSession, Log, TEXT("ExecuteNextToolInQueue: Queue empty, PendingToolCallCount=%d"), PendingToolCallCount);
+        UE_LOG(LogChatSession, Verbose, TEXT("ExecuteNextToolInQueue: Queue empty, PendingToolCallCount=%d"), PendingToolCallCount);
         
         // All tools executed - check if we should send follow-up
         if (PendingToolCallCount <= 0)
         {
             PendingToolCallCount = 0; // Safety reset
             
-            UE_LOG(LogChatSession, Log, TEXT("All tool calls completed - checking summarization before follow-up"));
+            UE_LOG(LogChatSession, Verbose, TEXT("All tool calls completed - checking summarization before follow-up"));
             
             // Check if summarization is needed after tool results (they can be large)
             TriggerSummarizationIfNeeded();
             
             // Log summarization state
-            UE_LOG(LogChatSession, Log, TEXT("After TriggerSummarizationIfNeeded: bIsSummarizing=%s, bPendingFollowUpAfterSummarization=%s"), 
+            UE_LOG(LogChatSession, Verbose, TEXT("After TriggerSummarizationIfNeeded: bIsSummarizing=%s, bPendingFollowUpAfterSummarization=%s"),
                 bIsSummarizing ? TEXT("true") : TEXT("false"),
                 bPendingFollowUpAfterSummarization ? TEXT("true") : TEXT("false"));
             
@@ -605,7 +596,7 @@ void FChatSession::ExecuteNextToolInQueue()
     FMCPToolCall ToolCall = ToolCallQueue[0];
     ToolCallQueue.RemoveAt(0);
     
-    UE_LOG(LogChatSession, Log, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
+    UE_LOG(LogChatSession, Verbose, TEXT("Executing tool: %s (remaining in queue: %d)"), *ToolCall.ToolName, ToolCallQueue.Num());
     
     // === MALFORMED ARGUMENTS CHECK ===
     // If the LLM sent invalid JSON for tool arguments, return an immediate error
@@ -626,7 +617,7 @@ void FChatSession::ExecuteNextToolInQueue()
         Messages.Add(ToolResultMsg);
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
         
-        CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: false, Result: malformed arguments JSON"), 
+        CHAT_SESSION_LOG(Verbose, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: false, Result: malformed arguments JSON"),
             *ToolCall.ToolName, *ToolCall.Id);
         
         PendingToolCallCount--;
@@ -656,7 +647,7 @@ void FChatSession::ExecuteNextToolInQueue()
         {
             // YOLO off: pause execution and wait for user to approve/reject
             PendingApprovalToolCall = ToolCall;
-            UE_LOG(LogChatSession, Log, TEXT("execute_python_code requires approval (YOLO mode off). Waiting for user."));
+            UE_LOG(LogChatSession, Verbose, TEXT("execute_python_code requires approval (YOLO mode off). Waiting for user."));
             return;
         }
         else
@@ -673,7 +664,7 @@ void FChatSession::ExecuteNextToolInQueue()
     if (ReflectionTool)
     {
         // Execute via reflection
-        UE_LOG(LogChatSession, Log, TEXT("Executing reflection tool: %s"), *ToolCall.ToolName);
+        UE_LOG(LogChatSession, Verbose, TEXT("Executing reflection tool: %s"), *ToolCall.ToolName);
         
         // Convert arguments to parameter map
         TMap<FString, FString> Parameters;
@@ -778,11 +769,10 @@ void FChatSession::ExecuteNextToolInQueue()
             }
         }
         
-        // Debug: Log all parameters before execution
-        UE_LOG(LogChatSession, Log, TEXT("Final parameters for tool %s:"), *ToolCall.ToolName);
+        UE_LOG(LogChatSession, Verbose, TEXT("Final parameters for tool %s:"), *ToolCall.ToolName);
         for (const auto& Pair : Parameters)
         {
-            UE_LOG(LogChatSession, Log, TEXT("  %s = %s"), *Pair.Key, *Pair.Value);
+            UE_LOG(LogChatSession, Verbose, TEXT("  %s = %s"), *Pair.Key, *Pair.Value);
         }
         
         // Set session context so internal tools can access the session
@@ -825,7 +815,7 @@ void FChatSession::ExecuteNextToolInQueue()
             LogContent = LogContent.Left(2000) + TEXT("... [truncated for logging, full result sent to LLM]");
         }
         
-        CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: true, Result: %s"), 
+        CHAT_SESSION_LOG(Verbose, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: true, Result: %s"),
             *ToolCall.ToolName, *ToolCall.Id, *LogContent);
         
         FString TruncatedContent = SmartTruncateToolResult(ResultContent, ToolCall.ToolName);
@@ -835,12 +825,12 @@ void FChatSession::ExecuteNextToolInQueue()
         OnMessageAdded.ExecuteIfBound(ToolResultMsg);
         
         PendingToolCallCount--;
-        UE_LOG(LogChatSession, Log, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
+        UE_LOG(LogChatSession, Verbose, TEXT("Internal tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
         
         // IMPORTANT: Defer to next tick to ensure the HTTP callback completes cleanly
         // Internal tools execute synchronously which can cause issues if we immediately
         // start a new HTTP request while still inside the previous callback's stack
-        UE_LOG(LogChatSession, Log, TEXT("Internal tool: Deferring ExecuteNextToolInQueue to next tick"));
+        UE_LOG(LogChatSession, Verbose, TEXT("Internal tool: Deferring ExecuteNextToolInQueue to next tick"));
         
         // Use a weak pointer to avoid accessing 'this' if session is destroyed
         TWeakPtr<FChatSession> WeakSession = AsShared();
@@ -848,7 +838,7 @@ void FChatSession::ExecuteNextToolInQueue()
         {
             if (TSharedPtr<FChatSession> StrongSession = WeakSession.Pin())
             {
-                UE_LOG(LogChatSession, Log, TEXT("Internal tool: Executing deferred ExecuteNextToolInQueue - PendingToolCallCount=%d, QueueSize=%d"), 
+                UE_LOG(LogChatSession, Verbose, TEXT("Internal tool: Executing deferred ExecuteNextToolInQueue - PendingToolCallCount=%d, QueueSize=%d"),
                     StrongSession->PendingToolCallCount, StrongSession->ToolCallQueue.Num());
                 StrongSession->ExecuteNextToolInQueue();
             }
@@ -909,8 +899,8 @@ void FChatSession::ExecuteNextToolInQueue()
                 LogContent = LogContent.Left(2000) + TEXT("... [truncated for logging, full result sent to LLM]");
             }
             
-            CHAT_SESSION_LOG(Log, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: %s, Result: %s"), 
-                *ToolCallCopy.ToolName, *ToolCallCopy.Id, 
+            CHAT_SESSION_LOG(Verbose, TEXT("[TOOL RESULT] Tool: %s, ID: %s, Success: %s, Result: %s"),
+                *ToolCallCopy.ToolName, *ToolCallCopy.Id,
                 bSuccess ? TEXT("true") : TEXT("false"), *LogContent);
             
             UE_LOG(LogChatSession, Log, TEXT("Tool result for %s: success=%d, content length=%d"), 
@@ -2239,11 +2229,11 @@ void FChatSession::InitializeMCP()
     MCPClient->DiscoverTools(FOnToolsDiscovered::CreateLambda([this](bool bSuccess, const TArray<FMCPTool>& MCPTools)
     {
         bMCPInitialized = true;
-        UE_LOG(LogChatSession, Log, TEXT("MCP initialized with %d MCP tools"), MCPTools.Num());
+        UE_LOG(LogChatSession, Verbose, TEXT("MCP initialized with %d MCP tools"), MCPTools.Num());
         
         // Report TOTAL tool count (internal + MCP), not just MCP
         int32 TotalToolCount = GetEnabledToolCount();
-        UE_LOG(LogChatSession, Log, TEXT("Total tools available: %d (internal + MCP)"), TotalToolCount);
+        UE_LOG(LogChatSession, Verbose, TEXT("Total tools available: %d (internal + MCP)"), TotalToolCount);
         OnToolsReady.ExecuteIfBound(bSuccess || TotalToolCount > 0, TotalToolCount);
     }));
 }
@@ -2700,7 +2690,7 @@ void FChatSession::ApplyLLMParametersToClient()
         VibeUEClient->SetMaxTokens(GetMaxTokensFromConfig());
         VibeUEClient->SetParallelToolCalls(bParallelToolCalls);
         
-        UE_LOG(LogChatSession, Log, TEXT("Applied LLM params to VibeUE: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
+        UE_LOG(LogChatSession, Verbose, TEXT("Applied LLM params to VibeUE: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
             VibeUEClient->GetTemperature(), VibeUEClient->GetTopP(), VibeUEClient->GetMaxTokens(),
             VibeUEClient->GetParallelToolCalls() ? TEXT("true") : TEXT("false"));
     }
@@ -2709,7 +2699,7 @@ void FChatSession::ApplyLLMParametersToClient()
     {
         OpenRouterClient->SetParallelToolCalls(bParallelToolCalls);
 
-        UE_LOG(LogChatSession, Log, TEXT("Applied parallel_tool_calls=%s to OpenRouter"),
+        UE_LOG(LogChatSession, Verbose, TEXT("Applied parallel_tool_calls=%s to OpenRouter"),
             bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 
@@ -2720,7 +2710,7 @@ void FChatSession::ApplyLLMParametersToClient()
         CustomClient->SetMaxTokens(GetMaxTokensFromConfig());
         CustomClient->SetParallelToolCalls(bParallelToolCalls);
 
-        UE_LOG(LogChatSession, Log, TEXT("Applied LLM params to OpenAICompatible: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
+        UE_LOG(LogChatSession, Verbose, TEXT("Applied LLM params to OpenAICompatible: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
             CustomClient->GetTemperature(), CustomClient->GetTopP(), CustomClient->GetMaxTokens(),
             CustomClient->GetParallelToolCalls() ? TEXT("true") : TEXT("false"));
     }
@@ -2995,7 +2985,7 @@ void FChatSession::InitializeInternalTools()
     }
     else
     {
-        UE_LOG(LogChatSession, Log, TEXT("ToolRegistry already initialized with %d tools"), Registry.GetAllTools().Num());
+        UE_LOG(LogChatSession, Verbose, TEXT("ToolRegistry already initialized with %d tools"), Registry.GetAllTools().Num());
     }
     
     // Load internal tools (will be cached)
@@ -3004,13 +2994,13 @@ void FChatSession::InitializeInternalTools()
     UE_LOG(LogChatSession, Log, TEXT("Internal tools initialized: %d tools available"), Tools.Num());
     for (const FMCPTool& Tool : Tools)
     {
-        UE_LOG(LogChatSession, Log, TEXT("  - %s: %s"), *Tool.Name, *Tool.Description);
+        UE_LOG(LogChatSession, Verbose, TEXT("  - %s: %s"), *Tool.Name, *Tool.Description);
     }
     
     // Notify UI that tools are ready (even if count is 0, so UI can update)
     int32 TotalToolCount = GetEnabledToolCount();
     OnToolsReady.ExecuteIfBound(true, TotalToolCount);
-    UE_LOG(LogChatSession, Log, TEXT("Notified UI: tools ready, count = %d"), TotalToolCount);
+    UE_LOG(LogChatSession, Verbose, TEXT("Notified UI: tools ready, count = %d"), TotalToolCount);
 }
 
 TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
