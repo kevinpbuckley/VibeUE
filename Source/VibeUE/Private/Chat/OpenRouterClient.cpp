@@ -74,17 +74,13 @@ FString FOpenRouterClient::GetDefaultSystemPrompt()
 
 void FOpenRouterClient::FetchModels(FOnLLMModelsFetched OnComplete)
 {
-    if (!HasApiKey())
-    {
-        UE_LOG(LogOpenRouterClient, Warning, TEXT("Cannot fetch models: No API key configured"));
-        OnComplete.ExecuteIfBound(false, TArray<FOpenRouterModel>());
-        return;
-    }
-    
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
     Request->SetURL(ModelsEndpoint);
     Request->SetVerb(TEXT("GET"));
-    Request->SetHeader(AuthorizationHeader, FString::Printf(TEXT("Bearer %s"), *ApiKey));
+    if (HasApiKey())
+    {
+        Request->SetHeader(AuthorizationHeader, FString::Printf(TEXT("Bearer %s"), *ApiKey));
+    }
     Request->SetHeader(TEXT("HTTP-Referer"), TEXT("https://www.vibeue.com"));
     Request->SetHeader(TEXT("X-OpenRouter-Title"), TEXT("VibeUE"));
     Request->SetHeader(TEXT("X-OpenRouter-Categories"), TEXT("ide-extension"));

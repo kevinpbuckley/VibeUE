@@ -1818,6 +1818,13 @@ FReply SAIChatWindow::OnToolsClicked()
 
 FReply SAIChatWindow::OnSettingsClicked()
 {
+    // If the settings window is already open, bring it to the front instead of opening a second one
+    if (TSharedPtr<SWindow> Existing = SettingsWindowWeakPtr.Pin())
+    {
+        Existing->BringToFront();
+        return FReply::Handled();
+    }
+
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
         .Title(FText::FromString(TEXT("VibeUE Settings")))
         .ClientSize(FVector2D(620, 660))
@@ -1827,6 +1834,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ---- Widget pointer declarations ----
     // API Keys tab
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
+    TSharedPtr<SEditableTextBox> VibeUEEndpointInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     // General tab
     TSharedPtr<SCheckBox>        DebugModeCheckBox;
@@ -1869,6 +1877,41 @@ FReply SAIChatWindow::OnSettingsClicked()
         SelectedProvider = (*ProviderOptions)[0];
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
 
+    // ---- OpenRouter model dropdown data (for settings) ----
+    // Rebuild SettingsOpenRouterModels from CachedModels (always OR, regardless of active provider)
+    SettingsOpenRouterModels.Empty();
+    for (const FOpenRouterModel& M : ChatSession->GetCachedModels())
+        SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+
+    // Pre-select using a dedicated OR model config key so it persists across provider switches
+    TSharedPtr<FOpenRouterModel> SettingsSelectedModel;
+    FString LastORModelId;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("OpenRouterLastModel"), LastORModelId, GEditorPerProjectIni);
+    if (LastORModelId.IsEmpty()) LastORModelId = ChatSession.IsValid() ? ChatSession->GetCurrentModel() : TEXT("");
+    for (const TSharedPtr<FOpenRouterModel>& M : SettingsOpenRouterModels)
+    {
+        if (M.IsValid() && M->Id == LastORModelId) { SettingsSelectedModel = M; break; }
+    }
+    TSharedPtr<TSharedPtr<FOpenRouterModel>> SettingsSelectedModelPtr = MakeShared<TSharedPtr<FOpenRouterModel>>(SettingsSelectedModel);
+
+    // ---- Trigger background OR model fetch to keep settings dropdown fresh ----
+    // Use weak ptrs so the callback is safe if the settings window closes before fetch completes
+    TWeakPtr<SAIChatWindow> WeakSelf = SharedThis(this);
+    ChatSession->FetchAvailableModels(FOnModelsFetched::CreateLambda(
+        [WeakSelf](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+        {
+            if (!bSuccess) return;
+            TSharedPtr<SAIChatWindow> Pinned = WeakSelf.Pin();
+            if (!Pinned.IsValid()) return;
+
+            Pinned->SettingsOpenRouterModels.Empty();
+            for (const FOpenRouterModel& M : Models)
+                Pinned->SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+
+            if (Pinned->SettingsModelComboBox.IsValid())
+                Pinned->SettingsModelComboBox->RefreshOptions();
+        }));
+
     // ---- Tab state ----
     TSharedPtr<int32> ActiveTab = MakeShared<int32>(0);
 
@@ -1892,7 +1935,19 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
                 .IsPassword(true)
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 20)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("VibeUE Endpoint URL:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SAssignNew(VibeUEEndpointInput, SEditableTextBox)
+                .Text(FText::FromString(FChatSession::GetVibeUEEndpointFromConfig()))
+                .HintText(FText::FromString(TEXT("https://api.vibeue.com (leave blank for default)")))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 20)
             [
                 SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
                 .OnClicked_Lambda([]() -> FReply {
@@ -1917,7 +1972,66 @@ FReply SAIChatWindow::OnSettingsClicked()
                 .Text(FText::FromString(FChatSession::GetApiKeyFromConfig()))
                 .IsPassword(true)
             ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("OpenRouter Model:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SAssignNew(SettingsModelComboBox, SComboBox<TSharedPtr<FOpenRouterModel>>)
+                .OptionsSource(&SettingsOpenRouterModels)
+                .InitiallySelectedItem(SettingsSelectedModel)
+                .OnSelectionChanged_Lambda([SettingsSelectedModelPtr](TSharedPtr<FOpenRouterModel> NewSelection, ESelectInfo::Type) mutable
+                {
+                    if (NewSelection.IsValid())
+                        *SettingsSelectedModelPtr = NewSelection;
+                })
+                .OnGenerateWidget_Lambda([](TSharedPtr<FOpenRouterModel> Item) -> TSharedRef<SWidget>
+                {
+                    return SNew(STextBlock)
+                        .Text(Item.IsValid() ? FText::FromString(Item->Name) : FText::GetEmpty());
+                })
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([SettingsSelectedModelPtr]() -> FText
+                    {
+                        return SettingsSelectedModelPtr->IsValid()
+                            ? FText::FromString((*SettingsSelectedModelPtr)->Name)
+                            : FText::FromString(TEXT("Select a model..."));
+                    })
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(SHorizontalBox)
+                .Visibility_Lambda([SettingsSelectedModelPtr, OpenRouterApiKeyInput]() -> EVisibility
+                {
+                    bool bHasModel = SettingsSelectedModelPtr->IsValid();
+                    bool bHasKey   = OpenRouterApiKeyInput.IsValid() && !OpenRouterApiKeyInput->GetText().IsEmpty();
+                    return (bHasModel && !bHasKey) ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 5, 0)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("\u26A0")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.55f, 0.0f)))
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([SettingsSelectedModelPtr]() -> FText
+                    {
+                        if (SettingsSelectedModelPtr->IsValid() && (*SettingsSelectedModelPtr)->Id.Contains(TEXT(":free")))
+                            return FText::FromString(TEXT("This model is free — a free OpenRouter account is all you need, no payment required"));
+                        return FText::FromString(TEXT("An OpenRouter API key is required to use this model"));
+                    })
+                    .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.35f, 0.35f)))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 0)
             [
                 SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
                 .OnClicked_Lambda([]() -> FReply {
@@ -2326,7 +2440,8 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     // Save lambda — captures all widget pointers
     // ============================================================
-    auto SaveLambda = [this, VibeUEApiKeyInput, OpenRouterApiKeyInput,
+    auto SaveLambda = [this, VibeUEApiKeyInput, VibeUEEndpointInput, OpenRouterApiKeyInput,
+        SettingsSelectedModelPtr,
         SelectedProviderPtr, AvailableProvidersList,
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
         TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
@@ -2335,7 +2450,23 @@ FReply SAIChatWindow::OnSettingsClicked()
     {
         // ---- API Keys ----
         ChatSession->SetVibeUEApiKey(VibeUEApiKeyInput->GetText().ToString());
+        ChatSession->SetVibeUEEndpoint(VibeUEEndpointInput->GetText().ToString());
         ChatSession->SetApiKey(OpenRouterApiKeyInput->GetText().ToString());
+
+        // ---- OpenRouter model selection ----
+        if (SettingsSelectedModelPtr->IsValid())
+        {
+            FString SelectedModelId = (*SettingsSelectedModelPtr)->Id;
+            GConfig->SetString(TEXT("VibeUE"), TEXT("OpenRouterLastModel"), *SelectedModelId, GEditorPerProjectIni);
+            GConfig->Flush(false, GEditorPerProjectIni);
+            ChatSession->SetCurrentModel(SelectedModelId);
+            // Sync the main chat window model dropdown
+            SelectedModel = *SettingsSelectedModelPtr;
+            if (ModelComboBox.IsValid())
+            {
+                ModelComboBox->SetSelectedItem(SelectedModel);
+            }
+        }
 
         // ---- Provider ----
         ELLMProvider NewProvider = ELLMProvider::VibeUE;
@@ -2454,6 +2585,12 @@ FReply SAIChatWindow::OnSettingsClicked()
         ]
     );
 
+    SettingsWindowWeakPtr = SettingsWindow;
+    SettingsWindow->SetOnWindowClosed(FOnWindowClosed::CreateLambda([this](const TSharedRef<SWindow>&)
+    {
+        SettingsWindowWeakPtr.Reset();
+        SettingsModelComboBox.Reset();
+    }));
     FSlateApplication::Get().AddWindow(SettingsWindow);
     return FReply::Handled();
 }
@@ -2992,36 +3129,6 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
 {
     if (!ChatSession.IsValid())
     {
-        return;
-    }
-
-    // ---- OpenAI Compatible -----------------------------------------------
-    // Model ID is configured via config; show a single stub entry.
-    if (ChatSession->GetCurrentProvider() == ELLMProvider::OpenAICompatible)
-    {
-        AvailableModels.Empty();
-        SelectedModel.Reset();
-
-        TSharedPtr<FOpenAICompatibleClient> CustomClient = ChatSession->GetCustomClient();
-        FString ConfiguredId = CustomClient.IsValid() ? CustomClient->GetConfiguredModelId() : TEXT("");
-
-        TSharedPtr<FOpenRouterModel> CustomModelPtr = MakeShared<FOpenRouterModel>();
-        CustomModelPtr->Id            = ConfiguredId;
-        CustomModelPtr->Name          = ConfiguredId.IsEmpty()
-            ? TEXT("OpenAI Compatible (no model configured)")
-            : ConfiguredId;
-        CustomModelPtr->bSupportsTools = true;
-        CustomModelPtr->ContextLength  = 0; // Unknown for arbitrary custom servers
-        AvailableModels.Add(CustomModelPtr);
-        SelectedModel = CustomModelPtr;
-        ChatSession->SetCurrentModel(CustomModelPtr->Id);
-
-        if (ModelComboBox.IsValid())
-        {
-            ModelComboBox->RefreshOptions();
-            ModelComboBox->SetSelectedItem(SelectedModel);
-        }
-        CHAT_LOG(Log, TEXT("Provider is OpenAICompatible — model dropdown set to '%s'"), *CustomModelPtr->Name);
         return;
     }
 

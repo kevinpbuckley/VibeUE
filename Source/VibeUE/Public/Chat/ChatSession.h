@@ -7,7 +7,6 @@
 #include "Chat/ILLMClient.h"
 #include "Chat/OpenRouterClient.h"
 #include "Chat/VibeUEAPIClient.h"
-#include "Chat/OpenAICompatibleClient.h"
 #include "Chat/MCPClient.h"
 #include "Speech/SpeechTypes.h"
 
@@ -19,9 +18,8 @@ DECLARE_LOG_CATEGORY_EXTERN(LogChatSession, Log, All);
 UENUM()
 enum class ELLMProvider : uint8
 {
-    VibeUE,            // VibeUE API (default)
-    OpenRouter,        // OpenRouter API
-    OpenAICompatible   // Any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, etc.)
+    VibeUE,      // VibeUE API (default)
+    OpenRouter   // OpenRouter API
 };
 
 /**
@@ -184,7 +182,10 @@ public:
     
     /** Set VibeUE API key */
     void SetVibeUEApiKey(const FString& ApiKey);
-    
+
+    /** Set VibeUE endpoint URL (updates running client and persists to config) */
+    void SetVibeUEEndpoint(const FString& Endpoint);
+
     /** Check if API key is configured (for current provider) */
     bool HasApiKey() const;
     
@@ -206,24 +207,6 @@ public:
     /** Save VibeUE API endpoint to config */
     static void SaveVibeUEEndpointToConfig(const FString& Endpoint);
 
-    /** Set OpenAI-compatible API key */
-    void SetCustomApiKey(const FString& ApiKey);
-
-    /** Get/Save OpenAI-compatible client config */
-    static FString GetCustomEndpointFromConfig();
-    static void SaveCustomEndpointToConfig(const FString& Endpoint);
-    static FString GetCustomApiKeyFromConfig();
-    static void SaveCustomApiKeyToConfig(const FString& ApiKey);
-    static ECustomAuthMode GetCustomAuthModeFromConfig();
-    static void SaveCustomAuthModeToConfig(ECustomAuthMode AuthMode);
-    static FString GetCustomModelIdFromConfig();
-    static void SaveCustomModelIdToConfig(const FString& ModelId);
-    static bool GetCustomStreamingFromConfig();
-    static void SaveCustomStreamingToConfig(bool bStreaming);
-
-    /** Get OpenAI-compatible client */
-    TSharedPtr<FOpenAICompatibleClient> GetCustomClient() const { return CustomClient; }
-    
     /** Get current LLM provider */
     ELLMProvider GetCurrentProvider() const { return CurrentProvider; }
     
@@ -510,9 +493,6 @@ private:
     /** VibeUE API HTTP client */
     TSharedPtr<FVibeUEAPIClient> VibeUEClient;
 
-    /** OpenAI-compatible HTTP client (Ollama, vLLM, LM Studio, etc.) */
-    TSharedPtr<FOpenAICompatibleClient> CustomClient;
-    
     /** Current LLM provider */
     ELLMProvider CurrentProvider = ELLMProvider::VibeUE;
     

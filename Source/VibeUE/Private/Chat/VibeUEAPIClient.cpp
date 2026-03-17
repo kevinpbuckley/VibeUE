@@ -119,18 +119,20 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     // Add tools if provided (use same format as OpenRouter)
     if (Tools.Num() > 0)
     {
+        UE_LOG(LogVibeUEAPIClient, Warning, TEXT("=== TOOLS BEING SENT TO LLM ==="));
         TArray<TSharedPtr<FJsonValue>> ToolsArray;
         for (const FMCPTool& Tool : Tools)
         {
-            UE_LOG(LogVibeUEAPIClient, Verbose, TEXT("  Sending tool to VibeUE: %s"), *Tool.Name);
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("  Sending tool: %s"), *Tool.Name);
             ToolsArray.Add(MakeShared<FJsonValueObject>(Tool.ToOpenRouterJson()));
         }
+        UE_LOG(LogVibeUEAPIClient, Warning, TEXT("=== END TOOLS (%d total) ==="), Tools.Num());
         RequestBody->SetArrayField(TEXT("tools"), ToolsArray);
-        
+
         // Control parallel tool calls - when false, LLM returns one tool call at a time
         RequestBody->SetBoolField(TEXT("parallel_tool_calls"), bParallelToolCalls);
-        
-        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Including %d tools in request (parallel_tool_calls=%s)"), 
+
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Including %d tools in request (parallel_tool_calls=%s)"),
             Tools.Num(), bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 

@@ -37,7 +37,6 @@ FChatSession::FChatSession()
 {
     OpenRouterClient = MakeShared<FOpenRouterClient>();
     VibeUEClient = MakeShared<FVibeUEAPIClient>();
-    CustomClient = MakeShared<FOpenAICompatibleClient>();
     SystemPrompt = FOpenRouterClient::GetDefaultSystemPrompt();
 }
 
@@ -71,23 +70,6 @@ void FChatSession::Initialize()
         VibeUEClient->SetEndpointUrl(VibeUEEndpoint);
     }
 
-    // Load OpenAI-compatible client config
-    {
-        FString CustomEndpoint = GetCustomEndpointFromConfig();
-        if (!CustomEndpoint.IsEmpty())
-        {
-            CustomClient->SetEndpointUrl(CustomEndpoint);
-        }
-        FString CustomApiKey = GetCustomApiKeyFromConfig();
-        if (!CustomApiKey.IsEmpty())
-        {
-            CustomClient->SetApiKey(CustomApiKey);
-        }
-        CustomClient->SetAuthMode(GetCustomAuthModeFromConfig());
-        CustomClient->SetConfiguredModelId(GetCustomModelIdFromConfig());
-        CustomClient->SetStreamingEnabled(GetCustomStreamingFromConfig());
-    }
-
     // Apply LLM generation parameters to all clients
     ApplyLLMParametersToClient();
     
@@ -106,9 +88,8 @@ void FChatSession::Initialize()
     
     auto ProviderName = [this]() -> const TCHAR* {
         switch (CurrentProvider) {
-            case ELLMProvider::OpenRouter:        return TEXT("OpenRouter");
-            case ELLMProvider::OpenAICompatible:  return TEXT("OpenAICompatible");
-            default:                              return TEXT("VibeUE");
+            case ELLMProvider::OpenRouter: return TEXT("OpenRouter");
+            default:                       return TEXT("VibeUE");
         }
     };
     UE_LOG(LogChatSession, Log, TEXT("Chat session initialized with %d messages, provider: %s, max tool iterations: %d"),
@@ -188,7 +169,7 @@ void FChatSession::SendMessage(const FString& UserMessage)
     TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log what we're sending to the LLM
-    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : (CurrentProvider == ELLMProvider::OpenAICompatible) ? TEXT("OpenAICompatible") : TEXT("VibeUE");
+    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : TEXT("VibeUE");
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
     
@@ -201,16 +182,7 @@ void FChatSession::SendMessage(const FString& UserMessage)
     {
         UpdateUsageStats(PromptTokens, CompletionTokens);
     });
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        CustomClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-            UsageCallback);
-    }
-    else if (CurrentProvider == ELLMProvider::VibeUE)
+    if (CurrentProvider == ELLMProvider::VibeUE)
     {
         VibeUEClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
             FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
@@ -308,7 +280,7 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     TArray<FMCPTool> Tools = GetAllEnabledTools();
 
     // Log what we're sending to the LLM
-    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : (CurrentProvider == ELLMProvider::OpenAICompatible) ? TEXT("OpenAICompatible") : TEXT("VibeUE");
+    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : TEXT("VibeUE");
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM WITH IMAGE] Provider: %s, Model: %s, Messages count: %d, Tools count: %d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num());
 
@@ -321,16 +293,7 @@ void FChatSession::SendMessageWithImage(const FString& UserMessage, const FStrin
     {
         UpdateUsageStats(PromptTokens, CompletionTokens);
     });
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        CustomClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-            UsageCallbackImg);
-    }
-    else if (CurrentProvider == ELLMProvider::VibeUE)
+    if (CurrentProvider == ELLMProvider::VibeUE)
     {
         VibeUEClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
             FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
@@ -404,11 +367,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
         if (Message.Content.IsEmpty())
         {
             FString Accumulated;
-            if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
-            {
-                Accumulated = CustomClient->GetLastAccumulatedResponse();
-            }
-            else if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+            if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
             {
                 Accumulated = VibeUEClient->GetLastAccumulatedResponse();
             }
@@ -466,11 +425,7 @@ void FChatSession::OnStreamComplete(bool bSuccess)
         
         // Check if response was incomplete and auto-continue
         bool bWasIncomplete = false;
-        if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
-        {
-            bWasIncomplete = CustomClient->WasResponseIncomplete();
-        }
-        else if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+        if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
         {
             bWasIncomplete = VibeUEClient->WasResponseIncomplete();
         }
@@ -1012,7 +967,7 @@ void FChatSession::SendFollowUpAfterToolCall()
     TArray<FMCPTool> Tools = GetAllEnabledTools();
     
     // Log follow-up request to LLM
-    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : (CurrentProvider == ELLMProvider::OpenAICompatible) ? TEXT("OpenAICompatible") : TEXT("VibeUE");
+    FString ProviderName = (CurrentProvider == ELLMProvider::OpenRouter) ? TEXT("OpenRouter") : TEXT("VibeUE");
     CHAT_SESSION_LOG(Log, TEXT("[SENDING TO LLM] (Follow-up after tool) Provider: %s, Model: %s, Messages count: %d, Tools count: %d, Iteration: %d/%d"),
         *ProviderName, *CurrentModelId, ApiMessages.Num(), Tools.Num(), ToolCallIterationCount, MaxToolCallIterations);
 
@@ -1021,16 +976,7 @@ void FChatSession::SendFollowUpAfterToolCall()
 
     // Send follow-up request using the appropriate client based on provider
     auto UsageCallbackFollowUp = FOnLLMUsageReceived::CreateLambda([this](int32 P, int32 C) { UpdateUsageStats(P, C); });
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        CustomClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
-            FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
-            FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnStreamComplete),
-            FOnLLMStreamError::CreateSP(this, &FChatSession::OnStreamError),
-            FOnLLMToolCall::CreateSP(this, &FChatSession::OnToolCall),
-            UsageCallbackFollowUp);
-    }
-    else if (CurrentProvider == ELLMProvider::VibeUE)
+    if (CurrentProvider == ELLMProvider::VibeUE)
     {
         VibeUEClient->SendChatRequest(ApiMessages, CurrentModelId, Tools,
             FOnLLMStreamChunk::CreateSP(this, &FChatSession::OnStreamChunk),
@@ -1203,20 +1149,6 @@ void FChatSession::SetCurrentModel(const FString& ModelId)
 
 void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 {
-    if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
-    {
-        // Route to the custom endpoint's /v1/models.  Many local servers do not
-        // implement this; FOpenAICompatibleClient::HandleModelsFetchComplete handles
-        // non-200 responses gracefully by returning bSuccess=false.
-        CustomClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
-        {
-            if (bSuccess) CachedModels = Models;
-            OnComplete.ExecuteIfBound(bSuccess, Models);
-        }));
-        return;
-    }
-
-    // Default: OpenRouter
     OpenRouterClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
     {
         if (bSuccess)
@@ -1236,10 +1168,6 @@ bool FChatSession::IsRequestInProgress() const
     }
     
     // Check if an HTTP request is in progress
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        return CustomClient.IsValid() && CustomClient->IsRequestInProgress();
-    }
     if (CurrentProvider == ELLMProvider::VibeUE)
     {
         return VibeUEClient.IsValid() && VibeUEClient->IsRequestInProgress();
@@ -1257,11 +1185,6 @@ void FChatSession::CancelRequest()
     {
         VibeUEClient->CancelRequest();
     }
-    if (CustomClient.IsValid())
-    {
-        CustomClient->CancelRequest();
-    }
-
     // Mark as cancelled so auto-continue and follow-up requests are suppressed
     // until the user sends a new message
     bWasCancelled = true;
@@ -1298,18 +1221,14 @@ void FChatSession::SetVibeUEApiKey(const FString& ApiKey)
     SaveVibeUEApiKeyToConfig(ApiKey);
 }
 
-void FChatSession::SetCustomApiKey(const FString& ApiKey)
+void FChatSession::SetVibeUEEndpoint(const FString& Endpoint)
 {
-    CustomClient->SetApiKey(ApiKey);
-    SaveCustomApiKeyToConfig(ApiKey);
+    VibeUEClient->SetEndpointUrl(Endpoint);
+    SaveVibeUEEndpointToConfig(Endpoint);
 }
 
 bool FChatSession::HasApiKey() const
 {
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        return CustomClient.IsValid() && CustomClient->HasApiKey();
-    }
     if (CurrentProvider == ELLMProvider::VibeUE)
     {
         return VibeUEClient.IsValid() && VibeUEClient->HasApiKey();
@@ -1871,11 +1790,7 @@ void FChatSession::RequestSummarization()
     auto SumComplete = FOnLLMStreamComplete::CreateSP(this, &FChatSession::OnSummarizationStreamComplete);
     auto SumError    = FOnLLMStreamError::CreateSP(this, &FChatSession::OnSummarizationStreamError);
 
-    if (CurrentProvider == ELLMProvider::OpenAICompatible)
-    {
-        CustomClient->SendChatRequest(SummarizationMessages, CurrentModelId, NoTools, SumChunk, SumComplete, SumError, SumTool, SumUsage);
-    }
-    else if (CurrentProvider == ELLMProvider::VibeUE)
+    if (CurrentProvider == ELLMProvider::VibeUE)
     {
         VibeUEClient->SendChatRequest(SummarizationMessages, CurrentModelId, NoTools, SumChunk, SumComplete, SumError, SumTool, SumUsage);
     }
@@ -1904,11 +1819,7 @@ void FChatSession::OnSummarizationStreamComplete(bool bSuccess)
     
     // Get the summary from accumulated response
     FString Summary;
-    if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
-    {
-        Summary = CustomClient->GetLastAccumulatedResponse();
-    }
-    else if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+    if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
     {
         Summary = VibeUEClient->GetLastAccumulatedResponse();
     }
@@ -2438,89 +2349,12 @@ void FChatSession::SaveVibeUEEndpointToConfig(const FString& Endpoint)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
-// ============ OpenAI-Compatible Client Config ============
-
-FString FChatSession::GetCustomEndpointFromConfig()
-{
-    FString Endpoint;
-    GConfig->GetString(TEXT("VibeUE"), TEXT("CustomEndpoint"), Endpoint, GEditorPerProjectIni);
-    return Endpoint;
-}
-
-void FChatSession::SaveCustomEndpointToConfig(const FString& Endpoint)
-{
-    GConfig->SetString(TEXT("VibeUE"), TEXT("CustomEndpoint"), *Endpoint, GEditorPerProjectIni);
-    GConfig->Flush(false, GEditorPerProjectIni);
-}
-
-FString FChatSession::GetCustomApiKeyFromConfig()
-{
-    FString ApiKey;
-    GConfig->GetString(TEXT("VibeUE"), TEXT("CustomApiKey"), ApiKey, GEditorPerProjectIni);
-    return ApiKey;
-}
-
-void FChatSession::SaveCustomApiKeyToConfig(const FString& ApiKey)
-{
-    GConfig->SetString(TEXT("VibeUE"), TEXT("CustomApiKey"), *ApiKey, GEditorPerProjectIni);
-    GConfig->Flush(false, GEditorPerProjectIni);
-}
-
-ECustomAuthMode FChatSession::GetCustomAuthModeFromConfig()
-{
-    FString ModeStr;
-    GConfig->GetString(TEXT("VibeUE"), TEXT("CustomAuthMode"), ModeStr, GEditorPerProjectIni);
-    if (ModeStr == TEXT("XApiKey")) return ECustomAuthMode::XApiKey;
-    if (ModeStr == TEXT("None"))    return ECustomAuthMode::None;
-    return ECustomAuthMode::Bearer; // Default
-}
-
-void FChatSession::SaveCustomAuthModeToConfig(ECustomAuthMode AuthMode)
-{
-    FString ModeStr;
-    switch (AuthMode)
-    {
-        case ECustomAuthMode::XApiKey: ModeStr = TEXT("XApiKey"); break;
-        case ECustomAuthMode::None:    ModeStr = TEXT("None");    break;
-        default:                       ModeStr = TEXT("Bearer");  break;
-    }
-    GConfig->SetString(TEXT("VibeUE"), TEXT("CustomAuthMode"), *ModeStr, GEditorPerProjectIni);
-    GConfig->Flush(false, GEditorPerProjectIni);
-}
-
-FString FChatSession::GetCustomModelIdFromConfig()
-{
-    FString ModelId;
-    GConfig->GetString(TEXT("VibeUE"), TEXT("CustomModelId"), ModelId, GEditorPerProjectIni);
-    return ModelId;
-}
-
-void FChatSession::SaveCustomModelIdToConfig(const FString& ModelId)
-{
-    GConfig->SetString(TEXT("VibeUE"), TEXT("CustomModelId"), *ModelId, GEditorPerProjectIni);
-    GConfig->Flush(false, GEditorPerProjectIni);
-}
-
-bool FChatSession::GetCustomStreamingFromConfig()
-{
-    bool bStreaming = true; // Default to true
-    GConfig->GetBool(TEXT("VibeUE"), TEXT("CustomStreaming"), bStreaming, GEditorPerProjectIni);
-    return bStreaming;
-}
-
-void FChatSession::SaveCustomStreamingToConfig(bool bStreaming)
-{
-    GConfig->SetBool(TEXT("VibeUE"), TEXT("CustomStreaming"), bStreaming, GEditorPerProjectIni);
-    GConfig->Flush(false, GEditorPerProjectIni);
-}
-
 ELLMProvider FChatSession::GetProviderFromConfig()
 {
     FString ProviderStr;
     GConfig->GetString(TEXT("VibeUE"), TEXT("Provider"), ProviderStr, GEditorPerProjectIni);
 
-    if (ProviderStr == TEXT("OpenRouter"))       return ELLMProvider::OpenRouter;
-    if (ProviderStr == TEXT("OpenAICompatible")) return ELLMProvider::OpenAICompatible;
+    if (ProviderStr == TEXT("OpenRouter")) return ELLMProvider::OpenRouter;
     return ELLMProvider::VibeUE;
 }
 
@@ -2529,9 +2363,8 @@ void FChatSession::SaveProviderToConfig(ELLMProvider Provider)
     FString ProviderStr;
     switch (Provider)
     {
-        case ELLMProvider::OpenRouter:       ProviderStr = TEXT("OpenRouter");       break;
-        case ELLMProvider::OpenAICompatible: ProviderStr = TEXT("OpenAICompatible"); break;
-        default:                             ProviderStr = TEXT("VibeUE");            break;
+        case ELLMProvider::OpenRouter: ProviderStr = TEXT("OpenRouter"); break;
+        default:                       ProviderStr = TEXT("VibeUE");     break;
     }
     GConfig->SetString(TEXT("VibeUE"), TEXT("Provider"), *ProviderStr, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
@@ -2542,8 +2375,7 @@ void FChatSession::SetCurrentProvider(ELLMProvider Provider)
     CurrentProvider = Provider;
     SaveProviderToConfig(Provider);
     UE_LOG(LogChatSession, Log, TEXT("Provider changed to: %s"),
-        Provider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") :
-        Provider == ELLMProvider::OpenAICompatible ? TEXT("OpenAICompatible") : TEXT("VibeUE"));
+        Provider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") : TEXT("VibeUE"));
 }
 
 TArray<FLLMProviderInfo> FChatSession::GetAvailableProviders()
@@ -2568,24 +2400,11 @@ TArray<FLLMProviderInfo> FChatSession::GetAvailableProviders()
         TEXT("Access multiple LLM providers through OpenRouter API")
     ));
 
-    // OpenAI-compatible provider
-    Providers.Add(FLLMProviderInfo(
-        TEXT("OpenAICompatible"),
-        TEXT("OpenAI Compatible"),
-        true,
-        TEXT(""),
-        TEXT("Any OpenAI-compatible endpoint (Ollama, vLLM, LM Studio, etc.)")
-    ));
-
     return Providers;
 }
 
 FLLMProviderInfo FChatSession::GetCurrentProviderInfo() const
 {
-    if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
-    {
-        return CustomClient->GetProviderInfo();
-    }
     if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
     {
         return VibeUEClient->GetProviderInfo();
@@ -2703,17 +2522,6 @@ void FChatSession::ApplyLLMParametersToClient()
             bParallelToolCalls ? TEXT("true") : TEXT("false"));
     }
 
-    if (CustomClient.IsValid())
-    {
-        CustomClient->SetTemperature(GetTemperatureFromConfig());
-        CustomClient->SetTopP(GetTopPFromConfig());
-        CustomClient->SetMaxTokens(GetMaxTokensFromConfig());
-        CustomClient->SetParallelToolCalls(bParallelToolCalls);
-
-        UE_LOG(LogChatSession, Verbose, TEXT("Applied LLM params to OpenAICompatible: temperature=%.2f, top_p=%.2f, max_tokens=%d, parallel_tool_calls=%s"),
-            CustomClient->GetTemperature(), CustomClient->GetTopP(), CustomClient->GetMaxTokens(),
-            CustomClient->GetParallelToolCalls() ? TEXT("true") : TEXT("false"));
-    }
 }
 
 // ============ MCP Server Settings ============
