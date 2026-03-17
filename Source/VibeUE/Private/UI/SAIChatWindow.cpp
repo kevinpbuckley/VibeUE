@@ -2029,10 +2029,12 @@ FReply SAIChatWindow::OnSettingsClicked()
                 + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 4, 0)
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("Ollama")))
-                    .ToolTipText(FText::FromString(TEXT("Ollama local server — localhost:11434, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .ToolTipText(FText::FromString(TEXT("Ollama local server — localhost:11434, no auth. Defaults to llama3.1:8b (128K context, reliable tool calling). Run: ollama pull llama3.1:8b")))
+                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:11434/v1/chat/completions")));
+                        if (CustomModelIdInput.IsValid())
+                            CustomModelIdInput->SetText(FText::FromString(TEXT("llama3.1:8b")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
                         return FReply::Handled();
