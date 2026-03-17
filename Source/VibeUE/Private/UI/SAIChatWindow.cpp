@@ -1922,6 +1922,11 @@ FReply SAIChatWindow::OnSettingsClicked()
         .IsChecked(bCfgCustomStreaming ? ECheckBoxState::Checked : ECheckBoxState::Unchecked);
     SAssignNew(TestConnectionStatusText, STextBlock)
         .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10));
+    TSharedPtr<STextBlock> PresetInfoText;
+    SAssignNew(PresetInfoText, STextBlock)
+        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+        .ColorAndOpacity(FLinearColor(0.7f, 0.85f, 1.0f, 1.0f))
+        .AutoWrapText(true);
 
     // ============================================================
     // TAB 0: API Keys
@@ -2030,13 +2035,19 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("Ollama")))
                     .ToolTipText(FText::FromString(TEXT("Ollama local server — localhost:11434, no auth. Defaults to llama3.1:8b (128K context, reliable tool calling). Run: ollama pull llama3.1:8b")))
-                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:11434/v1/chat/completions")));
                         if (CustomModelIdInput.IsValid())
                             CustomModelIdInput->SetText(FText::FromString(TEXT("llama3.1:8b")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(
+                                TEXT("Install Ollama from ollama.com, then run in a terminal:\n")
+                                TEXT("  ollama pull llama3.1:8b    (~4.7 GB, recommended)\n\n")
+                                TEXT("Other supported models: llama3.1, llama3.3:70b, qwen2.5:7b, qwen2.5-coder:7b, mistral-nemo:12b\n")
+                                TEXT("Hit \"Test Connection\" after Ollama is running to verify.")));
                         return FReply::Handled();
                     })
                 ]
@@ -2044,11 +2055,13 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("LM Studio")))
                     .ToolTipText(FText::FromString(TEXT("LM Studio local server — localhost:1234, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:1234/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("Download LM Studio from lmstudio.ai — load a model, then start the local server from the Developer tab.")));
                         return FReply::Handled();
                     })
                 ]
@@ -2056,11 +2069,13 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("vLLM")))
                     .ToolTipText(FText::FromString(TEXT("vLLM server — localhost:8000, Bearer auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8000/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("Bearer")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("pip install vllm — start with: python -m vllm.entrypoints.openai.api_server --model <model-name>")));
                         return FReply::Handled();
                     })
                 ]
@@ -2068,13 +2083,15 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("OpenAI")))
                     .ToolTipText(FText::FromString(TEXT("OpenAI API — api.openai.com, Bearer auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, CustomModelIdInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("https://api.openai.com/v1/chat/completions")));
                         if (CustomModelIdInput.IsValid() && CustomModelIdInput->GetText().IsEmpty())
                             CustomModelIdInput->SetText(FText::FromString(TEXT("gpt-4o")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("Bearer")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("Paste your OpenAI API key in the API Key field below. Get one at platform.openai.com/api-keys")));
                         return FReply::Handled();
                     })
                 ]
@@ -2087,11 +2104,13 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("SGLang")))
                     .ToolTipText(FText::FromString(TEXT("SGLang high-throughput server — localhost:30000, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:30000/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("pip install sglang — start with: python -m sglang.launch_server --model-path <model>")));
                         return FReply::Handled();
                     })
                 ]
@@ -2099,11 +2118,13 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("llama.cpp")))
                     .ToolTipText(FText::FromString(TEXT("llama.cpp server — localhost:8080, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("Build llama.cpp then run: ./llama-server -m <model.gguf> --port 8080 -c 16384")));
                         return FReply::Handled();
                     })
                 ]
@@ -2111,11 +2132,13 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("oobabooga")))
                     .ToolTipText(FText::FromString(TEXT("text-generation-webui (oobabooga) — localhost:5000, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:5000/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("In text-generation-webui: enable OpenAI extension and start the server with --extensions openai")));
                         return FReply::Handled();
                     })
                 ]
@@ -2123,15 +2146,20 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(SButton).Text(FText::FromString(TEXT("LocalAI")))
                     .ToolTipText(FText::FromString(TEXT("LocalAI OpenAI drop-in — localhost:8080, no auth")))
-                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions]() -> FReply {
+                    .OnClicked_Lambda([CustomEndpointInput, SelectedAuthModePtr, AuthModeOptions, PresetInfoText]() -> FReply {
                         if (CustomEndpointInput.IsValid())
                             CustomEndpointInput->SetText(FText::FromString(TEXT("http://localhost:8080/v1/chat/completions")));
                         for (auto& Opt : *AuthModeOptions)
                             if (Opt.IsValid() && *Opt == TEXT("None (local)")) { *SelectedAuthModePtr = Opt; break; }
+                        if (PresetInfoText.IsValid())
+                            PresetInfoText->SetText(FText::FromString(TEXT("localai.io — run with Docker: docker run -p 8080:8080 localai/localai:latest")));
                         return FReply::Handled();
                     })
                 ]
             ]
+            // Preset info text (shown when a preset button is clicked)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 10)
+            [ PresetInfoText.ToSharedRef() ]
             // Endpoint URL
             + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
@@ -2223,10 +2251,66 @@ FReply SAIChatWindow::OnSettingsClicked()
                         TempClient->FetchModels(FOnLLMModelsFetched::CreateLambda(
                             [TestConnectionStatusText, TempClient](bool bSuccess, const TArray<FOpenRouterModel>& Models)
                             {
-                                if (TestConnectionStatusText.IsValid())
-                                    TestConnectionStatusText->SetText(FText::FromString(bSuccess
-                                        ? FString::Printf(TEXT("✅ Connected — %d models available"), Models.Num())
-                                        : TEXT("❌ Could not reach server")));
+                                if (!TestConnectionStatusText.IsValid()) return;
+                                if (bSuccess && Models.Num() > 0)
+                                {
+                                    // Check if any detected model is known to support tool calling
+                                    static const TArray<FString> ToolCapablePatterns = {
+                                        TEXT("llama3.1"), TEXT("llama3.2"), TEXT("llama3.3"),
+                                        TEXT("qwen2.5"), TEXT("qwen2"),
+                                        TEXT("mistral"), TEXT("command-r"),
+                                        TEXT("phi4"), TEXT("phi3.5"),
+                                        TEXT("gpt-"), TEXT("claude-"),
+                                        TEXT("firefunction"), TEXT("nemotron"),
+                                        TEXT("smollm2"), TEXT("deepseek")
+                                    };
+                                    bool bHasSupportedModel = false;
+                                    for (const FOpenRouterModel& M : Models)
+                                    {
+                                        for (const FString& Pattern : ToolCapablePatterns)
+                                        {
+                                            if (M.Id.Contains(Pattern, ESearchCase::IgnoreCase))
+                                            {
+                                                bHasSupportedModel = true;
+                                                break;
+                                            }
+                                        }
+                                        if (bHasSupportedModel) break;
+                                    }
+
+                                    // Show up to 3 model names
+                                    FString ModelList;
+                                    int32 ShowCount = FMath::Min(Models.Num(), 3);
+                                    for (int32 i = 0; i < ShowCount; i++)
+                                    {
+                                        if (i > 0) ModelList += TEXT(", ");
+                                        ModelList += Models[i].Id;
+                                    }
+                                    if (Models.Num() > 3)
+                                        ModelList += FString::Printf(TEXT(" (+%d more)"), Models.Num() - 3);
+
+                                    if (bHasSupportedModel)
+                                    {
+                                        TestConnectionStatusText->SetText(FText::FromString(
+                                            FString::Printf(TEXT("✅ Connected — %s"), *ModelList)));
+                                    }
+                                    else
+                                    {
+                                        TestConnectionStatusText->SetText(FText::FromString(
+                                            FString::Printf(TEXT("⚠️ Connected but no tool-capable models found (%s).\nRun: ollama pull llama3.1:8b"), *ModelList)));
+                                    }
+                                }
+                                else if (bSuccess && Models.Num() == 0)
+                                {
+                                    // Server is up but no models installed yet
+                                    TestConnectionStatusText->SetText(FText::FromString(
+                                        TEXT("⚠️ Server running — no models installed.\nRun: ollama pull llama3.1:8b")));
+                                }
+                                else
+                                {
+                                    TestConnectionStatusText->SetText(FText::FromString(
+                                        TEXT("❌ Cannot connect — is the server running?\nCheck the Endpoint URL or start your local server first.")));
+                                }
                             }
                         ));
                         return FReply::Handled();
