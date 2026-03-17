@@ -160,9 +160,18 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenAICompatibleClient::BuildHttp
         MessagesArray.Add(MakeShared<FJsonValueObject>(SanitizedMessage.ToJson()));
     }
 
+    // When tools are present the request body grows to ~30-35 KB (10 full JSON schemas).
+    // WinHTTP uploads the large body while Ollama simultaneously streams back chunk1
+    // (the tool_calls delta, ~340 bytes).  WinHTTP only surfaces the LAST received chunk
+    // via GetContentAsString() once the upload finishes — chunk1 is silently discarded.
+    // Disable streaming for tool-bearing requests so the full JSON response arrives in one
+    // shot via HandleRequestComplete (non-streaming path is confirmed reliable).
+    // Pure text conversations (no tools) are not affected and still stream normally.
+    bool bEffectiveStreaming = bStreamingEnabled && (Tools.Num() == 0);
+
     TSharedPtr<FJsonObject> RequestBody = MakeShared<FJsonObject>();
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);
-    RequestBody->SetBoolField(TEXT("stream"), bStreamingEnabled);
+    RequestBody->SetBoolField(TEXT("stream"), bEffectiveStreaming);
 
     // ConfiguredModelId takes precedence; fall back to the session's ModelId arg
     FString EffectiveModelId = ConfiguredModelId.IsEmpty() ? ModelId : ConfiguredModelId;
@@ -175,8 +184,18 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenAICompatibleClient::BuildHttp
     RequestBody->SetNumberField(TEXT("top_p"), TopP);
     RequestBody->SetNumberField(TEXT("max_tokens"), MaxTokens);
 
-    UE_LOG(LogOpenAICompatibleClient, Log, TEXT("LLM params: model=%s, temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=%s"),
-        *EffectiveModelId, Temperature, TopP, MaxTokens, bStreamingEnabled ? TEXT("true") : TEXT("false"));
+    // num_ctx: Ollama-specific context window override.
+    // The 10 full MCP tool schemas consume ~30KB / ~8000 tokens — well beyond Ollama's
+    // default context (typically 2048–4096). Other servers ignore this field silently.
+    if (ContextSize > 0)
+    {
+        RequestBody->SetNumberField(TEXT("num_ctx"), ContextSize);
+        UE_LOG(LogOpenAICompatibleClient, Log, TEXT("Setting num_ctx=%d (Ollama context override)"), ContextSize);
+    }
+
+    UE_LOG(LogOpenAICompatibleClient, Log, TEXT("LLM params: model=%s, temperature=%.2f, top_p=%.2f, max_tokens=%d, stream=%s (tools=%d, streaming overridden=%s)"),
+        *EffectiveModelId, Temperature, TopP, MaxTokens, bEffectiveStreaming ? TEXT("true") : TEXT("false"),
+        Tools.Num(), (!bEffectiveStreaming && bStreamingEnabled) ? TEXT("yes") : TEXT("no"));
 
     if (Tools.Num() > 0)
     {
@@ -209,8 +228,14 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenAICompatibleClient::BuildHttp
     HttpRequest->SetURL(EndpointUrl);
     HttpRequest->SetVerb(TEXT("POST"));
     HttpRequest->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
-    HttpRequest->SetHeader(TEXT("Connection"), TEXT("close"));
+    // Do NOT set Connection: close for streaming (SSE) requests — WinHTTP buffers
+    // differently with Connection: close and may discard early SSE chunks (chunk1 lost).
+    // For non-streaming, keep-alive is also fine (connection closes after response anyway).
     HttpRequest->SetTimeout(120.0f);
+    // Local models (Ollama, LM Studio, etc.) may take 30–90s to load weights into
+    // memory before generating the first token.  The UE default activity timeout is
+    // 30s — extend it to match the total timeout so we don't abort on cold starts.
+    HttpRequest->SetActivityTimeout(120.0f);
     ApplyAuthHeader(HttpRequest);
     HttpRequest->SetContentAsString(RequestBodyString);
 

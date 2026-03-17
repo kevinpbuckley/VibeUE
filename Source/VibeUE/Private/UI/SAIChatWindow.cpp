@@ -1834,6 +1834,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SEditableTextBox> CustomModelIdInput;
     TSharedPtr<SCheckBox>        CustomStreamingCheckBox;
     TSharedPtr<STextBlock>       TestConnectionStatusText;
+    TSharedPtr<SCheckBox>        UseAsActiveProviderCheckBox;
     // General tab
     TSharedPtr<SCheckBox>        DebugModeCheckBox;
     TSharedPtr<SCheckBox>        AutoSaveBeforePythonCheckBox;
@@ -1990,6 +1991,30 @@ FReply SAIChatWindow::OnSettingsClicked()
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
             SNew(SVerticalBox)
+            // Active-provider toggle — placed first so it is never missed
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 14)
+            [
+                SNew(SBorder)
+                .BorderBackgroundColor(FLinearColor(0.08f, 0.18f, 0.08f, 1.0f))
+                .Padding(10, 8)
+                [
+                    SNew(SHorizontalBox)
+                    + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center)
+                    [
+                        SAssignNew(UseAsActiveProviderCheckBox, SCheckBox)
+                        .IsChecked(CurrentProvider == ELLMProvider::OpenAICompatible
+                            ? ECheckBoxState::Checked
+                            : ECheckBoxState::Unchecked)
+                    ]
+                    + SHorizontalBox::Slot().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Use Self-Hosted as active LLM provider")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+                        .ToolTipText(FText::FromString(TEXT("When checked, VibeUE sends messages to your configured endpoint below. Uncheck to fall back to the provider selected on the General tab.")))
+                    ]
+                ]
+            ]
             // Quick presets row
             + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
@@ -2729,6 +2754,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     auto SaveLambda = [this, VibeUEApiKeyInput, OpenRouterApiKeyInput,
         CustomEndpointInput, CustomApiKeyInput, CustomModelIdInput, CustomStreamingCheckBox,
+        UseAsActiveProviderCheckBox,
         SelectedAuthModePtr, AuthModeOptions, SelectedProviderPtr, AvailableProvidersList,
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
         TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
@@ -2766,8 +2792,14 @@ FReply SAIChatWindow::OnSettingsClicked()
         ChatSession->GetCustomClient()->SetStreamingEnabled(bNewStreaming);
 
         // ---- Provider ----
+        // The Self-Hosted checkbox takes precedence: if it is ticked the user clearly
+        // intends to use their configured endpoint regardless of what the General tab shows.
         ELLMProvider NewProvider = ELLMProvider::VibeUE;
-        if (SelectedProviderPtr->IsValid())
+        if (UseAsActiveProviderCheckBox.IsValid() && UseAsActiveProviderCheckBox->IsChecked())
+        {
+            NewProvider = ELLMProvider::OpenAICompatible;
+        }
+        else if (SelectedProviderPtr->IsValid())
         {
             FString SelName = **SelectedProviderPtr;
             for (const FLLMProviderInfo& Info : AvailableProvidersList)
@@ -3431,7 +3463,41 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
     {
         return;
     }
-    
+
+    // ---- OpenAI Compatible -----------------------------------------------
+    // Model is entered manually in the Self-Hosted settings tab; we do not
+    // hit /v1/models because many local servers (Ollama, LM Studio, etc.)
+    // either do not implement it or return non-standard schemas.  Show a
+    // single stub entry whose display name reflects the configured model ID.
+    if (ChatSession->GetCurrentProvider() == ELLMProvider::OpenAICompatible)
+    {
+        AvailableModels.Empty();
+        SelectedModel.Reset();
+
+        TSharedPtr<FOpenAICompatibleClient> CustomClient = ChatSession->GetCustomClient();
+        FString ConfiguredId = CustomClient.IsValid() ? CustomClient->GetConfiguredModelId() : TEXT("");
+
+        TSharedPtr<FOpenRouterModel> CustomModelPtr = MakeShared<FOpenRouterModel>();
+        CustomModelPtr->Id            = ConfiguredId;
+        CustomModelPtr->Name          = ConfiguredId.IsEmpty()
+            ? TEXT("Self-Hosted (set Model ID in Settings → Self-Hosted)")
+            : ConfiguredId;
+        CustomModelPtr->bSupportsTools = true;
+        CustomModelPtr->ContextLength  = 0; // Unknown for arbitrary custom servers
+        AvailableModels.Add(CustomModelPtr);
+        SelectedModel = CustomModelPtr;
+        ChatSession->SetCurrentModel(CustomModelPtr->Id);
+
+        if (ModelComboBox.IsValid())
+        {
+            ModelComboBox->RefreshOptions();
+            ModelComboBox->SetSelectedItem(SelectedModel);
+        }
+        CHAT_LOG(Log, TEXT("Provider is OpenAICompatible — model dropdown set to '%s'"), *CustomModelPtr->Name);
+        return;
+    }
+
+    // ---- OpenRouter / VibeUE ---------------------------------------------
     // Check if provider supports model selection
     if (ChatSession->SupportsModelSelection())
     {

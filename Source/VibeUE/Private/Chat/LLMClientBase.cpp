@@ -440,12 +440,11 @@ void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 Bytes
         return;
     }
     
-    // Always log when progress is called (helps debug streaming issues)
     if (IsDebugLoggingEnabled())
     {
         UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] HandleRequestProgress: sent=%llu, received=%llu"), BytesSent, BytesReceived);
     }
-    
+
     if (!Request.IsValid() || !Request->GetResponse().IsValid())
     {
         if (IsDebugLoggingEnabled())
@@ -1733,6 +1732,17 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
                     StreamBuffer = ResponseContent;
                     ProcessSSEData(UnprocessedContent);
                 }
+            }
+            else if (bAlreadyProcessedAsStream && bIsSSEContent && PendingToolCalls.Num() == 0 && AccumulatedContent.IsEmpty() && ResponseContent.Len() >= StreamBuffer.Len())
+            {
+                // Safety net: SSE was partially streamed (StreamBuffer > 0) but no tool calls and no
+                // content were accumulated. This can happen when WinHTTP delivers chunks out-of-order
+                // or drops early callbacks (e.g. chunk1 arrives before response object is valid).
+                // Re-process the full response from scratch — streaming state is already safe to reset
+                // here because HandleRequestComplete runs after the HTTP module is fully done.
+                UE_LOG(LogLLMClientBase, Log, TEXT("SSE stream yielded no content/tools (StreamBuffer=%d, ResponseContent=%d) — reprocessing full response"), StreamBuffer.Len(), ResponseContent.Len());
+                StreamBuffer.Empty();
+                ProcessSSEData(ResponseContent);
             }
         }
         else if (bToolCallsDetectedInStream && ResponseContent.Len() > 0)

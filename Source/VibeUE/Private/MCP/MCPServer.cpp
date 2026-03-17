@@ -3,6 +3,9 @@
 #include "MCP/MCPServer.h"
 #include "Misc/ConfigCacheIni.h"
 #include "Misc/Guid.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "Interfaces/IPluginManager.h"
 #include "Dom/JsonObject.h"
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
@@ -56,16 +59,23 @@ void FMCPServer::Initialize()
         Config.Port,
         Config.ApiKey.IsEmpty() ? TEXT("(none)") : TEXT("(set)"));
     
-    // Auto-start if enabled (Start() will validate the VibeUE API key)
+    // Auto-start MCP server if enabled
     if (Config.bEnabled)
     {
         Start();
+    }
+
+    // Auto-start proxy if both proxy-enabled and auto-start are configured
+    if (GetProxyEnabledFromConfig() && GetProxyAutoStartFromConfig())
+    {
+        StartProxy();
     }
 }
 
 void FMCPServer::Shutdown()
 {
     StopServer();
+    StopProxy();
     UE_LOG(LogMCPServer, Log, TEXT("MCP Server shutdown"));
     
     // Reset the static instance to ensure proper cleanup on editor exit
@@ -1702,4 +1712,196 @@ void FMCPServer::SaveApiKeyToConfig(const FString& ApiKey)
 {
     GConfig->SetString(TEXT("VibeUE.MCPServer"), TEXT("ApiKey"), *ApiKey, GEditorPerProjectIni);
     GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+// ============ Proxy Config Persistence ============
+
+bool FMCPServer::GetProxyEnabledFromConfig()
+{
+    bool bEnabled = false;
+    GConfig->GetBool(TEXT("VibeUE.MCPProxy"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    return bEnabled;
+}
+
+void FMCPServer::SaveProxyEnabledToConfig(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE.MCPProxy"), TEXT("Enabled"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+bool FMCPServer::GetProxyAutoStartFromConfig()
+{
+    bool bAutoStart = false;
+    GConfig->GetBool(TEXT("VibeUE.MCPProxy"), TEXT("AutoStart"), bAutoStart, GEditorPerProjectIni);
+    return bAutoStart;
+}
+
+void FMCPServer::SaveProxyAutoStartToConfig(bool bAutoStart)
+{
+    GConfig->SetBool(TEXT("VibeUE.MCPProxy"), TEXT("AutoStart"), bAutoStart, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+int32 FMCPServer::GetProxyPortFromConfig()
+{
+    int32 Port = 8089;
+    GConfig->GetInt(TEXT("VibeUE.MCPProxy"), TEXT("Port"), Port, GEditorPerProjectIni);
+    return Port;
+}
+
+void FMCPServer::SaveProxyPortToConfig(int32 Port)
+{
+    GConfig->SetInt(TEXT("VibeUE.MCPProxy"), TEXT("Port"), Port, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+FString FMCPServer::GetProxyPythonPathFromConfig()
+{
+    FString Path;
+    GConfig->GetString(TEXT("VibeUE.MCPProxy"), TEXT("PythonPath"), Path, GEditorPerProjectIni);
+    return Path; // Empty = use system "python"
+}
+
+void FMCPServer::SaveProxyPythonPathToConfig(const FString& Path)
+{
+    GConfig->SetString(TEXT("VibeUE.MCPProxy"), TEXT("PythonPath"), *Path, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
+// ============ Proxy Control ============
+
+bool FMCPServer::IsProxyRunning() const
+{
+    // Throttle to at most one real check every 3 seconds — this is called from Slate
+    // tick lambdas and a blocking socket connect would freeze the game thread.
+    double Now = FPlatformTime::Seconds();
+    if (Now - LastProxyCheckTime < 3.0)
+    {
+        return bCachedProxyRunning;
+    }
+    LastProxyCheckTime = Now;
+
+    int32 ProxyPort = GetProxyPortFromConfig();
+
+    ISocketSubsystem* SocketSub = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+    if (!SocketSub)
+    {
+        bCachedProxyRunning = false;
+        return false;
+    }
+
+    TSharedRef<FInternetAddr> Addr = SocketSub->CreateInternetAddr();
+    bool bIsValid = false;
+    Addr->SetIp(TEXT("127.0.0.1"), bIsValid);
+    Addr->SetPort(ProxyPort);
+    if (!bIsValid)
+    {
+        bCachedProxyRunning = false;
+        return false;
+    }
+
+    FSocket* TestSocket = SocketSub->CreateSocket(NAME_Stream, TEXT("ProxyCheck"), false);
+    if (!TestSocket)
+    {
+        bCachedProxyRunning = false;
+        return false;
+    }
+
+    // Non-blocking connect + 100ms wait.
+    // On Windows localhost, Connect() returns WSAEWOULDBLOCK for BOTH open and closed
+    // ports (the RST for a closed port arrives asynchronously). We then call Wait() —
+    // if the socket becomes writable within 100ms the port is genuinely open;
+    // if it times out the port is closed.
+    TestSocket->SetNonBlocking(true);
+    bool bConnected = TestSocket->Connect(*Addr);
+    if (!bConnected)
+    {
+        ESocketErrors LastErr = SocketSub->GetLastErrorCode();
+        if (LastErr == SE_EINPROGRESS || LastErr == SE_EWOULDBLOCK)
+        {
+            // Wait up to 100ms for the connection to complete or be refused
+            bConnected = TestSocket->Wait(ESocketWaitConditions::WaitForWrite, FTimespan::FromMilliseconds(100));
+        }
+        // Any other error (ECONNREFUSED etc.) leaves bConnected = false
+    }
+    SocketSub->DestroySocket(TestSocket);
+
+    bCachedProxyRunning = bConnected;
+    return bConnected;
+}
+
+bool FMCPServer::StartProxy()
+{
+    if (IsProxyRunning())
+    {
+        UE_LOG(LogMCPServer, Log, TEXT("MCP Proxy already running on port %d — skipping start"), GetProxyPortFromConfig());
+        return true;
+    }
+
+    // Locate the proxy script relative to the plugin directory
+    TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VibeUE"));
+    if (!Plugin.IsValid())
+    {
+        UE_LOG(LogMCPServer, Warning, TEXT("StartProxy: VibeUE plugin not found via IPluginManager"));
+        return false;
+    }
+    FString ScriptPath = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("Content/Python/vibeue-proxy.py"));
+
+    FString PythonExe = GetProxyPythonPathFromConfig();
+    if (PythonExe.IsEmpty()) PythonExe = TEXT("python");
+
+    // Ensure the proxy config JSON is up to date before spawning
+    WriteProxyConfigJson();
+
+    FString Params = FString::Printf(TEXT("\"%s\""), *ScriptPath);
+    uint32 OutProcessId = 0;
+    ProxyProcHandle = FPlatformProcess::CreateProc(*PythonExe, *Params,
+        /*bLaunchDetached=*/false, /*bLaunchHidden=*/true, /*bLaunchReallyHidden=*/true,
+        &OutProcessId, 0, nullptr, nullptr);
+
+    if (ProxyProcHandle.IsValid())
+    {
+        bProxyOwnedByUs = true;
+        bCachedProxyRunning = true;
+        LastProxyCheckTime = FPlatformTime::Seconds();
+        UE_LOG(LogMCPServer, Log, TEXT("MCP Proxy started (PID %d) on port %d"), OutProcessId, GetProxyPortFromConfig());
+        return true;
+    }
+
+    UE_LOG(LogMCPServer, Warning, TEXT("StartProxy: Failed to spawn process — python='%s', script='%s'"), *PythonExe, *ScriptPath);
+    return false;
+}
+
+void FMCPServer::StopProxy()
+{
+    if (!bProxyOwnedByUs || !ProxyProcHandle.IsValid()) return;
+
+    FPlatformProcess::TerminateProc(ProxyProcHandle, /*bKillTree=*/true);
+    FPlatformProcess::CloseProc(ProxyProcHandle);
+    bProxyOwnedByUs = false;
+    bCachedProxyRunning = false;
+    LastProxyCheckTime = FPlatformTime::Seconds();
+    UE_LOG(LogMCPServer, Log, TEXT("MCP Proxy stopped"));
+}
+
+void FMCPServer::WriteProxyConfigJson() const
+{
+    TSharedPtr<IPlugin> Plugin = IPluginManager::Get().FindPlugin(TEXT("VibeUE"));
+    if (!Plugin.IsValid()) return;
+
+    FString JsonPath = FPaths::ConvertRelativePathToFull(Plugin->GetBaseDir() / TEXT("vibeue-proxy.json"));
+
+    TSharedPtr<FJsonObject> JsonObj = MakeShared<FJsonObject>();
+    JsonObj->SetStringField(TEXT("bearer_token"), GetApiKeyFromConfig());
+    JsonObj->SetNumberField(TEXT("proxy_port"),   (double)GetProxyPortFromConfig());
+
+    FString JsonStr;
+    TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonStr);
+    FJsonSerializer::Serialize(JsonObj.ToSharedRef(), Writer);
+
+    FFileHelper::SaveStringToFile(JsonStr, *JsonPath, FFileHelper::EEncodingOptions::ForceUTF8WithoutBOM);
+    UE_LOG(LogMCPServer, Log, TEXT("Wrote vibeue-proxy.json to %s"), *JsonPath);
+
+    // Invalidate the cached proxy status so the UI re-checks against the new port on next tick
+    LastProxyCheckTime = -999.0;
 }

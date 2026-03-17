@@ -56,6 +56,16 @@ public:
     void SetMaxTokens(int32 InMaxTokens) { MaxTokens = InMaxTokens; }
     int32 GetMaxTokens() const { return MaxTokens; }
 
+    /**
+     * Context window size sent as num_ctx in the request body.
+     * Ollama accepts this to override its default (typically 2048–4096 tokens).
+     * Other OpenAI-compatible servers silently ignore it.
+     * Default 32768 — large enough for 10 full tool schemas (~30KB) plus response.
+     * Set to 0 to omit from the request (use server default).
+     */
+    void SetContextSize(int32 InContextSize) { ContextSize = InContextSize; }
+    int32 GetContextSize() const { return ContextSize; }
+
     void SetParallelToolCalls(bool bInParallel) { bParallelToolCalls = bInParallel; }
     bool GetParallelToolCalls() const { return bParallelToolCalls; }
 
@@ -82,6 +92,7 @@ private:
     float Temperature = 0.2f;
     float TopP = 0.95f;
     int32 MaxTokens = 8192;
+    int32 ContextSize = 32768;  // num_ctx sent to Ollama; 0 = omit (use server default)
     bool bParallelToolCalls = true;
 
     /** Derive /v1/models URL from the chat completions URL */

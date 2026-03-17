@@ -1213,7 +1213,20 @@ void FChatSession::SetCurrentModel(const FString& ModelId)
 
 void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 {
-    // Models are only relevant for OpenRouter
+    if (CurrentProvider == ELLMProvider::OpenAICompatible && CustomClient.IsValid())
+    {
+        // Route to the custom endpoint's /v1/models.  Many local servers do not
+        // implement this; FOpenAICompatibleClient::HandleModelsFetchComplete handles
+        // non-200 responses gracefully by returning bSuccess=false.
+        CustomClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+        {
+            if (bSuccess) CachedModels = Models;
+            OnComplete.ExecuteIfBound(bSuccess, Models);
+        }));
+        return;
+    }
+
+    // Default: OpenRouter
     OpenRouterClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
     {
         if (bSuccess)
