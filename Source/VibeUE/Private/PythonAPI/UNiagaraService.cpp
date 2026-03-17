@@ -2500,10 +2500,10 @@ TArray<FNiagaraRIParameterInfo> UNiagaraService::ListRapidIterationParams(
 					{
 						int32 Val;
 						FMemory::Memcpy(&Val, Data, sizeof(int32));
-						// Try to get enum name
 						if (UEnum* Enum = TypeDef.GetEnum())
 						{
-							Info.Value = Enum->GetNameStringByValue(Val);
+							FText DisplayName = Enum->GetDisplayNameTextByValue(Val);
+							Info.Value = !DisplayName.IsEmpty() ? DisplayName.ToString() : Enum->GetNameStringByValue(Val);
 						}
 						else
 						{
@@ -3239,7 +3239,8 @@ bool UNiagaraService::GetAllEditableSettings(
 						FMemory::Memcpy(&Val, Data, sizeof(int32));
 						if (UEnum* Enum = TypeDef.GetEnum())
 						{
-							Setting.CurrentValue = Enum->GetNameStringByValue(Val);
+							FText DisplayName = Enum->GetDisplayNameTextByValue(Val);
+							Setting.CurrentValue = !DisplayName.IsEmpty() ? DisplayName.ToString() : Enum->GetNameStringByValue(Val);
 						}
 						else
 						{
@@ -3346,7 +3347,8 @@ bool UNiagaraService::GetAllEditableSettings(
 							FMemory::Memcpy(&Val, Data, sizeof(int32));
 							if (UEnum* Enum = TypeDef.GetEnum())
 							{
-								Setting.CurrentValue = Enum->GetNameStringByValue(Val);
+								FText DisplayName = Enum->GetDisplayNameTextByValue(Val);
+								Setting.CurrentValue = !DisplayName.IsEmpty() ? DisplayName.ToString() : Enum->GetNameStringByValue(Val);
 							}
 							else
 							{

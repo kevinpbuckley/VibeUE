@@ -156,9 +156,25 @@ static FString GetStaticSwitchValue(UNiagaraNodeFunctionCall* FunctionCall, cons
 		FString PinName = Pin->PinName.ToString();
 		if (PinName.Contains(SwitchName.ToString(), ESearchCase::IgnoreCase))
 		{
-			// Return the default value
 			if (!Pin->DefaultValue.IsEmpty())
 			{
+				// Resolve enum display names (UserDefinedEnums store internal names like "NewEnumerator0")
+				FNiagaraTypeDefinition TypeDef = UEdGraphSchema_Niagara::PinToTypeDefinition(Pin);
+				if (TypeDef.IsEnum())
+				{
+					if (UEnum* Enum = TypeDef.GetEnum())
+					{
+						int32 Index = Enum->GetIndexByNameString(Pin->DefaultValue);
+						if (Index != INDEX_NONE)
+						{
+							FText DisplayName = Enum->GetDisplayNameTextByIndex(Index);
+							if (!DisplayName.IsEmpty())
+							{
+								return DisplayName.ToString();
+							}
+						}
+					}
+				}
 				return Pin->DefaultValue;
 			}
 		}
@@ -965,6 +981,23 @@ FString UNiagaraEmitterService::GetModuleInput(
 			{
 				if (!Pin->DefaultValue.IsEmpty())
 				{
+					// Resolve enum display names (UserDefinedEnums store internal names like "NewEnumerator3")
+					FNiagaraTypeDefinition TypeDef = UEdGraphSchema_Niagara::PinToTypeDefinition(Pin);
+					if (TypeDef.IsEnum())
+					{
+						if (UEnum* Enum = TypeDef.GetEnum())
+						{
+							int32 Index = Enum->GetIndexByNameString(Pin->DefaultValue);
+							if (Index != INDEX_NONE)
+							{
+								FText DisplayName = Enum->GetDisplayNameTextByIndex(Index);
+								if (!DisplayName.IsEmpty())
+								{
+									return DisplayName.ToString();
+								}
+							}
+						}
+					}
 					return Pin->DefaultValue;
 				}
 			}
@@ -2078,14 +2111,35 @@ static FString VariableValueToString(const FNiagaraParameterStore& Store, const 
 		}
 	}
 	
-	// For enums and other types, try to represent the raw bytes
+	// Enum types - resolve to display name
+	if (TypeDef.IsEnum() && Size <= 4)
+	{
+		int32 IntValue = 0;
+		FMemory::Memcpy(&IntValue, Data, FMath::Min(Size, 4));
+		if (UEnum* Enum = TypeDef.GetEnum())
+		{
+			FText DisplayName = Enum->GetDisplayNameTextByValue(IntValue);
+			if (!DisplayName.IsEmpty())
+			{
+				return DisplayName.ToString();
+			}
+			FString EnumName = Enum->GetNameStringByValue(IntValue);
+			if (!EnumName.IsEmpty())
+			{
+				return EnumName;
+			}
+		}
+		return FString::Printf(TEXT("%d"), IntValue);
+	}
+
+	// For other types, try to represent the raw bytes
 	if (Size <= 4)
 	{
 		int32 IntValue = 0;
 		FMemory::Memcpy(&IntValue, Data, FMath::Min(Size, 4));
 		return FString::Printf(TEXT("(raw: %d, type: %s, size: %d)"), IntValue, *TypeName.ToString(), Size);
 	}
-	
+
 	return FString::Printf(TEXT("(type: %s, size: %d bytes)"), *TypeName.ToString(), Size);
 }
 

@@ -729,6 +729,18 @@ public:
 	                                           const FString& ConditionStructName, const FString& PropertyPath,
 	                                           const FString& Value, int32 ConditionMatchIndex = -1);
 
+	/**
+	 * Bind an enter condition property to context data (e.g. context "Actor" path "TargetPawn" -> condition property "Object").
+	 * Leave ContextPropertyPath empty to bind the whole context object.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindEnterConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	                                                const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                                const FString& ContextName = TEXT("Actor"),
+	                                                const FString& ContextPropertyPath = TEXT(""),
+	                                                int32 ConditionMatchIndex = -1);
+
 	/** Add a condition to an existing transition. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
@@ -756,6 +768,19 @@ public:
 	                                                int32 TransitionIndex, const FString& ConditionStructName,
 	                                                const FString& PropertyPath, const FString& Value,
 	                                                int32 ConditionMatchIndex = -1);
+
+	/**
+	 * Bind a transition condition property to context data (e.g. context "Actor" path "TargetPawn" -> condition property "Object").
+	 * Leave ContextPropertyPath empty to bind the whole context object.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTransitionConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	                                                     int32 TransitionIndex, const FString& ConditionStructName,
+	                                                     const FString& ConditionPropertyPath,
+	                                                     const FString& ContextName = TEXT("Actor"),
+	                                                     const FString& ContextPropertyPath = TEXT(""),
+	                                                     int32 ConditionMatchIndex = -1);
 
 	/** Remove an evaluator by struct type name. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")

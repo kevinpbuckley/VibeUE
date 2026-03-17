@@ -650,6 +650,26 @@ unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "G
 unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "GotoState", "Root/Walking")
 ```
 
+### ⚠️ add_transition Rejects Duplicates — Do NOT Retry Blindly
+
+`add_transition` returns `False` if an identical transition (same trigger, type, and target) already
+exists on the state. If compilation fails after adding a transition, do **NOT** call `add_transition`
+again with different parameters — the first transition is still in memory. Instead:
+
+1. **Remove** the failed transition with `remove_transition` first
+2. **Then** add the corrected one
+
+```python
+# WRONG — retrying add_transition without removing the previous attempt
+unreal.StateTreeService.add_transition(path, "Root", "OnTick", "NextSelectableState")  # compile fails
+unreal.StateTreeService.add_transition(path, "Root", "OnTick", "GotoState", "Root/Idle")  # now 2 transitions!
+
+# CORRECT — remove the failed one first, then add the corrected version
+unreal.StateTreeService.add_transition(path, "Root", "OnTick", "NextSelectableState")  # compile fails
+unreal.StateTreeService.remove_transition(path, "Root", 0)  # clean up
+unreal.StateTreeService.add_transition(path, "Root", "OnTick", "GotoState", "Root/Idle")  # now only 1
+```
+
 ### ⚠️ Use `StateTreeRef` Not `StateTree` on StateTreeComponent
 
 `StateTreeComponent` has two related properties. The editor Details panel reads `StateTreeRef`.
@@ -695,6 +715,22 @@ for p in props:
 result = unreal.StateTreeService.set_task_property_value_detailed(
     path, "Root", "FStateTreeDebugTextTask", "BindableText", "Hello from Root")
 assert result.success, result.error_message
+```
+
+### ⚠️ Condition Properties That Require Bindings (e.g. "Object")
+
+Conditions like `StateTreeObjectIsValidCondition` have properties that **must be bound**
+to context data — setting a string value won't work. Use `bind_transition_condition_property_to_context`
+or `bind_enter_condition_property_to_context` instead of `set_*_condition_property_value`.
+
+```python
+# WRONG — trying to set "Object" as a string value (will fail or compile error)
+unreal.StateTreeService.set_transition_condition_property_value(
+    path, "Root", 0, "StateTreeObjectIsValidCondition", "Object", "/Game/SomeActor")
+
+# CORRECT — bind it to the context actor's property
+unreal.StateTreeService.bind_transition_condition_property_to_context(
+    path, "Root", 0, "StateTreeObjectIsValidCondition", "Object", "Actor", "TargetPawn")
 ```
 
 ### ⚠️ Bool Properties Drop the `b` Prefix in Python
@@ -921,6 +957,20 @@ props = unreal.StateTreeService.get_transition_condition_property_names(path, "R
 # Set a property on a transition condition
 unreal.StateTreeService.set_transition_condition_property_value(
     path, "Root/Idle", 0, "FMyCondition", "Threshold", "3.0")
+
+# Bind an enter condition property to context data (e.g. bind "Object" to Actor.TargetPawn)
+unreal.StateTreeService.bind_enter_condition_property_to_context(
+    path, "Root/Idle", "StateTreeObjectIsValidCondition", "Object",
+    "Actor", "TargetPawn")
+
+# Bind a transition condition property to context data
+unreal.StateTreeService.bind_transition_condition_property_to_context(
+    path, "Root/Idle", 0, "StateTreeObjectIsValidCondition", "Object",
+    "Actor", "TargetPawn")
+
+# Leave ContextPropertyPath empty to bind the whole context object
+unreal.StateTreeService.bind_transition_condition_property_to_context(
+    path, "Root", 0, "StateTreeObjectIsValidCondition", "Object", "Actor")
 ```
 
 ### Evaluator & Global Task Management (Extended)

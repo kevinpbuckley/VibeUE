@@ -3863,6 +3863,76 @@ bool UStateTreeService::SetEnterConditionPropertyValue(const FString& AssetPath,
 #endif
 }
 
+bool UStateTreeService::BindEnterConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	const FString& ConditionStructName, const FString& ConditionPropertyPath, const FString& ContextName,
+	const FString& ContextPropertyPath, int32 ConditionMatchIndex)
+{
+	if (ConditionPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: ConditionPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* CondNode = FindEditorNodeByStructInArray(State->EnterConditions, ConditionStructName, ConditionMatchIndex);
+	if (!CondNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToContext: Condition '%s' not found in state '%s'"),
+			*ConditionStructName, *StatePath);
+		return false;
+	}
+
+	FGuid ContextStructID;
+	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToContext: Context '%s' not found. Ensure context actor class is set."),
+			*ContextName);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(ContextStructID, ContextPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: Invalid context property path: %s"), *ContextPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(CondNode->ID, ConditionPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: Invalid condition property path: %s"), *ConditionPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
 	int32 TransitionIndex, const FString& ConditionStructName)
 {
@@ -4069,6 +4139,77 @@ bool UStateTreeService::SetTransitionConditionPropertyValue(const FString& Asset
 		return false;
 	}
 
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindTransitionConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	int32 TransitionIndex, const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	const FString& ContextName, const FString& ContextPropertyPath, int32 ConditionMatchIndex)
+{
+	if (ConditionPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToContext: ConditionPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State || !State->Transitions.IsValidIndex(TransitionIndex))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToContext: Invalid state or transition index"));
+		return false;
+	}
+
+	FStateTreeEditorNode* CondNode = FindEditorNodeByStructInArray(
+		State->Transitions[TransitionIndex].Conditions, ConditionStructName, ConditionMatchIndex);
+	if (!CondNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTransitionConditionPropertyToContext: Condition '%s' not found on transition %d of state '%s'"),
+			*ConditionStructName, TransitionIndex, *StatePath);
+		return false;
+	}
+
+	FGuid ContextStructID;
+	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTransitionConditionPropertyToContext: Context '%s' not found. Ensure context actor class is set."),
+			*ContextName);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(ContextStructID, ContextPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToContext: Invalid context property path: %s"), *ContextPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(CondNode->ID, ConditionPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionConditionPropertyToContext: Invalid condition property path: %s"), *ConditionPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else
@@ -4304,6 +4445,31 @@ bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& S
 		{
 			UE_LOG(LogStateTreeService, Warning, TEXT("AddTransition: Target state not found: %s"), *TargetPath);
 			return false;
+		}
+	}
+
+	// Check for duplicate transition (same trigger, type, and target)
+	for (const FStateTreeTransition& Existing : State->Transitions)
+	{
+		if (Existing.Trigger == ParsedTrigger && Existing.State.LinkType == ParsedType)
+		{
+			// For GotoState, also match the target state
+			if (ParsedType == EStateTreeTransitionType::GotoState)
+			{
+				if (TargetState && Existing.State.ID == TargetState->ID)
+				{
+					UE_LOG(LogStateTreeService, Warning, TEXT("AddTransition: Duplicate transition '%s' -> '%s' (target '%s') already exists on state '%s'. Skipping."),
+						*Trigger, *TransitionType, *TargetPath, *StatePath);
+					return false;
+				}
+			}
+			else
+			{
+				// Non-GotoState types (NextSelectableState, etc.) match on trigger+type alone
+				UE_LOG(LogStateTreeService, Warning, TEXT("AddTransition: Duplicate transition '%s' -> '%s' already exists on state '%s'. Skipping."),
+					*Trigger, *TransitionType, *StatePath);
+				return false;
+			}
 		}
 	}
 
