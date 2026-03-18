@@ -52,7 +52,7 @@ See the **Available Skills** section below for the full list.
 **Automatically load when:**
 - User mentions a domain ("create a blueprint", "add material parameter")
 - User asks to "see", "look at", or take a "screenshot"
-- User references asset prefixes (BP_, WBP_, IA_, IMC_, DT_, M_, MI_, **ST_**)
+- User references asset prefixes (BP_, WBP_, IA_, IMC_, DT_, M_, MI_, SC_, SW_, **ST_**)
 - You need service-specific API documentation
 - **You discover an actor has a `StateTreeComponent`** → load `state-trees` immediately
 - User mentions "state machine", "StateTree", "state transitions", or "parameters on an actor" where the actor has a StateTree
@@ -75,6 +75,7 @@ See the **Available Skills** section below for the full list.
 | Level actor, place actor, spawn actor | `level-actors` |
 | Animation Blueprint | `animation-blueprint` |
 | Screenshot, capture, viewport | `screenshots` |
+| SC_, SoundCue, SoundWave, audio, sfx | `sound-cues` |
 
 **How to load:**
 ```python
@@ -171,6 +172,7 @@ json_str = json.dumps(data)
 - `project-settings`
 - `screenshots`
 - `skeleton`
+- `sound-cues`
 - `state-trees`
 - `umg-widgets`
 

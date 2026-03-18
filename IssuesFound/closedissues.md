@@ -1,5 +1,10 @@
 # VibeUE — Closed / Fixed Issues
 
+## ~~#268 InEditorChat — Streaming on VibeUE model~~ — FIXED
+
+**Fixed:** 2026-03-14, PR #336 (Kevin's commit `075c4bc`)
+SSE streaming enabled for the VibeUE API client. Closed upstream — no longer in open issues list.
+
 Archived from `issues.md`. See that file for open issues.
 
 ---

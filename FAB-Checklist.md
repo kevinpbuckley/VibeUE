@@ -44,7 +44,7 @@
 - [x] .uplugin has "FabURL" key with Listing ID ✅
 
 ### Copyright & Source Code
-- [x] All source and header files (86 files) contain copyright notice ✅
+- [x] All source and header files (88 files) contain copyright notice ✅
   - Format: `// Copyright Buckley Builds LLC 2026 All Rights Reserved.`
 
 ### File Structure
