@@ -1916,7 +1916,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<int32> ActiveTab = MakeShared<int32>(0);
 
     // ============================================================
-    // TAB 0: API Keys
+    // TAB 1: API Keys
     // ============================================================
     TSharedRef<SWidget> Tab_APIKeys =
         SNew(SScrollBox)
@@ -2048,7 +2048,7 @@ FReply SAIChatWindow::OnSettingsClicked()
 
 
     // ============================================================
-    // TAB 1: General
+    // TAB 0: General
     // ============================================================
     TSharedRef<SWidget> Tab_General =
         SNew(SScrollBox)
@@ -2410,8 +2410,8 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Build tab switcher — all widgets now valid from SAssignNew calls above
     // ============================================================
     TSharedPtr<SWidgetSwitcher> TabSwitcher = SNew(SWidgetSwitcher)
-        + SWidgetSwitcher::Slot()[ Tab_APIKeys ]
         + SWidgetSwitcher::Slot()[ Tab_General ]
+        + SWidgetSwitcher::Slot()[ Tab_APIKeys ]
         + SWidgetSwitcher::Slot()[ Tab_Voice ]
         + SWidgetSwitcher::Slot()[ Tab_MCPServer ]
         + SWidgetSwitcher::Slot()[ Tab_About ];
@@ -2553,8 +2553,8 @@ FReply SAIChatWindow::OnSettingsClicked()
             .BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f))
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),   0) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),    1) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),    0) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),   1) ]
                 + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),      2) ]
                 + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"), 3) ]
                 + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),      4) ]
