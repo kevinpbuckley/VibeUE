@@ -14,6 +14,12 @@ unreal_classes:
   - SoundNodeAttenuation
   - SoundNodeLooping
   - SoundNodeDelay
+  - SoundNodeSwitch
+  - SoundNodeEnveloper
+  - SoundNodeDistanceCrossFade
+  - SoundNodeBranch
+  - SoundNodeParamCrossFade
+  - SoundNodeQualityLevel
 keywords:
   - sound cue
   - sound node
@@ -175,7 +181,9 @@ svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `create_sound_cue(path, wave_path)` | `FSoundCueResult` | `wave_path=''` for empty cue |
-| `get_sound_cue_info(path)` | `FSoundCueInfo` | node count, root index, vol, pitch |
+| `duplicate_sound_cue(src_path, dst_path)` | `FSoundCueResult` | copy a cue to a new path |
+| `delete_sound_cue(path)` | `bool` | deletes the asset from disk |
+| `get_sound_cue_info(path)` | `FSoundCueInfo` | node count, root index, vol, pitch, duration |
 | `save_sound_cue(path)` | `bool` | saves to disk |
 
 ### Node Creation — all return `FSoundCueResult`
@@ -187,18 +195,41 @@ svc.set_sound_class('/Game/Audio/SC_Explosion', '/Game/Audio/SC_SFX')
 | `add_mixer_node(path, num_inputs, x, y)` | Blends children in parallel | `num_inputs` 1–32 |
 | `add_concatenator_node(path, num_inputs, x, y)` | Plays children in sequence | `num_inputs` 2–32 |
 | `add_modulator_node(path, x, y)` | Random pitch/volume variance | — |
-| `add_attenuation_node(path, x, y)` | Spatial attenuation | — |
+| `add_attenuation_node(path, x, y)` | Spatial attenuation (graph node) | — |
 | `add_looping_node(path, x, y)` | Loops its child | — |
 | `add_delay_node(path, x, y)` | Adds a delay before playing | — |
+| `add_switch_node(path, x, y)` | Routes by integer parameter | — |
+| `add_enveloper_node(path, x, y)` | Volume/pitch envelope over time | — |
+| `add_distance_cross_fade_node(path, num_inputs, x, y)` | Crossfades by distance | `num_inputs` 2–32 |
+| `add_branch_node(path, x, y, bool_param='')` | Routes by bool parameter; True(0) False(1) Unset(2) | optional param name last |
+| `add_param_cross_fade_node(path, num_inputs, x, y)` | Crossfades by named float param | `num_inputs` 2–32 |
+| `add_quality_level_node(path, x, y)` | One input per quality level | — |
 
-### Node Connections
+### Node Management
 
 | Method | Returns | Notes |
 |--------|---------|-------|
 | `list_nodes(path)` | `TArray<FSoundCueNodeInfo>` | index, class, children, is_root_node |
 | `connect_nodes(path, parent, child, slot)` | `bool` | child feeds audio INTO parent |
+| `disconnect_node(path, parent_index, slot)` | `bool` | break a single input link |
 | `set_root_node(path, index)` | `bool` | sets cue output node |
 | `set_wave_player_asset(path, index, wave_path)` | `bool` | reassign wave on existing node |
+| `remove_node(path, index)` | `bool` | delete a node from the graph |
+| `move_node(path, index, x, y)` | `bool` | reposition a node in the graph |
+| `get_node_property(path, index, prop_name)` | `FString` | read any node UPROPERTY |
+| `set_node_property(path, index, prop_name, value)` | `bool` | write any node UPROPERTY |
+
+### Cue-Level Settings
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `set_volume_multiplier(path, vol)` | `bool` | — |
+| `set_pitch_multiplier(path, pitch)` | `bool` | — |
+| `set_sound_class(path, class_path)` | `bool` | — |
+| `set_attenuation(path, att_path)` | `bool` | `att_path=''` to clear |
+| `get_attenuation(path)` | `FString` | returns asset path or `''` |
+| `set_concurrency(path, conc_path, clear=False)` | `bool` | `conc_path=''` + `clear=True` to clear all |
+| `get_concurrency(path)` | `TArray<FString>` | list of assigned concurrency asset paths |
 
 ### FSoundCueNodeInfo fields
 

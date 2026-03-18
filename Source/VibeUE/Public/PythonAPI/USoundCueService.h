@@ -94,6 +94,10 @@ struct FSoundCueInfo
 	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio")
 	FString AttenuationPath;
 
+	/** Total playback duration in seconds (estimated by UE from the node graph) */
+	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio")
+	float Duration = 0.0f;
+
 	/** Total number of sound nodes in the graph (excludes the output node) */
 	UPROPERTY(BlueprintReadOnly, Category = "VibeUE|Audio")
 	int32 NodeCount = 0;
@@ -234,6 +238,34 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
 	static bool SaveSoundCue(const FString& AssetPath);
+
+	/**
+	 * Duplicate an existing SoundCue to a new path.
+	 *
+	 * @param SourcePath - Full path to the existing SoundCue
+	 * @param DestPath   - Full path for the new copy (must not already exist)
+	 * @return FSoundCueResult with bSuccess=true and AssetPath set on success
+	 *
+	 * Example:
+	 *   r = unreal.SoundCueService.duplicate_sound_cue(
+	 *       "/Game/Audio/SC_Footstep", "/Game/Audio/SC_Footstep_Gravel")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	static FSoundCueResult DuplicateSoundCue(
+		const FString& SourcePath,
+		const FString& DestPath);
+
+	/**
+	 * Delete a SoundCue asset from the content browser.
+	 *
+	 * @param AssetPath - Full path to the SoundCue to delete
+	 * @return True if deleted successfully
+	 *
+	 * Example:
+	 *   unreal.SoundCueService.delete_sound_cue("/Game/Audio/SC_Temp")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
+	static bool DeleteSoundCue(const FString& AssetPath);
 
 	// ============================================================================
 	// NODE INSPECTION
@@ -398,6 +430,65 @@ public:
 		float PosX = 0.0f,
 		float PosY = 0.0f);
 
+	/** Add a Switch node that selects one input based on an integer parameter.
+	 *  Slot 0 = default when param is out of range. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddSwitchNode(
+		const FString& AssetPath,
+		int32 NumInputs = 2,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/** Add an Enveloper node — applies a volume/pitch envelope curve to its input. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddEnveloperNode(
+		const FString& AssetPath,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/** Add a Distance CrossFade node — blends N inputs by listener distance.
+	 *  Use set_node_property to configure each input's FadeInDistanceStart/End etc. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddDistanceCrossFadeNode(
+		const FString& AssetPath,
+		int32 NumInputs = 2,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/** Add a Branch node — routes to True (slot 0), False (slot 1), or Unset (slot 2)
+	 *  based on a named bool parameter. Always has exactly 3 input slots. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddBranchNode(
+		const FString& AssetPath,
+		float PosX = 0.0f,
+		float PosY = 0.0f,
+		const FString& BoolParameterName = TEXT(""));
+
+	/** Add a Param CrossFade node — blends N inputs by a named float parameter. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddParamCrossFadeNode(
+		const FString& AssetPath,
+		int32 NumInputs = 2,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/** Add a Quality Level node — selects one input per platform quality level.
+	 *  Number of inputs equals the number of quality levels in Project Settings → Audio. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static FSoundCueResult AddQualityLevelNode(
+		const FString& AssetPath,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/** Reposition a node in the graph editor (purely visual).
+	 *  Call list_nodes() first to get the correct index. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Nodes")
+	static bool MoveNode(
+		const FString& AssetPath,
+		int32 NodeIndex,
+		float PosX,
+		float PosY);
+
 	// ============================================================================
 	// NODE CONNECTIONS
 	// ============================================================================
@@ -418,6 +509,37 @@ public:
 	 *   # Connect WavePlayer (index 1) into Random node (index 0) at slot 0
 	 *   unreal.SoundCueService.connect_nodes("/Game/Audio/SC_Footstep", 0, 1, 0)
 	 */
+	/**
+	 * Remove a node from the SoundCue graph by index.
+	 *
+	 * All connections to/from the node are broken first.
+	 * Call list_nodes() after removal to get updated indices.
+	 *
+	 * @param AssetPath - Full path to the SoundCue asset
+	 * @param NodeIndex - Index of the node to remove (from list_nodes)
+	 * @return True if removed successfully
+	 *
+	 * Example:
+	 *   unreal.SoundCueService.remove_node("/Game/Audio/SC_Footstep", 2)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	static bool RemoveNode(const FString& AssetPath, int32 NodeIndex);
+
+	/**
+	 * Disconnect a specific input slot on a node, leaving the slot empty.
+	 *
+	 * @param AssetPath - Full path to the SoundCue asset
+	 * @param NodeIndex - Index of the node whose input to disconnect (from list_nodes)
+	 * @param InputSlot - Zero-based input slot index to disconnect
+	 * @return True if disconnected successfully
+	 *
+	 * Example:
+	 *   # Clear slot 1 on node 2 (Mixer), leaving that input empty
+	 *   unreal.SoundCueService.disconnect_node("/Game/Audio/SC_Footstep", 2, 1)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
+	static bool DisconnectNode(const FString& AssetPath, int32 NodeIndex, int32 InputSlot);
+
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Connections")
 	static bool ConnectNodes(
 		const FString& AssetPath,
@@ -448,6 +570,54 @@ public:
 	// ============================================================================
 	// NODE PROPERTIES
 	// ============================================================================
+
+	/**
+	 * Get a property value from a sound node as a string.
+	 *
+	 * Uses UE property reflection — works for scalar types (float, bool, int32, FString).
+	 * For WavePlayer: "bLooping", "bIsRetriggerable"
+	 * For Modulator:  "PitchMin", "PitchMax", "VolumeMin", "VolumeMax"
+	 * For Delay:      "DelayMin", "DelayMax"
+	 *
+	 * @param AssetPath    - Full path to the SoundCue asset
+	 * @param NodeIndex    - Index of the node (from list_nodes)
+	 * @param PropertyName - Exact C++ property name (case-sensitive)
+	 * @return Property value as string, or empty string on failure
+	 *
+	 * Example:
+	 *   val = unreal.SoundCueService.get_node_property("/Game/Audio/SC_Footstep", 0, "PitchMin")
+	 *   print(val)  # "0.95"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|NodeProperties")
+	static FString GetNodeProperty(
+		const FString& AssetPath,
+		int32 NodeIndex,
+		const FString& PropertyName);
+
+	/**
+	 * Set a property value on a sound node from a string.
+	 *
+	 * Uses UE property reflection — works for scalar types (float, bool, int32, FString).
+	 * For WavePlayer: "bLooping" = "true"/"false"
+	 * For Modulator:  "PitchMin" = "0.9", "VolumeMax" = "1.1"
+	 * For Delay:      "DelayMin" = "0.1", "DelayMax" = "0.5"
+	 *
+	 * @param AssetPath    - Full path to the SoundCue asset
+	 * @param NodeIndex    - Index of the node (from list_nodes)
+	 * @param PropertyName - Exact C++ property name (case-sensitive)
+	 * @param Value        - New value as string (e.g. "0.9", "true", "42")
+	 * @return True if property was set successfully
+	 *
+	 * Example:
+	 *   unreal.SoundCueService.set_node_property("/Game/Audio/SC_Footstep", 0, "PitchMin", "0.85")
+	 *   unreal.SoundCueService.set_node_property("/Game/Audio/SC_Footstep", 0, "bLooping", "true")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|NodeProperties")
+	static bool SetNodeProperty(
+		const FString& AssetPath,
+		int32 NodeIndex,
+		const FString& PropertyName,
+		const FString& Value);
 
 	/**
 	 * Assign a SoundWave to an existing Wave Player node.
@@ -506,6 +676,27 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
 	static bool SetSoundClass(const FString& AssetPath, const FString& SoundClassPath);
 
+	/** Assign an attenuation settings asset to a SoundCue.
+	 *  Pass empty string to clear the current attenuation asset. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	static bool SetAttenuation(const FString& AssetPath, const FString& AttenuationAssetPath);
+
+	/** Return the asset path of the attenuation settings assigned to a SoundCue, or empty if none. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	static FString GetAttenuation(const FString& AssetPath);
+
+	/** Assign a SoundConcurrency asset to a SoundCue (adds to the concurrency set).
+	 *  Pass bClearExisting=true to replace any previously assigned concurrency assets. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	static bool SetConcurrency(
+		const FString& AssetPath,
+		const FString& ConcurrencyAssetPath,
+		bool bClearExisting = false);
+
+	/** Return all concurrency asset paths assigned to a SoundCue. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Settings")
+	static TArray<FString> GetConcurrency(const FString& AssetPath);
+
 	// ============================================================================
 	// SOUNDWAVE UTILITIES
 	// ============================================================================
@@ -522,6 +713,22 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
 	static FSoundWaveInfo GetSoundWaveInfo(const FString& SoundWavePath);
+
+	/**
+	 * Import a .wav or .mp3 audio file from disk as a SoundWave asset.
+	 *
+	 * @param FilePath   - Absolute path to the audio file on disk (e.g. "C:/Sounds/shot.wav")
+	 * @param AssetPath  - Destination content browser path (e.g. "/Game/Audio/SW_Shot")
+	 * @return FSoundCueResult with bSuccess=true and AssetPath set on success
+	 *
+	 * Example:
+	 *   r = unreal.SoundCueService.import_sound_wave(
+	 *       r"C:/Sounds/gunshot.wav", "/Game/Audio/SW_Gunshot")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
+	static FSoundCueResult ImportSoundWave(
+		const FString& FilePath,
+		const FString& AssetPath);
 
 private:
 

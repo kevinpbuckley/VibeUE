@@ -13,7 +13,15 @@
 #include "Sound/SoundNodeLooping.h"
 #include "Sound/SoundNodeConcatenator.h"
 #include "Sound/SoundNodeDelay.h"
+#include "Sound/SoundNodeSwitch.h"
+#include "Sound/SoundNodeEnveloper.h"
+#include "Sound/SoundNodeDistanceCrossFade.h"
+#include "Sound/SoundNodeBranch.h"
+#include "Sound/SoundNodeParamCrossFade.h"
+#include "Sound/SoundNodeQualityLevel.h"
 #include "Sound/SoundClass.h"
+#include "Sound/SoundAttenuation.h"
+#include "Sound/SoundConcurrency.h"
 #include "SoundCueGraph/SoundCueGraph.h"
 #include "SoundCueGraph/SoundCueGraphNode.h"
 #include "SoundCueGraph/SoundCueGraphNode_Root.h"
@@ -23,6 +31,8 @@
 #include "Factories/SoundCueFactoryNew.h"
 #include "Misc/Paths.h"
 #include "ScopedTransaction.h"
+#include "Kismet2/BlueprintEditorUtils.h"
+#include "AssetImportTask.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogSoundCueService, Log, All);
 
@@ -227,6 +237,7 @@ FSoundCueInfo USoundCueService::GetSoundCueInfo(const FString& AssetPath)
 	}
 
 	Info.AssetPath        = SoundCue->GetPathName();
+	Info.Duration         = SoundCue->GetDuration();
 	Info.VolumeMultiplier = SoundCue->VolumeMultiplier;
 	Info.PitchMultiplier  = SoundCue->PitchMultiplier;
 
@@ -266,6 +277,60 @@ bool USoundCueService::SaveSoundCue(const FString& AssetPath)
 		return false;
 	}
 	return UEditorAssetLibrary::SaveAsset(AssetPath, false);
+}
+
+FSoundCueResult USoundCueService::DuplicateSoundCue(const FString& SourcePath, const FString& DestPath)
+{
+	FSoundCueResult Result;
+
+	if (SourcePath.IsEmpty() || DestPath.IsEmpty())
+	{
+		Result.Message = TEXT("SourcePath and DestPath must not be empty");
+		return Result;
+	}
+
+	if (!UEditorAssetLibrary::DoesAssetExist(SourcePath))
+	{
+		Result.Message = FString::Printf(TEXT("Source asset does not exist: '%s'"), *SourcePath);
+		return Result;
+	}
+
+	if (UEditorAssetLibrary::DoesAssetExist(DestPath))
+	{
+		Result.Message = FString::Printf(TEXT("Destination already exists: '%s'. Delete it first."), *DestPath);
+		return Result;
+	}
+
+	UObject* Duplicate = UEditorAssetLibrary::DuplicateAsset(SourcePath, DestPath);
+	if (!Duplicate)
+	{
+		Result.Message = FString::Printf(TEXT("DuplicateAsset failed: '%s' → '%s'"), *SourcePath, *DestPath);
+		return Result;
+	}
+
+	UEditorAssetLibrary::SaveAsset(DestPath, false);
+
+	Result.bSuccess  = true;
+	Result.AssetPath = Duplicate->GetPathName();
+	Result.Message   = FString::Printf(TEXT("Duplicated '%s' → '%s'"), *SourcePath, *DestPath);
+	return Result;
+}
+
+bool USoundCueService::DeleteSoundCue(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty())
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("DeleteSoundCue: path is empty"));
+		return false;
+	}
+
+	if (!UEditorAssetLibrary::DoesAssetExist(AssetPath))
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("DeleteSoundCue: asset does not exist at '%s'"), *AssetPath);
+		return false;
+	}
+
+	return UEditorAssetLibrary::DeleteAsset(AssetPath);
 }
 
 // ============================================================================
@@ -737,9 +802,282 @@ FSoundCueResult USoundCueService::AddDelayNode(const FString& AssetPath, float P
 	return Result;
 }
 
+// Shared helper: add N input pins to a freshly-constructed graph node, then compile.
+// Used by all multi-input nodes (Switch, DistanceCrossFade, ParamCrossFade).
+static void AddPinsAndCompile(USoundCue* SoundCue, USoundCueGraphNode* GraphNode, int32 NumPins)
+{
+	for (int32 i = 0; i < NumPins; i++)
+	{
+		GraphNode->CreateInputPin();
+	}
+	SoundCue->CompileSoundNodesFromGraphNodes();
+}
+
+FSoundCueResult USoundCueService::AddSwitchNode(
+	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	int32 Clamped = FMath::Max(1, NumInputs);
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddSwitch", "Add Switch Node"));
+	SoundCue->Modify();
+
+	USoundNodeSwitch* Node = SoundCue->ConstructSoundNode<USoundNodeSwitch>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeSwitch> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	AddPinsAndCompile(SoundCue, Cast<USoundCueGraphNode>(Node->GraphNode), Clamped);
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("Switch node created at index %d (%d inputs)"), Idx, Clamped);
+	return Result;
+}
+
+FSoundCueResult USoundCueService::AddEnveloperNode(const FString& AssetPath, float PosX, float PosY)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddEnveloper", "Add Enveloper Node"));
+	SoundCue->Modify();
+
+	USoundNodeEnveloper* Node = SoundCue->ConstructSoundNode<USoundNodeEnveloper>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeEnveloper> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("Enveloper node created at index %d"), Idx);
+	return Result;
+}
+
+FSoundCueResult USoundCueService::AddDistanceCrossFadeNode(
+	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	int32 Clamped = FMath::Max(2, NumInputs);
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddDistXFade", "Add Distance CrossFade Node"));
+	SoundCue->Modify();
+
+	USoundNodeDistanceCrossFade* Node = SoundCue->ConstructSoundNode<USoundNodeDistanceCrossFade>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeDistanceCrossFade> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	// CrossFadeInput array is kept in sync by SetChildNodes override
+	AddPinsAndCompile(SoundCue, Cast<USoundCueGraphNode>(Node->GraphNode), Clamped);
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("DistanceCrossFade node created at index %d (%d inputs)"), Idx, Clamped);
+	return Result;
+}
+
+FSoundCueResult USoundCueService::AddBranchNode(
+	const FString& AssetPath, float PosX, float PosY, const FString& BoolParameterName)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddBranch", "Add Branch Node"));
+	SoundCue->Modify();
+
+	USoundNodeBranch* Node = SoundCue->ConstructSoundNode<USoundNodeBranch>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeBranch> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	if (!BoolParameterName.IsEmpty())
+	{
+		Node->BoolParameterName = FName(*BoolParameterName);
+	}
+
+	// Branch always has exactly 3 slots: True(0), False(1), Unset(2)
+	AddPinsAndCompile(SoundCue, Cast<USoundCueGraphNode>(Node->GraphNode), 3);
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("Branch node created at index %d (True=0, False=1, Unset=2)"), Idx);
+	return Result;
+}
+
+FSoundCueResult USoundCueService::AddParamCrossFadeNode(
+	const FString& AssetPath, int32 NumInputs, float PosX, float PosY)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	int32 Clamped = FMath::Max(2, NumInputs);
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddParamXFade", "Add Param CrossFade Node"));
+	SoundCue->Modify();
+
+	USoundNodeParamCrossFade* Node = SoundCue->ConstructSoundNode<USoundNodeParamCrossFade>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeParamCrossFade> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	AddPinsAndCompile(SoundCue, Cast<USoundCueGraphNode>(Node->GraphNode), Clamped);
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("ParamCrossFade node created at index %d (%d inputs)"), Idx, Clamped);
+	return Result;
+}
+
+FSoundCueResult USoundCueService::AddQualityLevelNode(const FString& AssetPath, float PosX, float PosY)
+{
+	FSoundCueResult Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { Result.Message = FString::Printf(TEXT("Could not load '%s'"), *AssetPath); return Result; }
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "AddQualityLevel", "Add Quality Level Node"));
+	SoundCue->Modify();
+
+	USoundNodeQualityLevel* Node = SoundCue->ConstructSoundNode<USoundNodeQualityLevel>();
+	if (!Node) { Result.Message = TEXT("ConstructSoundNode<USoundNodeQualityLevel> returned null"); return Result; }
+	if (Node->GraphNode) { Node->GraphNode->NodePosX = (int32)PosX; Node->GraphNode->NodePosY = (int32)PosY; }
+
+	// Number of inputs equals number of project quality levels
+	int32 NumLevels = Node->GetMinChildNodes();
+	if (NumLevels > 0)
+	{
+		AddPinsAndCompile(SoundCue, Cast<USoundCueGraphNode>(Node->GraphNode), NumLevels);
+	}
+	SoundCue->MarkPackageDirty();
+
+	TArray<USoundCueGraphNode*> All = GetGraphNodes(SoundCue);
+	int32 Idx = INDEX_NONE;
+	for (int32 i = 0; i < All.Num(); i++) { if (All[i]->SoundNode == Node) { Idx = i; break; } }
+
+	Result.bSuccess = true; Result.AssetPath = AssetPath;
+	Result.Message = FString::Printf(TEXT("QualityLevel node created at index %d (%d quality levels)"), Idx, NumLevels);
+	return Result;
+}
+
+bool USoundCueService::MoveNode(const FString& AssetPath, int32 NodeIndex, float PosX, float PosY)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { return false; }
+
+	USoundCueGraphNode* GraphNode = GetGraphNodeAtIndex(SoundCue, NodeIndex);
+	if (!GraphNode)
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("MoveNode: NodeIndex %d out of range"), NodeIndex);
+		return false;
+	}
+
+	GraphNode->NodePosX = (int32)PosX;
+	GraphNode->NodePosY = (int32)PosY;
+	SoundCue->MarkPackageDirty();
+	return true;
+}
+
 // ============================================================================
 // NODE CONNECTIONS
 // ============================================================================
+
+bool USoundCueService::RemoveNode(const FString& AssetPath, int32 NodeIndex)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue)
+	{
+		return false;
+	}
+
+	USoundCueGraphNode* GraphNode = GetGraphNodeAtIndex(SoundCue, NodeIndex);
+	if (!GraphNode)
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("RemoveNode: NodeIndex %d out of range"), NodeIndex);
+		return false;
+	}
+
+	USoundNode* SoundNode = GraphNode->SoundNode;
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "RemoveNode", "Remove SoundCue Node"));
+	SoundCue->Modify();
+
+	// Break all pin connections on this graph node
+	for (UEdGraphPin* Pin : GraphNode->Pins)
+	{
+		Pin->BreakAllPinLinks();
+	}
+
+	// Remove from graph and AllNodes
+	FBlueprintEditorUtils::RemoveNode(nullptr, GraphNode, true);
+	SoundCue->AllNodes.Remove(SoundNode);
+
+	// Rebuild ChildNodes and FirstNode from remaining graph state
+	SoundCue->CompileSoundNodesFromGraphNodes();
+	SoundCue->MarkPackageDirty();
+
+	UE_LOG(LogSoundCueService, Verbose, TEXT("RemoveNode: removed [%d] %s"),
+		NodeIndex, *SoundNode->GetClass()->GetName());
+
+	return true;
+}
+
+bool USoundCueService::DisconnectNode(const FString& AssetPath, int32 NodeIndex, int32 InputSlot)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue)
+	{
+		return false;
+	}
+
+	USoundCueGraphNode* GraphNode = GetGraphNodeAtIndex(SoundCue, NodeIndex);
+	if (!GraphNode)
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("DisconnectNode: NodeIndex %d out of range"), NodeIndex);
+		return false;
+	}
+
+	TArray<UEdGraphPin*> InputPins;
+	GraphNode->GetInputPins(InputPins);
+
+	if (!InputPins.IsValidIndex(InputSlot))
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("DisconnectNode: InputSlot %d out of range (node has %d input pins)"),
+			InputSlot, InputPins.Num());
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "DisconnectNode", "Disconnect SoundCue Node"));
+	SoundCue->Modify();
+
+	InputPins[InputSlot]->BreakAllPinLinks();
+	SoundCue->CompileSoundNodesFromGraphNodes();
+	SoundCue->MarkPackageDirty();
+
+	return true;
+}
 
 bool USoundCueService::ConnectNodes(
 	const FString& AssetPath, int32 ParentIndex, int32 ChildIndex, int32 InputSlot)
@@ -980,6 +1318,169 @@ bool USoundCueService::SetSoundClass(const FString& AssetPath, const FString& So
 	return true;
 }
 
+bool USoundCueService::SetAttenuation(const FString& AssetPath, const FString& AttenuationAssetPath)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { return false; }
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "SetAttenuation", "Set SoundCue Attenuation"));
+	SoundCue->Modify();
+
+	if (AttenuationAssetPath.IsEmpty())
+	{
+		SoundCue->AttenuationSettings = nullptr;
+	}
+	else
+	{
+		UObject* Loaded = UEditorAssetLibrary::LoadAsset(AttenuationAssetPath);
+		USoundAttenuation* Att = Cast<USoundAttenuation>(Loaded);
+		if (!Att)
+		{
+			UE_LOG(LogSoundCueService, Warning,
+				TEXT("SetAttenuation: '%s' is not a SoundAttenuation asset"), *AttenuationAssetPath);
+			return false;
+		}
+		SoundCue->AttenuationSettings = Att;
+	}
+
+	SoundCue->MarkPackageDirty();
+	return true;
+}
+
+FString USoundCueService::GetAttenuation(const FString& AssetPath)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { return FString(); }
+	return SoundCue->AttenuationSettings
+		? SoundCue->AttenuationSettings->GetPathName()
+		: FString();
+}
+
+bool USoundCueService::SetConcurrency(
+	const FString& AssetPath, const FString& ConcurrencyAssetPath, bool bClearExisting)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { return false; }
+
+	// Allow empty path when only clearing existing concurrency assets
+	USoundConcurrency* Concurrency = nullptr;
+	if (!ConcurrencyAssetPath.IsEmpty())
+	{
+		UObject* Loaded = UEditorAssetLibrary::LoadAsset(ConcurrencyAssetPath);
+		Concurrency = Cast<USoundConcurrency>(Loaded);
+		if (!Concurrency)
+		{
+			UE_LOG(LogSoundCueService, Warning,
+				TEXT("SetConcurrency: '%s' is not a SoundConcurrency asset"), *ConcurrencyAssetPath);
+			return false;
+		}
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "SetConcurrency", "Set SoundCue Concurrency"));
+	SoundCue->Modify();
+
+	if (bClearExisting)
+	{
+		SoundCue->ConcurrencySet.Empty();
+	}
+
+	if (Concurrency)
+	{
+		SoundCue->ConcurrencySet.Add(Concurrency);
+	}
+
+	SoundCue->MarkPackageDirty();
+	return true;
+}
+
+TArray<FString> USoundCueService::GetConcurrency(const FString& AssetPath)
+{
+	TArray<FString> Result;
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue) { return Result; }
+	for (const TObjectPtr<USoundConcurrency>& C : SoundCue->ConcurrencySet)
+	{
+		if (C) { Result.Add(C->GetPathName()); }
+	}
+	return Result;
+}
+
+FString USoundCueService::GetNodeProperty(
+	const FString& AssetPath, int32 NodeIndex, const FString& PropertyName)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue)
+	{
+		return FString();
+	}
+
+	USoundCueGraphNode* GraphNode = GetGraphNodeAtIndex(SoundCue, NodeIndex);
+	if (!GraphNode)
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("GetNodeProperty: NodeIndex %d out of range"), NodeIndex);
+		return FString();
+	}
+
+	USoundNode* SoundNode = GraphNode->SoundNode;
+	FProperty* Prop = SoundNode->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!Prop)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("GetNodeProperty: property '%s' not found on %s"),
+			*PropertyName, *SoundNode->GetClass()->GetName());
+		return FString();
+	}
+
+	FString ExportedValue;
+	Prop->ExportText_InContainer(0, ExportedValue, SoundNode, SoundNode, SoundNode, PPF_None);
+	return ExportedValue;
+}
+
+bool USoundCueService::SetNodeProperty(
+	const FString& AssetPath, int32 NodeIndex,
+	const FString& PropertyName, const FString& Value)
+{
+	USoundCue* SoundCue = LoadSoundCue(AssetPath);
+	if (!SoundCue)
+	{
+		return false;
+	}
+
+	USoundCueGraphNode* GraphNode = GetGraphNodeAtIndex(SoundCue, NodeIndex);
+	if (!GraphNode)
+	{
+		UE_LOG(LogSoundCueService, Warning, TEXT("SetNodeProperty: NodeIndex %d out of range"), NodeIndex);
+		return false;
+	}
+
+	USoundNode* SoundNode = GraphNode->SoundNode;
+	FProperty* Prop = SoundNode->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!Prop)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("SetNodeProperty: property '%s' not found on %s"),
+			*PropertyName, *SoundNode->GetClass()->GetName());
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "SetNodeProperty", "Set SoundNode Property"));
+	SoundCue->Modify();
+	SoundNode->Modify();
+
+	const TCHAR* ImportResult = Prop->ImportText_InContainer(*Value, SoundNode, SoundNode, PPF_None);
+	if (!ImportResult)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("SetNodeProperty: failed to set '%s' = '%s' on %s"),
+			*PropertyName, *Value, *SoundNode->GetClass()->GetName());
+		return false;
+	}
+
+	SoundNode->PostEditChange();
+	SoundCue->MarkPackageDirty();
+	return true;
+}
+
 // ============================================================================
 // SOUNDWAVE UTILITIES
 // ============================================================================
@@ -1002,4 +1503,59 @@ FSoundWaveInfo USoundCueService::GetSoundWaveInfo(const FString& SoundWavePath)
 	Info.bStreaming  = Wave->IsStreaming(nullptr);
 
 	return Info;
+}
+
+FSoundCueResult USoundCueService::ImportSoundWave(const FString& FilePath, const FString& AssetPath)
+{
+	FSoundCueResult Result;
+
+	if (FilePath.IsEmpty() || AssetPath.IsEmpty())
+	{
+		Result.Message = TEXT("FilePath and AssetPath must not be empty");
+		return Result;
+	}
+
+	if (!FPaths::FileExists(FilePath))
+	{
+		Result.Message = FString::Printf(TEXT("File not found on disk: '%s'"), *FilePath);
+		return Result;
+	}
+
+	FString PackagePath = FPaths::GetPath(AssetPath);
+	FString AssetName   = FPaths::GetBaseFilename(AssetPath);
+
+	if (PackagePath.IsEmpty() || AssetName.IsEmpty())
+	{
+		Result.Message = FString::Printf(
+			TEXT("Could not parse asset path '%s' — expected /Game/Dir/Name"), *AssetPath);
+		return Result;
+	}
+
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools").Get();
+
+	UAssetImportTask* Task = NewObject<UAssetImportTask>();
+	Task->Filename         = FilePath;
+	Task->DestinationPath  = PackagePath;
+	Task->DestinationName  = AssetName;
+	Task->bReplaceExisting = true;
+	Task->bAutomated       = true;
+	Task->bSave            = true;
+
+	TArray<UAssetImportTask*> Tasks;
+	Tasks.Add(Task);
+	AssetTools.ImportAssetTasks(Tasks);
+
+	// Verify the asset was actually created
+	USoundWave* Wave = LoadSoundWave(AssetPath);
+	if (!Wave)
+	{
+		Result.Message = FString::Printf(
+			TEXT("Import completed but asset not found at '%s' — check file format"), *AssetPath);
+		return Result;
+	}
+
+	Result.bSuccess  = true;
+	Result.AssetPath = Wave->GetPathName();
+	Result.Message   = FString::Printf(TEXT("Imported '%s' → '%s'"), *FilePath, *AssetPath);
+	return Result;
 }
