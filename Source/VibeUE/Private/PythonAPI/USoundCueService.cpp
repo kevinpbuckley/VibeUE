@@ -1559,3 +1559,38 @@ FSoundCueResult USoundCueService::ImportSoundWave(const FString& FilePath, const
 	Result.Message   = FString::Printf(TEXT("Imported '%s' → '%s'"), *FilePath, *AssetPath);
 	return Result;
 }
+
+bool USoundCueService::SetSoundWaveProperty(
+	const FString& SoundWavePath, const FString& PropertyName, const FString& Value)
+{
+	USoundWave* Wave = LoadSoundWave(SoundWavePath);
+	if (!Wave)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("SetSoundWaveProperty: could not load '%s'"), *SoundWavePath);
+		return false;
+	}
+
+	FProperty* Prop = Wave->GetClass()->FindPropertyByName(FName(*PropertyName));
+	if (!Prop)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("SetSoundWaveProperty: property '%s' not found on USoundWave"), *PropertyName);
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("SoundCueService", "SetSoundWaveProp", "Set SoundWave Property"));
+	Wave->Modify();
+
+	const TCHAR* ImportResult = Prop->ImportText_InContainer(*Value, Wave, Wave, PPF_None);
+	if (!ImportResult)
+	{
+		UE_LOG(LogSoundCueService, Warning,
+			TEXT("SetSoundWaveProperty: failed to set '%s' = '%s'"), *PropertyName, *Value);
+		return false;
+	}
+
+	Wave->PostEditChange();
+	Wave->MarkPackageDirty();
+	return true;
+}

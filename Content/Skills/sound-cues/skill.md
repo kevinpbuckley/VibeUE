@@ -242,6 +242,35 @@ n.is_root_node    # bool — True if this node is SoundCue.FirstNode
 n.child_indices   # list[int] — indices of connected children (-1 = unconnected slot)
 ```
 
+### SoundWave Utilities
+
+| Method | Returns | Notes |
+|--------|---------|-------|
+| `get_sound_wave_info(sw_path)` | `FSoundWaveInfo` | duration, sample rate, channels, looping, streaming |
+| `import_sound_wave(file_path, asset_path)` | `FSoundCueResult` | import .wav/.mp3 from disk |
+| `set_sound_wave_property(sw_path, prop, value)` | `bool` | set any UPROPERTY by name |
+
+Common `set_sound_wave_property` property names:
+
+| PropertyName | Type | Example value |
+|---|---|---|
+| `bLooping` | bool | `"true"` |
+| `bStreaming` | bool | `"true"` |
+| `VolumeMultiplier` | float | `"1.5"` |
+| `PitchMultiplier` | float | `"0.9"` |
+| `SubtitlePriority` | float | `"100.0"` |
+
+### FSoundWaveInfo fields
+
+```python
+info.asset_path    # str
+info.duration      # float — seconds
+info.sample_rate   # int — Hz
+info.num_channels  # int — 1=mono, 2=stereo
+info.looping       # bool  (note: NOT is_looping — UE strips the 'b' only)
+info.streaming     # bool  (note: NOT is_streaming)
+```
+
 ### FSoundCueResult fields
 
 ```python

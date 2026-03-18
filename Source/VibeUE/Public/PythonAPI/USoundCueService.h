@@ -730,6 +730,30 @@ public:
 		const FString& FilePath,
 		const FString& AssetPath);
 
+	/**
+	 * Set a property on a SoundWave asset by name.
+	 *
+	 * Common properties:
+	 *   "bLooping"           (bool)   — loop indefinitely
+	 *   "VolumeMultiplier"   (float)  — output volume scale
+	 *   "PitchMultiplier"    (float)  — output pitch scale
+	 *   "SubtitlePriority"   (float)  — subtitle display priority
+	 *   "bStreaming"         (bool)   — force streaming from disk
+	 *
+	 * @param SoundWavePath - Full path to the SoundWave asset
+	 * @param PropertyName  - UPROPERTY name (as in C++, e.g. "bLooping")
+	 * @param Value         - String representation of the value (e.g. "true", "1.5")
+	 * @return True on success
+	 *
+	 * Example:
+	 *   unreal.SoundCueService.set_sound_wave_property("/Game/Audio/SW_Wind", "bLooping", "true")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|SoundWave")
+	static bool SetSoundWaveProperty(
+		const FString& SoundWavePath,
+		const FString& PropertyName,
+		const FString& Value);
+
 private:
 
 	/** Load a SoundCue from a content-browser path. Returns nullptr on failure. */
