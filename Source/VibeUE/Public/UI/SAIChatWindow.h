@@ -84,9 +84,18 @@ private:
     /** Currently selected model */
     TSharedPtr<FOpenRouterModel> SelectedModel;
     
-    /** Available models for the combo box */
+    /** Available models for the main chat window combo box */
     TArray<TSharedPtr<FOpenRouterModel>> AvailableModels;
-    
+
+    /** OpenRouter models for the settings dropdown (always OR, regardless of active provider) */
+    TArray<TSharedPtr<FOpenRouterModel>> SettingsOpenRouterModels;
+
+    /** Settings window model combo box (member so fetch callback can refresh it) */
+    TSharedPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> SettingsModelComboBox;
+
+    /** Weak ref to the settings window — prevents opening a second instance */
+    TWeakPtr<SWindow> SettingsWindowWeakPtr;
+
     /** Cached model ratings from VibeUE website API */
     TMap<FString, FString> ModelRatings;
     

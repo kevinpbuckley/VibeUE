@@ -42,13 +42,15 @@ UE_URL     = f"http://127.0.0.1:{UE_PORT}/mcp"
 APPDATA = os.environ.get("APPDATA", str(pathlib.Path.home()))
 MANIFEST_PATH = pathlib.Path(APPDATA) / "VibeUE" / "tools-manifest.json"
 
-# Load bearer token from vibeue-proxy.json (same directory as this script).
+# Load bearer token and optional proxy_port from vibeue-proxy.json.
 # This token is injected into every outbound request to UE, so the MCP client
 # does not need to send auth — UE is still protected.
 _PROXY_CONFIG_PATH = pathlib.Path(__file__).parent.parent.parent / "vibeue-proxy.json"
 try:
     with open(_PROXY_CONFIG_PATH) as _f:
-        _UE_BEARER_TOKEN = json.load(_f).get("bearer_token", "")
+        _proxy_cfg = json.load(_f)
+        _UE_BEARER_TOKEN = _proxy_cfg.get("bearer_token", "")
+        PROXY_PORT = int(_proxy_cfg.get("proxy_port", PROXY_PORT))
 except Exception:
     _UE_BEARER_TOKEN = ""
 

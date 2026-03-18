@@ -440,12 +440,11 @@ void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 Bytes
         return;
     }
     
-    // Always log when progress is called (helps debug streaming issues)
     if (IsDebugLoggingEnabled())
     {
         UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] HandleRequestProgress: sent=%llu, received=%llu"), BytesSent, BytesReceived);
     }
-    
+
     if (!Request.IsValid() || !Request->GetResponse().IsValid())
     {
         if (IsDebugLoggingEnabled())
@@ -684,9 +683,6 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
     FString DeltaContent;
     if ((*DeltaObj)->TryGetStringField(TEXT("content"), DeltaContent))
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("Delta content: '%s' (len=%d, bToolCalls=%d)"), 
-            *DeltaContent.Left(100), DeltaContent.Len(), bToolCallsDetectedInStream);
-        
         // Always process content - it may come before tool calls start
         if (!DeltaContent.IsEmpty())
         {
@@ -698,7 +694,7 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
             
             if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
             {
-                UE_LOG(LogLLMClientBase, Log, TEXT("Sending chunk: '%s'"), *CleanContent.Left(100));
+                UE_LOG(LogLLMClientBase, Verbose, TEXT("Sending chunk: '%s'"), *CleanContent.Left(100));
                 CurrentOnChunk.Execute(CleanContent);
 
                 // Accumulate content so it can be retrieved later via GetLastAccumulatedResponse()
@@ -1102,7 +1098,7 @@ void FLLMClientBase::FirePendingToolCalls()
             UE_LOG(LogLLMClientBase, Log, TEXT("  [%d] %s (id=%s)"), Index, *ToolCall.ToolName, *ToolCall.Id);
             UE_LOG(LogLLMClientBase, Log, TEXT("       Args: %s"), *ToolCall.ArgumentsJson.Left(300));
         }
-        UE_LOG(LogLLMClientBase, Log, TEXT("Firing tool call: %s"), *ToolCall.ToolName);
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("Firing tool call: %s"), *ToolCall.ToolName);
         CurrentOnToolCall.Execute(ToolCall);
     }
     
@@ -1734,10 +1730,21 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
                     ProcessSSEData(UnprocessedContent);
                 }
             }
+            else if (bAlreadyProcessedAsStream && bIsSSEContent && PendingToolCalls.Num() == 0 && AccumulatedContent.IsEmpty() && ResponseContent.Len() >= StreamBuffer.Len())
+            {
+                // Safety net: SSE was partially streamed (StreamBuffer > 0) but no tool calls and no
+                // content were accumulated. This can happen when WinHTTP delivers chunks out-of-order
+                // or drops early callbacks (e.g. chunk1 arrives before response object is valid).
+                // Re-process the full response from scratch — streaming state is already safe to reset
+                // here because HandleRequestComplete runs after the HTTP module is fully done.
+                UE_LOG(LogLLMClientBase, Log, TEXT("SSE stream yielded no content/tools (StreamBuffer=%d, ResponseContent=%d) — reprocessing full response"), StreamBuffer.Len(), ResponseContent.Len());
+                StreamBuffer.Empty();
+                ProcessSSEData(ResponseContent);
+            }
         }
         else if (bToolCallsDetectedInStream && ResponseContent.Len() > 0)
         {
-            UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Skipping SSE reprocessing - tool calls accumulated during stream, will fire below"));
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("HandleRequestComplete: Skipping SSE reprocessing - tool calls accumulated during stream, will fire below"));
         }
     }
     
@@ -1747,7 +1754,7 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
     // execute tools synchronously (which can involve heavy work like HTTP requests, file I/O, etc.).
     if (PendingToolCalls.Num() > 0)
     {
-        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Firing %d pending tool calls"), PendingToolCalls.Num());
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("HandleRequestComplete: Firing %d pending tool calls"), PendingToolCalls.Num());
         FirePendingToolCalls();
     }
     

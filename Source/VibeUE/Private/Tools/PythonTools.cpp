@@ -199,7 +199,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		}
 		else
 		{
-			UE_LOG(LogPythonTools, Log, TEXT("Auto-saving dirty packages before Python execution..."));
+			UE_LOG(LogPythonTools, Verbose, TEXT("Auto-saving dirty packages before Python execution..."));
 
 			const bool bPromptUserToSave = false;
 			const bool bSaveMapPackages = true;
@@ -219,7 +219,7 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 
 			if (bSaveSuccess)
 			{
-				UE_LOG(LogPythonTools, Log, TEXT("Auto-save completed successfully"));
+				UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save completed successfully"));
 			}
 			else
 			{

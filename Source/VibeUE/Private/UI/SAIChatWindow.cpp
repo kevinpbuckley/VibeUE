@@ -27,6 +27,7 @@
 #include "Widgets/Layout/SBox.h"
 #include "Widgets/Layout/SBorder.h"
 #include "Widgets/Layout/SSpacer.h"
+#include "Widgets/Layout/SWidgetSwitcher.h"
 #include "Widgets/SBoxPanel.h"
 #include "Framework/Application/SlateApplication.h"
 #include "HAL/PlatformApplicationMisc.h"
@@ -1817,144 +1818,138 @@ FReply SAIChatWindow::OnToolsClicked()
 
 FReply SAIChatWindow::OnSettingsClicked()
 {
-    // Show API key input dialog
+    // If the settings window is already open, bring it to the front instead of opening a second one
+    if (TSharedPtr<SWindow> Existing = SettingsWindowWeakPtr.Pin())
+    {
+        Existing->BringToFront();
+        return FReply::Handled();
+    }
+
     TSharedRef<SWindow> SettingsWindow = SNew(SWindow)
-        .Title(FText::FromString(TEXT("VibeUE AI Chat Settings")))
-        .ClientSize(FVector2D(550, 990))
+        .Title(FText::FromString(TEXT("VibeUE Settings")))
+        .ClientSize(FVector2D(620, 660))
         .SupportsMinimize(false)
         .SupportsMaximize(false);
-    
+
+    // ---- Widget pointer declarations ----
+    // API Keys tab
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
+    TSharedPtr<SEditableTextBox> VibeUEEndpointInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
-    TSharedPtr<SCheckBox> DebugModeCheckBox;
-    TSharedPtr<SCheckBox> AutoSaveBeforePythonCheckBox;
-    TSharedPtr<SCheckBox> YoloModeCheckBox;
-    TSharedPtr<SCheckBox> ParallelToolCallsCheckBox;
-    TSharedPtr<SSpinBox<float>> TemperatureSpinBox;
-    TSharedPtr<SSpinBox<float>> TopPSpinBox;
-    TSharedPtr<SSpinBox<int32>> MaxTokensSpinBox;
-    TSharedPtr<SSpinBox<int32>> MaxToolIterationsSpinBox;
-
-    // MCP Server settings widgets
-    TSharedPtr<SCheckBox> MCPServerEnabledCheckBox;
-    TSharedPtr<SSpinBox<int32>> MCPServerPortSpinBox;
+    // General tab
+    TSharedPtr<SCheckBox>        DebugModeCheckBox;
+    TSharedPtr<SCheckBox>        AutoSaveBeforePythonCheckBox;
+    TSharedPtr<SCheckBox>        YoloModeCheckBox;
+    TSharedPtr<SCheckBox>        ParallelToolCallsCheckBox;
+    TSharedPtr<SSpinBox<float>>  TemperatureSpinBox;
+    TSharedPtr<SSpinBox<float>>  TopPSpinBox;
+    TSharedPtr<SSpinBox<int32>>  MaxTokensSpinBox;
+    TSharedPtr<SSpinBox<int32>>  MaxToolIterationsSpinBox;
+    // MCP Server tab
+    TSharedPtr<SCheckBox>        MCPServerEnabledCheckBox;
+    TSharedPtr<SSpinBox<int32>>  MCPServerPortSpinBox;
     TSharedPtr<SEditableTextBox> MCPServerApiKeyInput;
-    
-    // Load current LLM parameter values
-    float CurrentTemperature = FChatSession::GetTemperatureFromConfig();
-    float CurrentTopP = FChatSession::GetTopPFromConfig();
-    int32 CurrentMaxTokens = FChatSession::GetMaxTokensFromConfig();
-    bool bCurrentParallelToolCalls = FChatSession::GetParallelToolCallsFromConfig();
-    int32 CurrentMaxToolIterations = FChatSession::GetMaxToolCallIterationsFromConfig();
 
-    // Load current MCP Server settings
-    bool bMCPServerEnabled = FMCPServer::GetEnabledFromConfig();
-    int32 MCPServerPort = FMCPServer::GetPortFromConfig();
-    FString MCPServerApiKey = FMCPServer::GetApiKeyFromConfig();
-
-    // Load current auto-save setting
-    bool bCurrentAutoSaveBeforePython = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
-    
-    // Load current YOLO mode setting
-    bool bCurrentYoloMode = FChatSession::IsYoloModeEnabled();
-    
-    // Get available providers for the dropdown
+    // ---- Load config values ----
+    float   CfgTemperature      = FChatSession::GetTemperatureFromConfig();
+    float   CfgTopP             = FChatSession::GetTopPFromConfig();
+    int32   CfgMaxTokens        = FChatSession::GetMaxTokensFromConfig();
+    int32   CfgMaxIterations    = FChatSession::GetMaxToolCallIterationsFromConfig();
+    bool    bCfgParallel        = FChatSession::GetParallelToolCallsFromConfig();
+    bool    bCfgDebug           = FChatSession::IsDebugModeEnabled();
+    bool    bCfgAutoSave        = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
+    bool    bCfgYolo            = FChatSession::IsYoloModeEnabled();
+    bool    bMCPEnabled         = FMCPServer::GetEnabledFromConfig();
+    int32   MCPPort             = FMCPServer::GetPortFromConfig();
+    FString MCPApiKey           = FMCPServer::GetApiKeyFromConfig();
+    // ---- Provider dropdown data ----
     TArray<FLLMProviderInfo> AvailableProvidersList = FChatSession::GetAvailableProviders();
     TSharedPtr<TArray<TSharedPtr<FString>>> ProviderOptions = MakeShared<TArray<TSharedPtr<FString>>>();
-    for (const FLLMProviderInfo& ProviderInfo : AvailableProvidersList)
-    {
-        ProviderOptions->Add(MakeShared<FString>(ProviderInfo.DisplayName));
-    }
-    
-    // Current selection - find the matching item from the options array
+    for (const FLLMProviderInfo& Info : AvailableProvidersList)
+        ProviderOptions->Add(MakeShared<FString>(Info.DisplayName));
+
     ELLMProvider CurrentProvider = FChatSession::GetProviderFromConfig();
-    FString CurrentProviderName = CurrentProvider == ELLMProvider::VibeUE ? TEXT("VibeUE") : TEXT("OpenRouter");
+    FString CurrentProviderName = CurrentProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") : TEXT("VibeUE");
     TSharedPtr<FString> SelectedProvider;
-    for (const TSharedPtr<FString>& Option : *ProviderOptions)
-    {
-        if (Option.IsValid() && *Option == CurrentProviderName)
-        {
-            SelectedProvider = Option;
-            break;
-        }
-    }
-    // Fallback to first option if not found
+    for (const TSharedPtr<FString>& Opt : *ProviderOptions)
+        if (Opt.IsValid() && *Opt == CurrentProviderName) { SelectedProvider = Opt; break; }
     if (!SelectedProvider.IsValid() && ProviderOptions->Num() > 0)
-    {
         SelectedProvider = (*ProviderOptions)[0];
-    }
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
-    
-    bool bCurrentDebugMode = FChatSession::IsDebugModeEnabled();
-    
-    SettingsWindow->SetContent(
+
+    // ---- OpenRouter model dropdown data (for settings) ----
+    // Rebuild SettingsOpenRouterModels from CachedModels (always OR, regardless of active provider)
+    SettingsOpenRouterModels.Empty();
+    for (const FOpenRouterModel& M : ChatSession->GetCachedModels())
+        SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+
+    // Pre-select using a dedicated OR model config key so it persists across provider switches
+    TSharedPtr<FOpenRouterModel> SettingsSelectedModel;
+    FString LastORModelId;
+    GConfig->GetString(TEXT("VibeUE"), TEXT("OpenRouterLastModel"), LastORModelId, GEditorPerProjectIni);
+    if (LastORModelId.IsEmpty()) LastORModelId = ChatSession.IsValid() ? ChatSession->GetCurrentModel() : TEXT("");
+    for (const TSharedPtr<FOpenRouterModel>& M : SettingsOpenRouterModels)
+    {
+        if (M.IsValid() && M->Id == LastORModelId) { SettingsSelectedModel = M; break; }
+    }
+    TSharedPtr<TSharedPtr<FOpenRouterModel>> SettingsSelectedModelPtr = MakeShared<TSharedPtr<FOpenRouterModel>>(SettingsSelectedModel);
+
+    // ---- Trigger background OR model fetch to keep settings dropdown fresh ----
+    // Use weak ptrs so the callback is safe if the settings window closes before fetch completes
+    TWeakPtr<SAIChatWindow> WeakSelf = SharedThis(this);
+    ChatSession->FetchAvailableModels(FOnModelsFetched::CreateLambda(
+        [WeakSelf](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+        {
+            if (!bSuccess) return;
+            TSharedPtr<SAIChatWindow> Pinned = WeakSelf.Pin();
+            if (!Pinned.IsValid()) return;
+
+            Pinned->SettingsOpenRouterModels.Empty();
+            for (const FOpenRouterModel& M : Models)
+                Pinned->SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+
+            if (Pinned->SettingsModelComboBox.IsValid())
+                Pinned->SettingsModelComboBox->RefreshOptions();
+        }));
+
+    // ---- Tab state ----
+    TSharedPtr<int32> ActiveTab = MakeShared<int32>(0);
+
+    // ============================================================
+    // TAB 1: API Keys
+    // ============================================================
+    TSharedRef<SWidget> Tab_APIKeys =
         SNew(SScrollBox)
-        + SScrollBox::Slot()
+        + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
-        SNew(SVerticalBox)
-        // Provider Selection (Dropdown)
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("LLM Provider:")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SComboBox<TSharedPtr<FString>>)
-            .OptionsSource(ProviderOptions.Get())
-            .InitiallySelectedItem(SelectedProvider)
-            .OnSelectionChanged_Lambda([SelectedProviderPtr, ProviderOptions](TSharedPtr<FString> NewSelection, ESelectInfo::Type SelectInfo)
-            {
-                if (NewSelection.IsValid())
-                {
-                    *SelectedProviderPtr = NewSelection;
-                }
-            })
-            .OnGenerateWidget_Lambda([ProviderOptions](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
-            {
-                return SNew(STextBlock)
-                    .Text(Item.IsValid() ? FText::FromString(*Item) : FText::FromString(TEXT("Invalid")));
-            })
-            .Content()
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)
-                .Text_Lambda([SelectedProviderPtr, ProviderOptions]() -> FText
-                {
-                    return SelectedProviderPtr->IsValid() ? FText::FromString(**SelectedProviderPtr) : FText::FromString(TEXT("Select Provider"));
-                })
+                .Text(FText::FromString(TEXT("VibeUE API Key:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
             ]
-        ]
-        // VibeUE API Key
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 12, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("VibeUE API Key:")))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 0)
-        [
-            SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
-            .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
-            .IsPassword(true)
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4, 8, 0)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
             [
-                SNew(SButton)
-                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
+                .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
+                .IsPassword(true)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("VibeUE Endpoint URL:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SAssignNew(VibeUEEndpointInput, SEditableTextBox)
+                .Text(FText::FromString(FChatSession::GetVibeUEEndpointFromConfig()))
+                .HintText(FText::FromString(TEXT("https://api.vibeue.com (leave blank for default)")))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 20)
+            [
+                SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
                 .OnClicked_Lambda([]() -> FReply {
                     FPlatformProcess::LaunchURL(TEXT("https://www.vibeue.com/login"), nullptr, nullptr);
                     return FReply::Handled();
@@ -1965,599 +1960,638 @@ FReply SAIChatWindow::OnSettingsClicked()
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
                 ]
             ]
-        ]
-        // OpenRouter API Key
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 12, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("OpenRouter API Key:")))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 0)
-        [
-            SAssignNew(OpenRouterApiKeyInput, SEditableTextBox)
-            .Text(FText::FromString(FChatSession::GetApiKeyFromConfig()))
-            .IsPassword(true)
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4, 8, 0)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
-                SNew(SButton)
-                .ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("OpenRouter API Key:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SAssignNew(OpenRouterApiKeyInput, SEditableTextBox)
+                .Text(FText::FromString(FChatSession::GetApiKeyFromConfig()))
+                .IsPassword(true)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("OpenRouter Model:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SAssignNew(SettingsModelComboBox, SComboBox<TSharedPtr<FOpenRouterModel>>)
+                .OptionsSource(&SettingsOpenRouterModels)
+                .InitiallySelectedItem(SettingsSelectedModel)
+                .OnSelectionChanged_Lambda([SettingsSelectedModelPtr](TSharedPtr<FOpenRouterModel> NewSelection, ESelectInfo::Type) mutable
+                {
+                    if (NewSelection.IsValid())
+                        *SettingsSelectedModelPtr = NewSelection;
+                })
+                .OnGenerateWidget_Lambda([](TSharedPtr<FOpenRouterModel> Item) -> TSharedRef<SWidget>
+                {
+                    return SNew(STextBlock)
+                        .Text(Item.IsValid() ? FText::FromString(Item->Name) : FText::GetEmpty());
+                })
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([SettingsSelectedModelPtr]() -> FText
+                    {
+                        return SettingsSelectedModelPtr->IsValid()
+                            ? FText::FromString((*SettingsSelectedModelPtr)->Name)
+                            : FText::FromString(TEXT("Select a model..."));
+                    })
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
+            [
+                SNew(SHorizontalBox)
+                .Visibility_Lambda([SettingsSelectedModelPtr, OpenRouterApiKeyInput]() -> EVisibility
+                {
+                    bool bHasModel = SettingsSelectedModelPtr->IsValid();
+                    bool bHasKey   = OpenRouterApiKeyInput.IsValid() && !OpenRouterApiKeyInput->GetText().IsEmpty();
+                    return (bHasModel && !bHasKey) ? EVisibility::Visible : EVisibility::Collapsed;
+                })
+                + SHorizontalBox::Slot().AutoWidth().VAlign(VAlign_Center).Padding(0, 0, 5, 0)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("\u26A0")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.55f, 0.0f)))
+                ]
+                + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([SettingsSelectedModelPtr]() -> FText
+                    {
+                        if (SettingsSelectedModelPtr->IsValid() && (*SettingsSelectedModelPtr)->Id.Contains(TEXT(":free")))
+                            return FText::FromString(TEXT("This model is free — a free OpenRouter account is all you need, no payment required"));
+                        return FText::FromString(TEXT("An OpenRouter API key is required to use this model"));
+                    })
+                    .ColorAndOpacity(FSlateColor(FLinearColor(1.0f, 0.35f, 0.35f)))
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 0)
+            [
+                SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
                 .OnClicked_Lambda([]() -> FReply {
                     FPlatformProcess::LaunchURL(TEXT("https://openrouter.ai/keys"), nullptr, nullptr);
                     return FReply::Handled();
                 })
                 [
                     SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("Get OpenRouter API key at openrouter.ai")))
+                    .Text(FText::FromString(TEXT("Get OpenRouter key at openrouter.ai")))
                     .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
                 ]
             ]
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 12, 8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(DebugModeCheckBox, SCheckBox)
-                .IsChecked(bCurrentDebugMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Debug Mode")))
-                .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
-            ]
-        ]
+        ];
 
-        // Auto-save before Python execution
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(AutoSaveBeforePythonCheckBox, SCheckBox)
-                .IsChecked(bCurrentAutoSaveBeforePython ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Auto Save Before Python Execution")))
-                .ToolTipText(FText::FromString(TEXT("Automatically save all dirty packages before executing Python code to protect against crashes.")))
-            ]
-        ]
 
-        // YOLO Mode (auto-execute Python code without approval)
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 4)
+    // ============================================================
+    // TAB 0: General
+    // ============================================================
+    TSharedRef<SWidget> Tab_General =
+        SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(YoloModeCheckBox, SCheckBox)
-                .IsChecked(bCurrentYoloMode ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)
-                .Text(FText::FromString(TEXT("YOLO Mode (Auto-Execute Python)")))
-                .ToolTipText(FText::FromString(TEXT("When enabled, Python code is executed automatically without requiring approval. When disabled, you must click Approve before each Python code execution.")))
+                .Text(FText::FromString(TEXT("LLM Provider:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
             ]
-        ]
-
-        // ============ Voice Input Settings ============
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 16, 8, 4)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("Voice Input Settings:")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-        ]
-
-        // Enable voice input checkbox
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 16)
             [
-                SAssignNew(VoiceInputEnabledCheckBox, SCheckBox)
-                .IsChecked(FSpeechToTextService::GetVoiceInputEnabledFromConfig()
-                    ? ECheckBoxState::Checked
-                    : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Enable Voice Input")))
-            ]
-        ]
-
-        // Auto-send after recording checkbox
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(AutoSendAfterRecordingCheckBox, SCheckBox)
-                .IsChecked(ChatSession.IsValid() && ChatSession->IsAutoSendAfterRecordingEnabled()
-                    ? ECheckBoxState::Checked
-                    : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Auto Send After Recording")))
-                .ToolTipText(FText::FromString(TEXT("Automatically send transcribed text to AI without review")))
-            ]
-        ]
-
-        // ElevenLabs API Key
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("ElevenLabs API Key:")))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 0)
-        [
-            SAssignNew(ElevenLabsApiKeyInput, SEditableTextBox)
-            .Text(FText::FromString(FElevenLabsSpeechProvider::GetApiKeyFromConfig()))
-            .IsPassword(true)
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4, 8, 0)
-        [
-            SNew(SButton)
-            .ButtonStyle(FAppStyle::Get(), "SimpleButton")
-            .OnClicked_Lambda([]() -> FReply {
-                FPlatformProcess::LaunchURL(TEXT("https://elevenlabs.io/app/settings/api-keys"), nullptr, nullptr);
-                return FReply::Handled();
-            })
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Get ElevenLabs API key at elevenlabs.io")))
-                .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
-            ]
-        ]
-
-        // ============ LLM Generation Parameters (VibeUE only) ============
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 16, 8, 4)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("LLM Generation Parameters (VibeUE only):")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-        ]
-        // Temperature
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(0.4f)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Temperature:")))
-                .ToolTipText(FText::FromString(TEXT("Lower = more deterministic (better for code). Range: 0.0-2.0. Default: 0.2")))
-            ]
-            + SHorizontalBox::Slot()
-            .FillWidth(0.6f)
-            [
-                SAssignNew(TemperatureSpinBox, SSpinBox<float>)
-                .MinValue(0.0f)
-                .MaxValue(2.0f)
-                .Delta(0.05f)
-                .Value(CurrentTemperature)
-                .MinDesiredWidth(100)
-            ]
-        ]
-        // Top P
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(0.4f)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Top P:")))
-                .ToolTipText(FText::FromString(TEXT("Nucleus sampling. Range: 0.0-1.0. Default: 0.95")))
-            ]
-            + SHorizontalBox::Slot()
-            .FillWidth(0.6f)
-            [
-                SAssignNew(TopPSpinBox, SSpinBox<float>)
-                .MinValue(0.0f)
-                .MaxValue(1.0f)
-                .Delta(0.05f)
-                .Value(CurrentTopP)
-                .MinDesiredWidth(100)
-            ]
-        ]
-        // Max Tokens
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(0.4f)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Max Tokens:")))
-                .ToolTipText(FText::FromString(TEXT("Maximum response length. Range: 256-16384. Default: 8192")))
-            ]
-            + SHorizontalBox::Slot()
-            .FillWidth(0.6f)
-            [
-                SAssignNew(MaxTokensSpinBox, SSpinBox<int32>)
-                .MinValue(256)
-                .MaxValue(16384)
-                .Delta(256)
-                .Value(CurrentMaxTokens)
-                .MinDesiredWidth(100)
-            ]
-        ]
-        // Max Tool Iterations
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(0.4f)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Max Tool Iterations:")))
-                .ToolTipText(FText::FromString(TEXT("Max tool call rounds before confirmation prompt. Range: 5-200. Default: 15.")))
-            ]
-            + SHorizontalBox::Slot()
-            .FillWidth(0.6f)
-            [
-                SAssignNew(MaxToolIterationsSpinBox, SSpinBox<int32>)
-                .MinValue(5)
-                .MaxValue(200)
-                .Delta(5)
-                .Value(CurrentMaxToolIterations)
-                .MinDesiredWidth(100)
-            ]
-        ]
-        // Parallel Tool Calls
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 12, 8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(ParallelToolCallsCheckBox, SCheckBox)
-                .IsChecked(bCurrentParallelToolCalls ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Parallel Tool Calls")))
-                .ToolTipText(FText::FromString(TEXT("ON = LLM can make multiple tool calls at once (faster)\nOFF = One tool call at a time (shows progress between calls)")))
-            ]
-        ]
-        // ============ MCP Server Settings ============
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 16, 8, 4)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("MCP Server (Expose Tools to External Clients):")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-        ]
-        // MCP Server Enabled
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            [
-                SAssignNew(MCPServerEnabledCheckBox, SCheckBox)
-                .IsChecked(bMCPServerEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
-            ]
-            + SHorizontalBox::Slot()
-            .Padding(4, 0, 0, 0)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Enable MCP Server")))
-                .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Desktop, etc.")))
-            ]
-        ]
-        // MCP Server Port
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(0.4f)
-            .VAlign(VAlign_Center)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("Port:")))
-                .ToolTipText(FText::FromString(TEXT("Port for the MCP HTTP server. Default: 8088")))
-            ]
-            + SHorizontalBox::Slot()
-            .FillWidth(0.6f)
-            [
-                SAssignNew(MCPServerPortSpinBox, SSpinBox<int32>)
-                .MinValue(1024)
-                .MaxValue(65535)
-                .Delta(1)
-                .Value(MCPServerPort)
-                .MinDesiredWidth(100)
-            ]
-        ]
-        // MCP Server Bearer Token
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 4, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("Bearer Token (optional):")))
-            .ToolTipText(FText::FromString(TEXT("MCP clients must send this as a Bearer token in the Authorization header. Leave empty to allow unauthenticated connections.")))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 0)
-        [
-            SAssignNew(MCPServerApiKeyInput, SEditableTextBox)
-            .Text(FText::FromString(MCPServerApiKey))
-            .IsPassword(true)
-            .HintText(FText::FromString(TEXT("Leave empty for unauthenticated access")))
-        ]
-        // MCP Server Status
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 8, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text_Lambda([]() -> FText {
-                FMCPServer& Server = FMCPServer::Get();
-                if (Server.IsRunning())
+                SNew(SComboBox<TSharedPtr<FString>>)
+                .OptionsSource(ProviderOptions.Get())
+                .InitiallySelectedItem(*SelectedProviderPtr)
+                .OnSelectionChanged_Lambda([SelectedProviderPtr, ProviderOptions](TSharedPtr<FString> NewSel, ESelectInfo::Type)
                 {
-                    return FText::FromString(FString::Printf(TEXT("Status: Running at %s"), *Server.GetServerUrl()));
-                }
-                return FText::FromString(TEXT("Status: Not running"));
-            })
-            .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
-            .ColorAndOpacity_Lambda([]() -> FSlateColor {
-                return FMCPServer::Get().IsRunning() 
-                    ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f)) 
-                    : FSlateColor(VibeUEColors::TextMuted);
-            })
-        ]
-        // Plugin Install Path
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 12, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("Plugin Install Path:")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Bold", 10))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 2, 8, 0)
-        [
-            SNew(SHorizontalBox)
-            + SHorizontalBox::Slot()
-            .FillWidth(1.0f)
-            .VAlign(VAlign_Center)
+                    if (NewSel.IsValid()) *SelectedProviderPtr = NewSel;
+                })
+                .OnGenerateWidget_Lambda([ProviderOptions](TSharedPtr<FString> Item) -> TSharedRef<SWidget>
+                {
+                    return SNew(STextBlock).Text(Item.IsValid() ? FText::FromString(*Item) : FText::GetEmpty());
+                })
+                .Content()
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([SelectedProviderPtr]() -> FText {
+                        return SelectedProviderPtr->IsValid() ? FText::FromString(**SelectedProviderPtr) : FText::GetEmpty();
+                    })
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)
-                .Text_Lambda([]() -> FText {
-                    FString PluginDir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
-                    if (PluginDir.IsEmpty())
-                    {
-                        return FText::FromString(TEXT("(not found)"));
-                    }
-                    return FText::FromString(PluginDir);
+                .Text(FText::FromString(TEXT("LLM Generation Parameters:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(0.45f).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Temperature:"))).ToolTipText(FText::FromString(TEXT("Lower = more deterministic. Range: 0.0–2.0. Default: 0.2"))) ]
+                + SHorizontalBox::Slot().FillWidth(0.55f)
+                [
+                    SAssignNew(TemperatureSpinBox, SSpinBox<float>)
+                    .MinValue(0.0f).MaxValue(2.0f).Delta(0.05f).Value(CfgTemperature).MinDesiredWidth(100)
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(0.45f).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Top P:"))).ToolTipText(FText::FromString(TEXT("Nucleus sampling. Range: 0.0–1.0. Default: 0.95"))) ]
+                + SHorizontalBox::Slot().FillWidth(0.55f)
+                [
+                    SAssignNew(TopPSpinBox, SSpinBox<float>)
+                    .MinValue(0.0f).MaxValue(1.0f).Delta(0.05f).Value(CfgTopP).MinDesiredWidth(100)
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(0.45f).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Max Tokens:"))).ToolTipText(FText::FromString(TEXT("Maximum response length. Range: 256–16384. Default: 8192"))) ]
+                + SHorizontalBox::Slot().FillWidth(0.55f)
+                [
+                    SAssignNew(MaxTokensSpinBox, SSpinBox<int32>)
+                    .MinValue(256).MaxValue(16384).Delta(256).Value(CfgMaxTokens).MinDesiredWidth(100)
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 12)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(0.45f).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Max Tool Iterations:"))).ToolTipText(FText::FromString(TEXT("Max tool call rounds before confirmation. Range: 10–500. Default: 200"))) ]
+                + SHorizontalBox::Slot().FillWidth(0.55f)
+                [
+                    SAssignNew(MaxToolIterationsSpinBox, SSpinBox<int32>)
+                    .MinValue(5).MaxValue(200).Delta(5).Value(CfgMaxIterations).MinDesiredWidth(100)
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(ParallelToolCallsCheckBox, SCheckBox)
+                    .IsChecked(bCfgParallel ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Parallel Tool Calls")))
+                    .ToolTipText(FText::FromString(TEXT("ON = LLM can make multiple tool calls at once (faster)\nOFF = One tool call at a time (shows progress between calls)")))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(DebugModeCheckBox, SCheckBox)
+                    .IsChecked(bCfgDebug ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Debug Mode")))
+                    .ToolTipText(FText::FromString(TEXT("Show request count and token usage in the status bar.")))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(AutoSaveBeforePythonCheckBox, SCheckBox)
+                    .IsChecked(bCfgAutoSave ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Auto Save Before Python Execution")))
+                    .ToolTipText(FText::FromString(TEXT("Automatically save all dirty packages before executing Python code to protect against crashes.")))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(YoloModeCheckBox, SCheckBox)
+                    .IsChecked(bCfgYolo ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("YOLO Mode (Auto-Execute Python)")))
+                    .ToolTipText(FText::FromString(TEXT("When enabled, Python code executes automatically without requiring approval.")))
+                ]
+            ]
+        ];
+
+    // ============================================================
+    // TAB 3: Voice
+    // ============================================================
+    TSharedRef<SWidget> Tab_Voice =
+        SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(12, 12, 12, 0)
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(VoiceInputEnabledCheckBox, SCheckBox)
+                    .IsChecked(FSpeechToTextService::GetVoiceInputEnabledFromConfig() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Enable Voice Input"))) ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 16)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(AutoSendAfterRecordingCheckBox, SCheckBox)
+                    .IsChecked(ChatSession.IsValid() && ChatSession->IsAutoSendAfterRecordingEnabled() ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Auto Send After Recording")))
+                    .ToolTipText(FText::FromString(TEXT("Automatically send transcribed text to AI without review")))
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("ElevenLabs API Key:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SAssignNew(ElevenLabsApiKeyInput, SEditableTextBox)
+                .Text(FText::FromString(FElevenLabsSpeechProvider::GetApiKeyFromConfig()))
+                .IsPassword(true)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 0)
+            [
+                SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([]() -> FReply {
+                    FPlatformProcess::LaunchURL(TEXT("https://elevenlabs.io/app/settings/api-keys"), nullptr, nullptr);
+                    return FReply::Handled();
                 })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Get ElevenLabs API key at elevenlabs.io")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
+                ]
+            ]
+        ];
+
+    // ============================================================
+    // TAB 4: MCP Server
+    // ============================================================
+
+    TSharedRef<SWidget> Tab_MCPServer =
+        SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(12, 12, 12, 0)
+        [
+            SNew(SVerticalBox)
+
+            // ---- MCP Server Enable ----
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 12)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(MCPServerEnabledCheckBox, SCheckBox)
+                    .IsChecked(bMCPEnabled ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Enable MCP Server")))
+                    .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Desktop, etc.")))
+                ]
+            ]
+
+            // ---- Port ----
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(0.4f).VAlign(VAlign_Center)
+                [ SNew(STextBlock).Text(FText::FromString(TEXT("Port:"))).ToolTipText(FText::FromString(TEXT("Port for the MCP HTTP server. Default: 8088"))) ]
+                + SHorizontalBox::Slot().FillWidth(0.6f)
+                [
+                    SAssignNew(MCPServerPortSpinBox, SSpinBox<int32>)
+                    .MinValue(1024).MaxValue(65535).Delta(1).Value(MCPPort).MinDesiredWidth(100)
+                ]
+            ]
+
+            // ---- Bearer Token ----
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 8, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Bearer Token (optional):")))
+                .ToolTipText(FText::FromString(TEXT("MCP clients must send this token as Authorization: Bearer. Leave empty for unauthenticated connections.")))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SAssignNew(MCPServerApiKeyInput, SEditableTextBox)
+                .Text(FText::FromString(MCPApiKey))
+                .IsPassword(true)
+                .HintText(FText::FromString(TEXT("Leave empty for unauthenticated access")))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 12)
+            [
+                SNew(STextBlock)
                 .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
                 .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
-                .AutoWrapText(true)
+                .Text(FText::FromString(TEXT("Changes to port or token take effect after Save (server restarts automatically).")))
             ]
-            + SHorizontalBox::Slot()
-            .AutoWidth()
-            .Padding(8, 0, 0, 0)
-            .VAlign(VAlign_Center)
+
+            // ---- MCP Server Status + Copy URL ----
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 16)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([]() -> FText {
+                        FMCPServer& Server = FMCPServer::Get();
+                        return Server.IsRunning()
+                            ? FText::FromString(FString::Printf(TEXT("Status: Running at %s"), *Server.GetServerUrl()))
+                            : FText::FromString(TEXT("Status: Not running"));
+                    })
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+                    .ColorAndOpacity_Lambda([]() -> FSlateColor {
+                        return FMCPServer::Get().IsRunning()
+                            ? FSlateColor(FLinearColor(0.2f, 0.8f, 0.2f))
+                            : FSlateColor(VibeUEColors::TextMuted);
+                    })
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0)
+                [
+                    SNew(SButton)
+                    .ContentPadding(FMargin(8, 3))
+                    .IsEnabled_Lambda([]() { return FMCPServer::Get().IsRunning(); })
+                    .OnClicked_Lambda([]() -> FReply {
+                        FString Url = FMCPServer::Get().GetServerUrl();
+                        FPlatformApplicationMisc::ClipboardCopy(*Url);
+                        return FReply::Handled();
+                    })
+                    [
+                        SNew(STextBlock)
+                        .Text(FText::FromString(TEXT("Copy URL")))
+                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                    ]
+                ]
+            ]
+
+            // TODO: MCP Proxy sub-section — stripped out temporarily, to be re-added and fleshed out
+        ];
+
+    // ============================================================
+    // TAB 5: About
+    // ============================================================
+    TSharedRef<SWidget> Tab_About =
+        SNew(SScrollBox)
+        + SScrollBox::Slot().Padding(12, 12, 12, 0)
+        [
+            SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Plugin Install Path:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().FillWidth(1.0f).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text_Lambda([]() -> FText {
+                        FString Dir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
+                        return FText::FromString(Dir.IsEmpty() ? TEXT("(not found)") : Dir);
+                    })
+                    .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                    .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+                    .AutoWrapText(true)
+                ]
+                + SHorizontalBox::Slot().AutoWidth().Padding(8, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(SButton).Text(FText::FromString(TEXT("Open Folder")))
+                    .ToolTipText(FText::FromString(TEXT("Open the plugin folder in Explorer — sample instructions in Content/samples/")))
+                    .OnClicked_Lambda([]() -> FReply {
+                        FString Dir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
+                        if (!Dir.IsEmpty()) FPlatformProcess::ExploreFolder(*Dir);
+                        return FReply::Handled();
+                    })
+                ]
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 0)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("Sample instructions: Content/samples/instructions.sample.md")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
+                .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
+            ]
+        ];
+
+    // ============================================================
+    // Build tab switcher — all widgets now valid from SAssignNew calls above
+    // ============================================================
+    TSharedPtr<SWidgetSwitcher> TabSwitcher = SNew(SWidgetSwitcher)
+        + SWidgetSwitcher::Slot()[ Tab_General ]
+        + SWidgetSwitcher::Slot()[ Tab_APIKeys ]
+        + SWidgetSwitcher::Slot()[ Tab_Voice ]
+        + SWidgetSwitcher::Slot()[ Tab_MCPServer ]
+        + SWidgetSwitcher::Slot()[ Tab_About ];
+
+    // Tab button factory — TabSwitcher is now valid
+    auto MakeTabBtn = [TabSwitcher, ActiveTab](const FString& Label, int32 Idx) -> TSharedRef<SWidget>
+    {
+        return SNew(SButton)
+            .ButtonColorAndOpacity_Lambda([ActiveTab, Idx]() -> FLinearColor {
+                return *ActiveTab == Idx ? FLinearColor(0.18f, 0.38f, 0.72f) : FLinearColor(0.10f, 0.10f, 0.10f);
+            })
+            .OnClicked_Lambda([TabSwitcher, ActiveTab, Idx]() -> FReply {
+                *ActiveTab = Idx;
+                TabSwitcher->SetActiveWidgetIndex(Idx);
+                return FReply::Handled();
+            })
+            .ContentPadding(FMargin(10, 7))
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(Label))
+                .ColorAndOpacity(FLinearColor::White)
+                .Font(FCoreStyle::GetDefaultFontStyle("Regular", 10))
+            ];
+    };
+
+    // ============================================================
+    // Save lambda — captures all widget pointers
+    // ============================================================
+    auto SaveLambda = [this, VibeUEApiKeyInput, VibeUEEndpointInput, OpenRouterApiKeyInput,
+        SettingsSelectedModelPtr,
+        SelectedProviderPtr, AvailableProvidersList,
+        DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
+        TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
+        MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput,
+        SettingsWindow]() mutable -> FReply
+    {
+        // ---- API Keys ----
+        ChatSession->SetVibeUEApiKey(VibeUEApiKeyInput->GetText().ToString());
+        ChatSession->SetVibeUEEndpoint(VibeUEEndpointInput->GetText().ToString());
+        ChatSession->SetApiKey(OpenRouterApiKeyInput->GetText().ToString());
+
+        // ---- OpenRouter model selection ----
+        if (SettingsSelectedModelPtr->IsValid())
+        {
+            FString SelectedModelId = (*SettingsSelectedModelPtr)->Id;
+            GConfig->SetString(TEXT("VibeUE"), TEXT("OpenRouterLastModel"), *SelectedModelId, GEditorPerProjectIni);
+            GConfig->Flush(false, GEditorPerProjectIni);
+            ChatSession->SetCurrentModel(SelectedModelId);
+            // Sync the main chat window model dropdown
+            SelectedModel = *SettingsSelectedModelPtr;
+            if (ModelComboBox.IsValid())
+            {
+                ModelComboBox->SetSelectedItem(SelectedModel);
+            }
+        }
+
+        // ---- Provider ----
+        ELLMProvider NewProvider = ELLMProvider::VibeUE;
+        if (SelectedProviderPtr->IsValid())
+        {
+            FString SelName = **SelectedProviderPtr;
+            for (const FLLMProviderInfo& Info : AvailableProvidersList)
+            {
+                if (Info.DisplayName == SelName)
+                {
+                    if (Info.Id == TEXT("OpenRouter")) NewProvider = ELLMProvider::OpenRouter;
+                    break;
+                }
+            }
+        }
+        ChatSession->SetCurrentProvider(NewProvider);
+
+        // ---- General ----
+        FChatSession::SetDebugModeEnabled(DebugModeCheckBox->IsChecked());
+        FChatSession::SetFileLoggingEnabled(DebugModeCheckBox->IsChecked());
+        FChatSession::SetAutoSaveBeforePythonExecutionEnabled(AutoSaveBeforePythonCheckBox->IsChecked());
+        FChatSession::SetYoloModeEnabled(YoloModeCheckBox->IsChecked());
+        FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
+        FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
+        FChatSession::SaveMaxTokensToConfig(MaxTokensSpinBox->GetValue());
+        FChatSession::SaveMaxToolCallIterationsToConfig(MaxToolIterationsSpinBox->GetValue());
+        FChatSession::SaveParallelToolCallsToConfig(ParallelToolCallsCheckBox->IsChecked());
+        ChatSession->SetMaxToolCallIterations(MaxToolIterationsSpinBox->GetValue());
+        ChatSession->ApplyLLMParametersToClient();
+
+        // ---- MCP Server ----
+        bool bNewMCPEnabled = MCPServerEnabledCheckBox->IsChecked();
+        FMCPServer::SaveEnabledToConfig(bNewMCPEnabled);
+        FMCPServer::SavePortToConfig(MCPServerPortSpinBox->GetValue());
+        FMCPServer::SaveApiKeyToConfig(MCPServerApiKeyInput->GetText().ToString());
+        FMCPServer& MCPServer = FMCPServer::Get();
+        if (MCPServer.IsRunning()) MCPServer.StopServer();
+        MCPServer.LoadConfig();
+        if (bNewMCPEnabled) MCPServer.Start();
+
+        // Sync vibeue-proxy.json so a running proxy picks up token/port changes on next start
+        MCPServer.WriteProxyConfigJson();
+
+        // ---- Voice ----
+        FSpeechToTextService::SaveVoiceInputEnabledToConfig(VoiceInputEnabledCheckBox->IsChecked());
+        if (ChatSession.IsValid())
+            ChatSession->SetAutoSendAfterRecordingEnabled(AutoSendAfterRecordingCheckBox->IsChecked());
+        FString NewElevenLabsKey = ElevenLabsApiKeyInput->GetText().ToString();
+        FElevenLabsSpeechProvider::SaveApiKeyToConfig(NewElevenLabsKey);
+        if (ChatSession.IsValid())
+        {
+            TSharedPtr<FSpeechToTextService> SpeechSvc = ChatSession->GetSpeechService();
+            if (SpeechSvc.IsValid())
+            {
+                TSharedPtr<ISpeechProvider> SpeechProv = SpeechSvc->GetActiveProvider();
+                if (SpeechProv.IsValid())
+                {
+                    TSharedPtr<FElevenLabsSpeechProvider> ElevenProv = StaticCastSharedPtr<FElevenLabsSpeechProvider>(SpeechProv);
+                    if (ElevenProv.IsValid()) ElevenProv->SetApiKey(NewElevenLabsKey);
+                }
+            }
+        }
+
+        GConfig->Flush(false, GEditorPerProjectIni);
+        UpdateModelDropdownForProvider();
+
+        FString ProviderName = NewProvider == ELLMProvider::OpenRouter ? TEXT("OpenRouter") : TEXT("VibeUE API");
+        AddSystemNotification(FString::Printf(TEXT("✅ Settings saved — using %s"), *ProviderName));
+
+        SettingsWindow->RequestDestroyWindow();
+        return FReply::Handled();
+    };
+
+    // ============================================================
+    // Assemble window content
+    // ============================================================
+    SettingsWindow->SetContent(
+        SNew(SVerticalBox)
+        // Tab buttons row
+        + SVerticalBox::Slot().AutoHeight()
+        [
+            SNew(SBorder)
+            .Padding(0)
+            .BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f))
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),    0) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),   1) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),      2) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"), 3) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),      4) ]
+            ]
+        ]
+        // Tab content
+        + SVerticalBox::Slot().FillHeight(1.0f)
+        [ TabSwitcher.ToSharedRef() ]
+        // Save / Cancel
+        + SVerticalBox::Slot().AutoHeight().HAlign(HAlign_Right).Padding(8)
+        [
+            SNew(SHorizontalBox)
+            + SHorizontalBox::Slot().AutoWidth().Padding(0, 0, 6, 0)
             [
                 SNew(SButton)
-                .Text(FText::FromString(TEXT("Open Folder")))
-                .ToolTipText(FText::FromString(TEXT("Open the plugin folder in Explorer — find sample instruction files in Content/samples/")))
-                .OnClicked_Lambda([]() -> FReply {
-                    FString PluginDir = FPaths::ConvertRelativePathToFull(FVibeUEPaths::GetPluginDir());
-                    if (!PluginDir.IsEmpty())
-                    {
-                        FPlatformProcess::ExploreFolder(*PluginDir);
-                    }
+                .Text(FText::FromString(TEXT("Cancel")))
+                .OnClicked_Lambda([SettingsWindow]() -> FReply {
+                    SettingsWindow->RequestDestroyWindow();
                     return FReply::Handled();
                 })
             ]
+            + SHorizontalBox::Slot().AutoWidth()
+            [
+                SNew(SButton)
+                .Text(FText::FromString(TEXT("Save")))
+                .OnClicked_Lambda(SaveLambda)
+            ]
         ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .Padding(8, 2, 8, 0)
-        [
-            SNew(STextBlock)
-            .Text(FText::FromString(TEXT("Sample instructions: Content/samples/instructions.sample.md")))
-            .Font(FCoreStyle::GetDefaultFontStyle("Italic", 9))
-            .ColorAndOpacity(FSlateColor(VibeUEColors::TextMuted))
-        ]
-        + SVerticalBox::Slot()
-        .AutoHeight()
-        .HAlign(HAlign_Right)
-        .Padding(8, 16, 8, 8)
-        [
-            SNew(SButton)
-            .Text(FText::FromString(TEXT("Save")))
-            .OnClicked_Lambda([this, VibeUEApiKeyInput, OpenRouterApiKeyInput, SelectedProviderPtr, DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox, TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox, MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput, SettingsWindow]() -> FReply
-            {
-                // Save VibeUE API key
-                FString NewVibeUEApiKey = VibeUEApiKeyInput->GetText().ToString();
-                ChatSession->SetVibeUEApiKey(NewVibeUEApiKey);
-                
-                // Save OpenRouter API key
-                FString NewOpenRouterApiKey = OpenRouterApiKeyInput->GetText().ToString();
-                ChatSession->SetApiKey(NewOpenRouterApiKey);
-                
-                // Save provider selection from dropdown
-                ELLMProvider NewProvider = ELLMProvider::VibeUE;  // Default
-                if (SelectedProviderPtr->IsValid() && **SelectedProviderPtr == TEXT("OpenRouter"))
-                {
-                    NewProvider = ELLMProvider::OpenRouter;
-                }
-                ChatSession->SetCurrentProvider(NewProvider);
-                
-                // Save debug mode
-                bool bNewDebugMode = DebugModeCheckBox->IsChecked();
-                FChatSession::SetDebugModeEnabled(bNewDebugMode);
-                FChatSession::SetFileLoggingEnabled(bNewDebugMode);
-
-                // Save auto-save before Python execution setting
-                bool bNewAutoSaveBeforePython = AutoSaveBeforePythonCheckBox->IsChecked();
-                FChatSession::SetAutoSaveBeforePythonExecutionEnabled(bNewAutoSaveBeforePython);
-
-                // Save YOLO mode setting
-                bool bNewYoloMode = YoloModeCheckBox->IsChecked();
-                FChatSession::SetYoloModeEnabled(bNewYoloMode);
-
-                // Save LLM generation parameters
-                FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
-                FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
-                FChatSession::SaveMaxTokensToConfig(MaxTokensSpinBox->GetValue());
-                FChatSession::SaveMaxToolCallIterationsToConfig(MaxToolIterationsSpinBox->GetValue());
-                FChatSession::SaveParallelToolCallsToConfig(ParallelToolCallsCheckBox->IsChecked());
-                
-                // Apply max tool iterations to current session
-                ChatSession->SetMaxToolCallIterations(MaxToolIterationsSpinBox->GetValue());
-                
-                // Apply the new LLM parameters to the client
-                ChatSession->ApplyLLMParametersToClient();
-                
-                // Save MCP Server settings
-                bool bNewMCPServerEnabled = MCPServerEnabledCheckBox->IsChecked();
-                int32 NewMCPServerPort = MCPServerPortSpinBox->GetValue();
-                FString NewMCPServerApiKey = MCPServerApiKeyInput->GetText().ToString();
-                
-                FMCPServer::SaveEnabledToConfig(bNewMCPServerEnabled);
-                FMCPServer::SavePortToConfig(NewMCPServerPort);
-                FMCPServer::SaveApiKeyToConfig(NewMCPServerApiKey);
-                
-                // Restart MCP Server to apply any setting changes
-                FMCPServer& MCPServer = FMCPServer::Get();
-                if (MCPServer.IsRunning())
-                {
-                    MCPServer.StopServer();
-                }
-                MCPServer.LoadConfig();
-                if (bNewMCPServerEnabled)
-                {
-                    MCPServer.Start();
-                }
-
-                // Save Voice Input settings
-                bool bNewVoiceInputEnabled = VoiceInputEnabledCheckBox->IsChecked();
-                bool bNewAutoSendAfterRecording = AutoSendAfterRecordingCheckBox->IsChecked();
-                FString NewElevenLabsApiKey = ElevenLabsApiKeyInput->GetText().ToString();
-
-                FSpeechToTextService::SaveVoiceInputEnabledToConfig(bNewVoiceInputEnabled);
-                if (ChatSession.IsValid())
-                {
-                    ChatSession->SetAutoSendAfterRecordingEnabled(bNewAutoSendAfterRecording);
-                }
-                FElevenLabsSpeechProvider::SaveApiKeyToConfig(NewElevenLabsApiKey);
-
-                // Update the provider with the new API key immediately
-                if (ChatSession.IsValid())
-                {
-                    TSharedPtr<FSpeechToTextService> SpeechService = ChatSession->GetSpeechService();
-                    if (SpeechService.IsValid())
-                    {
-                        TSharedPtr<ISpeechProvider> Provider = SpeechService->GetActiveProvider();
-                        if (Provider.IsValid())
-                        {
-                            TSharedPtr<FElevenLabsSpeechProvider> ElevenLabsProvider = StaticCastSharedPtr<FElevenLabsSpeechProvider>(Provider);
-                            if (ElevenLabsProvider.IsValid())
-                            {
-                                ElevenLabsProvider->SetApiKey(NewElevenLabsApiKey);
-                            }
-                        }
-                    }
-                }
-
-                GConfig->Flush(false, GEditorPerProjectIni);
-                
-                // Update the model dropdown based on new provider
-                UpdateModelDropdownForProvider();
-                
-                AddSystemNotification(FString::Printf(TEXT("✅ Settings saved - Using %s"), 
-                    NewProvider == ELLMProvider::VibeUE ? TEXT("VibeUE API") : TEXT("OpenRouter")));
-                SettingsWindow->RequestDestroyWindow();
-                return FReply::Handled();
-            })
-        ]
-        ] // end SVerticalBox inside SScrollBox
     );
-    
+
+    SettingsWindowWeakPtr = SettingsWindow;
+    SettingsWindow->SetOnWindowClosed(FOnWindowClosed::CreateLambda([this](const TSharedRef<SWindow>&)
+    {
+        SettingsWindowWeakPtr.Reset();
+        SettingsModelComboBox.Reset();
+    }));
     FSlateApplication::Get().AddWindow(SettingsWindow);
-    
     return FReply::Handled();
 }
 
@@ -2679,7 +2713,7 @@ FText SAIChatWindow::GetSelectedModelText() const
 
 void SAIChatWindow::HandleMessageAdded(const FChatMessage& Message)
 {
-    UE_LOG(LogAIChatWindow, Log, TEXT("[HandleMessageAdded] Role: %s, Content length: %d"), *Message.Role, Message.Content.Len());
+    UE_LOG(LogAIChatWindow, Verbose, TEXT("[HandleMessageAdded] Role: %s, Content length: %d"), *Message.Role, Message.Content.Len());
     
     // Don't process empty streaming assistant messages - they're just placeholders
     if (Message.Role == TEXT("assistant") && Message.bIsStreaming && Message.Content.IsEmpty() && Message.ToolCalls.Num() == 0)
@@ -3097,7 +3131,8 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
     {
         return;
     }
-    
+
+    // ---- OpenRouter / VibeUE ---------------------------------------------
     // Check if provider supports model selection
     if (ChatSession->SupportsModelSelection())
     {
@@ -3311,7 +3346,7 @@ void SAIChatWindow::HandleToolCallApprovalRequired(const FString& ToolCallId, co
     // Check YOLO mode to determine if we need approval buttons or just a code preview
     bool bYoloMode = FChatSession::IsYoloModeEnabled();
     
-    CHAT_LOG(Log, TEXT("Tool call code preview: %s (id=%s, yolo=%s)"), *ToolCall.ToolName, *ToolCallId, bYoloMode ? TEXT("on") : TEXT("off"));
+    CHAT_LOG(Verbose, TEXT("Tool call code preview: %s (id=%s, yolo=%s)"), *ToolCall.ToolName, *ToolCallId, bYoloMode ? TEXT("on") : TEXT("off"));
     
     if (!bYoloMode)
     {

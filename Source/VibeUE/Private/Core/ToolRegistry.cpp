@@ -268,7 +268,7 @@ FString FToolRegistry::ExecuteTool(
 	FToolExecuteFunc* ExecuteFunc = ToolExecuteFuncs.Find(ToolName);
 	if (ExecuteFunc && *ExecuteFunc)
 	{
-		UE_LOG(LogToolRegistry, Log, TEXT("Executing tool: %s"), *ToolName);
+		UE_LOG(LogToolRegistry, Verbose, TEXT("Executing tool: %s"), *ToolName);
 		return (*ExecuteFunc)(Parameters);
 	}
 
@@ -285,7 +285,7 @@ FString FToolRegistry::ExecuteTool(
 TArray<FToolMetadata> FToolRegistry::GetEnabledTools() const
 {
 	TArray<FToolMetadata> Result;
-	UE_LOG(LogToolRegistry, Log, TEXT("GetEnabledTools: Total tools=%d, Disabled count=%d"), Tools.Num(), DisabledTools.Num());
+	UE_LOG(LogToolRegistry, Verbose, TEXT("GetEnabledTools: Total tools=%d, Disabled count=%d"), Tools.Num(), DisabledTools.Num());
 	
 	for (const FToolMetadata& Tool : Tools)
 	{
@@ -300,7 +300,7 @@ TArray<FToolMetadata> FToolRegistry::GetEnabledTools() const
 		}
 	}
 	
-	UE_LOG(LogToolRegistry, Log, TEXT("GetEnabledTools: Returning %d enabled tools"), Result.Num());
+	UE_LOG(LogToolRegistry, Verbose, TEXT("GetEnabledTools: Returning %d enabled tools"), Result.Num());
 	return Result;
 }
 
