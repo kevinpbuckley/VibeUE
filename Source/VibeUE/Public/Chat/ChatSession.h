@@ -182,7 +182,10 @@ public:
     
     /** Set VibeUE API key */
     void SetVibeUEApiKey(const FString& ApiKey);
-    
+
+    /** Set VibeUE endpoint URL (updates running client and persists to config) */
+    void SetVibeUEEndpoint(const FString& Endpoint);
+
     /** Check if API key is configured (for current provider) */
     bool HasApiKey() const;
     
@@ -200,10 +203,10 @@ public:
     
     /** Get VibeUE API endpoint from config */
     static FString GetVibeUEEndpointFromConfig();
-    
+
     /** Save VibeUE API endpoint to config */
     static void SaveVibeUEEndpointToConfig(const FString& Endpoint);
-    
+
     /** Get current LLM provider */
     ELLMProvider GetCurrentProvider() const { return CurrentProvider; }
     
@@ -486,10 +489,10 @@ public:
 private:
     /** OpenRouter HTTP client */
     TSharedPtr<FOpenRouterClient> OpenRouterClient;
-    
+
     /** VibeUE API HTTP client */
     TSharedPtr<FVibeUEAPIClient> VibeUEClient;
-    
+
     /** Current LLM provider */
     ELLMProvider CurrentProvider = ELLMProvider::VibeUE;
     

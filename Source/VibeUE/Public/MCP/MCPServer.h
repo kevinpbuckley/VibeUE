@@ -8,6 +8,7 @@
 #include "Networking.h"
 #include "HAL/Runnable.h"
 #include "HAL/RunnableThread.h"
+#include "HAL/PlatformProcess.h"
 #include "Containers/Queue.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogMCPServer, Log, All);
@@ -123,7 +124,32 @@ public:
     
     /** Save MCP Server API key to config */
     static void SaveApiKeyToConfig(const FString& ApiKey);
-    
+
+    // ============ Proxy Config Persistence ============
+
+    static bool     GetProxyEnabledFromConfig();
+    static void     SaveProxyEnabledToConfig(bool bEnabled);
+    static bool     GetProxyAutoStartFromConfig();
+    static void     SaveProxyAutoStartToConfig(bool bAutoStart);
+    static int32    GetProxyPortFromConfig();
+    static void     SaveProxyPortToConfig(int32 Port);
+    static FString  GetProxyPythonPathFromConfig();
+    static void     SaveProxyPythonPathToConfig(const FString& Path);
+
+    // ============ Proxy Control ============
+
+    /** Returns true if something is already listening on the configured proxy port */
+    bool IsProxyRunning() const;
+
+    /** Start the proxy if not already running. Returns true on success or if already up. */
+    bool StartProxy();
+
+    /** Stop the proxy process (only if we spawned it) */
+    void StopProxy();
+
+    /** Write vibeue-proxy.json with current bearer token and proxy port */
+    void WriteProxyConfigJson() const;
+
     /** Load all config into Config struct */
     void LoadConfig();
     
@@ -236,6 +262,16 @@ private:
     /** Tick delegate handle */
     FTSTicker::FDelegateHandle TickDelegateHandle;
     
+    /** Proxy process handle (only valid if we spawned it) */
+    FProcHandle ProxyProcHandle;
+
+    /** True if we spawned the proxy process and are responsible for stopping it */
+    bool bProxyOwnedByUs = false;
+
+    /** Cached proxy running state — updated at most every 3 seconds to avoid blocking the game thread */
+    mutable bool   bCachedProxyRunning = false;
+    mutable double LastProxyCheckTime  = -999.0;
+
     /** Singleton instance */
     static TSharedPtr<FMCPServer> Instance;
 };
