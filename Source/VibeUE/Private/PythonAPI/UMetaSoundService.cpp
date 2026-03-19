@@ -16,6 +16,11 @@
 
 // MetaSound Editor
 #include "MetasoundEditorSubsystem.h"
+#include "MetasoundFactory.h"
+
+// Asset creation
+#include "AssetToolsModule.h"
+#include "IAssetTools.h"
 
 // UE Editor
 #include "EditorAssetLibrary.h"
@@ -120,7 +125,20 @@ FMetaSoundNodeInfo UMetaSoundService::BuildNodeInfo(UMetaSoundBuilderBase* Build
 	Info.ClassName = Class.Metadata.GetClassName().ToString();
 
 #if WITH_EDITOR
-	Info.NodeTitle = Builder->GetConstBuilder().GetNodeTitle(Node.GetID()).ToString();
+	// Template and Invalid nodes cannot be resolved in the class registry —
+	// calling GetNodeTitle on them triggers an assertion in MetasoundAssetManager.
+	// Use the ClassName string as the title for those node types instead.
+	{
+		const EMetasoundFrontendClassType T = Class.Metadata.GetType();
+		if (T == EMetasoundFrontendClassType::Template || T == EMetasoundFrontendClassType::Invalid)
+		{
+			Info.NodeTitle = Info.ClassName;
+		}
+		else
+		{
+			Info.NodeTitle = Builder->GetConstBuilder().GetNodeTitle(Node.GetID()).ToString();
+		}
+	}
 #else
 	Info.NodeTitle = Info.ClassName;
 #endif
@@ -185,6 +203,9 @@ UMetaSoundBuilderBase* UMetaSoundService::BeginEditing(const FString& AssetPath,
 void UMetaSoundService::CommitEditing(const FString& AssetPath, UMetaSoundSource* Source)
 {
 	UMetaSoundEditorSubsystem::GetChecked().RegisterGraphWithFrontend(*Source);
+	// Notify any open MetaSound editor window to resync its graph view.
+	// Without this, the editor displays stale state until the asset is closed/reopened.
+	Source->PostEditChange();
 	UEditorAssetLibrary::SaveAsset(AssetPath, false);
 }
 
@@ -201,59 +222,31 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 		return Fail(TEXT("CreateMetaSound: PackagePath and AssetName must not be empty"));
 	}
 
-	UMetaSoundBuilderSubsystem* BuilderSub = GEngine->GetEngineSubsystem<UMetaSoundBuilderSubsystem>();
-	if (!BuilderSub)
+	// Use the editor factory path (NewObject + InitAsset + RegisterGraphWithFrontend)
+	// exactly as the editor does when creating a MetaSound Source via right-click.
+	// Using CreateSourceBuilder + BuildToAsset instead produces two sets of interface
+	// nodes (Input/Output type from the builder + Template type from FindOrBeginBuilding),
+	// resulting in orphan nodes visible in the graph editor.
+	IAssetTools& AssetTools = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools")).Get();
+
+	UMetaSoundSourceFactory* Factory = NewObject<UMetaSoundSourceFactory>();
+	UObject* CreatedObj = AssetTools.CreateAsset(AssetName, PackagePath, UMetaSoundSource::StaticClass(), Factory);
+	UMetaSoundSource* NewSource = Cast<UMetaSoundSource>(CreatedObj);
+	if (!NewSource)
 	{
-		return Fail(TEXT("CreateMetaSound: UMetaSoundBuilderSubsystem not available"));
+		return Fail(TEXT("CreateMetaSound: factory failed to create UMetaSoundSource"));
 	}
 
-	EMetaSoundBuilderResult CreateResult;
-	FMetaSoundBuilderNodeOutputHandle OnPlayOut;
-	FMetaSoundBuilderNodeInputHandle  OnFinishedIn;
-	TArray<FMetaSoundBuilderNodeInputHandle> AudioOuts;
-
-	UMetaSoundSourceBuilder* Builder = BuilderSub->CreateSourceBuilder(
-		FName(*AssetName),
-		OnPlayOut,
-		OnFinishedIn,
-		AudioOuts,
-		CreateResult,
-		StringToFormatEnum(OutputFormat),
-		false   // bIsOneShot = false (loopable source)
-	);
-
-	if (CreateResult != EMetaSoundBuilderResult::Succeeded || !Builder)
+	// Set the requested output format. The factory initialises with the class default
+	// (Mono); if a different format is requested, update it and re-register so the
+	// audio output interface nodes reflect the correct channel count.
+	const EMetaSoundOutputAudioFormat DesiredFormat = StringToFormatEnum(OutputFormat);
+	if (NewSource->OutputFormat != DesiredFormat)
 	{
-		return Fail(TEXT("CreateMetaSound: CreateSourceBuilder failed"));
+		NewSource->OutputFormat = DesiredFormat;
+		UMetaSoundEditorSubsystem::GetChecked().RegisterGraphWithFrontend(*NewSource);
+		UEditorAssetLibrary::SaveAsset(PackagePath / AssetName, false);
 	}
-
-	UMetaSoundEditorSubsystem& EditorSub = UMetaSoundEditorSubsystem::GetChecked();
-	EMetaSoundBuilderResult BuildResult;
-	TScriptInterface<IMetaSoundDocumentInterface> DocIface = EditorSub.BuildToAsset(
-		Builder,
-		TEXT("VibeUE"),
-		AssetName,
-		PackagePath,
-		BuildResult
-	);
-
-	if (BuildResult != EMetaSoundBuilderResult::Succeeded || !DocIface.GetObject())
-	{
-		BuilderSub->UnregisterSourceBuilder(FName(*AssetName));
-		return Fail(TEXT("CreateMetaSound: BuildToAsset failed"));
-	}
-
-	// Register the graph with the MetaSound frontend before unregistering the builder.
-	// Without this, the first FindOrBeginBuilding call will see the asset as unregistered
-	// and re-apply the source interface, producing duplicate Input/Output interface nodes.
-	UMetaSoundSource* NewSource = Cast<UMetaSoundSource>(DocIface.GetObject());
-	if (NewSource)
-	{
-		EditorSub.RegisterGraphWithFrontend(*NewSource);
-	}
-
-	// Clean up the transient builder name
-	BuilderSub->UnregisterSourceBuilder(FName(*AssetName));
 
 	const FString FullPath = PackagePath / AssetName;
 	UE_LOG(LogMetaSoundService, Log, TEXT("CreateMetaSound: created '%s'"), *FullPath);
@@ -494,11 +487,6 @@ TArray<FMetaSoundNodeInfo> UMetaSoundService::ListNodes(const FString& AssetPath
 	Builder->GetConstBuilder().IterateNodes(
 		[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
 		{
-			const EMetasoundFrontendClassType T = Class.Metadata.GetType();
-			if (T == EMetasoundFrontendClassType::Template || T == EMetasoundFrontendClassType::Invalid)
-			{
-				return;
-			}
 			Result.Add(BuildNodeInfo(Builder, Class, Node));
 		});
 
@@ -532,11 +520,6 @@ FMetaSoundNodeInfo UMetaSoundService::GetNodePins(const FString& AssetPath, cons
 		[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
 		{
 			if (bFoundNode)
-			{
-				return;
-			}
-			const EMetasoundFrontendClassType T = Class.Metadata.GetType();
-			if (T == EMetasoundFrontendClassType::Template || T == EMetasoundFrontendClassType::Invalid)
 			{
 				return;
 			}
