@@ -2851,21 +2851,37 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 	if (!TransitionType.IsEmpty())
 	{
 		const EStateTreeTransitionType NewType = StringToTransitionType(TransitionType);
-		const UStateTreeState* TargetState = nullptr;
+		Trans.State.LinkType = NewType;
+
 		if (NewType == EStateTreeTransitionType::GotoState && !TargetPath.IsEmpty())
 		{
-			TargetState = FindStateByPath(EditorData, TargetPath);
+			const UStateTreeState* TargetState = FindStateByPath(EditorData, TargetPath);
 			if (!TargetState)
 			{
 				UE_LOG(LogStateTreeService, Warning, TEXT("UpdateTransition: Target state not found: %s"), *TargetPath);
 				return false;
 			}
-		}
-		Trans.State.LinkType = NewType;
-		if (TargetState)
-		{
 			Trans.State.Name = TargetState->Name;
 			Trans.State.ID = TargetState->ID;
+		}
+	}
+	else if (!TargetPath.IsEmpty())
+	{
+		// target_path provided without transition_type — update the target on an existing GotoState transition
+		if (Trans.State.LinkType == EStateTreeTransitionType::GotoState)
+		{
+			const UStateTreeState* TargetState = FindStateByPath(EditorData, TargetPath);
+			if (!TargetState)
+			{
+				UE_LOG(LogStateTreeService, Warning, TEXT("UpdateTransition: Target state not found: %s"), *TargetPath);
+				return false;
+			}
+			Trans.State.Name = TargetState->Name;
+			Trans.State.ID = TargetState->ID;
+		}
+		else
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("UpdateTransition: target_path provided but transition %d on '%s' is not GotoState — target_path ignored"), TransitionIndex, *StatePath);
 		}
 	}
 	if (!Priority.IsEmpty())

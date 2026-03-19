@@ -1031,6 +1031,39 @@ public:
 	);
 
 	/**
+	 * Set collision settings on a primitive component in a blueprint.
+	 *
+	 * Collision properties live inside UPrimitiveComponent::BodyInstance and cannot be set
+	 * via set_component_property (which only resolves top-level properties). Use this method
+	 * to configure collision profile, enabled state, object type, and per-channel responses.
+	 *
+	 * @param BlueprintPath     - Full path to the blueprint
+	 * @param ComponentName     - Name of the component (must be a UPrimitiveComponent)
+	 * @param CollisionEnabled  - "NoCollision", "QueryOnly", "PhysicsOnly", "QueryAndPhysics" (empty = no change)
+	 * @param ObjectType        - "WorldStatic", "WorldDynamic", "Pawn", "Visibility", "Camera", "PhysicsBody", "Vehicle", "Destructible" (empty = no change)
+	 * @param CollisionProfile  - Profile name e.g. "Custom", "BlockAll", "OverlapAll", "NoCollision" (empty = no change)
+	 * @param ChannelResponses  - Map of channel name -> response: "Ignore", "Overlap", "Block" (empty map = no change)
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.set_collision_settings(
+	 *       "/Game/BP_Cube", "CollisionSphere",
+	 *       collision_enabled="QueryOnly",
+	 *       object_type="WorldDynamic",
+	 *       collision_profile="Custom",
+	 *       channel_responses={"Pawn": "Overlap", "WorldStatic": "Ignore", "WorldDynamic": "Ignore"})
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
+	static bool SetCollisionSettings(
+		const FString& BlueprintPath,
+		const FString& ComponentName,
+		const FString& CollisionEnabled,
+		const FString& ObjectType,
+		const FString& CollisionProfile,
+		const TMap<FString, FString>& ChannelResponses
+	);
+
+	/**
 	 * Get all properties of a component in a blueprint.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint

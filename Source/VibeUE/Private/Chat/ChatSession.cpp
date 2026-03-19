@@ -1091,6 +1091,13 @@ void FChatSession::ClearLoadedSkills()
     ActiveSkillsContent.Empty();
 }
 
+void FChatSession::SetContextItem(const FString& AssetObjectPath, const FString& AssetClass)
+{
+    ContextItemPath  = AssetObjectPath;
+    ContextItemClass = AssetClass;
+    UE_LOG(LogChatSession, Log, TEXT("Context item set: %s (%s)"), *AssetObjectPath, *AssetClass);
+}
+
 void FChatSession::ResetChat()
 {
     CancelRequest();
@@ -2060,6 +2067,20 @@ TArray<FChatMessage> FChatSession::BuildApiMessages() const
     if (!ActiveSkillsContent.IsEmpty())
     {
         FullSystemPrompt += TEXT("\n\n<loaded_skills>\n") + ActiveSkillsContent + TEXT("\n</loaded_skills>");
+    }
+
+    // Append active context item (asset or level currently focused in the editor)
+    // so the AI knows which target to use when the user doesn't specify one explicitly.
+    if (!ContextItemPath.IsEmpty())
+    {
+        FullSystemPrompt += FString::Printf(
+            TEXT("\n\n<context_item>\nThe user currently has the following editor context item focused. "
+                 "When the user asks you to modify something without specifying a target, "
+                 "assume they mean this item.\n"
+                 "  Context path : %s\n"
+                 "  Context class: %s\n"
+                 "</context_item>"),
+            *ContextItemPath, *ContextItemClass);
     }
 
     int32 AvailableTokens = GetCurrentModelContextLength() - ReservedResponseTokens;

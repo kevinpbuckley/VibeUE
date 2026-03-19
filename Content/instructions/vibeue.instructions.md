@@ -217,10 +217,30 @@ The AI can then offer to undo: delete BP_Enemy or remove the variable.
 4. On failure, AI reads output and offers rollback options
 
 ### Always Search Before Accessing
+
+**Use `manage_asset` (MCP tool) — NOT Python code — to find, open, save, and duplicate assets.**
+
+`manage_asset` is a first-class MCP tool that wraps `AssetDiscoveryService` directly. No Python needed.
+
 ```
-User says "BP_Player_Test" → search_assets("BP_Player_Test", "Blueprint") FIRST
-Never guess paths. Load "asset-management" skill for AssetDiscoveryService details.
+User says "BP_Player_Test" → manage_asset(action="search", search_term="BP_Player_Test", asset_type="Blueprint")
+Never guess paths. Confirm the exact path from results before editing.
 ```
+
+**Common patterns:**
+
+| Goal | Tool call |
+|------|-----------|
+| Find an asset by partial name | `manage_asset(action="search", search_term="BP_Enemy", asset_type="Blueprint")` |
+| Confirm an exact path exists | `manage_asset(action="find", asset_path="/Game/AI/ST_Cube")` |
+| List all assets in a folder | `manage_asset(action="list", path="/Game/AI")` |
+| Open an asset in its editor | `manage_asset(action="open", asset_path="/Game/AI/ST_Cube")` |
+| Save after edits | `manage_asset(action="save", asset_path="/Game/AI/ST_Cube")` |
+| Save all dirty assets | `manage_asset(action="save_all")` |
+| Duplicate to a new path | `manage_asset(action="duplicate", source_path="...", destination_path="...")` |
+| Delete (with reference guard) | `manage_asset(action="delete", asset_path="...")` |
+
+For detailed per-action docs: `manage_asset(action="help", help_action="search")`
 
 ### Idempotent Operations (Check Before Create)
 Always use `*_exists()` methods before creating to avoid duplicates:

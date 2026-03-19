@@ -77,6 +77,11 @@ TArray<FAssetData> UAssetDiscoveryService::SearchAssets(const FString& SearchTer
 	TArray<FAssetData> AllAssets;
 	FARFilter Filter;
 
+	// Always scan /Game recursively. Without an explicit path + bRecursivePaths=true,
+	// GetAssets with an empty FARFilter returns nothing in UE5.
+	Filter.PackagePaths.Add(FName("/Game"));
+	Filter.bRecursivePaths = true;
+
 	// Apply type filter if specified
 	if (!AssetType.IsEmpty())
 	{
@@ -84,6 +89,7 @@ TArray<FAssetData> UAssetDiscoveryService::SearchAssets(const FString& SearchTer
 		if (!ClassPath.IsNull())
 		{
 			Filter.ClassPaths.Add(ClassPath);
+			Filter.bRecursiveClasses = true;
 		}
 	}
 
@@ -155,21 +161,23 @@ bool UAssetDiscoveryService::FindAssetByPath(const FString& AssetPath, FAssetDat
 		return false;
 	}
 
-	// Try as package name first
+	// Try by package name first. Users supply paths like "/Game/Folder/Asset" (no .AssetName
+	// suffix), and GetAssetsByPackageName returns correctly-populated FAssetData where
+	// AssetName is just "Asset" (not the full path).
+	TArray<FAssetData> PackageAssets;
+	AssetRegistry->GetAssetsByPackageName(FName(*AssetPath), PackageAssets);
+	if (PackageAssets.Num() > 0)
+	{
+		OutAsset = PackageAssets[0];
+		return true;
+	}
+
+	// Fall back to object-path lookup for callers that supply the full ".AssetName" suffix
+	// (e.g. "/Game/Folder/Asset.Asset").
 	FAssetData FoundAsset = AssetRegistry->GetAssetByObjectPath(FSoftObjectPath(AssetPath));
 	if (FoundAsset.IsValid())
 	{
 		OutAsset = FoundAsset;
-		return true;
-	}
-
-	// Try searching by asset name if direct path failed
-	TArray<FAssetData> AllAssets;
-	AssetRegistry->GetAssetsByPackageName(FName(*AssetPath), AllAssets);
-
-	if (AllAssets.Num() > 0)
-	{
-		OutAsset = AllAssets[0];
 		return true;
 	}
 
