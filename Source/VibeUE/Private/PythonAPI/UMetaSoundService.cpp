@@ -243,6 +243,15 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 		return Fail(TEXT("CreateMetaSound: BuildToAsset failed"));
 	}
 
+	// Register the graph with the MetaSound frontend before unregistering the builder.
+	// Without this, the first FindOrBeginBuilding call will see the asset as unregistered
+	// and re-apply the source interface, producing duplicate Input/Output interface nodes.
+	UMetaSoundSource* NewSource = Cast<UMetaSoundSource>(DocIface.GetObject());
+	if (NewSource)
+	{
+		EditorSub.RegisterGraphWithFrontend(*NewSource);
+	}
+
 	// Clean up the transient builder name
 	BuilderSub->UnregisterSourceBuilder(FName(*AssetName));
 
