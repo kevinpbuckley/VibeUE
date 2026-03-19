@@ -294,10 +294,17 @@ FMetaSoundInfo UMetaSoundService::GetMetaSoundInfo(const FString& AssetPath)
 		Info.GraphOutputs.Add(Name.ToString());
 	}
 
-	// Count nodes by iterating the document builder
+	// Count nodes by iterating the document builder (skip Template/Invalid internal nodes)
 	int32 Count = 0;
 	Builder->GetConstBuilder().IterateNodes(
-		[&Count](const FMetasoundFrontendClass&, const FMetasoundFrontendNode&) { ++Count; });
+		[&Count](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode&)
+		{
+			const EMetasoundFrontendClassType T = Class.Metadata.GetType();
+			if (T != EMetasoundFrontendClassType::Template && T != EMetasoundFrontendClassType::Invalid)
+			{
+				++Count;
+			}
+		});
 	Info.NodeCount = Count;
 
 	return Info;
@@ -406,14 +413,14 @@ FMetaSoundResult UMetaSoundService::AddNode(const FString& AssetPath,
 		return Fail(LoadError);
 	}
 
-	const FMetasoundFrontendClassName ClassName(
+	const FMetasoundFrontendClassName NodeClass{
 		FName(*NodeNamespace),
 		FName(*NodeName),
 		FName(*NodeVariant)
-	);
+	};
 
 	EMetaSoundBuilderResult R;
-	FMetaSoundNodeHandle NodeHandle = Builder->AddNodeByClassName(ClassName, R, MajorVersion);
+	FMetaSoundNodeHandle NodeHandle = Builder->AddNodeByClassName(NodeClass, R, MajorVersion);
 
 	if (R != EMetaSoundBuilderResult::Succeeded)
 	{
@@ -478,6 +485,11 @@ TArray<FMetaSoundNodeInfo> UMetaSoundService::ListNodes(const FString& AssetPath
 	Builder->GetConstBuilder().IterateNodes(
 		[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
 		{
+			const EMetasoundFrontendClassType T = Class.Metadata.GetType();
+			if (T == EMetasoundFrontendClassType::Template || T == EMetasoundFrontendClassType::Invalid)
+			{
+				return;
+			}
 			Result.Add(BuildNodeInfo(Builder, Class, Node));
 		});
 
@@ -510,7 +522,16 @@ FMetaSoundNodeInfo UMetaSoundService::GetNodePins(const FString& AssetPath, cons
 	Builder->GetConstBuilder().IterateNodes(
 		[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
 		{
-			if (!bFoundNode && Node.GetID() == NodeGuid)
+			if (bFoundNode)
+			{
+				return;
+			}
+			const EMetasoundFrontendClassType T = Class.Metadata.GetType();
+			if (T == EMetasoundFrontendClassType::Template || T == EMetasoundFrontendClassType::Invalid)
+			{
+				return;
+			}
+			if (Node.GetID() == NodeGuid)
 			{
 				Found = BuildNodeInfo(Builder, Class, Node);
 				bFoundNode = true;

@@ -44,15 +44,19 @@ asset_path = r.asset_path   # "/Game/Audio/MS_SineLoop"
 all_nodes = ms.list_nodes(asset_path)
 for n in all_nodes:
     print(n.node_id, n.node_title, n.inputs, n.outputs)
-# Look for the AudioOut input node (node_title contains "Audio")
-audio_out_id = next(n.node_id for n in all_nodes if "Audio" in n.node_title and n.inputs)
+# Output node has title "Output"; its input pin is the audio sink
+audio_out_node = next(n for n in all_nodes if n.node_title == "Output")
+audio_out_id = audio_out_node.node_id
+# Pin strings are "VertexName:TypeName" — drop only the last :TypeName suffix
+audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
 ```
 
 ### 4 — Add a node
 
 ```python
 # add_node(asset_path, namespace, name, variant="", major_version=1, pos_x=0, pos_y=0)
-r2 = ms.add_node(asset_path, "Metasound.Standard", "Sine", "Audio", 1, -200.0, 0.0)
+# Use list_available_nodes() to discover the correct namespace/name/variant for any node
+r2 = ms.add_node(asset_path, "UE", "Sine", "Audio", 1, -200.0, 0.0)
 sine_id = r2.node_id   # GUID string
 ```
 
@@ -60,14 +64,16 @@ sine_id = r2.node_id   # GUID string
 
 ```python
 # Set the Sine frequency to 880 Hz
-ms.set_node_input_default(asset_path, sine_id, "In Frequency", "880.0", "Float")
+# Use get_node_pins() to confirm exact input pin names before setting
+ms.set_node_input_default(asset_path, sine_id, "Frequency", "880.0", "Float")
 ```
 
 ### 6 — Connect nodes
 
 ```python
 # connect_nodes(asset_path, from_node_id, output_name, to_node_id, input_name)
-ms.connect_nodes(asset_path, sine_id, "Out", audio_out_id, "Audio:0")
+# Sine output pin is "Audio"; AudioOut input pin is "UE.OutputFormat.Mono.Audio:0"
+ms.connect_nodes(asset_path, sine_id, "Audio", audio_out_id, audio_in_pin)
 ```
 
 ### 7 — Save
@@ -154,21 +160,22 @@ ms = unreal.MetaSoundService()
 r = ms.create_meta_sound("/Game/Audio", "MS_Test880Hz", "Mono")
 ap = r.asset_path
 
-# Find the built-in AudioOut input node (where we connect audio signal)
+# Find the built-in AudioOut node (title="Output") and its audio sink pin
 nodes = ms.list_nodes(ap)
-audio_out_node = next(n for n in nodes if "Audio" in n.node_title and n.inputs)
+audio_out_node = next(n for n in nodes if n.node_title == "Output")
 audio_out_id = audio_out_node.node_id
-audio_in_pin = audio_out_node.inputs[0].split(":")[0]   # e.g. "Audio:0"
+# Pin strings are "VertexName:TypeName" — drop only the last :TypeName to get the vertex name
+audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
 
-# Add Sine oscillator
-r2 = ms.add_node(ap, "Metasound.Standard", "Sine", "Audio", 1, -300.0, 0.0)
+# Add Sine oscillator (use list_available_nodes("Sine") to discover namespace/name/variant)
+r2 = ms.add_node(ap, "UE", "Sine", "Audio", 1, -300.0, 0.0)
 sine_id = r2.node_id
 
-# Set frequency
-ms.set_node_input_default(ap, sine_id, "In Frequency", "880.0", "Float")
+# Set frequency to 880 Hz (use get_node_pins() to confirm exact pin names)
+ms.set_node_input_default(ap, sine_id, "Frequency", "880.0", "Float")
 
-# Connect Sine output to AudioOut
-ms.connect_nodes(ap, sine_id, "Out", audio_out_id, audio_in_pin)
+# Connect Sine "Audio" output to the AudioOut sink pin
+ms.connect_nodes(ap, sine_id, "Audio", audio_out_id, audio_in_pin)
 
 # Save
 ms.save_meta_sound(ap)
@@ -182,5 +189,6 @@ print("Done:", ap)
 - **Save after every batch of edits**, not after each individual operation, to avoid excessive disk I/O.
 - `list_available_nodes("")` returns **all** registered node classes (~400+). Use a filter like `"Sine"`, `"Delay"`, `"Gain"` to narrow the results.
 - Node pin names for standard nodes use UE display names (e.g. `"In Frequency"`, `"Out"`, `"Audio:0"`). Use `get_node_pins()` to confirm exact names.
-- The built-in `AudioOut` input node receives the final audio signal. Its input pin is typically named `"Audio:0"` for Mono, `"Audio:0"` / `"Audio:1"` for Stereo.
-- MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (`Metasound.Standard`, `"Wave Player"`, `"Mono"` or `"Stereo"`).
+- The built-in audio sink node has `node_title == "Output"`. Its input pin is named `"UE.OutputFormat.Mono.Audio:0"` for Mono. Pin strings are `"VertexName:TypeName"` — use `":".join(pin.split(":")[:-1])` to extract just the vertex name.
+- Node namespace/name/variant values differ from what the MetaSound editor displays. Always call `list_available_nodes("keyword")` to discover the correct values; do not guess.
+- MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (discover via `list_available_nodes("Wave Player")`).
