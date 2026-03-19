@@ -759,7 +759,23 @@ FMetaSoundResult UMetaSoundService::SetNodeInputDefault(const FString& AssetPath
 		                            *InputName, *NodeId));
 	}
 
-	const FMetasoundFrontendLiteral Lit = MakeLiteral(Value, DataType);
+	FMetasoundFrontendLiteral Lit;
+	if (DataType.Equals(TEXT("WaveAsset"), ESearchCase::IgnoreCase) ||
+	    DataType.Equals(TEXT("Object"),    ESearchCase::IgnoreCase))
+	{
+		// Value is an asset path — load the UObject and create an object literal
+		UObject* Asset = UEditorAssetLibrary::LoadAsset(Value);
+		if (!Asset)
+		{
+			return Fail(FString::Printf(TEXT("SetNodeInputDefault: could not load asset '%s'"), *Value));
+		}
+		Lit.Set(Asset);
+	}
+	else
+	{
+		Lit = MakeLiteral(Value, DataType);
+	}
+
 	Builder->SetNodeInputDefault(InHandle, Lit, R);
 	if (R != EMetaSoundBuilderResult::Succeeded)
 	{
