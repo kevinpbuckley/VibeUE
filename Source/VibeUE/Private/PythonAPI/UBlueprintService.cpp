@@ -731,9 +731,10 @@ bool UBlueprintService::AddComponent(
 		SCS->AddNode(NewNode);
 	}
 	
-	// Mark blueprint as modified
+	// Mark blueprint as modified and recompile so the Blueprint Editor viewport refreshes immediately.
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
-	
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
 	UE_LOG(LogTemp, Log, TEXT("AddComponent: Added '%s' of type '%s' to %s"), *ComponentName, *ComponentType, *BlueprintPath);
 	return true;
 }
@@ -6253,5 +6254,123 @@ bool UBlueprintService::OverrideFunction(const FString& BlueprintPath, const FSt
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 
 	UE_LOG(LogTemp, Log, TEXT("OverrideFunction: Created override function graph '%s' in %s"), *FunctionName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::SetCollisionSettings(
+	const FString& BlueprintPath,
+	const FString& ComponentName,
+	const FString& CollisionEnabled,
+	const FString& ObjectType,
+	const FString& CollisionProfile,
+	const TMap<FString, FString>& ChannelResponses)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UActorComponent* Component = FindComponentTemplate(Blueprint, ComponentName);
+	if (!Component)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Component '%s' not found in %s"), *ComponentName, *BlueprintPath);
+		return false;
+	}
+
+	UPrimitiveComponent* PrimComp = Cast<UPrimitiveComponent>(Component);
+	if (!PrimComp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetCollisionSettings: '%s' is not a UPrimitiveComponent (type: %s)"),
+			*ComponentName, *Component->GetClass()->GetName());
+		return false;
+	}
+
+	// Helper: channel name string -> ECollisionChannel
+	auto ParseChannel = [](const FString& S) -> ECollisionChannel
+	{
+		if (S.Equals(TEXT("WorldStatic"),   ESearchCase::IgnoreCase)) return ECC_WorldStatic;
+		if (S.Equals(TEXT("WorldDynamic"),  ESearchCase::IgnoreCase)) return ECC_WorldDynamic;
+		if (S.Equals(TEXT("Pawn"),          ESearchCase::IgnoreCase)) return ECC_Pawn;
+		if (S.Equals(TEXT("Visibility"),    ESearchCase::IgnoreCase)) return ECC_Visibility;
+		if (S.Equals(TEXT("Camera"),        ESearchCase::IgnoreCase)) return ECC_Camera;
+		if (S.Equals(TEXT("PhysicsBody"),   ESearchCase::IgnoreCase)) return ECC_PhysicsBody;
+		if (S.Equals(TEXT("Vehicle"),       ESearchCase::IgnoreCase)) return ECC_Vehicle;
+		if (S.Equals(TEXT("Destructible"),  ESearchCase::IgnoreCase)) return ECC_Destructible;
+		return ECC_MAX; // unknown
+	};
+
+	// Helper: response string -> ECollisionResponse
+	auto ParseResponse = [](const FString& S) -> ECollisionResponse
+	{
+		if (S.Equals(TEXT("Overlap"), ESearchCase::IgnoreCase)) return ECR_Overlap;
+		if (S.Equals(TEXT("Block"),   ESearchCase::IgnoreCase)) return ECR_Block;
+		return ECR_Ignore; // default / "Ignore"
+	};
+
+	Blueprint->Modify();
+	PrimComp->Modify();
+
+	// Set collision profile first — this resets the response table according to the profile.
+	// Set it before individual channel overrides so "Custom" + per-channel responses works correctly.
+	if (!CollisionProfile.IsEmpty())
+	{
+		PrimComp->BodyInstance.SetCollisionProfileName(FName(*CollisionProfile));
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' CollisionProfile = '%s'"), *ComponentName, *CollisionProfile);
+	}
+
+	// Set collision enabled type
+	if (!CollisionEnabled.IsEmpty())
+	{
+		ECollisionEnabled::Type EnabledType = ECollisionEnabled::QueryAndPhysics;
+		if      (CollisionEnabled.Equals(TEXT("NoCollision"),     ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::NoCollision;
+		else if (CollisionEnabled.Equals(TEXT("QueryOnly"),       ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::QueryOnly;
+		else if (CollisionEnabled.Equals(TEXT("PhysicsOnly"),     ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::PhysicsOnly;
+		else if (CollisionEnabled.Equals(TEXT("QueryAndPhysics"), ESearchCase::IgnoreCase)) EnabledType = ECollisionEnabled::QueryAndPhysics;
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown CollisionEnabled value '%s', expected NoCollision/QueryOnly/PhysicsOnly/QueryAndPhysics"), *CollisionEnabled);
+		}
+		PrimComp->BodyInstance.SetCollisionEnabled(EnabledType);
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' CollisionEnabled = '%s'"), *ComponentName, *CollisionEnabled);
+	}
+
+	// Set object type (what collision channel this component occupies)
+	if (!ObjectType.IsEmpty())
+	{
+		ECollisionChannel Channel = ParseChannel(ObjectType);
+		if (Channel != ECC_MAX)
+		{
+			PrimComp->BodyInstance.SetObjectType(Channel);
+			UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' ObjectType = '%s'"), *ComponentName, *ObjectType);
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown ObjectType '%s'"), *ObjectType);
+		}
+	}
+
+	// Set per-channel collision responses
+	for (const TPair<FString, FString>& Pair : ChannelResponses)
+	{
+		ECollisionChannel Channel = ParseChannel(Pair.Key);
+		if (Channel == ECC_MAX)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("SetCollisionSettings: Unknown channel '%s', skipping"), *Pair.Key);
+			continue;
+		}
+		ECollisionResponse Response = ParseResponse(Pair.Value);
+		PrimComp->BodyInstance.SetResponseToChannel(Channel, Response);
+		UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: '%s' channel '%s' = '%s'"), *ComponentName, *Pair.Key, *Pair.Value);
+	}
+
+	// Notify the editor so the Details panel and viewport refresh
+	FPropertyChangedEvent PropertyChangedEvent(nullptr, EPropertyChangeType::ValueSet);
+	PrimComp->PostEditChangeProperty(PropertyChangedEvent);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("SetCollisionSettings: Updated collision on '%s' in %s"), *ComponentName, *BlueprintPath);
 	return true;
 }

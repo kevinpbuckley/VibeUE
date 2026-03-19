@@ -650,6 +650,44 @@ unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "G
 unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "GotoState", "Root/Walking")
 ```
 
+### ⚠️ NEVER Use remove_transition + add_transition to "Update" a Transition
+
+**This is destructive and silently deletes all conditions on the transition.**
+
+When asked to change a transition's target, trigger, or type, always use `update_transition`.
+`update_transition` edits the existing `FStateTreeTransition` in-place — all conditions are preserved.
+
+`remove_transition` followed by `add_transition` creates a fresh transition with **no conditions**.
+Any `StateTreeObjectIsValidCondition` or other conditions that were wired up will be permanently lost.
+
+```python
+# WRONG — destroys all conditions on the transition
+unreal.StateTreeService.remove_transition(path, "Root", 0)
+unreal.StateTreeService.add_transition(path, "Root", "OnTick", "GotoState", "Root/Chasing")
+
+# CORRECT — update in-place, conditions are preserved
+unreal.StateTreeService.update_transition(path, "Root", 0, target_path="Root/Chasing")
+```
+
+**If `update_transition` returns `True` but the change doesn't appear in get_state_tree_info:**
+- Compile and check again — the in-memory state is updated before compile
+- Do NOT fall back to remove+add as a workaround
+
+```python
+# Verify the update was applied AFTER compiling
+result = unreal.StateTreeService.update_transition(path, "Root", 0, target_path="Root/Chasing")
+print(f"Update result: {result}")  # True = written to editor data
+
+compile = unreal.StateTreeService.compile_state_tree(path)
+print(f"Compile: {compile.success}")
+
+info = unreal.StateTreeService.get_state_tree_info(path)
+for s in info.all_states:
+    if s.path == "Root":
+        for t in s.transitions:
+            print(f"  Trans: Trigger={t.trigger}, Target={t.target_state_name}, Conditions={[(c.name, c.struct_type) for c in t.conditions]}")
+```
+
 ### ⚠️ add_transition Rejects Duplicates — Do NOT Retry Blindly
 
 `add_transition` returns `False` if an identical transition (same trigger, type, and target) already

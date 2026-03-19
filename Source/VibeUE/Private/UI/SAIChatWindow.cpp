@@ -46,6 +46,10 @@
 #include "IImageWrapperModule.h"
 #include "IImageWrapper.h"
 #include "Engine/Texture2D.h"
+#include "AssetRegistry/AssetData.h"
+#include "Subsystems/AssetEditorSubsystem.h"
+#include "Framework/Docking/TabManager.h"
+#include "LevelEditor.h"
 
 #if PLATFORM_WINDOWS
 #include "Windows/AllowWindowsPlatformTypes.h"
@@ -383,6 +387,35 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
                     ]
                 ]
 
+                // Context item row — checkbox + active asset name
+                + SVerticalBox::Slot()
+                .AutoHeight()
+                .Padding(0, 2, 0, 2)
+                [
+                    SNew(SHorizontalBox)
+
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    .Padding(0, 0, 4, 0)
+                    [
+                        SAssignNew(IncludeContextCheckBox, SCheckBox)
+                        .IsChecked(ECheckBoxState::Checked)
+                        .ToolTipText(FText::FromString(TEXT("Include the currently-focused asset as context so the AI knows which asset you're working on")))
+                    ]
+
+                    + SHorizontalBox::Slot()
+                    .AutoWidth()
+                    .VAlign(VAlign_Center)
+                    [
+                        SAssignNew(ContextItemLabel, STextBlock)
+                        .Text(this, &SAIChatWindow::GetContextItemDisplayText)
+                        .Font(FCoreStyle::GetDefaultFontStyle("Regular", 9))
+                        .ColorAndOpacity(FSlateColor(VibeUEColors::TextSecondary))
+                        .ToolTipText(FText::FromString(TEXT("Currently focused asset")))
+                    ]
+                ]
+
                 // Input row
                 + SVerticalBox::Slot()
                 .AutoHeight()
@@ -462,6 +495,9 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
     
     // Rebuild message list from history
     RebuildMessageList();
+    
+    // Populate the context item label with whatever asset is currently focused
+    RefreshContextItem();
     
     // Update model dropdown based on current provider
     UpdateModelDropdownForProvider();
@@ -1334,6 +1370,19 @@ FReply SAIChatWindow::OnSendClicked()
                 *Message.Left(100), bHasImage ? TEXT("Yes") : TEXT("No"));
         }
 
+        // Refresh which asset is focused and push (or clear) the context item on the session
+        RefreshContextItem();
+        bool bIncludeContext = IncludeContextCheckBox.IsValid() &&
+                               IncludeContextCheckBox->IsChecked();
+        if (bIncludeContext && !CurrentContextItemPath.IsEmpty())
+        {
+            ChatSession->SetContextItem(CurrentContextItemPath, CurrentContextItemClass);
+        }
+        else
+        {
+            ChatSession->ClearContextItem();
+        }
+
         // Clear any previous error message before sending new request
         // Status now shown via streaming indicator in chat
 
@@ -1834,7 +1883,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ---- Widget pointer declarations ----
     // API Keys tab
     TSharedPtr<SEditableTextBox> VibeUEApiKeyInput;
-    TSharedPtr<SEditableTextBox> VibeUEEndpointInput;
     TSharedPtr<SEditableTextBox> OpenRouterApiKeyInput;
     // General tab
     TSharedPtr<SCheckBox>        DebugModeCheckBox;
@@ -1878,10 +1926,26 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<TSharedPtr<FString>> SelectedProviderPtr = MakeShared<TSharedPtr<FString>>(SelectedProvider);
 
     // ---- OpenRouter model dropdown data (for settings) ----
-    // Rebuild SettingsOpenRouterModels from CachedModels (always OR, regardless of active provider)
-    SettingsOpenRouterModels.Empty();
-    for (const FOpenRouterModel& M : ChatSession->GetCachedModels())
-        SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+    // Rebuild SettingsOpenRouterModels from CachedModels — filter and sort to match the chat AI dropdown
+    auto BuildSettingsModelList = [](const TArray<FOpenRouterModel>& Source) -> TArray<TSharedPtr<FOpenRouterModel>>
+    {
+        TArray<FOpenRouterModel> Filtered;
+        for (const FOpenRouterModel& M : Source)
+        {
+            if (M.bSupportsTools) Filtered.Add(M);
+        }
+        Filtered.Sort([](const FOpenRouterModel& A, const FOpenRouterModel& B)
+        {
+            if (A.IsFree() != B.IsFree()) return A.IsFree();
+            return A.Name < B.Name;
+        });
+        TArray<TSharedPtr<FOpenRouterModel>> Out;
+        for (const FOpenRouterModel& M : Filtered)
+            Out.Add(MakeShared<FOpenRouterModel>(M));
+        return Out;
+    };
+
+    SettingsOpenRouterModels = BuildSettingsModelList(ChatSession->GetCachedModels());
 
     // Pre-select using a dedicated OR model config key so it persists across provider switches
     TSharedPtr<FOpenRouterModel> SettingsSelectedModel;
@@ -1898,15 +1962,13 @@ FReply SAIChatWindow::OnSettingsClicked()
     // Use weak ptrs so the callback is safe if the settings window closes before fetch completes
     TWeakPtr<SAIChatWindow> WeakSelf = SharedThis(this);
     ChatSession->FetchAvailableModels(FOnModelsFetched::CreateLambda(
-        [WeakSelf](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+        [WeakSelf, BuildSettingsModelList](bool bSuccess, const TArray<FOpenRouterModel>& Models)
         {
             if (!bSuccess) return;
             TSharedPtr<SAIChatWindow> Pinned = WeakSelf.Pin();
             if (!Pinned.IsValid()) return;
 
-            Pinned->SettingsOpenRouterModels.Empty();
-            for (const FOpenRouterModel& M : Models)
-                Pinned->SettingsOpenRouterModels.Add(MakeShared<FOpenRouterModel>(M));
+            Pinned->SettingsOpenRouterModels = BuildSettingsModelList(Models);
 
             if (Pinned->SettingsModelComboBox.IsValid())
                 Pinned->SettingsModelComboBox->RefreshOptions();
@@ -1916,50 +1978,13 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<int32> ActiveTab = MakeShared<int32>(0);
 
     // ============================================================
-    // TAB 1: API Keys
+    // TAB 3: Open Router
     // ============================================================
-    TSharedRef<SWidget> Tab_APIKeys =
+    TSharedRef<SWidget> Tab_OpenRouter =
         SNew(SScrollBox)
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
             SNew(SVerticalBox)
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("VibeUE API Key:")))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
-            [
-                SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
-                .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
-                .IsPassword(true)
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 4, 0, 4)
-            [
-                SNew(STextBlock)
-                .Text(FText::FromString(TEXT("VibeUE Endpoint URL:")))
-                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 2, 0, 4)
-            [
-                SAssignNew(VibeUEEndpointInput, SEditableTextBox)
-                .Text(FText::FromString(FChatSession::GetVibeUEEndpointFromConfig()))
-                .HintText(FText::FromString(TEXT("https://api.vibeue.com (leave blank for default)")))
-            ]
-            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 20)
-            [
-                SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
-                .OnClicked_Lambda([]() -> FReply {
-                    FPlatformProcess::LaunchURL(TEXT("https://www.vibeue.com/login"), nullptr, nullptr);
-                    return FReply::Handled();
-                })
-                [
-                    SNew(STextBlock)
-                    .Text(FText::FromString(TEXT("Get VibeUE API key at vibeue.com")))
-                    .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
-                ]
-            ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)
@@ -2055,6 +2080,31 @@ FReply SAIChatWindow::OnSettingsClicked()
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
             SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
+            [
+                SNew(STextBlock)
+                .Text(FText::FromString(TEXT("VibeUE API Key:")))
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 11))
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 2)
+            [
+                SAssignNew(VibeUEApiKeyInput, SEditableTextBox)
+                .Text(FText::FromString(FChatSession::GetVibeUEApiKeyFromConfig()))
+                .IsPassword(true)
+            ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 20)
+            [
+                SNew(SButton).ButtonStyle(FAppStyle::Get(), "SimpleButton")
+                .OnClicked_Lambda([]() -> FReply {
+                    FPlatformProcess::LaunchURL(TEXT("https://www.vibeue.com/login"), nullptr, nullptr);
+                    return FReply::Handled();
+                })
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Get VibeUE API key at vibeue.com")))
+                    .ColorAndOpacity(FSlateColor(FLinearColor(0.3f, 0.5f, 1.0f)))
+                ]
+            ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)
@@ -2195,7 +2245,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         ];
 
     // ============================================================
-    // TAB 3: Voice
+    // TAB 2: Voice
     // ============================================================
     TSharedRef<SWidget> Tab_Voice =
         SNew(SScrollBox)
@@ -2256,7 +2306,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         ];
 
     // ============================================================
-    // TAB 4: MCP Server
+    // TAB 1: MCP Server
     // ============================================================
 
     TSharedRef<SWidget> Tab_MCPServer =
@@ -2359,7 +2409,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         ];
 
     // ============================================================
-    // TAB 5: About
+    // TAB 4: About
     // ============================================================
     TSharedRef<SWidget> Tab_About =
         SNew(SScrollBox)
@@ -2411,9 +2461,9 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     TSharedPtr<SWidgetSwitcher> TabSwitcher = SNew(SWidgetSwitcher)
         + SWidgetSwitcher::Slot()[ Tab_General ]
-        + SWidgetSwitcher::Slot()[ Tab_APIKeys ]
-        + SWidgetSwitcher::Slot()[ Tab_Voice ]
         + SWidgetSwitcher::Slot()[ Tab_MCPServer ]
+        + SWidgetSwitcher::Slot()[ Tab_Voice ]
+        + SWidgetSwitcher::Slot()[ Tab_OpenRouter ]
         + SWidgetSwitcher::Slot()[ Tab_About ];
 
     // Tab button factory — TabSwitcher is now valid
@@ -2440,7 +2490,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     // ============================================================
     // Save lambda — captures all widget pointers
     // ============================================================
-    auto SaveLambda = [this, VibeUEApiKeyInput, VibeUEEndpointInput, OpenRouterApiKeyInput,
+    auto SaveLambda = [this, VibeUEApiKeyInput, OpenRouterApiKeyInput,
         SettingsSelectedModelPtr,
         SelectedProviderPtr, AvailableProvidersList,
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
@@ -2450,7 +2500,6 @@ FReply SAIChatWindow::OnSettingsClicked()
     {
         // ---- API Keys ----
         ChatSession->SetVibeUEApiKey(VibeUEApiKeyInput->GetText().ToString());
-        ChatSession->SetVibeUEEndpoint(VibeUEEndpointInput->GetText().ToString());
         ChatSession->SetApiKey(OpenRouterApiKeyInput->GetText().ToString());
 
         // ---- OpenRouter model selection ----
@@ -2553,11 +2602,11 @@ FReply SAIChatWindow::OnSettingsClicked()
             .BorderBackgroundColor(FLinearColor(0.08f, 0.08f, 0.08f))
             [
                 SNew(SHorizontalBox)
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),    0) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("API Keys"),   1) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),      2) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"), 3) ]
-                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),      4) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("General"),      0) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("MCP Server"),   1) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Voice"),        2) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("Open Router"),  3) ]
+                + SHorizontalBox::Slot().AutoWidth()[ MakeTabBtn(TEXT("About"),        4) ]
             ]
         ]
         // Tab content
@@ -4239,4 +4288,175 @@ void SAIChatWindow::ClearAttachedImage()
     }
 
     UE_LOG(LogAIChatWindow, Log, TEXT("Attached image cleared"));
+}
+
+// ============ Context Item (Active Editor Asset) ============
+
+struct FEditorContextItem
+{
+    FString Path;
+    FString Class;
+    FString DisplayName;
+
+    bool IsValid() const
+    {
+        return !Path.IsEmpty();
+    }
+};
+
+/**
+ * Returns the focused editor context item (asset editor or level editor), falling
+ * back to the last known non-chat context and finally the most recently activated
+ * asset editor when no focused tab state is available.
+ */
+static FEditorContextItem GetActiveContextItem()
+{
+    static FEditorContextItem CachedContextItem;
+
+    auto CacheAndReturn = [](const FString& Path, const FString& Class, const FString& DisplayName) -> FEditorContextItem
+    {
+        CachedContextItem.Path = Path;
+        CachedContextItem.Class = Class;
+        CachedContextItem.DisplayName = DisplayName;
+        return CachedContextItem;
+    };
+
+    if (!GEditor)
+    {
+        return CachedContextItem;
+    }
+
+    UAssetEditorSubsystem* Sub = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>();
+    if (Sub)
+    {
+        TArray<IAssetEditorInstance*> OpenEditors = Sub->GetAllOpenEditors();
+
+        IAssetEditorInstance* ForegroundEditor = nullptr;
+        for (IAssetEditorInstance* Editor : OpenEditors)
+        {
+            if (!Editor)
+            {
+                continue;
+            }
+
+            TSharedPtr<FTabManager> AssociatedTabManager = Editor->GetAssociatedTabManager();
+            TSharedPtr<SDockTab> OwnerTab = AssociatedTabManager.IsValid() ? AssociatedTabManager->GetOwnerTab() : TSharedPtr<SDockTab>();
+            if (OwnerTab.IsValid() && (OwnerTab->IsForeground() || OwnerTab->IsActive()))
+            {
+                ForegroundEditor = Editor;
+                break;
+            }
+        }
+
+        auto ResolveAssetForEditor = [Sub](IAssetEditorInstance* Editor) -> FEditorContextItem
+        {
+            if (!Editor)
+            {
+                return FEditorContextItem();
+            }
+
+            TArray<UObject*> AllEditedAssets = Sub->GetAllEditedAssets();
+            for (UObject* Asset : AllEditedAssets)
+            {
+                if (!Asset)
+                {
+                    continue;
+                }
+
+                TArray<IAssetEditorInstance*> EditorsForAsset = Sub->FindEditorsForAsset(Asset);
+                if (EditorsForAsset.Contains(Editor))
+                {
+                    return FEditorContextItem{
+                        Asset->GetPathName(),
+                        Asset->GetClass() ? Asset->GetClass()->GetName() : TEXT("Asset"),
+                        Asset->GetName()
+                    };
+                }
+            }
+
+            return FEditorContextItem();
+        };
+
+        if (ForegroundEditor)
+        {
+            FEditorContextItem AssetContext = ResolveAssetForEditor(ForegroundEditor);
+            if (AssetContext.IsValid())
+            {
+                return CacheAndReturn(AssetContext.Path, AssetContext.Class, AssetContext.DisplayName);
+            }
+        }
+
+        if (FModuleManager::Get().IsModuleLoaded(TEXT("LevelEditor")))
+        {
+            FLevelEditorModule& LevelEditorModule = FModuleManager::GetModuleChecked<FLevelEditorModule>(TEXT("LevelEditor"));
+            TSharedPtr<SDockTab> LevelEditorTab = LevelEditorModule.GetLevelEditorTab();
+            if (LevelEditorTab.IsValid() && (LevelEditorTab->IsForeground() || LevelEditorTab->IsActive()))
+            {
+                if (UWorld* EditorWorld = GEditor->GetEditorWorldContext().World())
+                {
+                    return CacheAndReturn(
+                        EditorWorld->GetPathName(),
+                        TEXT("World"),
+                        EditorWorld->GetName());
+                }
+            }
+        }
+
+        if (CachedContextItem.IsValid())
+        {
+            return CachedContextItem;
+        }
+
+        IAssetEditorInstance* ActiveEditor = nullptr;
+        double MostRecentActivation = -1.0;
+        for (IAssetEditorInstance* Editor : OpenEditors)
+        {
+            if (Editor)
+            {
+                const double ActivationTime = Editor->GetLastActivationTime();
+                if (ActivationTime > MostRecentActivation)
+                {
+                    MostRecentActivation = ActivationTime;
+                    ActiveEditor = Editor;
+                }
+            }
+        }
+
+        FEditorContextItem AssetContext = ResolveAssetForEditor(ActiveEditor);
+        if (AssetContext.IsValid())
+        {
+            return CacheAndReturn(AssetContext.Path, AssetContext.Class, AssetContext.DisplayName);
+        }
+    }
+
+    if (CachedContextItem.IsValid())
+    {
+        return CachedContextItem;
+    }
+
+    return FEditorContextItem();
+}
+
+void SAIChatWindow::RefreshContextItem()
+{
+    CurrentContextItemPath.Empty();
+    CurrentContextItemClass.Empty();
+
+    FEditorContextItem ContextItem = GetActiveContextItem();
+    if (ContextItem.IsValid())
+    {
+        CurrentContextItemPath  = ContextItem.Path;
+        CurrentContextItemClass = ContextItem.Class;
+    }
+}
+
+FText SAIChatWindow::GetContextItemDisplayText() const
+{
+    // Query live every Slate frame so the label auto-updates on tab or viewport focus changes.
+    FEditorContextItem ContextItem = GetActiveContextItem();
+    if (!ContextItem.IsValid())
+    {
+        return FText::FromString(TEXT("No context focused"));
+    }
+    return FText::FromString(ContextItem.DisplayName);
 }

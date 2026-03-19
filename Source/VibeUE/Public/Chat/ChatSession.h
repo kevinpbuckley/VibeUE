@@ -428,6 +428,22 @@ public:
     /** Clear all loaded skills (called on chat reset) */
     void ClearLoadedSkills();
 
+    // ============ Context Item (Active Editor Asset) ============
+
+    /**
+     * Set the editor context item that the user currently has focused.
+     * When non-empty, the context item path and class are appended to the system prompt
+     * so the AI knows which target to use when the user doesn't specify one.
+     * Pass an empty string to clear.
+     */
+    void SetContextItem(const FString& AssetObjectPath, const FString& AssetClass);
+
+    /** Clear the context item (pass-through to SetContextItem("","")) */
+    void ClearContextItem() { SetContextItem(TEXT(""), TEXT("")); }
+
+    /** Get currently set context item path */
+    const FString& GetContextItemPath() const { return ContextItemPath; }
+
     // ============ Task List ============
 
     /** Update the task list (called by manage_tasks tool) */
@@ -676,6 +692,14 @@ private:
 
     /** Accumulated skill documentation appended to the system prompt */
     FString ActiveSkillsContent;
+
+    // ============ Context Item (Active Editor Asset) ============
+
+    /** Content Browser object path of the asset currently open in the editor (e.g. /Game/AI/BP_Cube.BP_Cube) */
+    FString ContextItemPath;
+
+    /** Asset class name for the context item (e.g. Blueprint, StaticMesh) */
+    FString ContextItemClass;
 
     // ============ Voice Input (Private) ============
 

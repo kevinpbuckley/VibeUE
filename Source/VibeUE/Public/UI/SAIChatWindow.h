@@ -184,6 +184,26 @@ private:
     /** Check if there's an attached image */
     bool HasAttachedImage() const { return !AttachedImageDataUrl.IsEmpty(); }
 
+    // ============ Context Item (Active Editor Tab) ============
+
+    /** Checkbox to include the active editor tab context as context */
+    TSharedPtr<SCheckBox> IncludeContextCheckBox;
+
+    /** Label showing the name of the currently-focused context item */
+    TSharedPtr<STextBlock> ContextItemLabel;
+
+    /** Currently tracked context item object path */
+    FString CurrentContextItemPath;
+
+    /** Currently tracked context item class */
+    FString CurrentContextItemClass;
+
+    /** Poll editor state for the currently focused context item and refresh the label */
+    void RefreshContextItem();
+
+    /** Get the display name for the current context item */
+    FText GetContextItemDisplayText() const;
+
     // ============ Task List Widget ============
 
     /** Task list widget shown as sticky header */

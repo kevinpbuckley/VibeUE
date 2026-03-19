@@ -1,6 +1,6 @@
 # VibeUE — Open Issues
 
-_Last updated: 2026-03-15 (session 3)_
+_Last updated: 2026-03-18_
 
 Fixed/closed issues are archived in [closedissues.md](closedissues.md).
 
@@ -22,7 +22,6 @@ _Cached 2026-03-15. Refresh by checking [kevinpbuckley/VibeUE/issues](https://gi
 | [#311](https://github.com/kevinpbuckley/VibeUE/issues/311) | Self-Hosted LLM / OpenAI-Compatible Endpoint + Tabbed Settings UI | enhancement | No — large, well-specced |
 | [#310](https://github.com/kevinpbuckley/VibeUE/issues/310) | Sound Cue & MetaSound Service Support | enhancement | No — large scope |
 | [#281](https://github.com/kevinpbuckley/VibeUE/issues/281) | C++ Agent Chat Framework with Tool Support | enhancement | No — major architecture |
-| [#268](https://github.com/kevinpbuckley/VibeUE/issues/268) | InEditorChat — Streaming on VibeUE model | — | Yes — well-scoped C++ client change |
 | [#267](https://github.com/kevinpbuckley/VibeUE/issues/267) | Auto-Router and Enhanced Model Selection | enhancement | No — needs API worker too |
 | [#258](https://github.com/kevinpbuckley/VibeUE/issues/258) | Context Knowledge (internal vector indexing) | — | No — exploratory |
 | [#257](https://github.com/kevinpbuckley/VibeUE/issues/257) | Domain Knowledge — External RAG | — | No — exploratory |
