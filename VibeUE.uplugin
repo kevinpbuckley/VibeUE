@@ -60,6 +60,10 @@
 		{
 			"Name": "StateTree",
 			"Enabled": true
+		},
+		{
+			"Name": "MetaSound",
+			"Enabled": true
 		}
 	]
 } 
