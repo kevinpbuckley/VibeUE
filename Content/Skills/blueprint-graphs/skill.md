@@ -47,6 +47,7 @@ related_skills:
 | `node.node_name` | `node.node_title` |
 | `node.node_position_x` | `node.pos_x` |
 | `node.node_position_y` | `node.pos_y` |
+| `pin.direction` | use the pin input/output boolean from `get_node_pins()` (`bIsInput` / Python bool field), not a `direction` enum |
 | `pin.is_linked` | `pin.is_connected` |
 | `pin.current_value` | `pin.default_value` |
 | `pin.sub_pins` | *(does not exist)* |
@@ -92,6 +93,65 @@ for node in nodes:
 
 For function graphs, find nodes by `node_type` or `node_title`.
 For event-style overrides, find nodes by the **display title Unreal shows in the graph**, not by the raw override function name.
+
+### ⚠️ Do Not Guess Blueprint Function Node Names
+
+Blueprint display titles and internal UFunction names are often **not the same**.
+
+Common examples:
+
+| Display title in graph | Internal callable name may be |
+|---|---|
+| `Get Actor Location` | `K2_GetActorLocation` |
+| `Set Actor Location` | `K2_SetActorLocation` |
+| `VInterp To` | `VInterpTo` |
+
+If you do not already know the exact callable name, do **not** guess and do **not** batch multiple node creations into one shot. Use one of these two patterns:
+
+1. `discover_nodes()` + `create_node_by_key()` for deterministic editor-style creation.
+2. `add_function_call_node()` only after discovery, or when you already know the exact function name.
+
+```python
+import unreal
+
+bp_path = "/Game/StateTree/Tasks/STT_Chase"
+graph = "EventGraph"
+
+matches = unreal.BlueprintService.discover_nodes(bp_path, "Get Actor Location")
+actor_get_location = next(
+    node for node in matches
+    if node.spawner_key.startswith("FUNC AActor::") or node.spawner_key.startswith("FUNC Actor::")
+)
+
+node_id = unreal.BlueprintService.create_node_by_key(
+    bp_path, graph, actor_get_location.spawner_key, 400, 0)
+assert node_id, actor_get_location.spawner_key
+```
+
+If a node-create call returns an empty ID, stop immediately. Re-read the graph, inspect the error output, and fix the lookup before creating anything else.
+
+### ⚠️ Complex Graphs: Create and Verify One Node at a Time
+
+For fragile graph work such as `STT_*` task Blueprints, timers, delegate workflows, or any graph being built from a screenshot:
+
+1. Create **one** node.
+2. Re-read the graph and confirm the returned GUID exists.
+3. Read that node's pins.
+4. Only then create the next node.
+5. After all required nodes exist, connect **one** edge at a time and verify the new connection appears in `get_connections()`.
+
+Do **not** create 4-6 nodes in one tool call when some of them have unresolved function names. That makes cleanup harder and leaves duplicate nodes behind on retry.
+
+### ⚠️ Recovery After a Failed Graph Attempt
+
+If a graph-edit attempt fails partway through:
+
+1. Call `get_nodes_in_graph()` and `get_connections()` to see the true post-failure state.
+2. Remove orphaned nodes with `delete_node()`.
+3. Remove stale links with `disconnect_pin()`.
+4. Retry from a clean baseline.
+
+Do **not** invent helper names like `disconnect_all_pins()`. Use the real APIs that exist.
 
 Examples for StateTree task blueprints:
 
@@ -241,6 +301,7 @@ unreal.EditorAssetLibrary.save_asset(bp_path)
 
 Never print `MODIFIED` or describe the graph as complete until the expected connections are present and compile succeeds.
 Never describe a node as present until it appears in a fresh `get_nodes_in_graph()` result.
+Never treat compile success alone as proof that the graph matches the requested design.
 
 ### Required Success Gate For Graph Edits
 
@@ -251,6 +312,11 @@ If you edit a graph, your success check must answer all of these from live asset
 3. Did compile succeed with zero relevant errors?
 
 If you cannot answer those three questions from tool output, the task is not complete yet.
+
+For complex graph tasks, also answer these two questions before claiming completion:
+
+4. Which node IDs were created successfully, one by one?
+5. What cleanup was done after any failed intermediate attempt?
 
 **Common mistake**: Using `Delay` when the user says "timer". `Delay` is a latent action that
 pauses the execution chain. `Set Timer by Event` is non-blocking and fires a separate event —
@@ -492,6 +558,6 @@ For `add_function_call_node(path, graph, class, func, x, y)`:
 - **KismetSystemLibrary** — System (PrintString, Delay, K2_SetTimerDelegate)
 - **KismetStringLibrary** — String (Concat_StrStr, MakeLiteralString, Contains)
 - **GameplayStatics** — Game (GetPlayerController, SpawnActor)
-- **Actor** — Actor (GetActorLocation, SetActorLocation)
+- **Actor** — Actor functions, but discover the exact callable/spawner first for graph nodes like `Get Actor Location` and `Set Actor Location`
 - **PrimitiveComponent** — Physics (SetSimulatePhysics)
 - **SceneComponent** — Transform (AddRelativeRotation, SetRelativeLocation)

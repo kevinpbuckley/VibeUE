@@ -9,16 +9,17 @@ https://www.vibeue.com/
 
 </div>
 
-**VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Control Blueprints, materials, UMG widgets, landscapes, foliage, and assets through natural language.
+**VibeUE brings AI directly into Unreal Engine** with an In-Editor Chat Client and Model Context Protocol (MCP) integration. Plan, inspect, create, and modify Blueprints, assets, materials, animation, landscapes, audio, UI, AI behavior, project settings, and more through natural language.
 
 > **🔑 A free VibeUE API key is required** for the MCP server and AI Chat to work. Get yours at **[vibeue.com/login](https://www.vibeue.com/login)** — then paste it into the VibeUE settings gear icon inside Unreal Editor. See the [AI Clients setup guide](https://www.vibeue.com/docs/ai-clients) for IDE configuration.
 
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 25 specialized services with 836 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 25 specialized services with 853 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
-- **MCP Discovery Tools** - 9 tools for exploring and executing Python in Unreal context
+- **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
+- **Domain Skills** - 27 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, widgets, data, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and AntiGravity via MCP
 
@@ -28,7 +29,7 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Discovery & Execution Tools (9 tools)
+### 1. MCP Tools (10 tools)
 Lightweight MCP tools for AI interaction with Unreal:
 
 | Tool | Purpose |
@@ -39,11 +40,14 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
 | `manage_skills` | Load domain-specific knowledge on demand |
+| `manage_asset` | Search, open, save, move, duplicate, and delete assets safely |
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
 | `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
 | `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
 
 **Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
+
+**Note:** The `manage_asset` MCP tool is the preferred path for asset search, save, move, duplicate, and delete workflows. It avoids ad hoc Python asset handling and preserves references when renaming or moving content.
 
 **Note:** The `terrain_data` and `deep_research` tools work together for real-world terrain workflows: geocode a place name → generate a heightmap → import into a landscape → fetch water features.
 
@@ -118,7 +122,27 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `state-trees`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
+Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`
+
+##### Asset Workflow Tool
+
+**`manage_asset`**
+```python
+# Search before acting
+manage_asset(action="search", search_term="BP_Player", asset_type="Blueprint")
+
+# Open or save a specific asset
+manage_asset(action="open", asset_path="/Game/Blueprints/BP_Player")
+manage_asset(action="save", asset_path="/Game/Blueprints/BP_Player")
+
+# Save everything dirty before a build or launch
+manage_asset(action="save_all")
+
+# Move or rename while preserving references
+manage_asset(action="move", source_path="/Game/StateTree/STT_Rotate", destination_path="/Game/StateTree/Tasks/STT_Rotate")
+```
+
+**Important:** Use `move`, not duplicate + delete, when the intent is a rename or relocation. Duplicate creates a second asset identity.
 
 ##### Log Reading Tool
 
@@ -303,13 +327,13 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (24 services, 798 methods)
+### 2. VibeUE Python API Services (25 services, 853 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
-| `BlueprintService` | 75 | Blueprint lifecycle, variables, functions, components, nodes |
+| `BlueprintService` | 84 | Blueprint lifecycle, variables, functions, components, nodes |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
@@ -322,16 +346,17 @@ High-level services exposed to Python for common game development tasks:
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
 | `MaterialNodeService` | 40 | Material graph expressions and connections |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
-| `AssetDiscoveryService` | 19 | Asset search, import/export, references |
+| `AssetDiscoveryService` | 20 | Asset search, import/export, references, move/rename workflows |
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
-| `WidgetService` | 22 | UMG widget blueprints, components, and MVVM ViewModel bindings |
+| `WidgetService` | 24 | UMG widget blueprints, components, and MVVM ViewModel bindings |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
 | `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
-| `ScreenshotService` | 6 | Editor window and viewport screenshot capture for AI vision |
+| `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
-| `StateTreeService` | 60 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, compile/save |
+| `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
+| `StateTreeService` | 66 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, compile/save |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -514,7 +539,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `blueprints`, `materials`, `enhanced-input`, `data-tables`, `data-assets`, `umg-widgets`, `level-actors`, `asset-management`, `screenshots`, `niagara-systems`, `niagara-emitters`, `project-settings`, `engine-settings`, `animation-blueprint`, `animsequence`, `animation-montage`, `animation-editing`, `skeleton`, `enum-struct`, `landscape`, `landscape-materials`, `landscape-auto-material`, `foliage`, `terrain-data`
+Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`
 
 ### Using Skills
 

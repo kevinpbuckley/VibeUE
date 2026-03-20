@@ -1896,8 +1896,21 @@ public:
 	 * @param PosY - Y position in the graph
 	 * @return Node ID (GUID) if successful, empty string otherwise
 	 *
+	 * This method first tries an exact UFunction lookup. If that fails, it falls back to the
+	 * Blueprint action database and attempts to resolve a matching callable node by display name,
+	 * compact title, keywords, and common K2 naming variants (for example "GetActorLocation"
+	 * resolving to the Blueprint node backed by "K2_GetActorLocation").
+	 *
+	 * For complex graph work, prefer this rule:
+	 *   1. discover_nodes() to see the exact node that exists in the current Blueprint context
+	 *   2. create the node
+	 *   3. re-read the graph and pins before creating or wiring the next node
+	 *
 	 * Example - Add Greater Than comparison:
 	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "ApplyDamage", "KismetMathLibrary", "Greater_FloatFloat", 200, 100)
+	 *
+	 * Example - Use a Blueprint display-style name and let the fallback resolve the callable node:
+	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "EventGraph", "Actor", "GetActorLocation", 300, 100)
 	 *
 	 * Example - Add Clamp node:
 	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "ApplyDamage", "KismetMathLibrary", "Clamp", 400, 100)
@@ -2424,6 +2437,10 @@ public:
 	 *   nodes = unreal.BlueprintService.discover_nodes("/Game/BP_Player", "Clamp")
 	 *   # Then create it using the spawner_key
 	 *   node_id = unreal.BlueprintService.create_node_by_key("/Game/BP_Player", "EventGraph", nodes[0].spawner_key, 100, 100)
+	 *
+	 * For graph edits that are sensitive to exact Blueprint node forms, discover_nodes() plus
+	 * create_node_by_key() is the most deterministic workflow because it reuses the editor's own
+	 * node spawners instead of relying on guessed function names.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Nodes")
 	static FString CreateNodeByKey(
