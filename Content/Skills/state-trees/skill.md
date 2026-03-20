@@ -77,6 +77,20 @@ When editing `STT_*` Blueprint task graphs:
 5. If the requested callback is a custom event, the callback must exist as a real `Custom Event` node in `EventGraph`, not as a `Create Event` delegate node plus a separate function graph.
 6. Use `FinishTask` with pin name `bSucceeded`.
 7. After wiring, always inspect `get_nodes_in_graph()`, `get_connections()`, and `compile_blueprint(...).success` before claiming success.
+8. For complex graphs, create and verify one node at a time before creating the next node.
+9. If any node-create step fails, stop, audit the graph, clean up orphaned nodes with `delete_node()` / `disconnect_pin()`, and only then retry.
+
+### STT Strict Graph Build Mode
+
+For `STT_*` task graphs built from screenshots or multi-node requests, use this execution order:
+
+1. Create one node.
+2. Confirm its GUID exists in a fresh `get_nodes_in_graph()` result.
+3. Inspect its pins with `get_node_pins()`.
+4. Only then create the next node.
+5. After all nodes are proven present, connect one wire at a time and verify each new edge appears in `get_connections()`.
+
+Do not batch unresolved function-call nodes into a single tool call. If the graph depends on nodes such as `Get Actor Location`, `Set Actor Location`, or `VInterp To`, discover the exact node first through the Blueprint graph workflow instead of guessing the underlying function name.
 
 ### STT Completion Contract
 
@@ -90,6 +104,7 @@ For `STT_*` graph edits, do not report success until the output explicitly shows
 6. Compile succeeds.
 
 If compile succeeds but any of the checks above fail, the graph is still wrong.
+If compile succeeds but some required node IDs were empty during creation, the graph is still wrong.
 
 ## Key Concepts
 

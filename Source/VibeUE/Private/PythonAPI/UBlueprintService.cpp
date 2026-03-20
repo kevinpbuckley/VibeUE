@@ -109,12 +109,171 @@ namespace
 			}
 		}
 
+		if (!ClassName.StartsWith(TEXT("A"), ESearchCase::CaseSensitive))
+		{
+			if (UClass* FoundClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *ClassName), EFindFirstObjectOptions::ExactClass))
+			{
+				return FoundClass;
+			}
+		}
+
 		if (UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.%s"), *ClassName)))
 		{
 			return FoundClass;
 		}
 
+		if (!ClassName.StartsWith(TEXT("A"), ESearchCase::CaseSensitive))
+		{
+			if (UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.A%s"), *ClassName)))
+			{
+				return FoundClass;
+			}
+		}
+
+		if (!ClassName.StartsWith(TEXT("U"), ESearchCase::CaseSensitive))
+		{
+			if (UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.U%s"), *ClassName)))
+			{
+				return FoundClass;
+			}
+		}
+
 		return nullptr;
+	}
+
+	static FString NormalizeBlueprintNodeSearchText(const FString& Text)
+	{
+		FString Normalized;
+		Normalized.Reserve(Text.Len());
+
+		for (const TCHAR Character : Text)
+		{
+			if (FChar::IsAlnum(Character))
+			{
+				Normalized.AppendChar(FChar::ToLower(Character));
+			}
+		}
+
+		return Normalized;
+	}
+
+	static bool MatchesBlueprintFunctionSearch(const FString& RequestedName, const FString& CandidateName)
+	{
+		const FString NormalizedRequested = NormalizeBlueprintNodeSearchText(RequestedName);
+		const FString NormalizedCandidate = NormalizeBlueprintNodeSearchText(CandidateName);
+
+		if (NormalizedRequested.IsEmpty() || NormalizedCandidate.IsEmpty())
+		{
+			return false;
+		}
+
+		if (NormalizedRequested == NormalizedCandidate)
+		{
+			return true;
+		}
+
+		if (NormalizedCandidate.StartsWith(TEXT("k2")) && NormalizedCandidate.RightChop(2) == NormalizedRequested)
+		{
+			return true;
+		}
+
+		if (NormalizedRequested.StartsWith(TEXT("k2")) && NormalizedRequested.RightChop(2) == NormalizedCandidate)
+		{
+			return true;
+		}
+
+		return false;
+	}
+
+	static UBlueprintFunctionNodeSpawner* FindBestFunctionSpawner(
+		UBlueprint* Blueprint,
+		UEdGraph* UiGraph,
+		UClass* OwnerClass,
+		const FString& RequestedFunctionName)
+	{
+		if (!Blueprint || !OwnerClass || RequestedFunctionName.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		const FString NormalizedRequested = NormalizeBlueprintNodeSearchText(RequestedFunctionName);
+		if (NormalizedRequested.IsEmpty())
+		{
+			return nullptr;
+		}
+
+		UBlueprintFunctionNodeSpawner* BestSpawner = nullptr;
+		int32 BestScore = MIN_int32;
+
+		const FBlueprintActionDatabase::FActionRegistry& ActionRegistry = FBlueprintActionDatabase::Get().GetAllActions();
+		for (const TPair<FObjectKey, FBlueprintActionDatabase::FActionList>& Entry : ActionRegistry)
+		{
+			for (UBlueprintNodeSpawner* NodeSpawner : Entry.Value)
+			{
+				UBlueprintFunctionNodeSpawner* FunctionSpawner = Cast<UBlueprintFunctionNodeSpawner>(NodeSpawner);
+				if (!FunctionSpawner)
+				{
+					continue;
+				}
+
+				const UFunction* CandidateFunction = FunctionSpawner->GetFunction();
+				if (!CandidateFunction || !CandidateFunction->HasAnyFunctionFlags(FUNC_BlueprintCallable))
+				{
+					continue;
+				}
+
+				UClass* CandidateOwnerClass = CandidateFunction->GetOwnerClass();
+				if (!CandidateOwnerClass)
+				{
+					continue;
+				}
+
+				const bool bExactOwnerMatch = CandidateOwnerClass == OwnerClass;
+				const bool bInheritedOwnerMatch = OwnerClass->IsChildOf(CandidateOwnerClass);
+				if (!bExactOwnerMatch && !bInheritedOwnerMatch)
+				{
+					continue;
+				}
+
+				const FBlueprintActionUiSpec& UiSpec = FunctionSpawner->PrimeDefaultUiSpec(UiGraph);
+				const FString DisplayName = UiSpec.MenuName.ToString();
+				const FString Tooltip = UiSpec.Tooltip.ToString();
+				const FString Keywords = UiSpec.Keywords.ToString();
+
+				int32 Score = bExactOwnerMatch ? 20 : 10;
+				if (MatchesBlueprintFunctionSearch(RequestedFunctionName, CandidateFunction->GetName()))
+				{
+					Score += 90;
+				}
+				if (MatchesBlueprintFunctionSearch(RequestedFunctionName, CandidateFunction->GetDisplayNameText().ToString()))
+				{
+					Score += 85;
+				}
+				if (MatchesBlueprintFunctionSearch(RequestedFunctionName, DisplayName))
+				{
+					Score += 100;
+				}
+
+				const FString NormalizedKeywords = NormalizeBlueprintNodeSearchText(Keywords);
+				const FString NormalizedTooltip = NormalizeBlueprintNodeSearchText(Tooltip);
+				if (!NormalizedKeywords.IsEmpty() && NormalizedKeywords.Contains(NormalizedRequested))
+				{
+					Score += 25;
+				}
+				if (!NormalizedTooltip.IsEmpty() && NormalizedTooltip.Contains(NormalizedRequested))
+				{
+					Score += 10;
+				}
+
+				if (Score > BestScore)
+				{
+					BestScore = Score;
+					BestSpawner = FunctionSpawner;
+				}
+			}
+		}
+
+		return BestScore > 20 ? BestSpawner : nullptr;
 	}
 
 	static FString BuildEventSpawnerKey(const UBlueprintEventNodeSpawner* EventSpawner)
@@ -3648,6 +3807,7 @@ FString UBlueprintService::AddFunctionCallNode(
 	// Find the class that owns the function
 	UClass* OwnerClass = nullptr;
 	UFunction* Function = nullptr;
+	UEdGraphNode* SpawnedNode = nullptr;
 	
 	// Check if this is a self-function call
 	if (FunctionOwnerClass.IsEmpty() || FunctionOwnerClass.Equals(TEXT("Self"), ESearchCase::IgnoreCase))
@@ -3710,13 +3870,7 @@ FString UBlueprintService::AddFunctionCallNode(
 		}
 		else
 		{
-			// Try to find the class by name using FindFirstObject (UE5 replacement for FindObject with ANY_PACKAGE)
-			OwnerClass = FindFirstObject<UClass>(*FunctionOwnerClass, EFindFirstObjectOptions::ExactClass);
-			if (!OwnerClass)
-			{
-				// Try with U prefix
-				OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *FunctionOwnerClass), EFindFirstObjectOptions::ExactClass);
-			}
+			OwnerClass = ResolveClassByName(FunctionOwnerClass);
 		}
 
 		if (!OwnerClass)
@@ -3729,6 +3883,23 @@ FString UBlueprintService::AddFunctionCallNode(
 		Function = OwnerClass->FindFunctionByName(FName(*FunctionName));
 		if (!Function)
 		{
+			if (UBlueprintFunctionNodeSpawner* FunctionSpawner = FindBestFunctionSpawner(Blueprint, Graph, OwnerClass, FunctionName))
+			{
+				SpawnedNode = FunctionSpawner->Invoke(Graph, IBlueprintNodeBinder::FBindingSet(), FVector2D(PosX, PosY));
+				if (SpawnedNode)
+				{
+					FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+					if (const UFunction* ResolvedFunction = FunctionSpawner->GetFunction())
+					{
+						UE_LOG(LogTemp, Log, TEXT("AddFunctionCallNode: Resolved '%s::%s' via node spawner fallback to %s::%s"), *FunctionOwnerClass, *FunctionName, *ResolvedFunction->GetOwnerClass()->GetName(), *ResolvedFunction->GetName());
+					}
+					return SpawnedNode->NodeGuid.ToString();
+				}
+
+				UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Spawner fallback matched '%s' in class '%s' but failed to invoke"), *FunctionName, *FunctionOwnerClass);
+				return FString();
+			}
+
 			UE_LOG(LogTemp, Error, TEXT("AddFunctionCallNode: Function '%s' not found in class '%s'"), *FunctionName, *FunctionOwnerClass);
 			return FString();
 		}
@@ -5568,12 +5739,7 @@ FString UBlueprintService::CreateNodeByKey(
 		}
 
 		// Find the function
-		UClass* OwnerClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.%s"), *ClassName));
-		if (!OwnerClass)
-		{
-			// Try more search paths
-			OwnerClass = FindFirstObject<UClass>(*ClassName, EFindFirstObjectOptions::ExactClass);
-		}
+		UClass* OwnerClass = ResolveClassByName(ClassName);
 
 		if (!OwnerClass)
 		{
