@@ -136,32 +136,57 @@ Direct Blueprint introspection APIs are largely missing or protected in UE 5.7 P
 | What you might try | Result |
 |---|---|
 | `bp.get_editor_property('simple_construction_script')` | Blocked — protected property |
+| `bp.simple_construction_script` | AttributeError — not exposed |
+| `scs.get_all_nodes()` | Runtime crash ("^") |
 | `BlueprintEditorLibrary.get_blueprint_component_names()` | Doesn't exist in UE 5.7 |
-| `BlueprintEditorLibrary.get_blueprint_variable_names()` | Doesn't exist in UE 5.7 |
-| `bp.generated_class().get_default_object()` | Blocked by VibeUE CDO safety guard |
+| `SubobjectDataSubsystem.k2_gather_subobject_data_for_blueprint(bp)` | Returns handles but `SubobjectData` exposes no properties from Python |
+| `bp.get_editor_property('parent_class')` | RuntimeError — `parent_class` not an editor property on Blueprint |
+| `bp.parent_class` | AttributeError — not exposed |
 
-**Working pattern — spawn, read, destroy:**
+**Working pattern — CDO (preferred, no spawn needed):**
 
 ```python
 import unreal
 
-bp_path = "/Game/Blueprints/BP_MyActor"
-bp = unreal.load_asset(bp_path)
-gen_class = bp.generated_class()
+bp = unreal.EditorAssetLibrary.load_asset("/Game/Blueprints/BP_MyActor")
+# Note: unreal.load_asset() returns None on a fresh session; use EditorAssetLibrary.load_asset()
 
-# Spawn at a safe location off-screen
-location = unreal.Vector(999999, 999999, 999999)
-actor = unreal.EditorLevelLibrary.spawn_actor_from_class(gen_class, location)
+gc = bp.generated_class()
+cdo = unreal.get_default_object(gc)   # module-level call; read-only is allowed
 
-# Read components
-for comp in actor.get_components_by_class(unreal.ActorComponent):
+for comp in cdo.get_components_by_class(unreal.ActorComponent):
     print(f"{comp.get_class().get_name()}: {comp.get_name()}")
-
-# Clean up
-unreal.EditorLevelLibrary.destroy_actor(actor)
 ```
 
-This is the only reliable path for inspecting BP component setup from Python.
+CDO modification is still blocked — `unreal.get_default_object(gc).set_editor_property(...)` raises `PYTHON_UNSAFE_CODE`.
+
+**Getting parent class — use asset registry tag:**
+
+```python
+import unreal
+
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+assets = ar.get_assets_by_path("/Game/Blueprints", False)
+for a in assets:
+    if "BP_MyActor" in str(a.asset_name):
+        print(a.get_tag_value("ParentClass"))        # e.g. "/Script/Engine.Actor"
+        print(a.get_tag_value("NativeParentClass"))  # same, native C++ parent
+        break
+```
+
+**Listing all Blueprints by class — use `get_assets_by_class`:**
+
+```python
+import unreal
+
+# ARFilter properties cannot be set after construction — don't use ARFilter for class filtering.
+# asset_class_names kwarg does not exist. Use get_assets_by_class instead:
+ar = unreal.AssetRegistryHelpers.get_asset_registry()
+bp_class = unreal.TopLevelAssetPath("/Script/Engine", "Blueprint")
+assets = ar.get_assets_by_class(bp_class, True)   # True = include derived classes
+for a in assets:
+    print(f"{a.package_path}/{a.asset_name}")
+```
 
 ### Material Parameters
 
