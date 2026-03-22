@@ -195,6 +195,97 @@ print("Done:", ap)
 
 ---
 
+## Complete Example — One-Shot SoundWave (Gunshot)
+
+```python
+import unreal
+ms = unreal.MetaSoundService()
+
+# Create a Mono MetaSound Source
+r = ms.create_meta_sound("/Game/Audio", "MS_Gunshot", "Mono")
+ap = r.asset_path
+
+# Find interface nodes
+nodes = ms.list_nodes(ap)
+
+# Input node — has "On Play" Trigger output
+input_node = next(n for n in nodes if n.node_title == "Input")
+input_node_id = input_node.node_id
+
+# Audio Output node — filter for the one with an Audio-type input
+audio_out_node = next(
+    n for n in nodes
+    if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs)
+)
+audio_out_id = audio_out_node.node_id
+audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])
+
+# Add Wave Player (Mono) node
+# Pin names (no need to call get_node_pins — see Known Node Pins below):
+#   Inputs:  "Play" (Trigger), "Stop" (Trigger), "Wave Asset" (WaveAsset), "Loop" (Bool)
+#   Outputs: "Out Mono" (Audio), "On Play" (Trigger), "On Finished" (Trigger)
+wp = ms.add_node(ap, "UE", "Wave Player", "Mono", 1, -300.0, 0.0)
+wp_id = wp.node_id
+
+# Set the wave asset
+ms.set_node_input_default(ap, wp_id, "Wave Asset", "/Game/Audio/SW_Gunshot_01", "WaveAsset")
+
+# Wire On Play (Input) → Play (WavePlayer)
+ms.connect_nodes(ap, input_node_id, "On Play", wp_id, "Play")
+
+# Wire Out Mono (WavePlayer) → audio sink (Output)
+ms.connect_nodes(ap, wp_id, "Out Mono", audio_out_id, audio_in_pin)
+
+# Save
+ms.save_meta_sound(ap)
+print("Done:", ap)
+```
+
+---
+
+## Known Node Pins
+
+Use these instead of calling `get_node_pins` on freshly-added nodes (can time out).
+
+### Wave Player (UE.Wave Player.Mono)
+
+| Direction | Pin | Type |
+|-----------|-----|------|
+| Input | `Play` | Trigger |
+| Input | `Stop` | Trigger |
+| Input | `Wave Asset` | WaveAsset |
+| Input | `Loop` | Bool |
+| Input | `Pitch Shift` | Float |
+| Input | `Start Time` | Time |
+| Input | `Loop Start` | Time |
+| Input | `Loop Duration` | Time |
+| Input | `Maintain Audio Sync` | Bool |
+| Output | `Out Mono` | Audio |
+| Output | `On Play` | Trigger |
+| Output | `On Finished` | Trigger |
+| Output | `On Nearly Finished` | Trigger |
+| Output | `On Looped` | Trigger |
+
+### Sine (UE.Sine.Audio)
+
+| Direction | Pin | Type |
+|-----------|-----|------|
+| Input | `Frequency` | Float |
+| Input | `Modulation` | Float |
+| Input | `Enabled` | Bool |
+| Input | `Bi Polar` | Bool |
+| Output | `Audio` | Audio |
+
+### Standard Interface Nodes
+
+| Node title | Pin | Type | Direction |
+|-----------|-----|------|-----------|
+| `Input` | `On Play` | Trigger | Output |
+| `Output` (Trigger) | `On Finished` | Trigger | Input |
+| `Output` (Audio/Mono) | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
+
+---
+
 ## Notes
 
 - **Save after every batch of edits**, not after each individual operation, to avoid excessive disk I/O.
