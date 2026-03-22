@@ -81,6 +81,60 @@ namespace
 		return EMetaSoundOutputAudioFormat::Mono;
 	}
 
+	/**
+	 * Fuzzy vertex name lookup — tries an exact FName match first, then falls back to a
+	 * case-insensitive suffix match with spaces stripped.  This lets callers pass display
+	 * names (e.g. "On Play") and still resolve namespaced vertex names ("UE.Source.OnPlay").
+	 *
+	 * Returns the matched vertex FName, or NAME_None if nothing matched.
+	 */
+	FName FuzzyFindVertexName(UMetaSoundBuilderBase* Builder,
+	                          const FGuid& NodeGuid,
+	                          const FString& PinName,
+	                          bool bSearchOutputs)
+	{
+		// --- 1. Exact match (fast path) ---
+		EMetaSoundBuilderResult TestResult;
+		const FMetaSoundNodeHandle NodeHandle(NodeGuid);
+		const FName ExactName(*PinName);
+		if (bSearchOutputs)
+			Builder->FindNodeOutputByName(NodeHandle, ExactName, TestResult);
+		else
+			Builder->FindNodeInputByName(NodeHandle, ExactName, TestResult);
+
+		if (TestResult == EMetaSoundBuilderResult::Succeeded)
+		{
+			return ExactName;
+		}
+
+		// --- 2. Suffix match: strip spaces + lowercase both sides ---
+		// e.g. "On Play" → "onplay"  matches suffix of  "ue.source.onplay"
+		const FString SearchNorm = PinName.Replace(TEXT(" "), TEXT("")).ToLower();
+		FName MatchedName = NAME_None;
+
+		Builder->GetConstBuilder().IterateNodes(
+			[&](const FMetasoundFrontendClass&, const FMetasoundFrontendNode& Node)
+			{
+				if (MatchedName != NAME_None) return;
+				if (Node.GetID() != NodeGuid)  return;
+
+				const TArray<FMetasoundFrontendVertex>& Verts =
+					bSearchOutputs ? Node.Interface.Outputs : Node.Interface.Inputs;
+
+				for (const FMetasoundFrontendVertex& V : Verts)
+				{
+					FString VNorm = V.Name.ToString().Replace(TEXT(" "), TEXT("")).ToLower();
+					if (VNorm == SearchNorm || VNorm.EndsWith(SearchNorm))
+					{
+						MatchedName = V.Name;
+						break;
+					}
+				}
+			});
+
+		return MatchedName;
+	}
+
 	/** Quick failure result factory. */
 	FMetaSoundResult Fail(const FString& Msg)
 	{
@@ -562,21 +616,34 @@ FMetaSoundResult UMetaSoundService::ConnectNodes(const FString& AssetPath,
 	if (!ParseNodeGuid(ToNodeId,   ToGuid,   ErrResult)) return ErrResult;
 
 	EMetaSoundBuilderResult R;
-	const FMetaSoundBuilderNodeOutputHandle OutHandle =
-		Builder->FindNodeOutputByName(FMetaSoundNodeHandle(FromGuid), FName(*OutputName), R);
-	if (R != EMetaSoundBuilderResult::Succeeded)
+
+	const FName ResolvedOutputName = FuzzyFindVertexName(Builder, FromGuid, OutputName, true);
+	if (ResolvedOutputName == NAME_None)
 	{
 		return Fail(FString::Printf(TEXT("ConnectNodes: output pin '%s' not found on node '%s'"),
 		                            *OutputName, *FromNodeId));
 	}
+	if (ResolvedOutputName.ToString() != OutputName)
+	{
+		UE_LOG(LogMetaSoundService, Log, TEXT("ConnectNodes: fuzzy output match '%s' → '%s'"),
+		       *OutputName, *ResolvedOutputName.ToString());
+	}
+	const FMetaSoundBuilderNodeOutputHandle OutHandle =
+		Builder->FindNodeOutputByName(FMetaSoundNodeHandle(FromGuid), ResolvedOutputName, R);
 
-	const FMetaSoundBuilderNodeInputHandle InHandle =
-		Builder->FindNodeInputByName(FMetaSoundNodeHandle(ToGuid), FName(*InputName), R);
-	if (R != EMetaSoundBuilderResult::Succeeded)
+	const FName ResolvedInputName = FuzzyFindVertexName(Builder, ToGuid, InputName, false);
+	if (ResolvedInputName == NAME_None)
 	{
 		return Fail(FString::Printf(TEXT("ConnectNodes: input pin '%s' not found on node '%s'"),
 		                            *InputName, *ToNodeId));
 	}
+	if (ResolvedInputName.ToString() != InputName)
+	{
+		UE_LOG(LogMetaSoundService, Log, TEXT("ConnectNodes: fuzzy input match '%s' → '%s'"),
+		       *InputName, *ResolvedInputName.ToString());
+	}
+	const FMetaSoundBuilderNodeInputHandle InHandle =
+		Builder->FindNodeInputByName(FMetaSoundNodeHandle(ToGuid), ResolvedInputName, R);
 
 	Builder->ConnectNodes(OutHandle, InHandle, R);
 	if (R != EMetaSoundBuilderResult::Succeeded)
@@ -606,8 +673,14 @@ FMetaSoundResult UMetaSoundService::DisconnectPin(const FString& AssetPath,
 	if (!ParseNodeGuid(NodeId, NodeGuid, ErrResult)) return ErrResult;
 
 	EMetaSoundBuilderResult R;
+	const FName ResolvedInputName = FuzzyFindVertexName(Builder, NodeGuid, InputName, false);
+	if (ResolvedInputName == NAME_None)
+	{
+		return Fail(FString::Printf(TEXT("DisconnectPin: input pin '%s' not found on node '%s'"),
+		                            *InputName, *NodeId));
+	}
 	const FMetaSoundBuilderNodeInputHandle InHandle =
-		Builder->FindNodeInputByName(FMetaSoundNodeHandle(NodeGuid), FName(*InputName), R);
+		Builder->FindNodeInputByName(FMetaSoundNodeHandle(NodeGuid), ResolvedInputName, R);
 	if (R != EMetaSoundBuilderResult::Succeeded)
 	{
 		return Fail(FString::Printf(TEXT("DisconnectPin: input pin '%s' not found on node '%s'"),
@@ -743,8 +816,14 @@ FMetaSoundResult UMetaSoundService::SetNodeInputDefault(const FString& AssetPath
 	if (!ParseNodeGuid(NodeId, NodeGuid, ErrResult)) return ErrResult;
 
 	EMetaSoundBuilderResult R;
+	const FName ResolvedInputName = FuzzyFindVertexName(Builder, NodeGuid, InputName, false);
+	if (ResolvedInputName == NAME_None)
+	{
+		return Fail(FString::Printf(TEXT("SetNodeInputDefault: pin '%s' not found on node '%s'"),
+		                            *InputName, *NodeId));
+	}
 	const FMetaSoundBuilderNodeInputHandle InHandle =
-		Builder->FindNodeInputByName(FMetaSoundNodeHandle(NodeGuid), FName(*InputName), R);
+		Builder->FindNodeInputByName(FMetaSoundNodeHandle(NodeGuid), ResolvedInputName, R);
 	if (R != EMetaSoundBuilderResult::Succeeded)
 	{
 		return Fail(FString::Printf(TEXT("SetNodeInputDefault: pin '%s' not found on node '%s'"),
