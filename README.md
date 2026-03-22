@@ -16,7 +16,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 26 specialized services with 861 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 26 specialized services with 866 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 28 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
@@ -327,13 +327,13 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (26 services, 861 methods)
+### 2. VibeUE Python API Services (26 services, 866 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
-| `BlueprintService` | 84 | Blueprint lifecycle, variables, functions, components, nodes |
+| `BlueprintService` | 88 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
@@ -610,7 +610,7 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (75 methods)
+### BlueprintService (88 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
