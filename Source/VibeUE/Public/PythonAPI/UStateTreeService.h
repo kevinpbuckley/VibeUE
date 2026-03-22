@@ -741,6 +741,16 @@ public:
 	                                                const FString& ContextPropertyPath = TEXT(""),
 	                                                int32 ConditionMatchIndex = -1);
 
+	/**
+	 * Bind an enter condition property to a root parameter (e.g. parameter "CanChase" -> condition property "bLeft").
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindEnterConditionPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	                                                      const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                                      const FString& ParameterPath,
+	                                                      int32 ConditionMatchIndex = -1);
+
 	/** Add a condition to an existing transition. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,

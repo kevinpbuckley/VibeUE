@@ -358,6 +358,29 @@ bool UAssetDiscoveryService::DuplicateAsset(const FString& SourcePath, const FSt
 	return UEditorAssetLibrary::DuplicateAsset(SourcePath, DestinationPath) != nullptr;
 }
 
+bool UAssetDiscoveryService::MoveAsset(const FString& SourcePath, const FString& DestinationPath)
+{
+	if (SourcePath.IsEmpty() || DestinationPath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::MoveAsset: SourcePath or DestinationPath is empty"));
+		return false;
+	}
+
+	if (!UEditorAssetLibrary::DoesAssetExist(SourcePath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::MoveAsset: Source asset does not exist: %s"), *SourcePath);
+		return false;
+	}
+
+	if (UEditorAssetLibrary::DoesAssetExist(DestinationPath))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::MoveAsset: Destination asset already exists: %s"), *DestinationPath);
+		return false;
+	}
+
+	return UEditorAssetLibrary::RenameAsset(SourcePath, DestinationPath);
+}
+
 bool UAssetDiscoveryService::SaveAsset(const FString& AssetPath)
 {
 	if (AssetPath.IsEmpty())

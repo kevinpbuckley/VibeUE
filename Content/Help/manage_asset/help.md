@@ -1,6 +1,6 @@
 # manage_asset
 
-Multi-action tool for searching, locating, opening, saving, duplicating, and deleting Unreal Engine assets.
+Multi-action tool for searching, locating, opening, saving, duplicating, moving, and deleting Unreal Engine assets.
 Wraps `unreal.AssetDiscoveryService` — no Python code required.
 
 ## Actions
@@ -14,6 +14,7 @@ Wraps `unreal.AssetDiscoveryService` — no Python code required.
 | `save`      | Save a single asset to disk                          | `asset_path`                            |
 | `save_all`  | Save all dirty/modified assets                       | _(none)_                                |
 | `duplicate` | Copy an asset to a new location                      | `source_path`, `destination_path`       |
+| `move`      | Move or rename an asset while preserving references  | `source_path`, `destination_path`       |
 | `delete`    | Delete an asset (blocks if referenced)               | `asset_path`                            |
 | `help`      | Show this overview or per-action detail              | `help_action` _(optional)_              |
 
@@ -46,5 +47,6 @@ C:\Projects\Content\BP_Player.uasset   ✗
 ```
 manage_asset(action="help", help_action="search")
 manage_asset(action="help", help_action="duplicate")
+manage_asset(action="help", help_action="move")
 manage_asset(action="help", help_action="delete")
 ```

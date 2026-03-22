@@ -218,7 +218,7 @@ The AI can then offer to undo: delete BP_Enemy or remove the variable.
 
 ### Always Search Before Accessing
 
-**Use `manage_asset` (MCP tool) — NOT Python code — to find, open, save, and duplicate assets.**
+**Use `manage_asset` (MCP tool) — NOT Python code — to find, open, save, duplicate, and move assets.**
 
 `manage_asset` is a first-class MCP tool that wraps `AssetDiscoveryService` directly. No Python needed.
 
@@ -238,7 +238,10 @@ Never guess paths. Confirm the exact path from results before editing.
 | Save after edits | `manage_asset(action="save", asset_path="/Game/AI/ST_Cube")` |
 | Save all dirty assets | `manage_asset(action="save_all")` |
 | Duplicate to a new path | `manage_asset(action="duplicate", source_path="...", destination_path="...")` |
+| Move or rename an asset | `manage_asset(action="move", source_path="...", destination_path="...")` |
 | Delete (with reference guard) | `manage_asset(action="delete", asset_path="...")` |
+
+Never emulate a move by duplicating an asset and deleting the original. That creates a different asset and can break references. Use `manage_asset(action="move", source_path="...", destination_path="...")` instead.
 
 For detailed per-action docs: `manage_asset(action="help", help_action="search")`
 

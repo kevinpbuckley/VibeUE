@@ -1,7 +1,7 @@
 ---
 name: asset-management
 display_name: Asset Discovery & Management
-description: Search, find, open, duplicate, save, delete, import, and export assets
+description: Search, find, open, move, duplicate, save, delete, import, and export assets
 vibeue_classes:
   - AssetDiscoveryService
 unreal_classes:
@@ -45,14 +45,31 @@ asset = unreal.AssetDiscoveryService.find_asset_by_path("C:/Projects/Content/BP_
 asset = unreal.AssetDiscoveryService.find_asset_by_path("/Game/Blueprints/BP_Player")
 ```
 
+### ⚠️ Never Emulate Move/Rename with Duplicate + Delete
+
+Duplicating creates a new asset identity. References stay pointed at the original asset, so deleting the original after a duplicate can break those references.
+
+Use a real move instead:
+
+```python
+import unreal
+
+unreal.AssetDiscoveryService.move_asset(
+    "/Game/StateTree/STT_Rotate",
+    "/Game/StateTree/Tasks/STT_Rotate"
+)
+
+# MCP equivalent
+# manage_asset(action="move", source_path="/Game/StateTree/STT_Rotate", destination_path="/Game/StateTree/Tasks/STT_Rotate")
+```
+
 ### ⚠️ Methods NOT Available
 
 | Does NOT Exist | Alternative |
 |----------------|-------------|
 | `asset_exists()` | `find_asset_by_path()` → check for None |
 | `is_asset_in_use()` | `get_asset_referencers()` → check if empty |
-| `rename_asset()` | Duplicate then delete |
-| `move_asset()` | Duplicate to new path then delete |
+| `rename_asset()` | `move_asset(old_path, new_path)` |
 | `import_asset()` | `import_texture()` for textures only |
 | `export_asset()` | `export_texture()` for textures only |
 
@@ -110,6 +127,19 @@ import unreal
 success = unreal.AssetDiscoveryService.duplicate_asset("/Game/BP_Enemy", "/Game/BP_EnemyBoss")
 if success:
     print("Duplicated")
+```
+
+### Move Pattern
+
+```python
+import unreal
+
+success = unreal.AssetDiscoveryService.move_asset(
+    "/Game/StateTree/STT_Rotate",
+    "/Game/StateTree/Tasks/STT_Rotate"
+)
+if success:
+    print("Moved without breaking references")
 ```
 
 ### Save Pattern

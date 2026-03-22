@@ -14,6 +14,8 @@ Copy an asset to a new Content Browser location.
 - The destination folder is created automatically if it does not exist.
 - Use `find` to confirm the destination does not already exist before duplicating.
 - After duplicating, the new asset is NOT automatically opened or saved — call `open` or `save` explicitly if needed.
+- Duplicate creates a second asset identity. Existing references keep pointing at the source asset.
+- Do NOT use duplicate + delete to simulate a move or rename. Use `manage_asset(action="move", ...)` instead.
 
 ## Examples
 
