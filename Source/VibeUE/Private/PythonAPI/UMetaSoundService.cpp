@@ -302,6 +302,41 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 		UEditorAssetLibrary::SaveAsset(PackagePath / AssetName, false);
 	}
 
+	// Auto-remove Template/Invalid nodes that FindOrBeginBuilding injects on first open.
+	// These orphan binding nodes are never useful to callers and confuse AI models.
+	{
+		const FString FullPath = PackagePath / AssetName;
+		FString LoadError;
+		UMetaSoundBuilderBase* Builder = BeginEditing(FullPath, &NewSource, LoadError);
+		if (Builder)
+		{
+			TArray<FGuid> ToRemove;
+			Builder->GetConstBuilder().IterateNodes(
+				[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
+				{
+					const EMetasoundFrontendClassType T = Class.Metadata.GetType();
+					if (T == EMetasoundFrontendClassType::Template
+					 || T == EMetasoundFrontendClassType::Invalid)
+					{
+						ToRemove.Add(Node.GetID());
+					}
+				});
+
+			if (ToRemove.Num() > 0)
+			{
+				EMetaSoundBuilderResult R;
+				for (const FGuid& NodeId : ToRemove)
+				{
+					Builder->RemoveNode(FMetaSoundNodeHandle(NodeId), R);
+					UE_LOG(LogMetaSoundService, Log,
+					       TEXT("CreateMetaSound: removed orphan Template node '%s'"),
+					       *NodeId.ToString(EGuidFormats::DigitsWithHyphens));
+				}
+				CommitEditing(FullPath, NewSource);
+			}
+		}
+	}
+
 	const FString FullPath = PackagePath / AssetName;
 	UE_LOG(LogMetaSoundService, Log, TEXT("CreateMetaSound: created '%s'"), *FullPath);
 	return Succeed(FullPath, TEXT("Created"));
