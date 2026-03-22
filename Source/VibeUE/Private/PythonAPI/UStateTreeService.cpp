@@ -2819,6 +2819,7 @@ bool UStateTreeService::SetTaskConsideredForCompletion(const FString& AssetPath,
 
 bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex,
 	const FString& Trigger, const FString& TransitionType, const FString& TargetPath, const FString& Priority,
+	const FString& EventTag,
 	bool bSetEnabled, bool bEnabled, bool bSetDelay, bool bDelayTransition, float DelayDuration, float DelayRandomVariance)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
@@ -2897,6 +2898,11 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 		Trans.bDelayTransition = bDelayTransition;
 		Trans.DelayDuration = DelayDuration;
 		Trans.DelayRandomVariance = DelayRandomVariance;
+	}
+	if (!EventTag.IsEmpty())
+	{
+		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		Trans.RequiredEvent.Tag = ParsedTag;
 	}
 
 	MarkStateTreeDirty(StateTree);
@@ -3949,6 +3955,66 @@ bool UStateTreeService::BindEnterConditionPropertyToContext(const FString& Asset
 #endif
 }
 
+bool UStateTreeService::BindEnterConditionPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	const FString& ConditionStructName, const FString& ConditionPropertyPath, const FString& ParameterPath, int32 ConditionMatchIndex)
+{
+	if (ConditionPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToRootParameter: ConditionPropertyPath and ParameterPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToRootParameter: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* CondNode = FindEditorNodeByStructInArray(State->EnterConditions, ConditionStructName, ConditionMatchIndex);
+	if (!CondNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToRootParameter: Condition '%s' not found in state '%s'"),
+			*ConditionStructName, *StatePath);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(EditorData->GetRootParametersGuid(), ParameterPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToRootParameter: Invalid parameter path: %s"), *ParameterPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(CondNode->ID, ConditionPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToRootParameter: Invalid condition property path: %s"), *ConditionPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
 	int32 TransitionIndex, const FString& ConditionStructName)
 {
@@ -4425,7 +4491,8 @@ bool UStateTreeService::SetGlobalTaskPropertyValue(const FString& AssetPath, con
 
 bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& StatePath,
                                        const FString& Trigger, const FString& TransitionType,
-                                       const FString& TargetPath, const FString& Priority)
+                                       const FString& TargetPath, const FString& Priority,
+                                       const FString& EventTag)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree)
@@ -4491,6 +4558,11 @@ bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& S
 
 	FStateTreeTransition& NewTransition = State->AddTransition(ParsedTrigger, ParsedType, TargetState);
 	NewTransition.Priority = ParsedPriority;
+	if (!EventTag.IsEmpty())
+	{
+		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		NewTransition.RequiredEvent.Tag = ParsedTag;
+	}
 
 	MarkStateTreeDirty(StateTree);
 	UE_LOG(LogStateTreeService, Log, TEXT("AddTransition: Added '%s' -> '%s' to state '%s' in %s"),

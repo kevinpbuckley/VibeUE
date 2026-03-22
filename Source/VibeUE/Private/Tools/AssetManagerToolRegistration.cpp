@@ -283,6 +283,33 @@ static FString Action_Duplicate(const TMap<FString, FString>& Params)
 	return SerializeJson(Response);
 }
 
+static FString Action_Move(const TMap<FString, FString>& Params)
+{
+	FString SourcePath      = ExtractParam(Params, TEXT("source_path"));
+	FString DestinationPath = ExtractParam(Params, TEXT("destination_path"));
+
+	if (SourcePath.IsEmpty() || DestinationPath.IsEmpty())
+	{
+		TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
+		Err->SetBoolField(TEXT("success"), false);
+		Err->SetStringField(TEXT("error"), TEXT("'source_path' and 'destination_path' are required for action 'move'"));
+		return SerializeJson(Err);
+	}
+
+	bool bOk = UAssetDiscoveryService::MoveAsset(SourcePath, DestinationPath);
+
+	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
+	Response->SetBoolField(TEXT("success"), bOk);
+	Response->SetStringField(TEXT("source_path"), SourcePath);
+	Response->SetStringField(TEXT("destination_path"), DestinationPath);
+	if (!bOk)
+	{
+		Response->SetStringField(TEXT("error"), FString::Printf(
+			TEXT("Failed to move '%s' to '%s'"), *SourcePath, *DestinationPath));
+	}
+	return SerializeJson(Response);
+}
+
 static FString Action_Delete(const TMap<FString, FString>& Params)
 {
 	FString AssetPath        = ExtractParam(Params, TEXT("asset_path"));
@@ -352,7 +379,7 @@ static FString Action_Help(const TMap<FString, FString>& Params)
 REGISTER_VIBEUE_TOOL(manage_asset,
 	"PREFERRED tool for all asset operations — use this instead of Python AssetDiscoveryService calls. "
 	"Manages Unreal Engine assets: search by name/type, find by exact path, list by folder, open in editor, "
-	"save, save_all, duplicate, or delete. "
+	"save, save_all, duplicate, move, or delete. "
 	"\n\nWORKFLOW: Always search/find FIRST to confirm the exact path before editing.\n"
 	"  User says 'BP_Player' -> manage_asset(action='search', search_term='BP_Player', asset_type='Blueprint')\n"
 	"  Never guess paths. Use the object_path from results as asset_path in subsequent calls.\n"
@@ -363,14 +390,16 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 	"  Open in editor       : action='open',   asset_path='/Game/AI/ST_Cube'\n"
 	"  Save after edits     : action='save',   asset_path='/Game/AI/ST_Cube'\n"
 	"  Save all dirty       : action='save_all'\n"
-	"  Duplicate asset      : action='duplicate', source_path='...', destination_path='...'\n"
+	"  Duplicate asset      : action='duplicate', source_path='...', destination_path='...'  (for true copies only)\n"
+	"  Move or rename asset : action='move', source_path='...', destination_path='...'  (preserves references)\n"
 	"  Delete (guarded)     : action='delete', asset_path='...'  (blocked if referenced; use skip_reference_check=true to override)\n"
+	"\nNever emulate a move by duplicating then deleting the original. That creates a different asset and can break references.\n"
 	"  Per-action docs      : action='help', help_action='search'\n"
 	"\nAll paths use Content Browser format: /Game/... or /Engine/...",
 	"Assets",
 	TOOL_PARAMS(
 		TOOL_PARAM("action",
-			"Action to perform: 'search', 'find', 'list', 'open', 'save', 'save_all', 'duplicate', 'delete', 'help'",
+			"Action to perform: 'search', 'find', 'list', 'open', 'save', 'save_all', 'duplicate', 'move', 'delete', 'help'",
 			"string", true),
 		TOOL_PARAM("asset_path",
 			"Content Browser path to a single asset (e.g. /Game/Blueprints/BP_Player). "
@@ -387,10 +416,10 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 			"Content Browser folder path to list recursively (e.g. /Game/AI). Used with action='list'.",
 			"string", false),
 		TOOL_PARAM("source_path",
-			"Source asset path for action='duplicate'.",
+			"Source asset path for action='duplicate' or action='move'.",
 			"string", false),
 		TOOL_PARAM("destination_path",
-			"Destination asset path for action='duplicate'.",
+			"Destination asset path for action='duplicate' or action='move'.",
 			"string", false),
 		TOOL_PARAM("skip_reference_check",
 			"If true, skip the reference check before delete (default false). Used with action='delete'.",
@@ -414,6 +443,7 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 		else if (Action == TEXT("save"))     { return Action_Save(FlatParams);     }
 		else if (Action == TEXT("save_all")) { return Action_SaveAll(FlatParams);  }
 		else if (Action == TEXT("duplicate")){ return Action_Duplicate(FlatParams);}
+		else if (Action == TEXT("move"))     { return Action_Move(FlatParams);     }
 		else if (Action == TEXT("delete"))   { return Action_Delete(FlatParams);   }
 		else if (Action == TEXT("help"))     { return Action_Help(FlatParams);     }
 		else
@@ -421,7 +451,7 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 			TSharedPtr<FJsonObject> Err = MakeShared<FJsonObject>();
 			Err->SetBoolField(TEXT("success"), false);
 			Err->SetStringField(TEXT("error"), FString::Printf(
-				TEXT("Unknown action '%s'. Valid actions: search, find, list, open, save, save_all, duplicate, delete, help"),
+				TEXT("Unknown action '%s'. Valid actions: search, find, list, open, save, save_all, duplicate, move, delete, help"),
 				*Action));
 			FString Out;
 			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);

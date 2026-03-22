@@ -16,10 +16,10 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 25 specialized services with 853 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 26 specialized services with 861 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
-- **Domain Skills** - 27 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, widgets, data, and more
+- **Domain Skills** - 28 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and AntiGravity via MCP
 
@@ -327,7 +327,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (25 services, 853 methods)
+### 2. VibeUE Python API Services (26 services, 861 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -351,6 +351,7 @@ High-level services exposed to Python for common game development tasks:
 | `WidgetService` | 24 | UMG widget blueprints, components, and MVVM ViewModel bindings |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
 | `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
+| `GameplayTagService` | 8 | Gameplay tag CRUD: add, remove, rename, list, filter, hierarchy inspection |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |

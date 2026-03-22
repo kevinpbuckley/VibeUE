@@ -160,6 +160,19 @@ public:
 	static bool DuplicateAsset(const FString& SourcePath, const FString& DestinationPath);
 
 	/**
+	 * Move or rename an asset while preserving references.
+	 *
+	 * @param SourcePath - Path to the existing asset
+	 * @param DestinationPath - New path for the asset
+	 * @return True if the move was successful
+	 *
+	 * Example:
+	 *   unreal.AssetDiscoveryService.move_asset("/Game/AI/ST_Patrol", "/Game/AI/Tasks/ST_Patrol")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	static bool MoveAsset(const FString& SourcePath, const FString& DestinationPath);
+
+	/**
 	 * Save a specific asset.
 	 *
 	 * @param AssetPath - Full path to the asset to save

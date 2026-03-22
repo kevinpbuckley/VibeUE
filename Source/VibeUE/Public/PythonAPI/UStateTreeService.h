@@ -553,12 +553,13 @@ public:
 	// ---- Transition Editing ----
 
 	/**
-	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority means "don't change".
+	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority/EventTag means "don't change".
 	 * @param TransitionIndex  Zero-based index in the state's Transitions array (from GetStateTreeInfo)
 	 * @param Trigger          "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent" — empty = no change
 	 * @param TransitionType   "GotoState", "Succeeded", "Failed", "NextState", "NextSelectableState" — empty = no change
 	 * @param TargetPath       Target state path, only used when TransitionType is "GotoState" — empty = no change
 	 * @param Priority         "Low", "Normal", "Medium", "High", "Critical" — empty = no change
+	 * @param EventTag         Gameplay tag for OnEvent trigger (e.g. "AI.StartPatrol") — empty = no change
 	 * @param bSetEnabled      Whether to update the enabled state
 	 * @param bEnabled         New enabled value (only applied when bSetEnabled is true)
 	 * @param bSetDelay        Whether to update delay settings
@@ -570,6 +571,7 @@ public:
 	static bool UpdateTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex,
 	                             const FString& Trigger = TEXT(""), const FString& TransitionType = TEXT(""),
 	                             const FString& TargetPath = TEXT(""), const FString& Priority = TEXT(""),
+	                             const FString& EventTag = TEXT(""),
 	                             bool bSetEnabled = false, bool bEnabled = true,
 	                             bool bSetDelay = false, bool bDelayTransition = false,
 	                             float DelayDuration = 0.0f, float DelayRandomVariance = 0.0f);
@@ -741,6 +743,16 @@ public:
 	                                                const FString& ContextPropertyPath = TEXT(""),
 	                                                int32 ConditionMatchIndex = -1);
 
+	/**
+	 * Bind an enter condition property to a root parameter (e.g. parameter "CanChase" -> condition property "bLeft").
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindEnterConditionPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	                                                      const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                                      const FString& ParameterPath,
+	                                                      int32 ConditionMatchIndex = -1);
+
 	/** Add a condition to an existing transition. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
@@ -819,12 +831,14 @@ public:
 	 * @param TransitionType "GotoState", "Succeeded", "Failed", "NextState", "NextSelectableState"
 	 * @param TargetPath     Path of the target state (only used when TransitionType is "GotoState")
 	 * @param Priority       "Low", "Normal", "Medium", "High", "Critical"
+	 * @param EventTag       Gameplay tag for OnEvent trigger (e.g. "AI.StartPatrol") — empty = none
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTransition(const FString& AssetPath, const FString& StatePath,
 	                          const FString& Trigger, const FString& TransitionType,
 	                          const FString& TargetPath = TEXT(""),
-	                          const FString& Priority = TEXT("Normal"));
+	                          const FString& Priority = TEXT("Normal"),
+	                          const FString& EventTag = TEXT(""));
 
 	// ---- Compile / Save ----
 
