@@ -92,6 +92,7 @@ public class VibeUE : ModuleRules
 				"StateTreeEditorModule",  // For FStateTreeCompiler, UStateTreeState, StateTree editor types
 				"PropertyBindingUtils",    // For FPropertyBindingBindableStructDescriptor (base of FStateTreeBindableStructDesc)
 				"GameplayTags",           // For FGameplayTag (required by StateTree)
+				"GameplayTagsEditor",     // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
 			"AudioEditor"             // For SoundCue graph classes (USoundCueGraphNode, USoundCueGraph, USoundCueFactoryNew)
 			}
 		);
