@@ -44,10 +44,17 @@ asset_path = r.asset_path   # "/Game/Audio/MS_SineLoop"
 all_nodes = ms.list_nodes(asset_path)
 for n in all_nodes:
     print(n.node_id, n.node_title, n.inputs, n.outputs)
-# Output node has title "Output"; its input pin is the audio sink
-audio_out_node = next(n for n in all_nodes if n.node_title == "Output")
+
+# IMPORTANT: A MetaSound Source has MULTIPLE nodes with title "Output" —
+# one per interface pin group (e.g. "On Finished" Trigger, "Out Mono" Audio).
+# You MUST filter by the node whose inputs contain an Audio-type pin.
+# Pin strings are "VertexName:TypeName" — the TypeName suffix after the last colon.
+audio_out_node = next(
+    n for n in all_nodes
+    if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs)
+)
 audio_out_id = audio_out_node.node_id
-# Pin strings are "VertexName:TypeName" — drop only the last :TypeName suffix
+# Drop the last :TypeName suffix to get the raw vertex name for connect_nodes
 audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
 ```
 
@@ -160,9 +167,13 @@ ms = unreal.MetaSoundService()
 r = ms.create_meta_sound("/Game/Audio", "MS_Test880Hz", "Mono")
 ap = r.asset_path
 
-# Find the built-in AudioOut node (title="Output") and its audio sink pin
+# Find the AudioOut node — there are multiple nodes titled "Output" (one per interface
+# pin group). Filter for the one whose inputs contain an Audio-type pin.
 nodes = ms.list_nodes(ap)
-audio_out_node = next(n for n in nodes if n.node_title == "Output")
+audio_out_node = next(
+    n for n in nodes
+    if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs)
+)
 audio_out_id = audio_out_node.node_id
 # Pin strings are "VertexName:TypeName" — drop only the last :TypeName to get the vertex name
 audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
@@ -189,6 +200,6 @@ print("Done:", ap)
 - **Save after every batch of edits**, not after each individual operation, to avoid excessive disk I/O.
 - `list_available_nodes("")` returns **all** registered node classes (~400+). Use a filter like `"Sine"`, `"Delay"`, `"Gain"` to narrow the results.
 - Node pin names for standard nodes use UE display names (e.g. `"In Frequency"`, `"Out"`, `"Audio:0"`). Use `get_node_pins()` to confirm exact names.
-- The built-in audio sink node has `node_title == "Output"`. Its input pin is named `"UE.OutputFormat.Mono.Audio:0"` for Mono. Pin strings are `"VertexName:TypeName"` — use `":".join(pin.split(":")[:-1])` to extract just the vertex name.
+- A MetaSound Source has **multiple nodes with `node_title == "Output"`** — one per interface pin group (e.g. `"On Finished"` Trigger, `"Out Mono"` Audio). To find the audio sink node, filter for the Output node whose inputs contain an Audio-type pin: `next(n for n in nodes if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs))`. Pin strings are `"VertexName:TypeName"` — use `":".join(pin.split(":")[:-1])` to extract just the vertex name for `connect_nodes`.
 - Node namespace/name/variant values differ from what the MetaSound editor displays. Always call `list_available_nodes("keyword")` to discover the correct values; do not guess.
 - MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (discover via `list_available_nodes("Wave Player")`).
