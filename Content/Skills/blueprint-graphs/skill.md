@@ -561,3 +561,162 @@ For `add_function_call_node(path, graph, class, func, x, y)`:
 - **Actor** — Actor functions, but discover the exact callable/spawner first for graph nodes like `Get Actor Location` and `Set Actor Location`
 - **PrimitiveComponent** — Physics (SetSimulatePhysics)
 - **SceneComponent** — Transform (AddRelativeRotation, SetRelativeLocation)
+
+---
+
+## Batch Graph Builder (`build_graph`)
+
+### When to Use
+
+Use `build_graph` when you need to create **3+ nodes with connections** in a single call. It is
+significantly faster and less error-prone than creating nodes one-at-a-time for complex graphs.
+
+Use the individual `add_*_node` + `connect_nodes` methods when:
+- You need to create 1-2 nodes
+- You need to inspect pins between node creations
+- The exact function name is uncertain (use `discover_nodes` first)
+
+### Node Types
+
+| Type | Required Params | Description |
+|------|----------------|-------------|
+| `function_call` | `class`, `function` | Calls a UFunction (e.g. `KismetSystemLibrary::PrintString`) |
+| `spawner_key` | `key` | Creates node from a spawner key (FUNC, EVENT, NODE prefix) |
+| `variable_get` | `variable` | Gets a Blueprint variable |
+| `variable_set` | `variable` | Sets a Blueprint variable |
+| `event` | `event` | Overridable event (e.g. `ReceiveBeginPlay`) |
+| `custom_event` | `name` | Custom event node |
+| `branch` | *(none)* | If/Then/Else branch |
+| `cast` | `target_class` | Dynamic cast |
+| `print_string` | *(none)* | PrintString shorthand |
+| `input_action` | `action` | Enhanced Input Action (asset path) |
+| `math` | `operation`, `operand_type` | Math op (Add/Subtract/Multiply/Divide/Clamp/Abs) |
+| `comparison` | `operation`, `operand_type` | Comparison (Greater/Less/Equal/NotEqual/GreaterEqual/LessEqual) |
+| `delegate_bind` | `delegate`, (optional: `component`) | Bind a multicast delegate |
+| `create_event` | `function` | Create Event node |
+| `validated_get` | `variable` | Validated Get (with exec pins) |
+| `member_get` | `member`, `class` | Get member from another class |
+| `create_delegate` | `function` | Create Delegate node |
+
+### Connection Format
+
+Connections use `"NodeRef.PinName"` format: `{"from": "A.then", "to": "B.execute"}`
+
+Pin aliases supported:
+- `execute` / `exec` → first exec input pin
+- `then` / `output` → first exec output pin
+- `value` / `result` → first non-exec output pin
+- `True` → `then`, `False` → `else` (Branch node)
+
+### Example: BeginPlay → PrintString
+
+```python
+import unreal
+
+bp_path = "/Game/BP_MyActor"
+
+result = unreal.BlueprintService.build_graph(
+    bp_path,
+    "EventGraph",
+    # Nodes
+    [
+        {"ref": "BP", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
+        {"ref": "Print", "type": "print_string", "params": {}},
+    ],
+    # Connections
+    [
+        {"from": "BP.then", "to": "Print.execute"},
+    ],
+    # Pin defaults
+    [
+        {"node_ref": "Print", "pin_name": "InString", "value": "Hello World!"},
+    ],
+    True,  # auto-layout
+    True   # compile after
+)
+
+print(f"Success: {result.b_success}")
+print(f"Nodes: {result.nodes_created}/{result.nodes_created + result.nodes_failed}")
+print(f"Connections: {result.connections_made}/{result.connections_made + result.connections_failed}")
+if result.errors:
+    for e in result.errors:
+        print(f"  ERROR: {e}")
+```
+
+### Example: Branch with Math
+
+```python
+result = unreal.BlueprintService.build_graph(
+    bp_path,
+    "EventGraph",
+    [
+        {"ref": "BP", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
+        {"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health"}},
+        {"ref": "Cmp", "type": "comparison", "params": {"operation": "Less", "operand_type": "Double"}},
+        {"ref": "Branch", "type": "branch", "params": {}},
+        {"ref": "PrintLow", "type": "print_string", "params": {}},
+        {"ref": "PrintOK", "type": "print_string", "params": {}},
+    ],
+    [
+        {"from": "BP.then", "to": "Branch.execute"},
+        {"from": "GetHP.Health", "to": "Cmp.A"},
+        {"from": "Cmp.ReturnValue", "to": "Branch.Condition"},
+        {"from": "Branch.then", "to": "PrintLow.execute"},
+        {"from": "Branch.else", "to": "PrintOK.execute"},
+    ],
+    [
+        {"node_ref": "Cmp", "pin_name": "B", "value": "25.0"},
+        {"node_ref": "PrintLow", "pin_name": "InString", "value": "Health is low!"},
+        {"node_ref": "PrintOK", "pin_name": "InString", "value": "Health OK"},
+    ],
+    True, True
+)
+```
+
+### Round-Trip: Export → Modify → Rebuild
+
+Use `get_graph_definition` to capture an existing graph, modify the definition, then
+rebuild with `build_graph`:
+
+```python
+import unreal
+
+bp_path = "/Game/BP_MyActor"
+graph = "EventGraph"
+
+# Export current graph
+nodes, connections, defaults, error = unreal.BlueprintService.get_graph_definition(
+    bp_path, graph)
+
+# Inspect exported nodes
+for n in nodes:
+    print(f"  {n.ref}: {n.type} {n.params}")
+
+# Modify (add a new node, change a connection, etc.)
+# Then rebuild in a different graph or blueprint
+```
+
+### Auto-Layout (`auto_layout_graph`)
+
+`auto_layout_graph` arranges all nodes in a graph using a simplified Sugiyama algorithm:
+- Layers are assigned by BFS on execution (exec pin) flow
+- Pure data nodes are placed in the same layer as their first consumer
+- Event/entry nodes sort to the top of each layer
+- Column width: 400px, Row height: 200px
+
+```python
+unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph")
+```
+
+### Error Handling
+
+`build_graph` returns `FBuildGraphResult` with detailed audit:
+- `b_success` — `True` only if zero node failures AND zero compile errors
+- `nodes_created` / `nodes_failed` — individual node creation results
+- `connections_made` / `connections_failed` — wiring results
+- `defaults_set` / `defaults_failed` — pin default results
+- `ref_to_node_id` — maps your local refs to engine GUIDs
+- `errors` — critical failures (node not found, class not found, compile errors)
+- `warnings` — non-fatal issues (pin mismatch, connection rejected)
+
+Always check `result.errors` and `result.warnings` after a `build_graph` call.

@@ -2819,6 +2819,7 @@ bool UStateTreeService::SetTaskConsideredForCompletion(const FString& AssetPath,
 
 bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex,
 	const FString& Trigger, const FString& TransitionType, const FString& TargetPath, const FString& Priority,
+	const FString& EventTag,
 	bool bSetEnabled, bool bEnabled, bool bSetDelay, bool bDelayTransition, float DelayDuration, float DelayRandomVariance)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
@@ -2897,6 +2898,11 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 		Trans.bDelayTransition = bDelayTransition;
 		Trans.DelayDuration = DelayDuration;
 		Trans.DelayRandomVariance = DelayRandomVariance;
+	}
+	if (!EventTag.IsEmpty())
+	{
+		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		Trans.RequiredEvent.Tag = ParsedTag;
 	}
 
 	MarkStateTreeDirty(StateTree);
@@ -4485,7 +4491,8 @@ bool UStateTreeService::SetGlobalTaskPropertyValue(const FString& AssetPath, con
 
 bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& StatePath,
                                        const FString& Trigger, const FString& TransitionType,
-                                       const FString& TargetPath, const FString& Priority)
+                                       const FString& TargetPath, const FString& Priority,
+                                       const FString& EventTag)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
 	if (!StateTree)
@@ -4551,6 +4558,11 @@ bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& S
 
 	FStateTreeTransition& NewTransition = State->AddTransition(ParsedTrigger, ParsedType, TargetState);
 	NewTransition.Priority = ParsedPriority;
+	if (!EventTag.IsEmpty())
+	{
+		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		NewTransition.RequiredEvent.Tag = ParsedTag;
+	}
 
 	MarkStateTreeDirty(StateTree);
 	UE_LOG(LogStateTreeService, Log, TEXT("AddTransition: Added '%s' -> '%s' to state '%s' in %s"),

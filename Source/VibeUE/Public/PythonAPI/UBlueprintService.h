@@ -786,6 +786,132 @@ struct FBlueprintDetailedInfo
 	TArray<FBlueprintComponentInfo> Components;
 };
 
+// ============================================================================
+// BATCH GRAPH BUILDER TYPES
+// ============================================================================
+
+/**
+ * Describes a single node to create in a batch graph operation.
+ * Each node has a local ref (for wiring) and a type that maps to an
+ * existing UBlueprintService creation method.
+ */
+USTRUCT(BlueprintType)
+struct FGraphNodeDesc
+{
+	GENERATED_BODY()
+
+	/** Local reference for wiring (e.g. "A", "BeginPlay", any unique string) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString Ref;
+
+	/**
+	 * Node type — determines which creation method is used:
+	 *   function_call, spawner_key, variable_get, variable_set,
+	 *   event, custom_event, branch, cast, print_string,
+	 *   input_action, math, comparison, delegate_bind,
+	 *   create_event, validated_get, member_get, create_delegate
+	 */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString Type;
+
+	/** Type-specific parameters (e.g. "class":"KismetMathLibrary", "function":"Clamp") */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TMap<FString, FString> Params;
+};
+
+/**
+ * Describes a connection between two node pins in a batch graph.
+ * Format: "NodeRef.PinName"
+ */
+USTRUCT(BlueprintType)
+struct FGraphConnectionDesc
+{
+	GENERATED_BODY()
+
+	/** Source (output) — format: "NodeRef.PinName" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString From;
+
+	/** Target (input) — format: "NodeRef.PinName" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString To;
+};
+
+/**
+ * Describes a pin default value to set in a batch graph.
+ */
+USTRUCT(BlueprintType)
+struct FGraphPinDefaultDesc
+{
+	GENERATED_BODY()
+
+	/** Local ref of the target node */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString NodeRef;
+
+	/** Pin name on that node */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString PinName;
+
+	/** Default value as string */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString Value;
+};
+
+/**
+ * Result of a BuildGraph operation — full audit of what was created.
+ */
+USTRUCT(BlueprintType)
+struct FBuildGraphResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NodesCreated = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NodesFailed = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 ConnectionsMade = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 ConnectionsFailed = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 DefaultsSet = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 DefaultsFailed = 0;
+
+	/** Maps local ref → actual engine GUID string */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TMap<FString, FString> RefToNodeId;
+
+	/** Error messages with actionable context */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Errors;
+
+	/** Warning messages (non-fatal) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	TArray<FString> Warnings;
+
+	/** Whether compilation was run */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	bool bCompiled = false;
+
+	/** Number of compilation errors (only if bCompiled) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 CompileErrors = 0;
+
+	/** Number of compilation warnings (only if bCompiled) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 CompileWarnings = 0;
+};
+
 /**
  * Blueprint service exposed directly to Python.
  *
@@ -2688,6 +2814,75 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Functions")
 	static bool OverrideFunction(const FString& BlueprintPath, const FString& FunctionName);
 
+	// ================================================================
+	// BATCH GRAPH BUILDER
+	// ================================================================
+
+	/**
+	 * Create multiple nodes, wire connections, and set pin defaults in a single
+	 * call. The entire operation is wrapped in FScopedTransaction (Ctrl+Z undoes all).
+	 *
+	 * Uses the same discovery/spawner resolution as individual methods.
+	 * Every connection goes through Schema->TryCreateConnection().
+	 * Nodes that fail to create are skipped (with errors logged).
+	 * Connections referencing failed nodes are skipped.
+	 * The graph is left in a valid state regardless of partial failures.
+	 *
+	 * Python Usage:
+	 *   result = unreal.BlueprintService.build_graph(
+	 *       "/Game/BP_Player", "EventGraph",
+	 *       [{"ref":"BeginPlay", "type":"event", "params":{"event":"ReceiveBeginPlay"}},
+	 *        {"ref":"Print", "type":"print_string", "params":{}}],
+	 *       [{"from":"BeginPlay.then", "to":"Print.execute"}],
+	 *       [{"node_ref":"Print", "pin_name":"InString", "value":"Hello!"}],
+	 *       True, True)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
+	static bool BuildGraph(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const TArray<FGraphNodeDesc>& Nodes,
+		const TArray<FGraphConnectionDesc>& Connections,
+		const TArray<FGraphPinDefaultDesc>& PinDefaults,
+		bool bAutoLayout,
+		bool bCompileAfter,
+		FBuildGraphResult& OutResult
+	);
+
+	/**
+	 * Auto-layout all nodes in an existing graph.
+	 * Uses topological sort on execution flow + layered positioning.
+	 * Does not modify any connections or node logic — only positions.
+	 *
+	 * Python Usage:
+	 *   unreal.BlueprintService.auto_layout_graph("/Game/BP_Player", "EventGraph")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
+	static bool AutoLayoutGraph(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		FString& OutError
+	);
+
+	/**
+	 * Get the definition of an existing graph in the batch builder format.
+	 * The returned definition can be fed back into BuildGraph.
+	 * Enables round-tripping and learning from hand-built graphs.
+	 *
+	 * Python Usage:
+	 *   success, nodes, connections, defaults, error = \
+	 *       unreal.BlueprintService.get_graph_definition("/Game/BP_Player", "EventGraph")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
+	static bool GetGraphDefinition(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		TArray<FGraphNodeDesc>& OutNodes,
+		TArray<FGraphConnectionDesc>& OutConnections,
+		TArray<FGraphPinDefaultDesc>& OutPinDefaults,
+		FString& OutError
+	);
+
 private:
 	/** Helper to load blueprint from path */
 	static UBlueprint* LoadBlueprint(const FString& BlueprintPath);
@@ -2697,4 +2892,25 @@ private:
 
 	/** Helper to find a node by ID in a graph */
 	static UEdGraphNode* FindNodeById(UEdGraph* Graph, const FString& NodeId);
+
+	// ── Batch Graph Builder internals ──
+
+	/** Create a single node from a FGraphNodeDesc. Returns nullptr on failure. */
+	static UEdGraphNode* CreateNodeFromDesc(
+		UBlueprint* Blueprint,
+		UEdGraph* Graph,
+		const FGraphNodeDesc& Desc,
+		float PosX, float PosY,
+		FString& OutError
+	);
+
+	/** Resolve a pin by name with alias support (execute, then, value, true, false, etc.) */
+	static UEdGraphPin* ResolvePinByName(
+		UEdGraphNode* Node,
+		const FString& PinName,
+		EEdGraphPinDirection PreferredDirection = EGPD_MAX
+	);
+
+	/** Build a list of available pin names for error messages */
+	static FString GetAvailablePinNames(UEdGraphNode* Node, EEdGraphPinDirection Direction);
 };
