@@ -236,12 +236,13 @@ wp_id = wp.node_id
 ms.set_node_input_default(ap, wp_id, "Wave Asset", "/Game/Audio/SW_Gunshot_01", "WaveAsset")
 
 # Wire On Play (Input) → Play (WavePlayer)
-# The Input node's vertex name is "UE.Source.OnPlay", NOT "On Play"
-on_play_pin = ":".join(input_node.outputs[0].split(":")[:-1])  # "UE.Source.OnPlay"
-ms.connect_nodes(ap, input_node_id, on_play_pin, wp_id, "Play")
+# CRITICAL: use the vertex name "UE.Source.OnPlay" — NOT the display name "On Play"
+r = ms.connect_nodes(ap, input_node_id, "UE.Source.OnPlay", wp_id, "Play")
+if not r.b_success: raise RuntimeError(f"connect On Play→Play failed: {r.message}")
 
 # Wire Out Mono (WavePlayer) → audio sink (Output)
-ms.connect_nodes(ap, wp_id, "Out Mono", audio_out_id, audio_in_pin)
+r = ms.connect_nodes(ap, wp_id, "Out Mono", audio_out_id, audio_in_pin)
+if not r.b_success: raise RuntimeError(f"connect Out Mono→Output failed: {r.message}")
 
 # Save
 ms.save_meta_sound(ap)
@@ -285,14 +286,14 @@ Use these instead of calling `get_node_pins` on freshly-added nodes (can time ou
 
 ### Standard Interface Nodes
 
-**IMPORTANT:** Interface node pins use namespaced vertex names, NOT display names.
-Always derive vertex names from `list_nodes()` output using `":".join(pin.split(":")[:-1])`.
+**CRITICAL:** Interface node pins use namespaced vertex names. The display name shown
+in the editor is NOT the vertex name. Always use the vertex names below in `connect_nodes`.
 
-| Node title | Display name | Vertex name (use this in connect_nodes) | Type | Direction |
-|-----------|-------------|----------------------------------------|------|-----------|
-| `Input` | `On Play` | `UE.Source.OnPlay` | Trigger | Output |
-| `Output` (Trigger) | `On Finished` | `UE.Source.OneShot.OnFinished` | Trigger | Input |
-| `Output` (Audio/Mono) | `Out Mono` | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
+| Node title | Vertex name (EXACT string for connect_nodes) | Type | Direction |
+|-----------|---------------------------------------------|------|-----------|
+| `Input` | `UE.Source.OnPlay` | Trigger | Output |
+| `Output` (Trigger) | `UE.Source.OneShot.OnFinished` | Trigger | Input |
+| `Output` (Audio/Mono) | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
 
 ---
 
