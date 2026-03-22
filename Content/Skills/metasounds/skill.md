@@ -56,6 +56,11 @@ audio_out_node = next(
 audio_out_id = audio_out_node.node_id
 # Drop the last :TypeName suffix to get the raw vertex name for connect_nodes
 audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
+
+# Input node — derive the On Play vertex name the same way (display name differs from vertex name)
+input_node = next(n for n in all_nodes if n.node_title == "Input")
+input_node_id = input_node.node_id
+on_play_pin = ":".join(input_node.outputs[0].split(":")[:-1])  # "UE.Source.OnPlay"
 ```
 
 ### 4 — Add a node
@@ -231,7 +236,9 @@ wp_id = wp.node_id
 ms.set_node_input_default(ap, wp_id, "Wave Asset", "/Game/Audio/SW_Gunshot_01", "WaveAsset")
 
 # Wire On Play (Input) → Play (WavePlayer)
-ms.connect_nodes(ap, input_node_id, "On Play", wp_id, "Play")
+# The Input node's vertex name is "UE.Source.OnPlay", NOT "On Play"
+on_play_pin = ":".join(input_node.outputs[0].split(":")[:-1])  # "UE.Source.OnPlay"
+ms.connect_nodes(ap, input_node_id, on_play_pin, wp_id, "Play")
 
 # Wire Out Mono (WavePlayer) → audio sink (Output)
 ms.connect_nodes(ap, wp_id, "Out Mono", audio_out_id, audio_in_pin)
@@ -278,11 +285,14 @@ Use these instead of calling `get_node_pins` on freshly-added nodes (can time ou
 
 ### Standard Interface Nodes
 
-| Node title | Pin | Type | Direction |
-|-----------|-----|------|-----------|
-| `Input` | `On Play` | Trigger | Output |
-| `Output` (Trigger) | `On Finished` | Trigger | Input |
-| `Output` (Audio/Mono) | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
+**IMPORTANT:** Interface node pins use namespaced vertex names, NOT display names.
+Always derive vertex names from `list_nodes()` output using `":".join(pin.split(":")[:-1])`.
+
+| Node title | Display name | Vertex name (use this in connect_nodes) | Type | Direction |
+|-----------|-------------|----------------------------------------|------|-----------|
+| `Input` | `On Play` | `UE.Source.OnPlay` | Trigger | Output |
+| `Output` (Trigger) | `On Finished` | `UE.Source.OneShot.OnFinished` | Trigger | Input |
+| `Output` (Audio/Mono) | `Out Mono` | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
 
 ---
 
