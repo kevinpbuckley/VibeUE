@@ -108,6 +108,10 @@ struct FStateTreeTransitionInfo
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString RequiredEventTag;
 
+	/** Event payload struct type name (e.g. "FStartChasingPayload"), empty if none */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	FString EventPayloadStruct;
+
 	/** Conditions that must be true for this transition to fire */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	TArray<FStateTreeNodeInfo> Conditions;
@@ -553,13 +557,14 @@ public:
 	// ---- Transition Editing ----
 
 	/**
-	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority/EventTag means "don't change".
+	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority/EventTag/EventPayloadStruct means "don't change".
 	 * @param TransitionIndex  Zero-based index in the state's Transitions array (from GetStateTreeInfo)
 	 * @param Trigger          "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent" — empty = no change
 	 * @param TransitionType   "GotoState", "Succeeded", "Failed", "NextState", "NextSelectableState" — empty = no change
 	 * @param TargetPath       Target state path, only used when TransitionType is "GotoState" — empty = no change
 	 * @param Priority         "Low", "Normal", "Medium", "High", "Critical" — empty = no change
 	 * @param EventTag         Gameplay tag for OnEvent trigger (e.g. "AI.StartPatrol") — empty = no change
+	 * @param EventPayloadStruct Struct type for event payload (e.g. "FStartChasingPayload") — empty = no change, "None" = clear
 	 * @param bSetEnabled      Whether to update the enabled state
 	 * @param bEnabled         New enabled value (only applied when bSetEnabled is true)
 	 * @param bSetDelay        Whether to update delay settings
@@ -572,6 +577,7 @@ public:
 	                             const FString& Trigger = TEXT(""), const FString& TransitionType = TEXT(""),
 	                             const FString& TargetPath = TEXT(""), const FString& Priority = TEXT(""),
 	                             const FString& EventTag = TEXT(""),
+	                             const FString& EventPayloadStruct = TEXT(""),
 	                             bool bSetEnabled = false, bool bEnabled = true,
 	                             bool bSetDelay = false, bool bDelayTransition = false,
 	                             float DelayDuration = 0.0f, float DelayRandomVariance = 0.0f);
@@ -753,6 +759,12 @@ public:
 	                                                      const FString& ParameterPath,
 	                                                      int32 ConditionMatchIndex = -1);
 
+	/** Remove the property binding on an enter condition property (unbind it). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UnbindEnterConditionProperty(const FString& AssetPath, const FString& StatePath,
+	                                        const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                        int32 ConditionMatchIndex = -1);
+
 	/** Add a condition to an existing transition. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
@@ -774,6 +786,11 @@ public:
 	                                                                           int32 TransitionIndex, const FString& ConditionStructName,
 	                                                                           int32 ConditionMatchIndex = -1);
 
+	/** Get the bindable properties exposed by a transition's required event payload struct. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetTransitionEventPayloadPropertyNames(const FString& AssetPath, const FString& StatePath,
+	                                                                            int32 TransitionIndex);
+
 	/** Set a property on a transition condition node. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetTransitionConditionPropertyValue(const FString& AssetPath, const FString& StatePath,
@@ -793,6 +810,26 @@ public:
 	                                                     const FString& ContextName = TEXT("Actor"),
 	                                                     const FString& ContextPropertyPath = TEXT(""),
 	                                                     int32 ConditionMatchIndex = -1);
+
+	/**
+	 * Bind a transition condition property to an event payload property.
+	 * The transition must have a RequiredEvent with a PayloadStruct set.
+	 * @param PayloadPropertyPath Property path within the event payload struct (e.g. "TargetPawn"). The service resolves this against the payload struct and binds it through the transition event's Payload field.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTransitionConditionPropertyToEventPayload(const FString& AssetPath, const FString& StatePath,
+	                                                          int32 TransitionIndex, const FString& ConditionStructName,
+	                                                          const FString& ConditionPropertyPath,
+	                                                          const FString& PayloadPropertyPath,
+	                                                          int32 ConditionMatchIndex = -1);
+
+	/** Remove the property binding on a transition condition property (unbind it). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UnbindTransitionConditionProperty(const FString& AssetPath, const FString& StatePath,
+	                                             int32 TransitionIndex, const FString& ConditionStructName,
+	                                             const FString& ConditionPropertyPath,
+	                                             int32 ConditionMatchIndex = -1);
 
 	/** Remove an evaluator by struct type name. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
