@@ -16,7 +16,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 26 specialized services with 866 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 26 specialized services with 871 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 28 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
@@ -327,7 +327,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (26 services, 866 methods)
+### 2. VibeUE Python API Services (26 services, 871 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -357,7 +357,7 @@ High-level services exposed to Python for common game development tasks:
 | `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
 | `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
-| `StateTreeService` | 66 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, compile/save |
+| `StateTreeService` | 71 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, component overrides, property bindings, compile/save |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -1209,9 +1209,9 @@ EngineSettingsService controls core engine configuration across multiple domains
 - `get/set_gc_setting(setting, value)` - Configure garbage collection behavior
 - `list_gc_settings()` - List available GC settings
 
-### StateTreeService (60 methods)
+### StateTreeService (71 methods)
 
-StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, theme colors, and compilation.
+StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, theme colors, component overrides, property bindings, and compilation.
 
 **Discovery & Info:**
 - `list_state_trees(directory_path)` - List all StateTree assets under a content path
@@ -1250,6 +1250,11 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 - `remove_root_parameter(asset_path, name)` - Remove a parameter by name
 - `rename_root_parameter(asset_path, old_name, new_name)` - Rename a parameter
 
+**Level Actor Component Overrides:**
+- `get_component_state_tree_path(actor_name_or_label)` - Get the StateTree asset used by a placed actor's StateTreeComponent
+- `get_component_parameter_overrides(actor_name_or_label)` - Inspect current per-instance parameter override values on a placed actor
+- `set_component_parameter_override(actor_name_or_label, parameter_name, value)` - Set a per-instance parameter override on a placed actor's StateTreeComponent
+
 **Tasks:**
 - `add_task(asset_path, state_path, task_struct_name)` - Add a task by C++ struct name (e.g. `"FStateTreeDelayTask"`)
 - `remove_task(asset_path, state_path, task_struct_name, task_match_index)` - Remove a task
@@ -1262,6 +1267,7 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 - `set_task_property_value_detailed(...)` - Set task property with structured result (failure reason + readback value)
 - `bind_task_property_to_root_parameter(asset_path, state_path, task_struct_name, task_property_path, parameter_path, task_match_index)` - Bind task property to a root parameter
 - `bind_task_property_to_context(asset_path, state_path, task_struct_name, task_property_path, context_name, context_property_path, task_match_index)` - Bind task property to context data
+- `unbind_task_property(asset_path, state_path, task_struct_name, task_property_path, task_match_index)` - Remove a task property binding
 
 **Evaluators & Global Tasks:**
 - `add_evaluator(asset_path, evaluator_struct_name)` - Add a global evaluator
@@ -1279,6 +1285,9 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 - `set_enter_condition_operand(asset_path, state_path, condition_index, operand)` - Set `"And"` / `"Or"` / `"Copy"` operand
 - `get_enter_condition_property_names(asset_path, state_path, condition_struct_name, condition_match_index)` - Discover condition properties
 - `set_enter_condition_property_value(asset_path, state_path, condition_struct_name, property_path, value, condition_match_index)` - Set a condition property
+- `bind_enter_condition_property_to_context(asset_path, state_path, condition_struct_name, condition_property_path, context_name, context_property_path, condition_match_index)` - Bind an enter condition property to context data
+- `bind_enter_condition_property_to_root_parameter(asset_path, state_path, condition_struct_name, condition_property_path, parameter_path, condition_match_index)` - Bind an enter condition property to a root parameter
+- `unbind_enter_condition_property(asset_path, state_path, condition_struct_name, condition_property_path, condition_match_index)` - Remove an enter condition property binding
 
 **Transitions:**
 - `add_transition(asset_path, state_path, trigger, transition_type, target_path, priority)` - Add a transition (`"OnStateCompleted"`, `"GotoState"`, etc.)
@@ -1291,7 +1300,11 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 - `remove_transition_condition(asset_path, state_path, transition_index, condition_index)` - Remove a transition condition
 - `set_transition_condition_operand(asset_path, state_path, transition_index, condition_index, operand)` - Set operand
 - `get_transition_condition_property_names(asset_path, state_path, transition_index, condition_struct_name, condition_match_index)` - Discover properties
+- `get_transition_event_payload_property_names(asset_path, state_path, transition_index)` - Discover bindable properties from an `OnEvent` transition's payload struct
 - `set_transition_condition_property_value(asset_path, state_path, transition_index, condition_struct_name, property_path, value, condition_match_index)` - Set property
+- `bind_transition_condition_property_to_context(asset_path, state_path, transition_index, condition_struct_name, condition_property_path, context_name, context_property_path, condition_match_index)` - Bind a transition condition property to context data
+- `bind_transition_condition_property_to_event_payload(asset_path, state_path, transition_index, condition_struct_name, condition_property_path, payload_property_path, condition_match_index)` - Bind a transition condition property to an event payload property
+- `unbind_transition_condition_property(asset_path, state_path, transition_index, condition_struct_name, condition_property_path, condition_match_index)` - Remove a transition condition property binding
 
 **Compile & Save:**
 - `compile_state_tree(asset_path)` - Compile the asset; returns success flag, errors, and warnings
