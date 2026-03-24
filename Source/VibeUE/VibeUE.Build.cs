@@ -66,6 +66,9 @@ public class VibeUE : ModuleRules
 				"Projects",
 				"AssetRegistry",
 				"MessageLog",
+				"MovieScene",
+				"MovieSceneTracks",
+				"RenderCore",
 				"EditorStyle",
 				"AssetTools",
 				"PropertyEditor",         // For property reflection

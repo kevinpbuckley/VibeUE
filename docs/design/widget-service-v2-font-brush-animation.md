@@ -736,6 +736,21 @@ Total: **16 new functions**, bringing WidgetService from 24 to **40 actions**.
 
 ---
 
+## Completion Step
+
+When implementation is complete, update the UMG test prompts to cover the new WidgetService v2 surface area before considering the work finished.
+
+Required prompt follow-up:
+- Update `test_prompts/umg/manage_umg_widget.md` to exercise font and brush workflows with `set_font`, `get_font`, `set_brush`, and `get_brush`
+- Add prompt coverage for animation authoring with `create_animation`, `add_animation_track`, `add_keyframe`, `list_animations`, and `remove_animation`
+- Add prompt coverage for visual verification with `capture_preview`
+- Add prompt coverage for runtime verification with `start_pie`, `is_pie_running`, `spawn_widget_in_pie`, `get_live_property`, `remove_widget_from_pie`, and `stop_pie`
+- Verify prompt wording matches the final shipped API names and expected parameter formats exactly
+
+This prompt update is part of the definition of done for WidgetService v2.
+
+---
+
 ## Implementation Notes
 
 ### Font

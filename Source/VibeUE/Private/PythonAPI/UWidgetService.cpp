@@ -52,8 +52,35 @@
 #include "Components/ExpandableArea.h"
 #include "Components/MenuAnchor.h"
 #include "Components/NativeWidgetHost.h"
+#include "Components/PanelSlot.h"
 #include "Kismet2/BlueprintEditorUtils.h"
 #include "Kismet2/KismetEditorUtilities.h"
+#include "Animation/WidgetAnimation.h"
+#include "Animation/WidgetAnimationBinding.h"
+#include "Animation/MovieSceneMarginTrack.h"
+#include "Animation/MovieSceneMarginSection.h"
+#include "Blueprint/UserWidget.h"
+#include "Blueprint/WidgetBlueprintLibrary.h"
+#include "Channels/MovieSceneChannelTraits.h"
+#include "Editor.h"
+#include "Editor/EditorEngine.h"
+#include "Engine/Texture2D.h"
+#include "Engine/TextureRenderTarget2D.h"
+#include "Fonts/SlateFontInfo.h"
+#include "ImageUtils.h"
+#include "Materials/MaterialInterface.h"
+#include "Misc/FileHelper.h"
+#include "Misc/Paths.h"
+#include "MovieScene.h"
+#include "MovieSceneBinding.h"
+#include "PlayInEditorDataTypes.h"
+#include "Sections/MovieSceneColorSection.h"
+#include "Sections/MovieSceneFloatSection.h"
+#include "Slate/WidgetRenderer.h"
+#include "Styling/SlateBrush.h"
+#include "Tracks/MovieSceneColorTrack.h"
+#include "Tracks/MovieSceneFloatTrack.h"
+#include "Tracks/MovieScenePropertyTrack.h"
 #include "UObject/PropertyIterator.h"
 #include "UObject/UnrealType.h"
 #include "MVVMBlueprintView.h"
@@ -108,6 +135,794 @@ static const TArray<FString> GAvailableWidgetTypes = {
 	TEXT("MenuAnchor"),
 	TEXT("NativeWidgetHost")
 };
+
+namespace
+{
+	enum class EWidgetAnimationTrackType : uint8
+	{
+		Float,
+		Color,
+		Margin
+	};
+
+	struct FResolvedWidgetProperty
+	{
+		UObject* TargetObject = nullptr;
+		FProperty* Property = nullptr;
+		void* ValuePtr = nullptr;
+		FString ResolvedPath;
+	};
+
+	struct FWidgetAnimationPropertyTarget
+	{
+		UObject* AnimatedObject = nullptr;
+		EWidgetAnimationTrackType TrackType = EWidgetAnimationTrackType::Float;
+		FName PropertyName;
+		FString PropertyPath;
+		int32 MarginChannelIndex = INDEX_NONE;
+	};
+
+	TMap<FString, TWeakObjectPtr<UUserWidget>> GPIEWidgetInstances;
+
+	FProperty* FindPropertyCaseInsensitive(UStruct* StructType, const FString& PropertyName)
+	{
+		if (!StructType)
+		{
+			return nullptr;
+		}
+
+		if (FProperty* Property = StructType->FindPropertyByName(FName(*PropertyName)))
+		{
+			return Property;
+		}
+
+		for (TFieldIterator<FProperty> It(StructType); It; ++It)
+		{
+			if (It->GetName().Equals(PropertyName, ESearchCase::IgnoreCase))
+			{
+				return *It;
+			}
+		}
+
+		return nullptr;
+	}
+
+	bool ResolvePropertyPath(UStruct* StructType, void* ContainerPtr, const FString& PropertyPath, FProperty*& OutProperty, void*& OutValuePtr)
+	{
+		OutProperty = nullptr;
+		OutValuePtr = nullptr;
+
+		if (!StructType || !ContainerPtr || PropertyPath.IsEmpty())
+		{
+			return false;
+		}
+
+		TArray<FString> Segments;
+		PropertyPath.ParseIntoArray(Segments, TEXT("."), true);
+		if (Segments.Num() == 0)
+		{
+			return false;
+		}
+
+		UStruct* CurrentStruct = StructType;
+		void* CurrentContainer = ContainerPtr;
+
+		for (int32 Index = 0; Index < Segments.Num(); ++Index)
+		{
+			FProperty* Property = FindPropertyCaseInsensitive(CurrentStruct, Segments[Index]);
+			if (!Property)
+			{
+				return false;
+			}
+
+			void* NextValuePtr = Property->ContainerPtrToValuePtr<void>(CurrentContainer);
+			if (Index == Segments.Num() - 1)
+			{
+				OutProperty = Property;
+				OutValuePtr = NextValuePtr;
+				return true;
+			}
+
+			if (FStructProperty* StructProperty = CastField<FStructProperty>(Property))
+			{
+				CurrentStruct = StructProperty->Struct;
+				CurrentContainer = NextValuePtr;
+				continue;
+			}
+
+			if (FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(Property))
+			{
+				UObject* NextObject = ObjectProperty->GetObjectPropertyValue(NextValuePtr);
+				if (!NextObject)
+				{
+					return false;
+				}
+
+				CurrentStruct = NextObject->GetClass();
+				CurrentContainer = NextObject;
+				continue;
+			}
+
+			return false;
+		}
+
+		return false;
+	}
+
+	bool ResolveSpecialWidgetProperty(UWidget* Widget, const FString& PropertyName, UObject*& OutTargetObject, FString& OutResolvedPath)
+	{
+		if (!Widget)
+		{
+			return false;
+		}
+
+		if (PropertyName.Equals(TEXT("Position X"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Offsets.Left");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Position Y"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Offsets.Top");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Size X"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Offsets.Right");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Size Y"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Offsets.Bottom");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Anchor Min X"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Anchors.Minimum.X");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Anchor Min Y"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Anchors.Minimum.Y");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Anchor Max X"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Anchors.Maximum.X");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Anchor Max Y"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Anchors.Maximum.Y");
+			return true;
+		}
+
+		return false;
+	}
+
+	bool ResolveWidgetProperty(UWidget* Widget, const FString& PropertyName, FResolvedWidgetProperty& OutResolved)
+	{
+		OutResolved = {};
+		if (!Widget)
+		{
+			return false;
+		}
+
+		OutResolved.TargetObject = Widget;
+		OutResolved.ResolvedPath = PropertyName;
+		ResolveSpecialWidgetProperty(Widget, PropertyName, OutResolved.TargetObject, OutResolved.ResolvedPath);
+
+		if (!ResolvePropertyPath(OutResolved.TargetObject->GetClass(), OutResolved.TargetObject, OutResolved.ResolvedPath, OutResolved.Property, OutResolved.ValuePtr))
+		{
+			return false;
+		}
+
+		return true;
+	}
+
+	void MarkWidgetBlueprintModified(UWidgetBlueprint* WidgetBP, bool bStructural = false)
+	{
+		if (!WidgetBP)
+		{
+			return;
+		}
+
+		WidgetBP->Modify();
+		if (bStructural)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+		}
+		else
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+		}
+	}
+
+	UUserWidget* CreateWidgetInstanceForBlueprint(UWidgetBlueprint* WidgetBP)
+	{
+		if (!WidgetBP)
+		{
+			return nullptr;
+		}
+
+		if (!WidgetBP->GeneratedClass || WidgetBP->Status == BS_Dirty)
+		{
+			FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+		}
+
+		if (!WidgetBP->GeneratedClass || !WidgetBP->GeneratedClass->IsChildOf(UUserWidget::StaticClass()))
+		{
+			return nullptr;
+		}
+
+		UWorld* World = nullptr;
+		if (GEditor)
+		{
+			if (GEditor->PlayWorld)
+			{
+				World = GEditor->PlayWorld.Get();
+			}
+			else
+			{
+				World = GEditor->GetEditorWorldContext().World();
+			}
+		}
+
+		if (!World)
+		{
+			return nullptr;
+		}
+
+		UClass* WidgetClass = WidgetBP->GeneratedClass;
+		if (!WidgetClass || !WidgetClass->IsChildOf(UUserWidget::StaticClass()))
+		{
+			return nullptr;
+		}
+
+		const FName WidgetName = MakeUniqueObjectName(World, WidgetClass, FName(*FString::Printf(TEXT("%s_Instance"), *WidgetBP->GetName())));
+		return CreateWidget<UUserWidget>(World, WidgetClass, WidgetName);
+	}
+
+	UWidget* FindRuntimeWidgetByName(UUserWidget* WidgetInstance, const FString& ComponentName)
+	{
+		if (!WidgetInstance || !WidgetInstance->WidgetTree)
+		{
+			return nullptr;
+		}
+
+		if (ComponentName.IsEmpty())
+		{
+			return WidgetInstance->WidgetTree->RootWidget;
+		}
+
+		TArray<UWidget*> AllWidgets;
+		WidgetInstance->WidgetTree->GetAllWidgets(AllWidgets);
+		for (UWidget* Widget : AllWidgets)
+		{
+			if (Widget && Widget->GetName().Equals(ComponentName, ESearchCase::IgnoreCase))
+			{
+				return Widget;
+			}
+		}
+
+		return nullptr;
+	}
+
+	template<typename StructType>
+	bool ImportStructFromText(const FString& Text, StructType& OutValue)
+	{
+		const UScriptStruct* ScriptStruct = TBaseStructure<StructType>::Get();
+		return ScriptStruct && ScriptStruct->ImportText(*Text, &OutValue, nullptr, PPF_None, GLog, ScriptStruct->GetName()) != nullptr;
+	}
+
+	bool ParseLinearColor(const FString& Text, FLinearColor& OutColor)
+	{
+		return ImportStructFromText(Text, OutColor);
+	}
+
+	bool ParseVector2D(const FString& Text, FVector2D& OutVector)
+	{
+		return ImportStructFromText(Text, OutVector);
+	}
+
+	bool ParseMargin(const FString& Text, FMargin& OutMargin)
+	{
+		return ImportStructFromText(Text, OutMargin);
+	}
+
+	bool ParseCornerRadius(const FString& Text, FVector4& OutCornerRadius)
+	{
+		OutCornerRadius = FVector4::Zero();
+
+		FString Trimmed = Text;
+		Trimmed.TrimStartAndEndInline();
+		Trimmed.RemoveFromStart(TEXT("("));
+		Trimmed.RemoveFromEnd(TEXT(")"));
+
+		TArray<FString> Parts;
+		Trimmed.ParseIntoArray(Parts, TEXT(","), true);
+		for (const FString& Part : Parts)
+		{
+			FString Key;
+			FString Value;
+			if (!Part.Split(TEXT("="), &Key, &Value))
+			{
+				continue;
+			}
+
+			Key.TrimStartAndEndInline();
+			Value.TrimStartAndEndInline();
+
+			float ParsedValue = 0.0f;
+			if (!LexTryParseString(ParsedValue, *Value))
+			{
+				continue;
+			}
+
+			if (Key.Equals(TEXT("TopLeft"), ESearchCase::IgnoreCase))
+			{
+				OutCornerRadius.X = ParsedValue;
+			}
+			else if (Key.Equals(TEXT("TopRight"), ESearchCase::IgnoreCase))
+			{
+				OutCornerRadius.Y = ParsedValue;
+			}
+			else if (Key.Equals(TEXT("BottomRight"), ESearchCase::IgnoreCase))
+			{
+				OutCornerRadius.Z = ParsedValue;
+			}
+			else if (Key.Equals(TEXT("BottomLeft"), ESearchCase::IgnoreCase))
+			{
+				OutCornerRadius.W = ParsedValue;
+			}
+		}
+
+		return true;
+	}
+
+	ESlateBrushDrawType::Type StringToBrushDrawType(const FString& DrawAs)
+	{
+		if (DrawAs.Equals(TEXT("Box"), ESearchCase::IgnoreCase))
+		{
+			return ESlateBrushDrawType::Box;
+		}
+		if (DrawAs.Equals(TEXT("Border"), ESearchCase::IgnoreCase))
+		{
+			return ESlateBrushDrawType::Border;
+		}
+		if (DrawAs.Equals(TEXT("RoundedBox"), ESearchCase::IgnoreCase))
+		{
+			return ESlateBrushDrawType::RoundedBox;
+		}
+		if (DrawAs.Equals(TEXT("NoDrawType"), ESearchCase::IgnoreCase) || DrawAs.Equals(TEXT("None"), ESearchCase::IgnoreCase))
+		{
+			return ESlateBrushDrawType::NoDrawType;
+		}
+		return ESlateBrushDrawType::Image;
+	}
+
+	FString BrushDrawTypeToString(ESlateBrushDrawType::Type DrawType)
+	{
+		switch (DrawType)
+		{
+		case ESlateBrushDrawType::Box:
+			return TEXT("Box");
+		case ESlateBrushDrawType::Border:
+			return TEXT("Border");
+		case ESlateBrushDrawType::RoundedBox:
+			return TEXT("RoundedBox");
+		case ESlateBrushDrawType::NoDrawType:
+			return TEXT("NoDrawType");
+		default:
+			return TEXT("Image");
+		}
+	}
+
+	EMovieSceneKeyInterpolation StringToKeyInterpolation(const FString& Interpolation)
+	{
+		if (Interpolation.Equals(TEXT("Constant"), ESearchCase::IgnoreCase))
+		{
+			return EMovieSceneKeyInterpolation::Constant;
+		}
+		if (Interpolation.Equals(TEXT("Cubic"), ESearchCase::IgnoreCase))
+		{
+			return EMovieSceneKeyInterpolation::Auto;
+		}
+		return EMovieSceneKeyInterpolation::Linear;
+	}
+
+	bool TryGetPropertyText(UObject* Object, const FString& PropertyPath, FString& OutText)
+	{
+		if (!Object)
+		{
+			return false;
+		}
+
+		FProperty* Property = nullptr;
+		void* ValuePtr = nullptr;
+		if (!ResolvePropertyPath(Object->GetClass(), Object, PropertyPath, Property, ValuePtr))
+		{
+			return false;
+		}
+
+		Property->ExportTextItem_Direct(OutText, ValuePtr, nullptr, Object, PPF_None);
+		return true;
+	}
+
+	bool TrySetPropertyText(UObject* Object, const FString& PropertyPath, const FString& PropertyValue)
+	{
+		if (!Object)
+		{
+			return false;
+		}
+
+		FProperty* Property = nullptr;
+		void* ValuePtr = nullptr;
+		if (!ResolvePropertyPath(Object->GetClass(), Object, PropertyPath, Property, ValuePtr))
+		{
+			return false;
+		}
+
+		return Property->ImportText_Direct(*PropertyValue, ValuePtr, Object, PPF_None) != nullptr;
+	}
+
+	FString GetLastPathSegment(const FString& PropertyPath)
+	{
+		FString Left;
+		FString Right;
+		if (PropertyPath.Split(TEXT("."), &Left, &Right, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+		{
+			return Right;
+		}
+		return PropertyPath;
+	}
+
+	bool IsSlateFontProperty(const FProperty* Property)
+	{
+		const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+		return StructProperty && StructProperty->Struct == TBaseStructure<FSlateFontInfo>::Get();
+	}
+
+	bool IsSlateBrushProperty(const FProperty* Property)
+	{
+		const FStructProperty* StructProperty = CastField<FStructProperty>(Property);
+		return StructProperty && StructProperty->Struct == TBaseStructure<FSlateBrush>::Get();
+	}
+
+	bool ResolveFontProperty(UWidget* Widget, const FString& RequestedPropertyName, FResolvedWidgetProperty& OutResolved)
+	{
+		TArray<FString> CandidatePaths;
+		if (!RequestedPropertyName.IsEmpty() && !RequestedPropertyName.Equals(TEXT("Font"), ESearchCase::IgnoreCase))
+		{
+			CandidatePaths.Add(RequestedPropertyName);
+		}
+		else
+		{
+			CandidatePaths = {
+				TEXT("Font"),
+				TEXT("WidgetStyle.Font"),
+				TEXT("WidgetStyle.TextStyle.Font"),
+				TEXT("TextStyle.Font")
+			};
+		}
+
+		for (const FString& CandidatePath : CandidatePaths)
+		{
+			if (ResolveWidgetProperty(Widget, CandidatePath, OutResolved) && IsSlateFontProperty(OutResolved.Property))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	bool ResolveBrushProperty(UWidget* Widget, const FString& SlotName, FResolvedWidgetProperty& OutResolved)
+	{
+		TArray<FString> CandidatePaths;
+
+		if (Cast<UImage>(Widget))
+		{
+			CandidatePaths = { TEXT("Brush") };
+		}
+		else if (Cast<UButton>(Widget))
+		{
+			if (SlotName.Equals(TEXT("Normal"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.Normal") };
+			else if (SlotName.Equals(TEXT("Hovered"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.Hovered") };
+			else if (SlotName.Equals(TEXT("Pressed"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.Pressed") };
+			else if (SlotName.Equals(TEXT("Disabled"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.Disabled") };
+		}
+		else if (Cast<UBorder>(Widget))
+		{
+			CandidatePaths = { TEXT("Background") };
+		}
+		else if (Cast<UProgressBar>(Widget))
+		{
+			CandidatePaths = { SlotName };
+		}
+		else if (Cast<UCheckBox>(Widget))
+		{
+			CandidatePaths = { FString::Printf(TEXT("WidgetStyle.%s"), *SlotName) };
+		}
+		else if (Cast<USlider>(Widget))
+		{
+			if (SlotName.Equals(TEXT("BarImage"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.NormalBarImage") };
+			else if (SlotName.Equals(TEXT("ThumbImage"), ESearchCase::IgnoreCase)) CandidatePaths = { TEXT("WidgetStyle.NormalThumbImage") };
+			else CandidatePaths = { FString::Printf(TEXT("WidgetStyle.%s"), *SlotName) };
+		}
+
+		CandidatePaths.AddUnique(SlotName);
+		CandidatePaths.AddUnique(FString::Printf(TEXT("WidgetStyle.%s"), *SlotName));
+
+		for (const FString& CandidatePath : CandidatePaths)
+		{
+			if (ResolveWidgetProperty(Widget, CandidatePath, OutResolved) && IsSlateBrushProperty(OutResolved.Property))
+			{
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	UWidgetAnimation* FindAnimationByName(UWidgetBlueprint* WidgetBP, const FString& AnimationName)
+	{
+		if (!WidgetBP)
+		{
+			return nullptr;
+		}
+
+		for (UWidgetAnimation* Animation : WidgetBP->Animations)
+		{
+			if (!Animation)
+			{
+				continue;
+			}
+
+			if (Animation->GetName().Equals(AnimationName, ESearchCase::IgnoreCase))
+			{
+				return Animation;
+			}
+
+#if WITH_EDITOR
+			if (Animation->GetDisplayLabel().Equals(AnimationName, ESearchCase::IgnoreCase))
+			{
+				return Animation;
+			}
+#endif
+		}
+
+		return nullptr;
+	}
+
+	int32 GetAnimationTrackCount(UWidgetAnimation* Animation)
+	{
+		if (!Animation || !Animation->GetMovieScene())
+		{
+			return 0;
+		}
+
+		int32 TrackCount = 0;
+		const UMovieScene* MovieScene = Animation->GetMovieScene();
+		for (const FMovieSceneBinding& Binding : MovieScene->GetBindings())
+		{
+			TrackCount += Binding.GetTracks().Num();
+		}
+
+		return TrackCount;
+	}
+
+	bool ResolveAnimationPropertyTarget(UWidget* DesignWidget, UUserWidget* PreviewWidget, const FString& PropertyName, FWidgetAnimationPropertyTarget& OutTarget)
+	{
+		OutTarget = {};
+		if (!DesignWidget || !PreviewWidget)
+		{
+			return false;
+		}
+
+		UWidget* RuntimeWidget = FindRuntimeWidgetByName(PreviewWidget, DesignWidget->GetName());
+		if (!RuntimeWidget)
+		{
+			return false;
+		}
+
+		if (PropertyName.Equals(TEXT("Position X"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("Position Y"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("Size X"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("Size Y"), ESearchCase::IgnoreCase))
+		{
+			UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(RuntimeWidget->Slot);
+			if (!CanvasSlot)
+			{
+				return false;
+			}
+
+			OutTarget.AnimatedObject = CanvasSlot;
+			OutTarget.TrackType = EWidgetAnimationTrackType::Margin;
+			OutTarget.PropertyName = TEXT("Offsets");
+			OutTarget.PropertyPath = TEXT("LayoutData.Offsets");
+
+			if (PropertyName.Equals(TEXT("Position X"), ESearchCase::IgnoreCase)) OutTarget.MarginChannelIndex = 0;
+			else if (PropertyName.Equals(TEXT("Position Y"), ESearchCase::IgnoreCase)) OutTarget.MarginChannelIndex = 1;
+			else if (PropertyName.Equals(TEXT("Size X"), ESearchCase::IgnoreCase)) OutTarget.MarginChannelIndex = 2;
+			else if (PropertyName.Equals(TEXT("Size Y"), ESearchCase::IgnoreCase)) OutTarget.MarginChannelIndex = 3;
+
+			return true;
+		}
+
+		FResolvedWidgetProperty Resolved;
+		if (!ResolveWidgetProperty(RuntimeWidget, PropertyName, Resolved))
+		{
+			return false;
+		}
+
+		OutTarget.AnimatedObject = Resolved.TargetObject;
+		OutTarget.PropertyName = Resolved.Property->GetFName();
+		OutTarget.PropertyPath = Resolved.ResolvedPath;
+
+		if (FStructProperty* StructProperty = CastField<FStructProperty>(Resolved.Property))
+		{
+			if (StructProperty->Struct == TBaseStructure<FLinearColor>::Get())
+			{
+				OutTarget.TrackType = EWidgetAnimationTrackType::Color;
+				return true;
+			}
+
+			if (StructProperty->Struct && StructProperty->Struct->GetFName() == TEXT("SlateColor"))
+			{
+				OutTarget.TrackType = EWidgetAnimationTrackType::Color;
+				OutTarget.PropertyName = TEXT("SpecifiedColor");
+				OutTarget.PropertyPath = Resolved.ResolvedPath + TEXT(".SpecifiedColor");
+				return true;
+			}
+		}
+
+		if (CastField<FFloatProperty>(Resolved.Property) || CastField<FDoubleProperty>(Resolved.Property))
+		{
+			OutTarget.TrackType = EWidgetAnimationTrackType::Float;
+			return true;
+		}
+
+		return false;
+	}
+
+	FGuid EnsureAnimationBinding(UWidgetAnimation* Animation, UUserWidget* PreviewWidget, UObject* AnimatedObject)
+	{
+		if (!Animation || !Animation->GetMovieScene() || !PreviewWidget || !AnimatedObject)
+		{
+			return FGuid();
+		}
+
+		const UPanelSlot* SlotObject = Cast<UPanelSlot>(AnimatedObject);
+		for (const FWidgetAnimationBinding& Binding : Animation->AnimationBindings)
+		{
+			if (SlotObject)
+			{
+				if (Binding.WidgetName == SlotObject->Content->GetFName() && Binding.SlotWidgetName == SlotObject->GetFName())
+				{
+					return Binding.AnimationGuid;
+				}
+			}
+			else if (Binding.WidgetName == AnimatedObject->GetFName() && Binding.SlotWidgetName.IsNone())
+			{
+				return Binding.AnimationGuid;
+			}
+		}
+
+		if (!Animation->CanPossessObject(*AnimatedObject, PreviewWidget))
+		{
+			return FGuid();
+		}
+
+		const FGuid BindingGuid = Animation->GetMovieScene()->AddPossessable(AnimatedObject->GetName(), AnimatedObject->GetClass());
+		Animation->BindPossessableObject(BindingGuid, *AnimatedObject, PreviewWidget);
+		return BindingGuid;
+	}
+
+	template<typename TrackType>
+	TrackType* FindOrAddPropertyTrack(UMovieScene* MovieScene, const FGuid& BindingGuid, const FName& PropertyName, const FString& PropertyPath)
+	{
+		if (!MovieScene)
+		{
+			return nullptr;
+		}
+
+		for (UMovieSceneTrack* ExistingTrack : MovieScene->FindTracks(TrackType::StaticClass(), BindingGuid))
+		{
+			UMovieScenePropertyTrack* ExistingPropertyTrack = Cast<UMovieScenePropertyTrack>(ExistingTrack);
+			if (ExistingPropertyTrack && ExistingPropertyTrack->GetPropertyName() == PropertyName && ExistingPropertyTrack->GetPropertyPath().ToString() == PropertyPath)
+			{
+				return Cast<TrackType>(ExistingTrack);
+			}
+		}
+
+		TrackType* NewTrack = MovieScene->AddTrack<TrackType>(BindingGuid);
+		if (UMovieScenePropertyTrack* NewPropertyTrack = Cast<UMovieScenePropertyTrack>(NewTrack))
+		{
+			NewPropertyTrack->SetPropertyNameAndPath(PropertyName, PropertyPath);
+		}
+		return NewTrack;
+	}
+
+	template<typename SectionType>
+	SectionType* FindOrAddSection(UMovieScenePropertyTrack* Track, const TRange<FFrameNumber>& DefaultRange)
+	{
+		if (!Track)
+		{
+			return nullptr;
+		}
+
+		for (UMovieSceneSection* ExistingSection : Track->GetAllSections())
+		{
+			if (SectionType* TypedSection = Cast<SectionType>(ExistingSection))
+			{
+				return TypedSection;
+			}
+		}
+
+		SectionType* NewSection = Cast<SectionType>(Track->CreateNewSection());
+		if (!NewSection)
+		{
+			return nullptr;
+		}
+
+		NewSection->SetRange(DefaultRange);
+		Track->AddSection(*NewSection);
+		return NewSection;
+	}
+
+	void EnsurePlaybackRangeIncludesFrame(UMovieScene* MovieScene, FFrameNumber Frame)
+	{
+		if (!MovieScene)
+		{
+			return;
+		}
+
+		TRange<FFrameNumber> PlaybackRange = MovieScene->GetPlaybackRange();
+		FFrameNumber Lower = PlaybackRange.HasLowerBound() ? PlaybackRange.GetLowerBoundValue() : FFrameNumber(0);
+		FFrameNumber Upper = PlaybackRange.HasUpperBound() ? PlaybackRange.GetUpperBoundValue() : FFrameNumber(1);
+
+		if (Frame < Lower)
+		{
+			Lower = Frame;
+		}
+		if (Frame >= Upper)
+		{
+			Upper = Frame + 1;
+		}
+
+		MovieScene->SetPlaybackRange(TRange<FFrameNumber>(Lower, Upper));
+	}
+
+	bool ExportFloatValue(void* ValuePtr, FProperty* Property, UObject* OwnerObject, float& OutValue)
+	{
+		FString ValueText;
+		Property->ExportTextItem_Direct(ValueText, ValuePtr, nullptr, OwnerObject, PPF_None);
+		return LexTryParseString(OutValue, *ValueText);
+	}
+
+	bool ExportLinearColorValue(void* ValuePtr, FProperty* Property, UObject* OwnerObject, FLinearColor& OutValue)
+	{
+		FString ValueText;
+		Property->ExportTextItem_Direct(ValueText, ValuePtr, nullptr, OwnerObject, PPF_None);
+		return ParseLinearColor(ValueText, OutValue);
+	}
+}
 
 // =================================================================
 // Helper Methods
@@ -746,31 +1561,15 @@ FString UWidgetService::GetProperty(
 		return FString();
 	}
 
-	// Find the property
-	FProperty* Property = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
-	if (!Property)
-	{
-		// Try case-insensitive search
-		for (TFieldIterator<FProperty> It(Widget->GetClass()); It; ++It)
-		{
-			if (It->GetName().Equals(PropertyName, ESearchCase::IgnoreCase))
-			{
-				Property = *It;
-				break;
-			}
-		}
-	}
-
-	if (!Property)
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::GetProperty: Property '%s' not found on widget '%s'"), *PropertyName, *ComponentName);
 		return FString();
 	}
 
-	// Get the value as string
 	FString ValueStr;
-	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Widget);
-	Property->ExportTextItem_Direct(ValueStr, ValuePtr, nullptr, Widget, PPF_None);
+	Resolved.Property->ExportTextItem_Direct(ValueStr, Resolved.ValuePtr, nullptr, Resolved.TargetObject, PPF_None);
 
 	return ValueStr;
 }
@@ -793,46 +1592,21 @@ bool UWidgetService::SetProperty(
 		return false;
 	}
 
-	// Find the property
-	FProperty* Property = Widget->GetClass()->FindPropertyByName(FName(*PropertyName));
-	if (!Property)
-	{
-		// Try case-insensitive search
-		for (TFieldIterator<FProperty> It(Widget->GetClass()); It; ++It)
-		{
-			if (It->GetName().Equals(PropertyName, ESearchCase::IgnoreCase))
-			{
-				Property = *It;
-				break;
-			}
-		}
-	}
-
-	if (!Property)
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Property '%s' not found on widget '%s'"), *PropertyName, *ComponentName);
 		return false;
 	}
 
-	// Check if property is editable
-	if (!Property->HasAnyPropertyFlags(CPF_Edit))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Property '%s' is not editable"), *PropertyName);
-		return false;
-	}
-
-	// Set the value from string
-	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Widget);
-	if (!Property->ImportText_Direct(*PropertyValue, ValuePtr, Widget, PPF_None))
+	if (Resolved.Property->ImportText_Direct(*PropertyValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Failed to parse value '%s' for property '%s'"), *PropertyValue, *PropertyName);
 		return false;
 	}
 
-	// Mark as modified
-	Widget->Modify();
-	WidgetBP->Modify();
-	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+	Resolved.TargetObject->Modify();
+	MarkWidgetBlueprintModified(WidgetBP);
 
 	return true;
 }
@@ -891,6 +1665,737 @@ TArray<FWidgetPropertyInfo> UWidgetService::ListProperties(
 	}
 
 	return Properties;
+}
+
+bool UWidgetService::SetFont(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	const FWidgetFontInfo& FontInfo,
+	const FString& PropertyName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return false;
+	}
+
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveFontProperty(Widget, PropertyName, Resolved))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetFont: Font property '%s' not found on widget '%s'"), *PropertyName, *ComponentName);
+		return false;
+	}
+
+	FSlateFontInfo& SlateFont = *reinterpret_cast<FSlateFontInfo*>(Resolved.ValuePtr);
+	if (!FontInfo.FontFamily.IsEmpty())
+	{
+		UObject* FontAsset = UEditorAssetLibrary::LoadAsset(FontInfo.FontFamily);
+		if (!FontAsset)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetFont: Failed to load font asset '%s'"), *FontInfo.FontFamily);
+			return false;
+		}
+
+		SlateFont.FontObject = FontAsset;
+	}
+
+	SlateFont.TypefaceFontName = FontInfo.Typeface.IsEmpty() ? FName(TEXT("Regular")) : FName(*FontInfo.Typeface);
+	SlateFont.Size = FontInfo.Size;
+	SlateFont.LetterSpacing = FontInfo.LetterSpacing;
+
+	FLinearColor OutlineColor = FLinearColor::Black;
+	if (ParseLinearColor(FontInfo.OutlineColor, OutlineColor))
+		{
+		SlateFont.OutlineSettings.OutlineColor = OutlineColor;
+		}
+	SlateFont.OutlineSettings.OutlineSize = FontInfo.OutlineSize;
+
+	Resolved.TargetObject->Modify();
+	Widget->Modify();
+
+	TrySetPropertyText(Widget, TEXT("ColorAndOpacity"), FontInfo.Color);
+	TrySetPropertyText(Widget, TEXT("ShadowOffset"), FontInfo.ShadowOffset);
+	TrySetPropertyText(Widget, TEXT("ShadowColorAndOpacity"), FontInfo.ShadowColor);
+
+	MarkWidgetBlueprintModified(WidgetBP);
+	return true;
+}
+
+FWidgetFontInfo UWidgetService::GetFont(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	const FString& PropertyName)
+{
+	FWidgetFontInfo Result;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return Result;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return Result;
+	}
+
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveFontProperty(Widget, PropertyName, Resolved))
+	{
+		return Result;
+	}
+
+	const FSlateFontInfo& SlateFont = *reinterpret_cast<const FSlateFontInfo*>(Resolved.ValuePtr);
+	Result.FontFamily = SlateFont.FontObject ? SlateFont.FontObject->GetPathName() : FString();
+	Result.Typeface = SlateFont.TypefaceFontName.IsNone() ? TEXT("Regular") : SlateFont.TypefaceFontName.ToString();
+	Result.Size = SlateFont.Size;
+	Result.LetterSpacing = SlateFont.LetterSpacing;
+	Result.OutlineSize = SlateFont.OutlineSettings.OutlineSize;
+	Result.OutlineColor = SlateFont.OutlineSettings.OutlineColor.ToString();
+
+	TryGetPropertyText(Widget, TEXT("ColorAndOpacity"), Result.Color);
+	TryGetPropertyText(Widget, TEXT("ShadowOffset"), Result.ShadowOffset);
+	TryGetPropertyText(Widget, TEXT("ShadowColorAndOpacity"), Result.ShadowColor);
+
+	return Result;
+}
+
+bool UWidgetService::SetBrush(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	const FString& SlotName,
+	const FWidgetBrushInfo& BrushInfo)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return false;
+	}
+
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveBrushProperty(Widget, SlotName, Resolved))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetBrush: Brush slot '%s' not found on widget '%s'"), *SlotName, *ComponentName);
+		return false;
+	}
+
+	FSlateBrush& SlateBrush = *reinterpret_cast<FSlateBrush*>(Resolved.ValuePtr);
+	SlateBrush.SetResourceObject(nullptr);
+	SlateBrush.ImageType = BrushInfo.ResourcePath.IsEmpty() ? ESlateBrushImageType::NoImage : ESlateBrushImageType::FullColor;
+	SlateBrush.DrawAs = StringToBrushDrawType(BrushInfo.DrawAs);
+
+	FLinearColor TintColor = FLinearColor::White;
+	if (ParseLinearColor(BrushInfo.TintColor, TintColor))
+	{
+		SlateBrush.TintColor = FSlateColor(TintColor);
+	}
+
+	FVector2D ImageSize = FVector2D::ZeroVector;
+	if (ParseVector2D(BrushInfo.ImageSize, ImageSize))
+	{
+		SlateBrush.SetImageSize(ImageSize);
+	}
+
+	FMargin Margin;
+	if (ParseMargin(BrushInfo.Margin, Margin))
+	{
+		SlateBrush.Margin = Margin;
+	}
+
+	if (SlateBrush.DrawAs == ESlateBrushDrawType::RoundedBox)
+	{
+		FVector4 CornerRadius;
+		if (ParseCornerRadius(BrushInfo.CornerRadius, CornerRadius))
+		{
+			SlateBrush.OutlineSettings.CornerRadii = CornerRadius;
+			SlateBrush.OutlineSettings.RoundingType = ESlateBrushRoundingType::FixedRadius;
+		}
+	}
+
+	if (!BrushInfo.ResourcePath.IsEmpty())
+	{
+		UObject* ResourceObject = UEditorAssetLibrary::LoadAsset(BrushInfo.ResourcePath);
+		if (!ResourceObject)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetBrush: Failed to load resource '%s'"), *BrushInfo.ResourcePath);
+			return false;
+		}
+
+		SlateBrush.SetResourceObject(ResourceObject);
+	}
+
+	Resolved.TargetObject->Modify();
+	MarkWidgetBlueprintModified(WidgetBP);
+	return true;
+}
+
+FWidgetBrushInfo UWidgetService::GetBrush(
+	const FString& WidgetPath,
+	const FString& ComponentName,
+	const FString& SlotName)
+{
+	FWidgetBrushInfo Result;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return Result;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, ComponentName);
+	if (!Widget)
+	{
+		return Result;
+	}
+
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveBrushProperty(Widget, SlotName, Resolved))
+	{
+		return Result;
+	}
+
+	const FSlateBrush& SlateBrush = *reinterpret_cast<const FSlateBrush*>(Resolved.ValuePtr);
+	Result.ResourcePath = SlateBrush.GetResourceObject() ? SlateBrush.GetResourceObject()->GetPathName() : FString();
+	Result.TintColor = SlateBrush.TintColor.GetSpecifiedColor().ToString();
+	Result.DrawAs = BrushDrawTypeToString(SlateBrush.DrawAs);
+	const FVector2D ImageSize = SlateBrush.GetImageSize();
+	Result.ImageSize = FString::Printf(TEXT("(X=%0.6f,Y=%0.6f)"), ImageSize.X, ImageSize.Y);
+	Result.Margin = FString::Printf(TEXT("(Left=%0.6f,Top=%0.6f,Right=%0.6f,Bottom=%0.6f)"), SlateBrush.Margin.Left, SlateBrush.Margin.Top, SlateBrush.Margin.Right, SlateBrush.Margin.Bottom);
+	Result.CornerRadius = FString::Printf(TEXT("(TopLeft=%0.6f,TopRight=%0.6f,BottomRight=%0.6f,BottomLeft=%0.6f)"), SlateBrush.OutlineSettings.CornerRadii.X, SlateBrush.OutlineSettings.CornerRadii.Y, SlateBrush.OutlineSettings.CornerRadii.Z, SlateBrush.OutlineSettings.CornerRadii.W);
+
+	return Result;
+}
+
+TArray<FWidgetAnimInfo> UWidgetService::ListAnimations(const FString& WidgetPath)
+{
+	TArray<FWidgetAnimInfo> Results;
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return Results;
+	}
+
+	for (UWidgetAnimation* Animation : WidgetBP->Animations)
+	{
+		if (!Animation)
+		{
+			continue;
+		}
+
+		FWidgetAnimInfo Info;
+#if WITH_EDITOR
+		Info.AnimationName = Animation->GetDisplayLabel().IsEmpty() ? Animation->GetName() : Animation->GetDisplayLabel();
+#else
+		Info.AnimationName = Animation->GetName();
+#endif
+		Info.Duration = Animation->GetEndTime() - Animation->GetStartTime();
+		Info.TrackCount = GetAnimationTrackCount(Animation);
+		Results.Add(Info);
+	}
+
+	return Results;
+}
+
+bool UWidgetService::CreateAnimation(
+	const FString& WidgetPath,
+	const FString& AnimationName,
+	float Duration)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	if (AnimationName.IsEmpty() || FindAnimationByName(WidgetBP, AnimationName) != nullptr)
+	{
+		return false;
+	}
+
+	WidgetBP->Modify();
+
+	UWidgetAnimation* NewAnimation = NewObject<UWidgetAnimation>(WidgetBP, FName(*AnimationName), RF_Transactional);
+	if (!NewAnimation)
+	{
+		return false;
+	}
+
+#if WITH_EDITOR
+	NewAnimation->SetDisplayLabel(AnimationName);
+#endif
+	NewAnimation->Rename(*AnimationName, WidgetBP);
+	NewAnimation->MovieScene = NewObject<UMovieScene>(NewAnimation, FName(*AnimationName), RF_Transactional);
+	if (!NewAnimation->MovieScene)
+	{
+		return false;
+	}
+
+	NewAnimation->MovieScene->SetDisplayRate(FFrameRate(20, 1));
+	const FFrameTime OutFrame = FMath::Max(Duration, 0.0f) * NewAnimation->MovieScene->GetTickResolution();
+	NewAnimation->MovieScene->SetPlaybackRange(TRange<FFrameNumber>(0, OutFrame.FrameNumber + 1));
+	NewAnimation->MovieScene->GetEditorData().WorkStart = 0.0f;
+	NewAnimation->MovieScene->GetEditorData().WorkEnd = FMath::Max(Duration, 0.0f);
+
+	WidgetBP->Animations.Add(NewAnimation);
+	MarkWidgetBlueprintModified(WidgetBP, true);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	return true;
+}
+
+bool UWidgetService::RemoveAnimation(
+	const FString& WidgetPath,
+	const FString& AnimationName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	UWidgetAnimation* Animation = FindAnimationByName(WidgetBP, AnimationName);
+	if (!Animation)
+	{
+		return false;
+	}
+
+	WidgetBP->Modify();
+	WidgetBP->Animations.Remove(Animation);
+	Animation->Rename(nullptr, GetTransientPackage(), REN_DontCreateRedirectors);
+	MarkWidgetBlueprintModified(WidgetBP, true);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	return true;
+}
+
+bool UWidgetService::AddAnimationTrack(
+	const FString& WidgetPath,
+	const FString& AnimationName,
+	const FString& ComponentName,
+	const FString& PropertyName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	UWidget* DesignWidget = FindWidgetByName(WidgetBP, ComponentName);
+	UWidgetAnimation* Animation = FindAnimationByName(WidgetBP, AnimationName);
+	UUserWidget* PreviewWidget = CreateWidgetInstanceForBlueprint(WidgetBP);
+	if (!DesignWidget || !Animation || !PreviewWidget || !Animation->GetMovieScene())
+	{
+		return false;
+	}
+
+	FWidgetAnimationPropertyTarget Target;
+	if (!ResolveAnimationPropertyTarget(DesignWidget, PreviewWidget, PropertyName, Target))
+	{
+		return false;
+	}
+
+	const FGuid BindingGuid = EnsureAnimationBinding(Animation, PreviewWidget, Target.AnimatedObject);
+	if (!BindingGuid.IsValid())
+	{
+		return false;
+	}
+
+	if (Target.TrackType == EWidgetAnimationTrackType::Float)
+	{
+		UMovieSceneFloatTrack* Track = FindOrAddPropertyTrack<UMovieSceneFloatTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneFloatSection* Section = FindOrAddSection<UMovieSceneFloatSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		if (!Track || !Section)
+		{
+			return false;
+		}
+
+		FProperty* Property = nullptr;
+		void* ValuePtr = nullptr;
+		float CurrentValue = 0.0f;
+		if (ResolvePropertyPath(Target.AnimatedObject->GetClass(), Target.AnimatedObject, Target.PropertyPath, Property, ValuePtr) && ExportFloatValue(ValuePtr, Property, Target.AnimatedObject, CurrentValue))
+		{
+			Section->GetChannel().SetDefault(CurrentValue);
+		}
+	}
+	else if (Target.TrackType == EWidgetAnimationTrackType::Color)
+	{
+		UMovieSceneColorTrack* Track = FindOrAddPropertyTrack<UMovieSceneColorTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneColorSection* Section = FindOrAddSection<UMovieSceneColorSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		if (!Track || !Section)
+		{
+			return false;
+		}
+
+		FProperty* Property = nullptr;
+		void* ValuePtr = nullptr;
+		FLinearColor CurrentColor = FLinearColor::White;
+		if (ResolvePropertyPath(Target.AnimatedObject->GetClass(), Target.AnimatedObject, Target.PropertyPath, Property, ValuePtr) && ExportLinearColorValue(ValuePtr, Property, Target.AnimatedObject, CurrentColor))
+		{
+			Section->GetRedChannel().SetDefault(CurrentColor.R);
+			Section->GetGreenChannel().SetDefault(CurrentColor.G);
+			Section->GetBlueChannel().SetDefault(CurrentColor.B);
+			Section->GetAlphaChannel().SetDefault(CurrentColor.A);
+		}
+	}
+	else
+	{
+		UMovieSceneMarginTrack* Track = FindOrAddPropertyTrack<UMovieSceneMarginTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneMarginSection* Section = FindOrAddSection<UMovieSceneMarginSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		UCanvasPanelSlot* CanvasSlot = Cast<UCanvasPanelSlot>(Target.AnimatedObject);
+		if (!Track || !Section || !CanvasSlot)
+		{
+			return false;
+		}
+
+		const FMargin Offsets = CanvasSlot->GetLayout().Offsets;
+		Section->LeftCurve.SetDefault(Offsets.Left);
+		Section->TopCurve.SetDefault(Offsets.Top);
+		Section->RightCurve.SetDefault(Offsets.Right);
+		Section->BottomCurve.SetDefault(Offsets.Bottom);
+	}
+
+	MarkWidgetBlueprintModified(WidgetBP, true);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	return true;
+}
+
+bool UWidgetService::AddKeyframe(
+	const FString& WidgetPath,
+	const FString& AnimationName,
+	const FString& ComponentName,
+	const FString& PropertyName,
+	const FWidgetAnimKeyframe& Keyframe)
+{
+	if (!AddAnimationTrack(WidgetPath, AnimationName, ComponentName, PropertyName))
+	{
+		return false;
+	}
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		return false;
+	}
+
+	UWidget* DesignWidget = FindWidgetByName(WidgetBP, ComponentName);
+	UWidgetAnimation* Animation = FindAnimationByName(WidgetBP, AnimationName);
+	UUserWidget* PreviewWidget = CreateWidgetInstanceForBlueprint(WidgetBP);
+	if (!DesignWidget || !Animation || !PreviewWidget || !Animation->GetMovieScene())
+	{
+		return false;
+	}
+
+	FWidgetAnimationPropertyTarget Target;
+	if (!ResolveAnimationPropertyTarget(DesignWidget, PreviewWidget, PropertyName, Target))
+	{
+		return false;
+	}
+
+	const FGuid BindingGuid = EnsureAnimationBinding(Animation, PreviewWidget, Target.AnimatedObject);
+	if (!BindingGuid.IsValid())
+	{
+		return false;
+	}
+
+	const FFrameNumber FrameNumber = (Keyframe.Time * Animation->GetMovieScene()->GetTickResolution()).FrameNumber;
+	EnsurePlaybackRangeIncludesFrame(Animation->GetMovieScene(), FrameNumber);
+	const EMovieSceneKeyInterpolation Interpolation = StringToKeyInterpolation(Keyframe.Interpolation);
+
+	if (Target.TrackType == EWidgetAnimationTrackType::Float)
+	{
+		float ParsedValue = 0.0f;
+		if (!LexTryParseString(ParsedValue, *Keyframe.Value))
+		{
+			return false;
+		}
+
+		UMovieSceneFloatTrack* Track = FindOrAddPropertyTrack<UMovieSceneFloatTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneFloatSection* Section = FindOrAddSection<UMovieSceneFloatSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		if (!Track || !Section)
+		{
+			return false;
+		}
+
+		AddKeyToChannel(&Section->GetChannel(), FrameNumber, ParsedValue, Interpolation);
+	}
+	else if (Target.TrackType == EWidgetAnimationTrackType::Color)
+	{
+		FLinearColor ParsedValue = FLinearColor::White;
+		if (!ParseLinearColor(Keyframe.Value, ParsedValue))
+		{
+			return false;
+		}
+
+		UMovieSceneColorTrack* Track = FindOrAddPropertyTrack<UMovieSceneColorTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneColorSection* Section = FindOrAddSection<UMovieSceneColorSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		if (!Track || !Section)
+		{
+			return false;
+		}
+
+		AddKeyToChannel(&Section->GetRedChannel(), FrameNumber, ParsedValue.R, Interpolation);
+		AddKeyToChannel(&Section->GetGreenChannel(), FrameNumber, ParsedValue.G, Interpolation);
+		AddKeyToChannel(&Section->GetBlueChannel(), FrameNumber, ParsedValue.B, Interpolation);
+		AddKeyToChannel(&Section->GetAlphaChannel(), FrameNumber, ParsedValue.A, Interpolation);
+	}
+	else
+	{
+		float ParsedValue = 0.0f;
+		if (!LexTryParseString(ParsedValue, *Keyframe.Value))
+		{
+			return false;
+		}
+
+		UMovieSceneMarginTrack* Track = FindOrAddPropertyTrack<UMovieSceneMarginTrack>(Animation->GetMovieScene(), BindingGuid, Target.PropertyName, Target.PropertyPath);
+		UMovieSceneMarginSection* Section = FindOrAddSection<UMovieSceneMarginSection>(Track, Animation->GetMovieScene()->GetPlaybackRange());
+		if (!Track || !Section)
+		{
+			return false;
+		}
+
+		switch (Target.MarginChannelIndex)
+		{
+		case 0:
+			AddKeyToChannel(&Section->LeftCurve, FrameNumber, ParsedValue, Interpolation);
+			break;
+		case 1:
+			AddKeyToChannel(&Section->TopCurve, FrameNumber, ParsedValue, Interpolation);
+			break;
+		case 2:
+			AddKeyToChannel(&Section->RightCurve, FrameNumber, ParsedValue, Interpolation);
+			break;
+		case 3:
+			AddKeyToChannel(&Section->BottomCurve, FrameNumber, ParsedValue, Interpolation);
+			break;
+		default:
+			return false;
+		}
+	}
+
+	MarkWidgetBlueprintModified(WidgetBP, true);
+	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	return true;
+}
+
+FWidgetPreviewResult UWidgetService::CapturePreview(
+	const FString& WidgetPath,
+	int32 Width,
+	int32 Height)
+{
+	FWidgetPreviewResult Result;
+	Result.Width = Width;
+	Result.Height = Height;
+
+	if (Width <= 0 || Height <= 0)
+	{
+		Result.ErrorMessage = TEXT("Width and Height must be greater than zero.");
+		return Result;
+	}
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		Result.ErrorMessage = TEXT("Widget Blueprint not found.");
+		return Result;
+	}
+
+	UUserWidget* WidgetInstance = CreateWidgetInstanceForBlueprint(WidgetBP);
+	if (!WidgetInstance)
+	{
+		Result.ErrorMessage = TEXT("Failed to create widget preview instance.");
+		return Result;
+	}
+
+	TSharedRef<SWidget> SlateWidget = WidgetInstance->TakeWidget();
+	UTextureRenderTarget2D* RenderTarget = FWidgetRenderer::CreateTargetFor(FVector2D(Width, Height), TF_Bilinear, true);
+	if (!RenderTarget)
+	{
+		Result.ErrorMessage = TEXT("Failed to create preview render target.");
+		return Result;
+	}
+
+	FWidgetRenderer* WidgetRenderer = new FWidgetRenderer(true);
+	WidgetRenderer->SetIsPrepassNeeded(false);
+	WidgetRenderer->DrawWidget(RenderTarget, SlateWidget, FVector2D(Width, Height), 0.0f);
+	BeginCleanup(WidgetRenderer);
+
+	const FString OutputDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(FPaths::ProjectSavedDir(), TEXT("WidgetPreviews")));
+	IFileManager::Get().MakeDirectory(*OutputDir, true);
+	const FString OutputPath = FPaths::Combine(OutputDir, WidgetBP->GetName() + TEXT(".png"));
+
+	TUniquePtr<FArchive> Archive(IFileManager::Get().CreateFileWriter(*OutputPath));
+	if (!Archive)
+	{
+		Result.ErrorMessage = TEXT("Failed to create preview output file.");
+		return Result;
+	}
+
+	if (!FImageUtils::ExportRenderTarget2DAsPNG(RenderTarget, *Archive))
+	{
+		Result.ErrorMessage = TEXT("Failed to export preview PNG.");
+		return Result;
+	}
+
+	Archive.Reset();
+	Result.bSuccess = true;
+	Result.OutputPath = OutputPath;
+	return Result;
+}
+
+bool UWidgetService::StartPIE()
+{
+	if (!GEditor)
+	{
+		return false;
+	}
+
+	if (GEditor->PlayWorld || GEditor->bIsSimulatingInEditor)
+	{
+		return true;
+	}
+
+	FRequestPlaySessionParams SessionParams;
+	GEditor->RequestPlaySession(SessionParams);
+	return true;
+}
+
+bool UWidgetService::StopPIE()
+{
+	if (!GEditor)
+	{
+		return false;
+	}
+
+	if (GEditor->PlayWorld || GEditor->bIsSimulatingInEditor)
+	{
+		for (TPair<FString, TWeakObjectPtr<UUserWidget>>& Pair : GPIEWidgetInstances)
+		{
+			if (Pair.Value.IsValid())
+			{
+				Pair.Value->RemoveFromParent();
+			}
+		}
+		GPIEWidgetInstances.Empty();
+		GEditor->RequestEndPlayMap();
+	}
+
+	return true;
+}
+
+bool UWidgetService::IsPIERunning()
+{
+	return GEditor && (GEditor->PlayWorld != nullptr || GEditor->bIsSimulatingInEditor);
+}
+
+FPIEWidgetHandle UWidgetService::SpawnWidgetInPIE(
+	const FString& WidgetPath,
+	int32 ZOrder)
+{
+	FPIEWidgetHandle Result;
+
+	if (!GEditor || !GEditor->PlayWorld)
+	{
+		Result.ErrorMessage = TEXT("PIE is not running.");
+		return Result;
+	}
+
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP)
+	{
+		Result.ErrorMessage = TEXT("Widget Blueprint not found.");
+		return Result;
+	}
+
+	if (!WidgetBP->GeneratedClass || WidgetBP->Status == BS_Dirty)
+	{
+		FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	}
+
+	if (!WidgetBP->GeneratedClass || !WidgetBP->GeneratedClass->IsChildOf(UUserWidget::StaticClass()))
+	{
+		Result.ErrorMessage = TEXT("Widget Blueprint is not a valid UserWidget class.");
+		return Result;
+	}
+
+	UWorld* PlayWorld = GEditor->PlayWorld.Get();
+	UClass* WidgetClass = WidgetBP->GeneratedClass;
+	if (!PlayWorld || !WidgetClass || !WidgetClass->IsChildOf(UUserWidget::StaticClass()))
+	{
+		Result.ErrorMessage = TEXT("PIE world or widget class is invalid.");
+		return Result;
+	}
+
+	const FName WidgetName = MakeUniqueObjectName(PlayWorld, WidgetClass, FName(*FString::Printf(TEXT("%s_PIE"), *WidgetBP->GetName())));
+	UUserWidget* WidgetInstance = CreateWidget<UUserWidget>(PlayWorld, WidgetClass, WidgetName);
+	if (!WidgetInstance)
+	{
+		Result.ErrorMessage = TEXT("Failed to create PIE widget instance.");
+		return Result;
+	}
+
+	WidgetInstance->AddToViewport(ZOrder);
+
+	Result.bValid = true;
+	Result.InstanceId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+	GPIEWidgetInstances.Add(Result.InstanceId, WidgetInstance);
+	return Result;
+}
+
+FString UWidgetService::GetLiveProperty(
+	const FPIEWidgetHandle& Handle,
+	const FString& ComponentName,
+	const FString& PropertyName)
+{
+	const TWeakObjectPtr<UUserWidget>* WidgetPtr = GPIEWidgetInstances.Find(Handle.InstanceId);
+	if (!WidgetPtr || !WidgetPtr->IsValid())
+	{
+		return FString();
+	}
+
+	UWidget* Widget = FindRuntimeWidgetByName(WidgetPtr->Get(), ComponentName);
+	if (!Widget)
+	{
+		return FString();
+	}
+
+	FResolvedWidgetProperty Resolved;
+	if (!ResolveWidgetProperty(Widget, PropertyName, Resolved))
+	{
+		return FString();
+	}
+
+	FString ValueText;
+	Resolved.Property->ExportTextItem_Direct(ValueText, Resolved.ValuePtr, nullptr, Resolved.TargetObject, PPF_None);
+	return ValueText;
+}
+
+bool UWidgetService::RemoveWidgetFromPIE(const FPIEWidgetHandle& Handle)
+{
+	TWeakObjectPtr<UUserWidget>* WidgetPtr = GPIEWidgetInstances.Find(Handle.InstanceId);
+	if (!WidgetPtr)
+	{
+		return false;
+	}
+
+	if (WidgetPtr->IsValid())
+	{
+		WidgetPtr->Get()->RemoveFromParent();
+	}
+
+	GPIEWidgetInstances.Remove(Handle.InstanceId);
+	return true;
 }
 
 // =================================================================
@@ -1005,6 +2510,7 @@ TArray<FWidgetEventInfo> UWidgetService::GetAvailableEvents(
 
 bool UWidgetService::BindEvent(
 	const FString& WidgetPath,
+	const FString& WidgetName,
 	const FString& EventName,
 	const FString& FunctionName)
 {
@@ -1018,13 +2524,73 @@ bool UWidgetService::BindEvent(
 	// Note: Full event binding requires complex Blueprint graph manipulation
 	// This is a simplified implementation that logs the binding request
 	// For full implementation, use the Blueprint function service
-	
-	UE_LOG(LogTemp, Log, TEXT("UWidgetService::BindEvent: Binding request - Event: %s -> Function: %s"), *EventName, *FunctionName);
-	
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::BindEvent: Binding request - Widget: %s, Event: %s -> Function: %s"), *WidgetName, *EventName, *FunctionName);
+
 	// Mark as modified
 	WidgetBP->Modify();
 	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 
+	return true;
+}
+
+bool UWidgetService::RenameWidget(
+	const FString& WidgetPath,
+	const FString& OldName,
+	const FString& NewName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RenameWidget: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	if (NewName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RenameWidget: NewName must not be empty"));
+		return false;
+	}
+
+	// Find the widget by old name
+	UWidget* TargetWidget = nullptr;
+	TArray<UWidget*> AllWidgets;
+	WidgetBP->WidgetTree->GetAllWidgets(AllWidgets);
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (Widget && Widget->GetName() == OldName)
+		{
+			TargetWidget = Widget;
+			break;
+		}
+	}
+
+	if (!TargetWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RenameWidget: Widget '%s' not found in '%s'"), *OldName, *WidgetPath);
+		return false;
+	}
+
+	// Check for name collision
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (Widget && Widget != TargetWidget && Widget->GetName() == NewName)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService::RenameWidget: A widget named '%s' already exists in '%s'"), *NewName, *WidgetPath);
+			return false;
+		}
+	}
+
+	WidgetBP->Modify();
+	WidgetBP->WidgetTree->Modify();
+	TargetWidget->Modify();
+
+	const FName NewFName(*NewName);
+	TargetWidget->Rename(*NewName, TargetWidget->GetOuter(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::RenameWidget: Renamed '%s' to '%s' in '%s'"), *OldName, *NewName, *WidgetPath);
 	return true;
 }
 

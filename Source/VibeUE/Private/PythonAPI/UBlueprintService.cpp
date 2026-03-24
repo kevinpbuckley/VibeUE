@@ -409,52 +409,72 @@ TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& B
 		return Functions;
 	}
 
-	UClass* GeneratedClass = Blueprint->GeneratedClass;
-	if (!GeneratedClass)
+	// First, enumerate from compiled GeneratedClass (provides full type info)
+	if (UClass* GeneratedClass = Blueprint->GeneratedClass)
 	{
-		return Functions;
+		for (TFieldIterator<UFunction> FuncIt(GeneratedClass, EFieldIteratorFlags::ExcludeSuper); FuncIt; ++FuncIt)
+		{
+			UFunction* Function = *FuncIt;
+			if (!Function)
+			{
+				continue;
+			}
+
+			FBlueprintFunctionInfo FuncInfo;
+			FuncInfo.FunctionName = Function->GetName();
+			FuncInfo.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
+
+			UFunction* SuperFunc = Function->GetSuperFunction();
+			FuncInfo.bIsOverride = (SuperFunc != nullptr);
+
+			for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
+			{
+				FProperty* Prop = *PropIt;
+				if (Prop->HasAnyPropertyFlags(CPF_ReturnParm))
+				{
+					FuncInfo.ReturnType = Prop->GetCPPType();
+				}
+				else if (Prop->HasAnyPropertyFlags(CPF_Parm))
+				{
+					FString ParamStr = FString::Printf(TEXT("%s: %s"), *Prop->GetName(), *Prop->GetCPPType());
+					FuncInfo.Parameters.Add(ParamStr);
+				}
+			}
+
+			if (FuncInfo.ReturnType.IsEmpty())
+			{
+				FuncInfo.ReturnType = TEXT("void");
+			}
+
+			Functions.Add(FuncInfo);
+		}
 	}
 
-	// Iterate through functions
-	for (TFieldIterator<UFunction> FuncIt(GeneratedClass, EFieldIteratorFlags::ExcludeSuper); FuncIt; ++FuncIt)
+	// Also enumerate FunctionGraphs to catch functions added since last compile
+	for (UEdGraph* Graph : Blueprint->FunctionGraphs)
 	{
-		UFunction* Function = *FuncIt;
-		if (!Function)
+		if (!Graph)
 		{
 			continue;
 		}
 
-		FBlueprintFunctionInfo FuncInfo;
-		FuncInfo.FunctionName = Function->GetName();
+		const FString GraphName = Graph->GetName();
 
-		// Check if pure
-		FuncInfo.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
-
-		// Check if override
-		UFunction* SuperFunc = Function->GetSuperFunction();
-		FuncInfo.bIsOverride = (SuperFunc != nullptr);
-
-		// Get parameters and return type
-		for (TFieldIterator<FProperty> PropIt(Function); PropIt; ++PropIt)
+		// Skip if already found in the compiled class
+		const bool bAlreadyFound = Functions.ContainsByPredicate([&GraphName](const FBlueprintFunctionInfo& F)
 		{
-			FProperty* Prop = *PropIt;
-			if (Prop->HasAnyPropertyFlags(CPF_ReturnParm))
-			{
-				FuncInfo.ReturnType = Prop->GetCPPType();
-			}
-			else if (Prop->HasAnyPropertyFlags(CPF_Parm))
-			{
-				FString ParamStr = FString::Printf(TEXT("%s: %s"), *Prop->GetName(), *Prop->GetCPPType());
-				FuncInfo.Parameters.Add(ParamStr);
-			}
-		}
+			return F.FunctionName == GraphName;
+		});
 
-		if (FuncInfo.ReturnType.IsEmpty())
+		if (!bAlreadyFound)
 		{
+			FBlueprintFunctionInfo FuncInfo;
+			FuncInfo.FunctionName = GraphName;
+			FuncInfo.bIsPure = false;
+			FuncInfo.bIsOverride = false;
 			FuncInfo.ReturnType = TEXT("void");
+			Functions.Add(FuncInfo);
 		}
-
-		Functions.Add(FuncInfo);
 	}
 
 	return Functions;

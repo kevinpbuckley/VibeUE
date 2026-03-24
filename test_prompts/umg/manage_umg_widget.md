@@ -313,6 +313,92 @@ Verify all three style changes are applied.
 
 ---
 
+## Dedicated Font API Test
+
+Use the dedicated font API on HeaderTitle instead of raw property strings. Set:
+- font family to Roboto if available
+- typeface to Bold
+- size to 30
+- letter spacing to 20
+- shadow offset to (2, 2)
+- shadow color to a mostly opaque black
+
+---
+
+Read the full font config back and verify every field you changed.
+
+---
+
+## Brush API Test
+
+Use the dedicated brush API on the background image. Set:
+- draw mode to RoundedBox
+- tint to a dark blue color
+- margin to 0.2 on every side
+- corner radius to 16 on every corner
+
+If a valid engine texture is easy to reference, set that as the brush resource too.
+
+---
+
+Read the brush back and verify the brush fields were applied.
+
+---
+
+## Animation Authoring Test
+
+Create a widget animation called IntroFade.
+
+---
+
+Add a track for HeaderTitle RenderOpacity.
+
+---
+
+Add two keyframes to that track:
+- time 0.0 -> value 0.0
+- time 0.35 -> value 1.0
+
+Use linear interpolation.
+
+---
+
+List the animations and verify IntroFade exists with at least one track.
+
+---
+
+## Preview Capture Test
+
+Capture a 1280x720 preview PNG of TestWidget into the project's Saved folder.
+
+---
+
+Verify the preview result succeeded and report the output path.
+
+---
+
+## PIE Runtime Test
+
+Start PIE if it is not already running.
+
+---
+
+Spawn TestWidget in PIE and keep the returned handle.
+
+---
+
+Use the live-property API to read HeaderTitle RenderOpacity from the PIE widget instance.
+
+---
+
+Remove the spawned PIE widget and stop PIE.
+
+---
+
+Verify the PIE cleanup completed cleanly.
+
+---
+
 ## Anchor Test
 
 In TestWidget2, set the button's anchors to stretch both horizontally and vertically.
