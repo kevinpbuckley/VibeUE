@@ -26,6 +26,7 @@
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
 #include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
 #include "K2Node_CreateDelegate.h"       // For create event nodes (add_create_delegate_node)
+#include "K2Node_MakeStruct.h"           // For STRUCT key: creating typed struct Make nodes
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -137,6 +138,36 @@ namespace
 			if (UClass* FoundClass = FindObject<UClass>(nullptr, *FString::Printf(TEXT("/Script/Engine.U%s"), *ClassName)))
 			{
 				return FoundClass;
+			}
+		}
+
+		return nullptr;
+	}
+
+	// Loads a UScriptStruct by asset path. Accepts both full paths ("/Game/X/Foo.Foo")
+	// and package-only paths ("/Game/X/Foo") by auto-appending the asset name suffix.
+	static UScriptStruct* LoadStructByPath(const FString& StructPath)
+	{
+		if (StructPath.IsEmpty()) return nullptr;
+
+		// Try the path as-is first (handles "/Script/Engine.HitResult" and "/Game/X/Foo.Foo")
+		if (UScriptStruct* Found = LoadObject<UScriptStruct>(nullptr, *StructPath))
+		{
+			return Found;
+		}
+
+		// If no dot suffix, auto-append the last path component as the asset name
+		// e.g. "/Game/StateTree/FStartChasingPayload" -> "/Game/StateTree/FStartChasingPayload.FStartChasingPayload"
+		if (!StructPath.Contains(TEXT(".")))
+		{
+			FString AssetName;
+			StructPath.Split(TEXT("/"), nullptr, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
+			if (!AssetName.IsEmpty())
+			{
+				if (UScriptStruct* Found = LoadObject<UScriptStruct>(nullptr, *FString::Printf(TEXT("%s.%s"), *StructPath, *AssetName)))
+				{
+					return Found;
+				}
 			}
 		}
 
@@ -5838,6 +5869,77 @@ FString UBlueprintService::CreateNodeByKey(
 		NewNode->NodePosX = PosX;
 		NewNode->NodePosY = PosY;
 	}
+	else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
+	{
+		// STRUCT <path> — creates a K2Node_MakeStruct typed to the given struct.
+		// Accepts "/Game/X/Foo.Foo", "/Game/X/Foo" (auto-suffix), or "/Script/Engine.HitResult".
+		UScriptStruct* StructType = LoadStructByPath(KeyValue);
+		if (!StructType)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Struct type '%s' not found"), *KeyValue);
+			return FString();
+		}
+
+		UClass* MakeStructClass = FindFirstObject<UClass>(TEXT("K2Node_MakeStruct"), EFindFirstObjectOptions::ExactClass);
+		if (!MakeStructClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: K2Node_MakeStruct class not found"));
+			return FString();
+		}
+
+		UK2Node_MakeStruct* MakeStructNode = NewObject<UK2Node_MakeStruct>(Graph, MakeStructClass);
+		MakeStructNode->StructType = StructType;
+		MakeStructNode->NodePosX = PosX;
+		MakeStructNode->NodePosY = PosY;
+		Graph->AddNode(MakeStructNode, false, false);
+		MakeStructNode->CreateNewGuid();
+		MakeStructNode->PostPlacedNewNode();
+		MakeStructNode->AllocateDefaultPins();
+		NewNode = MakeStructNode;
+	}
+	else if (KeyType.Equals(TEXT("INSTANCED_STRUCT"), ESearchCase::IgnoreCase))
+	{
+		// INSTANCED_STRUCT <struct_path> — creates a MakeInstancedStruct function call node
+		// with the wildcard Value pin pre-typed to the given struct.
+		UClass* LibClass = ResolveClassByName(TEXT("BlueprintInstancedStructLibrary"));
+		if (!LibClass)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: BlueprintInstancedStructLibrary not found"));
+			return FString();
+		}
+
+		UFunction* MakeFunc = LibClass->FindFunctionByName(TEXT("MakeInstancedStruct"));
+		if (!MakeFunc)
+		{
+			UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: MakeInstancedStruct function not found"));
+			return FString();
+		}
+
+		UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		FuncNode->SetFromFunction(MakeFunc);
+		FuncNode->NodePosX = PosX;
+		FuncNode->NodePosY = PosY;
+		Graph->AddNode(FuncNode, false, false);
+		FuncNode->CreateNewGuid();
+		FuncNode->PostPlacedNewNode();
+		FuncNode->AllocateDefaultPins();
+
+		// Pre-type the wildcard Value pin if a struct path is provided
+		if (!KeyValue.IsEmpty())
+		{
+			if (UScriptStruct* StructType = LoadStructByPath(KeyValue))
+			{
+				if (UEdGraphPin* ValuePin = FuncNode->FindPin(TEXT("Value")))
+				{
+					ValuePin->PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+					ValuePin->PinType.PinSubCategoryObject = StructType;
+					FuncNode->ReconstructNode();
+				}
+			}
+		}
+
+		NewNode = FuncNode;
+	}
 	else
 	{
 		UE_LOG(LogTemp, Error, TEXT("CreateNodeByKey: Unknown key type: %s"), *KeyType);
@@ -6857,6 +6959,66 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			NewNode->AllocateDefaultPins();
 			return NewNode;
 		}
+		else if (KeyType.Equals(TEXT("STRUCT"), ESearchCase::IgnoreCase))
+		{
+			UScriptStruct* StructType = LoadStructByPath(KeyValue);
+			if (!StructType)
+			{
+				OutError = FString::Printf(TEXT("Node '%s': Struct type '%s' not found"), *Desc.Ref, *KeyValue);
+				return nullptr;
+			}
+
+			UClass* MakeStructClass = FindFirstObject<UClass>(TEXT("K2Node_MakeStruct"), EFindFirstObjectOptions::ExactClass);
+			if (!MakeStructClass)
+			{
+				OutError = FString::Printf(TEXT("Node '%s': K2Node_MakeStruct class not found"), *Desc.Ref);
+				return nullptr;
+			}
+
+			UK2Node_MakeStruct* MakeStructNode = NewObject<UK2Node_MakeStruct>(Graph, MakeStructClass);
+			MakeStructNode->StructType = StructType;
+			MakeStructNode->NodePosX = PosX;
+			MakeStructNode->NodePosY = PosY;
+			Graph->AddNode(MakeStructNode, false, false);
+			MakeStructNode->CreateNewGuid();
+			MakeStructNode->PostPlacedNewNode();
+			MakeStructNode->AllocateDefaultPins();
+			return MakeStructNode;
+		}
+		else if (KeyType.Equals(TEXT("INSTANCED_STRUCT"), ESearchCase::IgnoreCase))
+		{
+			UClass* LibClass = ResolveClassByName(TEXT("BlueprintInstancedStructLibrary"));
+			UFunction* MakeFunc = LibClass ? LibClass->FindFunctionByName(TEXT("MakeInstancedStruct")) : nullptr;
+			if (!MakeFunc)
+			{
+				OutError = FString::Printf(TEXT("Node '%s': MakeInstancedStruct not found"), *Desc.Ref);
+				return nullptr;
+			}
+
+			UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+			FuncNode->SetFromFunction(MakeFunc);
+			FuncNode->NodePosX = PosX;
+			FuncNode->NodePosY = PosY;
+			Graph->AddNode(FuncNode, false, false);
+			FuncNode->CreateNewGuid();
+			FuncNode->PostPlacedNewNode();
+			FuncNode->AllocateDefaultPins();
+
+			if (!KeyValue.IsEmpty())
+			{
+				if (UScriptStruct* StructType = LoadStructByPath(KeyValue))
+				{
+					if (UEdGraphPin* ValuePin = FuncNode->FindPin(TEXT("Value")))
+					{
+						ValuePin->PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+						ValuePin->PinType.PinSubCategoryObject = StructType;
+						FuncNode->ReconstructNode();
+					}
+				}
+			}
+
+			return FuncNode;
+		}
 
 		OutError = FString::Printf(TEXT("Node '%s': Unknown spawner key type '%s'"), *Desc.Ref, *KeyType);
 		return nullptr;
@@ -6902,6 +7064,83 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 		SetNode->PostPlacedNewNode();
 		SetNode->AllocateDefaultPins();
 		return SetNode;
+	}
+
+	// ── make_struct ──
+	// Creates a K2Node_MakeStruct typed to a specific struct.
+	// Params: struct = "/Game/X/Foo.Foo" or "/Game/X/Foo" or "/Script/Engine.HitResult"
+	if (Type.Equals(TEXT("make_struct"), ESearchCase::IgnoreCase))
+	{
+		const FString* StructPath = Desc.Params.Find(TEXT("struct"));
+		if (!StructPath)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': make_struct requires 'struct' param"), *Desc.Ref);
+			return nullptr;
+		}
+
+		UScriptStruct* StructType = LoadStructByPath(*StructPath);
+		if (!StructType)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': Struct type '%s' not found"), *Desc.Ref, **StructPath);
+			return nullptr;
+		}
+
+		UClass* MakeStructClass = FindFirstObject<UClass>(TEXT("K2Node_MakeStruct"), EFindFirstObjectOptions::ExactClass);
+		if (!MakeStructClass)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': K2Node_MakeStruct class not found"), *Desc.Ref);
+			return nullptr;
+		}
+
+		UK2Node_MakeStruct* MakeStructNode = NewObject<UK2Node_MakeStruct>(Graph, MakeStructClass);
+		MakeStructNode->StructType = StructType;
+		MakeStructNode->NodePosX = PosX;
+		MakeStructNode->NodePosY = PosY;
+		Graph->AddNode(MakeStructNode, false, false);
+		MakeStructNode->CreateNewGuid();
+		MakeStructNode->PostPlacedNewNode();
+		MakeStructNode->AllocateDefaultPins();
+		return MakeStructNode;
+	}
+
+	// ── instanced_struct ──
+	// Creates a MakeInstancedStruct function call node (wraps any struct in FInstancedStruct).
+	// Params: struct = "/Game/X/Foo" (optional — pre-types the wildcard Value pin)
+	if (Type.Equals(TEXT("instanced_struct"), ESearchCase::IgnoreCase))
+	{
+		UClass* LibClass = ResolveClassByName(TEXT("BlueprintInstancedStructLibrary"));
+		UFunction* MakeFunc = LibClass ? LibClass->FindFunctionByName(TEXT("MakeInstancedStruct")) : nullptr;
+		if (!MakeFunc)
+		{
+			OutError = FString::Printf(TEXT("Node '%s': MakeInstancedStruct not found — ensure Engine module is loaded"), *Desc.Ref);
+			return nullptr;
+		}
+
+		UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		FuncNode->SetFromFunction(MakeFunc);
+		FuncNode->NodePosX = PosX;
+		FuncNode->NodePosY = PosY;
+		Graph->AddNode(FuncNode, false, false);
+		FuncNode->CreateNewGuid();
+		FuncNode->PostPlacedNewNode();
+		FuncNode->AllocateDefaultPins();
+
+		// If a struct path is provided, pre-type the wildcard Value pin
+		const FString* StructPath = Desc.Params.Find(TEXT("struct"));
+		if (StructPath)
+		{
+			if (UScriptStruct* StructType = LoadStructByPath(*StructPath))
+			{
+				if (UEdGraphPin* ValuePin = FuncNode->FindPin(TEXT("Value")))
+				{
+					ValuePin->PinType.PinCategory = UEdGraphSchema_K2::PC_Struct;
+					ValuePin->PinType.PinSubCategoryObject = StructType;
+					FuncNode->ReconstructNode();
+				}
+			}
+		}
+
+		return FuncNode;
 	}
 
 	// ── event ──
@@ -7433,6 +7672,33 @@ bool UBlueprintService::BuildGraph(
 
 	const UEdGraphSchema_K2* Schema = Cast<UEdGraphSchema_K2>(Graph->GetSchema());
 
+	// Helper: resolve a ref string to a node — tries local refs first, then existing GUIDs in the graph
+	auto ResolveNodeRef = [&](const FString& Ref) -> UEdGraphNode*
+	{
+		// 1. Local ref from nodes created in this build_graph call
+		if (UEdGraphNode** Found = RefToNode.Find(Ref))
+		{
+			return *Found;
+		}
+		// 2. Existing node GUID already in the graph (32-char hex with no hyphens)
+		if (Ref.Len() == 32)
+		{
+			FGuid ParsedGuid;
+			FGuid::Parse(Ref, ParsedGuid);
+			if (ParsedGuid.IsValid())
+			{
+				for (UEdGraphNode* Node : Graph->Nodes)
+				{
+					if (Node && Node->NodeGuid == ParsedGuid)
+					{
+						return Node;
+					}
+				}
+			}
+		}
+		return nullptr;
+	};
+
 	for (int32 i = 0; i < Connections.Num(); i++)
 	{
 		const FGraphConnectionDesc& Conn = Connections[i];
@@ -7453,21 +7719,23 @@ bool UBlueprintService::BuildGraph(
 			continue;
 		}
 
-		UEdGraphNode** FromNodePtr = RefToNode.Find(FromRef);
-		if (!FromNodePtr)
+		UEdGraphNode* FromNode = ResolveNodeRef(FromRef);
+		if (!FromNode)
 		{
-			OutResult.Warnings.Add(FString::Printf(TEXT("Connection %d: Source node ref '%s' not found (was it created?)"), i, *FromRef));
+			OutResult.Warnings.Add(FString::Printf(TEXT("Connection %d: Source ref '%s' not found (not a local ref or existing GUID)"), i, *FromRef));
 			OutResult.ConnectionsFailed++;
 			continue;
 		}
+		UEdGraphNode** FromNodePtr = &FromNode;
 
-		UEdGraphNode** ToNodePtr = RefToNode.Find(ToRef);
-		if (!ToNodePtr)
+		UEdGraphNode* ToNode = ResolveNodeRef(ToRef);
+		if (!ToNode)
 		{
-			OutResult.Warnings.Add(FString::Printf(TEXT("Connection %d: Target node ref '%s' not found (was it created?)"), i, *ToRef));
+			OutResult.Warnings.Add(FString::Printf(TEXT("Connection %d: Target ref '%s' not found (not a local ref or existing GUID)"), i, *ToRef));
 			OutResult.ConnectionsFailed++;
 			continue;
 		}
+		UEdGraphNode** ToNodePtr = &ToNode;
 
 		UEdGraphPin* SourcePin = ResolvePinByName(*FromNodePtr, FromPinName, EGPD_Output);
 		if (!SourcePin)
@@ -7507,13 +7775,14 @@ bool UBlueprintService::BuildGraph(
 	{
 		const FGraphPinDefaultDesc& PinDefault = PinDefaults[i];
 
-		UEdGraphNode** NodePtr = RefToNode.Find(PinDefault.NodeRef);
-		if (!NodePtr)
+		UEdGraphNode* ResolvedNode = ResolveNodeRef(PinDefault.NodeRef);
+		if (!ResolvedNode)
 		{
-			OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: Node ref '%s' not found"), i, *PinDefault.NodeRef));
+			OutResult.Warnings.Add(FString::Printf(TEXT("PinDefault %d: Node ref '%s' not found (not a local ref or existing GUID)"), i, *PinDefault.NodeRef));
 			OutResult.DefaultsFailed++;
 			continue;
 		}
+		UEdGraphNode** NodePtr = &ResolvedNode;
 
 		UEdGraphPin* Pin = ResolvePinByName(*NodePtr, PinDefault.PinName, EGPD_Input);
 		if (!Pin)
