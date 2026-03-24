@@ -821,18 +821,19 @@ struct FGraphNodeDesc
 
 /**
  * Describes a connection between two node pins in a batch graph.
- * Format: "NodeRef.PinName"
+ * Format: "NodeRef.PinName" where NodeRef is either a local ref from the
+ * Nodes array or an existing node's GUID string (32-char hex) already in the graph.
  */
 USTRUCT(BlueprintType)
 struct FGraphConnectionDesc
 {
 	GENERATED_BODY()
 
-	/** Source (output) — format: "NodeRef.PinName" */
+	/** Source (output) — format: "RefOrGUID.PinName" */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString From;
 
-	/** Target (input) — format: "NodeRef.PinName" */
+	/** Target (input) — format: "RefOrGUID.PinName" */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString To;
 };
@@ -845,7 +846,7 @@ struct FGraphPinDefaultDesc
 {
 	GENERATED_BODY()
 
-	/** Local ref of the target node */
+	/** Local ref or existing GUID of the target node */
 	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
 	FString NodeRef;
 
@@ -2833,9 +2834,12 @@ public:
 	 *       "/Game/BP_Player", "EventGraph",
 	 *       [{"ref":"BeginPlay", "type":"event", "params":{"event":"ReceiveBeginPlay"}},
 	 *        {"ref":"Print", "type":"print_string", "params":{}}],
-	 *       [{"from":"BeginPlay.then", "to":"Print.execute"}],
+	 *       [{"from_":"BeginPlay.then", "to":"Print.execute"}],
 	 *       [{"node_ref":"Print", "pin_name":"InString", "value":"Hello!"}],
 	 *       True, True)
+	 *
+	 *   Note: Connection refs can be local refs (from Nodes array) or existing node GUIDs.
+	 *   Note: Use "from_" (with underscore) because "from" is a Python reserved keyword.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
 	static bool BuildGraph(

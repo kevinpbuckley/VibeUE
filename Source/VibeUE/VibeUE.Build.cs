@@ -66,6 +66,9 @@ public class VibeUE : ModuleRules
 				"Projects",
 				"AssetRegistry",
 				"MessageLog",
+				"MovieScene",
+				"MovieSceneTracks",
+				"RenderCore",
 				"EditorStyle",
 				"AssetTools",
 				"PropertyEditor",         // For property reflection
@@ -97,6 +100,7 @@ public class VibeUE : ModuleRules
 				"MetasoundEngine",        // For UMetaSoundSource, UMetaSoundBuilderSubsystem, UMetaSoundSourceBuilder
 				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
 				"MetasoundGraphCore",     // For core MetaSound graph types
+				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
 			}
 		);
 

@@ -88,12 +88,21 @@ static bool ContainsDangerousPattern(const FString& Code, FString& OutPattern, F
 		return true;
 	}
 	
-	// Direct CDO modification causes crashes
-	if (Code.Contains(TEXT("get_default_object")) && (Code.Contains(TEXT("set_editor_property")) || Code.Contains(TEXT("="))))
+	// Direct CDO modification causes crashes — block only when modifying, not reading.
+	// Use regex to detect modification patterns on the CDO result directly (inline or via chained call).
+	// Simple Contains checks are too broad — they fire when set_editor_property or = appear anywhere
+	// in the script, even on unrelated objects.
 	{
-		OutPattern = TEXT("get_default_object() modification");
-		OutReason = TEXT("Modifying Class Default Objects (CDOs) from Python causes crashes. Modify instances instead.");
-		return true;
+		// Inline: get_default_object(...).set_editor_property(...) on the same line.
+		// Uses [^\n]* to skip nested parens (e.g. get_default_object(bp.generated_class())).
+		static FRegexPattern CdoModifyPattern(TEXT("get_default_object\\b[^\\n]*\\.\\s*set_editor_property"));
+		FRegexMatcher CdoModifyMatcher(CdoModifyPattern, Code);
+		if (CdoModifyMatcher.FindNext())
+		{
+			OutPattern = TEXT("get_default_object() modification");
+			OutReason = TEXT("Modifying Class Default Objects (CDOs) from Python causes crashes. Modify instances instead.");
+			return true;
+		}
 	}
 	
 	// input() blocks the editor indefinitely

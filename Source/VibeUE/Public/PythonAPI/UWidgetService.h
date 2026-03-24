@@ -282,9 +282,150 @@ struct FWidgetViewModelBindingInfo
 };
 
 /**
+ * Font configuration for text-based widget components.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetFontInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString FontFamily;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString Typeface = TEXT("Regular");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	int32 Size = 12;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	int32 LetterSpacing = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString Color = TEXT("(R=1.0,G=1.0,B=1.0,A=1.0)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString ShadowOffset = TEXT("(X=0.0,Y=0.0)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString ShadowColor = TEXT("(R=0.0,G=0.0,B=0.0,A=0.5)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	int32 OutlineSize = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Font")
+	FString OutlineColor = TEXT("(R=0.0,G=0.0,B=0.0,A=1.0)");
+};
+
+/**
+ * Brush configuration for widget components that expose FSlateBrush values.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetBrushInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString ResourcePath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString TintColor = TEXT("(R=1.0,G=1.0,B=1.0,A=1.0)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString DrawAs = TEXT("Image");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString ImageSize = TEXT("(X=0.0,Y=0.0)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString Margin = TEXT("(Left=0.0,Top=0.0,Right=0.0,Bottom=0.0)");
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Brush")
+	FString CornerRadius = TEXT("(TopLeft=0.0,TopRight=0.0,BottomRight=0.0,BottomLeft=0.0)");
+};
+
+/**
+ * Keyframe data for a widget animation property track.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetAnimKeyframe
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	float Time = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	FString Value;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	FString Interpolation = TEXT("Linear");
+};
+
+/**
+ * Summary information about a widget animation.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetAnimInfo
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	FString AnimationName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	float Duration = 0.0f;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Animation")
+	int32 TrackCount = 0;
+};
+
+/**
+ * Result of capturing an off-screen widget preview render.
+ */
+USTRUCT(BlueprintType)
+struct FWidgetPreviewResult
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
+	FString OutputPath;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
+	int32 Width = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
+	int32 Height = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|Preview")
+	FString ErrorMessage;
+};
+
+/**
+ * Handle for a widget instance spawned during PIE.
+ */
+USTRUCT(BlueprintType)
+struct FPIEWidgetHandle
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|PIE")
+	bool bValid = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|PIE")
+	FString InstanceId;
+
+	UPROPERTY(BlueprintReadWrite, Category = "Widget|PIE")
+	FString ErrorMessage;
+};
+
+/**
  * Widget service exposed directly to Python.
  *
- * Provides 22 widget management actions:
+ * Provides 41 widget management actions:
  * - list_widget_blueprints: List all Widget Blueprints in the project
  * - get_hierarchy: Get widget hierarchy tree
  * - get_root_widget: Get the root widget of a Widget Blueprint
@@ -293,6 +434,7 @@ struct FWidgetViewModelBindingInfo
  * - get_component_properties: Get properties for a specific component
  * - add_component: Add a widget component to a Widget Blueprint (native types or custom WBPs by name)
  * - remove_component: Remove a widget component from a Widget Blueprint
+ * - rename_widget: Rename a widget component in a Widget Blueprint
  * - validate: Validate widget hierarchy for errors
  * - get_property: Get a specific property value
  * - set_property: Set a specific property value
@@ -305,6 +447,22 @@ struct FWidgetViewModelBindingInfo
  * - list_view_model_bindings: List all MVVM bindings on a Widget Blueprint
  * - add_view_model_binding: Create a binding between a ViewModel property and a widget property
  * - remove_view_model_binding: Remove an MVVM binding by index
+ * - set_font: Apply a full font configuration to a text widget
+ * - get_font: Read a full font configuration from a text widget
+ * - set_brush: Apply a brush to a widget brush slot
+ * - get_brush: Read a brush from a widget brush slot
+ * - list_animations: List all widget animations on a Widget Blueprint
+ * - create_animation: Create a new widget animation
+ * - remove_animation: Remove a widget animation
+ * - add_animation_track: Add a property track to a widget animation
+ * - add_keyframe: Add a keyframe to a widget animation track
+ * - capture_preview: Render a widget preview to a PNG file
+ * - start_pie: Start Play-In-Editor
+ * - stop_pie: Stop Play-In-Editor
+ * - is_pie_running: Check whether PIE is active
+ * - spawn_widget_in_pie: Spawn a widget instance into the PIE viewport
+ * - get_live_property: Read a property from a live PIE widget instance
+ * - remove_widget_from_pie: Remove a spawned PIE widget instance from the viewport
  * - widget_blueprint_exists: Check if a Widget Blueprint exists
  * - widget_exists: Check if a widget component exists in a Widget Blueprint
  *
@@ -453,6 +611,21 @@ public:
 		const FString& ComponentName,
 		bool bRemoveChildren = false);
 
+	/**
+	 * Rename a widget component in the Widget Blueprint.
+	 * Maps to action="rename_widget"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param OldName - Current name of the widget component
+	 * @param NewName - New name for the widget component
+	 * @return True if the rename was successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
+	static bool RenameWidget(
+		const FString& WidgetPath,
+		const FString& OldName,
+		const FString& NewName);
+
 	// =================================================================
 	// Validation (validate)
 	// =================================================================
@@ -519,6 +692,192 @@ public:
 		bool bEditableOnly = true);
 
 	// =================================================================
+	// Font and Brush Access
+	// =================================================================
+
+	/**
+	 * Set a full font configuration on a widget text property.
+	 * Maps to action="set_font"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param FontInfo - Font configuration to apply
+	 * @param PropertyName - Font property path (defaults to "Font")
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Font")
+	static bool SetFont(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FWidgetFontInfo& FontInfo,
+		const FString& PropertyName = TEXT("Font"));
+
+	/**
+	 * Read a full font configuration from a widget text property.
+	 * Maps to action="get_font"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param PropertyName - Font property path (defaults to "Font")
+	 * @return Font configuration (default/empty on failure)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Font")
+	static FWidgetFontInfo GetFont(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FString& PropertyName = TEXT("Font"));
+
+	/**
+	 * Set a brush slot on a widget component.
+	 * Maps to action="set_brush"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param SlotName - Brush slot name
+	 * @param BrushInfo - Brush configuration to apply
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Brush")
+	static bool SetBrush(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FString& SlotName,
+		const FWidgetBrushInfo& BrushInfo);
+
+	/**
+	 * Read a brush slot from a widget component.
+	 * Maps to action="get_brush"
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param ComponentName - Name of the component
+	 * @param SlotName - Brush slot name
+	 * @return Brush configuration (default/empty on failure)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Brush")
+	static FWidgetBrushInfo GetBrush(
+		const FString& WidgetPath,
+		const FString& ComponentName,
+		const FString& SlotName);
+
+	// =================================================================
+	// Animation Authoring
+	// =================================================================
+
+	/**
+	 * List all widget animations on a Widget Blueprint.
+	 * Maps to action="list_animations"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Animation")
+	static TArray<FWidgetAnimInfo> ListAnimations(const FString& WidgetPath);
+
+	/**
+	 * Create a new widget animation.
+	 * Maps to action="create_animation"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Animation")
+	static bool CreateAnimation(
+		const FString& WidgetPath,
+		const FString& AnimationName,
+		float Duration = 1.0f);
+
+	/**
+	 * Remove an existing widget animation.
+	 * Maps to action="remove_animation"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Animation")
+	static bool RemoveAnimation(
+		const FString& WidgetPath,
+		const FString& AnimationName);
+
+	/**
+	 * Add a property track to a widget animation.
+	 * Maps to action="add_animation_track"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Animation")
+	static bool AddAnimationTrack(
+		const FString& WidgetPath,
+		const FString& AnimationName,
+		const FString& ComponentName,
+		const FString& PropertyName);
+
+	/**
+	 * Add a keyframe to a widget animation track.
+	 * Maps to action="add_keyframe"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Animation")
+	static bool AddKeyframe(
+		const FString& WidgetPath,
+		const FString& AnimationName,
+		const FString& ComponentName,
+		const FString& PropertyName,
+		const FWidgetAnimKeyframe& Keyframe);
+
+	// =================================================================
+	// Preview Capture
+	// =================================================================
+
+	/**
+	 * Capture an off-screen preview of a Widget Blueprint.
+	 * Maps to action="capture_preview"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|Preview")
+	static FWidgetPreviewResult CapturePreview(
+		const FString& WidgetPath,
+		int32 Width = 1920,
+		int32 Height = 1080);
+
+	// =================================================================
+	// PIE Widget Lifecycle
+	// =================================================================
+
+	/**
+	 * Start Play-In-Editor if it is not already running.
+	 * Maps to action="start_pie"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static bool StartPIE();
+
+	/**
+	 * Stop Play-In-Editor if it is running.
+	 * Maps to action="stop_pie"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static bool StopPIE();
+
+	/**
+	 * Check if Play-In-Editor is currently running.
+	 * Maps to action="is_pie_running"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static bool IsPIERunning();
+
+	/**
+	 * Spawn a widget into the PIE viewport.
+	 * Maps to action="spawn_widget_in_pie"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static FPIEWidgetHandle SpawnWidgetInPIE(
+		const FString& WidgetPath,
+		int32 ZOrder = 0);
+
+	/**
+	 * Read a property from a live PIE widget instance.
+	 * Maps to action="get_live_property"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static FString GetLiveProperty(
+		const FPIEWidgetHandle& Handle,
+		const FString& ComponentName,
+		const FString& PropertyName);
+
+	/**
+	 * Remove a widget from the PIE viewport.
+	 * Maps to action="remove_widget_from_pie"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets|PIE")
+	static bool RemoveWidgetFromPIE(const FPIEWidgetHandle& Handle);
+
+	// =================================================================
 	// Event Handling (get_available_events, bind_events)
 	// =================================================================
 
@@ -542,6 +901,7 @@ public:
 	 * Maps to action="bind_events"
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param WidgetName - Name of the widget component that owns the event (e.g., "PlayButton")
 	 * @param EventName - Name of the event (e.g., "OnClicked")
 	 * @param FunctionName - Name of the function to call
 	 * @return True if binding was successful
@@ -549,6 +909,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
 	static bool BindEvent(
 		const FString& WidgetPath,
+		const FString& WidgetName,
 		const FString& EventName,
 		const FString& FunctionName);
 

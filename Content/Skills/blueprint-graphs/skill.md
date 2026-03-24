@@ -597,10 +597,30 @@ Use the individual `add_*_node` + `connect_nodes` methods when:
 | `validated_get` | `variable` | Validated Get (with exec pins) |
 | `member_get` | `member`, `class` | Get member from another class |
 | `create_delegate` | `function` | Create Delegate node |
+| `make_struct` | `struct` | Make Struct node (`K2Node_MakeStruct`) for any struct type (engine or user-defined) |
+| `instanced_struct` | `struct` | Make Instanced Struct node — wraps a struct into `FInstancedStruct` |
 
 ### Connection Format
 
-Connections use `"NodeRef.PinName"` format: `{"from": "A.then", "to": "B.execute"}`
+Connections use `"RefOrGUID.PinName"` format: `{"from_": "A.then", "to": "B.execute"}`
+
+**⚠️ Key name is `from_` (with underscore)** because `from` is a Python reserved keyword.
+UE Python maps the C++ UPROPERTY `From` to `from_`.
+
+The ref part can be either:
+- A **local ref** from the `Nodes` array (e.g. `"MkInst"`)
+- An **existing node GUID** already in the graph (32-char hex string from `get_nodes_in_graph()`)
+
+This allows `build_graph` to wire new nodes to existing nodes in a single call:
+
+```python
+# Mix local refs with existing GUIDs
+existing_id = "EB9221E84DFFF609028F9DAA6267B654"  # from get_nodes_in_graph()
+connections = [
+    {"from_": f"{existing_id}.OutputPin", "to": "NewNode.InputPin"},  # existing → new
+    {"from_": "NewNode.OutputPin", "to": "OtherNew.InputPin"},        # new → new
+]
+```
 
 Pin aliases supported:
 - `execute` / `exec` → first exec input pin
@@ -625,7 +645,7 @@ result = unreal.BlueprintService.build_graph(
     ],
     # Connections
     [
-        {"from": "BP.then", "to": "Print.execute"},
+        {"from_": "BP.then", "to": "Print.execute"},
     ],
     # Pin defaults
     [
@@ -658,11 +678,11 @@ result = unreal.BlueprintService.build_graph(
         {"ref": "PrintOK", "type": "print_string", "params": {}},
     ],
     [
-        {"from": "BP.then", "to": "Branch.execute"},
-        {"from": "GetHP.Health", "to": "Cmp.A"},
-        {"from": "Cmp.ReturnValue", "to": "Branch.Condition"},
-        {"from": "Branch.then", "to": "PrintLow.execute"},
-        {"from": "Branch.else", "to": "PrintOK.execute"},
+        {"from_": "BP.then", "to": "Branch.execute"},
+        {"from_": "GetHP.Health", "to": "Cmp.A"},
+        {"from_": "Cmp.ReturnValue", "to": "Branch.Condition"},
+        {"from_": "Branch.then", "to": "PrintLow.execute"},
+        {"from_": "Branch.else", "to": "PrintOK.execute"},
     ],
     [
         {"node_ref": "Cmp", "pin_name": "B", "value": "25.0"},
@@ -707,6 +727,40 @@ for n in nodes:
 ```python
 unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph")
 ```
+
+### Make Struct and Make Instanced Struct
+
+Use `make_struct` to create a `K2Node_MakeStruct` for any struct type (engine or user-defined).
+Use `instanced_struct` to wrap a struct into `FInstancedStruct` — required when a pin expects `FInstancedStruct` (e.g. `Make State Tree Event.Payload`).
+
+**⚠️ The `Value` pin on `Make Instanced Struct` is a wildcard.** It resolves to the struct's fields only after the struct type is set via `struct` param. Do **not** try to split or connect it before the node type is resolved — connecting by field name (e.g. `Value.TargetPawn`) will fail.
+
+**Correct pattern — build_graph example:**
+
+```python
+result = unreal.BlueprintService.build_graph(
+    bp_path,
+    "EventGraph",
+    [
+        # 1. Make the struct with its fields populated
+        {"ref": "MkPayload", "type": "make_struct", "params": {"struct": "FStartChasingPayload"}},
+        # 2. Wrap it in FInstancedStruct
+        {"ref": "MkInst", "type": "instanced_struct", "params": {"struct": "FStartChasingPayload"}},
+    ],
+    [
+        # Wire the struct output into the instanced struct Value pin
+        {"from_": "MkPayload.StartChasingPayload", "to": "MkInst.Value"},
+        # Wire MkInst output into whatever consumes FInstancedStruct
+        {"from_": "MkInst.ReturnValue", "to": "MkState.Payload"},
+    ],
+    [],
+    True, True
+)
+```
+
+**Pin names for `make_struct`:** The output pin name matches the struct type name exactly as Unreal exposes it (e.g. `StartChasingPayload` for `FStartChasingPayload`). If uncertain, create the node, then call `get_node_pins()` to read the actual output pin name before connecting.
+
+**Pin names for `instanced_struct`:** Input is `Value`, output is `ReturnValue`.
 
 ### Error Handling
 
