@@ -1569,12 +1569,7 @@ bool UNiagaraEmitterService::AddRenderer(
 		return false;
 	}
 
-	// AddRenderer signature changed in UE 5.7 to include a version GUID parameter
-#if ENGINE_MINOR_VERSION >= 7
 	Emitter->AddRenderer(NewRenderer, VersionedEmitter.Version);
-#else
-	Emitter->AddRenderer(NewRenderer);
-#endif
 
 	System->MarkPackageDirty();
 	return true;
@@ -1622,12 +1617,7 @@ bool UNiagaraEmitterService::RemoveRenderer(
 			return false;
 		}
 
-		// RemoveRenderer signature changed in UE 5.7 to include a version GUID parameter
-#if ENGINE_MINOR_VERSION >= 7
 		Emitter->RemoveRenderer(RendererToRemove, VersionedEmitter.Version);
-#else
-		Emitter->RemoveRenderer(RendererToRemove);
-#endif
 	}
 
 	System->MarkPackageDirty();

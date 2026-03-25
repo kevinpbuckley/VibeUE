@@ -236,7 +236,7 @@ FFoliageScatterResult UFoliageService::ScatterInternal(
 		for (const FLandscapeInfoLayerSettings& LayerSettings : LandscapeInfo->Layers)
 		{
 			if (LayerSettings.LayerInfoObj &&
-				LayerSettings.LayerInfoObj->GetLayerName().ToString().Equals(LayerName, ESearchCase::IgnoreCase))
+				LayerSettings.LayerInfoObj->LayerName.ToString().Equals(LayerName, ESearchCase::IgnoreCase))
 			{
 				TargetLayerInfo = LayerSettings.LayerInfoObj;
 				break;

@@ -3017,16 +3017,6 @@ TArray<FWidgetViewModelBindingInfo> UWidgetService::ListViewModelBindings(const 
 		Info.SourcePath = Binding->SourcePath.GetPropertyPath(SelfContext);
 		Info.DestinationPath = Binding->DestinationPath.GetPropertyPath(SelfContext);
 
-		// If property path is empty, try display text
-		if (Info.SourcePath.IsEmpty())
-		{
-			Info.SourcePath = Binding->SourcePath.ToText(WidgetBP, false).ToString();
-		}
-		if (Info.DestinationPath.IsEmpty())
-		{
-			Info.DestinationPath = Binding->DestinationPath.ToText(WidgetBP, false).ToString();
-		}
-
 		Results.Add(Info);
 	}
 

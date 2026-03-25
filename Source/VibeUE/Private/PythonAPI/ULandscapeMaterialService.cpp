@@ -760,10 +760,8 @@ FLandscapeLayerInfoCreateResult ULandscapeMaterialService::CreateLayerInfoObject
 		return Result;
 	}
 
-	LayerInfoObj->SetLayerName(FName(*LayerName), false);
-	LayerInfoObj->SetBlendMethod(
-		bIsWeightBlended ? ELandscapeTargetLayerBlendMethod::FinalWeightBlending : ELandscapeTargetLayerBlendMethod::None,
-		false);
+	LayerInfoObj->LayerName = FName(*LayerName);
+	LayerInfoObj->bNoWeightBlend = !bIsWeightBlended;
 
 	// Notify asset registry
 	FAssetRegistryModule::AssetCreated(LayerInfoObj);
@@ -800,8 +798,8 @@ bool ULandscapeMaterialService::GetLayerInfoDetails(
 		return false;
 	}
 
-	OutLayerName = LayerInfo->GetLayerName().ToString();
-	bOutIsWeightBlended = LayerInfo->GetBlendMethod() != ELandscapeTargetLayerBlendMethod::None;
+	OutLayerName = LayerInfo->LayerName.ToString();
+	bOutIsWeightBlended = !LayerInfo->bNoWeightBlend;
 
 	return true;
 }
@@ -945,7 +943,7 @@ bool ULandscapeMaterialService::AssignMaterialToLandscape(
 				LandscapeEdit.SetAlphaData(FillLayer, MinX, MinY, MaxX, MaxY, FillData.GetData(), 0);
 
 				UE_LOG(LogTemp, Log, TEXT("ULandscapeMaterialService::AssignMaterialToLandscape: Initialized fill layer '%s' across %dx%d extent"),
-					*FillLayer->GetLayerName().ToString(), SizeX, SizeY);
+					*FillLayer->LayerName.ToString(), SizeX, SizeY);
 			}
 			else
 			{

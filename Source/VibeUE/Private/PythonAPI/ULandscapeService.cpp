@@ -204,9 +204,9 @@ void ULandscapeService::PopulateLandscapeInfo(ALandscapeProxy* Landscape, FLands
 			FLandscapeLayerInfo_Custom LayerInfo;
 			if (LayerSettings.LayerInfoObj)
 			{
-				LayerInfo.LayerName = LayerSettings.LayerInfoObj->GetLayerName().ToString();
+				LayerInfo.LayerName = LayerSettings.LayerInfoObj->LayerName.ToString();
 				LayerInfo.LayerInfoPath = LayerSettings.LayerInfoObj->GetPathName();
-				LayerInfo.bIsWeightBlended = LayerSettings.LayerInfoObj->GetBlendMethod() != ELandscapeTargetLayerBlendMethod::None;
+				LayerInfo.bIsWeightBlended = !LayerSettings.LayerInfoObj->bNoWeightBlend;
 			}
 			else
 			{
@@ -2063,9 +2063,9 @@ TArray<FLandscapeLayerInfo_Custom> ULandscapeService::ListLayers(const FString& 
 		FLandscapeLayerInfo_Custom LayerInfo;
 		if (LayerSettings.LayerInfoObj)
 		{
-			LayerInfo.LayerName = LayerSettings.LayerInfoObj->GetLayerName().ToString();
+			LayerInfo.LayerName = LayerSettings.LayerInfoObj->LayerName.ToString();
 			LayerInfo.LayerInfoPath = LayerSettings.LayerInfoObj->GetPathName();
-			LayerInfo.bIsWeightBlended = LayerSettings.LayerInfoObj->GetBlendMethod() != ELandscapeTargetLayerBlendMethod::None;
+			LayerInfo.bIsWeightBlended = !LayerSettings.LayerInfoObj->bNoWeightBlend;
 		}
 		else
 		{
@@ -2120,7 +2120,7 @@ bool ULandscapeService::AddLayer(
 	Info->UpdateComponentLayerAllowList();
 
 	UE_LOG(LogTemp, Log, TEXT("ULandscapeService::AddLayer: Added layer '%s' to landscape '%s'"),
-		*LayerInfoObj->GetLayerName().ToString(), *LandscapeNameOrLabel);
+		*LayerInfoObj->LayerName.ToString(), *LandscapeNameOrLabel);
 	return true;
 }
 
@@ -2209,11 +2209,11 @@ TArray<FLandscapeLayerWeightSample> ULandscapeService::GetLayerWeightsAtLocation
 		// Read a single pixel of weight data from the edit layer
 		TArray<uint8> WeightData;
 		WeightData.SetNumZeroed(1);
-		TAlphamapAccessor<true> AlphaAccessor(Info, LayerSettings.LayerInfoObj);
-		AlphaAccessor.GetData(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
+		FAlphamapAccessor<true, false> AlphaAccessor(Info, LayerSettings.LayerInfoObj);
+		AlphaAccessor.GetDataFast(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
 
 		FLandscapeLayerWeightSample Sample;
-		Sample.LayerName = LayerSettings.LayerInfoObj->GetLayerName().ToString();
+		Sample.LayerName = LayerSettings.LayerInfoObj->LayerName.ToString();
 		Sample.Weight = WeightData[0] / 255.0f;
 		Result.Add(Sample);
 	}
@@ -2246,7 +2246,7 @@ bool ULandscapeService::PaintLayerAtLocation(
 	for (const FLandscapeInfoLayerSettings& LayerSettings : Info->Layers)
 	{
 		if (LayerSettings.LayerInfoObj &&
-			LayerSettings.LayerInfoObj->GetLayerName().ToString().Equals(LayerName, ESearchCase::IgnoreCase))
+			LayerSettings.LayerInfoObj->LayerName.ToString().Equals(LayerName, ESearchCase::IgnoreCase))
 		{
 			TargetLayer = LayerSettings.LayerInfoObj;
 			break;
@@ -2300,12 +2300,12 @@ bool ULandscapeService::PaintLayerAtLocation(
 	// lock before any subsequent layer resolve / texture compression.
 	{
 		// Use TAlphamapAccessor which properly handles edit layers (mirrors FHeightmapAccessor pattern)
-		TAlphamapAccessor<false> AlphaAccessor(Info, TargetLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, TargetLayer);
 
 		// Read current weight data for the target layer
 		TArray<uint8> WeightData;
 		WeightData.SetNumZeroed(SizeX * SizeY);
-		AlphaAccessor.GetData(MinX, MinY, MaxX, MaxY, WeightData.GetData());
+		AlphaAccessor.GetDataFast(MinX, MinY, MaxX, MaxY, WeightData.GetData());
 
 		// Apply brush to weight data
 		for (int32 Y = 0; Y < SizeY; Y++)
@@ -2566,7 +2566,7 @@ static ULandscapeLayerInfoObject* FindLayerInfoByName(ULandscapeInfo* Info, cons
 	for (const FLandscapeInfoLayerSettings& LayerSettings : Info->Layers)
 	{
 		if (LayerSettings.LayerInfoObj &&
-			LayerSettings.LayerInfoObj->GetLayerName().ToString().Equals(LayerName, ESearchCase::IgnoreCase))
+			LayerSettings.LayerInfoObj->LayerName.ToString().Equals(LayerName, ESearchCase::IgnoreCase))
 		{
 			return LayerSettings.LayerInfoObj;
 		}
@@ -2660,7 +2660,7 @@ bool ULandscapeService::PaintLayerInRegion(
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
-		TAlphamapAccessor<false> AlphaAccessor(Info, TargetLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, TargetLayer);
 
 		// Build flat array at the requested strength
 		uint8 WeightVal = static_cast<uint8>(FMath::Clamp(FMath::RoundToInt(Strength * 255.0f), 0, 255));
@@ -2775,8 +2775,8 @@ TArray<float> ULandscapeService::GetWeightsInRegion(
 	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
 	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
 
-	TAlphamapAccessor<true> AlphaAccessor(Info, TargetLayer);
-	AlphaAccessor.GetData(StartX, StartY, EndX, EndY, WeightData.GetData());
+	FAlphamapAccessor<true, false> AlphaAccessor(Info, TargetLayer);
+	AlphaAccessor.GetDataFast(StartX, StartY, EndX, EndY, WeightData.GetData());
 
 	Result.SetNumUninitialized(SizeX * SizeY);
 	for (int32 i = 0; i < WeightData.Num(); i++)
@@ -2832,7 +2832,7 @@ bool ULandscapeService::SetWeightsInRegion(
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
-		TAlphamapAccessor<false> AlphaAccessor(Info, TargetLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, TargetLayer);
 
 		TArray<uint8> WeightData;
 		WeightData.SetNumUninitialized(SizeX * SizeY);
@@ -3012,7 +3012,7 @@ FWeightMapImportResult ULandscapeService::ImportWeightMap(
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
-		TAlphamapAccessor<false> AlphaAccessor(Info, TargetLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, TargetLayer);
 		AlphaAccessor.SetData(MinX, MinY, MaxX, MaxY, RawData.GetData(), ELandscapeLayerPaintingRestriction::None);
 		AlphaAccessor.Flush();
 	} // ~TAlphamapAccessor: releases texture write lock
@@ -3096,11 +3096,11 @@ bool ULandscapeService::SetHoleAtLocation(
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
-		TAlphamapAccessor<false> AlphaAccessor(Info, VisLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, VisLayer);
 
 		TArray<uint8> WeightData;
 		WeightData.SetNumZeroed(SizeX * SizeY);
-		AlphaAccessor.GetData(MinX, MinY, MaxX, MaxY, WeightData.GetData());
+		AlphaAccessor.GetDataFast(MinX, MinY, MaxX, MaxY, WeightData.GetData());
 
 		uint8 HoleWeight = bCreateHole ? 255 : 0;
 
@@ -3172,7 +3172,7 @@ bool ULandscapeService::SetHoleInRegion(
 	// Scope the TAlphamapAccessor so its destructor releases the texture write
 	// lock before ForceLayersFullUpdate() triggers texture compression.
 	{
-		TAlphamapAccessor<false> AlphaAccessor(Info, VisLayer);
+		FAlphamapAccessor<false, false> AlphaAccessor(Info, VisLayer);
 
 		uint8 HoleWeight = bCreateHole ? 255 : 0;
 		TArray<uint8> WeightData;
@@ -3226,8 +3226,8 @@ bool ULandscapeService::GetHoleAtLocation(
 	FGuid LayerGuid = ResolveEditLayerGuid(Landscape);
 	FScopedSetLandscapeEditingLayer EditLayerScope(Landscape, LayerGuid);
 
-	TAlphamapAccessor<true> AlphaAccessor(Info, VisLayer);
-	AlphaAccessor.GetData(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
+	FAlphamapAccessor<true, false> AlphaAccessor(Info, VisLayer);
+	AlphaAccessor.GetDataFast(LocalX, LocalY, LocalX, LocalY, WeightData.GetData());
 
 	return WeightData[0] > 128;
 }
@@ -3787,7 +3787,7 @@ bool ULandscapeService::ApplySplinesToLandscape(const FString& LandscapeNameOrLa
 		});
 
 	// ApplySplines rasterizes terrain deformation and layer painting for all splines
-	LandscapeInfo->ApplySplines(nullptr, true);
+	LandscapeInfo->ApplySplines(false);
 
 	LandscapeInfo->ForceLayersFullUpdate();
 	UpdateLandscapeAfterHeightEdit(Landscape);
@@ -4062,7 +4062,7 @@ FLandscapeCreateResult ULandscapeService::ResizeLandscape(
 		{
 			continue;
 		}
-		FString LName = LayerSettings.LayerInfoObj->GetLayerName().ToString();
+		FString LName = LayerSettings.LayerInfoObj->LayerName.ToString();
 		LayerPaths.Add(LayerSettings.LayerInfoObj->GetPathName());
 		TArray<float> Weights = GetWeightsInRegion(LandscapeNameOrLabel, LName, MinX, MinY, OldSizeX, OldSizeY);
 		LayerWeights.Add(TPair<FString, TArray<float>>(LName, MoveTemp(Weights)));

@@ -60,7 +60,7 @@ static UStateTree* LoadStateTree(const FString& AssetPath)
 	// leaves the object in memory but unreachable by LoadAsset until it's saved.
 	const FString ShortName = FPackageName::GetShortName(AssetPath);
 	const FString FullObjectPath = AssetPath + TEXT(".") + ShortName;
-	if (UStateTree* Found = FindObject<UStateTree>(nullptr, *FullObjectPath, EFindObjectFlags::None))
+	if (UStateTree* Found = FindObject<UStateTree>(nullptr, *FullObjectPath))
 	{
 		return Found;
 	}
@@ -1158,9 +1158,6 @@ static bool SetBlueprintTaskClassOnWrapperNode(FStateTreeEditorNode& InOutNode, 
 	// TaskClass controls wrapper instance type. Refresh instance containers after assignment.
 	InOutNode.Instance.Reset();
 	InOutNode.InstanceObject = nullptr;
-	InOutNode.ExecutionRuntimeData.Reset();
-	InOutNode.ExecutionRuntimeDataObject = nullptr;
-
 	if (const FStateTreeNodeBase* NodeBase = InOutNode.Node.GetPtr<FStateTreeNodeBase>())
 	{
 		if (const UScriptStruct* InstanceType = Cast<const UScriptStruct>(NodeBase->GetInstanceDataType()))
@@ -1170,15 +1167,6 @@ static bool SetBlueprintTaskClassOnWrapperNode(FStateTreeEditorNode& InOutNode, 
 		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase->GetInstanceDataType()))
 		{
 			InOutNode.InstanceObject = NewObject<UObject>(Outer, InstanceClass);
-		}
-
-		if (const UScriptStruct* RuntimeType = Cast<const UScriptStruct>(NodeBase->GetExecutionRuntimeDataType()))
-		{
-			InOutNode.ExecutionRuntimeData.InitializeAs(RuntimeType);
-		}
-		else if (const UClass* RuntimeClass = Cast<const UClass>(NodeBase->GetExecutionRuntimeDataType()))
-		{
-			InOutNode.ExecutionRuntimeDataObject = NewObject<UObject>(Outer, RuntimeClass);
 		}
 	}
 
@@ -1269,14 +1257,6 @@ static bool InitEditorNodeFromStruct(FStateTreeEditorNode& OutNode, UScriptStruc
 		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase->GetInstanceDataType()))
 		{
 			OutNode.InstanceObject = NewObject<UObject>(Outer, InstanceClass);
-		}
-		if (const UScriptStruct* RuntimeType = Cast<const UScriptStruct>(NodeBase->GetExecutionRuntimeDataType()))
-		{
-			OutNode.ExecutionRuntimeData.InitializeAs(RuntimeType);
-		}
-		else if (const UClass* RuntimeClass = Cast<const UClass>(NodeBase->GetExecutionRuntimeDataType()))
-		{
-			OutNode.ExecutionRuntimeDataObject = NewObject<UObject>(Outer, RuntimeClass);
 		}
 	}
 
