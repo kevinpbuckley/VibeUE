@@ -231,6 +231,11 @@ if not result.success:
 
 # 6. Save
 unreal.StateTreeService.save_state_tree("/Game/AI/MyBehavior")
+
+# 7. Select the last state you modified so the user can see it
+unreal.VibeUEService.manage_asset(action="open", asset_path="/Game/AI/MyBehavior")
+unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root", True)
+unreal.StateTreeService.select_state("/Game/AI/MyBehavior", "Root/Walking")  # select whichever state you just edited
 ```
 
 ## API Reference
@@ -253,8 +258,9 @@ info = unreal.StateTreeService.get_state_tree_info("/Game/AI/MyBehavior")
 # Each FStateTreeStateInfo has:
 #   .name, .path, .state_type, .selection_behavior, .enabled
 #   .theme_color (display name of assigned color, empty if none)
-#   .b_expanded (whether state is expanded in editor tree view)
 #   .tasks, .enter_conditions, .transitions, .child_paths
+# NOTE: Do NOT access .expanded — it may not be exposed depending on the
+#       compiled plugin version. Use set_state_expanded() directly instead.
 ```
 
 ### Asset Creation
@@ -292,6 +298,29 @@ unreal.StateTreeService.rename_theme_color("/Game/AI/MyBehavior", "Default Color
 unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root/Walking", False)  # collapse
 unreal.StateTreeService.set_state_expanded("/Game/AI/MyBehavior", "Root/Walking", True)   # expand
 ```
+
+#### Editor State Selection
+
+Use `select_state` to highlight a state in the StateTree editor panel (equivalent to clicking it).
+
+**Trigger:** If the user asks to "focus", "view", "open", or "select" a state — they all mean the same thing. Use this workflow for all of them.
+
+**Also:** After ANY modification to a state (add task, add transition, set property, etc.), always call `select_state` on the state you just changed so the user can see the result in the editor.
+
+```python
+import unreal
+
+# Open the asset first (if not already open)
+unreal.VibeUEService.manage_asset(action="open", asset_path="/Game/AI/ST_Cube")
+
+# Expand parents so the state is visible
+unreal.StateTreeService.set_state_expanded("/Game/AI/ST_Cube", "Root", True)
+
+# Select the state — highlights it in the editor panel
+unreal.StateTreeService.select_state("/Game/AI/ST_Cube", "Root/Idle")
+```
+
+`select_state` calls `FStateTreeViewModel::SetSelection` via `UStateTreeEditingSubsystem`, which is exactly what the editor does when the user clicks a state node. The asset must already be open in an editor tab.
 
 ### Tasks
 
@@ -445,6 +474,8 @@ unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "FStateTreeDelayT
 #   OnStateFailed      — only on task failure
 #   OnTick             — every tick (use with conditions)
 #   OnEvent            — on gameplay event
+#   OnDelegate         — when a task's FStateTreeDelegateDispatcher fires
+#                        (requires bind_transition_to_delegate after setting trigger)
 
 # Transition types:
 #   GotoState          — go to a specific state (requires target_path)
@@ -470,6 +501,72 @@ unreal.StateTreeService.add_transition(
     "/Game/AI/MyBehavior", "Root/Attacking",
     "OnStateSucceeded", "GotoState", "Root/Attacking")
 ```
+
+### OnDelegate Transitions — Full Workflow
+
+`OnDelegate` transitions fire when a task's `FStateTreeDelegateDispatcher` property broadcasts.
+This requires **three steps**: add the dispatcher variable, set the trigger, bind the transition.
+
+#### ⚠️ Expected Compile Error — Do NOT Revert
+
+After calling `update_transition(trigger="OnDelegate")`, compiling will produce:
+
+```
+"<StateName> On Delegate Transition to '<TargetState>' requires to be bound to some delegate dispatcher."
+```
+
+**This is expected.** The binding step (`bind_transition_to_delegate`) hasn't been done yet.
+Do NOT revert the trigger back to `OnStateCompleted` — continue with the workflow below.
+
+#### Step-by-Step
+
+```python
+import unreal
+
+bp_path = "/Game/StateTree/Tasks/STT_Rotate"
+st_path = "/Game/StateTree/ST_Cube"
+state_path = "Root/Rotating"
+transition_index = 0  # from get_state_tree_info
+
+# Step 1: Add a FStateTreeDelegateDispatcher variable to the Blueprint task
+if not unreal.BlueprintService.variable_exists(bp_path, "FinishRotatingDispatcher"):
+    result = unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+    assert result, "Failed to add FinishRotatingDispatcher variable"
+    unreal.BlueprintService.compile_blueprint(bp_path)
+    unreal.EditorAssetLibrary.save_asset(bp_path)
+
+# Step 2: Set the transition trigger to OnDelegate
+result = unreal.StateTreeService.update_transition(st_path, state_path, transition_index, trigger="OnDelegate")
+assert result, "update_transition failed"
+
+# Step 3: Bind the transition to the dispatcher property
+result = unreal.StateTreeService.bind_transition_to_delegate(
+    st_path, state_path, transition_index,
+    "STT_Rotate",                  # task name (display name, Blueprint name, or struct type)
+    "FinishRotatingDispatcher"     # the FStateTreeDelegateDispatcher variable name
+)
+assert result, "bind_transition_to_delegate failed"
+
+# Step 4: Compile — should now succeed with no delegate errors
+compile_result = unreal.StateTreeService.compile_state_tree(st_path)
+assert compile_result.success, compile_result.errors
+unreal.StateTreeService.save_state_tree(st_path)
+```
+
+#### Firing the Dispatcher from the Blueprint Task
+
+In `STT_Rotate`'s Blueprint graph, call the dispatcher to trigger the transition:
+
+```python
+# The dispatcher is called like a function in Blueprint — add a "Call FinishRotatingDispatcher" node
+# connected to whatever execution flow should end the state (e.g. after a timer, animation, etc.)
+```
+
+#### Notes
+
+- `FStateTreeDelegateDispatcher` is a USTRUCT — use type string `"FStateTreeDelegateDispatcher"` with `add_variable`.
+- The dispatcher variable must be on the task that is **in the same state** as the `OnDelegate` transition.
+- After `bind_transition_to_delegate`, the compile error about the missing binding will resolve.
 
 ### Compile & Save
 

@@ -56,6 +56,14 @@ public:
 	static FString GetScreenshotsDir();
 
 	/**
+	 * Get the VibeUE plugin version name (e.g. "3.0").
+	 * Reads from the plugin descriptor via IPluginManager.
+	 * 
+	 * @return Version string, or "unknown" if not found
+	 */
+	static FString GetPluginVersionName();
+
+	/**
 	 * Clear all files in the VibeUE Screenshots directory.
 	 * Called on plugin startup to save disk space.
 	 */

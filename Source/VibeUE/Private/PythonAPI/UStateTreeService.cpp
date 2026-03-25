@@ -29,6 +29,9 @@
 #include "StateTreeCompiler.h"
 #include "StateTreeCompilerLog.h"
 #include "Blueprint/StateTreeTaskBlueprintBase.h"
+#include "StateTreeEditingSubsystem.h"
+#include "StateTreeViewModel.h"
+#include "Editor.h"
 
 // For class discovery
 #include "UObject/UObjectIterator.h"
@@ -2361,6 +2364,45 @@ bool UStateTreeService::SetStateExpanded(const FString& AssetPath, const FString
 #endif
 }
 
+bool UStateTreeService::SelectState(const FString& AssetPath, const FString& StatePath)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SelectState: Failed to load StateTree: %s"), *AssetPath);
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SelectState: No editor data for %s"), *AssetPath);
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SelectState: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	UStateTreeEditingSubsystem* EditingSubsystem = GEditor->GetEditorSubsystem<UStateTreeEditingSubsystem>();
+	if (!EditingSubsystem)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SelectState: UStateTreeEditingSubsystem not available"));
+		return false;
+	}
+
+	TSharedRef<FStateTreeViewModel> ViewModel = EditingSubsystem->FindOrAddViewModel(StateTree);
+	ViewModel->SetSelection(State);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
@@ -3043,6 +3085,19 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 
 	if (!Trigger.IsEmpty())
 	{
+		// Validate trigger string — StringToTransitionTrigger silently falls back to OnStateCompleted
+		// for unknown values, so we validate explicitly to avoid silent no-ops.
+		static const TSet<FString> ValidTriggers = {
+			TEXT("OnStateCompleted"), TEXT("OnStateSucceeded"), TEXT("OnStateFailed"),
+			TEXT("OnTick"), TEXT("OnEvent"), TEXT("OnDelegate")
+		};
+		if (!ValidTriggers.Contains(Trigger))
+		{
+			UE_LOG(LogStateTreeService, Warning,
+				TEXT("UpdateTransition: Unknown trigger '%s'. Valid values: OnStateCompleted, OnStateSucceeded, OnStateFailed, OnTick, OnEvent, OnDelegate"),
+				*Trigger);
+			return false;
+		}
 		Trans.Trigger = StringToTransitionTrigger(Trigger);
 	}
 	if (!TransitionType.IsEmpty())
@@ -3121,6 +3176,79 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 	MarkStateTreeDirty(StateTree);
 	UE_LOG(LogStateTreeService, Log, TEXT("UpdateTransition: Updated transition %d on state '%s' in %s"),
 		TransitionIndex, *StatePath, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindTransitionToDelegate(const FString& AssetPath, const FString& StatePath,
+	int32 TransitionIndex, const FString& TaskStructName, const FString& DispatcherPropertyName, int32 TaskMatchIndex)
+{
+	if (DispatcherPropertyName.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: DispatcherPropertyName is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	if (!State->Transitions.IsValidIndex(TransitionIndex))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: TransitionIndex %d out of range (%d transitions) on state '%s'"),
+			TransitionIndex, State->Transitions.Num(), *StatePath);
+		return false;
+	}
+
+	FStateTreeTransition& Trans = State->Transitions[TransitionIndex];
+	if (Trans.Trigger != EStateTreeTransitionTrigger::OnDelegate)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTransitionToDelegate: Transition %d trigger is '%s', not 'OnDelegate'. Call update_transition() with trigger='OnDelegate' first."),
+			TransitionIndex, *TransitionTriggerToString(Trans.Trigger));
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: Task '%s' not found in state '%s' (match index %d)"),
+			*TaskStructName, *StatePath, TaskMatchIndex);
+		return false;
+	}
+
+	// Source: the FStateTreeDelegateDispatcher property on the task node
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(TaskNode->ID, DispatcherPropertyName, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: Invalid dispatcher property name: %s"), *DispatcherPropertyName);
+		return false;
+	}
+
+	// Target: FStateTreeTransition.DelegateListener — the transition's delegate listener slot
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(Trans.ID, TEXT("DelegateListener"), TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTransitionToDelegate: Failed to create DelegateListener path for transition %d"), TransitionIndex);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("BindTransitionToDelegate: Bound transition %d on '%s' to '%s.%s'"),
+		TransitionIndex, *StatePath, *TaskStructName, *DispatcherPropertyName);
 	return true;
 #else
 	return false;
