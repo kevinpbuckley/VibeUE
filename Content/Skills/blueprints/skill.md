@@ -67,6 +67,32 @@ The type system resolves Blueprint names automatically via asset search.
 | `info.inputs` | `info.input_parameters` |
 | `var.name` | `var.variable_name` |
 
+### ⚠️ Python Naming: Boolean `b` Prefix Is Stripped
+
+UE Python **strips the lowercase `b` prefix** from boolean properties. Always use the name without it:
+
+| C++ name | Python name |
+|---|---|
+| `bAlreadyOverridden` | `already_overridden` |
+| `bIsEventStyle` | `is_event_style` |
+| `bIsNativeEvent` | `is_native_event` |
+| `bEnabled` | `enabled` |
+
+Do **not** use `b_already_overridden`, `b_is_event_style`, etc. — these will raise `AttributeError`.
+
+### ⚠️ StateTree Dispatcher Variable Type
+
+To add a StateTree delegate dispatcher variable to a Blueprint task (e.g. `STT_*`):
+
+```python
+# Use type "FStateTreeDelegateDispatcher" — NOT "EventDispatcher"
+unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStateTreeDelegateDispatcher")
+```
+
+`"EventDispatcher"` is a Blueprint-only concept and is not a valid type string. The correct type
+for StateTree delegate transitions is the USTRUCT `FStateTreeDelegateDispatcher`.
+After adding this variable, use `bind_transition_to_delegate` on the StateTree to link it to a transition.
+
 ---
 
 ## Workflows

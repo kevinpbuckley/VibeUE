@@ -6,6 +6,7 @@ https://www.vibeue.com/
 
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.7%2B-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-blue)](https://modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
@@ -1792,5 +1793,7 @@ Plugins/VibeUE/
 
 ## 📄 License
 
-VibeUE is available on the Unreal Marketplace and GitHub.
+MIT License — Copyright © 2025 Kevin Buckley / Buckley Builds LLC
+
+This project is open source and freely available under the [MIT License](LICENSE). You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.
 
