@@ -2416,6 +2416,15 @@ FReply SAIChatWindow::OnSettingsClicked()
         + SScrollBox::Slot().Padding(12, 12, 12, 0)
         [
             SNew(SVerticalBox)
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 8)
+            [
+                SNew(STextBlock)
+                .Text_Lambda([]() -> FText {
+                    FString Version = FVibeUEPaths::GetPluginVersionName();
+                    return FText::FromString(FString::Printf(TEXT("VibeUE v%s"), *Version));
+                })
+                .Font(FCoreStyle::GetDefaultFontStyle("Bold", 14))
+            ]
             + SVerticalBox::Slot().AutoHeight().Padding(0, 0, 0, 4)
             [
                 SNew(STextBlock)

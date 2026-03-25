@@ -64,7 +64,7 @@ struct FStateTreeTransitionInfo
 {
 	GENERATED_BODY()
 
-	/** When the transition fires: "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent" */
+	/** When the transition fires: "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent", "OnDelegate" */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	FString Trigger;
 
@@ -457,6 +457,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetStateExpanded(const FString& AssetPath, const FString& StatePath, bool bExpanded);
 
+	/**
+	 * Select a state in the editor tree view (highlights the state in the StateTree editor panel).
+	 * The StateTree asset must already be open in an editor tab.
+	 * Call manage_asset open first if needed, then set_state_expanded to expand parents, then select_state.
+	 *
+	 * @param AssetPath Content path to the StateTree (e.g. "/Game/AI/ST_Cube")
+	 * @param StatePath Path of the state to select (e.g. "Root/Idle")
+	 * @return true if the selection was applied successfully
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SelectState(const FString& AssetPath, const FString& StatePath);
+
 	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath);
@@ -559,7 +571,8 @@ public:
 	/**
 	 * Update an existing transition. Empty string for Trigger/TransitionType/Priority/EventTag/EventPayloadStruct means "don't change".
 	 * @param TransitionIndex  Zero-based index in the state's Transitions array (from GetStateTreeInfo)
-	 * @param Trigger          "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent" — empty = no change
+	 * @param Trigger          "OnStateCompleted", "OnStateSucceeded", "OnStateFailed", "OnTick", "OnEvent", "OnDelegate" — empty = no change
+	 *                         Unknown trigger strings are rejected (return false) to prevent silent no-ops.
 	 * @param TransitionType   "GotoState", "Succeeded", "Failed", "NextState", "NextSelectableState" — empty = no change
 	 * @param TargetPath       Target state path, only used when TransitionType is "GotoState" — empty = no change
 	 * @param Priority         "Low", "Normal", "Medium", "High", "Critical" — empty = no change
@@ -581,6 +594,26 @@ public:
 	                             bool bSetEnabled = false, bool bEnabled = true,
 	                             bool bSetDelay = false, bool bDelayTransition = false,
 	                             float DelayDuration = 0.0f, float DelayRandomVariance = 0.0f);
+
+	/**
+	 * Bind an OnDelegate transition to a task's FStateTreeDelegateDispatcher property.
+	 *
+	 * Prerequisites:
+	 *   1. The task must have a variable of type FStateTreeDelegateDispatcher (use add_variable with type "FStateTreeDelegateDispatcher").
+	 *   2. The transition trigger must be "OnDelegate" (set via update_transition first).
+	 *
+	 * After calling this, compile the StateTree — a successful compile confirms the binding is valid.
+	 *
+	 * @param StatePath              Path of the state containing the transition (e.g. "Root/Rotating")
+	 * @param TransitionIndex        Zero-based index of the transition (from get_state_tree_info)
+	 * @param TaskStructName         Task name: display name, Blueprint name, or struct type (same as other task APIs)
+	 * @param DispatcherPropertyName Name of the FStateTreeDelegateDispatcher variable on the task
+	 * @param TaskMatchIndex         Which matching task to target (-1 = last match)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTransitionToDelegate(const FString& AssetPath, const FString& StatePath,
+	                                     int32 TransitionIndex, const FString& TaskStructName,
+	                                     const FString& DispatcherPropertyName, int32 TaskMatchIndex = -1);
 
 	/** Remove a transition by index. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")

@@ -40,6 +40,20 @@ related_skills:
 | `disconnect_nodes()` | `disconnect_pin()` |
 | `get_node_connections()` | `get_connections()` |
 
+### ⚠️ `disconnect_pin()` Signature — 4 Args Only
+
+`disconnect_pin` breaks **all** connections from a single named pin. Do **not** call it like `connect_nodes` (which takes 6 args):
+
+```python
+# CORRECT — 4 args: path, graph, node_id, pin_name
+unreal.BlueprintService.disconnect_pin(bp_path, "EventGraph", custom_event_id, "then")
+
+# WRONG — 6 args crashes with "takes at most 4 arguments (6 given)"
+# unreal.BlueprintService.disconnect_pin(bp_path, graph, src_id, src_pin, tgt_id, tgt_pin)
+```
+
+To remove a specific edge, disconnect the output pin on the source node (e.g. `"then"`). Because the other end is the only connection on that exec pin, the single-pin disconnect is equivalent to removing the edge.
+
 ### ⚠️ Property Name Gotchas
 
 | WRONG | CORRECT |
@@ -51,6 +65,26 @@ related_skills:
 | `pin.is_linked` | `pin.is_connected` |
 | `pin.current_value` | `pin.default_value` |
 | `pin.sub_pins` | *(does not exist)* |
+
+### ⚠️ `discover_nodes()` vs `get_nodes_in_graph()` — Different Object Types
+
+`get_nodes_in_graph()` returns **`FBlueprintNodeInfo`** objects — these have `node_title`, `node_id`, `pos_x`, `pos_y`, `node_type`.
+
+`discover_nodes()` returns **`FBlueprintNodeTypeInfo`** objects — these have **`display_name`** (NOT `node_title`), `spawner_key`, `category`, `tooltip`, `is_pure`, `is_latent`, `keywords`.
+
+```python
+# get_nodes_in_graph — use node_title
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
+for n in nodes:
+    print(n.node_title, n.node_id)  # node_title is correct here
+
+# discover_nodes — use display_name (NOT node_title)
+matches = unreal.BlueprintService.discover_nodes(bp_path, "Broadcast")
+for m in matches:
+    print(m.display_name, m.spawner_key)  # display_name, NOT node_title
+```
+
+Also: search `discover_nodes` by **function name**, not variable type. To find the Broadcast Delegate node for a `StateTreeDelegate` variable, search `"Broadcast"` — NOT `"Dispatcher"` or `"StateTreeDelegate"`.
 
 ### ⚠️ Branch Node Pin Names
 
@@ -692,6 +726,60 @@ result = unreal.BlueprintService.build_graph(
     True, True
 )
 ```
+
+### StateTreeDelegate Broadcast — Replace Finish Task with Broadcast Delegate
+
+When a StateTree task Blueprint has a `StateTreeDelegate` variable (e.g. `FinishRotatingDispatcher`) and the user wants the custom event timer callback to **broadcast** that delegate instead of calling `Finish Task`, the graph must:
+
+1. Disconnect `CustomEvent.then → Finish Task.execute`
+2. Delete the `Finish Task` node
+3. Discover the `Broadcast Delegate` spawner key (search `"Broadcast"`)
+4. Create a `Broadcast Delegate` node + a variable GET for the delegate
+5. Connect `CustomEvent.then → Broadcast.execute` and `GET.FinishRotatingDispatcher → Broadcast.Dispatcher`
+
+```python
+import unreal
+
+bp_path = "/Game/StateTree/Tasks/STT_Rotate"
+graph = "EventGraph"
+
+# Step 1: Find node GUIDs
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
+custom_node = next((n for n in nodes if "CustomEvent" in n.node_type or "Custom Event" in n.node_title), None)
+finish_node = next((n for n in nodes if "Finish Task" in n.node_title), None)
+assert custom_node and finish_node, "Nodes not found"
+
+# Step 2: Disconnect CustomEvent.then (correct: 4 args)
+unreal.BlueprintService.disconnect_pin(bp_path, graph, custom_node.node_id, "then")
+
+# Step 3: Delete Finish Task
+unreal.BlueprintService.delete_node(bp_path, graph, finish_node.node_id)
+
+# Step 4: Discover Broadcast Delegate node — search "Broadcast" NOT "Dispatcher"
+matches = unreal.BlueprintService.discover_nodes(bp_path, "Broadcast", "", 10)
+for m in matches:
+    print(m.display_name, m.spawner_key)  # display_name, NOT node_title
+
+broadcast_node = next((m for m in matches if "Broadcast" in m.display_name), None)
+assert broadcast_node, "Broadcast Delegate node not found"
+
+# Step 5: Build replacement — Broadcast + GET variable
+result = unreal.BlueprintService.build_graph(
+    bp_path, graph,
+    [
+        {"ref": "Broadcast", "type": "spawner_key", "params": {"key": broadcast_node.spawner_key}},
+        {"ref": "GetDisp", "type": "variable_get", "params": {"variable": "FinishRotatingDispatcher"}},
+    ],
+    [
+        {"from_": f"{custom_node.node_id}.then", "to": "Broadcast.execute"},
+        {"from_": "GetDisp.FinishRotatingDispatcher", "to": "Broadcast.Dispatcher"},
+    ],
+    [], True, True
+)
+print(f"Success: {result.b_success}, errors: {result.errors}")
+```
+
+**Target (self)** on the Broadcast node connects to `self` by default when the Blueprint is the correct class (`StateTreeTaskBlueprintBase`). You do not need to wire it manually.
 
 ### Round-Trip: Export → Modify → Rebuild
 

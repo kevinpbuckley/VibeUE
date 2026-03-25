@@ -5,6 +5,8 @@
 #include "Misc/Paths.h"
 #include "HAL/FileManager.h"
 
+#include "PluginDescriptor.h"
+
 DEFINE_LOG_CATEGORY_STATIC(LogVibeUEPaths, Log, All);
 
 // Static member initialization
@@ -120,6 +122,21 @@ FString FVibeUEPaths::GetConfigDir()
 		return FString();
 	}
 	return PluginDir / TEXT("Config");
+}
+
+FString FVibeUEPaths::GetPluginVersionName()
+{
+	IPluginManager& PluginManager = IPluginManager::Get();
+	TSharedPtr<IPlugin> Plugin = PluginManager.FindPlugin(TEXT("VibeUE"));
+	if (Plugin.IsValid())
+	{
+		const FPluginDescriptor& Descriptor = Plugin->GetDescriptor();
+		if (!Descriptor.VersionName.IsEmpty())
+		{
+			return Descriptor.VersionName;
+		}
+	}
+	return TEXT("unknown");
 }
 
 FString FVibeUEPaths::GetScreenshotsDir()

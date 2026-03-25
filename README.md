@@ -6,6 +6,7 @@ https://www.vibeue.com/
 
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.7%2B-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-2025--11--25-blue)](https://modelcontextprotocol.io)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
@@ -16,7 +17,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 26 specialized services with 871 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 26 specialized services with 886 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 28 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
@@ -327,13 +328,13 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (26 services, 871 methods)
+### 2. VibeUE Python API Services (26 services, 886 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
-| `BlueprintService` | 88 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder |
+| `BlueprintService` | 87 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
@@ -348,7 +349,7 @@ High-level services exposed to Python for common game development tasks:
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `AssetDiscoveryService` | 20 | Asset search, import/export, references, move/rename workflows |
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
-| `WidgetService` | 24 | UMG widget blueprints, components, and MVVM ViewModel bindings |
+| `WidgetService` | 41 | UMG widget blueprints, components, snapshots, styling, animation, preview/PIE validation, and MVVM ViewModel bindings |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
 | `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
 | `GameplayTagService` | 8 | Gameplay tag CRUD: add, remove, rename, list, filter, hierarchy inspection |
@@ -610,7 +611,7 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (88 methods)
+### BlueprintService (87 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
@@ -813,19 +814,19 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `connect_to_output(path, expr, output, property)` - Connect to material output
 - `create_parameter(...)` - Create parameter expression
 
-### WidgetService (22 methods)
+### WidgetService (41 methods)
 
-- `list_widget_blueprints(path)` - Find widget blueprints
-- `add_component(path, type, name, parent)` - Add widget
-- `get/set_property(path, component, property, value)` - Properties
-- `get_hierarchy(path)` - Get widget tree
-- `bind_event(path, event, function)` - Bind events
-- `add_view_model(path, class, name, creation_type)` - Add MVVM ViewModel
-- `remove_view_model(path, name)` - Remove ViewModel
-- `list_view_models(path)` - List ViewModels
-- `add_view_model_binding(path, vm, vm_prop, widget, widget_prop, mode)` - Bind ViewModel to widget
-- `remove_view_model_binding(path, index)` - Remove binding
-- `list_view_model_bindings(path)` - List all MVVM bindings
+- `list_widget_blueprints(path)`, `widget_blueprint_exists(path)`, `widget_exists(path, component)` - Discover widget assets and validate targets before editing
+- `get_hierarchy(path)`, `get_root_widget(path)`, `list_components(path)` - Inspect widget trees and hierarchy state
+- `get_widget_snapshot(path)`, `get_component_snapshot(path, component)` - Capture hierarchy, slot layout, and property state in a single call
+- `add_component(path, type, name, parent)`, `remove_component(path, name)`, `rename_widget(path, old_name, new_name)`, `validate(path)` - Manage widget composition safely
+- `get_component_properties(path, component)`, `list_properties(path, component)`, `get/set_property(path, component, property, value)`, `search_types(filter)` - Query and edit widget properties and available types
+- `get_available_events(path, component, type)`, `bind_event(path, widget, event, function)` - Discover and wire widget events
+- `add_view_model(path, class, name, creation_type)`, `remove_view_model(path, name)`, `list_view_models(path)` - Register MVVM ViewModels
+- `add_view_model_binding(path, vm, vm_prop, widget, widget_prop, mode)`, `remove_view_model_binding(path, index)`, `list_view_model_bindings(path)` - Create and manage MVVM bindings
+- `set_font/get_font(...)`, `set_brush/get_brush(...)` - Apply full font and brush styling APIs for UMG widgets
+- `list_animations(path)`, `create_animation(path, name)`, `remove_animation(path, name)`, `add_animation_track(path, anim, widget, property)`, `add_keyframe(path, anim, widget, property, keyframe)` - Author UMG animations
+- `capture_preview(path)`, `start_pie()`, `stop_pie()`, `is_pie_running()`, `spawn_widget_in_pie(path)`, `get_live_property(handle, component, property)`, `remove_widget_from_pie(handle)` - Preview and runtime validation workflows
 
 ### InputService (23 methods)
 
@@ -835,7 +836,7 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `add_modifier/trigger(...)` - Add modifiers/triggers
 - `get_available_keys(filter)` - List bindable keys
 
-### AssetDiscoveryService (19 methods)
+### AssetDiscoveryService (20 methods)
 
 - `search_assets(term, type)` - Find assets
 - `save_asset(path)` / `save_all_assets()` - Save
@@ -1146,7 +1147,7 @@ FoliageService provides foliage type management, instance scattering, layer-awar
 - `get_emitter_properties(system, emitter)` - Get lifecycle and property info
 - `get_rapid_iteration_parameters(system, emitter, type)` - Get rapid iteration parameters
 
-### ScreenshotService (6 methods)
+### ScreenshotService (5 methods)
 
 ScreenshotService enables AI vision by capturing editor content:
 - `capture_editor_window(path)` - Capture entire editor window (works for blueprints, materials, etc.)
@@ -1164,7 +1165,7 @@ RuntimeVirtualTextureService manages RVT assets and landscape integration:
 - `create_rvt_volume(landscape, rvt_path, ...)` - Create an RVT volume actor sized to a landscape
 - `assign_rvt_to_landscape(landscape, rvt_path)` - Assign an RVT asset to a landscape actor
 
-### ProjectSettingsService (10+ methods)
+### ProjectSettingsService (16 methods)
 
 ProjectSettingsService provides access to project configuration and editor preferences:
 - `list_settings_categories()` - List all available settings categories
@@ -1178,7 +1179,7 @@ ProjectSettingsService provides access to project configuration and editor prefe
 - `get_default_maps()` - Get editor/game startup map settings
 - `set_default_maps(editor_map, game_map)` - Configure startup maps
 
-### EngineSettingsService (15+ methods)
+### EngineSettingsService (23 methods)
 
 EngineSettingsService controls core engine configuration across multiple domains:
 
@@ -1792,5 +1793,7 @@ Plugins/VibeUE/
 
 ## 📄 License
 
-VibeUE is available on the Unreal Marketplace and GitHub.
+MIT License — Copyright © 2025 Kevin Buckley / Buckley Builds LLC
+
+This project is open source and freely available under the [MIT License](LICENSE). You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.
 
