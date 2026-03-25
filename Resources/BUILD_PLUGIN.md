@@ -28,7 +28,7 @@ This happens because VibeUE is a **C++ Editor plugin** that requires compilation
 ## How the Build Script Works
 
 The `BuildPlugin.bat` script automatically:
-1. **Searches for Unreal Engine 5.6** in common installation locations
+1. **Searches for Unreal Engine 5.7** in common installation locations
 2. **Finds your project's .uproject file** by searching parent directories
 3. **Builds the VibeUE plugin** using Unreal's build tools
 4. **Shows clear success/failure messages** with helpful troubleshooting tips
@@ -53,7 +53,7 @@ The build script works automatically, but if you need to customize it:
 ### "Build failed" with compilation errors
 **Common causes**:
 1. **Missing Visual Studio** - Install Visual Studio 2022 with C++ workload
-2. **Wrong UE version** - The script looks for UE 5.6 by default
+2. **Wrong UE version** - The script looks for UE 5.7 by default
 3. **Corrupted files** - Delete `Binaries` and `Intermediate` folders, then run BuildPlugin.bat again
 
 ## What Gets Built?
@@ -109,7 +109,7 @@ Currently, the build script supports:
 For Mac/Linux, you can manually build using:
 ```bash
 # Navigate to UE installation
-cd /Path/To/UE_5.6
+cd /Path/To/UE_5.7
 
 # Build the plugin
 Engine/Build/BatchFiles/Mac/Build.sh MyProjectEditor Mac Development /Path/To/MyProject.uproject -waitmutex

@@ -1,4 +1,4 @@
-// Copyright VibeUE 2025
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -11,6 +11,9 @@ public:
 	/** IModuleInterface implementation */
 	virtual void StartupModule() override;
 	virtual void ShutdownModule() override;
+
+	/** Called before engine exit to cleanup Python references */
+	void OnPreExit();
 
 	static inline FModule& Get()
 	{
