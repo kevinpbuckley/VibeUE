@@ -85,6 +85,8 @@ namespace
 	 * Fuzzy vertex name lookup — tries an exact FName match first, then falls back to a
 	 * case-insensitive suffix match with spaces stripped.  This lets callers pass display
 	 * names (e.g. "On Play") and still resolve namespaced vertex names ("UE.Source.OnPlay").
+	 * If both fail, strips the last ':Xxx' component (DataType suffix from list_nodes output)
+	 * and retries — e.g. "Out Mono:Audio" → "Out Mono", "UE.Source.OnPlay:Trigger" → "UE.Source.OnPlay".
 	 *
 	 * Returns the matched vertex FName, or NAME_None if nothing matched.
 	 */
@@ -93,46 +95,73 @@ namespace
 	                          const FString& PinName,
 	                          bool bSearchOutputs)
 	{
-		// --- 1. Exact match (fast path) ---
-		EMetaSoundBuilderResult TestResult;
-		const FMetaSoundNodeHandle NodeHandle(NodeGuid);
-		const FName ExactName(*PinName);
-		if (bSearchOutputs)
-			Builder->FindNodeOutputByName(NodeHandle, ExactName, TestResult);
-		else
-			Builder->FindNodeInputByName(NodeHandle, ExactName, TestResult);
-
-		if (TestResult == EMetaSoundBuilderResult::Succeeded)
+		auto TryFind = [&](const FString& Name) -> FName
 		{
-			return ExactName;
+			// --- 1. Exact match (fast path) ---
+			EMetaSoundBuilderResult TestResult;
+			const FMetaSoundNodeHandle NodeHandle(NodeGuid);
+			const FName ExactName(*Name);
+			if (bSearchOutputs)
+				Builder->FindNodeOutputByName(NodeHandle, ExactName, TestResult);
+			else
+				Builder->FindNodeInputByName(NodeHandle, ExactName, TestResult);
+
+			if (TestResult == EMetaSoundBuilderResult::Succeeded)
+			{
+				return ExactName;
+			}
+
+			// --- 2. Suffix match: strip spaces + lowercase both sides ---
+			// e.g. "On Play" → "onplay"  matches suffix of  "ue.source.onplay"
+			const FString SearchNorm = Name.Replace(TEXT(" "), TEXT("")).ToLower();
+			FName MatchedName = NAME_None;
+
+			Builder->GetConstBuilder().IterateNodes(
+				[&](const FMetasoundFrontendClass&, const FMetasoundFrontendNode& Node)
+				{
+					if (MatchedName != NAME_None) return;
+					if (Node.GetID() != NodeGuid)  return;
+
+					const TArray<FMetasoundFrontendVertex>& Verts =
+						bSearchOutputs ? Node.Interface.Outputs : Node.Interface.Inputs;
+
+					for (const FMetasoundFrontendVertex& V : Verts)
+					{
+						FString VNorm = V.Name.ToString().Replace(TEXT(" "), TEXT("")).ToLower();
+						if (VNorm == SearchNorm || VNorm.EndsWith(SearchNorm))
+						{
+							MatchedName = V.Name;
+							break;
+						}
+					}
+				});
+
+			return MatchedName;
+		};
+
+		// First attempt with the name as-is
+		FName Result = TryFind(PinName);
+		if (Result != NAME_None)
+		{
+			return Result;
 		}
 
-		// --- 2. Suffix match: strip spaces + lowercase both sides ---
-		// e.g. "On Play" → "onplay"  matches suffix of  "ue.source.onplay"
-		const FString SearchNorm = PinName.Replace(TEXT(" "), TEXT("")).ToLower();
-		FName MatchedName = NAME_None;
-
-		Builder->GetConstBuilder().IterateNodes(
-			[&](const FMetasoundFrontendClass&, const FMetasoundFrontendNode& Node)
+		// --- 3. Strip trailing ':DataType' suffix from list_nodes output and retry ---
+		// e.g. "Out Mono:Audio" → "Out Mono", "UE.Source.OnPlay:Trigger" → "UE.Source.OnPlay"
+		// "UE.OutputFormat.Mono.Audio:0:Audio" → "UE.OutputFormat.Mono.Audio:0" (only last segment stripped)
+		int32 LastColon;
+		if (PinName.FindLastChar(TEXT(':'), LastColon) && LastColon > 0)
+		{
+			const FString Stripped = PinName.Left(LastColon);
+			Result = TryFind(Stripped);
+			if (Result != NAME_None)
 			{
-				if (MatchedName != NAME_None) return;
-				if (Node.GetID() != NodeGuid)  return;
+				UE_LOG(LogMetaSoundService, Log, TEXT("FuzzyFindVertexName: stripped DataType suffix '%s' → '%s'"),
+				       *PinName, *Stripped);
+			}
+		}
 
-				const TArray<FMetasoundFrontendVertex>& Verts =
-					bSearchOutputs ? Node.Interface.Outputs : Node.Interface.Inputs;
-
-				for (const FMetasoundFrontendVertex& V : Verts)
-				{
-					FString VNorm = V.Name.ToString().Replace(TEXT(" "), TEXT("")).ToLower();
-					if (VNorm == SearchNorm || VNorm.EndsWith(SearchNorm))
-					{
-						MatchedName = V.Name;
-						break;
-					}
-				}
-			});
-
-		return MatchedName;
+		return Result;
 	}
 
 	/** Quick failure result factory. */

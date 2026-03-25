@@ -1,3 +1,27 @@
+---
+name: metasounds
+display_name: MetaSound Editor
+description: Create and modify MetaSound Source assets — add nodes, wire pins, set defaults, play sounds procedurally
+vibeue_classes:
+  - MetaSoundService
+unreal_classes:
+  - MetaSoundSource
+  - MetaSoundBuilder
+keywords:
+  - metasound
+  - MetaSound
+  - MS_
+  - audio
+  - sound
+  - wave
+  - SoundWave
+  - procedural
+  - trigger
+  - sine
+  - oscillator
+  - WavePlayer
+---
+
 # MetaSound Service Skill
 
 Use this skill to create and edit MetaSound Source assets via Python.
@@ -251,6 +275,67 @@ print("Done:", ap)
 
 ---
 
+## Return Type Attribute Reference
+
+Use these exact attribute names — guessing leads to `AttributeError`.
+
+### `FMetaSoundInfo` — returned by `get_meta_sound_info()`
+
+| Attribute | Type | Example |
+|-----------|------|---------|
+| `asset_path` | str | `"/Game/Audio/MS_Test_Blip"` |
+| `asset_name` | str | `"MS_Test_Blip"` |
+| `output_format` | str | `"Mono"` |
+| `node_count` | int | `4` |
+| `graph_inputs` | list[str] | `[]` |
+| `graph_outputs` | list[str] | `[]` |
+
+```python
+info = svc.get_meta_sound_info(asset_path)
+print(info.node_count, info.output_format)
+# NOT info.success, info.b_success, info.message
+```
+
+---
+
+### `FMetaSoundNodeInfo` — returned by `list_nodes()` and `get_node_pins()`
+
+| Attribute | Type | Example |
+|-----------|------|---------|
+| `node_id` | str (GUID) | `"A1B2C3D4-..."` |
+| `node_title` | str | `"Wave Player"` |
+| `class_name` | str | `"UE.Wave Player.Mono"` |
+| `inputs` | list[str] | `["Play:Trigger", "Wave Asset:WaveAsset"]` |
+| `outputs` | list[str] | `["Out Mono:Audio", "On Finished:Trigger"]` |
+
+```python
+nodes = ms.list_nodes(asset_path)
+for n in nodes:
+    print(n.node_id, n.node_title, n.class_name)
+    # NOT n.node_class, n.node_class_name, n.name
+```
+
+### `FMetaSoundNodeClassInfo` — returned by `list_available_nodes()`
+
+| Attribute | Type | Example |
+|-----------|------|---------|
+| `full_class_name` | str | `"UE.Wave Player.Mono"` |
+| `namespace` | str | `"UE"` |
+| `name` | str | `"Wave Player"` |
+| `variant` | str | `"Mono"` |
+| `display_name` | str | `"Wave Player (Mono)"` |
+| `inputs` | list[str] | `["Play:Trigger", ...]` |
+| `outputs` | list[str] | `["Out Mono:Audio", ...]` |
+
+```python
+nodes = ms.list_available_nodes("Wave Player")
+for n in nodes:
+    print(n.name, n.variant, n.full_class_name)
+    # NOT n.node_name, n.node_class, n.class_name
+```
+
+---
+
 ## Known Node Pins
 
 Use these instead of calling `get_node_pins` on freshly-added nodes (can time out).
@@ -302,6 +387,6 @@ in the editor is NOT the vertex name. Always use the vertex names below in `conn
 - **Save after every batch of edits**, not after each individual operation, to avoid excessive disk I/O.
 - `list_available_nodes("")` returns **all** registered node classes (~400+). Use a filter like `"Sine"`, `"Delay"`, `"Gain"` to narrow the results.
 - Node pin names for standard nodes use UE display names (e.g. `"In Frequency"`, `"Out"`, `"Audio:0"`). Use `get_node_pins()` to confirm exact names.
-- A MetaSound Source has **multiple nodes with `node_title == "Output"`** — one per interface pin group (e.g. `"On Finished"` Trigger, `"Out Mono"` Audio). To find the audio sink node, filter for the Output node whose inputs contain an Audio-type pin: `next(n for n in nodes if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs))`. Pin strings are `"VertexName:TypeName"` — use `":".join(pin.split(":")[:-1])` to extract just the vertex name for `connect_nodes`.
+- A MetaSound Source has **multiple nodes with `node_title == "Output"`** — one per interface pin group (e.g. `"On Finished"` Trigger, `"Out Mono"` Audio). To find the audio sink node, filter for the Output node whose inputs contain an Audio-type pin: `next(n for n in nodes if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs))`. Pin strings from `list_nodes` are `"VertexName:TypeName"` — you can pass them directly to `connect_nodes`, which now automatically strips the trailing `:TypeName` suffix. Manual stripping (`":".join(pin.split(":")[:-1])`) still works but is no longer required.
 - Node namespace/name/variant values differ from what the MetaSound editor displays. Always call `list_available_nodes("keyword")` to discover the correct values; do not guess.
 - MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (discover via `list_available_nodes("Wave Player")`).
