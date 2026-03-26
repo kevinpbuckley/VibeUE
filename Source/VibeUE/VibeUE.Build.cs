@@ -97,10 +97,13 @@ public class VibeUE : ModuleRules
 				"GameplayTags",           // For FGameplayTag (required by StateTree)
 				"GameplayTagsEditor",     // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
 				"AudioEditor",            // For SoundCue graph classes (USoundCueGraphNode, USoundCueGraph, USoundCueFactoryNew)
+				"MetasoundEngine",        // For UMetaSoundSource, UMetaSoundBuilderSubsystem, UMetaSoundSourceBuilder
+				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
+				"MetasoundGraphCore",     // For core MetaSound graph types
 				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
 			}
 		);
-		
+
 		if (Target.bBuildEditor == true)
 		{
 			PrivateDependencyModuleNames.AddRange(
@@ -113,7 +116,8 @@ public class VibeUE : ModuleRules
 					"MaterialEditor",      // For material editor integration
 					"LevelEditor",         // For global keyboard shortcuts
 					"StatusBar",           // For panel drawer integration
-					"ContentBrowser"       // For content browser selection queries
+					"ContentBrowser",      // For content browser selection queries
+					"MetasoundEditor",     // For UMetaSoundEditorSubsystem (FindOrBeginBuilding, BuildToAsset)
 				}
 			);
 		}

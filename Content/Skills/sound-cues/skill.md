@@ -33,6 +33,10 @@ related_skills:
   - asset-management
 ---
 
+> **Wrong skill for MetaSound assets?** If the user asked about `MetaSound`, `MS_` assets, or `UMetaSoundSource`, unload this skill and load the `metasounds` skill instead:
+> `manage_skills(action="load", skill_name="metasounds")`
+> SoundCue and MetaSound are completely separate systems — do not use `SoundCueService` for MetaSound tasks.
+
 # Sound Cue Editor Skill
 
 ## Service Access

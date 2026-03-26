@@ -82,8 +82,8 @@ def load_manifest() -> list:
 def forward_to_ue(body_bytes: bytes, headers: dict) -> tuple[bool, bytes]:
     """Try to forward a raw request body to UE. Returns (success, response_bytes).
 
-    success=True  → UE returned a 2xx; response_bytes is valid JSON-RPC to forward as-is.
-    success=False → UE unreachable OR returned an error; response_bytes is a plain-text
+    success=True  -- UE returned a 2xx; response_bytes is valid JSON-RPC to forward as-is.
+    success=False -- UE unreachable OR returned an error; response_bytes is a plain-text
                     description of the problem (may be empty if connection failed outright).
                     Caller must wrap this in a proper JSON-RPC error envelope.
     """
@@ -139,7 +139,7 @@ def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
         text = (
             f"Unreal Engine rejected the request: {ue_message}\n"
             f"Check that the API token in ~/.claude/mcp.json matches "
-            f"Project Settings → Plugins → VibeUE → API Key."
+            f"Project Settings -> Plugins -> VibeUE -> API Key."
         )
     else:
         text = (
@@ -317,7 +317,7 @@ class QuietThreadingHTTPServer(ThreadingHTTPServer):
 if __name__ == "__main__":
     if not _PROXY_CONFIG_PATH.exists():
         log(f"WARNING: vibeue-proxy.json not found at {_PROXY_CONFIG_PATH}")
-        log("Create it with {\"bearer_token\": \"<your-token>\"} to match UE Project Settings → VibeUE → API Key.")
+        log("Create it with {\"bearer_token\": \"<your-token>\"} to match UE Project Settings -> VibeUE -> API Key.")
         log("Without it, requests to UE will be sent without auth and will fail if an API Key is set.")
     elif not _UE_BEARER_TOKEN:
         log(f"WARNING: vibeue-proxy.json exists but 'bearer_token' is empty — UE requests will be unauthenticated.")
