@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.vibeue.com)",
+      "WebFetch(domain:vibe-ue-com.vercel.app)",
+      "mcp__plugin_github_github__list_issues",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":10,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nbp = unreal.load_asset\\(\\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\)\\\\nfor graph in bp.function_graphs + bp.event_graphs:\\\\n    for node in graph.nodes:\\\\n        title = node.get_node_title\\(unreal.NodeTitleType.FULL_TITLE\\)\\\\n        print\\(f\\\\\"{graph.get_name\\(\\)} | {node.__class__.__name__} | {title}\\\\\"\\)\\\\n\"}}}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":11,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nbp = unreal.load_asset\\(\\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\)\\\\nprint\\(dir\\(bp\\)\\)\\\\n\"}}}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":12,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nfrom unreal import BlueprintService\\\\n\\\\n# Use get_node_info since we have the GUID\\\\nbp_path = \\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\\\nguid = \\\\\"1B17F026432F48DCD5CA9391FA5711EE\\\\\"\\\\nresult = BlueprintService.get_node_info\\(bp_path, \\\\\"EventGraph\\\\\", guid\\)\\\\nprint\\(result\\)\\\\n\"}}}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":13,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nfrom unreal import BlueprintService\\\\n\\\\nbp_path = \\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\\\nguid = \\\\\"1B17F026432F48DCD5CA9391FA5711EE\\\\\"\\\\npins = BlueprintService.get_node_pins\\(bp_path, \\\\\"EventGraph\\\\\", guid\\)\\\\nfor p in pins:\\\\n    print\\(f\\\\\"  pin: {p.pin_name} direction={p.pin_direction} type={p.pin_type}\\\\\"\\)\\\\n\"}}}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":14,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nfrom unreal import BlueprintService\\\\n\\\\nbp_path = \\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\\\nguid = \\\\\"1B17F026432F48DCD5CA9391FA5711EE\\\\\"\\\\npins = BlueprintService.get_node_pins\\(bp_path, \\\\\"EventGraph\\\\\", guid\\)\\\\nfor p in pins:\\\\n    print\\(dir\\(p\\)\\)\\\\n    break\\\\n\"}}}')",
+      "Bash(curl -s -X POST http://127.0.0.1:8089/mcp -H \"Content-Type: application/json\" \\\\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":15,\"method\":\"tools/call\",\"params\":{\"name\":\"execute_python_code\",\"arguments\":{\"code\":\"import unreal\\\\nfrom unreal import BlueprintService\\\\n\\\\nbp_path = \\\\\"/Game/Tests/BP_DelegateTest\\\\\"\\\\nguid = \\\\\"1B17F026432F48DCD5CA9391FA5711EE\\\\\"\\\\npins = BlueprintService.get_node_pins\\(bp_path, \\\\\"EventGraph\\\\\", guid\\)\\\\nfor p in pins:\\\\n    print\\(f\\\\\"  {p.pin_name} | is_input={p.is_input} | type={p.pin_type} | connected={p.is_connected}\\\\\"\\)\\\\n\"}}}')",
+      "mcp__VibeUE__execute_python_code",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"G:\\\\Repos Unreal\\\\VibePlayground\\\\Plugins\\\\VibeUE\\\\BuildAndLaunchGame.ps1\" 2>&1)",
+      "Bash(curl:*)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"G:/Repos Unreal/VibePlayground/Plugins/VibeUE/BuildAndLaunchGame.ps1\" 2>&1)",
+      "Bash(powershell.exe -ExecutionPolicy Bypass -File \"G:/Repos Unreal/VibePlayground/Plugins/VibeUE/BuildAndLaunchGame.ps1\")",
+      "Bash(python -m json.tool)"
+    ]
+  },
+  "enabledMcpjsonServers": [
+    "VibeUE"
+  ]
+}

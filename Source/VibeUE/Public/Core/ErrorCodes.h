@@ -1,4 +1,4 @@
-// Copyright VibeUE 2025
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
@@ -163,6 +163,18 @@ namespace ErrorCodes
 	/** @brief Pin with specified name not found */
 	constexpr const TCHAR* PIN_NOT_FOUND = TEXT("PIN_NOT_FOUND");
 
+	/** @brief Source node not found during connection operation */
+	constexpr const TCHAR* SOURCE_NODE_NOT_FOUND = TEXT("SOURCE_NODE_NOT_FOUND");
+
+	/** @brief Target node not found during connection operation */
+	constexpr const TCHAR* TARGET_NODE_NOT_FOUND = TEXT("TARGET_NODE_NOT_FOUND");
+
+	/** @brief Source pin not found during connection operation */
+	constexpr const TCHAR* SOURCE_PIN_NOT_FOUND = TEXT("SOURCE_PIN_NOT_FOUND");
+
+	/** @brief Target pin not found during connection operation */
+	constexpr const TCHAR* TARGET_PIN_NOT_FOUND = TEXT("TARGET_PIN_NOT_FOUND");
+
 	/** @brief Pin is not connected to any other pin */
 	constexpr const TCHAR* PIN_NOT_CONNECTED = TEXT("PIN_NOT_CONNECTED");
 
@@ -272,6 +284,18 @@ namespace ErrorCodes
 
 	/** @brief Asset deletion failed */
 	constexpr const TCHAR* ASSET_DELETE_FAILED = TEXT("ASSET_DELETE_FAILED");
+
+	/** @brief Asset creation failed */
+	constexpr const TCHAR* ASSET_CREATE_FAILED = TEXT("ASSET_CREATE_FAILED");
+
+	/** @brief Asset save failed */
+	constexpr const TCHAR* ASSET_SAVE_FAILED = TEXT("ASSET_SAVE_FAILED");
+
+	/** @brief Type could not be found */
+	constexpr const TCHAR* TYPE_NOT_FOUND = TEXT("TYPE_NOT_FOUND");
+
+	/** @brief Object creation failed */
+	constexpr const TCHAR* CREATION_FAILED = TEXT("CREATION_FAILED");
 
 	// ============================================================================
 	// Event Errors (5000-5099)
@@ -385,6 +409,59 @@ namespace ErrorCodes
 	constexpr const TCHAR* IMAGE_SERIALIZATION_ERROR = TEXT("IMAGE_SERIALIZATION_ERROR");
 
 	// ============================================================================
+	// Material Errors (7000-7099)
+	// ============================================================================
+
+	/** @brief Material could not be found at specified path */
+	constexpr const TCHAR* MATERIAL_NOT_FOUND = TEXT("MATERIAL_NOT_FOUND");
+
+	/** @brief Material expression could not be found */
+	constexpr const TCHAR* EXPRESSION_NOT_FOUND = TEXT("EXPRESSION_NOT_FOUND");
+
+	/** @brief Material expression input not found */
+	constexpr const TCHAR* EXPRESSION_INPUT_NOT_FOUND = TEXT("EXPRESSION_INPUT_NOT_FOUND");
+
+	/** @brief Material expression output not found */
+	constexpr const TCHAR* EXPRESSION_OUTPUT_NOT_FOUND = TEXT("EXPRESSION_OUTPUT_NOT_FOUND");
+
+	/** @brief Failed to create material expression */
+	constexpr const TCHAR* EXPRESSION_CREATE_FAILED = TEXT("EXPRESSION_CREATE_FAILED");
+
+	/** @brief Material expression class not found */
+	constexpr const TCHAR* EXPRESSION_CLASS_NOT_FOUND = TEXT("EXPRESSION_CLASS_NOT_FOUND");
+
+	/** @brief Failed to connect material expressions */
+	constexpr const TCHAR* EXPRESSION_CONNECT_FAILED = TEXT("EXPRESSION_CONNECT_FAILED");
+
+	/** @brief Expression cannot be promoted to parameter */
+	constexpr const TCHAR* EXPRESSION_CANNOT_PROMOTE = TEXT("EXPRESSION_CANNOT_PROMOTE");
+
+	// ============================================================================
+	// DataTable Errors (8000-8099)
+	// ============================================================================
+
+	/** @brief DataTable could not be found at specified path */
+	constexpr const TCHAR* DATATABLE_NOT_FOUND = TEXT("DATATABLE_NOT_FOUND");
+
+	/** @brief Row struct could not be found */
+	constexpr const TCHAR* ROW_STRUCT_NOT_FOUND = TEXT("ROW_STRUCT_NOT_FOUND");
+
+	/** @brief Row could not be found in data table */
+	constexpr const TCHAR* ROW_NOT_FOUND = TEXT("ROW_NOT_FOUND");
+
+	/** @brief Row already exists in data table */
+	constexpr const TCHAR* ROW_ALREADY_EXISTS = TEXT("ROW_ALREADY_EXISTS");
+
+	/** @brief Failed to create data table */
+	constexpr const TCHAR* DATATABLE_CREATE_FAILED = TEXT("DATATABLE_CREATE_FAILED");
+
+	/** @brief Invalid row struct type */
+	constexpr const TCHAR* ROW_STRUCT_INVALID = TEXT("ROW_STRUCT_INVALID");
+
+	/** @brief Row operation failed */
+	constexpr const TCHAR* ROW_OPERATION_FAILED = TEXT("ROW_OPERATION_FAILED");
+
+	// ============================================================================
 	// System/Connection Errors (9000-9099)
 	// ============================================================================
 
@@ -405,6 +482,120 @@ namespace ErrorCodes
 
 	/** @brief Unknown command type */
 	constexpr const TCHAR* UNKNOWN_COMMAND = TEXT("UNKNOWN_COMMAND");
+
+	/** @brief GEditor is not available */
+	constexpr const TCHAR* EDITOR_NOT_AVAILABLE = TEXT("EDITOR_NOT_AVAILABLE");
+
+	/** @brief Required subsystem is not available */
+	constexpr const TCHAR* SUBSYSTEM_NOT_AVAILABLE = TEXT("SUBSYSTEM_NOT_AVAILABLE");
+
+	// ============================================================================
+	// Python Errors (9100-9199)
+	// ============================================================================
+
+	/** @brief Python is not available or not initialized */
+	constexpr const TCHAR* PYTHON_NOT_AVAILABLE = TEXT("PYTHON_NOT_AVAILABLE");
+
+	/** @brief Python syntax error in code */
+	constexpr const TCHAR* PYTHON_SYNTAX_ERROR = TEXT("PYTHON_SYNTAX_ERROR");
+
+	/** @brief Python runtime error or exception */
+	constexpr const TCHAR* PYTHON_RUNTIME_ERROR = TEXT("PYTHON_RUNTIME_ERROR");
+
+	/** @brief Python code contains patterns known to crash the editor */
+	constexpr const TCHAR* PYTHON_UNSAFE_CODE = TEXT("PYTHON_UNSAFE_CODE");
+
+	/** @brief Python execution exceeded timeout */
+	constexpr const TCHAR* PYTHON_EXECUTION_TIMEOUT = TEXT("PYTHON_EXECUTION_TIMEOUT");
+
+	/** @brief Python module not found */
+	constexpr const TCHAR* PYTHON_MODULE_NOT_FOUND = TEXT("PYTHON_MODULE_NOT_FOUND");
+
+	/** @brief Python class not found in module */
+	constexpr const TCHAR* PYTHON_CLASS_NOT_FOUND = TEXT("PYTHON_CLASS_NOT_FOUND");
+
+	/** @brief Python function not found in module */
+	constexpr const TCHAR* PYTHON_FUNCTION_NOT_FOUND = TEXT("PYTHON_FUNCTION_NOT_FOUND");
+
+	/** @brief Python introspection failed */
+	constexpr const TCHAR* PYTHON_INTROSPECTION_FAILED = TEXT("PYTHON_INTROSPECTION_FAILED");
+
+	/** @brief Invalid Python expression */
+	constexpr const TCHAR* PYTHON_INVALID_EXPRESSION = TEXT("PYTHON_INVALID_EXPRESSION");
+
+	// ============================================================================
+	// Filesystem Errors (10000-10099)
+	// ============================================================================
+
+	/** @brief File not found at specified path */
+	constexpr const TCHAR* FILE_NOT_FOUND = TEXT("FILE_NOT_FOUND");
+
+	/** @brief Failed to read file contents */
+	constexpr const TCHAR* FILE_READ_ERROR = TEXT("FILE_READ_ERROR");
+
+	/** @brief Failed to write to file */
+	constexpr const TCHAR* FILE_WRITE_ERROR = TEXT("FILE_WRITE_ERROR");
+
+	/** @brief Path is outside allowed directories */
+	constexpr const TCHAR* FILE_ACCESS_DENIED = TEXT("FILE_ACCESS_DENIED");
+
+	// ============================================================================
+	// Niagara Errors (11000-11099)
+	// ============================================================================
+
+	/** @brief Niagara System could not be found at specified path */
+	constexpr const TCHAR* NIAGARA_SYSTEM_NOT_FOUND = TEXT("NIAGARA_SYSTEM_NOT_FOUND");
+
+	/** @brief Niagara Emitter could not be found */
+	constexpr const TCHAR* NIAGARA_EMITTER_NOT_FOUND = TEXT("NIAGARA_EMITTER_NOT_FOUND");
+
+	/** @brief Failed to create Niagara System */
+	constexpr const TCHAR* NIAGARA_SYSTEM_CREATE_FAILED = TEXT("NIAGARA_SYSTEM_CREATE_FAILED");
+
+	/** @brief Failed to add emitter to system */
+	constexpr const TCHAR* NIAGARA_EMITTER_ADD_FAILED = TEXT("NIAGARA_EMITTER_ADD_FAILED");
+
+	/** @brief Failed to remove emitter from system */
+	constexpr const TCHAR* NIAGARA_EMITTER_REMOVE_FAILED = TEXT("NIAGARA_EMITTER_REMOVE_FAILED");
+
+	/** @brief Niagara compilation failed */
+	constexpr const TCHAR* NIAGARA_COMPILATION_FAILED = TEXT("NIAGARA_COMPILATION_FAILED");
+
+	/** @brief Niagara parameter not found */
+	constexpr const TCHAR* NIAGARA_PARAMETER_NOT_FOUND = TEXT("NIAGARA_PARAMETER_NOT_FOUND");
+
+	/** @brief Niagara parameter type mismatch */
+	constexpr const TCHAR* NIAGARA_PARAMETER_TYPE_MISMATCH = TEXT("NIAGARA_PARAMETER_TYPE_MISMATCH");
+
+	/** @brief Niagara system already exists at target path */
+	constexpr const TCHAR* NIAGARA_SYSTEM_ALREADY_EXISTS = TEXT("NIAGARA_SYSTEM_ALREADY_EXISTS");
+
+	/** @brief Emitter with same name already exists in system */
+	constexpr const TCHAR* NIAGARA_EMITTER_NAME_EXISTS = TEXT("NIAGARA_EMITTER_NAME_EXISTS");
+
+	/** @brief Failed to set Niagara parameter */
+	constexpr const TCHAR* NIAGARA_PARAMETER_SET_FAILED = TEXT("NIAGARA_PARAMETER_SET_FAILED");
+
+	/** @brief Emitter handle is invalid */
+	constexpr const TCHAR* NIAGARA_EMITTER_HANDLE_INVALID = TEXT("NIAGARA_EMITTER_HANDLE_INVALID");
+
+	/** @brief Niagara module not found */
+	constexpr const TCHAR* NIAGARA_MODULE_NOT_FOUND = TEXT("NIAGARA_MODULE_NOT_FOUND");
+
+	/** @brief Failed to add module to emitter */
+	constexpr const TCHAR* NIAGARA_MODULE_ADD_FAILED = TEXT("NIAGARA_MODULE_ADD_FAILED");
+
+	/** @brief Failed to remove module from emitter */
+	constexpr const TCHAR* NIAGARA_MODULE_REMOVE_FAILED = TEXT("NIAGARA_MODULE_REMOVE_FAILED");
+
+	/** @brief Niagara renderer not found */
+	constexpr const TCHAR* NIAGARA_RENDERER_NOT_FOUND = TEXT("NIAGARA_RENDERER_NOT_FOUND");
+
+	/** @brief Failed to add renderer to emitter */
+	constexpr const TCHAR* NIAGARA_RENDERER_ADD_FAILED = TEXT("NIAGARA_RENDERER_ADD_FAILED");
+
+	/** @brief Niagara script not found */
+	constexpr const TCHAR* NIAGARA_SCRIPT_NOT_FOUND = TEXT("NIAGARA_SCRIPT_NOT_FOUND");
 
 } // namespace ErrorCodes
 } // namespace VibeUE

@@ -1,0 +1,1862 @@
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+
+#include "Chat/LLMClientBase.h"
+#include "Chat/ChatSession.h"
+#include "Utils/VibeUEPaths.h"
+#include "HttpModule.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+
+DEFINE_LOG_CATEGORY(LogLLMClientBase);
+
+// Helper to check debug mode
+static bool IsDebugLoggingEnabled()
+{
+    return FChatSession::IsDebugModeEnabled();
+}
+
+FString FLLMClientBase::SanitizeForLLM(const FString& Input)
+{
+    // Remove NUL characters and other problematic control characters
+    FString Output;
+    Output.Reserve(Input.Len());
+    
+    for (TCHAR Char : Input)
+    {
+        // Skip NUL (0x00) and other problematic control characters
+        // Keep tab (0x09), newline (0x0A), carriage return (0x0D)
+        if (Char == 0 || (Char < 32 && Char != 9 && Char != 10 && Char != 13))
+        {
+            continue;
+        }
+        Output.AppendChar(Char);
+    }
+    
+    return Output;
+}
+
+FString FLLMClientBase::LoadSystemPromptFromFile()
+{
+    // Try to load all instruction .md files from the instructions folder
+    FString InstructionsFolder = FVibeUEPaths::GetInstructionsDir();
+    FString CombinedInstructions;
+    IFileManager& FileManager = IFileManager::Get();
+    
+    // Use centralized path utility that handles FAB/marketplace installs
+    if (!InstructionsFolder.IsEmpty() && FPaths::DirectoryExists(InstructionsFolder))
+    {
+        TArray<FString> FoundFiles;
+        FileManager.FindFiles(FoundFiles, *(InstructionsFolder / TEXT("*.md")), true, false);
+        
+        if (FoundFiles.Num() > 0)
+        {
+            for (const FString& FileName : FoundFiles)
+            {
+                FString FilePath = InstructionsFolder / FileName;
+                FString FileContent;
+                if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Loaded instruction file: %s"), *FilePath);
+                    if (!CombinedInstructions.IsEmpty())
+                    {
+                        CombinedInstructions += TEXT("\n\n---\n\n");
+                    }
+                    CombinedInstructions += FileContent;
+                }
+            }
+            
+            if (!CombinedInstructions.IsEmpty())
+            {
+                // Replace {SKILLS} placeholder with dynamically generated skills table
+                if (CombinedInstructions.Contains(TEXT("{SKILLS}")))
+                {
+                    FString SkillsSection = GenerateSkillsSection();
+                    CombinedInstructions = CombinedInstructions.Replace(TEXT("{SKILLS}"), *SkillsSection);
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Replaced {SKILLS} placeholder with generated skills table"));
+                }
+
+                // Append directory information automatically
+                FString DirectoryInfo = GetProjectDirectoryInfo();
+                if (!DirectoryInfo.IsEmpty())
+                {
+                    CombinedInstructions += TEXT("\n\n---\n\n");
+                    CombinedInstructions += DirectoryInfo;
+                }
+
+                UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
+                return CombinedInstructions;
+            }
+        }
+    }
+    
+    // Fallback: Built-in minimal prompt (also append directory info)
+    UE_LOG(LogLLMClientBase, Warning, TEXT("Could not load instruction files from instructions folder (%s), using fallback prompt"), *InstructionsFolder);
+    FString FallbackPrompt = TEXT(
+        "You are an AI assistant integrated into Unreal Engine via the VibeUE plugin. "
+        "You help users with Blueprint development, material creation, asset management, "
+        "UMG widget design, Enhanced Input setup, and general Unreal Engine questions.\n\n"
+        "You have access to MCP tools that can directly manipulate Unreal Engine. "
+        "Use get_help(topic=\"overview\") to learn about available tools and workflows.\n\n"
+        "Be concise and provide actionable guidance. When suggesting code or Blueprint "
+        "logic, be specific about node names and connections."
+    );
+    
+    // Append directory info even to fallback
+    FString DirectoryInfo = GetProjectDirectoryInfo();
+    if (!DirectoryInfo.IsEmpty())
+    {
+        FallbackPrompt += TEXT("\n\n---\n\n");
+        FallbackPrompt += DirectoryInfo;
+    }
+    
+    return FallbackPrompt;
+}
+
+FString FLLMClientBase::GetProjectDirectoryInfo()
+{
+    // Get important project and engine directories (same as get_directories tool)
+    FString EngineDir = FPaths::ConvertRelativePathToFull(FPaths::EngineDir());
+    FString GameDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+    FString PluginDir = FPaths::ConvertRelativePathToFull(FPaths::Combine(GameDir, TEXT("Plugins"), TEXT("VibeUE")));
+    
+    // Normalize paths
+    FPaths::NormalizeDirectoryName(EngineDir);
+    FPaths::NormalizeDirectoryName(GameDir);
+    FPaths::NormalizeDirectoryName(PluginDir);
+    
+    // Determine platform
+#if PLATFORM_WINDOWS
+    FString PlatformDir = TEXT("Win64");
+#elif PLATFORM_MAC
+    FString PlatformDir = TEXT("Mac");
+#elif PLATFORM_LINUX
+    FString PlatformDir = TEXT("Linux");
+#else
+    FString PlatformDir = TEXT("Win64");
+#endif
+
+    // Build Python paths
+    FString PythonIncludeDir = FPaths::Combine(EngineDir, TEXT("Source"), TEXT("ThirdParty"), TEXT("Python3"), PlatformDir, TEXT("include"));
+    FString PythonLibDir = FPaths::Combine(EngineDir, TEXT("Source"), TEXT("ThirdParty"), TEXT("Python3"), PlatformDir, TEXT("Lib"));
+    FString PythonSitePackagesDir = FPaths::Combine(EngineDir, TEXT("Plugins"), TEXT("Experimental"), TEXT("PythonScriptPlugin"), TEXT("Content"), TEXT("Python"));
+    
+    // Build formatted directory information
+    FString DirectoryInfo = TEXT("## Project Directory Information\n\n");
+    DirectoryInfo += TEXT("These directories are automatically available for file operations:\n\n");
+    DirectoryInfo += FString::Printf(TEXT("- **Game Directory**: `%s`\n"), *GameDir);
+    DirectoryInfo += FString::Printf(TEXT("- **VibeUE Plugin Directory**: `%s`\n"), *PluginDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Engine Directory**: `%s`\n"), *EngineDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Include Directory**: `%s`\n"), *PythonIncludeDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Lib Directory**: `%s`\n"), *PythonLibDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Python Site-Packages Directory**: `%s`\n"), *PythonSitePackagesDir);
+    DirectoryInfo += FString::Printf(TEXT("- **Platform**: %s\n\n"), *PlatformDir);
+    DirectoryInfo += TEXT("**Note**: When using `read_file`, `list_dir`, or `file_search` tools, you can reference:\n");
+    DirectoryInfo += TEXT("- Plugin examples: Use paths relative to the plugin directory or game directory\n");
+    DirectoryInfo += TEXT("- Absolute paths are supported and preferred\n");
+    DirectoryInfo += TEXT("- No need to call `get_directories` - this information is always available\n");
+    
+    return DirectoryInfo;
+}
+
+FString FLLMClientBase::GenerateSkillsSection()
+{
+    // Get the skills directory
+    FString SkillsDir = FVibeUEPaths::GetPluginContentDir() / TEXT("Skills");
+
+    if (!FPaths::DirectoryExists(SkillsDir))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("Skills directory not found: %s"), *SkillsDir);
+        return TEXT("| Skill | Description | Services |\n|-------|-------------|----------|\n| *No skills found* | | |\n");
+    }
+
+    // Find all skill directories
+    IFileManager& FileManager = IFileManager::Get();
+    TArray<FString> SkillDirs;
+    FileManager.FindFiles(SkillDirs, *(SkillsDir / TEXT("*")), false, true);
+
+    if (SkillDirs.Num() == 0)
+    {
+        return TEXT("| Skill | Description | Services |\n|-------|-------------|----------|\n| *No skills found* | | |\n");
+    }
+
+    // Build markdown table
+    FString SkillsTable = TEXT("| Skill | Description | Services |\n");
+    SkillsTable += TEXT("|-------|-------------|----------|\n");
+
+    for (const FString& SkillDirName : SkillDirs)
+    {
+        FString SkillMdPath = SkillsDir / SkillDirName / TEXT("skill.md");
+
+        if (!FPaths::FileExists(SkillMdPath))
+        {
+            continue;
+        }
+
+        FString SkillContent;
+        if (!FFileHelper::LoadFileToString(SkillContent, *SkillMdPath))
+        {
+            continue;
+        }
+
+        // Parse YAML frontmatter (between --- markers)
+        FString SkillName = SkillDirName;
+        FString Description;
+        TArray<FString> Services;
+
+        int32 FirstDelim = SkillContent.Find(TEXT("---"));
+        if (FirstDelim != INDEX_NONE)
+        {
+            int32 SecondDelim = SkillContent.Find(TEXT("---"), ESearchCase::IgnoreCase, ESearchDir::FromStart, FirstDelim + 3);
+            if (SecondDelim != INDEX_NONE)
+            {
+                FString Frontmatter = SkillContent.Mid(FirstDelim + 3, SecondDelim - FirstDelim - 3);
+
+                // Parse line by line
+                TArray<FString> Lines;
+                Frontmatter.ParseIntoArrayLines(Lines);
+
+                bool bInVibeUEClasses = false;
+
+                for (const FString& Line : Lines)
+                {
+                    FString TrimmedLine = Line.TrimStartAndEnd();
+
+                    if (TrimmedLine.StartsWith(TEXT("name:")))
+                    {
+                        SkillName = TrimmedLine.Mid(5).TrimStartAndEnd();
+                        bInVibeUEClasses = false;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("description:")))
+                    {
+                        Description = TrimmedLine.Mid(12).TrimStartAndEnd();
+                        bInVibeUEClasses = false;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("vibeue_classes:")))
+                    {
+                        bInVibeUEClasses = true;
+                    }
+                    else if (TrimmedLine.StartsWith(TEXT("-")) && bInVibeUEClasses)
+                    {
+                        FString ServiceName = TrimmedLine.Mid(1).TrimStartAndEnd();
+                        if (!ServiceName.IsEmpty())
+                        {
+                            Services.Add(ServiceName);
+                        }
+                    }
+                    else if (!TrimmedLine.StartsWith(TEXT("-")) && !TrimmedLine.IsEmpty())
+                    {
+                        // New key, no longer in vibeue_classes
+                        bInVibeUEClasses = false;
+                    }
+                }
+            }
+        }
+
+        // Build table row
+        FString ServicesStr = FString::Join(Services, TEXT(", "));
+        SkillsTable += FString::Printf(TEXT("| `%s` | %s | %s |\n"), *SkillName, *Description, *ServicesStr);
+    }
+
+    return SkillsTable;
+}
+
+FLLMClientBase::FLLMClientBase()
+    : bToolCallsDetectedInStream(false)
+    , bInToolCallBlock(false)
+    , bInFunctionBlock(false)
+    , ConnectionRetryCount(0)
+{
+}
+
+FLLMClientBase::~FLLMClientBase()
+{
+    CancelRequest();
+}
+
+void FLLMClientBase::ResetStreamingState()
+{
+    StreamBuffer.Empty();
+    AccumulatedContent.Empty();
+    LastResponseModel.Empty();
+    PendingToolCalls.Empty();
+    bToolCallsDetectedInStream = false;
+    bInToolCallBlock = false;
+    bInFunctionBlock = false;
+    bInThinkingBlock = false;
+    bResponseIncomplete = false;
+    CompletionTokensInResponse = 0;
+}
+
+void FLLMClientBase::CancelRequest()
+{
+    // Set flag BEFORE cancelling so the async completion callback ignores the result
+    bCancellationRequested = true;
+    if (CurrentRequest.IsValid())
+    {
+        CurrentRequest->CancelRequest();
+        CurrentRequest.Reset();
+    }
+    ResetStreamingState();
+}
+
+bool FLLMClientBase::IsRequestInProgress() const
+{
+    return CurrentRequest.IsValid() && 
+           CurrentRequest->GetStatus() == EHttpRequestStatus::Processing;
+}
+
+void FLLMClientBase::OnPreRequestError(const FString& ErrorMessage)
+{
+    UE_LOG(LogLLMClientBase, Error, TEXT("%s"), *ErrorMessage);
+    if (CurrentOnError.IsBound())
+    {
+        CurrentOnError.Execute(ErrorMessage);
+    }
+    if (CurrentOnComplete.IsBound())
+    {
+        CurrentOnComplete.Execute(false);
+    }
+}
+
+FString FLLMClientBase::ProcessErrorResponse(int32 ResponseCode, const FString& ResponseBody)
+{
+    // Default implementation - try to extract error from JSON
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+    if (FJsonSerializer::Deserialize(Reader, JsonObject) && JsonObject.IsValid())
+    {
+        // Try common error formats
+        FString ErrorMessage;
+        if (JsonObject->TryGetStringField(TEXT("detail"), ErrorMessage) ||
+            JsonObject->TryGetStringField(TEXT("message"), ErrorMessage) ||
+            JsonObject->TryGetStringField(TEXT("error"), ErrorMessage))
+        {
+            return ErrorMessage;
+        }
+        
+        // Nested error object
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            if ((*ErrorObj)->TryGetStringField(TEXT("message"), ErrorMessage))
+            {
+                return ErrorMessage;
+            }
+        }
+    }
+    
+    return FString::Printf(TEXT("Request failed (HTTP %d)"), ResponseCode);
+}
+
+void FLLMClientBase::SendChatRequest(
+    const TArray<FChatMessage>& Messages,
+    const FString& ModelId,
+    const TArray<FMCPTool>& Tools,
+    FOnLLMStreamChunk OnChunk,
+    FOnLLMStreamComplete OnComplete,
+    FOnLLMStreamError OnError,
+    FOnLLMToolCall OnToolCall,
+    FOnLLMUsageReceived OnUsage)
+{
+    // Cancel any existing request
+    CancelRequest();
+
+    // Clear cancellation flag now that we're starting a fresh request
+    bCancellationRequested = false;
+
+    // Reset retry count for new request
+    ConnectionRetryCount = 0;
+
+    // Save request parameters for potential retry
+    LastMessages = Messages;
+    LastModelId = ModelId;
+    LastTools = Tools;
+
+    // Store delegates
+    CurrentOnChunk = OnChunk;
+    CurrentOnComplete = OnComplete;
+    CurrentOnError = OnError;
+    CurrentOnToolCall = OnToolCall;
+    CurrentOnUsage = OnUsage;
+
+    // Let subclass build the request
+    CurrentRequest = BuildHttpRequest(Messages, ModelId, Tools);
+    if (!CurrentRequest.IsValid())
+    {
+        // Subclass should have called OnPreRequestError already
+        return;
+    }
+
+    // Debug log outgoing request
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== LLM REQUEST =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("URL: %s"), *CurrentRequest->GetURL());
+        UE_LOG(LogLLMClientBase, Log, TEXT("Messages: %d, Tools: %d"), Messages.Num(), Tools.Num());
+        for (int32 i = 0; i < Messages.Num(); i++)
+        {
+            const FChatMessage& Msg = Messages[i];
+            FString ContentPreview = Msg.Content.Left(200);
+            if (Msg.Content.Len() > 200) ContentPreview += TEXT("...");
+            UE_LOG(LogLLMClientBase, Log, TEXT("  [%d] %s: %s"), i, *Msg.Role, *ContentPreview);
+            if (Msg.ToolCalls.Num() > 0)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("       ToolCalls: %d"), Msg.ToolCalls.Num());
+            }
+            if (!Msg.ToolCallId.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("       ToolCallId: %s"), *Msg.ToolCallId);
+            }
+        }
+        UE_LOG(LogLLMClientBase, Log, TEXT("=================================="));
+    }
+
+    // Bind streaming handlers
+    CurrentRequest->OnRequestProgress64().BindRaw(this, &FLLMClientBase::HandleRequestProgress);
+    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
+
+    // Send the request
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[REQUEST] Sending HTTP request..."));
+        UE_LOG(LogLLMClientBase, Log, TEXT("[REQUEST] URL: %s"), *CurrentRequest->GetURL());
+    }
+    CurrentRequest->ProcessRequest();
+}
+
+void FLLMClientBase::HandleRequestProgress(FHttpRequestPtr Request, uint64 BytesSent, uint64 BytesReceived)
+{
+    // Request was cancelled by the user - ignore all callbacks
+    if (bCancellationRequested)
+    {
+        return;
+    }
+
+    // Only process when we've actually received data
+    if (BytesReceived == 0)
+    {
+        // This is just the upload progress, not download - ignore
+        return;
+    }
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] HandleRequestProgress: sent=%llu, received=%llu"), BytesSent, BytesReceived);
+    }
+
+    if (!Request.IsValid() || !Request->GetResponse().IsValid())
+    {
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Warning, TEXT("[STREAM] Invalid request or response in progress callback"));
+        }
+        return;
+    }
+
+    FString ResponseContent = Request->GetResponse()->GetContentAsString();
+    
+    // Only process new content
+    if (ResponseContent.Len() > StreamBuffer.Len())
+    {
+        FString NewContent = ResponseContent.RightChop(StreamBuffer.Len());
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] New content: %d chars (total buffer: %d)"), NewContent.Len(), ResponseContent.Len());
+        }
+        else
+        {
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("New SSE content (%d chars)"), NewContent.Len());
+        }
+        
+        // Check if this is SSE data or plain JSON (non-streaming response)
+        // SSE data starts with "data: " prefix, or may start with ":" (comment) followed by data lines
+        FString TrimmedContent = NewContent.TrimStart();
+        if (TrimmedContent.StartsWith(TEXT("data: ")) || TrimmedContent.StartsWith(TEXT(":")))
+        {
+            // SSE streaming response (including SSE comments like ": OPENROUTER PROCESSING")
+            // Update StreamBuffer ONLY for SSE content that we're processing
+            StreamBuffer = ResponseContent;
+            // Process the entire content - ProcessSSEData will skip comment lines and process data lines
+            ProcessSSEData(NewContent);
+        }
+        else
+        {
+            // Non-streaming response - will be processed in HandleRequestComplete
+            // Do NOT update StreamBuffer here so HandleRequestComplete knows to process it
+            if (IsDebugLoggingEnabled())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[STREAM] Non-SSE content detected, deferring to HandleRequestComplete"));
+            }
+        }
+    }
+}
+
+void FLLMClientBase::ProcessSSEData(const FString& Data)
+{
+    // Debug log raw SSE data
+    if (IsDebugLoggingEnabled() && !Data.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] Raw data (%d chars): %s"), Data.Len(), *Data.Left(500));
+    }
+
+    // Split by newlines and process each SSE event
+    TArray<FString> Lines;
+    Data.ParseIntoArray(Lines, TEXT("\n"), true);
+
+    for (const FString& Line : Lines)
+    {
+        FString TrimmedLine = Line.TrimStartAndEnd();
+        
+        // Skip empty lines and comments
+        if (TrimmedLine.IsEmpty() || TrimmedLine.StartsWith(TEXT(":")))
+        {
+            continue;
+        }
+
+        // Handle SSE data lines
+        if (TrimmedLine.StartsWith(TEXT("data: ")))
+        {
+            FString JsonData = TrimmedLine.RightChop(6); // Remove "data: " prefix
+            
+            // Check for stream end
+            if (JsonData == TEXT("[DONE]"))
+            {
+                // Do NOT fire tool calls here inside HandleRequestProgress.
+                // Executing tools synchronously within the HTTP module's progress callback
+                // can corrupt internal HTTP state and cause EXCEPTION_ACCESS_VIOLATION.
+                // Tool calls will be fired from HandleRequestComplete instead, after the
+                // HTTP module has fully finished processing the request.
+                if (PendingToolCalls.Num() > 0)
+                {
+                    if (IsDebugLoggingEnabled())
+                    {
+                        UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - %d tool calls pending, will fire from HandleRequestComplete"), PendingToolCalls.Num());
+                    }
+                }
+                else if (IsDebugLoggingEnabled())
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - no pending tool calls"));
+                }
+                continue;
+            }
+
+            ProcessSSEChunk(JsonData);
+        }
+    }
+}
+
+void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
+{
+    // Parse JSON
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(JsonData);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    {
+        return;
+    }
+
+    // Check for error - SSE streams can contain error chunks mid-stream
+    // (e.g., OpenRouter "JSON error injected into SSE stream" from backend 500s)
+    // These are transient - the stream usually continues with [DONE] afterward.
+    // Log as warning but do NOT fire the destructive error handler, which would
+    // remove the in-progress assistant message.
+    if (JsonObject->HasField(TEXT("error")))
+    {
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
+            UE_LOG(LogLLMClientBase, Warning, TEXT("SSE stream received error chunk (non-fatal): %s"), *ErrorMessage);
+        }
+        return;
+    }
+
+    // Check for usage stats
+    const TSharedPtr<FJsonObject>* UsageObj;
+    if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj))
+    {
+        int32 PromptTokens = 0;
+        int32 CompletionTokens = 0;
+        (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
+        (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
+
+        // Log cache stats if present (Anthropic prompt caching)
+        int32 CachedTokens = 0;
+        int32 CacheWriteTokens = 0;
+        const TSharedPtr<FJsonObject>* PromptDetailsObj;
+        if ((*UsageObj)->TryGetObjectField(TEXT("prompt_tokens_details"), PromptDetailsObj))
+        {
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cached_tokens"), CachedTokens);
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cache_write_tokens"), CacheWriteTokens);
+        }
+        if (CachedTokens > 0 || CacheWriteTokens > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[CACHE] prompt=%d, cached=%d (%.0f%%), written=%d, completion=%d"),
+                PromptTokens, CachedTokens,
+                PromptTokens > 0 ? 100.0f * CachedTokens / PromptTokens : 0.0f,
+                CacheWriteTokens, CompletionTokens);
+        }
+
+        if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
+        {
+            CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
+        }
+    }
+
+    // Process choices array
+    const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+    if (!JsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) || ChoicesArray->Num() == 0)
+    {
+        return;
+    }
+
+    const TSharedPtr<FJsonObject>* ChoiceObj;
+    if (!(*ChoicesArray)[0]->TryGetObject(ChoiceObj))
+    {
+        return;
+    }
+
+    // Get delta object (streaming format)
+    const TSharedPtr<FJsonObject>* DeltaObj;
+    if (!(*ChoiceObj)->TryGetObjectField(TEXT("delta"), DeltaObj))
+    {
+        return;
+    }
+
+    // Check for tool calls in delta
+    const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
+    if ((*DeltaObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray))
+    {
+        bToolCallsDetectedInStream = true;
+        
+        for (const TSharedPtr<FJsonValue>& ToolCallValue : *ToolCallsArray)
+        {
+            const TSharedPtr<FJsonObject>* ToolCallObj;
+            if (!ToolCallValue->TryGetObject(ToolCallObj))
+            {
+                continue;
+            }
+
+            int32 ToolIndex = 0;
+            (*ToolCallObj)->TryGetNumberField(TEXT("index"), ToolIndex);
+            
+            // Check if this is a new tool call (not yet in pending)
+            bool bIsNewToolCall = !PendingToolCalls.Contains(ToolIndex);
+            
+            // Initialize tool call if not exists
+            if (bIsNewToolCall)
+            {
+                PendingToolCalls.Add(ToolIndex, FMCPToolCall());
+            }
+
+            FMCPToolCall& ToolCall = PendingToolCalls[ToolIndex];
+
+            // Get ID if present
+            FString ToolCallId;
+            if ((*ToolCallObj)->TryGetStringField(TEXT("id"), ToolCallId))
+            {
+                ToolCall.Id = ToolCallId;
+            }
+
+            // Get function details
+            const TSharedPtr<FJsonObject>* FunctionObj;
+            if ((*ToolCallObj)->TryGetObjectField(TEXT("function"), FunctionObj))
+            {
+                FString FunctionName;
+                if ((*FunctionObj)->TryGetStringField(TEXT("name"), FunctionName))
+                {
+                    ToolCall.ToolName = FunctionName;
+                }
+
+                FString FunctionArgs;
+                if ((*FunctionObj)->TryGetStringField(TEXT("arguments"), FunctionArgs))
+                {
+                    ToolCall.ArgumentsJson += FunctionArgs; // Accumulate arguments
+                }
+            }
+        }
+    }
+
+    // Get content if present
+    // Note: Content may come before tool calls in the same response, so we need to capture it
+    FString DeltaContent;
+    if ((*DeltaObj)->TryGetStringField(TEXT("content"), DeltaContent))
+    {
+        // Always process content - it may come before tool calls start
+        if (!DeltaContent.IsEmpty())
+        {
+            // Detect thinking block start/end and fire status callback
+            DetectThinkingBlocks(DeltaContent);
+            
+            // Filter only tool_call tags (those need to be parsed), but pass through thinking tags
+            FString CleanContent = FilterToolCallTags(DeltaContent);
+            
+            if (!CleanContent.IsEmpty() && CurrentOnChunk.IsBound())
+            {
+                UE_LOG(LogLLMClientBase, Verbose, TEXT("Sending chunk: '%s'"), *CleanContent.Left(100));
+                CurrentOnChunk.Execute(CleanContent);
+
+                // Accumulate content so it can be retrieved later via GetLastAccumulatedResponse()
+                // This is critical when messages have both content and tool calls
+                AccumulatedContent += CleanContent;
+            }
+        }
+    }
+}
+
+FString FLLMClientBase::FilterToolCallTags(const FString& Content)
+{
+    // Filter tool_call tags from content - these need to be parsed for tool execution
+    // Keep thinking tags (<think>, <thinking>) visible to the user
+    FString CleanContent = Content;
+    
+    // Filter <tool_call> tags (Qwen sometimes outputs these in text instead of using native tool calls)
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<tool_call>"), TEXT("</tool_call>"), bInToolCallBlock);
+    
+    // Filter <function=...> XML-style tool call tags (some models output this format)
+    CleanContent = FilterTagBlock(CleanContent, TEXT("<function="), TEXT("</function>"), bInFunctionBlock);
+    
+    // Filter bracket-style [tool_call: ...] or [Tool call: ...] patterns
+    // Use a simple state-based approach for streaming (can't use regex on partial chunks)
+    int32 BracketStart;
+    while ((BracketStart = CleanContent.Find(TEXT("[tool_call:"), ESearchCase::IgnoreCase)) != INDEX_NONE)
+    {
+        int32 BracketEnd = CleanContent.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketStart);
+        if (BracketEnd != INDEX_NONE)
+        {
+            // Complete bracket tool call - remove it
+            CleanContent = CleanContent.Left(BracketStart) + CleanContent.Mid(BracketEnd + 1);
+        }
+        else
+        {
+            // Incomplete - truncate at bracket start (will accumulate in next chunk)
+            CleanContent = CleanContent.Left(BracketStart);
+            break;
+        }
+    }
+    
+    return CleanContent;
+}
+
+FString FLLMClientBase::FilterTagBlock(const FString& Content, const FString& OpenTag, const FString& CloseTag, bool& bInBlock)
+{
+    FString CleanContent;
+    int32 TagStart = Content.Find(OpenTag, ESearchCase::IgnoreCase);
+    int32 TagEnd = Content.Find(CloseTag, ESearchCase::IgnoreCase);
+    int32 CloseTagLen = CloseTag.Len();
+    
+    if (TagStart != INDEX_NONE || bInBlock)
+    {
+        if (TagStart != INDEX_NONE && TagEnd != INDEX_NONE && TagEnd > TagStart)
+        {
+            // Complete block in this chunk - remove it
+            CleanContent = Content.Left(TagStart) + Content.Mid(TagEnd + CloseTagLen);
+            bInBlock = false;
+        }
+        else if (TagStart != INDEX_NONE)
+        {
+            // Block starts but doesn't end
+            CleanContent = Content.Left(TagStart);
+            bInBlock = true;
+        }
+        else if (TagEnd != INDEX_NONE)
+        {
+            // Block ends
+            CleanContent = Content.Mid(TagEnd + CloseTagLen);
+            bInBlock = false;
+        }
+        else
+        {
+            // Still inside block - skip content
+            CleanContent = TEXT("");
+        }
+    }
+    else
+    {
+        CleanContent = Content;
+    }
+    
+    return CleanContent;
+}
+
+void FLLMClientBase::DetectThinkingBlocks(const FString& Content)
+{
+    // Detect start and end of thinking blocks and fire status callback
+    // Supports: <think>, <thinking>, <reasoning>, <thought>
+    
+    bool bWasInThinkingBlock = bInThinkingBlock;
+    
+    // Check for thinking block start tags
+    static const TArray<FString> OpenTags = { 
+        TEXT("<think>"), TEXT("<thinking>"), TEXT("<reasoning>"), TEXT("<thought>") 
+    };
+    
+    // Check for thinking block end tags
+    static const TArray<FString> CloseTags = { 
+        TEXT("</think>"), TEXT("</thinking>"), TEXT("</reasoning>"), TEXT("</thought>") 
+    };
+    
+    // Check if any open tag is present
+    for (const FString& OpenTag : OpenTags)
+    {
+        if (Content.Contains(OpenTag, ESearchCase::IgnoreCase))
+        {
+            bInThinkingBlock = true;
+            break;
+        }
+    }
+    
+    // Check if any close tag is present
+    for (const FString& CloseTag : CloseTags)
+    {
+        if (Content.Contains(CloseTag, ESearchCase::IgnoreCase))
+        {
+            bInThinkingBlock = false;
+            break;
+        }
+    }
+}
+
+TArray<FMCPToolCall> FLLMClientBase::ParseBracketStyleToolCalls(const FString& Content)
+{
+    // Parse bracket-style tool calls from content
+    // Formats supported:
+    //   [tool_call: func_name(arg1="value1", arg2=value2)]
+    //   [Tool call: func_name(arg1="value1", arg2=value2)]
+    
+    TArray<FMCPToolCall> ToolCalls;
+    
+    // Find all [tool_call: ...] or [Tool call: ...] patterns
+    int32 SearchStart = 0;
+    int32 CallIndex = 0;
+    
+    while (SearchStart < Content.Len())
+    {
+        // Find start of tool call - case insensitive
+        int32 BracketStart = Content.Find(TEXT("[tool_call:"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        if (BracketStart == INDEX_NONE)
+        {
+            // Try alternate format "[Tool call:"
+            BracketStart = Content.Find(TEXT("[Tool call:"), ESearchCase::IgnoreCase, ESearchDir::FromStart, SearchStart);
+        }
+        
+        if (BracketStart == INDEX_NONE)
+        {
+            break;
+        }
+        
+        // Find the closing bracket
+        int32 BracketEnd = Content.Find(TEXT("]"), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketStart);
+        if (BracketEnd == INDEX_NONE)
+        {
+            // Incomplete - might continue in next chunk
+            break;
+        }
+        
+        // Extract the content between [tool_call: and ]
+        int32 ContentStart = BracketStart;
+        // Skip past "[tool_call:" or "[Tool call:"
+        while (ContentStart < BracketEnd && Content[ContentStart] != TCHAR(':'))
+        {
+            ContentStart++;
+        }
+        ContentStart++; // Skip the colon
+        
+        FString CallContent = Content.Mid(ContentStart, BracketEnd - ContentStart).TrimStartAndEnd();
+        
+        // Parse: func_name(args)
+        int32 ParenStart = CallContent.Find(TEXT("("));
+        if (ParenStart == INDEX_NONE)
+        {
+            // No arguments - just function name
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = CallContent.TrimStartAndEnd();
+            ToolCall.Id = FString::Printf(TEXT("bracket_call_%d_%lld"), CallIndex, FDateTime::UtcNow().GetTicks());
+            ToolCall.ArgumentsJson = TEXT("{}");
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[BRACKET PARSE] Tool call (no args): %s"), *ToolCall.ToolName);
+                ToolCalls.Add(ToolCall);
+                CallIndex++;
+            }
+        }
+        else
+        {
+            // Has arguments
+            FString FuncName = CallContent.Left(ParenStart).TrimStartAndEnd();
+            
+            // Find matching closing paren
+            int32 ParenEnd = CallContent.Len() - 1;
+            while (ParenEnd > ParenStart && CallContent[ParenEnd] != TCHAR(')'))
+            {
+                ParenEnd--;
+            }
+            
+            FString ArgsStr = CallContent.Mid(ParenStart + 1, ParenEnd - ParenStart - 1);
+            
+            // Parse arguments into JSON object
+            // Format: key1="value1", key2=value2, key3=true
+            TSharedPtr<FJsonObject> ArgsObj = MakeShared<FJsonObject>();
+            
+            // Simple parser for key=value pairs
+            TArray<FString> ArgPairs;
+            
+            // Split by comma, but respect quotes and nested braces
+            FString CurrentArg;
+            int32 BraceDepth = 0;
+            bool bInQuotes = false;
+            TCHAR QuoteChar = 0;
+            
+            for (int32 i = 0; i < ArgsStr.Len(); i++)
+            {
+                TCHAR c = ArgsStr[i];
+                
+                if (!bInQuotes && (c == TCHAR('"') || c == TCHAR('\'')))
+                {
+                    bInQuotes = true;
+                    QuoteChar = c;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (bInQuotes && c == QuoteChar)
+                {
+                    bInQuotes = false;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && (c == TCHAR('{') || c == TCHAR('[')))
+                {
+                    BraceDepth++;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && (c == TCHAR('}') || c == TCHAR(']')))
+                {
+                    BraceDepth--;
+                    CurrentArg.AppendChar(c);
+                }
+                else if (!bInQuotes && BraceDepth == 0 && c == TCHAR(','))
+                {
+                    // End of argument
+                    FString TrimmedArg = CurrentArg.TrimStartAndEnd();
+                    if (!TrimmedArg.IsEmpty())
+                    {
+                        ArgPairs.Add(TrimmedArg);
+                    }
+                    CurrentArg.Empty();
+                }
+                else
+                {
+                    CurrentArg.AppendChar(c);
+                }
+            }
+            
+            // Don't forget the last argument
+            FString TrimmedArg = CurrentArg.TrimStartAndEnd();
+            if (!TrimmedArg.IsEmpty())
+            {
+                ArgPairs.Add(TrimmedArg);
+            }
+            
+            // Parse each key=value pair
+            for (const FString& Pair : ArgPairs)
+            {
+                int32 EqPos = Pair.Find(TEXT("="));
+                if (EqPos != INDEX_NONE)
+                {
+                    FString Key = Pair.Left(EqPos).TrimStartAndEnd();
+                    FString Value = Pair.Mid(EqPos + 1).TrimStartAndEnd();
+                    
+                    // Remove quotes from string values
+                    if ((Value.StartsWith(TEXT("\"")) && Value.EndsWith(TEXT("\""))) ||
+                        (Value.StartsWith(TEXT("'")) && Value.EndsWith(TEXT("'"))))
+                    {
+                        Value = Value.Mid(1, Value.Len() - 2);
+                        ArgsObj->SetStringField(Key, Value);
+                    }
+                    else if (Value.Equals(TEXT("true"), ESearchCase::IgnoreCase))
+                    {
+                        ArgsObj->SetBoolField(Key, true);
+                    }
+                    else if (Value.Equals(TEXT("false"), ESearchCase::IgnoreCase))
+                    {
+                        ArgsObj->SetBoolField(Key, false);
+                    }
+                    else if (Value.StartsWith(TEXT("{")) || Value.StartsWith(TEXT("[")))
+                    {
+                        // Try to parse as JSON
+                        TSharedPtr<FJsonValue> JsonValue;
+                        TSharedRef<TJsonReader<>> JsonReader = TJsonReaderFactory<>::Create(Value);
+                        if (FJsonSerializer::Deserialize(JsonReader, JsonValue) && JsonValue.IsValid())
+                        {
+                            ArgsObj->SetField(Key, JsonValue);
+                        }
+                        else
+                        {
+                            ArgsObj->SetStringField(Key, Value);
+                        }
+                    }
+                    else if (Value.IsNumeric())
+                    {
+                        // Number
+                        ArgsObj->SetNumberField(Key, FCString::Atod(*Value));
+                    }
+                    else
+                    {
+                        // Plain string without quotes
+                        ArgsObj->SetStringField(Key, Value);
+                    }
+                }
+            }
+            
+            // Serialize arguments to JSON
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = FuncName;
+            ToolCall.Id = FString::Printf(TEXT("bracket_call_%d_%lld"), CallIndex, FDateTime::UtcNow().GetTicks());
+            ToolCall.Arguments = ArgsObj;
+            
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+            FJsonSerializer::Serialize(ArgsObj.ToSharedRef(), Writer);
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[BRACKET PARSE] Tool call: %s, args: %s"), *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(200));
+                ToolCalls.Add(ToolCall);
+                CallIndex++;
+            }
+        }
+        
+        SearchStart = BracketEnd + 1;
+    }
+    
+    return ToolCalls;
+}
+
+void FLLMClientBase::FirePendingToolCalls()
+{
+    if (PendingToolCalls.Num() == 0 || !CurrentOnToolCall.IsBound())
+    {
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[SSE] [DONE] received - no pending tool calls"));
+        }
+        return;
+    }
+
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== TOOL CALLS =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Firing %d pending tool calls"), PendingToolCalls.Num());
+    }
+
+    // Sort by index and execute
+    TArray<int32> Indices;
+    PendingToolCalls.GetKeys(Indices);
+    Indices.Sort();
+
+    for (int32 Index : Indices)
+    {
+        FMCPToolCall& ToolCall = PendingToolCalls[Index];
+        
+        // VALIDATION: Skip tool calls with empty name or ID (malformed streaming response)
+        if (ToolCall.ToolName.IsEmpty())
+        {
+            UE_LOG(LogLLMClientBase, Warning, TEXT("Skipping tool call with empty name at index %d (ID=%s, Args=%s)"), 
+                Index, *ToolCall.Id, *ToolCall.ArgumentsJson.Left(100));
+            // Create error result for this malformed tool call
+            if (!ToolCall.Id.IsEmpty())
+            {
+                // If we have an ID but no name, we need to report an error
+                FMCPToolCall ErrorCall = ToolCall;
+                ErrorCall.ToolName = TEXT("__error__");
+                CurrentOnToolCall.Execute(ErrorCall);
+            }
+            continue;
+        }
+        
+        // Generate a fallback ID if empty (some providers don't send IDs correctly)
+        if (ToolCall.Id.IsEmpty())
+        {
+            ToolCall.Id = FString::Printf(TEXT("call_%d_%lld"), Index, FDateTime::UtcNow().GetTicks());
+            UE_LOG(LogLLMClientBase, Warning, TEXT("Generated fallback ID for tool call: %s -> %s"), 
+                *ToolCall.ToolName, *ToolCall.Id);
+        }
+        
+        // Parse accumulated arguments JSON into the Arguments object
+        if (!ToolCall.ArgumentsJson.IsEmpty())
+        {
+            TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+            if (!FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments) || !ToolCall.Arguments.IsValid())
+            {
+                UE_LOG(LogLLMClientBase, Warning, TEXT("Failed to parse tool arguments JSON for %s: %s"), 
+                    *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(500));
+                ToolCall.bArgumentsParseError = true;
+            }
+        }
+        
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("  [%d] %s (id=%s)"), Index, *ToolCall.ToolName, *ToolCall.Id);
+            UE_LOG(LogLLMClientBase, Log, TEXT("       Args: %s"), *ToolCall.ArgumentsJson.Left(300));
+        }
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("Firing tool call: %s"), *ToolCall.ToolName);
+        CurrentOnToolCall.Execute(ToolCall);
+    }
+    
+    // Clear pending tool calls after firing to prevent duplicate execution
+    PendingToolCalls.Empty();
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("=================================="));
+    }
+}
+
+void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
+{
+    UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Processing non-streaming response"));
+    
+    // Track completion tokens and finish reason for detecting incomplete responses
+    CompletionTokensInResponse = 0;  // Use member variable
+    bool bFinishReasonNull = false;
+    
+    // Parse the JSON response
+    TSharedPtr<FJsonObject> JsonObject;
+    TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseContent);
+    if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("[NON-STREAM] Failed to parse JSON response"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to parse LLM response"));
+        return;
+    }
+    
+    // Check for error
+    if (JsonObject->HasField(TEXT("error")))
+    {
+        const TSharedPtr<FJsonObject>* ErrorObj;
+        if (JsonObject->TryGetObjectField(TEXT("error"), ErrorObj))
+        {
+            FString ErrorMessage = (*ErrorObj)->GetStringField(TEXT("message"));
+            UE_LOG(LogLLMClientBase, Error, TEXT("[NON-STREAM] API error: %s"), *ErrorMessage);
+            CurrentOnError.ExecuteIfBound(ErrorMessage);
+        }
+        return;
+    }
+
+    // Capture the actual model used (populated by OpenRouter when auto-routing)
+    JsonObject->TryGetStringField(TEXT("model"), LastResponseModel);
+    if (!LastResponseModel.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Actual model used: %s"), *LastResponseModel);
+        if (FChatSession::IsFileLoggingEnabled())
+        {
+            FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+            FString ModelLog = FString::Printf(TEXT("Routed to: %s\n"), *LastResponseModel);
+            FFileHelper::SaveStringToFile(ModelLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+        }
+    }
+
+    // Get usage stats if present
+    const TSharedPtr<FJsonObject>* UsageObj;
+    if (JsonObject->TryGetObjectField(TEXT("usage"), UsageObj))
+    {
+        int32 PromptTokens = 0;
+        int32 CompletionTokens = 0;
+        (*UsageObj)->TryGetNumberField(TEXT("prompt_tokens"), PromptTokens);
+        (*UsageObj)->TryGetNumberField(TEXT("completion_tokens"), CompletionTokens);
+        CompletionTokensInResponse = CompletionTokens;  // Save for later check
+
+        // Log cache stats if present (Anthropic prompt caching)
+        int32 CachedTokens = 0;
+        int32 CacheWriteTokens = 0;
+        const TSharedPtr<FJsonObject>* PromptDetailsObj;
+        if ((*UsageObj)->TryGetObjectField(TEXT("prompt_tokens_details"), PromptDetailsObj))
+        {
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cached_tokens"), CachedTokens);
+            (*PromptDetailsObj)->TryGetNumberField(TEXT("cache_write_tokens"), CacheWriteTokens);
+        }
+        if (CachedTokens > 0 || CacheWriteTokens > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[CACHE] prompt=%d, cached=%d (%.0f%%), written=%d, completion=%d"),
+                PromptTokens, CachedTokens,
+                PromptTokens > 0 ? 100.0f * CachedTokens / PromptTokens : 0.0f,
+                CacheWriteTokens, CompletionTokens);
+        }
+
+        if ((PromptTokens > 0 || CompletionTokens > 0) && CurrentOnUsage.IsBound())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Usage: prompt=%d, completion=%d"), PromptTokens, CompletionTokens);
+            CurrentOnUsage.Execute(PromptTokens, CompletionTokens);
+        }
+    }
+    
+    // Get choices array
+    const TArray<TSharedPtr<FJsonValue>>* ChoicesArray;
+    if (!JsonObject->TryGetArrayField(TEXT("choices"), ChoicesArray) || ChoicesArray->Num() == 0)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] No choices in response"));
+        return;
+    }
+    
+    // Get first choice
+    const TSharedPtr<FJsonObject>* ChoiceObj;
+    if (!(*ChoicesArray)[0]->TryGetObject(ChoiceObj))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Invalid choice object"));
+        return;
+    }
+    
+    // Check finish_reason - null indicates incomplete response
+    FString FinishReason;
+    (*ChoiceObj)->TryGetStringField(TEXT("finish_reason"), FinishReason);
+    bFinishReasonNull = FinishReason.IsEmpty() || FinishReason == TEXT("null");
+    
+    if (bFinishReasonNull)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] finish_reason is null - response may be incomplete"));
+    }
+    
+    // Get the message object (non-streaming uses "message", streaming uses "delta")
+    const TSharedPtr<FJsonObject>* MessageObj;
+    if (!(*ChoiceObj)->TryGetObjectField(TEXT("message"), MessageObj))
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] No message in choice"));
+        return;
+    }
+    
+    // ALWAYS extract and display content first, even when tool_calls are present
+    // This shows the LLM's reasoning/status message alongside tool execution
+    FString Content;
+    if ((*MessageObj)->TryGetStringField(TEXT("content"), Content) && !Content.IsEmpty())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Content (with tool_calls check pending): %s"), *Content.Left(200));
+        
+        // Filter tool_call tags from content
+        FString CleanContent = FilterToolCallTags(Content);
+        
+        // Remove any text-based tool_call blocks from displayed content
+        // (these will be parsed separately if no JSON tool_calls array exists)
+        
+        // Filter XML-style </tool_call> tags
+        int32 FirstToolCallIndex = CleanContent.Find(TEXT("</tool_call>"));
+        if (FirstToolCallIndex > 0)
+        {
+            CleanContent = CleanContent.Left(FirstToolCallIndex).TrimEnd();
+        }
+        else if (CleanContent.StartsWith(TEXT("</tool_call>")))
+        {
+            CleanContent.Empty();
+        }
+        
+        // Filter bracket-style [tool_call: ...] patterns
+        // Remove all occurrences of [tool_call: func_name(...)]
+        FRegexPattern BracketToolCallPattern(TEXT("\\[tool_call:\\s*[^\\]]+\\]"));
+        FRegexMatcher BracketMatcher(BracketToolCallPattern, CleanContent);
+        while (BracketMatcher.FindNext())
+        {
+            // Replace from match start to end with empty string
+            int32 MatchStart = BracketMatcher.GetMatchBeginning();
+            int32 MatchEnd = BracketMatcher.GetMatchEnding();
+            CleanContent = CleanContent.Left(MatchStart) + CleanContent.Mid(MatchEnd);
+            // Reset matcher with updated string
+            BracketMatcher = FRegexMatcher(BracketToolCallPattern, CleanContent);
+        }
+        
+        // Clean up any extra whitespace/newlines from removed tool calls
+        CleanContent = CleanContent.TrimStartAndEnd();
+        while (CleanContent.Contains(TEXT("\n\n\n")))
+        {
+            CleanContent = CleanContent.Replace(TEXT("\n\n\n"), TEXT("\n\n"));
+        }
+        
+        if (!CleanContent.IsEmpty())
+        {
+            AccumulatedContent = CleanContent;
+            if (CurrentOnChunk.IsBound())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Displaying content to user: %s"), *CleanContent.Left(200));
+                CurrentOnChunk.Execute(CleanContent);
+            }
+        }
+    }
+    
+    // Check for tool calls in JSON format
+    const TArray<TSharedPtr<FJsonValue>>* ToolCallsArray;
+    if ((*MessageObj)->TryGetArrayField(TEXT("tool_calls"), ToolCallsArray) && ToolCallsArray->Num() > 0)
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found %d tool calls"), ToolCallsArray->Num());
+        bToolCallsDetectedInStream = true;
+        
+        for (int32 i = 0; i < ToolCallsArray->Num(); i++)
+        {
+            const TSharedPtr<FJsonObject>* ToolCallObj;
+            if (!(*ToolCallsArray)[i]->TryGetObject(ToolCallObj))
+            {
+                continue;
+            }
+            
+            FMCPToolCall ToolCall;
+            ToolCall.Id = (*ToolCallObj)->GetStringField(TEXT("id"));
+            
+            const TSharedPtr<FJsonObject>* FunctionObj;
+            if ((*ToolCallObj)->TryGetObjectField(TEXT("function"), FunctionObj))
+            {
+                ToolCall.ToolName = (*FunctionObj)->GetStringField(TEXT("name"));
+                ToolCall.ArgumentsJson = (*FunctionObj)->GetStringField(TEXT("arguments"));
+                
+                // Parse arguments JSON
+                TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+                if (!FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments) || !ToolCall.Arguments.IsValid())
+                {
+                    UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse tool arguments JSON for %s: %s"), 
+                        *ToolCall.ToolName, *ToolCall.ArgumentsJson.Left(500));
+                    ToolCall.bArgumentsParseError = true;
+                }
+            }
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Tool call %d: %s (id=%s)"), i, *ToolCall.ToolName, *ToolCall.Id);
+            
+            if (CurrentOnToolCall.IsBound())
+            {
+                CurrentOnToolCall.Execute(ToolCall);
+            }
+        }
+        return; // Tool calls handled via JSON array, skip text-based parsing
+    }
+    
+    // No JSON tool_calls array - check for text-based tool calls in content
+    // First try bracket format: [tool_call: func(args)]
+    if (!Content.IsEmpty() && (Content.Contains(TEXT("[tool_call:")) || Content.Contains(TEXT("[Tool call:"))))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for bracket-format tool calls..."));
+        
+        TArray<FMCPToolCall> BracketToolCalls = ParseBracketStyleToolCalls(Content);
+        
+        if (BracketToolCalls.Num() > 0)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found %d bracket-format tool calls"), BracketToolCalls.Num());
+            bToolCallsDetectedInStream = true;
+            
+            for (const FMCPToolCall& ToolCall : BracketToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled via bracket format
+        }
+    }
+    
+    // Try Qwen/vLLM function format: <function=name><parameter=key>value</parameter>...</function>
+    // This format is used by some models when they don't properly support tool_calls
+    if (!Content.IsEmpty() && Content.Contains(TEXT("<function=")))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for <function=name> style tool calls..."));
+        
+        FString WorkContent = Content;
+        TArray<FMCPToolCall> ParsedToolCalls;
+        int32 ToolCallIndex = 0;
+        
+        // Pattern: <function=tool_name><parameter=param_name>value</parameter>...</function>
+        FRegexPattern FunctionPattern(TEXT("<function=([^>]+)>([\\s\\S]*?)(?:</function>|</tool_call>|$)"));
+        FRegexMatcher FunctionMatcher(FunctionPattern, WorkContent);
+        
+        while (FunctionMatcher.FindNext())
+        {
+            FString ToolName = FunctionMatcher.GetCaptureGroup(1);
+            FString ParametersContent = FunctionMatcher.GetCaptureGroup(2);
+            
+            // Clean up tool name (might have trailing whitespace or newlines)
+            ToolName = ToolName.TrimStartAndEnd();
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Found <function=%s> with content length %d"), *ToolName, ParametersContent.Len());
+            
+            // Extract parameters: <parameter=key>value</parameter>
+            TSharedPtr<FJsonObject> Arguments = MakeShared<FJsonObject>();
+            FRegexPattern ParamPattern(TEXT("<parameter=([^>]+)>([\\s\\S]*?)</parameter>"));
+            FRegexMatcher ParamMatcher(ParamPattern, ParametersContent);
+            
+            while (ParamMatcher.FindNext())
+            {
+                FString ParamName = ParamMatcher.GetCaptureGroup(1);
+                FString ParamValue = ParamMatcher.GetCaptureGroup(2);
+                
+                // Trim whitespace
+                ParamName = ParamName.TrimStartAndEnd();
+                ParamValue = ParamValue.TrimStartAndEnd();
+                
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parameter: %s = %s"), *ParamName, *ParamValue.Left(100));
+                
+                // Try to parse as JSON if it looks like JSON
+                if (ParamValue.StartsWith(TEXT("{")) || ParamValue.StartsWith(TEXT("[")))
+                {
+                    TSharedPtr<FJsonValue> JsonValue;
+                    TSharedRef<TJsonReader<>> ParamReader = TJsonReaderFactory<>::Create(ParamValue);
+                    if (FJsonSerializer::Deserialize(ParamReader, JsonValue))
+                    {
+                        Arguments->SetField(ParamName, JsonValue);
+                    }
+                    else
+                    {
+                        // Failed to parse as JSON, store as string
+                        Arguments->SetStringField(ParamName, ParamValue);
+                    }
+                }
+                else
+                {
+                    Arguments->SetStringField(ParamName, ParamValue);
+                }
+            }
+            
+            // Build the tool call
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = ToolName;
+            ToolCall.Arguments = Arguments;
+            ToolCall.Id = FString::Printf(TEXT("func_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
+            
+            // Serialize arguments to JSON string
+            TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+            FJsonSerializer::Serialize(Arguments.ToSharedRef(), Writer);
+            
+            UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed <function> tool call: %s (id=%s, args=%s)"), 
+                *ToolCall.ToolName, *ToolCall.Id, *ToolCall.ArgumentsJson.Left(200));
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                ParsedToolCalls.Add(ToolCall);
+            }
+            
+            ToolCallIndex++;
+        }
+        
+        // Fire all parsed tool calls
+        if (ParsedToolCalls.Num() > 0)
+        {
+            bToolCallsDetectedInStream = true;
+            for (const FMCPToolCall& ToolCall : ParsedToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled via function format
+        }
+    }
+    
+    // Try XML-style format: <tool_call>...</tool_call> or just <tool_call>... (some models don't close)
+    if (!Content.IsEmpty() && (Content.Contains(TEXT("<tool_call>")) || Content.Contains(TEXT("</tool_call>"))))
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] No JSON tool_calls, checking for XML-style tool calls in content..."));
+        
+        // Extract content between <tool_call> tags (or after <tool_call> if no closing tag)
+        FString WorkContent = Content;
+        TArray<FMCPToolCall> ParsedToolCalls;
+        int32 ToolCallIndex = 0;
+        
+        int32 StartIdx = 0;
+        while ((StartIdx = WorkContent.Find(TEXT("<tool_call>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, StartIdx)) != INDEX_NONE)
+        {
+            // Move past the opening tag
+            int32 ContentStart = StartIdx + 11; // Length of "<tool_call>"
+            
+            // Find the closing tag or end of string
+            int32 EndIdx = WorkContent.Find(TEXT("</tool_call>"), ESearchCase::IgnoreCase, ESearchDir::FromStart, ContentStart);
+            FString ToolCallContent;
+            if (EndIdx != INDEX_NONE)
+            {
+                ToolCallContent = WorkContent.Mid(ContentStart, EndIdx - ContentStart);
+                StartIdx = EndIdx + 12; // Move past closing tag
+            }
+            else
+            {
+                // No closing tag - take rest of string
+                ToolCallContent = WorkContent.Mid(ContentStart);
+                StartIdx = WorkContent.Len(); // End loop
+            }
+            
+            // Trim and look for JSON
+            ToolCallContent = ToolCallContent.TrimStartAndEnd();
+            
+            // Skip if empty
+            if (ToolCallContent.IsEmpty())
+            {
+                continue;
+            }
+            
+            // Find the JSON object in this content
+            int32 JsonStart = ToolCallContent.Find(TEXT("{"));
+            if (JsonStart == INDEX_NONE)
+            {
+                continue;
+            }
+            
+            // Find matching closing brace
+            int32 BraceCount = 0;
+            int32 JsonEnd = JsonStart;
+            for (int32 i = JsonStart; i < ToolCallContent.Len(); i++)
+            {
+                if (ToolCallContent[i] == TEXT('{')) BraceCount++;
+                else if (ToolCallContent[i] == TEXT('}')) BraceCount--;
+                
+                if (BraceCount == 0)
+                {
+                    JsonEnd = i + 1;
+                    break;
+                }
+            }
+            
+            FString JsonStr = ToolCallContent.Mid(JsonStart, JsonEnd - JsonStart);
+            
+            // Parse the JSON
+            TSharedPtr<FJsonObject> ToolCallJson;
+            TSharedRef<TJsonReader<>> ToolReader = TJsonReaderFactory<>::Create(JsonStr);
+            if (!FJsonSerializer::Deserialize(ToolReader, ToolCallJson) || !ToolCallJson.IsValid())
+            {
+                UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] Failed to parse XML-style tool call JSON: %s"), *JsonStr.Left(200));
+                continue;
+            }
+            
+            // Extract tool call info
+            FMCPToolCall ToolCall;
+            ToolCall.ToolName = ToolCallJson->GetStringField(TEXT("name"));
+            
+            // Get arguments - could be object or string
+            const TSharedPtr<FJsonObject>* ArgsObj;
+            if (ToolCallJson->TryGetObjectField(TEXT("arguments"), ArgsObj))
+            {
+                // Arguments is an object, serialize to string
+                TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ToolCall.ArgumentsJson);
+                FJsonSerializer::Serialize(ArgsObj->ToSharedRef(), Writer);
+                ToolCall.Arguments = *ArgsObj;
+            }
+            else
+            {
+                // Arguments might be a string
+                ToolCall.ArgumentsJson = ToolCallJson->GetStringField(TEXT("arguments"));
+                TSharedRef<TJsonReader<>> ArgReader = TJsonReaderFactory<>::Create(ToolCall.ArgumentsJson);
+                FJsonSerializer::Deserialize(ArgReader, ToolCall.Arguments);
+            }
+            
+            // Generate ID since text format doesn't include one
+            ToolCall.Id = FString::Printf(TEXT("xml_call_%d_%lld"), ToolCallIndex, FDateTime::UtcNow().GetTicks());
+            
+            if (!ToolCall.ToolName.IsEmpty())
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Parsed XML-style tool call: %s (id=%s)"), *ToolCall.ToolName, *ToolCall.Id);
+                ParsedToolCalls.Add(ToolCall);
+            }
+            
+            ToolCallIndex++;
+        }
+        
+        // Fire all parsed tool calls
+        if (ParsedToolCalls.Num() > 0)
+        {
+            bToolCallsDetectedInStream = true;
+            for (const FMCPToolCall& ToolCall : ParsedToolCalls)
+            {
+                if (CurrentOnToolCall.IsBound())
+                {
+                    CurrentOnToolCall.Execute(ToolCall);
+                }
+            }
+            return; // Tool calls handled
+        }
+    }
+    
+    // Final check: if no content and no tool calls but completion tokens > threshold,
+    // the API is likely filtering the response (e.g., content moderation)
+    if (AccumulatedContent.IsEmpty() && !bToolCallsDetectedInStream && CompletionTokensInResponse > 50)
+    {
+        UE_LOG(LogLLMClientBase, Warning, TEXT("[NON-STREAM] API filtering detected: %d completion tokens consumed but empty response"), CompletionTokensInResponse);
+        
+        // Generate a synthetic status message explaining the issue
+        FString FilteredMsg = FString::Printf(TEXT("⚠️ API response filtered (%d tokens consumed). The model generated content that was filtered by the API. Try rephrasing your request."), CompletionTokensInResponse);
+        if (CurrentOnChunk.IsBound())
+        {
+            CurrentOnChunk.Execute(FilteredMsg);
+        }
+        AccumulatedContent = FilteredMsg;
+    }
+    
+    // Detect incomplete response: finish_reason is null and content suggests tool usage intent
+    // This happens when the model says "I'll do X" but the tool call is cut off
+    if (bFinishReasonNull && !bToolCallsDetectedInStream && !AccumulatedContent.IsEmpty())
+    {
+        // Check for patterns that suggest the AI intended to make a tool call
+        FString LowerContent = AccumulatedContent.ToLower();
+        bool bSuggestsToolIntent = 
+            LowerContent.Contains(TEXT("i'll load")) ||
+            LowerContent.Contains(TEXT("i will load")) ||
+            LowerContent.Contains(TEXT("let me load")) ||
+            LowerContent.Contains(TEXT("i'll use")) ||
+            LowerContent.Contains(TEXT("i will use")) ||
+            LowerContent.Contains(TEXT("let me use")) ||
+            LowerContent.Contains(TEXT("i'll call")) ||
+            LowerContent.Contains(TEXT("i'll search")) ||
+            LowerContent.Contains(TEXT("i'll execute")) ||
+            LowerContent.Contains(TEXT("i'll run")) ||
+            LowerContent.Contains(TEXT("loading the")) ||
+            LowerContent.Contains(TEXT("using the")) ||
+            LowerContent.Contains(TEXT("calling the")) ||
+            (LowerContent.Contains(TEXT("skill")) && (LowerContent.Contains(TEXT("load")) || LowerContent.Contains(TEXT("find"))));
+        
+        if (bSuggestsToolIntent)
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[AUTO-CONTINUE] Incomplete response detected - AI stated intent to use tool but no tool call received. Continuing silently..."));
+            bResponseIncomplete = true;
+            // Auto-continue will be handled by ChatSession - no need to show message to user
+        }
+    }
+}
+
+void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+{
+    // Request was cancelled by the user - do not retry or fire any callbacks
+    if (bCancellationRequested)
+    {
+        bCancellationRequested = false;
+        return;
+    }
+
+    // Check for timeout/connection failure first
+    if (Request.IsValid())
+    {
+        EHttpRequestStatus::Type RequestStatus = Request->GetStatus();
+        if (RequestStatus == EHttpRequestStatus::Failed)
+        {
+            // For SSE streaming, the server closing the connection is normal behavior
+            // but UE's HTTP module reports it as "Failed". If we already received
+            // streaming data, this is NOT an error - just proceed to normal completion.
+            bool bHasStreamData = !StreamBuffer.IsEmpty();
+            if (bHasStreamData)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Request status=Failed but StreamBuffer has %d chars - treating as successful SSE completion"), StreamBuffer.Len());
+                // Fall through to normal completion logic below
+            }
+            else
+            {
+                // Connection failed with no streaming data - retry before giving up
+                if (ConnectionRetryCount < MaxConnectionRetries)
+                {
+                    ConnectionRetryCount++;
+                    UE_LOG(LogLLMClientBase, Warning, TEXT("HandleRequestComplete: Connection failed (attempt %d/%d) - retrying..."), 
+                        ConnectionRetryCount, MaxConnectionRetries);
+                    CurrentRequest.Reset();
+                    ResetStreamingState();
+                    RetryCurrentRequest();
+                    return;
+                }
+                
+                UE_LOG(LogLLMClientBase, Error, TEXT("HandleRequestComplete: Request failed after %d retries - connection error (no streaming data received)"), MaxConnectionRetries);
+                CurrentOnError.ExecuteIfBound(TEXT("Request timed out or connection failed after 3 retries. Please try again."));
+                CurrentOnComplete.ExecuteIfBound(false);
+                CurrentRequest.Reset();
+                ResetStreamingState();
+                return;
+            }
+        }
+    }
+    
+    // ALWAYS log response validity for debugging
+    UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response valid=%s, Connected=%s"), 
+        Response.IsValid() ? TEXT("Yes") : TEXT("No"),
+        bConnectedSuccessfully ? TEXT("Yes") : TEXT("No"));
+    
+    if (Response.IsValid())
+    {
+        // Log response headers for debugging
+        int32 ResponseCode = Response->GetResponseCode();
+        FString ContentType = Response->GetHeader(TEXT("Content-Type"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: ResponseCode=%d, ContentType=%s"), 
+            ResponseCode, *ContentType);
+        
+        FString ResponseContent = Response->GetContentAsString();
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Response content length=%d, StreamBuffer length=%d"), 
+            ResponseContent.Len(), StreamBuffer.Len());
+        
+        // Log response summary to dedicated file for debugging (if file logging enabled)
+        if (FChatSession::IsFileLoggingEnabled())
+        {
+            FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
+            // Log summary instead of full response to avoid massive log files from streaming chunks
+            FString ResponseLog = FString::Printf(TEXT("\n========== RESPONSE [%s] ==========\nHTTP %d, Content-Type: %s, Length: %d bytes\n"),
+                *FDateTime::Now().ToString(),
+                ResponseCode,
+                *ContentType,
+                ResponseContent.Len());
+            FFileHelper::SaveStringToFile(ResponseLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("Response summary logged to: %s"), *RawLogPath);
+        }
+        
+        // Check if we have content that needs processing
+        // IMPORTANT: If tool calls were detected during SSE streaming, do NOT re-process
+        // the response as SSE. The PendingToolCalls map already has the correct data
+        // accumulated during streaming chunks. Re-processing would re-send content chunks
+        // to the UI and could double-populate PendingToolCalls.
+        if (ResponseContent.Len() > 0 && !bToolCallsDetectedInStream)
+        {
+            // Check if this is non-SSE (JSON) content that wasn't processed in progress callback
+            FString TrimmedContent = ResponseContent.TrimStart();
+            bool bIsSSEContent = TrimmedContent.StartsWith(TEXT("data: ")) || TrimmedContent.StartsWith(TEXT(":"));
+            
+            // If we already have data in StreamBuffer, it means SSE processing already happened
+            bool bAlreadyProcessedAsStream = StreamBuffer.Len() > 0;
+            
+            // For non-SSE content, we need to process it here since progress callback deferred it
+            if (!bIsSSEContent && !bAlreadyProcessedAsStream)
+            {
+                UE_LOG(LogLLMClientBase, Log, TEXT("Processing non-streaming JSON response"));
+                UE_LOG(LogLLMClientBase, Log, TEXT("Response preview: %s"), *ResponseContent.Left(1000));
+                ProcessNonStreamingResponse(ResponseContent);
+            }
+            else if (StreamBuffer.Len() == 0 && bIsSSEContent)
+            {
+                // SSE content that wasn't captured by progress callback
+                UE_LOG(LogLLMClientBase, Log, TEXT("Processing SSE content that wasn't captured by progress callback"));
+                StreamBuffer = ResponseContent;
+                ProcessSSEData(ResponseContent);
+            }
+            else if (bAlreadyProcessedAsStream && ResponseContent.Len() > StreamBuffer.Len())
+            {
+                // There's more content in ResponseContent than what we processed - final chunk was deferred
+                // Extract and process the unprocessed portion
+                FString UnprocessedContent = ResponseContent.Right(ResponseContent.Len() - StreamBuffer.Len());
+                if (!UnprocessedContent.IsEmpty())
+                {
+                    UE_LOG(LogLLMClientBase, Log, TEXT("Processing %d chars of deferred SSE content from final chunk"), UnprocessedContent.Len());
+                    StreamBuffer = ResponseContent;
+                    ProcessSSEData(UnprocessedContent);
+                }
+            }
+            else if (bAlreadyProcessedAsStream && bIsSSEContent && PendingToolCalls.Num() == 0 && AccumulatedContent.IsEmpty() && ResponseContent.Len() >= StreamBuffer.Len())
+            {
+                // Safety net: SSE was partially streamed (StreamBuffer > 0) but no tool calls and no
+                // content were accumulated. This can happen when WinHTTP delivers chunks out-of-order
+                // or drops early callbacks (e.g. chunk1 arrives before response object is valid).
+                // Re-process the full response from scratch — streaming state is already safe to reset
+                // here because HandleRequestComplete runs after the HTTP module is fully done.
+                UE_LOG(LogLLMClientBase, Log, TEXT("SSE stream yielded no content/tools (StreamBuffer=%d, ResponseContent=%d) — reprocessing full response"), StreamBuffer.Len(), ResponseContent.Len());
+                StreamBuffer.Empty();
+                ProcessSSEData(ResponseContent);
+            }
+        }
+        else if (bToolCallsDetectedInStream && ResponseContent.Len() > 0)
+        {
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("HandleRequestComplete: Skipping SSE reprocessing - tool calls accumulated during stream, will fire below"));
+        }
+    }
+    
+    // Fire any pending tool calls.
+    // Tool calls are ALWAYS fired here in HandleRequestComplete, never in HandleRequestProgress.
+    // This ensures the HTTP module has fully finished processing the request before we
+    // execute tools synchronously (which can involve heavy work like HTTP requests, file I/O, etc.).
+    if (PendingToolCalls.Num() > 0)
+    {
+        UE_LOG(LogLLMClientBase, Verbose, TEXT("HandleRequestComplete: Firing %d pending tool calls"), PendingToolCalls.Num());
+        FirePendingToolCalls();
+    }
+    
+    // Also log the request URL and verb for context
+    if (Request.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("HandleRequestComplete: Request URL=%s, Verb=%s"), 
+            *Request->GetURL(), *Request->GetVerb());
+    }
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("========== LLM RESPONSE COMPLETE =========="));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Connected: %s"), bConnectedSuccessfully ? TEXT("Yes") : TEXT("No"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("Stream buffer size: %d chars"), StreamBuffer.Len());
+    }
+
+    // For SSE streaming, bConnectedSuccessfully can be false even when we received data
+    // This happens because SSE streams typically end with server closing the connection
+    // If we have streaming data, consider it a success
+    bool bHasStreamingData = !StreamBuffer.IsEmpty();
+    
+    if (!bConnectedSuccessfully && !bHasStreamingData)
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("Request failed - connection error (no streaming data received)"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to connect. Please check your network connection."));
+        CurrentOnComplete.ExecuteIfBound(false);
+        CurrentRequest.Reset();
+        ResetStreamingState();
+        return;
+    }
+
+    int32 ResponseCode = Response.IsValid() ? Response->GetResponseCode() : 0;
+    
+    // If we have streaming data but no response code, assume success (SSE completed)
+    if (ResponseCode == 0 && bHasStreamingData)
+    {
+        ResponseCode = 200;
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("No response code but have streaming data - treating as success"));
+        }
+    }
+    
+    if (IsDebugLoggingEnabled())
+    {
+        UE_LOG(LogLLMClientBase, Log, TEXT("Response Code: %d"), ResponseCode);
+        UE_LOG(LogLLMClientBase, Log, TEXT("Total response length: %d chars"), StreamBuffer.Len());
+        UE_LOG(LogLLMClientBase, Log, TEXT("Tool calls detected: %s"), bToolCallsDetectedInStream ? TEXT("Yes") : TEXT("No"));
+        UE_LOG(LogLLMClientBase, Log, TEXT("==========================================="));
+    }
+    
+    if (ResponseCode == 200)
+    {
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Request completed successfully"));
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Total stream buffer: %d chars"), StreamBuffer.Len());
+            UE_LOG(LogLLMClientBase, Log, TEXT("[COMPLETE] Tool calls fired: %s"), bToolCallsDetectedInStream ? TEXT("Yes") : TEXT("No"));
+        }
+        else
+        {
+            UE_LOG(LogLLMClientBase, Verbose, TEXT("Request completed successfully"));
+        }
+        CurrentOnComplete.ExecuteIfBound(true);
+    }
+    else
+    {
+        FString ResponseBody = Response.IsValid() ? Response->GetContentAsString() : TEXT("");
+        FString ErrorMessage = ProcessErrorResponse(ResponseCode, ResponseBody);
+        
+        UE_LOG(LogLLMClientBase, Error, TEXT("Request failed: %s"), *ErrorMessage);
+        if (IsDebugLoggingEnabled())
+        {
+            UE_LOG(LogLLMClientBase, Log, TEXT("Response body: %s"), *ResponseBody.Left(1000));
+        }
+        CurrentOnError.ExecuteIfBound(ErrorMessage);
+        CurrentOnComplete.ExecuteIfBound(false);
+    }
+
+    // Clean up
+    ConnectionRetryCount = 0;  // Reset on successful completion
+    CurrentRequest.Reset();
+    ResetStreamingState();
+}
+
+void FLLMClientBase::RetryCurrentRequest()
+{
+    // Rebuild the HTTP request from saved parameters
+    CurrentRequest = BuildHttpRequest(LastMessages, LastModelId, LastTools);
+    if (!CurrentRequest.IsValid())
+    {
+        UE_LOG(LogLLMClientBase, Error, TEXT("[RETRY] Failed to rebuild HTTP request"));
+        CurrentOnError.ExecuteIfBound(TEXT("Failed to rebuild request for retry."));
+        CurrentOnComplete.ExecuteIfBound(false);
+        return;
+    }
+
+    // Re-bind handlers
+    CurrentRequest->OnRequestProgress64().BindRaw(this, &FLLMClientBase::HandleRequestProgress);
+    CurrentRequest->OnProcessRequestComplete().BindRaw(this, &FLLMClientBase::HandleRequestComplete);
+
+    UE_LOG(LogLLMClientBase, Log, TEXT("[RETRY] Sending retry attempt %d/%d"), ConnectionRetryCount, MaxConnectionRetries);
+    CurrentRequest->ProcessRequest();
+}

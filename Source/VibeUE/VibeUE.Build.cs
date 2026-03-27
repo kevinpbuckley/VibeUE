@@ -44,16 +44,19 @@ public class VibeUE : ModuleRules
 				"HTTP",
 				"Json",
 				"JsonUtilities",
-				"DeveloperSettings"
+				"DeveloperSettings",
+				"ApplicationCore",      // For FPlatformApplicationMisc (clipboard, etc.)
+				"WebSockets"            // For ElevenLabs WebSocket connection
 			}
 		);
-		
+
 		PrivateDependencyModuleNames.AddRange(
 			new string[]
 			{
 				"UnrealEd",
 				"EditorScriptingUtilities",
 				"EditorSubsystem",
+				"PythonScriptPlugin",   // For Python code execution
 				"Slate",
 				"SlateCore",
 				"UMG",
@@ -63,9 +66,38 @@ public class VibeUE : ModuleRules
 				"Projects",
 				"AssetRegistry",
 				"MessageLog",
+				"MovieScene",
+				"MovieSceneTracks",
+				"RenderCore",
 				"EditorStyle",
 				"AssetTools",
-				"PropertyEditor"         // For property reflection
+				"PropertyEditor",         // For property reflection
+				"EnhancedInput",          // For Enhanced Input System support
+				"InputCore",              // For input types
+				"AudioCapture",           // For microphone input
+				"AudioCaptureCore",       // For FAudioCaptureSynth
+				"ImageWrapper",           // For image encoding/decoding
+				"DesktopPlatform",        // For file dialogs
+				"Niagara",                // For Niagara VFX runtime classes
+				"NiagaraEditor",          // For Niagara editor utilities and factories
+				"AnimGraph",              // For AnimGraphNode types (state machines, states)
+				"AnimGraphRuntime",       // For animation runtime types
+				"Persona",                // For IAnimationBlueprintEditor interface
+				"SkeletalMeshModifiers",  // For SkeletonModifier (bone manipulation) - MeshModelingToolset plugin
+				"SkeletalMeshEditor",     // For SkeletalMeshEditorSubsystem
+				"InputBlueprintNodes",    // For UK2Node_EnhancedInputAction (Enhanced Input event nodes)
+				"Landscape",              // For ALandscape, ULandscapeInfo, ULandscapeComponent
+				"LandscapeEditor",        // For landscape editor factories and utilities
+				"Foliage",                // Required by LandscapeEdit.h (InstancedFoliageActor)
+				"ModelViewViewModel",     // For MVVM ViewModel base classes (UMVVMViewModelBase)
+				"ModelViewViewModelBlueprint", // For MVVM Blueprint View and bindings
+				"StateTreeModule",        // For UStateTree, UStateTreeEditorData, StateTree core types
+				"StateTreeEditorModule",  // For FStateTreeCompiler, UStateTreeState, StateTree editor types
+				"PropertyBindingUtils",    // For FPropertyBindingBindableStructDescriptor (base of FStateTreeBindableStructDesc)
+				"GameplayTags",           // For FGameplayTag (required by StateTree)
+				"GameplayTagsEditor",     // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
+				"AudioEditor",            // For SoundCue graph classes (USoundCueGraphNode, USoundCueGraph, USoundCueFactoryNew)
+				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
 			}
 		);
 		
@@ -77,7 +109,11 @@ public class VibeUE : ModuleRules
 					"PropertyEditor",      // For widget property editing
 					"ToolMenus",           // For editor UI
 					"BlueprintEditorLibrary", // For Blueprint utilities
-					"UMGEditor"            // For WidgetBlueprint.h and other UMG editor functionality
+					"UMGEditor",           // For WidgetBlueprint.h and other UMG editor functionality
+					"MaterialEditor",      // For material editor integration
+					"LevelEditor",         // For global keyboard shortcuts
+					"StatusBar",           // For panel drawer integration
+					"ContentBrowser"       // For content browser selection queries
 				}
 			);
 		}

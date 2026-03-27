@@ -1,4 +1,4 @@
-// Copyright VibeUE 2025
+// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #pragma once
 
