@@ -1370,7 +1370,14 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 	}
 	else
 	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+		// FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified crashes in UE 5.6
+		// when called repeatedly during widget hierarchy construction (0xC0000005 access
+		// violation) because it triggers RefreshVariables + an immediate internal recompile
+		// that leaves widget property memory in an invalid state for the next call.
+		// Compile synchronously instead — this properly initializes widget property memory
+		// so subsequent set_brush/set_font calls don't crash.
+		FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
+		FKismetEditorUtilities::CompileBlueprint(WidgetBP);
 	}
 
 	Result.bSuccess = true;
@@ -1951,8 +1958,7 @@ bool UWidgetService::CreateAnimation(
 	NewAnimation->MovieScene->GetEditorData().WorkEnd = FMath::Max(Duration, 0.0f);
 
 	WidgetBP->Animations.Add(NewAnimation);
-	MarkWidgetBlueprintModified(WidgetBP, true);
-	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 	return true;
 }
 
