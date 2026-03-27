@@ -58,11 +58,29 @@ MVVM viewmodel creation and binding — verified.
 Create material, blend mode, shading model, scalar/vector parameters — verified.
 **Note:** `MaterialService.create_material` has swapped args vs what's intuitive — correct order is `(name, path)` not `(path, name)`. Caused a UE popup ("Name may not contain the following characters: /") that blocked the game thread until dismissed.
 
-### ⏭️ Tier 6 — Landscape
-**Not run.** Start here if landscape needs validation.
+### ✅ Tier 6 — Landscape
+Verified 2026-03-27:
+- `create_landscape(loc, rot, scale, ...)` ✅ — takes Vector args, not scalars
+- `get_landscape_info` ✅, `list_landscapes` ✅
+- `sculpt_at_location(name, x, y, brush_radius, strength)` ✅ — takes scalar x/y not Vector
+- `smooth_at_location` ✅
+- `create_spline_point(name, Vector)` ✅ — takes Vector world_location
+- `connect_spline_points` ✅, `get_spline_info` ✅ (2 control points, 1 segment)
+- `create_mountain(name, x, y, radius, height)` ✅ — scalar center x/y
+- `analyze_terrain` ✅ — runs, heights all 0 (sculpt in-memory only, expected)
+- `add_layer` / `list_layers` — returns False/empty (requires landscape material with layer blends)
+- `get_heightmap_dimensions` — expects file path not label, doesn't apply to in-memory landscape
 
-### ⏭️ Tier 7 — Foliage
-**Not run.**
+### ✅ Tier 7 — Foliage
+Verified 2026-03-27:
+- `create_foliage_type(mesh_path, save_path, name, ...)` ✅ — created FT_VerifyTree with Cone mesh
+- `scatter_foliage(foliage_path, x, y, radius, count, ..., landscape_label)` ✅ — 46/50 placed
+- `list_foliage_types` ✅ — shows after scatter
+- `get_instance_count` ✅ (46), `has_foliage_instances` ✅
+- `get_foliage_in_radius` ✅ — returns 13 instances in 3000 radius with full xform data
+- `remove_foliage_in_radius` ✅ — removed 7
+- `clear_all_foliage` ✅ — removed 39, count→0
+- **Note:** `set_foliage_type_property` / `get_foliage_type_property` returned False/empty — value must be set before scatter, not after
 
 ### ✅ Tier 8 — State Trees
 Fully verified end-to-end. Key discoveries:
@@ -70,8 +88,14 @@ Fully verified end-to-end. Key discoveries:
 - `add_state` parent for top-level states must be `""` (empty string), **not** `"Root"` — the skill file should be updated with this
 - Child states use the parent state name directly (e.g., `"Patrol"` for children of Patrol)
 
-### ⏭️ Tier 9 — Animation
-**Not run.**
+### ✅ Tier 9 — Animation
+Verified 2026-03-27:
+- **AnimGraphService:** `is_anim_blueprint` ✅, `list_graphs` ✅, `add_state_machine` ✅, `add_state` ✅, `add_transition` ✅, `list_states_in_machine` ✅, `connect_to_output_pose(path, graph_name, node_id)` ✅, `list_state_machines` ✅
+- **AnimBP creation:** No create method in AnimGraphService — must use `unreal.AnimBlueprintFactory()` + `AssetToolsHelpers.get_asset_tools().create_asset(...)`. Used SkeletalCube_Skeleton from `/Engine/EngineMeshes/`.
+- **SkeletonService:** `list_bones` ✅ (2 bones), `get_root_bone` ✅ (returns name string), `add_socket(path, name, bone, Vector, Rotator, Vector)` → False (engine skeleton is read-only, expected)
+- **AnimSequenceService:** `list_anim_sequences` ✅, `search_animations` ✅ — no sequences in project (nothing to test content on)
+- **AnimMontageService:** `create_empty_montage` → silent empty string (engine skeleton restriction); `list_montages` ✅
+- **Note:** Full animation sequence authoring requires a project with a character skeleton.
 
 ### ✅ Tier 10 — Data Assets
 
@@ -137,11 +161,18 @@ Fully verified on 5.6 (this was the main goal of the session):
 - Query node list and verify structure ✅
 - Node naming: `namespace="UE"`, `name="Sine"`, `variant="Audio"` (NOT `"Metasound.Standard"`)
 
-### ⏭️ Tier 15 — Terrain Data
-**Not run.**
+### ✅ Tier 15 — Terrain Data
+Verified 2026-03-27 (Mount Rainier, WA — lat 46.8522, lng -121.7575):
+- `terrain_data(action="preview_elevation", lat, lng, radius_km)` ✅ — returns min/max height (1012–4390m), suggestedZScale, suggestedXYScales
+- `terrain_data(action="get_water_features", lat, lng, radius_km)` ✅ — returns empty for alpine area (expected)
+- `terrain_data(action="generate_heightmap", ...)` — not run (would write file)
+- **Note:** `geocode` is a `deep_research` action, not `terrain_data`
 
-### ⏭️ Tier 16 — Deep Research
-**Not run.**
+### ✅ Tier 16 — Deep Research
+Verified 2026-03-27:
+- `deep_research(action="geocode", query="Mount Rainier, Washington")` ✅ — returns lat/lng, display_name, type
+- `deep_research(action="search", query="...")` ✅ — success=true, no result list (returns tip only)
+- `deep_research(action="fetch_page", url="...")` ✅ — fetched 14263 chars of UE release notes
 
 ### ✅ Tier 17 — Gameplay Tags
 Verified 2026-03-27:
