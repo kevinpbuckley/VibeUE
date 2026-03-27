@@ -164,6 +164,24 @@ static UStateTreeState* FindStateByPath(UStateTreeEditorData* EditorData, const 
 	return Current;
 }
 
+static bool IsSameOrDescendantPath(const FString& CandidatePath, const FString& AncestorPath)
+{
+	return CandidatePath == AncestorPath || CandidatePath.StartsWith(AncestorPath + TEXT("/"));
+}
+
+static bool HasSiblingWithName(const TArray<TObjectPtr<UStateTreeState>>& States, const UStateTreeState* IgnoredState, const FName& Name)
+{
+	for (const UStateTreeState* ExistingState : States)
+	{
+		if (ExistingState && ExistingState != IgnoredState && ExistingState->Name == Name)
+		{
+			return true;
+		}
+	}
+
+	return false;
+}
+
 /**
  * Find a UScriptStruct by name. Tries with and without the "F" prefix.
  * Searches across all packages.
@@ -2106,6 +2124,106 @@ bool UStateTreeService::RemoveState(const FString& AssetPath, const FString& Sta
 #endif
 
 	return false;
+}
+
+bool UStateTreeService::MoveState(const FString& AssetPath, const FString& StatePath,
+	const FString& NewParentPath, int32 NewIndex)
+{
+	if (StatePath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: StatePath is empty"));
+		return false;
+	}
+
+	if (NewIndex < -1)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: NewIndex must be -1 or >= 0, got %d"), NewIndex);
+		return false;
+	}
+
+	if (IsSameOrDescendantPath(NewParentPath, StatePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: Cannot move '%s' under itself or one of its descendants ('%s')"),
+			*StatePath, *NewParentPath);
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	UStateTreeState* NewParent = nullptr;
+	TArray<TObjectPtr<UStateTreeState>>* DestinationStates = nullptr;
+	if (NewParentPath.IsEmpty())
+	{
+		DestinationStates = &EditorData->SubTrees;
+	}
+	else
+	{
+		NewParent = FindStateByPath(EditorData, NewParentPath);
+		if (!NewParent)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: New parent state not found: %s"), *NewParentPath);
+			return false;
+		}
+		DestinationStates = &NewParent->Children;
+	}
+
+	TArray<TObjectPtr<UStateTreeState>>* SourceStates = State->Parent ? &State->Parent->Children : &EditorData->SubTrees;
+	if (!SourceStates)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: Failed to resolve source collection for %s"), *StatePath);
+		return false;
+	}
+
+	if (HasSiblingWithName(*DestinationStates, State, State->Name))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: Destination already contains a sibling named '%s' under '%s'"),
+			*State->Name.ToString(), NewParentPath.IsEmpty() ? TEXT("<root>") : *NewParentPath);
+		return false;
+	}
+
+	const int32 SourceIndex = SourceStates->IndexOfByKey(State);
+	if (SourceIndex == INDEX_NONE)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("MoveState: State '%s' is not attached to its expected parent collection"), *StatePath);
+		return false;
+	}
+
+	SourceStates->RemoveAt(SourceIndex);
+
+	const int32 InsertIndex = (NewIndex == -1)
+		? DestinationStates->Num()
+		: FMath::Clamp(NewIndex, 0, DestinationStates->Num());
+	DestinationStates->Insert(State, InsertIndex);
+	State->Parent = NewParent;
+
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("MoveState: Moved '%s' under '%s' at index %d in %s"),
+		*StatePath,
+		NewParentPath.IsEmpty() ? TEXT("<root>") : *NewParentPath,
+		InsertIndex,
+		*AssetPath);
+	return true;
+#else
+	return false;
+#endif
 }
 
 bool UStateTreeService::SetStateEnabled(const FString& AssetPath, const FString& StatePath, bool bEnabled)

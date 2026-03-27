@@ -1226,6 +1226,7 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 
 **State Management:**
 - `add_state(asset_path, parent_path, state_name, state_type)` - Add a state (`"State"`, `"Group"`, `"Subtree"`, `"Linked"`, `"LinkedAsset"`)
+- `move_state(asset_path, state_path, new_parent_path, new_index)` - Reparent an existing state in-place without losing its data
 - `remove_state(asset_path, state_path)` - Remove a state and all its children
 - `rename_state(asset_path, state_path, new_name)` - Rename a state
 - `set_state_enabled(asset_path, state_path, enabled)` - Enable or disable a state

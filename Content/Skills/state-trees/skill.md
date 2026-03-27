@@ -283,6 +283,9 @@ unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "Root", "Idle", "State"
 # State types: "State" (default), "Group", "Subtree", "Linked", "LinkedAsset"
 unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "Root", "BehaviorGroup", "Group")
 
+# Move a state in-place to a new parent. This preserves the original state object and its data.
+unreal.StateTreeService.move_state("/Game/AI/MyBehavior", "Root/Idle", "Root/BehaviorGroup")
+
 # Remove a state (also removes children)
 unreal.StateTreeService.remove_state("/Game/AI/MyBehavior", "Root/Walking")
 
@@ -829,6 +832,28 @@ unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "G
 # CORRECT
 unreal.StateTreeService.add_transition(path, "Root/Idle", "OnStateCompleted", "GotoState", "Root/Walking")
 ```
+
+### ⚠️ NEVER Use remove_state + add_state to "Move" a State
+
+**This is destructive and can silently drop the original state's identity and editor data.**
+
+When asked to move a StateTree state under a different parent, always use `move_state`.
+`move_state` reparents the existing `UStateTreeState` in-place, preserving its children, tasks,
+transitions, bindings, and per-state metadata.
+
+`remove_state` followed by `add_state` creates a different state object. Any data attached to the
+original state can be lost or detached from the new copy.
+
+```python
+# WRONG — destroys the original state object and recreates a lookalike
+unreal.StateTreeService.remove_state(path, "Root/Idle")
+unreal.StateTreeService.add_state(path, "Root/Peaceful", "Idle")
+
+# CORRECT — reparent the existing state in-place
+unreal.StateTreeService.move_state(path, "Root/Idle", "Root/Peaceful")
+```
+
+If `move_state` fails, stop and inspect the tree state. Do NOT fall back to remove+add as a workaround.
 
 ### ⚠️ NEVER Use remove_transition + add_transition to "Update" a Transition
 

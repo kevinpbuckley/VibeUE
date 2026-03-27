@@ -415,6 +415,18 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool RemoveState(const FString& AssetPath, const FString& StatePath);
 
+	/**
+	 * Move an existing state in-place to a new parent and optional sibling index.
+	 * Preserves the original state object, children, tasks, transitions, and bindings.
+	 * @param AssetPath     Content path to the StateTree (e.g. "/Game/AI/MyStateTree")
+	 * @param StatePath     Path of the state to move (e.g. "Root/Idle")
+	 * @param NewParentPath Path of the new parent state, or empty string to move to top-level subtree roots
+	 * @param NewIndex      Optional insertion index among destination siblings; -1 appends to the end
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool MoveState(const FString& AssetPath, const FString& StatePath,
+	                     const FString& NewParentPath, int32 NewIndex = -1);
+
 	/** Enable or disable a state. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetStateEnabled(const FString& AssetPath, const FString& StatePath, bool bEnabled);

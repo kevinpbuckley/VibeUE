@@ -243,6 +243,8 @@ Never guess paths. Confirm the exact path from results before editing.
 
 Never emulate a move by duplicating an asset and deleting the original. That creates a different asset and can break references. Use `manage_asset(action="move", source_path="...", destination_path="...")` instead.
 
+Never emulate a StateTree hierarchy move by calling `remove_state` and then `add_state`. That destroys the original `UStateTreeState` object and can lose tasks, transitions, bindings, child states, or other editor data. Use `unreal.StateTreeService.move_state(asset_path, state_path, new_parent_path, new_index)` for StateTree reparenting.
+
 For detailed per-action docs: `manage_asset(action="help", help_action="search")`
 
 ### Idempotent Operations (Check Before Create)
