@@ -192,18 +192,61 @@ Verified 2026-03-27:
 
 All originally-committed changes verified and working. Only remaining tiers are Landscape (6), Foliage (7), Animation (9), and Terrain Data/Deep Research (15, 16) — none of which have C++ implementations that needed fixing.
 
-**Remaining next time:**
-- Tier 6 (Landscape), Tier 7 (Foliage), Tier 9 (Animation) — if those areas need validation
-- Tier 15 (Terrain Data), Tier 16 (Deep Research) — network/external services
-- Cleanup: delete `/Game/VerifyTests/` (DT_CrashTest, DT_Fresh1, DT_StyleTest leftover from earlier debugging; IA_Jump/Look/Move, IMC_VerifyTest, NS_VerifyTest, SC_VerifyTest from this session)
-- `/Game/VibeTests/` also exists from previous session — delete it too
-
 ---
 
-## Test Assets Remaining in Project
+## Full Rerun — 2026-03-27 (Second Session)
 
-`/Game/VerifyTests/`: DT_CrashTest, DT_Fresh1, DT_StyleTest, IA_Jump, IA_Look, IA_Move, IMC_VerifyTest, NS_VerifyTest, SC_VerifyTest
+**All 18 tiers re-run back-to-back. Two new C++ bugs found and fixed during the run.**
 
-`/Game/VibeTests/`: E_EnemyState, S_EnemyData/FEnemyData, DT_TestTags, various Blueprint/Widget/Material/StateTree/MetaSound assets from Tier 1–8, 14 testing.
+### Bugs Found and Fixed (commit 1032a1f)
 
-Delete both folders when done with all verification.
+#### 1. `AddComponent` — 0xC0000005 crash in UE 5.6 (non-UserWidget path)
+`FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified` was crashing when called
+repeatedly during widget hierarchy construction. Fixed: use `MarkBlueprintAsModified` +
+explicit `FKismetEditorUtilities::CompileBlueprint`. The compile initializes widget
+property memory so subsequent `set_brush`/`set_font` calls work correctly.
+
+#### 2. `CreateAnimation` — 0xC0000005 crash after Button+TextBlock hierarchy
+Double-compile: `MarkBlueprintAsStructurallyModified` triggers an internal recompile,
+then `CompileBlueprint` was called again on top. Fixed: use lightweight `MarkBlueprintAsModified`
+only (no explicit compile needed for animation additions).
+
+### API Corrections Discovered During Rerun
+
+| Service | Method | Correct call |
+|---|---|---|
+| `BlueprintService` | `list_nodes` | → `get_nodes_in_graph(bp, graph)` |
+| `BlueprintService` | node GUID | → `node_id` not `node_guid` on `BlueprintNodeInfo` |
+| `BlueprintService` | `add_function_call_node` | Returns GUID string, not a struct |
+| `LandscapeService` | `list_landscapes` | Returns `actor_label` not `landscape_name` |
+| `LandscapeService` | `create_landscape` | `(loc, rot, scale, landscape_label=...)` |
+| `FoliageService` | `scatter_foliage` | kwarg is `landscape_name_or_label` (not `landscape_label`) |
+| `FoliageService` | `clear_all_foliage` | Takes no arguments |
+| `FoliageService` | `get_foliage_in_radius` | Returns `FoliageQueryResult` with `.total_instances`, `.instances` |
+| `AnimGraphService` | `list_state_machines` | Returns `machine_name` not `node_name` |
+| `MaterialService` | blend mode/shading | `set_property(path, "BlendMode", "BLEND_Opaque")` |
+| `EnumStructService` | `create_enum` | `(directory_path, enum_name)` not `(full_path, name)` |
+| `DataTableService` | `create_data_table` | Row struct: `"TableRowBase"` not `"FTableRowBase"` |
+| `DataTableService` | `create_data_table` | `(row_struct, asset_path, asset_name)` |
+| `InputService` | Class name | `InputService` not `EnhancedInputService` |
+| `InputService` | `list_input_actions` | Takes no arguments |
+| `StateTreeService` | `create_state_tree` | `(full_path_with_name)` not `(dir, name)` |
+| `StateTreeService` | `add_state` | `(asset_path, parent_path, state_name)` |
+| `StateTreeService` | `add_transition` | `(asset_path, state_path, trigger, transition_type, target_path)` |
+| `StateTreeService` | Cross-subtree transition | Use full path `"EnemyBehavior/Attack"` as `target_path` |
+| `MetaSoundService` | Class usage | Must instantiate: `ms = unreal.MetaSoundService()` |
+| `MetaSoundService` | `create_meta_sound` | `(package_path, asset_name, output_format)` |
+| `MetaSoundService` | `add_graph_input` | Not `add_input_node` |
+| `MetaSoundService` | `set_node_input_default` | `(path, node_id, input_name, value, data_type)` |
+| `MetaSoundService` | node info | `node_title`, `node_id`, `inputs`, `outputs` (not `node_name`) |
+| `WidgetService` | `add_view_model` | Class must use `_C` suffix for BP classes: `"VM_PlayerData_C"` |
+| `WidgetService` | `set_font` | `(path, component, font_info_struct)` — not 4-arg order |
+
+### All Tiers Green
+
+T1 ✅ T2 ✅ T3 ✅ T4 ✅ (bugs fixed) T5 ✅ T6 ✅ T7 ✅ T8 ✅ T9 ✅ T10 ✅
+T11 ✅ T12 ✅ T13 ✅ T14 ✅ T15 ✅ T16 ✅ T17 ✅ T18 ✅
+
+All test assets cleaned up (`/Game/VerifyTests/` and `/Game/VibeTests/` deleted).
+
+**Nothing remaining.**
