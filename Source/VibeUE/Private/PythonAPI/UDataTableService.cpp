@@ -150,12 +150,16 @@ FString UDataTableService::GetPropertyTypeString(FProperty* Property)
 
 	if (FObjectProperty* ObjProp = CastField<FObjectProperty>(Property))
 	{
-		return FString::Printf(TEXT("Object:%s"), *ObjProp->PropertyClass->GetName());
+		return ObjProp->PropertyClass
+			? FString::Printf(TEXT("Object:%s"), *ObjProp->PropertyClass->GetName())
+			: TEXT("Object");
 	}
 
 	if (FSoftObjectProperty* SoftProp = CastField<FSoftObjectProperty>(Property))
 	{
-		return FString::Printf(TEXT("SoftObject:%s"), *SoftProp->PropertyClass->GetName());
+		return SoftProp->PropertyClass
+			? FString::Printf(TEXT("SoftObject:%s"), *SoftProp->PropertyClass->GetName())
+			: TEXT("SoftObject");
 	}
 
 	if (FArrayProperty* ArrayProp = CastField<FArrayProperty>(Property))
@@ -165,7 +169,9 @@ FString UDataTableService::GetPropertyTypeString(FProperty* Property)
 
 	if (FStructProperty* StructProp = CastField<FStructProperty>(Property))
 	{
-		return FString::Printf(TEXT("Struct:%s"), *StructProp->Struct->GetName());
+		return StructProp->Struct
+			? FString::Printf(TEXT("Struct:%s"), *StructProp->Struct->GetName())
+			: TEXT("Struct");
 	}
 
 	if (FMapProperty* MapProp = CastField<FMapProperty>(Property))
@@ -175,7 +181,8 @@ FString UDataTableService::GetPropertyTypeString(FProperty* Property)
 			*GetPropertyTypeString(MapProp->ValueProp));
 	}
 
-	return Property->GetCPPType();
+	// GetCPPType() can crash on partially-loaded properties; use the class name as a safe fallback.
+	return Property->GetClass() ? Property->GetClass()->GetName() : TEXT("Unknown");
 }
 
 // ============================================
@@ -456,7 +463,7 @@ bool UDataTableService::GetInfo(const FString& TablePath, FDataTableDetailedInfo
 			TSharedPtr<FJsonObject> ColObj = MakeShared<FJsonObject>();
 			ColObj->SetStringField(TEXT("name"), Property->GetName());
 			ColObj->SetStringField(TEXT("type"), GetPropertyTypeString(Property));
-			ColObj->SetStringField(TEXT("cpp_type"), Property->GetCPPType());
+			ColObj->SetStringField(TEXT("cpp_type"), GetPropertyTypeString(Property));
 
 			if (Property->HasMetaData(TEXT("Category")))
 			{
@@ -518,7 +525,7 @@ TArray<FRowStructColumnInfo> UDataTableService::GetRowStruct(const FString& Tabl
 		FRowStructColumnInfo Column;
 		Column.Name = Property->GetName();
 		Column.Type = GetPropertyTypeString(Property);
-		Column.CppType = Property->GetCPPType();
+		Column.CppType = Column.Type;
 
 		if (Property->HasMetaData(TEXT("Category")))
 		{
