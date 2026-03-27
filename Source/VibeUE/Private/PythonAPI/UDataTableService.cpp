@@ -13,6 +13,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonReader.h"
 #include "Serialization/JsonWriter.h"
+#include "Kismet/DataTableFunctionLibrary.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogDataTableService, Log, All);
 
@@ -615,24 +616,28 @@ bool UDataTableService::AddRow(const FString& TablePath, const FString& RowName,
 		return false;
 	}
 
-	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
-	if (!RowStruct)
-	{
-		return false;
-	}
-
-	// Check if row already exists
 	if (DataTable->FindRowUnchecked(FName(*RowName)))
 	{
 		UE_LOG(LogDataTableService, Warning, TEXT("AddRow: Row '%s' already exists. Use UpdateRow to modify it."), *RowName);
 		return false;
 	}
 
-	// Allocate memory for new row and initialize with defaults
-	void* NewRowData = FMemory::Malloc(RowStruct->GetStructureSize());
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	if (!RowStruct)
+	{
+		return false;
+	}
+
+	// Allocate and initialise a new row. Ownership transfers to the DataTable's RowMap;
+	// do NOT free this pointer after Add — UDataTable::ShutdownInternal will do so.
+	// We bypass DataTable->AddRow() and HandleDataTableChanged() entirely because
+	// plugin-managed structs (ModularSynthPreset, GameplayTagTableRow, etc.) hook into
+	// HandleDataTableChanged and call TMap::operator[] with keys that don't exist yet,
+	// triggering a fatal UE assertion (Map.h:729 "Pair != nullptr").
+	uint8* NewRowData = (uint8*)FMemory::Malloc(RowStruct->GetStructureSize(),
+	                                             RowStruct->GetMinAlignment());
 	RowStruct->InitializeStruct(NewRowData);
 
-	// Apply provided data if any
 	if (!DataJson.IsEmpty())
 	{
 		TSharedPtr<FJsonObject> JsonObj;
@@ -647,16 +652,8 @@ bool UDataTableService::AddRow(const FString& TablePath, const FString& RowName,
 		}
 	}
 
-	// Add row to table
-	DataTable->AddRow(FName(*RowName), *static_cast<FTableRowBase*>(NewRowData));
-
-	// Cleanup temporary row data
-	RowStruct->DestroyStruct(NewRowData);
-	FMemory::Free(NewRowData);
-
-	// Mark table dirty
+	const_cast<TMap<FName, uint8*>&>(DataTable->GetRowMap()).Add(FName(*RowName), NewRowData);
 	DataTable->MarkPackageDirty();
-
 	return true;
 }
 
@@ -717,49 +714,45 @@ bool UDataTableService::UpdateRow(const FString& TablePath, const FString& RowNa
 		return false;
 	}
 
+	if (!DataTable->FindRowUnchecked(FName(*RowName)))
+	{
+		UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Row '%s' not found. Use AddRow to create it."), *RowName);
+		return false;
+	}
+
+	// Apply JSON directly to the existing row data in-place, bypassing HandleDataTableChanged
+	// (same reason as AddRow — plugin-managed structs assert in Map.h:729).
 	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
 	if (!RowStruct)
 	{
 		return false;
 	}
 
-	// Find existing row
-	void* ExistingRowData = DataTable->FindRowUnchecked(FName(*RowName));
+	TSharedPtr<FJsonObject> UpdateObj;
+	{
+		TSharedRef<TJsonReader<>> UR = TJsonReaderFactory<>::Create(DataJson);
+		if (!FJsonSerializer::Deserialize(UR, UpdateObj) || !UpdateObj.IsValid())
+		{
+			UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Invalid JSON format"));
+			return false;
+		}
+	}
+
+	uint8* ExistingRowData = DataTable->FindRowUnchecked(FName(*RowName));
+	// Already checked above that row exists, but guard anyway.
 	if (!ExistingRowData)
 	{
-		UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Row '%s' not found. Use AddRow to create it."), *RowName);
 		return false;
 	}
 
-	// Parse JSON
-	TSharedPtr<FJsonObject> JsonObj;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(DataJson);
-	if (!FJsonSerializer::Deserialize(Reader, JsonObj) || !JsonObj.IsValid())
+	FString Error;
+	if (!JsonToRow(RowStruct, ExistingRowData, UpdateObj, Error))
 	{
-		UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Invalid JSON format"));
+		UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Failed to apply row data: %s"), *Error);
 		return false;
 	}
 
-	// Apply updates (partial update)
-	for (auto& Pair : JsonObj->Values)
-	{
-		FProperty* Property = RowStruct->FindPropertyByName(*Pair.Key);
-		if (!Property)
-		{
-			UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Property '%s' not found"), *Pair.Key);
-			continue;
-		}
-
-		FString Error;
-		if (!JsonToProperty(Property, ExistingRowData, Pair.Value, Error))
-		{
-			UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Failed to set '%s': %s"), *Pair.Key, *Error);
-		}
-	}
-
-	// Mark table dirty
 	DataTable->MarkPackageDirty();
-
 	return true;
 }
 
@@ -776,19 +769,24 @@ bool UDataTableService::RemoveRow(const FString& TablePath, const FString& RowNa
 		return false;
 	}
 
-	// Check if row exists
 	if (!DataTable->FindRowUnchecked(FName(*RowName)))
 	{
 		UE_LOG(LogDataTableService, Warning, TEXT("RemoveRow: Row '%s' not found"), *RowName);
 		return false;
 	}
 
-	// Remove the row
-	DataTable->RemoveRow(FName(*RowName));
-
-	// Mark table dirty
+	// Remove directly from the RowMap and free the struct memory, bypassing
+	// HandleDataTableChanged (same assertion hazard as AddRow/UpdateRow).
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	auto& MutableMap = const_cast<TMap<FName, uint8*>&>(DataTable->GetRowMap());
+	uint8* RowData = MutableMap.FindRef(FName(*RowName));
+	if (RowData && RowStruct)
+	{
+		RowStruct->DestroyStruct(RowData);
+		FMemory::Free(RowData);
+	}
+	MutableMap.Remove(FName(*RowName));
 	DataTable->MarkPackageDirty();
-
 	return true;
 }
 
@@ -831,22 +829,23 @@ bool UDataTableService::RenameRow(const FString& TablePath, const FString& OldNa
 		return false;
 	}
 
-	// Copy the row data
-	void* CopiedRowData = FMemory::Malloc(RowStruct->GetStructureSize());
-	RowStruct->InitializeStruct(CopiedRowData);
-	RowStruct->CopyScriptStruct(CopiedRowData, OldRowData);
+	// Allocate new row memory and copy data into it.
+	// Ownership transfers to the RowMap — do NOT free NewRowData after Add.
+	// Use direct RowMap access to bypass HandleDataTableChanged (Map.h:729 assertion).
+	uint8* NewRowData = (uint8*)FMemory::Malloc(RowStruct->GetStructureSize(),
+	                                             RowStruct->GetMinAlignment());
+	RowStruct->InitializeStruct(NewRowData);
+	RowStruct->CopyScriptStruct(NewRowData, OldRowData);
 
-	// Add new row
-	DataTable->AddRow(FName(*NewName), *static_cast<FTableRowBase*>(CopiedRowData));
+	// Insert new name, remove old name directly in the map (bypass HandleDataTableChanged).
+	auto& MutableMap = const_cast<TMap<FName, uint8*>&>(DataTable->GetRowMap());
+	MutableMap.Add(FName(*NewName), NewRowData);
 
-	// Remove old row
-	DataTable->RemoveRow(FName(*OldName));
+	// Free old row memory before removing from map.
+	RowStruct->DestroyStruct(static_cast<uint8*>(OldRowData));
+	FMemory::Free(OldRowData);
+	MutableMap.Remove(FName(*OldName));
 
-	// Cleanup
-	RowStruct->DestroyStruct(CopiedRowData);
-	FMemory::Free(CopiedRowData);
-
-	// Mark table dirty
 	DataTable->MarkPackageDirty();
 
 	return true;
@@ -862,8 +861,22 @@ int32 UDataTableService::ClearRows(const FString& TablePath)
 
 	int32 RowCount = DataTable->GetRowNames().Num();
 
-	// Empty the table
-	DataTable->EmptyTable();
+	// Manually destroy and free each row, then clear the map.
+	// Bypasses EmptyTable() → HandleDataTableChanged → Map.h:729 assertion.
+	const UScriptStruct* RowStruct = DataTable->GetRowStruct();
+	auto& MutableMap = const_cast<TMap<FName, uint8*>&>(DataTable->GetRowMap());
+	if (RowStruct)
+	{
+		for (auto& KVP : MutableMap)
+		{
+			if (KVP.Value)
+			{
+				RowStruct->DestroyStruct(KVP.Value);
+				FMemory::Free(KVP.Value);
+			}
+		}
+	}
+	MutableMap.Empty();
 
 	// Mark table dirty
 	DataTable->MarkPackageDirty();
