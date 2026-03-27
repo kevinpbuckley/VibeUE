@@ -73,33 +73,57 @@ Fully verified end-to-end. Key discoveries:
 ### ⏭️ Tier 9 — Animation
 **Not run.**
 
-### 🔶 Tier 10 — Data Assets (partial)
+### ✅ Tier 10 — Data Assets
 
-**Enums:** ✅ `create_enum` working. Created `E_EnemyState` / `EnemyState`.
-**Note:** `EnumStructService.create_enum` arg order is `(asset_path, enum_name)` — caused same popup as MaterialService when swapped.
+**Enums:** ✅ `create_enum` working.
+**Note:** `EnumStructService.create_enum` arg order is `(asset_path, enum_name)`.
 
-**Structs:** ✅ `create_struct` working. Created `S_EnemyData` / `FEnemyData` at `/Game/VibeTests/FEnemyData`.
+**Structs:** ✅ `create_struct` working.
 
-**Data Asset:** ⏭️ Not tested in this session.
+**Data Asset:** ⏭️ Not tested.
 
-**DataTable:**
-- `create_data_table` ✅ — confirmed working via log (`DT_TestTags` created with `GameplayTagTableRow`)
-- `add_row` ❌ — UE assertion failure when called with `{}` / `""` data on `GameplayTagTableRow`
-- `get_row_struct` ❌ — **Crashed UE** with `0xC0000005` access violation (caused by `Property->GetCPPType()` on a complex property). This is what killed the session.
-- `list_rows`, `remove_row`, `update_row` — untested
+**DataTable:** ✅ Fully verified (2026-03-27):
+- `create_data_table` ✅
+- `add_row` ✅ — fixed by bypassing `HandleDataTableChanged` (direct RowMap access)
+- `get_row` ✅
+- `update_row` ✅ — fixed (in-place JSON apply, no export/re-import)
+- `remove_row` ✅ — fixed (direct RowMap.Remove + manual DestroyStruct/Free)
+- `list_rows` ✅
+- `rename_row` ✅ — fixed (direct RowMap Add+Remove)
+- `clear_rows` ✅ — fixed (manual loop, bypass EmptyTable)
+- `get_row_struct` ✅ — fixed (null-safe GetPropertyTypeString, no raw GetCPPType)
+- `get_info` ✅
 
-**Known limitation discovered:** User-defined structs created via `EnumStructService.create_struct` do **not** inherit from `FTableRowBase`. The `DataTableService.FindRowStruct` rejects them (`IsChildOf(TableRowBase)` check). To use a custom struct as a DataTable row struct, you currently need to create it with the right parent in the UE editor manually. `StructureFactory` in Python also doesn't expose a parent struct param.
+**Fix committed:** `4bce878` — all row mutation ops now use `const_cast<TMap<FName,uint8*>&>(GetRowMap())` directly, bypassing all `HandleDataTableChanged` callbacks that caused Map.h:729 fatal assertion.
 
-**UE state when session ended:** Editor crashed. Needs relaunch before anything else.
+**Known limitation:** User-defined structs created via `EnumStructService.create_struct` do **not** inherit `FTableRowBase` — DataTableService rejects them. Create via UE editor or use engine-provided row structs.
 
-### ⏭️ Tier 11 — Enhanced Input
-**Not run.**
+### ✅ Tier 11 — Enhanced Input
+Verified 2026-03-27:
+- `create_action` ✅ (name, path, value_type) — Boolean, Axis2D
+- `create_mapping_context` ✅ (name, path)
+- `add_key_mapping` ✅ — SpaceBar→Jump, W→Move, MouseX→Look
+- `get_mappings` ✅ — returned 7 mappings
+- `add_trigger` ✅ — (context_path, mapping_index, trigger_type)
+- `list_input_actions` ✅, `list_mapping_contexts` ✅
+- **Note:** `add_modifier`/`add_trigger` take `(context_path, mapping_index, type)` — NOT `(context, action, key, type)`
 
-### ⏭️ Tier 12 — Niagara
-**Not run.**
+### ✅ Tier 12 — Niagara
+Verified 2026-03-27:
+- `create_system` ✅ — arg order is `(name, path)` not `(path, name)`
+- `list_emitter_templates` ✅ — 48 templates found
+- `add_emitter` ✅ — added SpriteFacingAndAlignment template
+- `list_emitters` ✅, `list_parameters` ✅
+- `compile_system` ✅
 
-### ⏭️ Tier 13 — Sound Cues
-**Not run.**
+### ✅ Tier 13 — Sound Cues
+Verified 2026-03-27:
+- `create_sound_cue` ✅ — takes full path including name (`/Game/Path/SC_Name`)
+- `add_modulator_node` ✅, `add_random_node` ✅, `add_wave_player_node` ✅
+- `list_nodes` ✅ — returns node_index, node_class, node_title
+- `connect_nodes` ✅ — takes `(path, parent_index, child_index, input_slot)`
+- `set_root_node` ✅, `set_volume_multiplier` ✅, `set_pitch_multiplier` ✅
+- `save_sound_cue` ✅, `get_sound_cue_info` ✅
 
 ### ✅ Tier 14 — MetaSound
 Fully verified on 5.6 (this was the main goal of the session):
@@ -119,36 +143,36 @@ Fully verified on 5.6 (this was the main goal of the session):
 ### ⏭️ Tier 16 — Deep Research
 **Not run.**
 
-### ⏭️ Tier 17 — Gameplay Tags
-**Not run.**
+### ✅ Tier 17 — Gameplay Tags
+Verified 2026-03-27:
+- `add_tag` ✅ — `VerifyTest.Enemy.Base`, `.Enemy.Boss`, `.Player.Base`
+- `list_tags` ✅ — filter by prefix, returns hierarchy with child_count
+- `has_tag` ✅, `get_children` ✅, `get_tag_info` ✅
 
-### ⏭️ Tier 18 — Logs & Diagnostics
-**Not run.**
-
----
-
-## Immediate Next Steps (start of next session)
-
-1. **Relaunch UE** (`buildandlaunch.ps1`) — editor crashed at end of session
-2. **Commit all changes** (uplugin version, GameplayStateTree dependency, MetaSound 5.6 fixes, Build.cs):
-   ```bash
-   git add Source/VibeUE/Private/PythonAPI/UMetaSoundService.cpp
-   git add Source/VibeUE/VibeUE.Build.cs
-   git add VibeUE.uplugin
-   git commit -m "fix: MetaSound 5.6 compatibility + GameplayStateTree dependency"
-   ```
-3. **Finish Tier 10** — DataTable row ops (avoid `get_row_struct`, use `get_info().columns_json` instead; debug `add_row` assertion)
-4. **Continue from Tier 6** in suggested run order, or skip landscape/foliage and go straight to **Tier 9, 11, 12, 13**
-5. **Update StateTree skill file** — document that top-level state parent must be `""` not `"Root"`
+### ✅ Tier 18 — Logs & Diagnostics
+Verified 2026-03-27:
+- `read_logs` ✅ — requires `action="read"` and `file="main"` (not `log_alias`)
+- Read main log, filter by text ✅
+- `main` alias resolves correctly, 2577 lines in current session log
 
 ---
 
-## Test Assets Created
+## Status After 2026-03-27 Session
 
-All in `/Game/VibeTests/` (wrong folder — test list says `/Game/VerifyTests/`):
-- `E_EnemyState` — UserDefinedEnum
-- `FEnemyData` / `S_EnemyData` — UserDefinedStruct (does NOT inherit FTableRowBase)
-- `DT_TestTags` — DataTable with `GameplayTagTableRow` struct
-- Various MetaSound, Blueprint, Widget, Material, StateTree assets created during testing
+All originally-committed changes verified and working. Only remaining tiers are Landscape (6), Foliage (7), Animation (9), and Terrain Data/Deep Research (15, 16) — none of which have C++ implementations that needed fixing.
 
-Cleanup: delete `/Game/VibeTests/` when done (wrong path anyway — should have been `/Game/VerifyTests/`).
+**Remaining next time:**
+- Tier 6 (Landscape), Tier 7 (Foliage), Tier 9 (Animation) — if those areas need validation
+- Tier 15 (Terrain Data), Tier 16 (Deep Research) — network/external services
+- Cleanup: delete `/Game/VerifyTests/` (DT_CrashTest, DT_Fresh1, DT_StyleTest leftover from earlier debugging; IA_Jump/Look/Move, IMC_VerifyTest, NS_VerifyTest, SC_VerifyTest from this session)
+- `/Game/VibeTests/` also exists from previous session — delete it too
+
+---
+
+## Test Assets Remaining in Project
+
+`/Game/VerifyTests/`: DT_CrashTest, DT_Fresh1, DT_StyleTest, IA_Jump, IA_Look, IA_Move, IMC_VerifyTest, NS_VerifyTest, SC_VerifyTest
+
+`/Game/VibeTests/`: E_EnemyState, S_EnemyData/FEnemyData, DT_TestTags, various Blueprint/Widget/Material/StateTree/MetaSound assets from Tier 1–8, 14 testing.
+
+Delete both folders when done with all verification.
