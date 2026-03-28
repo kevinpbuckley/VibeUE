@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Chat/LLMClientBase.h"
+#include "Chat/ILLMClient.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogVibeUEAPIClient, Log, All);
 
@@ -30,7 +31,8 @@ public:
     virtual FLLMProviderInfo GetProviderInfo() const override;
     virtual void SetApiKey(const FString& InApiKey) override;
     virtual bool HasApiKey() const override;
-    virtual bool SupportsModelFetching() const override { return false; }
+    virtual bool SupportsModelFetching() const override { return true; }
+    virtual void FetchModels(FOnLLMModelsFetched OnComplete) override;
     //~ End ILLMClient Interface
 
     /** Set the API endpoint URL */

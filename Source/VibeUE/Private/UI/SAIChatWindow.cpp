@@ -2957,7 +2957,7 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
         AvailableModels.Empty();
         SelectedModel.Reset();  // Clear old selection when fetching new models
         
-        // Filter to only models that support tools, then sort
+        // Filter to only models that support tools
         TArray<FOpenRouterModel> FilteredModels;
         for (const FOpenRouterModel& Model : Models)
         {
@@ -2967,17 +2967,21 @@ void SAIChatWindow::HandleModelsFetched(bool bSuccess, const TArray<FOpenRouterM
             }
         }
         
-        // Sort: free models first, then by name
-        FilteredModels.Sort([](const FOpenRouterModel& A, const FOpenRouterModel& B)
+        // Only sort for OpenRouter; VibeUE models are returned in curated order from the API
+        const bool bIsVibeUE = ChatSession.IsValid() && ChatSession->GetCurrentProvider() == ELLMProvider::VibeUE;
+        if (!bIsVibeUE)
         {
-            // Free models come first
-            if (A.IsFree() != B.IsFree())
+            FilteredModels.Sort([](const FOpenRouterModel& A, const FOpenRouterModel& B)
             {
-                return A.IsFree();
-            }
-            // Then sort by name
-            return A.Name < B.Name;
-        });
+                // Free models come first
+                if (A.IsFree() != B.IsFree())
+                {
+                    return A.IsFree();
+                }
+                // Then sort by name
+                return A.Name < B.Name;
+            });
+        }
         
         CHAT_LOG(Log, TEXT("Filtered to %d models with tool support (from %d total)"), 
             FilteredModels.Num(), Models.Num());
@@ -3131,27 +3135,32 @@ void SAIChatWindow::ApplyModelRatings()
         SelectedModelId = SelectedModel->Id;
     }
     
-    // Re-sort: rated models first (great > good > moderate > bad), then free, then alphabetical
-    AvailableModels.Sort([](const TSharedPtr<FOpenRouterModel>& A, const TSharedPtr<FOpenRouterModel>& B)
+    // Re-sort for OpenRouter only; VibeUE models are returned in curated order from the API
+    const bool bIsVibeUE = ChatSession.IsValid() && ChatSession->GetCurrentProvider() == ELLMProvider::VibeUE;
+    if (!bIsVibeUE)
     {
-        int32 TierA = A->GetRatingTier();
-        int32 TierB = B->GetRatingTier();
-        
-        // Rated models come first (higher tier = better)
-        if (TierA != TierB)
+        // Re-sort: rated models first (great > good > moderate > bad), then free, then alphabetical
+        AvailableModels.Sort([](const TSharedPtr<FOpenRouterModel>& A, const TSharedPtr<FOpenRouterModel>& B)
         {
-            return TierA > TierB;
-        }
-        
-        // Within same tier: free models first
-        if (A->IsFree() != B->IsFree())
-        {
-            return A->IsFree();
-        }
-        
-        // Then alphabetical
-        return A->Name < B->Name;
-    });
+            int32 TierA = A->GetRatingTier();
+            int32 TierB = B->GetRatingTier();
+            
+            // Rated models come first (higher tier = better)
+            if (TierA != TierB)
+            {
+                return TierA > TierB;
+            }
+            
+            // Within same tier: free models first
+            if (A->IsFree() != B->IsFree())
+            {
+                return A->IsFree();
+            }
+            
+            // Then alphabetical
+            return A->Name < B->Name;
+        });
+    }
     
     // Restore selection
     SelectedModel.Reset();
@@ -3190,93 +3199,8 @@ void SAIChatWindow::UpdateModelDropdownForProvider()
         return;
     }
 
-    // ---- OpenRouter / VibeUE ---------------------------------------------
-    // Check if provider supports model selection
-    if (ChatSession->SupportsModelSelection())
-    {
-        // OpenRouter - fetch models
-        ChatSession->FetchAvailableModels(FOnModelsFetched::CreateSP(this, &SAIChatWindow::HandleModelsFetched));
-    }
-    else
-    {
-        // VibeUE provider — populate dropdown with auto-router first, then the fixed model
-        AvailableModels.Empty();
-        SelectedModel.Reset();
-
-        // Auto-router entry — always first
-        TSharedPtr<FOpenRouterModel> AutoRouterPtr = MakeShared<FOpenRouterModel>();
-        AutoRouterPtr->Id = TEXT("vibeue/auto");
-        AutoRouterPtr->Name = TEXT("VibeUE Free Auto-Router");
-        AutoRouterPtr->bSupportsTools = true;
-        AutoRouterPtr->ContextLength = 131072;
-        AvailableModels.Add(AutoRouterPtr);
-
-        // Create a single "VibeUE" model entry with default values
-        // Empty Id means no model field is sent — Worker uses its configured OPENAI_MODEL default
-        TSharedPtr<FOpenRouterModel> VibeUEModelPtr = MakeShared<FOpenRouterModel>();
-        VibeUEModelPtr->Id = TEXT("");
-        VibeUEModelPtr->Name = TEXT("VibeUE");
-        VibeUEModelPtr->bSupportsTools = true;
-        VibeUEModelPtr->ContextLength = 131072; // Default, will be updated from API
-
-        AvailableModels.Add(VibeUEModelPtr);
-
-        // Restore previously selected model if it's in the list
-        const FString& CurrentModelId = ChatSession->GetCurrentModel();
-        if (CurrentModelId == TEXT("vibeue/auto"))
-        {
-            SelectedModel = AutoRouterPtr;
-        }
-        else
-        {
-            SelectedModel = VibeUEModelPtr;
-        }
-
-        // Keep ChatSession in sync
-        ChatSession->SetCurrentModel(SelectedModel->Id);
-        
-        // Fetch actual model info from API to get real context length
-        if (ChatSession.IsValid())
-        {
-            TSharedPtr<FVibeUEAPIClient> VibeUEClient = ChatSession->GetVibeUEClient();
-            if (VibeUEClient.IsValid())
-            {
-                // Capture weak pointers for the lambda
-                TWeakPtr<FOpenRouterModel> WeakModel = VibeUEModelPtr;
-                TWeakPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> WeakComboBox = ModelComboBox;
-                
-                VibeUEClient->FetchModelInfo([WeakModel, WeakComboBox](bool bSuccess, int32 ContextLength, const FString& ModelId)
-                {
-                    // Must run on game thread since we're updating UI
-                    AsyncTask(ENamedThreads::GameThread, [WeakModel, WeakComboBox, bSuccess, ContextLength, ModelId]()
-                    {
-                        if (TSharedPtr<FOpenRouterModel> Model = WeakModel.Pin())
-                        {
-                            if (bSuccess && ContextLength > 0)
-                            {
-                                Model->ContextLength = ContextLength;
-                                UE_LOG(LogAIChatWindow, Log, TEXT("Updated VibeUE model context length to %d from API"), ContextLength);
-                            }
-                            
-                            // Refresh the combo box to show updated info
-                            if (TSharedPtr<SComboBox<TSharedPtr<FOpenRouterModel>>> ComboBox = WeakComboBox.Pin())
-                            {
-                                ComboBox->RefreshOptions();
-                            }
-                        }
-                    });
-                });
-            }
-        }
-        
-        if (ModelComboBox.IsValid())
-        {
-            ModelComboBox->RefreshOptions();
-            ModelComboBox->SetSelectedItem(SelectedModel);
-        }
-        
-        CHAT_LOG(Log, TEXT("Provider changed to VibeUE - model dropdown shows single option"));
-    }
+    // Both OpenRouter and VibeUE providers now support model fetching
+    ChatSession->FetchAvailableModels(FOnModelsFetched::CreateSP(this, &SAIChatWindow::HandleModelsFetched));
 }
 
 void SAIChatWindow::HandleToolsReady(bool bSuccess, int32 ToolCount)
