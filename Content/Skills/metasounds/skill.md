@@ -81,8 +81,9 @@ audio_out_id = audio_out_node.node_id
 # Drop the last :TypeName suffix to get the raw vertex name for connect_nodes
 audio_in_pin = ":".join(audio_out_node.inputs[0].split(":")[:-1])  # "UE.OutputFormat.Mono.Audio:0"
 
-# Input node — derive the On Play vertex name the same way (display name differs from vertex name)
-input_node = next(n for n in all_nodes if n.node_title == "Input")
+# Input node — filter by class_name "Input.Trigger" to avoid matching graph input nodes
+# (graph inputs also appear as "Input" nodes but with class "Input.Float", "Input.Bool", etc.)
+input_node = next(n for n in all_nodes if n.class_name == "Input.Trigger")
 input_node_id = input_node.node_id
 on_play_pin = ":".join(input_node.outputs[0].split(":")[:-1])  # "UE.Source.OnPlay"
 ```
@@ -139,35 +140,35 @@ ms.save_meta_sound(asset_path)
 
 ### Node Management
 
-| Method | Description |
-|--------|-------------|
-| `add_node(asset_path, namespace, name, variant="", major_version=1, pos_x=0, pos_y=0)` | Add a node. Returns `FMetaSoundResult` with `node_id` = GUID string. |
-| `remove_node(asset_path, node_id)` | Remove node and all its edges. |
-| `list_nodes(asset_path)` | List all nodes in the graph. Returns `TArray<FMetaSoundNodeInfo>`. |
-| `get_node_pins(asset_path, node_id)` | Return `FMetaSoundNodeInfo` for a single node. |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `add_node(asset_path, namespace, name, variant="", major_version=1, pos_x=0, pos_y=0)` | `FMetaSoundResult` | Add a node. `node_id` on result is the GUID string. |
+| `remove_node(asset_path, node_id)` | `FMetaSoundResult` | Remove node and all its edges. |
+| `list_nodes(asset_path)` | `TArray<FMetaSoundNodeInfo>` | List all nodes in the graph. |
+| `get_node_pins(asset_path, node_id)` | `FMetaSoundNodeInfo` | Return pin info for a single node. |
 
 ### Connections
 
-| Method | Description |
-|--------|-------------|
-| `connect_nodes(asset_path, from_node_id, output_name, to_node_id, input_name)` | Connect an output pin to an input pin. |
-| `disconnect_pin(asset_path, node_id, input_name)` | Remove the connection going into an input pin. |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `connect_nodes(asset_path, from_node_id, output_name, to_node_id, input_name)` | `FMetaSoundResult` | Connect an output pin to an input pin. Check `r.success`. |
+| `disconnect_pin(asset_path, node_id, input_name)` | `FMetaSoundResult` | Remove the connection going into an input pin. |
 
 ### Graph I/O
 
-| Method | Description |
-|--------|-------------|
-| `add_graph_input(asset_path, input_name, data_type, default_value="")` | Add a named input exposed as a runtime parameter. |
-| `add_graph_output(asset_path, output_name, data_type)` | Add a named output. |
-| `remove_graph_input(asset_path, input_name)` | Remove a graph input. |
-| `remove_graph_output(asset_path, output_name)` | Remove a graph output. |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `add_graph_input(asset_path, input_name, data_type, default_value="")` | `FMetaSoundResult` | Add a named input exposed as a runtime parameter. Appears as an `Input.<Type>` node in the graph. |
+| `add_graph_output(asset_path, output_name, data_type)` | `FMetaSoundResult` | Add a named output. |
+| `remove_graph_input(asset_path, input_name)` | `FMetaSoundResult` | Remove a graph input. |
+| `remove_graph_output(asset_path, output_name)` | `FMetaSoundResult` | Remove a graph output. |
 
 ### Node Configuration
 
-| Method | Description |
-|--------|-------------|
-| `set_node_input_default(asset_path, node_id, input_name, value, data_type)` | Set a literal default on a node input. `data_type`: "Float", "Int32", "Bool", "String". |
-| `set_node_location(asset_path, node_id, pos_x, pos_y)` | Update editor position. |
+| Method | Returns | Description |
+|--------|---------|-------------|
+| `set_node_input_default(asset_path, node_id, input_name, value, data_type)` | `FMetaSoundResult` | Set a literal default on a node input. `data_type`: "Float", "Int32", "Bool", "String", "WaveAsset". |
+| `set_node_location(asset_path, node_id, pos_x, pos_y)` | `FMetaSoundResult` | Update editor position. |
 
 ---
 
@@ -262,11 +263,11 @@ ms.set_node_input_default(ap, wp_id, "Wave Asset", "/Game/Audio/SW_Gunshot_01", 
 # Wire On Play (Input) → Play (WavePlayer)
 # CRITICAL: use the vertex name "UE.Source.OnPlay" — NOT the display name "On Play"
 r = ms.connect_nodes(ap, input_node_id, "UE.Source.OnPlay", wp_id, "Play")
-if not r.b_success: raise RuntimeError(f"connect On Play→Play failed: {r.message}")
+if not r.success: raise RuntimeError(f"connect On Play→Play failed: {r.message}")
 
 # Wire Out Mono (WavePlayer) → audio sink (Output)
 r = ms.connect_nodes(ap, wp_id, "Out Mono", audio_out_id, audio_in_pin)
-if not r.b_success: raise RuntimeError(f"connect Out Mono→Output failed: {r.message}")
+if not r.success: raise RuntimeError(f"connect Out Mono→Output failed: {r.message}")
 
 # Save
 ms.save_meta_sound(ap)
@@ -278,6 +279,24 @@ print("Done:", ap)
 ## Return Type Attribute Reference
 
 Use these exact attribute names — guessing leads to `AttributeError`.
+
+### `FMetaSoundResult` — returned by most mutating methods
+
+| Attribute | Type | Example |
+|-----------|------|---------|
+| `success` | bool | `True` |
+| `message` | str | `"Connected A.Audio -> B.UE.OutputFormat.Mono.Audio:0"` |
+| `asset_path` | str | `"/Game/Audio/MS_Test"` |
+| `node_id` | str (GUID) | `"A1B2C3D4-..."` (populated by `add_node` only) |
+
+```python
+r = ms.connect_nodes(ap, from_id, "Audio", to_id, pin)
+if not r.success:
+    raise RuntimeError(r.message)
+# NOT r.b_success — that attribute does not exist
+```
+
+---
 
 ### `FMetaSoundInfo` — returned by `get_meta_sound_info()`
 
@@ -358,15 +377,25 @@ Use these instead of calling `get_node_pins` on freshly-added nodes (can time ou
 | Output | `On Finished` | Trigger |
 | Output | `On Nearly Finished` | Trigger |
 | Output | `On Looped` | Trigger |
+| Output | `On Cue Point` | Trigger |
+| Output | `Cue Point ID` | Int32 |
+| Output | `Cue Point Label` | String |
+| Output | `Loop Percent` | Float |
+| Output | `Playback Location` | Float |
+| Output | `Playback Time` | Time |
 
 ### Sine (UE.Sine.Audio)
 
 | Direction | Pin | Type |
 |-----------|-----|------|
 | Input | `Frequency` | Float |
-| Input | `Modulation` | Float |
+| Input | `Modulation` | Audio |
 | Input | `Enabled` | Bool |
 | Input | `Bi Polar` | Bool |
+| Input | `Sync` | Trigger |
+| Input | `Phase Offset` | Float |
+| Input | `Glide` | Float |
+| Input | `Type` | Enum:SineGenerationType |
 | Output | `Audio` | Audio |
 
 ### Standard Interface Nodes
@@ -390,3 +419,6 @@ in the editor is NOT the vertex name. Always use the vertex names below in `conn
 - A MetaSound Source has **multiple nodes with `node_title == "Output"`** — one per interface pin group (e.g. `"On Finished"` Trigger, `"Out Mono"` Audio). To find the audio sink node, filter for the Output node whose inputs contain an Audio-type pin: `next(n for n in nodes if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs))`. Pin strings from `list_nodes` are `"VertexName:TypeName"` — you can pass them directly to `connect_nodes`, which now automatically strips the trailing `:TypeName` suffix. Manual stripping (`":".join(pin.split(":")[:-1])`) still works but is no longer required.
 - Node namespace/name/variant values differ from what the MetaSound editor displays. Always call `list_available_nodes("keyword")` to discover the correct values; do not guess.
 - MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (discover via `list_available_nodes("Wave Player")`).
+- **Graph inputs appear as `Input` nodes** in the graph (`class_name == "Input.Float"`, `"Input.Bool"`, etc.). When filtering for the standard interface Input node (the one that carries `On Play`), always match by `class_name == "Input.Trigger"` — not by `node_title == "Input"` alone, which will also match graph input nodes.
+- **AudioMixer pins interleave audio and gain:** `Audio Mixer (Mono, 2)` has pins `["In 0:Audio", "Gain 0:Float", "In 1:Audio", "Gain 1:Float"]`. Never index by position — always filter for `:Audio` typed pins when connecting audio signals: `audio_ins = [p.split(":")[0] for p in mixer_node.inputs if p.endswith(":Audio")]`.
+- **Stereo MetaSound Sources** report `UE.OutputFormat.Mono.Audio:0` as the audio output sink pin (same as Mono). The existing audio-output filter (`any(p.endswith(":Audio") for p in n.inputs)`) works correctly for both formats.
