@@ -4,7 +4,9 @@
 #include "GameplayTagsManager.h"
 #include "GameplayTagContainer.h"
 #include "GameplayTagsSettings.h"
+#if WITH_EDITOR
 #include "GameplayTagsEditorModule.h"
+#endif
 #include "Modules/ModuleManager.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogGameplayTagService, Log, All);
@@ -138,6 +140,8 @@ TArray<FGameplayTagInfo> UGameplayTagService::GetChildren(const FString& ParentT
 // =================================================================
 // Add Operations
 // =================================================================
+
+#if WITH_EDITOR
 
 FGameplayTagResult UGameplayTagService::AddTag(const FString& TagName, const FString& Comment, const FString& TagSource)
 {
@@ -318,3 +322,5 @@ FGameplayTagResult UGameplayTagService::RenameTag(const FString& OldTagName, con
 
 	return Result;
 }
+
+#endif // WITH_EDITOR
