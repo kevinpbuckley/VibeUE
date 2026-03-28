@@ -64,7 +64,7 @@ struct FMCPSSEConnection
  * MCP Server - Exposes internal tools to external chat clients
  * 
  * Implements the Model Context Protocol (MCP) Streamable HTTP transport
- * allowing clients like VS Code, Cursor, and Claude Desktop to use
+ * allowing clients like VS Code, Cursor, and Claude Code to use
  * VibeUE's internal tools.
  * 
  * @see https://modelcontextprotocol.io/specification/2025-06-18/basic/transports#streamable-http

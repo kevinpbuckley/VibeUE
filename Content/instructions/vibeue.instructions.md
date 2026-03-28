@@ -243,6 +243,29 @@ Never guess paths. Confirm the exact path from results before editing.
 
 Never emulate a move by duplicating an asset and deleting the original. That creates a different asset and can break references. Use `manage_asset(action="move", source_path="...", destination_path="...")` instead.
 
+### Non-Destructive Editing
+
+Preserve existing data by default. If an operation cannot be completed with a direct supported setter or workflow, do not "fake" it by deleting, recreating, clearing, or replacing existing assets, states, nodes, bindings, properties, or arrays.
+
+Before changing any dropdown, enum-like field, type field, or other constrained value:
+
+1. Discover the valid options first from `vibeue_apis`, a service discovery method, or a targeted discovery tool.
+2. Use a first-class setter or supported editor workflow that updates the value in place.
+3. If the exact option or setter cannot be verified, stop and report the gap instead of guessing.
+
+Never use destructive fallback patterns such as:
+
+- remove-and-recreate to change a type or dropdown value
+- clearing existing data just to make a write succeed
+- replacing a whole object when only one field should change
+- deleting children, tasks, transitions, bindings, or parameters as part of an unverified workaround
+
+If a requested edit is not directly supported, prefer one of these outcomes:
+
+1. Discover a supported non-destructive API.
+2. Leave the existing data unchanged and explain what capability is missing.
+3. Ask the user before any operation that would intentionally discard or rebuild existing data.
+
 Never emulate a StateTree hierarchy move by calling `remove_state` and then `add_state`. That destroys the original `UStateTreeState` object and can lose tasks, transitions, bindings, child states, or other editor data. Use `unreal.StateTreeService.move_state(asset_path, state_path, new_parent_path, new_index)` for StateTree reparenting.
 
 For detailed per-action docs: `manage_asset(action="help", help_action="search")`

@@ -2328,7 +2328,7 @@ FReply SAIChatWindow::OnSettingsClicked()
                 [
                     SNew(STextBlock)
                     .Text(FText::FromString(TEXT("Enable MCP Server")))
-                    .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Desktop, etc.")))
+                    .ToolTipText(FText::FromString(TEXT("Expose internal tools via Streamable HTTP for VS Code, Cursor, Claude Code, etc.")))
                 ]
             ]
 

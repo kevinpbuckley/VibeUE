@@ -283,6 +283,15 @@ unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "Root", "Idle", "State"
 # State types: "State" (default), "Group", "Subtree", "Linked", "LinkedAsset"
 unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "Root", "BehaviorGroup", "Group")
 
+# Change type of an existing state: "State", "Group", "Subtree"
+unreal.StateTreeService.set_state_type("/Game/AI/MyBehavior", "Peaceful", "Subtree")
+
+# Linked type — links to another subtree in the same tree
+unreal.StateTreeService.set_linked_subtree("/Game/AI/MyBehavior", "Root/Extension", "Peaceful")
+
+# LinkedAsset type — links to a different StateTree asset
+unreal.StateTreeService.set_linked_asset("/Game/AI/MyBehavior", "Root/Extension", "/Game/AI/OtherBehavior")
+
 # Move a state in-place to a new parent. This preserves the original state object and its data.
 unreal.StateTreeService.move_state("/Game/AI/MyBehavior", "Root/Idle", "Root/BehaviorGroup")
 

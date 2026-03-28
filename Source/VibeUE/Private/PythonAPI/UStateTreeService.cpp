@@ -1565,6 +1565,15 @@ static void MarkStateTreeDirty(UStateTree* StateTree)
 #if WITH_EDITOR
 	FPropertyChangedEvent PropertyChangedEvent(nullptr);
 	StateTree->PostEditChangeProperty(PropertyChangedEvent);
+
+	// Notify the open editor tab to rebuild its tree view.
+	if (GEditor)
+	{
+		if (UStateTreeEditingSubsystem* EditingSubsystem = GEditor->GetEditorSubsystem<UStateTreeEditingSubsystem>())
+		{
+			EditingSubsystem->FindOrAddViewModel(StateTree)->NotifyAssetChangedExternally();
+		}
+	}
 #endif
 }
 
@@ -2258,6 +2267,143 @@ bool UStateTreeService::SetStateEnabled(const FString& AssetPath, const FString&
 #endif
 }
 
+bool UStateTreeService::SetStateType(const FString& AssetPath, const FString& StatePath, const FString& StateType)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetStateType: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	const EStateTreeStateType ParsedType = StringToStateType(StateType);
+
+	if (ParsedType == EStateTreeStateType::Linked || ParsedType == EStateTreeStateType::LinkedAsset)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+		       TEXT("SetStateType: Use SetLinkedSubtree for 'Linked' or SetLinkedAsset for 'LinkedAsset' on state '%s'."),
+		       *StatePath);
+		return false;
+	}
+
+	// If transitioning away from a linked type, reset parameters (mirrors PostEditChangeChainProperty).
+	if (State->Type == EStateTreeStateType::Linked || State->Type == EStateTreeStateType::LinkedAsset)
+	{
+		State->Parameters.ResetParametersAndOverrides();
+	}
+
+	State->Type = ParsedType;
+	State->LinkedSubtree = FStateTreeStateLink();
+	State->LinkedAsset = nullptr;
+	State->Parameters.bFixedLayout = false;
+
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("SetStateType: %s -> %s in %s"), *StatePath, *StateType, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::SetLinkedSubtree(const FString& AssetPath, const FString& StatePath, const FString& TargetSubtreePath)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetLinkedSubtree: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	UStateTreeState* TargetState = FindStateByPath(EditorData, TargetSubtreePath);
+	if (!TargetState)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetLinkedSubtree: Target subtree not found: %s"), *TargetSubtreePath);
+		return false;
+	}
+
+	FStateTreeStateLink Link;
+	Link.Name = TargetState->Name;
+	Link.ID = TargetState->ID;
+	Link.LinkType = EStateTreeTransitionType::GotoState;
+
+	State->Type = EStateTreeStateType::Linked;
+	State->SetLinkedState(Link);
+
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("SetLinkedSubtree: %s -> linked to '%s' in %s"), *StatePath, *TargetSubtreePath, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::SetLinkedAsset(const FString& AssetPath, const FString& StatePath, const FString& LinkedAssetPath)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetLinkedAsset: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	UStateTree* LinkedAsset = Cast<UStateTree>(
+		StaticLoadObject(UStateTree::StaticClass(), nullptr, *LinkedAssetPath));
+	if (!LinkedAsset)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetLinkedAsset: Could not load StateTree asset: %s"), *LinkedAssetPath);
+		return false;
+	}
+
+	State->Type = EStateTreeStateType::LinkedAsset;
+	State->SetLinkedStateAsset(LinkedAsset);
+
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("SetLinkedAsset: %s -> linked asset '%s' in %s"), *StatePath, *LinkedAssetPath, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::SetStateDescription(const FString& AssetPath, const FString& StatePath, const FString& Description)
 {
 	UStateTree* StateTree = LoadStateTree(AssetPath);
@@ -2519,6 +2665,24 @@ bool UStateTreeService::SelectState(const FString& AssetPath, const FString& Sta
 #else
 	return false;
 #endif
+}
+
+bool UStateTreeService::RefreshEditor(const FString& AssetPath)
+{
+#if WITH_EDITOR
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+	if (UStateTreeEditingSubsystem* EditingSubsystem = GEditor->GetEditorSubsystem<UStateTreeEditingSubsystem>())
+	{
+		EditingSubsystem->FindOrAddViewModel(StateTree)->NotifyAssetChangedExternally();
+		return true;
+	}
+#endif
+	return false;
 }
 
 bool UStateTreeService::SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath)

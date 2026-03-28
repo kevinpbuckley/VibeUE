@@ -17,12 +17,12 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 26 specialized services with 886 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 27 specialized services with 909 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 28 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
 - **Custom Instructions** - Add project-specific context via markdown files
-- **External IDE Integration** - Connect VS Code, Claude Desktop, Cursor, and AntiGravity via MCP
+- **External IDE Integration** - Connect VS Code, Claude Code, Cursor, and AntiGravity via MCP
 
 ---
 
@@ -328,7 +328,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (26 services, 886 methods)
+### 2. VibeUE Python API Services (27 services, 909 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -341,6 +341,7 @@ High-level services exposed to Python for common game development tasks:
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `MaterialService` | 30 | Materials and material instances |
+| `MetaSoundService` | 17 | MetaSound graph authoring, nodes, interfaces, inputs/outputs, and wiring |
 | `ActorService` | 27 | Level actor management, viewport camera control |
 | `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
@@ -358,7 +359,7 @@ High-level services exposed to Python for common game development tasks:
 | `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
 | `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
-| `StateTreeService` | 71 | StateTree asset creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, component overrides, property bindings, compile/save |
+| `StateTreeService` | 77 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, compile/save |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -1210,9 +1211,9 @@ EngineSettingsService controls core engine configuration across multiple domains
 - `get/set_gc_setting(setting, value)` - Configure garbage collection behavior
 - `list_gc_settings()` - List available GC settings
 
-### StateTreeService (71 methods)
+### StateTreeService (77 methods)
 
-StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, tasks, evaluators, conditions, transitions, parameters, theme colors, component overrides, property bindings, and compilation.
+StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, state type and linked-state configuration, non-destructive state reparenting, tasks, evaluators, conditions, transitions, parameters, theme colors, component overrides, property bindings, and compilation.
 
 **Discovery & Info:**
 - `list_state_trees(directory_path)` - List all StateTree assets under a content path
@@ -1230,11 +1231,19 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 - `remove_state(asset_path, state_path)` - Remove a state and all its children
 - `rename_state(asset_path, state_path, new_name)` - Rename a state
 - `set_state_enabled(asset_path, state_path, enabled)` - Enable or disable a state
+- `set_state_type(asset_path, state_path, state_type)` - Change a state's type in place (`"State"`, `"Group"`, `"Subtree"`, `"Linked"`, `"LinkedAsset"`)
+- `set_linked_subtree(asset_path, state_path, subtree_name)` - Configure which local subtree a `Linked` state references
+- `set_linked_asset(asset_path, state_path, linked_asset_path)` - Configure which external StateTree asset a `LinkedAsset` state references
 - `set_state_description(asset_path, state_path, description)` - Set editor description
 - `set_state_tag(asset_path, state_path, gameplay_tag)` - Set gameplay tag (pass empty to clear)
 - `set_state_weight(asset_path, state_path, weight)` - Set utility weight for utility-based selection
 - `set_state_expanded(asset_path, state_path, expanded)` - Expand or collapse in editor tree view
+- `select_state(asset_path, state_path)` - Highlight a state in the open StateTree editor panel
 - `set_context_actor_class(asset_path, actor_class_path)` - Set ContextActorClass on the schema
+
+Use `move_state` when the intent is to move or reparent an existing StateTree state. Do not emulate a move with `remove_state` plus `add_state`, because that recreates the state instead of preserving its existing identity and attached data.
+
+Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place StateTree type/link edits. Do not emulate those operations by deleting and recreating states.
 
 **State Properties:**
 - `set_selection_behavior(asset_path, state_path, behavior)` - How children are selected (`TrySelectChildrenInOrder`, `TrySelectChildrenAtRandom`, etc.)
@@ -1294,6 +1303,7 @@ StateTreeService provides full programmatic control over StateTree assets: creat
 **Transitions:**
 - `add_transition(asset_path, state_path, trigger, transition_type, target_path, priority)` - Add a transition (`"OnStateCompleted"`, `"GotoState"`, etc.)
 - `update_transition(asset_path, state_path, transition_index, ...)` - Modify trigger, type, target, priority, enabled, or delay settings
+- `bind_transition_to_delegate(asset_path, state_path, transition_index, task_struct_name, dispatcher_property_name, task_match_index)` - Bind an `OnDelegate` transition to a task dispatcher property
 - `remove_transition(asset_path, state_path, transition_index)` - Remove a transition by index
 - `move_transition(asset_path, state_path, from_index, to_index)` - Reorder a transition
 
@@ -1523,7 +1533,7 @@ unreal.LandscapeService.import_heightmap("MtFuji",
 
 ## 🌐 External IDE Integration
 
-Connect VS Code, Claude Desktop, Cursor, or AntiGravity to control Unreal via MCP.
+Connect VS Code, Claude Code, Cursor, or AntiGravity to control Unreal via MCP.
 
 ### Enable MCP Server
 
@@ -1557,7 +1567,17 @@ Create `.vscode/mcp.json`:
 }
 ```
 
-### Claude Desktop / Cursor / AntiGravity
+### Claude Code
+
+Run once in your terminal:
+
+```bash
+claude mcp add --scope user --transport stdio VibeUE-Claude -- npx -y mcp-remote http://127.0.0.1:8088/mcp --transport http-only --allow-http --header "Authorization:Bearer YOUR_API_KEY"
+```
+
+Omit the `--header` arguments if no API key is set in VibeUE.
+
+### Cursor / AntiGravity
 
 ```json
 {
@@ -1633,7 +1653,13 @@ VS Code `.vscode/mcp.json`:
 }
 ```
 
-Claude Desktop / Cursor / AntiGravity:
+Claude Code:
+
+```bash
+claude mcp add --scope user --transport stdio VibeUE-Claude -- npx -y mcp-remote http://127.0.0.1:8089/mcp --transport http-only --allow-http
+```
+
+Cursor / AntiGravity:
 
 ```json
 {
