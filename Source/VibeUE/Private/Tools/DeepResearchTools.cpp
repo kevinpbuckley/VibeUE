@@ -4,7 +4,7 @@
 // MCP tool: deep_research — web research and GPS geocoding with no API key required.
 //
 // Actions:
-//   search          — DuckDuckGo Instant Answer API (free, no key)
+//   search          — DuckDuckGo HTML search (real web results with titles, URLs, snippets)
 //   fetch_page      — Jina AI Reader: converts any URL to clean markdown (free, no key)
 //   geocode         — OpenStreetMap Nominatim: place name → lat/lng (free, no key)
 //   reverse_geocode — OpenStreetMap Nominatim: lat/lng → place name (free, no key)
@@ -160,7 +160,142 @@ static FResearchHttpResult ResearchHttpGet(
 }
 
 // ---------------------------------------------------------------------------
-// Action: search  (DuckDuckGo Instant Answer API)
+// Helpers for parsing search results
+// ---------------------------------------------------------------------------
+
+// Decode percent-encoded URL components (e.g. %3A → :, %2F → /)
+static FString UrlDecodeSimple(const FString& Input)
+{
+	FString Out;
+	Out.Reserve(Input.Len());
+	for (int32 i = 0; i < Input.Len(); ++i)
+	{
+		if (Input[i] == TEXT('%') && i + 2 < Input.Len())
+		{
+			const FString Hex = Input.Mid(i + 1, 2);
+			const int32 Value = FParse::HexDigit(Hex[0]) * 16 + FParse::HexDigit(Hex[1]);
+			if (Value >= 0)
+			{
+				Out.AppendChar(static_cast<TCHAR>(Value));
+				i += 2;
+				continue;
+			}
+		}
+		else if (Input[i] == TEXT('+'))
+		{
+			Out.AppendChar(TEXT(' '));
+			continue;
+		}
+		Out.AppendChar(Input[i]);
+	}
+	return Out;
+}
+
+// Extract the real URL from a DuckDuckGo redirect href (uddg= parameter)
+static FString ExtractDDGUrl(const FString& Href)
+{
+	const FString UddgKey = TEXT("uddg=");
+	int32 Start = Href.Find(UddgKey);
+	if (Start != INDEX_NONE)
+	{
+		Start += UddgKey.Len();
+		int32 End = Href.Find(TEXT("&"), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start);
+		FString Encoded = (End != INDEX_NONE) ? Href.Mid(Start, End - Start) : Href.Mid(Start);
+		return UrlDecodeSimple(Encoded);
+	}
+	if (Href.StartsWith(TEXT("//")))
+		return FString(TEXT("https:")) + Href;
+	return Href;
+}
+
+// Parse markdown search results (from Jina-rendered DDG page) into structured data
+struct FDDGResult
+{
+	FString Title;
+	FString Url;
+	FString Snippet;
+};
+
+static TArray<FDDGResult> ParseMarkdownSearchResults(const FString& Markdown, int32 MaxResults = 15)
+{
+	TArray<FDDGResult> Results;
+
+	// Jina renders DDG Lite results as markdown like:
+	//   1.[Title Text](https://duckduckgo.com/l/?uddg=REAL_URL&rut=...)
+	//   Snippet text here
+	//   domain.com/path
+	//
+	// or for DDG HTML:
+	//   ## [Title Text](https://duckduckgo.com/l/?uddg=REAL_URL&rut=...)
+	//   Snippet text
+	//   domain.com/path
+
+	TArray<FString> Lines;
+	Markdown.ParseIntoArrayLines(Lines);
+
+	for (int32 i = 0; i < Lines.Num() && Results.Num() < MaxResults; ++i)
+	{
+		const FString& Line = Lines[i];
+
+		// Look for markdown links: [Title](URL)
+		// These appear on lines starting with a number+dot or ## 
+		int32 BracketStart = Line.Find(TEXT("["));
+		if (BracketStart == INDEX_NONE) continue;
+
+		// Check format: must have ](url) pattern
+		int32 BracketEnd = Line.Find(TEXT("]("), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketStart);
+		if (BracketEnd == INDEX_NONE) continue;
+
+		int32 UrlEnd = Line.Find(TEXT(")"), ESearchCase::IgnoreCase, ESearchDir::FromStart, BracketEnd + 2);
+		if (UrlEnd == INDEX_NONE) continue;
+
+		FString Title = Line.Mid(BracketStart + 1, BracketEnd - BracketStart - 1).TrimStartAndEnd();
+		FString LinkUrl = Line.Mid(BracketEnd + 2, UrlEnd - BracketEnd - 2).TrimStartAndEnd();
+
+		// Skip image links, navigation links, DuckDuckGo internal stuff
+		if (Title.IsEmpty()) continue;
+		if (Title.StartsWith(TEXT("Image"))) continue;
+		if (LinkUrl.Contains(TEXT("duckduckgo.com/t/"))) continue; // tracking pixel
+
+		// Extract real URL from DDG redirect
+		FString RealUrl = ExtractDDGUrl(LinkUrl);
+
+		// Skip DDG-internal URLs (category pages, etc.)
+		if (RealUrl.Contains(TEXT("duckduckgo.com")) && !RealUrl.Contains(TEXT("uddg="))) continue;
+
+		// Collect snippet from subsequent lines (up to 3 lines of text, stop at next numbered result or markdown heading)
+		FString Snippet;
+		for (int32 j = i + 1; j < FMath::Min(i + 4, Lines.Num()); ++j)
+		{
+			const FString& NextLine = Lines[j].TrimStartAndEnd();
+			if (NextLine.IsEmpty()) continue;
+			// Stop if this is another result (starts with number+bracket or ##)
+			if (NextLine.Len() > 2 && FChar::IsDigit(NextLine[0]) && NextLine.Contains(TEXT("[")) && NextLine.Contains(TEXT("]("))) break;
+			if (NextLine.StartsWith(TEXT("##"))) break;
+			if (NextLine.StartsWith(TEXT("!["))) continue; // skip image references
+			// Skip bare domain lines (like "dev.epicgames.com/...")  
+			if (!NextLine.Contains(TEXT(" ")) && NextLine.Contains(TEXT("."))) continue;
+			// This is snippet text
+			if (!Snippet.IsEmpty()) Snippet += TEXT(" ");
+			// Remove markdown bold markers
+			FString Clean = NextLine.Replace(TEXT("**"), TEXT(""));
+			// Remove &hellip; entities
+			Clean = Clean.Replace(TEXT("&hellip;"), TEXT("..."));
+			Snippet += Clean;
+		}
+
+		FDDGResult R;
+		R.Title   = Title.Replace(TEXT("**"), TEXT("")); // strip markdown bold
+		R.Url     = RealUrl;
+		R.Snippet = Snippet.TrimStartAndEnd();
+		Results.Add(R);
+	}
+
+	return Results;
+}
+
+// ---------------------------------------------------------------------------
+// Action: search  (DuckDuckGo via Jina Reader — real web results)
 // ---------------------------------------------------------------------------
 static FString ActionSearch(const TMap<FString, FString>& Params)
 {
@@ -168,12 +303,20 @@ static FString ActionSearch(const TMap<FString, FString>& Params)
 	if (Query.IsEmpty())
 		return BuildResearchError(TEXT("MISSING_PARAMS"), TEXT("'query' is required for the search action."));
 
+	// Build DuckDuckGo Lite URL and route through Jina Reader for clean markdown
 	const FString Encoded = UrlEncodeSimple(Query);
-	const FString Url = FString::Printf(
-		TEXT("https://api.duckduckgo.com/?q=%s&format=json&no_html=1&skip_disambig=1&no_redirect=1"),
-		*Encoded);
+	const FString DDGUrl = FString::Printf(TEXT("https://lite.duckduckgo.com/lite/?q=%s"), *Encoded);
+	const FString JinaUrl = FString::Printf(TEXT("https://r.jina.ai/%s"), *DDGUrl);
 
-	const FResearchHttpResult Http = ResearchHttpGet(Url, TEXT("VibeUE/1.0 (Unreal Engine plugin)"), {}, 15.0f);
+	TArray<TPair<FString, FString>> Headers;
+	Headers.Add(TPair<FString, FString>(TEXT("Accept"), TEXT("text/markdown")));
+	Headers.Add(TPair<FString, FString>(TEXT("X-Return-Format"), TEXT("markdown")));
+
+	const FResearchHttpResult Http = ResearchHttpGet(
+		JinaUrl,
+		TEXT("VibeUE/1.0 (Unreal Engine plugin)"),
+		Headers,
+		20.0f);
 
 	if (!Http.bSuccess)
 		return BuildResearchError(TEXT("HTTP_ERROR"), Http.ErrorMessage);
@@ -181,59 +324,35 @@ static FString ActionSearch(const TMap<FString, FString>& Params)
 	if (Http.ResponseCode != 200)
 		return BuildResearchError(
 			FString::Printf(TEXT("HTTP_%d"), Http.ResponseCode),
-			FString::Printf(TEXT("DuckDuckGo returned %d"), Http.ResponseCode));
+			FString::Printf(TEXT("Search request returned %d"), Http.ResponseCode));
 
-	TSharedPtr<FJsonObject> DDG;
-	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Http.Body);
-	if (!FJsonSerializer::Deserialize(Reader, DDG) || !DDG.IsValid())
-		return BuildResearchError(TEXT("PARSE_ERROR"), TEXT("Failed to parse DuckDuckGo response."));
+	// Parse the markdown results
+	TArray<FDDGResult> ParsedResults = ParseMarkdownSearchResults(Http.Body, 15);
 
-	// Build a clean output object
+	if (ParsedResults.Num() == 0)
+		return BuildResearchError(TEXT("NO_RESULTS"),
+			FString::Printf(TEXT("No search results found for: %s"), *Query));
+
+	// Build structured JSON output
 	TSharedRef<FJsonObject> Out = MakeShared<FJsonObject>();
 	Out->SetBoolField(TEXT("success"), true);
 	Out->SetStringField(TEXT("query"), Query);
+	Out->SetNumberField(TEXT("result_count"), ParsedResults.Num());
 
-	FString Heading, AbstractText, AbstractUrl, Answer;
-	DDG->TryGetStringField(TEXT("Heading"),      Heading);
-	DDG->TryGetStringField(TEXT("AbstractText"),  AbstractText);
-	DDG->TryGetStringField(TEXT("AbstractURL"),   AbstractUrl);
-	DDG->TryGetStringField(TEXT("Answer"),        Answer);
-
-	if (!Heading.IsEmpty())      Out->SetStringField(TEXT("heading"),      Heading);
-	if (!AbstractText.IsEmpty()) Out->SetStringField(TEXT("abstract"),     AbstractText);
-	if (!AbstractUrl.IsEmpty())  Out->SetStringField(TEXT("abstract_url"), AbstractUrl);
-	if (!Answer.IsEmpty())       Out->SetStringField(TEXT("answer"),       Answer);
-
-	// Collect related topics (text + url pairs)
-	const TArray<TSharedPtr<FJsonValue>>* RelatedTopicsRaw;
-	TArray<TSharedPtr<FJsonValue>> RelatedTopics;
-
-	if (DDG->TryGetArrayField(TEXT("RelatedTopics"), RelatedTopicsRaw))
+	TArray<TSharedPtr<FJsonValue>> ResultsArray;
+	for (const FDDGResult& R : ParsedResults)
 	{
-		for (const TSharedPtr<FJsonValue>& Val : *RelatedTopicsRaw)
-		{
-			const TSharedPtr<FJsonObject>* TopicObj;
-			if (!Val->TryGetObject(TopicObj)) continue;
-
-			FString Text, FirstUrl;
-			(*TopicObj)->TryGetStringField(TEXT("Text"),     Text);
-			(*TopicObj)->TryGetStringField(TEXT("FirstURL"), FirstUrl);
-			if (Text.IsEmpty() && FirstUrl.IsEmpty()) continue;
-
-			TSharedRef<FJsonObject> Topic = MakeShared<FJsonObject>();
-			if (!Text.IsEmpty())     Topic->SetStringField(TEXT("text"), Text);
-			if (!FirstUrl.IsEmpty()) Topic->SetStringField(TEXT("url"),  FirstUrl);
-			RelatedTopics.Add(MakeShared<FJsonValueObject>(Topic));
-
-			if (RelatedTopics.Num() >= 10) break; // cap at 10
-		}
+		TSharedRef<FJsonObject> Item = MakeShared<FJsonObject>();
+		if (!R.Title.IsEmpty())   Item->SetStringField(TEXT("title"),   R.Title);
+		if (!R.Url.IsEmpty())     Item->SetStringField(TEXT("url"),     R.Url);
+		if (!R.Snippet.IsEmpty()) Item->SetStringField(TEXT("snippet"), R.Snippet);
+		ResultsArray.Add(MakeShared<FJsonValueObject>(Item));
 	}
 
-	if (RelatedTopics.Num() > 0)
-		Out->SetArrayField(TEXT("related_topics"), RelatedTopics);
+	Out->SetArrayField(TEXT("results"), ResultsArray);
 
 	// Hint for follow-up
-	Out->SetStringField(TEXT("tip"), TEXT("Use fetch_page action with any URL from related_topics or abstract_url to read the full page content."));
+	Out->SetStringField(TEXT("tip"), TEXT("Use fetch_page action with any result URL to read the full page content as clean markdown."));
 
 	FString OutStr;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&OutStr);
@@ -414,7 +533,7 @@ static FString ActionReverseGeocode(const TMap<FString, FString>& Params)
 // ---------------------------------------------------------------------------
 REGISTER_VIBEUE_TOOL(deep_research,
 	"Web research and GPS geocoding — no API key required. "
-	"Use 'search' to look up any topic via DuckDuckGo and get an abstract plus relevant URLs. "
+	"Use 'search' to look up any topic via DuckDuckGo and get real web results with titles, URLs, and snippets. "
 	"Use 'fetch_page' to read the full content of any URL as clean markdown (great for Unreal Engine "
 	"documentation, Dev Community posts, API references). "
 	"Use 'geocode' to convert any place name or address into GPS coordinates (lat/lng) for use with "
