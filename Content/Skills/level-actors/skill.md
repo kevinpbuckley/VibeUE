@@ -17,6 +17,40 @@ unreal_classes:
 
 **DO NOT use `unreal.EditorLevelLibrary`.** The entire Editor Scripting Utilities Plugin is deprecated in UE 5.7+. Use `unreal.EditorActorSubsystem` via `unreal.get_editor_subsystem()` for all level actor operations.
 
+```python
+# ❌ DEPRECATED - DO NOT USE
+all_actors = unreal.EditorLevelLibrary.get_all_level_actors()
+unreal.EditorLevelLibrary.spawn_actor_from_class(...)
+
+# ✅ CORRECT - Use EditorActorSubsystem
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
+all_actors = actor_subsys.get_all_level_actors()
+actor_subsys.spawn_actor_from_class(...)
+```
+
+### 🚫 `get_all_level_actors_of_class` DOES NOT EXIST
+
+**`EditorActorSubsystem` has NO `get_all_level_actors_of_class()` method.** Always use `get_all_level_actors()` + `isinstance()` filtering:
+
+```python
+# ❌ WRONG - This method does not exist, causes AttributeError
+actor_subsys.get_all_level_actors_of_class(unreal.Landscape)
+
+# ✅ CORRECT - Filter manually
+landscapes = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal.Landscape)]
+lights = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal.PointLight)]
+```
+
+**Migration guide:**
+| Deprecated (`EditorLevelLibrary`) | Replacement (`EditorActorSubsystem`) |
+|---|---|
+| `get_all_level_actors()` | `actor_subsys.get_all_level_actors()` |
+| `get_all_level_actors_of_class(cls)` | `[a for a in actor_subsys.get_all_level_actors() if isinstance(a, cls)]` |
+| `spawn_actor_from_class()` | `actor_subsys.spawn_actor_from_class()` |
+| `destroy_actor()` | `actor_subsys.destroy_actor()` |
+| `get_selected_level_actors()` | `actor_subsys.get_selected_level_actors()` |
+| `set_actor_selection_state()` | `actor_subsys.set_actor_selection_state()` |
+
 ### 🚨 NEVER Use `ActorService.add_actor` for Static Mesh Actors
 
 `ActorService.add_actor()` + `set_property("StaticMesh", ...)` creates actors with **zero-extent bounds** — they are completely invisible in the viewport even though `get_property` reports the mesh is set. This is a known limitation.
@@ -127,7 +161,7 @@ import unreal
 
 actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 all_actors = actor_subsys.get_all_level_actors()
-lights = actor_subsys.get_all_level_actors_of_class(unreal.PointLight)
+lights = [a for a in all_actors if isinstance(a, unreal.PointLight)]
 
 for actor in all_actors[:10]:
     loc = actor.get_actor_location()
