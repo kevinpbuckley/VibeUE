@@ -57,8 +57,8 @@
 ### Build & Dependencies
 - [x] Plugin generates no errors or consequential warnings ✅
 - [ ] C++ third-party code and libraries are in ThirdParty folder ⚠️ *No C++ third-party code*
-- [x] Python third-party code and libraries are in Content/Python/Lib/site-packages/ ✅
-- [ ] Third Party Software form accurately filled out ⚠️ *Required for Python dependencies*
+- [x] Python third-party code and libraries are in Content/Python/Lib/site-packages/ ✅ *N/A — proxy uses only Python stdlib, no third-party deps*
+- [x] Third Party Software form accurately filled out ✅ *N/A — no third-party Python libraries shipped*
 
 ## Validation Summary
 
@@ -76,10 +76,9 @@
 - No build errors
 - Python dependencies in Content/Python/Lib/site-packages/
 
-### ⚠️ Needs Attention (3 items)
+### ⚠️ Needs Attention (2 items)
 1. **Media**: Create screenshots/videos showing plugin functionality
 2. **Technical Information**: Complete during FAB submission
-3. **Third Party Software Form**: Document Python dependencies (FastMCP, Pydantic, HTTPX, Uvicorn, etc.)
 
 ## Pre-Submission Tasks
 - [ ] Create 3-5 screenshots (plugin UI, VS Code integration, Blueprint/UMG demos)
@@ -88,4 +87,4 @@
 - [ ] Run `MakePlugin.ps1` to generate final package
 - [ ] Test package in clean UE 5.7 project
 
-**Status**: ~95% complete | **Remaining**: Media assets + Third Party form
+**Status**: ~95% complete | **Remaining**: Media assets
