@@ -95,7 +95,6 @@ public class VibeUE : ModuleRules
 				"StateTreeEditorModule",  // For FStateTreeCompiler, UStateTreeState, StateTree editor types
 				"PropertyBindingUtils",    // For FPropertyBindingBindableStructDescriptor (base of FStateTreeBindableStructDesc)
 				"GameplayTags",           // For FGameplayTag (required by StateTree)
-				"GameplayTagsEditor",     // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
 				"AudioEditor",            // For SoundCue graph classes (USoundCueGraphNode, USoundCueGraph, USoundCueFactoryNew)
 				"MetasoundEngine",        // For UMetaSoundSource, UMetaSoundBuilderSubsystem, UMetaSoundSourceBuilder
 				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
@@ -118,6 +117,7 @@ public class VibeUE : ModuleRules
 					"StatusBar",           // For panel drawer integration
 					"ContentBrowser",      // For content browser selection queries
 					"MetasoundEditor",     // For UMetaSoundEditorSubsystem (FindOrBeginBuilding, BuildToAsset)
+				"GameplayTagsEditor",  // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
 				}
 			);
 		}

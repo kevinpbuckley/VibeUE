@@ -156,6 +156,7 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
 	static TArray<FGameplayTagInfo> GetChildren(const FString& ParentTag);
 
+#if WITH_EDITOR
 	// =================================================================
 	// Add Operations
 	// =================================================================
@@ -204,6 +205,7 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult RenameTag(const FString& OldTagName, const FString& NewTagName);
+#endif // WITH_EDITOR
 
 private:
 	/** Helper to populate FGameplayTagInfo from the tag manager */
