@@ -444,6 +444,40 @@ struct VIBEUE_API FOpenRouterModel
         }
         return Model;
     }
+
+    /** Create from VibeUE Worker API JSON response (capabilities-based format) */
+    static FOpenRouterModel FromVibeUEJson(const TSharedPtr<FJsonObject>& JsonObject)
+    {
+        FOpenRouterModel Model;
+        if (JsonObject.IsValid())
+        {
+            Model.Id = JsonObject->GetStringField(TEXT("id"));
+            
+            // Use name if available, otherwise derive from id
+            if (JsonObject->HasField(TEXT("name")))
+            {
+                Model.Name = JsonObject->GetStringField(TEXT("name"));
+            }
+            else
+            {
+                Model.Name = Model.Id;
+            }
+            
+            Model.ContextLength = JsonObject->GetIntegerField(TEXT("context_length"));
+            
+            // VibeUE models are free
+            Model.PricingPrompt = 0.0f;
+            Model.PricingCompletion = 0.0f;
+            
+            // Check capabilities object for tool_calling
+            const TSharedPtr<FJsonObject>* CapabilitiesObject;
+            if (JsonObject->TryGetObjectField(TEXT("capabilities"), CapabilitiesObject))
+            {
+                Model.bSupportsTools = (*CapabilitiesObject)->GetBoolField(TEXT("tool_calling"));
+            }
+        }
+        return Model;
+    }
     
     /** Check if this model is free */
     bool IsFree() const

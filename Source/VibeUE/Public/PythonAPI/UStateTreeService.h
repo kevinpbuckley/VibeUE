@@ -415,9 +415,42 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool RemoveState(const FString& AssetPath, const FString& StatePath);
 
+	/**
+	 * Move an existing state in-place to a new parent and optional sibling index.
+	 * Preserves the original state object, children, tasks, transitions, and bindings.
+	 * @param AssetPath     Content path to the StateTree (e.g. "/Game/AI/MyStateTree")
+	 * @param StatePath     Path of the state to move (e.g. "Root/Idle")
+	 * @param NewParentPath Path of the new parent state, or empty string to move to top-level subtree roots
+	 * @param NewIndex      Optional insertion index among destination siblings; -1 appends to the end
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool MoveState(const FString& AssetPath, const FString& StatePath,
+	                     const FString& NewParentPath, int32 NewIndex = -1);
+
 	/** Enable or disable a state. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetStateEnabled(const FString& AssetPath, const FString& StatePath, bool bEnabled);
+
+	/**
+	 * Change the type of an existing state to "State", "Group", or "Subtree".
+	 * For "Linked" use SetLinkedSubtree; for "LinkedAsset" use SetLinkedAsset.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetStateType(const FString& AssetPath, const FString& StatePath, const FString& StateType);
+
+	/**
+	 * Set a state's type to Linked and link it to another subtree in the same StateTree.
+	 * @param TargetSubtreePath  Path of the subtree to link to (e.g. "Root" or "Peaceful")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetLinkedSubtree(const FString& AssetPath, const FString& StatePath, const FString& TargetSubtreePath);
+
+	/**
+	 * Set a state's type to LinkedAsset and link it to another StateTree asset.
+	 * @param LinkedAssetPath  Content path to the StateTree asset (e.g. "/Game/AI/OtherTree")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetLinkedAsset(const FString& AssetPath, const FString& StatePath, const FString& LinkedAssetPath);
 
 	/** Set an editor description string for a state. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
@@ -468,6 +501,10 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SelectState(const FString& AssetPath, const FString& StatePath);
+
+	/** Notify the open StateTree editor tab to rebuild its tree view. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RefreshEditor(const FString& AssetPath);
 
 	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")

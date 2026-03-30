@@ -1156,14 +1156,23 @@ void FChatSession::SetCurrentModel(const FString& ModelId)
 
 void FChatSession::FetchAvailableModels(FOnModelsFetched OnComplete)
 {
-    OpenRouterClient->FetchModels(FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
+    auto CacheAndForward = FOnModelsFetched::CreateLambda([this, OnComplete](bool bSuccess, const TArray<FOpenRouterModel>& Models)
     {
         if (bSuccess)
         {
             CachedModels = Models;
         }
         OnComplete.ExecuteIfBound(bSuccess, Models);
-    }));
+    });
+    
+    if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+    {
+        VibeUEClient->FetchModels(CacheAndForward);
+    }
+    else
+    {
+        OpenRouterClient->FetchModels(CacheAndForward);
+    }
 }
 
 bool FChatSession::IsRequestInProgress() const

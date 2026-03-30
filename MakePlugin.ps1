@@ -44,6 +44,7 @@ $ExcludeDirectories = @(
     ".github",           # GitHub workflows and config (development only)
     ".vs",               # Visual Studio
     ".vscode",           # VS Code
+    ".cursor",           # Cursor IDE
     "__pycache__",       # Python cache
     ".pytest_cache",     # Python test cache
     ".venv",             # Python virtual environment (users should create their own)
@@ -88,7 +89,8 @@ $ExcludeDevFiles = @(
     "AddCopyrights.ps1",     # Development script not needed by end users
     "FAB-DESCRIPTION.md",    # Development file not needed by end users
     "FAB-Checklist.md",      # Internal checklist not needed by end users
-    ".gitignore"             # Git-specific file not needed by end users
+    ".gitignore",            # Git-specific file not needed by end users
+    "vibeue-proxy.json"      # Local proxy config with bearer token (auto-generated at runtime)
 )
 
 # Note: test_prompts folder is now included for user reference and examples

@@ -44,7 +44,7 @@
 - [x] .uplugin has "FabURL" key with Listing ID ✅
 
 ### Copyright & Source Code
-- [x] All source and header files (88 files) contain copyright notice ✅
+- [x] All source and header files (134 files) contain copyright notice ✅
   - Format: `// Copyright Buckley Builds LLC 2026 All Rights Reserved.`
 
 ### File Structure
@@ -57,8 +57,8 @@
 ### Build & Dependencies
 - [x] Plugin generates no errors or consequential warnings ✅
 - [ ] C++ third-party code and libraries are in ThirdParty folder ⚠️ *No C++ third-party code*
-- [x] Python third-party code and libraries are in Content/Python/Lib/site-packages/ ✅
-- [ ] Third Party Software form accurately filled out ⚠️ *Required for Python dependencies*
+- [x] Python third-party code and libraries are in Content/Python/Lib/site-packages/ ✅ *N/A — proxy uses only Python stdlib, no third-party deps*
+- [x] Third Party Software form accurately filled out ✅ *N/A — no third-party Python libraries shipped*
 
 ## Validation Summary
 
@@ -70,16 +70,15 @@
 - Documentation accessible (README.md + Resources/)
 - No offensive content
 - EngineVersion + WhitelistPlatforms + FabURL configured
-- All 86 source files have copyright headers
+- All 134 source files have copyright headers
 - FilterPlugin.ini configured correctly
 - File path lengths within limits
 - No build errors
 - Python dependencies in Content/Python/Lib/site-packages/
 
-### ⚠️ Needs Attention (3 items)
+### ⚠️ Needs Attention (2 items)
 1. **Media**: Create screenshots/videos showing plugin functionality
 2. **Technical Information**: Complete during FAB submission
-3. **Third Party Software Form**: Document Python dependencies (FastMCP, Pydantic, HTTPX, Uvicorn, etc.)
 
 ## Pre-Submission Tasks
 - [ ] Create 3-5 screenshots (plugin UI, VS Code integration, Blueprint/UMG demos)
@@ -88,4 +87,4 @@
 - [ ] Run `MakePlugin.ps1` to generate final package
 - [ ] Test package in clean UE 5.7 project
 
-**Status**: ~95% complete | **Remaining**: Media assets + Third Party form
+**Status**: ~95% complete | **Remaining**: Media assets

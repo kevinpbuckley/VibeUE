@@ -1,8 +1,8 @@
-In-Editor AI Chat & MCP Server for Blueprint/UMG/Animation/Niagara/Landscape/Foliage automation. Built-in chat client inside Unreal Engine or connect VS Code, Claude Desktop, Cursor via native C++ HTTP MCP server with 9 discovery/execution tools.
+In-Editor AI Chat & MCP Server for Blueprint/UMG/Animation/Niagara/Landscape/Foliage automation. Built-in chat client inside Unreal Engine or connect VS Code, Claude Code, Cursor, and AntiGravity via native C++ HTTP MCP server with 10 discovery/execution tools.
 
-Python API Services - 25 specialized services with 797 methods: AnimSequenceService (89), BlueprintService (75), LandscapeService (68), AnimMontageService (62), SkeletonService (53), MaterialNodeService (40), AnimGraphService (38), NiagaraService (37), MaterialService (30), ActorService (27), SoundCueService (38), InputService (23), EngineSettingsService (23), NiagaraEmitterService (23), WidgetService (22), LandscapeMaterialService (22), EnumStructService (20), AssetDiscoveryService (19), ProjectSettingsService (16), DataTableService (15), FoliageService (15), DataAssetService (11), StateTreeService (21), ScreenshotService (6), RuntimeVirtualTextureService (4).
+Python API Services - 27 specialized services with 909 methods, including StateTreeService (77) for full StateTree asset editing, MetaSoundService (17) for MetaSound graph authoring, and broad coverage for animation, Blueprints, widgets, landscape, Niagara, audio, settings, and data workflows.
 
-Skills System - 25 lazy-loaded domain skills reducing context overhead 50-65% while maintaining comprehensive domain guidance.
+Skills System - 28 lazy-loaded domain skills reducing context overhead 50-65% while maintaining comprehensive domain guidance.
 
 Module: VibeUE (Editor) with 163 C++ classes enabling Blueprint/UMG/Material/Enhanced Input/Data/Landscape/StateTree automation.
 

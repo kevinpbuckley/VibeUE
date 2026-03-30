@@ -39,7 +39,7 @@ FLLMProviderInfo FVibeUEAPIClient::GetProviderInfo() const
     return FLLMProviderInfo(
         TEXT("VibeUE"),
         TEXT("VibeUE"),
-        false,  // Does not support model selection (single model)
+        true,   // Supports model selection (fetched from API)
         TEXT(""),  // No default model ID needed
         TEXT("VibeUE's own LLM API service")
     );
@@ -258,6 +258,77 @@ void FVibeUEAPIClient::FetchModelInfo(TFunction<void(bool bSuccess, int32 Contex
         
         UE_LOG(LogVibeUEAPIClient, Log, TEXT("Fetched model info: id=%s, context_length=%d"), *ModelId, ContextLength);
         OnComplete(true, ContextLength, ModelId);
+    });
+    
+    Request->ProcessRequest();
+}
+
+void FVibeUEAPIClient::FetchModels(FOnLLMModelsFetched OnComplete)
+{
+    // Build the models endpoint URL from the chat endpoint
+    FString ModelsUrl = EndpointUrl;
+    ModelsUrl.ReplaceInline(TEXT("/v1/chat/completions"), TEXT("/v1/models"));
+    
+    UE_LOG(LogVibeUEAPIClient, Log, TEXT("Fetching available models from: %s"), *ModelsUrl);
+    
+    TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> Request = FHttpModule::Get().CreateRequest();
+    Request->SetURL(ModelsUrl);
+    Request->SetVerb(TEXT("GET"));
+    Request->SetHeader(TEXT("Content-Type"), ContentTypeHeader);
+    if (HasApiKey())
+    {
+        Request->SetHeader(ApiKeyHeader, ApiKey);
+    }
+    Request->SetTimeout(10.0f);
+    
+    Request->OnProcessRequestComplete().BindLambda([OnComplete](FHttpRequestPtr Req, FHttpResponsePtr Response, bool bConnectedSuccessfully)
+    {
+        if (!bConnectedSuccessfully || !Response.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to fetch models - connection error"));
+            OnComplete.ExecuteIfBound(false, TArray<FOpenRouterModel>());
+            return;
+        }
+        
+        int32 ResponseCode = Response->GetResponseCode();
+        if (ResponseCode != 200)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to fetch models - HTTP %d"), ResponseCode);
+            OnComplete.ExecuteIfBound(false, TArray<FOpenRouterModel>());
+            return;
+        }
+        
+        FString ResponseBody = Response->GetContentAsString();
+        
+        TSharedPtr<FJsonObject> JsonObject;
+        TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(ResponseBody);
+        if (!FJsonSerializer::Deserialize(Reader, JsonObject) || !JsonObject.IsValid())
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("Failed to parse models JSON"));
+            OnComplete.ExecuteIfBound(false, TArray<FOpenRouterModel>());
+            return;
+        }
+        
+        const TArray<TSharedPtr<FJsonValue>>* DataArray;
+        if (!JsonObject->TryGetArrayField(TEXT("data"), DataArray) || DataArray->Num() == 0)
+        {
+            UE_LOG(LogVibeUEAPIClient, Warning, TEXT("No models in response"));
+            OnComplete.ExecuteIfBound(false, TArray<FOpenRouterModel>());
+            return;
+        }
+        
+        TArray<FOpenRouterModel> Models;
+        for (const TSharedPtr<FJsonValue>& Value : *DataArray)
+        {
+            TSharedPtr<FJsonObject> ModelObject = Value->AsObject();
+            if (ModelObject.IsValid())
+            {
+                Models.Add(FOpenRouterModel::FromVibeUEJson(ModelObject));
+            }
+        }
+        
+        UE_LOG(LogVibeUEAPIClient, Log, TEXT("Fetched %d models from VibeUE API"), Models.Num());
+        OnComplete.ExecuteIfBound(true, Models);
     });
     
     Request->ProcessRequest();

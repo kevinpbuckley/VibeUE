@@ -1,14 +1,14 @@
 🚀 VibeUE - AI-Powered Unreal Engine Development
 
-Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Desktop, Cursor, and AntiGravity.
+Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG automation! VibeUE brings AI directly INTO Unreal Engine with a built-in In-Editor AI Chat Client - no external tools required. Also works as an MCP server for VS Code, Claude Code, Cursor, and AntiGravity.
 
 
 ✨ WHAT MAKES VIBEUE SPECIAL:
 
 • 🎮 IN-EDITOR AI CHAT - Built-in chat client inside Unreal Engine!
-• 26 Python API Services with 866 Methods
+• 27 Python API Services with 909 Methods
 • 10 MCP Discovery & Execution Tools - Explore and execute Python
-• 28 Domain Skills - Lazy-loaded knowledge reducing context overhead 50-65%
+• 29 Domain Skills - Lazy-loaded knowledge reducing context overhead 50-65%
 • Native C++ HTTP MCP Server - No Python dependency required
 • Complete Blueprint lifecycle management (create, compile, modify)
 • Animation System - Sequences, Blueprints, Montages, Skeletons with full editing
@@ -17,6 +17,7 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 • Enhanced Input System - Actions, Mapping Contexts, Modifiers & Triggers
 • Material & Material Instance editing with node graph support
 • StateTree Behavior - Create AI state machines with states, tasks, evaluators, and transitions
+• Sound Cues & MetaSounds - Build audio graphs, add nodes, wire pins, set properties procedurally
 • Project/Engine Settings - Direct access to editor configuration
 • FREE AI tier included - Get a free API key at vibeue.com!
 
@@ -36,7 +37,7 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 🎯 TWO WAYS TO USE:
 
 • In-Editor Chat: Get a free API key at vibeue.com, open chat window, start creating!
-• External MCP: Connect VS Code, Cursor, Claude Desktop via HTTP MCP
+• External MCP: Connect VS Code, Cursor, Claude Code via HTTP MCP
 
 
 📚 COMPREHENSIVE RESOURCES:
