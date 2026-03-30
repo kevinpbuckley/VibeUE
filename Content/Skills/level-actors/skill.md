@@ -13,7 +13,24 @@ unreal_classes:
 
 ## Critical Rules
 
-### 🚫 DEPRECATED: `unreal.EditorLevelLibrary`
+### � Creating a "Basic" Level Requires `new_level_from_template`, NOT `new_level`
+
+When the user asks to **create a new level** (especially "Basic", "Default", or with a sky/floor), **always** use `new_level_from_template`:
+
+```python
+subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+# ❌ WRONG — creates a completely empty level with no content
+subsys.new_level("/Game/Maps/MyLevel")
+
+# ✅ CORRECT — creates level with floor, sky, lighting, player start
+subsys.new_level_from_template("/Game/Maps/MyLevel", "/Engine/Maps/Templates/Template_Default")
+```
+
+**Template names:** `Template_Default` = Basic, `OpenWorld`, `TimeOfDay_Default`, `VR-Basic`
+
+---
+
+### �🚫 DEPRECATED: `unreal.EditorLevelLibrary`
 
 **DO NOT use `unreal.EditorLevelLibrary`.** The entire Editor Scripting Utilities Plugin is deprecated in UE 5.7+. Use `unreal.EditorActorSubsystem` via `unreal.get_editor_subsystem()` for all level actor operations.
 
@@ -124,6 +141,50 @@ level_subsys.editor_invalidate_viewports()
 ---
 
 ## Workflows
+
+### Create Level from Template
+
+> 🚨 **Critical:** `new_level()` creates a **blank/empty** level with NO content (no floor, sky, lights, or player start). To get the standard "Basic" level with default content, ALWAYS use `new_level_from_template()` with `/Engine/Maps/Templates/Template_Default`.
+
+**Available UE 5.7 templates in `/Engine/Maps/Templates/`:**
+| Template path | Description |
+|---|---|
+| `/Engine/Maps/Templates/Template_Default` | **Basic** — floor, sky sphere, directional light, player start |
+| `/Engine/Maps/Templates/OpenWorld` | Open world with large terrain |
+| `/Engine/Maps/Templates/TimeOfDay_Default` | Time-of-day sky setup |
+| `/Engine/Maps/Templates/VR-Basic` | VR template |
+
+**Pattern: Create a new level from the Basic template**
+```python
+import unreal
+
+subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+save_path  = "/Game/Maps/MyLevel"
+template   = "/Engine/Maps/Templates/Template_Default"
+
+# new_level_from_template: closes current level, creates from template, saves + loads
+result = subsys.new_level_from_template(save_path, template)
+print(f"Created: {result}")  # True on success
+```
+
+> ⚠️ **Cannot delete the currently-loaded level.** If the target path already exists and is loaded, you must first switch away using `new_level()` to a temp path, then create from template:
+```python
+import unreal
+
+subsys = unreal.get_editor_subsystem(unreal.LevelEditorSubsystem)
+target   = "/Game/Maps/MyLevel"
+template = "/Engine/Maps/Templates/Template_Default"
+
+# 1. Switch to temp level to unload target (so it can be overwritten)
+subsys.new_level("/Game/Maps/__TempSwitch")
+
+# 2. Create the actual level from template (overwrites any existing asset at target)
+result = subsys.new_level_from_template(target, template)
+print(f"Created from template: {result}")
+# Note: __TempSwitch is automatically replaced/closed — no manual cleanup needed
+```
+
+---
 
 ### Spawn Built-in Actor
 
