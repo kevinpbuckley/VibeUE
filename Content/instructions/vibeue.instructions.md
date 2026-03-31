@@ -142,6 +142,65 @@ The AI can then offer to undo: delete BP_Enemy or remove the variable.
 3. Include the full asset path in the message
 4. On failure, AI reads output and offers rollback options
 
+### Transaction Support (Undo/Redo)
+
+**All VibeUE services automatically wrap their operations in editor transactions.** This means operations like spawning actors, modifying properties, creating blueprints, etc. are already on the undo stack and can be undone via `Edit > Undo` in the editor.
+
+Use `unreal.EditorTransactionService` to programmatically undo/redo and group operations:
+
+**Undo/Redo:**
+```python
+import unreal
+
+# Undo the last operation
+result = unreal.EditorTransactionService.undo()
+print(f"Undo: {result.message}")  # e.g. "Undone: Spawn Actor"
+
+# Redo it back
+result = unreal.EditorTransactionService.redo()
+
+# Undo multiple operations at once
+result = unreal.EditorTransactionService.undo_multiple(3)
+
+# Check before undoing
+if unreal.EditorTransactionService.can_undo():
+    desc = unreal.EditorTransactionService.get_undo_description()
+    print(f"Next undo: {desc}")
+```
+
+**Transaction Grouping — wrap multiple operations into a single undo step:**
+```python
+import unreal
+
+# Everything between begin/end becomes ONE undo step
+unreal.EditorTransactionService.begin_transaction("Build Castle")
+
+unreal.ActorService.spawn_actor("StaticMeshActor", "Wall_1", [0, 0, 0])
+unreal.ActorService.spawn_actor("StaticMeshActor", "Wall_2", [500, 0, 0])
+unreal.ActorService.spawn_actor("StaticMeshActor", "Tower_1", [0, 0, 500])
+
+unreal.EditorTransactionService.end_transaction()
+# A single undo() now reverts ALL three spawns
+```
+
+**When to use transaction grouping:**
+- Building multi-part structures (walls + floors + roofs)
+- Batch property changes across many actors
+- Any multi-step operation the user might want to undo as one action
+
+**When NOT needed:**
+- Single operations (already transactional via the service)
+- Read-only queries (`list_level_actors`, `get_blueprint_info`, etc.)
+
+**Cancel a transaction (reverts everything since begin):**
+```python
+unreal.EditorTransactionService.begin_transaction("Risky Operation")
+# ... do some work ...
+# Something went wrong — revert everything
+result = unreal.EditorTransactionService.cancel_transaction()
+print(f"Cancel: {result.message}")  # ends the transaction then undoes it
+```
+
 ### Always Search Before Accessing
 
 **Use `manage_asset` (MCP tool) — NOT Python code — to find, open, save, duplicate, and move assets.**
