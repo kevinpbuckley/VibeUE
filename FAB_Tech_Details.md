@@ -1,6 +1,6 @@
 In-Editor AI Chat & MCP Server for Blueprint/UMG/Animation/Niagara/Landscape/Foliage automation. Built-in chat client inside Unreal Engine or connect VS Code, Claude Code, Cursor, and AntiGravity via native C++ HTTP MCP server with 10 discovery/execution tools.
 
-Python API Services - 27 specialized services with 909 methods, including StateTreeService (77) for full StateTree asset editing, MetaSoundService (17) for MetaSound graph authoring, and broad coverage for animation, Blueprints, widgets, landscape, Niagara, audio, settings, and data workflows.
+Python API Services - 28 specialized services with 931 methods, including StateTreeService (77) for full StateTree asset editing, EditorTransactionService (16) for undo/redo and transaction management, MetaSoundService (17) for MetaSound graph authoring, and broad coverage for animation, Blueprints, widgets, landscape, Niagara, audio, settings, and data workflows.
 
 Skills System - 28 lazy-loaded domain skills reducing context overhead 50-65% while maintaining comprehensive domain guidance.
 

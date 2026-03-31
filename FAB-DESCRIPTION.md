@@ -6,7 +6,7 @@ Revolutionize your Unreal Engine workflow with AI-powered Blueprint and UMG auto
 ✨ WHAT MAKES VIBEUE SPECIAL:
 
 • 🎮 IN-EDITOR AI CHAT - Built-in chat client inside Unreal Engine!
-• 27 Python API Services with 909 Methods
+• 28 Python API Services with 931 Methods
 • 10 MCP Discovery & Execution Tools - Explore and execute Python
 • 29 Domain Skills - Lazy-loaded knowledge reducing context overhead 50-65%
 • Native C++ HTTP MCP Server - No Python dependency required
