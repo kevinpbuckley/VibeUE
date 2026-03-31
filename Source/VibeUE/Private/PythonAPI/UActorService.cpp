@@ -467,6 +467,100 @@ bool UActorService::SetScale(const FString& ActorNameOrLabel, FVector Scale)
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// Transform Lock / Constraint Operations
+// ═══════════════════════════════════════════════════════════════════
+
+bool UActorService::SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	FBoolProperty* Prop = CastField<FBoolProperty>(AActor::StaticClass()->FindPropertyByName(TEXT("bLockLocation")));
+	if (!Prop) return false;
+
+	BeginTransaction(FText::FromString(TEXT("Set Actor Lock Location")));
+
+	Actor->Modify();
+	Prop->SetPropertyValue_InContainer(Actor, bLocked);
+	Actor->PostEditChange();
+
+	EndTransaction();
+
+	Actor->MarkPackageDirty();
+	return true;
+}
+
+bool UActorService::GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	FBoolProperty* Prop = CastField<FBoolProperty>(AActor::StaticClass()->FindPropertyByName(TEXT("bLockLocation")));
+	if (!Prop) return false;
+
+	OutLocked = Prop->GetPropertyValue_InContainer(Actor);
+	return true;
+}
+
+bool UActorService::SetAbsoluteTransform(
+	const FString& ActorNameOrLabel,
+	bool bAbsoluteLocation,
+	bool bAbsoluteRotation,
+	bool bAbsoluteScale)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	USceneComponent* Root = Actor->GetRootComponent();
+	if (!Root) return false;
+
+	BeginTransaction(FText::FromString(TEXT("Set Absolute Transform Flags")));
+
+	Root->Modify();
+	Root->SetAbsolute(bAbsoluteLocation, bAbsoluteRotation, bAbsoluteScale);
+
+	EndTransaction();
+
+	Actor->MarkPackageDirty();
+	RefreshViewport();
+
+	return true;
+}
+
+bool UActorService::GetAbsoluteTransform(
+	const FString& ActorNameOrLabel,
+	bool& OutAbsoluteLocation,
+	bool& OutAbsoluteRotation,
+	bool& OutAbsoluteScale)
+{
+	AActor* Actor = FindActorByIdentifier(ActorNameOrLabel);
+	if (!Actor) return false;
+
+	USceneComponent* Root = Actor->GetRootComponent();
+	if (!Root) return false;
+
+	OutAbsoluteLocation = Root->IsUsingAbsoluteLocation();
+	OutAbsoluteRotation = Root->IsUsingAbsoluteRotation();
+	OutAbsoluteScale = Root->IsUsingAbsoluteScale();
+
+	return true;
+}
+
+bool UActorService::SetPreserveScaleRatio(bool bPreserve)
+{
+	GConfig->SetBool(TEXT("SelectionDetails"), TEXT("PreserveScaleRatio"), bPreserve, GEditorPerProjectIni);
+	GConfig->Flush(false, GEditorPerProjectIni);
+	return true;
+}
+
+bool UActorService::GetPreserveScaleRatio()
+{
+	bool bPreserve = true;
+	GConfig->GetBool(TEXT("SelectionDetails"), TEXT("PreserveScaleRatio"), bPreserve, GEditorPerProjectIni);
+	return bPreserve;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // Viewport Operations
 // ═══════════════════════════════════════════════════════════════════
 

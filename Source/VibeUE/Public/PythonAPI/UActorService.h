@@ -186,6 +186,11 @@ struct FActorPropertyData
  *   actor_service.set_rotation("MyActor", (0, 90, 0))
  *   transform = actor_service.get_transform("MyActor")
  *
+ *   # Transform Locking
+ *   actor_service.set_actor_lock_location("MyActor", True)   # Lock location in viewport
+ *   actor_service.set_preserve_scale_ratio(True)   # Lock uniform scale (padlock icon)
+ *   actor_service.set_absolute_transform("MyActor", False, True, False)  # Absolute rotation
+ *
  *   # Properties
  *   value = actor_service.get_property("MyLight", "LightComponent.Intensity")
  *   actor_service.set_property("MyLight", "LightComponent.Intensity", "5000")
@@ -198,7 +203,7 @@ struct FActorPropertyData
  *   actor_service.focus_actor("MyActor")
  *   actor_service.refresh_viewport()
  *
- * @note All 21 level actor operations available via Python
+ * @note All 27 level actor operations available via Python
  */
 UCLASS(BlueprintType)
 class VIBEUE_API UActorService : public UObject
@@ -337,6 +342,106 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
 	static bool SetScale(const FString& ActorNameOrLabel, FVector Scale);
+
+	// ═══════════════════════════════════════════════════════════════════
+	// Transform Lock / Constraint Operations
+	// ═══════════════════════════════════════════════════════════════════
+
+	/**
+	 * Lock or unlock an actor's location in the viewport.
+	 * When locked, the actor cannot be moved via viewport gizmos (only via code).
+	 * This wraps the built-in AActor::bLockLocation property.
+	 *
+	 * NOTE: UE5 only supports locking LOCATION natively. There is no built-in
+	 * per-actor lock for rotation or scale. Use absolute transform flags or
+	 * set_property("lock_location", "True") as an alternative.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor
+	 * @param bLocked - True to lock, False to unlock
+	 * @return True if lock was set successfully
+	 *
+	 * Example:
+	 *   unreal.ActorService.set_actor_lock_location("MyCube", True)   # Lock position
+	 *   unreal.ActorService.set_actor_lock_location("MyCube", False)  # Unlock position
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked);
+
+	/**
+	 * Check whether an actor's location is locked.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor
+	 * @param OutLocked - Whether location is locked
+	 * @return True if actor was found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked);
+
+	/**
+	 * Set absolute transform flags on an actor's root component.
+	 * When absolute is set, that transform channel is world-space rather than
+	 * relative to the parent. This is useful when attaching actors but needing
+	 * independent positioning.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor
+	 * @param bAbsoluteLocation - True = location is world-space, not relative to parent
+	 * @param bAbsoluteRotation - True = rotation is world-space, not relative to parent
+	 * @param bAbsoluteScale - True = scale is world-space, not relative to parent
+	 * @return True if flags were set
+	 *
+	 * Example:
+	 *   # Make rotation absolute (world-space) while keeping location relative
+	 *   unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool SetAbsoluteTransform(
+		const FString& ActorNameOrLabel,
+		bool bAbsoluteLocation,
+		bool bAbsoluteRotation,
+		bool bAbsoluteScale);
+
+	/**
+	 * Get absolute transform flags from an actor's root component.
+	 *
+	 * @param ActorNameOrLabel - Name or label of the actor
+	 * @param OutAbsoluteLocation - Whether location is absolute
+	 * @param OutAbsoluteRotation - Whether rotation is absolute
+	 * @param OutAbsoluteScale - Whether scale is absolute
+	 * @return True if actor was found
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool GetAbsoluteTransform(
+		const FString& ActorNameOrLabel,
+		bool& OutAbsoluteLocation,
+		bool& OutAbsoluteRotation,
+		bool& OutAbsoluteScale);
+
+	/**
+	 * Set the Preserve Scale Ratio (uniform scale padlock) in the editor.
+	 * When enabled, scaling any axis in the Details panel scales all axes
+	 * proportionally, maintaining the object's proportions.
+	 * This is the padlock icon next to Scale in the Transform section.
+	 *
+	 * NOTE: This is a global editor preference, not per-actor.
+	 * It affects ALL actors when scaling via the Details panel.
+	 *
+	 * @param bPreserve - True to lock (uniform scale), False to unlock (independent axes)
+	 * @return True if setting was applied
+	 *
+	 * Example:
+	 *   unreal.ActorService.set_preserve_scale_ratio(True)   # Lock scale axes together
+	 *   unreal.ActorService.set_preserve_scale_ratio(False)  # Allow independent axis scaling
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool SetPreserveScaleRatio(bool bPreserve);
+
+	/**
+	 * Get the current Preserve Scale Ratio (uniform scale padlock) state.
+	 *
+	 * @return True if scale axes are locked together (uniform scaling)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	static bool GetPreserveScaleRatio();
 
 	// ═══════════════════════════════════════════════════════════════════
 	// Viewport Operations

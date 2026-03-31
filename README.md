@@ -17,7 +17,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 27 specialized services with 909 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Project/Engine Settings, and more
+- **Python API Services** - 28 specialized services with 931 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 29 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
@@ -328,7 +328,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (27 services, 909 methods)
+### 2. VibeUE Python API Services (28 services, 931 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -342,7 +342,7 @@ High-level services exposed to Python for common game development tasks:
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `MaterialService` | 30 | Materials and material instances |
 | `MetaSoundService` | 17 | MetaSound graph authoring, nodes, interfaces, inputs/outputs, and wiring |
-| `ActorService` | 27 | Level actor management, viewport camera control |
+| `ActorService` | 33 | Level actor management, viewport camera control, transform lock/constraints |
 | `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
@@ -360,6 +360,7 @@ High-level services exposed to Python for common game development tasks:
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
 | `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
 | `StateTreeService` | 77 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, compile/save |
+| `EditorTransactionService` | 16 | Undo/redo, transaction grouping, history inspection, buffer reset |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -860,11 +861,12 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `get_row/update_row/remove_row(...)` - Row operations
 - `get_row_struct(path)` - Get column schema
 
-### ActorService (27 methods)
+### ActorService (33 methods)
 
 ActorService provides comprehensive level actor manipulation:
 - Actor discovery and queries
 - Transform operations (position, rotation, scale)
+- Transform locking and constraints
 - Selection management
 - Spawning and destruction
 - Property access
@@ -874,6 +876,14 @@ ActorService provides comprehensive level actor manipulation:
 - `set_viewport_camera(location, rotation)` — Position the editor viewport camera directly
 - `get_actor_view_camera(name, direction, padding)` — Calculate and apply a camera view that frames an actor from a direction (Top, Bottom, Left, Right, Front, Back)
 - `calculate_actor_view(name, direction, padding)` — Calculate view info without moving the camera
+
+**Transform Lock / Constraints:**
+- `set_actor_lock_location(name, locked)` — Lock/unlock an actor's location in the editor
+- `get_actor_lock_location(name)` — Query whether an actor's location is locked
+- `set_absolute_transform(name, location, rotation, scale)` — Set absolute (world-space) flags for location, rotation, scale
+- `get_absolute_transform(name)` — Query current absolute transform flags
+- `set_preserve_scale_ratio(enabled)` — Toggle the global "Preserve Scale Ratio" editor preference (padlock icon)
+- `get_preserve_scale_ratio()` — Query whether the scale ratio padlock is enabled
 
 ### SkeletonService (53 methods)
 
@@ -1406,6 +1416,34 @@ Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place 
 **Compile & Save:**
 - `compile_state_tree(asset_path)` - Compile the asset; returns success flag, errors, and warnings
 - `save_state_tree(asset_path)` - Save to disk
+
+### EditorTransactionService (16 methods)
+
+EditorTransactionService provides programmatic undo/redo and transaction management:
+
+**Undo / Redo:**
+- `undo()` — Undo the last transaction
+- `redo()` — Redo the last undone transaction
+- `undo_multiple(count)` — Undo multiple transactions at once
+- `redo_multiple(count)` — Redo multiple transactions at once
+
+**Transaction Grouping:**
+- `begin_transaction(description)` — Open a named transaction scope
+- `end_transaction()` — Close the current transaction scope
+- `cancel_transaction()` — Cancel (rollback) the current transaction
+
+**History Inspection:**
+- `can_undo()` — Check if undo is available
+- `can_redo()` — Check if redo is available
+- `get_undo_description()` — Get the description of the next undo action
+- `get_redo_description()` — Get the description of the next redo action
+- `get_undo_history(count)` — List recent undo history entries
+- `get_redo_history(count)` — List recent redo history entries
+- `get_undo_count()` — Get total number of undo entries
+- `get_redo_count()` — Get total number of redo entries
+
+**Buffer Reset:**
+- `reset_history()` — Clear the entire undo/redo buffer
 
 ---
 
