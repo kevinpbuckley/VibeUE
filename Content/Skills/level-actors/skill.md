@@ -326,3 +326,68 @@ view = actor_service.calculate_actor_view("MyActor", unreal.ViewDirection.RIGHT,
 | Profile view | `LEFT` or `RIGHT` |
 
 > ⚠️ **Do NOT switch to `set_viewport_camera` with manual coordinates to get a "better angle".** Manual positions almost always miss the subject and point at sky or empty space. If the view isn't wide enough, **increase the padding** or switch to `TOP`. There is no need for a diagonal camera — `TOP` and `FRONT` with adequate padding cover every screenshot use case.
+
+---
+
+### Transform Locking & Constraints
+
+#### 🔒 Location Locking (Per-Actor, Native UE5)
+
+UE5 has a native `bLockLocation` property on all actors. When locked, the actor cannot be moved via viewport gizmos (but CAN still be moved via code).
+
+```python
+import unreal
+
+# Lock an actor's location
+unreal.ActorService.set_actor_lock_location("MyCube", True)
+
+# Check if locked
+locked = unreal.ActorService.get_actor_lock_location("MyCube")
+print(f"Locked: {locked}")
+
+# Unlock
+unreal.ActorService.set_actor_lock_location("MyCube", False)
+```
+
+#### 🔒 Scale Ratio Lock (Uniform Scaling Padlock — Global Editor Setting)
+
+The padlock icon next to Scale in the Details panel is the **Preserve Scale Ratio** setting. When enabled, scaling any axis scales ALL axes proportionally. This is a **global editor preference**, not per-actor.
+
+```python
+import unreal
+
+# Lock scale axes together (uniform scaling) — the padlock icon
+unreal.ActorService.set_preserve_scale_ratio(True)
+
+# Unlock for independent axis scaling
+unreal.ActorService.set_preserve_scale_ratio(False)
+
+# Check current state
+locked = unreal.ActorService.get_preserve_scale_ratio()
+print(f"Scale ratio locked: {locked}")
+```
+
+#### ⚠️ There is NO Per-Actor Rotation or Scale Lock
+
+**UE5 does NOT have a per-actor lock for rotation or scale.** There is no `bLockRotation` or `bLockScale` property on actors. Only location locking (`set_actor_lock_location`) is per-actor.
+
+If user asks to "lock rotation" or "lock scale on this actor specifically":
+1. Explain this limitation clearly
+2. For uniform scaling, use `set_preserve_scale_ratio(True)` (global, affects all actors)
+3. For location locking, use `set_actor_lock_location`
+4. For world-space independence, use **absolute transform flags**
+
+#### Absolute Transform Flags (Per-Component)
+
+Make location/rotation/scale world-space instead of relative to parent. Useful when attaching actors but needing independent positioning.
+
+```python
+import unreal
+
+# Make rotation absolute (independent of parent), keep location/scale relative
+unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
+
+# Check flags
+loc, rot, scale = unreal.ActorService.get_absolute_transform("MyCube")
+print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
+```
