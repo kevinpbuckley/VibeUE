@@ -443,10 +443,6 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
 	static bool GetPreserveScaleRatio();
 
-	// ═══════════════════════════════════════════════════════════════════
-	// Viewport Operations
-	// ═══════════════════════════════════════════════════════════════════
-
 	/**
 	 * Focus the viewport camera on an actor.
 	 *

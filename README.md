@@ -17,10 +17,10 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 28 specialized services with 931 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Runtime Virtual Textures, StateTree Behavior, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 29 specialized services with 950 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
-- **Domain Skills** - 29 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, data, and more
+- **Domain Skills** - 30 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Code, Cursor, and AntiGravity via MCP
 
@@ -328,7 +328,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (28 services, 931 methods)
+### 2. VibeUE Python API Services (29 services, 950 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -357,6 +357,7 @@ High-level services exposed to Python for common game development tasks:
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
 | `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |
+| `ViewportService` | 19 | Viewport camera type (perspective/ortho), view mode, FOV, clip planes, exposure, game view, cinematic control, camera speed, viewport layout (single/quad) |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
 | `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
 | `StateTreeService` | 77 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, compile/save |
@@ -543,7 +544,7 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`
+Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `viewport`
 
 ### Using Skills
 
@@ -1167,6 +1168,39 @@ ScreenshotService enables AI vision by capturing editor content:
 - `get_open_editor_tabs()` - List open editor tabs with asset info
 - `get_active_window_title()` - Get focused window title
 - `is_editor_window_active()` - Check if editor is in focus
+
+### ViewportService (19 methods)
+
+ViewportService provides direct control of the active Unreal Editor level viewport:
+- `get_viewport_info()` - Get camera transform, viewport type, FOV, clip planes, exposure, layout, realtime/game view flags, and camera speed
+- `set/get_viewport_type(type)` - Switch between `perspective`, `top`, `bottom`, `left`, `right`, `front`, and `back`
+- `set/get_view_mode(mode)` - Control rendering mode: `lit`, `unlit`, `wireframe`, `detaillighting`, `lightingonly`, `lightcomplexity`, `shadercomplexity`, `pathtracing`, `clay`
+- `set/get_fov(degrees)` - Read and set perspective FOV
+- `set_near_clip_plane(distance)` / `set_far_clip_plane(distance)` - Adjust clipping planes for close-up or large-scene work
+- `set_exposure(fixed, ev100)` / `set_exposure_game_settings()` - Toggle fixed exposure or return to game settings / auto exposure
+- `set_game_view(enable)` - Toggle editor icon and gizmo visibility
+- `set_allow_cinematic_control(enable)` - Allow Sequencer to take over the viewport camera
+- `set_realtime(enable)` - Toggle realtime rendering
+- `set_camera_location(vector)` / `set_camera_rotation(rotator)` / `set_camera_speed(speed)` - Position and tune the editor camera
+- `set/get_viewport_layout(name)` - Switch between `OnePane`, `TwoPanesHoriz`, `TwoPanesVert`, `ThreePanesLeft`, `ThreePanesRight`, `ThreePanesTop`, `ThreePanesBottom`, `FourPanesLeft`, `FourPanesRight`, `FourPanesTop`, `FourPanesBottom`, and `FourPanes2x2` / `Quad`
+
+```python
+import unreal
+
+# Inspect the active viewport
+info = unreal.ViewportService.get_viewport_info()
+print(info.viewport_type, info.fov, info.layout)
+
+# Switch to quad view, then put the focused pane in top view
+unreal.ViewportService.set_viewport_layout("Quad")
+unreal.ViewportService.set_viewport_type("top")
+
+# Return to perspective with fixed exposure for look-dev
+unreal.ViewportService.set_viewport_type("perspective")
+unreal.ViewportService.set_fov(60.0)
+unreal.ViewportService.set_exposure(True, 1.0)
+unreal.ViewportService.set_view_mode("lit")
+```
 
 ### RuntimeVirtualTextureService (4 methods)
 

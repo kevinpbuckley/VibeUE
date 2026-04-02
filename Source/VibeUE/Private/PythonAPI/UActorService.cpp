@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "PythonAPI/UActorService.h"
 #include "GameFramework/Actor.h"
@@ -21,9 +21,9 @@
 #include "UObject/PropertyIterator.h"
 #include "EditorAssetLibrary.h"
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Helper Functions
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 UWorld* UActorService::GetEditorWorld()
 {
@@ -174,9 +174,9 @@ void UActorService::EndTransaction()
 	}
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Discovery Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 TArray<FLevelActorInfo> UActorService::ListLevelActors(
 	const FString& ActorClassFilter,
@@ -240,9 +240,9 @@ bool UActorService::GetActorInfo(const FString& ActorNameOrLabel, FLevelActorInf
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Lifecycle Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 FLevelActorInfo UActorService::AddActor(
 	const FString& ActorClass,
@@ -351,9 +351,9 @@ bool UActorService::RemoveActor(const FString& ActorNameOrLabel)
 	return bDestroyed;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Transform Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::GetTransform(const FString& ActorNameOrLabel, FActorTransformData& OutTransform)
 {
@@ -466,9 +466,9 @@ bool UActorService::SetScale(const FString& ActorNameOrLabel, FVector Scale)
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Transform Lock / Constraint Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked)
 {
@@ -560,9 +560,9 @@ bool UActorService::GetPreserveScaleRatio()
 	return bPreserve;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Viewport Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::FocusActor(const FString& ActorNameOrLabel, bool bInstant)
 {
@@ -649,9 +649,9 @@ bool UActorService::RefreshViewport()
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Camera View Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 FLevelEditorViewportClient* UActorService::GetPerspectiveViewportClient()
 {
@@ -689,7 +689,7 @@ FCameraViewInfo UActorService::CalculateViewForActor(AActor* Actor, EViewDirecti
 	Extent.Z = FMath::Max(Extent.Z, MinExtent);
 
 	// Calculate view distance based on the face of the bounding box the camera sees
-	// Use a 60-degree FOV assumption (half-angle = 30 degrees, tan(30) ≈ 0.577)
+	// Use a 60-degree FOV assumption (half-angle = 30 degrees, tan(30) ~= 0.577)
 	float HalfFOVTangent = 0.577f; // tan(30 degrees)
 
 	float ViewDistance = 0.0f;
@@ -796,9 +796,9 @@ FCameraViewInfo UActorService::CalculateActorView(
 	return CalculateViewForActor(Actor, Direction, PaddingMultiplier);
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Property Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::GetProperty(
 	const FString& ActorNameOrLabel,
@@ -1070,9 +1070,9 @@ TArray<FActorPropertyData> UActorService::GetAllProperties(
 	return Properties;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Organization Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::SetFolder(const FString& ActorNameOrLabel, const FString& FolderPath)
 {
@@ -1106,9 +1106,9 @@ bool UActorService::RenameActor(const FString& ActorNameOrLabel, const FString& 
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Hierarchy Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::AttachActor(
 	const FString& ChildNameOrLabel,
@@ -1187,9 +1187,9 @@ bool UActorService::DetachActor(const FString& ActorNameOrLabel)
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Selection Operations
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::SelectActor(const FString& ActorNameOrLabel, bool bAddToSelection)
 {
@@ -1232,9 +1232,9 @@ bool UActorService::DeselectAll()
 	return true;
 }
 
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 // Existence Checks
-// ═══════════════════════════════════════════════════════════════════
+// =================================================================
 
 bool UActorService::ActorExists(const FString& ActorLabel)
 {
