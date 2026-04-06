@@ -530,6 +530,17 @@ public:
 	static TArray<FWidgetInfo> GetHierarchy(const FString& WidgetPath);
 
 	/**
+	 * Get widget hierarchy as a JSON string. Prefer this over get_hierarchy when
+	 * add_component has been called — repeated blueprint compiles inside add_component
+	 * can corrupt the Python type binding for FWidgetInfo, crashing TArray<FWidgetInfo>
+	 * marshaling. FString return is immune to this.
+	 *
+	 * Returns JSON array: [{name, class, parent, is_root, is_variable, children:[]}]
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
+	static FString GetHierarchyJson(const FString& WidgetPath);
+
+	/**
 	 * Get the root widget of a Widget Blueprint.
 	 *
 	 * @param WidgetPath - Full path to the Widget Blueprint

@@ -80,6 +80,14 @@ UScriptStruct* UDataTableService::FindRowStruct(const FString& StructNameOrPath)
 				FoundStruct = Struct;
 				break;
 			}
+
+			// Also try stripping a leading F from the input (e.g. "FTableRowBase" → "TableRowBase")
+			if (StructNameOrPath.StartsWith(TEXT("F")) &&
+				Struct->GetName().Equals(StructNameOrPath.RightChop(1), ESearchCase::IgnoreCase))
+			{
+				FoundStruct = Struct;
+				break;
+			}
 		}
 	}
 

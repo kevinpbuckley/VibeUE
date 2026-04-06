@@ -210,7 +210,7 @@ void ULandscapeService::PopulateLandscapeInfo(ALandscapeProxy* Landscape, FLands
 			}
 			else
 			{
-				LayerInfo.LayerName = LayerSettings.GetLayerName().ToString();
+				LayerInfo.LayerName = LayerSettings.LayerName.ToString();
 			}
 			OutInfo.Layers.Add(LayerInfo);
 		}
@@ -2069,7 +2069,7 @@ TArray<FLandscapeLayerInfo_Custom> ULandscapeService::ListLayers(const FString& 
 		}
 		else
 		{
-			LayerInfo.LayerName = LayerSettings.GetLayerName().ToString();
+			LayerInfo.LayerName = LayerSettings.LayerName.ToString();
 		}
 		Result.Add(LayerInfo);
 	}
@@ -2146,7 +2146,8 @@ bool ULandscapeService::RemoveLayer(
 	bool bFound = false;
 	for (int32 i = Info->Layers.Num() - 1; i >= 0; i--)
 	{
-		FName CurrentLayerName = Info->Layers[i].GetLayerName();
+		const FLandscapeInfoLayerSettings& LS = Info->Layers[i];
+		FName CurrentLayerName = LS.LayerInfoObj ? LS.LayerInfoObj->LayerName : LS.LayerName;
 		if (CurrentLayerName.ToString().Equals(LayerName, ESearchCase::IgnoreCase))
 		{
 			Info->Layers.RemoveAt(i);
@@ -2543,7 +2544,8 @@ bool ULandscapeService::LayerExists(
 
 	for (const FLandscapeInfoLayerSettings& LayerSettings : Info->Layers)
 	{
-		if (LayerSettings.GetLayerName().ToString().Equals(LayerName, ESearchCase::IgnoreCase))
+		const FName LSName = LayerSettings.LayerInfoObj ? LayerSettings.LayerInfoObj->LayerName : LayerSettings.LayerName;
+		if (LSName.ToString().Equals(LayerName, ESearchCase::IgnoreCase))
 		{
 			return true;
 		}
