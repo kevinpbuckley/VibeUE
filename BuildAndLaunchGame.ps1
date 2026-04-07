@@ -81,13 +81,47 @@ if (-not $enginePath) {
 }
 
 $buildBat  = Join-Path $enginePath "Engine\Build\BatchFiles\Build.bat"
+$runUatBat = Join-Path $enginePath "Engine\Build\BatchFiles\RunUAT.bat"
 $editorExe = Join-Path $enginePath "Engine\Binaries\Win64\UnrealEditor.exe"
+$pluginDescriptor = Get-ChildItem -Path $PSScriptRoot -Filter "*.uplugin" -File -ErrorAction SilentlyContinue | Select-Object -First 1
+$projectEditorTarget = Join-Path $projectRoot "Source\${projectName}Editor.Target.cs"
+$hasProjectEditorTarget = Test-Path $projectEditorTarget
 
 Write-Host "=== $projectName Build and Launch Script ===" -ForegroundColor Cyan
 Write-Host "Script  : $PSScriptRoot" -ForegroundColor Gray
 Write-Host "Project : $projectPath" -ForegroundColor Yellow
 Write-Host "Engine  : $enginePath" -ForegroundColor Yellow
 Write-Host "Mode    : $Mode" -ForegroundColor Yellow
+
+function Wait-ForAutomationTool {
+    param(
+        [int]$TimeoutSeconds = 120
+    )
+
+    $elapsed = 0
+    while ($true) {
+        $automationToolProcesses = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+            ($_.Name -ieq "dotnet.exe" -or $_.Name -ieq "AutomationTool.exe") -and
+            $_.CommandLine -and
+            $_.CommandLine -like "*AutomationTool*"
+        }
+
+        if (-not $automationToolProcesses) {
+            return $true
+        }
+
+        if ($elapsed -eq 0) {
+            Write-Host "Waiting for an existing AutomationTool process to finish..." -ForegroundColor Yellow
+        }
+
+        if ($elapsed -ge $TimeoutSeconds) {
+            return $false
+        }
+
+        Start-Sleep 1
+        $elapsed++
+    }
+}
 
 # Stop any running Unreal Engine processes gracefully
 $unrealProcesses = Get-Process | Where-Object { 
@@ -179,16 +213,58 @@ if ($Clean) {
 
 # Build the project
 if (-not $SkipBuild) {
-    Write-Host "Building $projectName in $Mode mode..." -ForegroundColor Yellow
-    
-    & $buildBat "${projectName}Editor" Win64 $Mode $projectPath -waitmutex
-    
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host "Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
-        exit 1
+    if ($pluginDescriptor -and -not $hasProjectEditorTarget) {
+        $packageRoot = Join-Path $PSScriptRoot "Packaged"
+        $packageDir = Join-Path $packageRoot (Get-Date -Format "yyyyMMdd-HHmmss")
+        $packagedBinaries = Join-Path $packageDir "Binaries\Win64"
+        $pluginBinaries = Join-Path $PSScriptRoot "Binaries\Win64"
+
+        Write-Host "Blueprint-only project detected. Building plugin standalone for launch..." -ForegroundColor Yellow
+
+        if (-not (Wait-ForAutomationTool)) {
+            Write-Host "Timed out waiting for another AutomationTool process to finish. Close the other build or wait for it to complete, then rerun the script." -ForegroundColor Red
+            exit 1
+        }
+
+        New-Item -ItemType Directory -Path $packageDir -Force | Out-Null
+
+        & $runUatBat BuildPlugin "-Plugin=$($pluginDescriptor.FullName)" "-Package=$packageDir" -CreateSubFolder -TargetPlatforms=Win64
+
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Plugin build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
+            exit 1
+        }
+
+        if (-not (Test-Path $packagedBinaries)) {
+            Write-Host "Plugin build completed but no packaged binaries were found at $packagedBinaries" -ForegroundColor Red
+            exit 1
+        }
+
+        New-Item -ItemType Directory -Path $pluginBinaries -Force | Out-Null
+        Copy-Item (Join-Path $packagedBinaries "*") $pluginBinaries -Force
+
+        if (Test-Path $packageRoot) {
+            Get-ChildItem $packageRoot -Directory -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -Skip 2 |
+                ForEach-Object {
+                    Remove-Item $_.FullName -Recurse -Force -ErrorAction SilentlyContinue
+                }
+        }
+
+        Write-Host "Plugin build completed successfully!" -ForegroundColor Green
+    } else {
+        Write-Host "Building $projectName in $Mode mode..." -ForegroundColor Yellow
+        
+        & $buildBat "${projectName}Editor" Win64 $Mode $projectPath -waitmutex
+        
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "Build failed! Exit code: $LASTEXITCODE" -ForegroundColor Red
+            exit 1
+        }
+        
+        Write-Host "Build completed successfully!" -ForegroundColor Green
     }
-    
-    Write-Host "Build completed successfully!" -ForegroundColor Green
 } else {
     Write-Host "Skipping build..." -ForegroundColor Yellow
 }
