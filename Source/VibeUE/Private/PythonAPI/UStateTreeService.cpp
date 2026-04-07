@@ -37,6 +37,7 @@
 #include "UObject/UObjectIterator.h"
 
 #include "GameplayTagContainer.h"
+#include "GameplayTagsManager.h"
 #include "PythonAPI/UActorService.h"
 
 DEFINE_LOG_CATEGORY_STATIC(LogStateTreeService, Log, All);
@@ -3132,7 +3133,12 @@ bool UStateTreeService::UpdateTransition(const FString& AssetPath, const FString
 	}
 	if (!EventTag.IsEmpty())
 	{
-		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), false);
+		if (!ParsedTag.IsValid())
+		{
+			UGameplayTagsManager::Get().AddNativeGameplayTag(FName(*EventTag), TEXT("Auto-registered by VibeUE StateTree service"));
+			ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), false);
+		}
 		Trans.RequiredEvent.Tag = ParsedTag;
 	}
 	if (!EventPayloadStruct.IsEmpty())
@@ -5127,7 +5133,12 @@ bool UStateTreeService::AddTransition(const FString& AssetPath, const FString& S
 	NewTransition.Priority = ParsedPriority;
 	if (!EventTag.IsEmpty())
 	{
-		const FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), /*bErrorIfNotFound=*/false);
+		FGameplayTag ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), false);
+		if (!ParsedTag.IsValid())
+		{
+			UGameplayTagsManager::Get().AddNativeGameplayTag(FName(*EventTag), TEXT("Auto-registered by VibeUE StateTree service"));
+			ParsedTag = FGameplayTag::RequestGameplayTag(FName(*EventTag), false);
+		}
 		NewTransition.RequiredEvent.Tag = ParsedTag;
 	}
 

@@ -83,6 +83,10 @@
 #include "Tracks/MovieScenePropertyTrack.h"
 #include "UObject/PropertyIterator.h"
 #include "UObject/UnrealType.h"
+#include "Dom/JsonObject.h"
+#include "Dom/JsonValue.h"
+#include "Serialization/JsonWriter.h"
+#include "Serialization/JsonSerializer.h"
 #include "MVVMBlueprintView.h"
 #include "MVVMBlueprintViewBinding.h"
 #include "MVVMBlueprintViewModelContext.h"
@@ -1085,6 +1089,58 @@ TArray<FString> UWidgetService::ListWidgetBlueprints(const FString& PathFilter)
 	return WidgetPaths;
 }
 
+FString UWidgetService::GetHierarchyJson(const FString& WidgetPath)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree) return TEXT("[]");
+
+	UWidget* RootWidget = WidgetBP->WidgetTree->RootWidget;
+	if (!RootWidget) return TEXT("[]");
+
+	TArray<TSharedPtr<FJsonValue>> JsonArray;
+
+	TFunction<void(UWidget*, const FString&)> Visit;
+	Visit = [&](UWidget* Widget, const FString& ParentName)
+	{
+		if (!Widget || !IsValid(Widget)) return;
+
+		TSharedPtr<FJsonObject> Obj = MakeShared<FJsonObject>();
+		Obj->SetStringField(TEXT("name"),   Widget->GetName());
+		Obj->SetStringField(TEXT("class"),  Widget->GetClass() ? Widget->GetClass()->GetName() : TEXT("Unknown"));
+		Obj->SetStringField(TEXT("parent"), ParentName);
+		Obj->SetBoolField  (TEXT("is_root"),     Widget == RootWidget);
+		Obj->SetBoolField  (TEXT("is_variable"),  Widget->bIsVariable);
+
+		TArray<TSharedPtr<FJsonValue>> ChildrenJson;
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				if (UWidget* Child = Panel->GetChildAt(i))
+					ChildrenJson.Add(MakeShared<FJsonValueString>(Child->GetName()));
+			}
+		}
+		Obj->SetArrayField(TEXT("children"), ChildrenJson);
+		JsonArray.Add(MakeShared<FJsonValueObject>(Obj));
+
+		if (UPanelWidget* Panel = Cast<UPanelWidget>(Widget))
+		{
+			for (int32 i = 0; i < Panel->GetChildrenCount(); ++i)
+			{
+				if (UWidget* Child = Panel->GetChildAt(i))
+					Visit(Child, Widget->GetName());
+			}
+		}
+	};
+
+	Visit(RootWidget, FString());
+
+	FString Output;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Output);
+	FJsonSerializer::Serialize(JsonArray, Writer);
+	return Output;
+}
+
 TArray<FWidgetInfo> UWidgetService::GetHierarchy(const FString& WidgetPath)
 {
 	TArray<FWidgetInfo> Hierarchy;
@@ -1356,22 +1412,14 @@ FWidgetAddComponentResult UWidgetService::AddComponent(
 		return Result;
 	}
 
-	// Mark blueprint as modified and compile
+	// Mark blueprint as modified — do NOT compile here.
+	// Compiling after every add_component call (e.g. 6 adds = 6 compiles) locks up UE
+	// and corrupts the Python type binding for FWidgetInfo via FPyWrapperTypeRegistry.
+	// The caller is expected to call compile_blueprint explicitly after all components
+	// are added. MarkBlueprintAsModified is sufficient to keep the widget tree valid
+	// between adds; full compilation is not needed until the hierarchy is finalized.
 	WidgetBP->Modify();
-
-	if (bIsUserWidget)
-	{
-		// For UserWidget subclasses, do a synchronous compile immediately.
-		// This ensures the parent WBP is in a valid compiled state before
-		// any deferred operations (like auto-save) try to process it,
-		// which would otherwise crash in Slate prepass with stack overflow.
-		UE_LOG(LogTemp, Log, TEXT("UWidgetService: Compiling parent WBP after adding UserWidget child '%s'"), *ComponentName);
-		FKismetEditorUtilities::CompileBlueprint(WidgetBP);
-	}
-	else
-	{
-		FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
-	}
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 
 	Result.bSuccess = true;
 	Result.ComponentName = NewWidget->GetName();
@@ -1951,8 +1999,7 @@ bool UWidgetService::CreateAnimation(
 	NewAnimation->MovieScene->GetEditorData().WorkEnd = FMath::Max(Duration, 0.0f);
 
 	WidgetBP->Animations.Add(NewAnimation);
-	MarkWidgetBlueprintModified(WidgetBP, true);
-	FKismetEditorUtilities::CompileBlueprint(WidgetBP);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 	return true;
 }
 

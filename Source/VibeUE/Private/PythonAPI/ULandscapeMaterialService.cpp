@@ -884,7 +884,8 @@ bool ULandscapeMaterialService::AssignMaterialToLandscape(
 			bool bExists = false;
 			for (FLandscapeInfoLayerSettings& LayerSettings : Info->Layers)
 			{
-				if (LayerSettings.GetLayerName().ToString().Equals(Pair.Key, ESearchCase::IgnoreCase))
+				const FName LSName = LayerSettings.LayerInfoObj ? LayerSettings.LayerInfoObj->LayerName : LayerSettings.LayerName;
+				if (LSName.ToString().Equals(Pair.Key, ESearchCase::IgnoreCase))
 				{
 					LayerSettings.LayerInfoObj = LayerInfoObj;
 					bExists = true;
