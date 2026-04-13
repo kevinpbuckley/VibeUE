@@ -143,12 +143,27 @@ PRAGMA_ENABLE_DEPRECATION_WARNINGS
 
 TSharedRef<SDockTab> FAIChatCommands::SpawnAIChatTab(const FSpawnTabArgs& Args)
 {
-    return SNew(SDockTab)
+    TSharedPtr<SAIChatWindow> ChatWidget;
+
+    TSharedRef<SDockTab> NewTab = SNew(SDockTab)
         .TabRole(ETabRole::NomadTab)
         .Label(LOCTEXT("AIChatTabLabel", "VibeUE AI Chat"))
         [
-            SNew(SAIChatWindow)
+            SAssignNew(ChatWidget, SAIChatWindow)
         ];
+
+    // Focus the input text box whenever this tab becomes active (panel drawer opens, tab clicked, etc.)
+    NewTab->SetOnTabActivated(SDockTab::FOnTabActivatedCallback::CreateLambda(
+        [WeakChat = TWeakPtr<SAIChatWindow>(ChatWidget)](TSharedRef<SDockTab>, ETabActivationCause)
+        {
+            if (TSharedPtr<SAIChatWindow> Chat = WeakChat.Pin())
+            {
+                Chat->FocusInputTextBox();
+            }
+        }
+    ));
+
+    return NewTab;
 }
 
 PRAGMA_DISABLE_DEPRECATION_WARNINGS

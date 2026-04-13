@@ -12,6 +12,7 @@
 #include "HAL/PlatformFileManager.h"
 #include "ContentBrowserModule.h"
 #include "IContentBrowserSingleton.h"
+#include "Misc/PackageName.h"
 
 namespace
 {
@@ -75,11 +76,18 @@ TArray<FAssetData> UAssetDiscoveryService::SearchAssets(const FString& SearchTer
 	}
 
 	TArray<FAssetData> AllAssets;
-	FARFilter Filter;
 
-	// Always scan /Game recursively. Without an explicit path + bRecursivePaths=true,
-	// GetAssets with an empty FARFilter returns nothing in UE5.
-	Filter.PackagePaths.Add(FName("/Game"));
+	// Collect all mounted content roots (/Game, /Engine, /PluginName, …)
+	// so we search Game, Engine and every plugin in one pass.
+	TArray<FString> RootPaths;
+	FPackageName::QueryRootContentPaths(RootPaths);
+
+	FARFilter Filter;
+	for (const FString& Root : RootPaths)
+	{
+		// QueryRootContentPaths returns paths with trailing '/' — FName handles both forms.
+		Filter.PackagePaths.Add(FName(*Root));
+	}
 	Filter.bRecursivePaths = true;
 
 	// Apply type filter if specified

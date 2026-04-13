@@ -68,7 +68,25 @@ public:
     /** Static method to clear any attached image */
     static void ClearImageAttachment();
 
+    /** Set keyboard focus to the input text box */
+    void FocusInputTextBox();
+
+    // SWidget overrides for focus routing
+    virtual bool SupportsKeyboardFocus() const override { return true; }
+    virtual FReply OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent) override;
+
 private:
+    /** Handle for the app activation state change delegate */
+    FDelegateHandle AppActivationHandle;
+
+    /** Whether the InputTextBox had focus before the app was last deactivated */
+    bool bInputBoxWasFocusedBeforeDeactivation = false;
+
+    /** Re-entrancy guard: prevents FocusInputTextBox from triggering itself via OnTabActivated */
+    bool bIsFocusingInput = false;
+
+    /** Called when the UE application gains or loses OS-level focus */
+    void OnApplicationActivationChanged(bool bIsActivated);
     /** The chat session managing conversation state */
     TSharedPtr<FChatSession> ChatSession;
     
