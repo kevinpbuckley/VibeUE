@@ -395,7 +395,8 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 	"  Delete (guarded)     : action='delete', asset_path='...'  (blocked if referenced; use skip_reference_check=true to override)\n"
 	"\nNever emulate a move by duplicating then deleting the original. That creates a different asset and can break references.\n"
 	"  Per-action docs      : action='help', help_action='search'\n"
-	"\nAll paths use Content Browser format: /Game/... or /Engine/...",
+	"\nAll paths use Content Browser format: /Game/..., /Engine/..., or /PluginName/...\n"
+	"Search covers ALL content roots (Game, Engine, Plugins) automatically.",
 	"Assets",
 	TOOL_PARAMS(
 		TOOL_PARAM("action",

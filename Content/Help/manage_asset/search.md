@@ -11,7 +11,7 @@ Search for assets by partial name and optional asset type.
 
 ## Notes
 
-- Searches only `/Game/` content. For Engine content use `list` with `path="/Engine"`.
+- Searches all mounted content roots: `/Game/`, `/Engine/`, and all plugin content (e.g. `/VibeUE/`).
 - Returns up to all matching assets — filter with `asset_type` to narrow results.
 - Use the returned `object_path` or `package_name` as the `asset_path` for subsequent operations.
 

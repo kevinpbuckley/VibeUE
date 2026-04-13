@@ -511,13 +511,73 @@ void SAIChatWindow::Construct(const FArguments& InArgs)
         FLLMProviderInfo ProviderInfo = ChatSession->GetCurrentProviderInfo();
         AddSystemNotification(FString::Printf(TEXT("⚠️ Please set your %s API key in Settings"), *ProviderInfo.DisplayName));
     }
+
+    // Register for app activation changes so we can restore focus to the text box
+    // when the user returns to UE after switching to another application
+    AppActivationHandle = FSlateApplication::Get().OnApplicationActivationStateChanged().AddSP(
+        this, &SAIChatWindow::OnApplicationActivationChanged);
 }
 
 SAIChatWindow::~SAIChatWindow()
 {
+    // Unregister app activation handler
+    if (AppActivationHandle.IsValid())
+    {
+        FSlateApplication::Get().OnApplicationActivationStateChanged().Remove(AppActivationHandle);
+        AppActivationHandle.Reset();
+    }
+
     if (ChatSession.IsValid())
     {
         ChatSession->Shutdown();
+    }
+}
+
+void SAIChatWindow::FocusInputTextBox()
+{
+    if (bIsFocusingInput || !InputTextBox.IsValid())
+    {
+        return;
+    }
+    TGuardValue<bool> ReentrancyGuard(bIsFocusingInput, true);
+    FSlateApplication::Get().SetKeyboardFocus(InputTextBox, EFocusCause::SetDirectly);
+}
+
+FReply SAIChatWindow::OnFocusReceived(const FGeometry& MyGeometry, const FFocusEvent& InFocusEvent)
+{
+    // Route panel-level focus (e.g. clicking empty space) straight to the text box
+    if (InputTextBox.IsValid())
+    {
+        return FReply::Handled().SetUserFocus(InputTextBox.ToSharedRef(), EFocusCause::SetDirectly);
+    }
+    return SCompoundWidget::OnFocusReceived(MyGeometry, InFocusEvent);
+}
+
+void SAIChatWindow::OnApplicationActivationChanged(bool bIsActivated)
+{
+    if (!bIsActivated)
+    {
+        // Record whether our text box had focus before leaving the app
+        bInputBoxWasFocusedBeforeDeactivation = InputTextBox.IsValid() &&
+            FSlateApplication::Get().GetKeyboardFocusedWidget() == InputTextBox;
+        return;
+    }
+
+    // App reactivated — restore focus to text box if it was focused before we left
+    if (bInputBoxWasFocusedBeforeDeactivation && InputTextBox.IsValid())
+    {
+        bInputBoxWasFocusedBeforeDeactivation = false;
+        // Delay one frame so Slate finishes its own activation processing first
+        RegisterActiveTimer(0.0f, FWidgetActiveTimerDelegate::CreateLambda(
+            [WeakInputBox = TWeakPtr<SMultiLineEditableTextBox>(InputTextBox)](double, float) -> EActiveTimerReturnType
+            {
+                if (TSharedPtr<SMultiLineEditableTextBox> TextBox = WeakInputBox.Pin())
+                {
+                    FSlateApplication::Get().SetKeyboardFocus(TextBox, EFocusCause::SetDirectly);
+                }
+                return EActiveTimerReturnType::Stop;
+            }
+        ));
     }
 }
 

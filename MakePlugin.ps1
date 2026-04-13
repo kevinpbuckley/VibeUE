@@ -88,6 +88,7 @@ $ExcludeDevFiles = @(
     "BuildAndLaunchGame.ps1", # Game-specific launch script not needed by end users
     "AddCopyrights.ps1",     # Development script not needed by end users
     "FAB-DESCRIPTION.md",    # Development file not needed by end users
+    "FAB_Tech_Details.md",   # FAB submission details not needed by end users
     "FAB-Checklist.md",      # Internal checklist not needed by end users
     ".gitignore",            # Git-specific file not needed by end users
     "vibeue-proxy.json"      # Local proxy config with bearer token (auto-generated at runtime)
