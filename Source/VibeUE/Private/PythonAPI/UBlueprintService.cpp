@@ -19,6 +19,8 @@
 #include "K2Node_VariableSet.h"
 #include "K2Node_IfThenElse.h"
 #include "K2Node_CallFunction.h"
+#include "K2Node_CallArrayFunction.h"   // For array library functions with wildcard pins
+#include "K2Node_GetArrayItem.h"        // For Array Get (replaces deprecated Array_Get)
 #include "K2Node_CreateDelegate.h"
 #include "K2Node_CustomEvent.h"
 #include "K2Node_DynamicCast.h"
@@ -3720,11 +3722,20 @@ bool UBlueprintService::ConnectNodes(
 	const UEdGraphSchema_K2* Schema = Cast<UEdGraphSchema_K2>(Graph->GetSchema());
 	if (Schema)
 	{
-		Schema->TryCreateConnection(SourcePin, TargetPin);
-		FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
-		UE_LOG(LogTemp, Log, TEXT("ConnectNodes: Connected '%s'.'%s' to '%s'.'%s'"),
-			*SourceNodeId, *SourcePinName, *TargetNodeId, *TargetPinName);
-		return true;
+		bool bConnected = Schema->TryCreateConnection(SourcePin, TargetPin);
+		if (bConnected)
+		{
+			FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+			UE_LOG(LogTemp, Log, TEXT("ConnectNodes: Connected '%s'.'%s' to '%s'.'%s'"),
+				*SourceNodeId, *SourcePinName, *TargetNodeId, *TargetPinName);
+			return true;
+		}
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("ConnectNodes: TryCreateConnection failed for '%s'.'%s' -> '%s'.'%s' (type mismatch or incompatible pins)"),
+				*SourceNodeId, *SourcePinName, *TargetNodeId, *TargetPinName);
+			return false;
+		}
 	}
 
 	UE_LOG(LogTemp, Error, TEXT("ConnectNodes: Failed to get schema for graph '%s'"), *GraphName);
@@ -5807,8 +5818,20 @@ FString UBlueprintService::CreateNodeByKey(
 			return FString();
 		}
 
-		// Create the function call node
-		UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		// Create the function call node - use the correct subclass for array functions
+		// Array library functions need UK2Node_CallArrayFunction for wildcard pin type propagation
+		bool bHasArrayPointerParms = Function->HasMetaData(FBlueprintMetadata::MD_ArrayParam);
+
+		UK2Node_CallFunction* FuncNode;
+		if (bHasArrayPointerParms)
+		{
+			FuncNode = NewObject<UK2Node_CallArrayFunction>(Graph);
+			UE_LOG(LogTemp, Log, TEXT("CreateNodeByKey: Creating array function node for '%s' (has ArrayParm metadata)"), *FunctionName);
+		}
+		else
+		{
+			FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		}
 		FuncNode->SetFromFunction(Function);
 		FuncNode->NodePosX = PosX;
 		FuncNode->NodePosY = PosY;
@@ -6848,7 +6871,16 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 			return nullptr;
 		}
 
-		UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		// Use correct subclass for array functions (wildcard pin type propagation)
+		UK2Node_CallFunction* FuncNode;
+		if (Function->HasMetaData(FBlueprintMetadata::MD_ArrayParam))
+		{
+			FuncNode = NewObject<UK2Node_CallArrayFunction>(Graph);
+		}
+		else
+		{
+			FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+		}
 		FuncNode->SetFromFunction(Function);
 		FuncNode->NodePosX = PosX;
 		FuncNode->NodePosY = PosY;
@@ -6899,7 +6931,16 @@ UEdGraphNode* UBlueprintService::CreateNodeFromDesc(
 				return nullptr;
 			}
 
-			UK2Node_CallFunction* FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+			// Use correct subclass for array functions (wildcard pin type propagation)
+			UK2Node_CallFunction* FuncNode;
+			if (Function->HasMetaData(FBlueprintMetadata::MD_ArrayParam))
+			{
+				FuncNode = NewObject<UK2Node_CallArrayFunction>(Graph);
+			}
+			else
+			{
+				FuncNode = NewObject<UK2Node_CallFunction>(Graph);
+			}
 			FuncNode->SetFromFunction(Function);
 			FuncNode->NodePosX = PosX;
 			FuncNode->NodePosY = PosY;
@@ -8022,51 +8063,153 @@ bool UBlueprintService::AutoLayoutGraph(
 		}
 	}
 
-	// Pure nodes (no exec pins): place in same layer as first consumer
-	for (UEdGraphNode* Node : LayoutNodes)
+	// Check if exec-based BFS produced any meaningful layering.
+	// If all layered nodes are at layer 0 (common for pure functions with no exec connections),
+	// fall back to data-flow-based layering instead.
+	bool bExecFlowIsFlat = true;
+	for (auto& Pair : NodeLayer)
 	{
-		if (NodeLayer.Contains(Node)) continue;
-
-		bool bHasExecPin = false;
-		for (UEdGraphPin* Pin : Node->Pins)
+		if (Pair.Value > 0)
 		{
-			if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			bExecFlowIsFlat = false;
+			break;
+		}
+	}
+
+	if (bExecFlowIsFlat && LayoutNodes.Num() > 1)
+	{
+		// ── Data-flow fallback: assign layers by longest data-flow path from sources ──
+		// Build data-flow adjacency: for each node, find nodes whose outputs feed into it
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> DataPredecessors;
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
 			{
-				bHasExecPin = true;
-				break;
+				if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+				{
+					for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+					{
+						if (LinkedPin && LinkedPin->GetOwningNode())
+						{
+							DataPredecessors.FindOrAdd(Node).AddUnique(LinkedPin->GetOwningNode());
+						}
+					}
+				}
 			}
 		}
 
-		if (!bHasExecPin)
+		// Topological sort via BFS (Kahn's algorithm) to assign layers by data-flow depth.
+		// Nodes with no data predecessors start at layer 0.
+		NodeLayer.Empty();
+
+		// Compute in-degree for each node in data flow
+		TMap<UEdGraphNode*, int32> InDegree;
+		for (UEdGraphNode* Node : LayoutNodes)
 		{
-			// Find the minimum layer of any consumer
-			int32 MinConsumerLayer = INT32_MAX;
-			const TArray<UEdGraphNode*>* Consumers = DataConsumers.Find(Node);
+			InDegree.FindOrAdd(Node); // ensure entry exists (default 0)
+		}
+		for (auto& Pair : DataPredecessors)
+		{
+			InDegree.FindOrAdd(Pair.Key) = Pair.Value.Num();
+		}
+
+		// Seed BFS with data sources (in-degree 0)
+		TQueue<UEdGraphNode*> DataQueue;
+		for (auto& Pair : InDegree)
+		{
+			if (Pair.Value == 0)
+			{
+				NodeLayer.Add(Pair.Key, 0);
+				DataQueue.Enqueue(Pair.Key);
+			}
+		}
+
+		while (!DataQueue.IsEmpty())
+		{
+			UEdGraphNode* Current;
+			DataQueue.Dequeue(Current);
+			int32 CurrentLayer = NodeLayer.FindRef(Current);
+
+			const TArray<UEdGraphNode*>* Consumers = DataConsumers.Find(Current);
 			if (Consumers)
 			{
 				for (UEdGraphNode* Consumer : *Consumers)
 				{
-					const int32* ConsumerLayer = NodeLayer.Find(Consumer);
-					if (ConsumerLayer && *ConsumerLayer < MinConsumerLayer)
+					int32 NewLayer = CurrentLayer + 1;
+					int32* ExistingLayer = NodeLayer.Find(Consumer);
+					if (!ExistingLayer || *ExistingLayer < NewLayer)
 					{
-						MinConsumerLayer = *ConsumerLayer;
+						NodeLayer.Add(Consumer, NewLayer);
+					}
+
+					// Decrement in-degree; enqueue when all predecessors processed
+					int32& Deg = InDegree.FindOrAdd(Consumer);
+					Deg--;
+					if (Deg <= 0)
+					{
+						DataQueue.Enqueue(Consumer);
 					}
 				}
 			}
+		}
 
-			if (MinConsumerLayer == INT32_MAX)
+		// Assign any remaining unreached nodes to layer 0
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			if (!NodeLayer.Contains(Node))
 			{
-				MinConsumerLayer = 0; // Disconnected pure node
+				NodeLayer.Add(Node, 0);
+			}
+		}
+	}
+	else
+	{
+		// Original exec-based layering worked — place pure nodes relative to consumers.
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			if (NodeLayer.Contains(Node)) continue;
+
+			bool bHasExecPin = false;
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+				{
+					bHasExecPin = true;
+					break;
+				}
 			}
 
+			if (!bHasExecPin)
+			{
+				// Find the minimum layer of any consumer
+				int32 MinConsumerLayer = INT32_MAX;
+				const TArray<UEdGraphNode*>* Consumers = DataConsumers.Find(Node);
+				if (Consumers)
+				{
+					for (UEdGraphNode* Consumer : *Consumers)
+					{
+						const int32* ConsumerLayer = NodeLayer.Find(Consumer);
+						if (ConsumerLayer && *ConsumerLayer < MinConsumerLayer)
+						{
+							MinConsumerLayer = *ConsumerLayer;
+						}
+					}
+				}
+
+				if (MinConsumerLayer == INT32_MAX)
+				{
+					MinConsumerLayer = 0; // Disconnected pure node
+				}
+
 				// Place pure nodes one column LEFT of their consumer so they appear
-			// as data inputs flowing into the exec node, not stacked alongside it.
-			NodeLayer.Add(Node, FMath::Max(0, MinConsumerLayer - 1));
-		}
-		else
-		{
-			// Exec node never reached by BFS — disconnected island
-			NodeLayer.Add(Node, 0);
+				// as data inputs flowing into the exec node, not stacked alongside it.
+				NodeLayer.Add(Node, FMath::Max(0, MinConsumerLayer - 1));
+			}
+			else
+			{
+				// Exec node never reached by BFS — disconnected island
+				NodeLayer.Add(Node, 0);
+			}
 		}
 	}
 
