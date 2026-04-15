@@ -29,6 +29,7 @@
 #include "StateTreeCompiler.h"
 #include "StateTreeCompilerLog.h"
 #include "Blueprint/StateTreeTaskBlueprintBase.h"
+#include "Blueprint/StateTreeEvaluatorBlueprintBase.h"
 #include "StateTreeEditingSubsystem.h"
 #include "StateTreeViewModel.h"
 #include "Editor.h"
@@ -265,12 +266,20 @@ static bool StructNameMatches(const UScriptStruct* Struct, const FString& Expect
 static bool BlueprintWrapperMatchesName(const FStateTreeEditorNode& EditorNode, const FString& ExpectedName)
 {
 	const UScriptStruct* NodeStruct = EditorNode.Node.GetScriptStruct();
-	if (!NodeStruct || !NodeStruct->GetName().Equals(TEXT("StateTreeBlueprintTaskWrapper"), ESearchCase::IgnoreCase))
+	if (!NodeStruct)
 	{
 		return false;
 	}
 
-	// Check display name (e.g. "STT Rotate")
+	const FString StructName = NodeStruct->GetName();
+	const bool bIsTaskWrapper = StructName.Equals(TEXT("StateTreeBlueprintTaskWrapper"), ESearchCase::IgnoreCase);
+	const bool bIsEvalWrapper = StructName.Equals(TEXT("StateTreeBlueprintEvaluatorWrapper"), ESearchCase::IgnoreCase);
+	if (!bIsTaskWrapper && !bIsEvalWrapper)
+	{
+		return false;
+	}
+
+	// Check display name (e.g. "STT Rotate" or "STE PatrolPointManagement")
 	const FString DisplayName = EditorNode.GetName().ToString();
 	if (DisplayName.Equals(ExpectedName, ESearchCase::IgnoreCase)
 		|| DisplayName.Replace(TEXT(" "), TEXT("_")).Equals(ExpectedName, ESearchCase::IgnoreCase))
@@ -278,36 +287,37 @@ static bool BlueprintWrapperMatchesName(const FStateTreeEditorNode& EditorNode, 
 		return true;
 	}
 
-	// Read the TaskClass property to get the Blueprint class path
+	// Read the class property (TaskClass for tasks, EvaluatorClass for evaluators)
+	const FName ClassPropName = bIsTaskWrapper ? TEXT("TaskClass") : TEXT("EvaluatorClass");
 	const void* NodeMemory = EditorNode.Node.GetMemory();
 	if (!NodeMemory)
 	{
 		return false;
 	}
 
-	const FProperty* TaskClassProp = FindFProperty<FProperty>(NodeStruct, TEXT("TaskClass"));
-	if (!TaskClassProp)
+	const FProperty* ClassProp = FindFProperty<FProperty>(NodeStruct, ClassPropName);
+	if (!ClassProp)
 	{
 		return false;
 	}
 
-	FString TaskClassStr;
-	TaskClassProp->ExportTextItem_Direct(TaskClassStr, TaskClassProp->ContainerPtrToValuePtr<void>(NodeMemory), nullptr, nullptr, 0);
-	if (TaskClassStr.IsEmpty())
+	FString ClassStr;
+	ClassProp->ExportTextItem_Direct(ClassStr, ClassProp->ContainerPtrToValuePtr<void>(NodeMemory), nullptr, nullptr, 0);
+	if (ClassStr.IsEmpty())
 	{
 		return false;
 	}
 
-	// TaskClassStr is something like "/Script/Engine.BlueprintGeneratedClass'/Game/StateTree/STT_Rotate.STT_Rotate_C'"
+	// ClassStr is something like "/Script/Engine.BlueprintGeneratedClass'/Game/StateTree/STT_Rotate.STT_Rotate_C'"
 	// Extract the class name after the last dot or slash
 	FString ClassName;
-	if (TaskClassStr.Split(TEXT("."), nullptr, &ClassName, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+	if (ClassStr.Split(TEXT("."), nullptr, &ClassName, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
 	{
 		ClassName.RemoveFromEnd(TEXT("'"));
 	}
 	else
 	{
-		ClassName = TaskClassStr;
+		ClassName = ClassStr;
 	}
 
 	// Match against "STT_Rotate_C" or "STT_Rotate" (without _C suffix)
@@ -942,6 +952,27 @@ static bool IsValidBlueprintTaskClass(UClass* InClass)
 	return true;
 }
 
+static bool IsValidBlueprintEvaluatorClass(UClass* InClass)
+{
+	const UClass* BlueprintEvalBaseClass = UStateTreeEvaluatorBlueprintBase::StaticClass();
+	if (!InClass || !BlueprintEvalBaseClass)
+	{
+		return false;
+	}
+
+	if (!InClass->IsChildOf(BlueprintEvalBaseClass) || InClass == BlueprintEvalBaseClass)
+	{
+		return false;
+	}
+
+	if (InClass->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
+	{
+		return false;
+	}
+
+	return true;
+}
+
 static UClass* TryResolveBlueprintTaskClassFromObjectPath(const FString& ObjectPath)
 {
 	if (ObjectPath.IsEmpty())
@@ -1174,6 +1205,206 @@ static bool SetBlueprintTaskClassOnWrapperNode(FStateTreeEditorNode& InOutNode, 
 	}
 
 	// TaskClass controls wrapper instance type. Refresh instance containers after assignment.
+	InOutNode.Instance.Reset();
+	InOutNode.InstanceObject = nullptr;
+	InOutNode.ExecutionRuntimeData.Reset();
+	InOutNode.ExecutionRuntimeDataObject = nullptr;
+
+	if (const FStateTreeNodeBase* NodeBase = InOutNode.Node.GetPtr<FStateTreeNodeBase>())
+	{
+		if (const UScriptStruct* InstanceType = Cast<const UScriptStruct>(NodeBase->GetInstanceDataType()))
+		{
+			InOutNode.Instance.InitializeAs(InstanceType);
+		}
+		else if (const UClass* InstanceClass = Cast<const UClass>(NodeBase->GetInstanceDataType()))
+		{
+			InOutNode.InstanceObject = NewObject<UObject>(Outer, InstanceClass);
+		}
+
+		if (const UScriptStruct* RuntimeType = Cast<const UScriptStruct>(NodeBase->GetExecutionRuntimeDataType()))
+		{
+			InOutNode.ExecutionRuntimeData.InitializeAs(RuntimeType);
+		}
+		else if (const UClass* RuntimeClass = Cast<const UClass>(NodeBase->GetExecutionRuntimeDataType()))
+		{
+			InOutNode.ExecutionRuntimeDataObject = NewObject<UObject>(Outer, RuntimeClass);
+		}
+	}
+
+	return InOutNode.Instance.IsValid() || InOutNode.InstanceObject != nullptr;
+}
+
+// ---- Blueprint Evaluator resolution helpers (mirrors task helpers above) ----
+
+static UClass* TryResolveBlueprintEvaluatorClassFromObjectPath(const FString& ObjectPath)
+{
+	if (ObjectPath.IsEmpty()) { return nullptr; }
+	if (UClass* LoadedClass = LoadObject<UClass>(nullptr, *ObjectPath))
+	{
+		if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+	}
+	if (UClass* FoundClass = FindFirstObject<UClass>(*ObjectPath, EFindFirstObjectOptions::None))
+	{
+		if (IsValidBlueprintEvaluatorClass(FoundClass)) { return FoundClass; }
+	}
+	return nullptr;
+}
+
+static UClass* TryResolveBlueprintEvaluatorClassFromAssetPath(const FString& AssetPath)
+{
+	if (AssetPath.IsEmpty()) { return nullptr; }
+	if (UObject* LoadedAsset = UEditorAssetLibrary::LoadAsset(AssetPath))
+	{
+		if (UBlueprint* Blueprint = Cast<UBlueprint>(LoadedAsset))
+		{
+			if (IsValidBlueprintEvaluatorClass(Blueprint->GeneratedClass)) { return Blueprint->GeneratedClass; }
+		}
+		if (UClass* LoadedClass = Cast<UClass>(LoadedAsset))
+		{
+			if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+		}
+	}
+	const FString AssetName = FPackageName::GetShortName(AssetPath);
+	if (!AssetName.IsEmpty())
+	{
+		const FString GeneratedClassPath = FString::Printf(TEXT("%s.%s_C"), *AssetPath, *AssetName);
+		if (UClass* GeneratedClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassPath))
+		{
+			return GeneratedClass;
+		}
+	}
+	return nullptr;
+}
+
+static UClass* ResolveBlueprintEvaluatorClass(const FString& EvalIdentifier)
+{
+	FString Identifier = EvalIdentifier;
+	Identifier.TrimStartAndEndInline();
+	if (Identifier.IsEmpty()) { return nullptr; }
+
+	// Short name (no path separator)
+	if (!Identifier.Contains(TEXT("/")))
+	{
+		if (UClass* LoadedClass = FindFirstObject<UClass>(*Identifier, EFindFirstObjectOptions::None))
+		{
+			if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+		}
+		if (!Identifier.EndsWith(TEXT("_C")))
+		{
+			if (UClass* LoadedClass = FindFirstObject<UClass>(*(Identifier + TEXT("_C")), EFindFirstObjectOptions::None))
+			{
+				if (IsValidBlueprintEvaluatorClass(LoadedClass)) { return LoadedClass; }
+			}
+		}
+	}
+
+	// Full path
+	if (Identifier.StartsWith(TEXT("/")))
+	{
+		if (Identifier.Contains(TEXT(".")))
+		{
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(Identifier)) { return EvalClass; }
+			FString PackagePath, ObjectName;
+			if (Identifier.Split(TEXT("."), &PackagePath, &ObjectName, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+			{
+				if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(PackagePath)) { return EvalClass; }
+				if (!ObjectName.EndsWith(TEXT("_C")))
+				{
+					if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(PackagePath + TEXT(".") + ObjectName + TEXT("_C"))) { return EvalClass; }
+				}
+			}
+		}
+		else
+		{
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(Identifier)) { return EvalClass; }
+		}
+	}
+
+	// Asset registry search by short name
+	FString TargetBlueprintName = Identifier;
+	if (TargetBlueprintName.Contains(TEXT(".")))
+	{
+		FString LeftPart, RightPart;
+		if (TargetBlueprintName.Split(TEXT("."), &LeftPart, &RightPart, ESearchCase::CaseSensitive, ESearchDir::FromEnd))
+		{
+			TargetBlueprintName = RightPart;
+		}
+	}
+	if (TargetBlueprintName.Contains(TEXT("/")))
+	{
+		TargetBlueprintName = FPackageName::GetShortName(TargetBlueprintName);
+	}
+	if (TargetBlueprintName.EndsWith(TEXT("_C")))
+	{
+		TargetBlueprintName.LeftChopInline(2);
+	}
+	if (TargetBlueprintName.IsEmpty()) { return nullptr; }
+
+	FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	FARFilter Filter;
+	Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+	Filter.PackagePaths.Add(FName(TEXT("/Game")));
+	Filter.bRecursivePaths = true;
+
+	TArray<FAssetData> BlueprintAssets;
+	AssetRegistry.Get().GetAssets(Filter, BlueprintAssets);
+
+	for (const FAssetData& AssetData : BlueprintAssets)
+	{
+		if (!AssetData.AssetName.ToString().Equals(TargetBlueprintName, ESearchCase::IgnoreCase)) { continue; }
+		if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromAssetPath(AssetData.PackageName.ToString())) { return EvalClass; }
+		const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
+		if (GeneratedClassTag.IsSet())
+		{
+			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
+			if (UClass* EvalClass = TryResolveBlueprintEvaluatorClassFromObjectPath(GeneratedClassObjectPath)) { return EvalClass; }
+		}
+	}
+
+	return nullptr;
+}
+
+static bool SetBlueprintEvaluatorClassOnWrapperNode(FStateTreeEditorNode& InOutNode, UClass* BlueprintEvalClass, UObject* Outer)
+{
+	if (!BlueprintEvalClass || !IsValidBlueprintEvaluatorClass(BlueprintEvalClass))
+	{
+		return false;
+	}
+
+	if (Outer == nullptr)
+	{
+		Outer = GetTransientPackage();
+	}
+
+	const UScriptStruct* NodeStruct = InOutNode.Node.GetScriptStruct();
+	void* NodeMemory = InOutNode.Node.GetMutableMemory();
+	if (!NodeStruct || !NodeMemory)
+	{
+		return false;
+	}
+
+	FProperty* EvalClassProperty = FindFProperty<FProperty>(NodeStruct, TEXT("EvaluatorClass"));
+	if (!EvalClassProperty)
+	{
+		return false;
+	}
+
+	void* EvalClassValuePtr = EvalClassProperty->ContainerPtrToValuePtr<void>(NodeMemory);
+	if (!EvalClassValuePtr)
+	{
+		return false;
+	}
+
+	if (FObjectPropertyBase* ObjectProperty = CastField<FObjectPropertyBase>(EvalClassProperty))
+	{
+		ObjectProperty->SetObjectPropertyValue(EvalClassValuePtr, BlueprintEvalClass);
+	}
+	else if (!SetPropertyValueFromString(EvalClassProperty, EvalClassValuePtr, BlueprintEvalClass->GetPathName()))
+	{
+		return false;
+	}
+
+	// EvaluatorClass controls wrapper instance type. Refresh instance containers after assignment.
 	InOutNode.Instance.Reset();
 	InOutNode.InstanceObject = nullptr;
 	InOutNode.ExecutionRuntimeData.Reset();
@@ -1937,6 +2168,48 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 				Results.Add(Struct->GetName());
 			}
 		}
+	}
+
+	// Append Blueprint evaluator types
+	{
+		TSet<FString> UniqueTypes(Results);
+		const UClass* BlueprintEvalBaseClass = UStateTreeEvaluatorBlueprintBase::StaticClass();
+		if (BlueprintEvalBaseClass)
+		{
+			for (TObjectIterator<UClass> It; It; ++It)
+			{
+				if (IsValidBlueprintEvaluatorClass(*It))
+				{
+					UniqueTypes.Add((*It)->GetName());
+				}
+			}
+		}
+
+		FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+		FARFilter Filter;
+		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
+		Filter.PackagePaths.Add(FName(TEXT("/Game")));
+		Filter.bRecursivePaths = true;
+
+		TArray<FAssetData> BlueprintAssets;
+		AssetRegistry.Get().GetAssets(Filter, BlueprintAssets);
+
+		for (const FAssetData& AssetData : BlueprintAssets)
+		{
+			const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
+			if (!GeneratedClassTag.IsSet()) { continue; }
+			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
+			if (GeneratedClassObjectPath.IsEmpty()) { continue; }
+			if (UClass* GeneratedClass = LoadObject<UClass>(nullptr, *GeneratedClassObjectPath))
+			{
+				if (IsValidBlueprintEvaluatorClass(GeneratedClass))
+				{
+					UniqueTypes.Add(GeneratedClass->GetName());
+				}
+			}
+		}
+
+		Results = UniqueTypes.Array();
 	}
 
 	Results.Sort();
@@ -4214,27 +4487,62 @@ bool UStateTreeService::AddEvaluator(const FString& AssetPath, const FString& Ev
 	}
 
 	UScriptStruct* EvalStruct = FindNodeStruct(EvaluatorStructName);
-	if (!EvalStruct)
-	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Struct not found: %s"), *EvaluatorStructName);
-		return false;
-	}
+	UClass* BlueprintEvalClass = nullptr;
 
-	if (!EvalStruct->IsChildOf(FStateTreeEvaluatorBase::StaticStruct()))
+	if (EvalStruct)
 	{
-		UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Struct '%s' is not a FStateTreeEvaluatorBase"), *EvaluatorStructName);
-		return false;
+		// Verify struct-backed evaluator derives from FStateTreeEvaluatorBase
+		if (!EvalStruct->IsChildOf(FStateTreeEvaluatorBase::StaticStruct()))
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Struct '%s' is not a FStateTreeEvaluatorBase"), *EvaluatorStructName);
+			return false;
+		}
+	}
+	else
+	{
+		// Try to resolve as a Blueprint evaluator class
+		BlueprintEvalClass = ResolveBlueprintEvaluatorClass(EvaluatorStructName);
+		if (!BlueprintEvalClass)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Evaluator struct/class not found: %s"), *EvaluatorStructName);
+			return false;
+		}
+
+		EvalStruct = FindNodeStruct(TEXT("StateTreeBlueprintEvaluatorWrapper"));
+		if (!EvalStruct)
+		{
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: StateTreeBlueprintEvaluatorWrapper struct not found while adding blueprint evaluator '%s'"), *EvaluatorStructName);
+			return false;
+		}
 	}
 
 	FStateTreeEditorNode& NewNode = EditorData->Evaluators.AddDefaulted_GetRef();
-	if (!InitEditorNodeFromStruct(NewNode, EvalStruct))
+	if (!InitEditorNodeFromStruct(NewNode, EvalStruct, EditorData))
 	{
 		EditorData->Evaluators.RemoveAt(EditorData->Evaluators.Num() - 1);
 		return false;
 	}
 
+	if (BlueprintEvalClass)
+	{
+		if (!SetBlueprintEvaluatorClassOnWrapperNode(NewNode, BlueprintEvalClass, EditorData))
+		{
+			EditorData->Evaluators.RemoveAt(EditorData->Evaluators.Num() - 1);
+			UE_LOG(LogStateTreeService, Warning, TEXT("AddEvaluator: Failed to set blueprint evaluator class '%s' on wrapper"), *BlueprintEvalClass->GetName());
+			return false;
+		}
+	}
+
 	MarkStateTreeDirty(StateTree);
-	UE_LOG(LogStateTreeService, Log, TEXT("AddEvaluator: Added '%s' to %s"), *EvaluatorStructName, *AssetPath);
+	if (BlueprintEvalClass)
+	{
+		UE_LOG(LogStateTreeService, Log, TEXT("AddEvaluator: Added blueprint evaluator '%s' to %s"),
+		       *BlueprintEvalClass->GetName(), *AssetPath);
+	}
+	else
+	{
+		UE_LOG(LogStateTreeService, Log, TEXT("AddEvaluator: Added '%s' to %s"), *EvaluatorStructName, *AssetPath);
+	}
 	return true;
 #else
 	return false;
@@ -5256,6 +5564,190 @@ bool UStateTreeService::SetEvaluatorPropertyValue(const FString& AssetPath, cons
 		return false;
 	}
 
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindEvaluatorPropertyToRootParameter(const FString& AssetPath, const FString& EvaluatorStructName,
+	const FString& EvaluatorPropertyPath, const FString& ParameterPath, int32 MatchIndex)
+{
+	if (EvaluatorPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToRootParameter: EvaluatorPropertyPath and ParameterPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FStateTreeEditorNode* EvalNode = FindEditorNodeByStructInArray(EditorData->Evaluators, EvaluatorStructName, MatchIndex);
+	if (!EvalNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEvaluatorPropertyToRootParameter: Evaluator '%s' not found at match index %d"),
+			*EvaluatorStructName, MatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(EditorData->GetRootParametersGuid(), ParameterPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToRootParameter: Invalid parameter path: %s"), *ParameterPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(EvalNode->ID, EvaluatorPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToRootParameter: Invalid evaluator property path: %s"), *EvaluatorPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindEvaluatorPropertyToContext(const FString& AssetPath, const FString& EvaluatorStructName,
+	const FString& EvaluatorPropertyPath, const FString& ContextName, const FString& ContextPropertyPath, int32 MatchIndex)
+{
+	if (EvaluatorPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToContext: EvaluatorPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FStateTreeEditorNode* EvalNode = FindEditorNodeByStructInArray(EditorData->Evaluators, EvaluatorStructName, MatchIndex);
+	if (!EvalNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEvaluatorPropertyToContext: Evaluator '%s' not found at match index %d"),
+			*EvaluatorStructName, MatchIndex);
+		return false;
+	}
+
+	FGuid ContextStructID;
+	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
+	{
+		const TConstArrayView<FStateTreeExternalDataDesc> CtxDescs = StateTree->GetSchema()->GetContextDataDescs();
+		if (CtxDescs.IsEmpty())
+		{
+			UE_LOG(LogStateTreeService, Warning,
+				TEXT("BindEvaluatorPropertyToContext: Context '%s' not found — this StateTree has NO context actor class set. "
+				     "Call set_context_actor_class() first to assign one, then retry the bind."),
+				*ContextName);
+		}
+		else
+		{
+			FString Available;
+			for (const FStateTreeExternalDataDesc& Desc : CtxDescs)
+			{
+				if (!Available.IsEmpty()) Available += TEXT(", ");
+				Available += Desc.Name.ToString();
+			}
+			UE_LOG(LogStateTreeService, Warning,
+				TEXT("BindEvaluatorPropertyToContext: Context '%s' not found. Available contexts: [%s]"),
+				*ContextName, *Available);
+		}
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(ContextStructID, ContextPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToContext: Invalid context property path: %s"), *ContextPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(EvalNode->ID, EvaluatorPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEvaluatorPropertyToContext: Invalid evaluator property path: %s"), *EvaluatorPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::UnbindEvaluatorProperty(const FString& AssetPath, const FString& EvaluatorStructName,
+	const FString& EvaluatorPropertyPath, int32 MatchIndex)
+{
+	if (EvaluatorPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindEvaluatorProperty: EvaluatorPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	FStateTreeEditorNode* EvalNode = FindEditorNodeByStructInArray(EditorData->Evaluators, EvaluatorStructName, MatchIndex);
+	if (!EvalNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("UnbindEvaluatorProperty: Evaluator '%s' not found at match index %d"),
+			*EvaluatorStructName, MatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(EvalNode->ID, EvaluatorPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindEvaluatorProperty: Invalid evaluator property path: %s"), *EvaluatorPropertyPath);
+		return false;
+	}
+
+	FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
+	if (!Bindings)
+	{
+		return false;
+	}
+
+	Bindings->RemoveBindings(TargetPath);
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else

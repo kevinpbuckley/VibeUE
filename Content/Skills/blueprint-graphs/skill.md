@@ -130,6 +130,35 @@ for node in nodes:
 For function graphs, find nodes by `node_type` or `node_title`.
 For event-style overrides, find nodes by the **display title Unreal shows in the graph**, not by the raw override function name.
 
+### ⚠️ Event-Style Overrides Use `"EventGraph"` — NOT the Function Name
+
+When an override is **event-style** (void/latent functions like `ReceiveTreeStart`, `ReceiveTick`,
+`ReceiveLatentEnterState`, `ReceiveStateCompleted`), the event node lives inside `"EventGraph"`.
+Do **NOT** use the function name as the graph name — that graph doesn't exist.
+
+```python
+# WRONG — returns 0 nodes, creates nothing
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "ReceiveTreeStart")
+node_id = unreal.BlueprintService.add_function_call_node(bp_path, "ReceiveTreeStart", ...)
+
+# CORRECT — event-style overrides are in EventGraph
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph")
+node_id = unreal.BlueprintService.add_function_call_node(bp_path, "EventGraph", ...)
+```
+
+Common event-style overrides and their **graph name → node title**:
+
+| Raw Function Name | Graph Name | Node Title in Graph |
+|---|---|---|
+| `ReceiveTreeStart` | `"EventGraph"` | `Event TreeStart` |
+| `ReceiveTick` | `"EventGraph"` | `Event Tick` |
+| `ReceiveTreeStop` | `"EventGraph"` | `Event TreeStop` |
+| `ReceiveLatentEnterState` | `"EventGraph"` | `Event EnterState` |
+| `ReceiveLatentTick` | `"EventGraph"` | `Event Tick` |
+| `ReceiveStateCompleted` | `"EventGraph"` | `Event StateCompleted` |
+
+Only **function-style** overrides (non-void, like `GetStaticDescription`) create a separate function graph.
+
 ### ⚠️ Do Not Guess Blueprint Function Node Names
 
 Blueprint display titles and internal UFunction names are often **not the same**.
@@ -605,6 +634,22 @@ For `add_function_call_node(path, graph, class, func, x, y)`:
 
 Array operations use **wildcard pins** — the `TargetArray` and element pins start with no type until a typed array is connected. The engine automatically propagates the array element type through all wildcard pins when you connect a typed array variable.
 
+### ⚠️ Random Element From Array — Use `Array_Random`, NOT Manual Length+Random+Get
+
+When you need a random element from an array, use `Array_Random` — a single node that returns
+a random item. Do **NOT** manually build `Array_Length` → `RandomIntegerInRange` → `Array_Get`.
+That pattern has 3 nodes, is harder to wire, and `Array_Get` is deprecated in UE5.
+
+```python
+# CORRECT — single node, editor shows it as "Random Array Item"
+arr_rand_id = unreal.BlueprintService.add_function_call_node(
+    bp_path, "EventGraph", "KismetArrayLibrary", "Array_Random", 600, 200)
+# Pins: TargetArray (in, wildcard), OutItem (out, wildcard), OutIndex (out, int)
+
+# Or via build_graph:
+{"ref": "rand", "type": "spawner_key", "params": {"key": "FUNC KismetArrayLibrary::Array_Random"}}
+```
+
 ### Available Array Functions (KismetArrayLibrary)
 
 | Function | Purpose | Key Pins |
@@ -612,7 +657,7 @@ Array operations use **wildcard pins** — the `TargetArray` and element pins st
 | `Array_Length` | Get array element count | TargetArray(in), ReturnValue(int) |
 | `Array_LastIndex` | Get last valid index | TargetArray(in), ReturnValue(int) |
 | `Array_IsEmpty` | Check if empty | TargetArray(in), ReturnValue(bool) |
-| `Array_Random` | Get random element | TargetArray(in), OutItem(out), OutIndex(int) |
+| **`Array_Random`** | **Get random element ("Random Array Item")** | **TargetArray(in), OutItem(out), OutIndex(int)** |
 | `Array_Add` | Add element, returns index | TargetArray(in/out), NewItem(in), ReturnValue(int) |
 | `Array_Remove` | Remove by index | TargetArray(in/out), IndexToRemove(int) |
 | `Array_Clear` | Remove all elements | TargetArray(in/out) |
