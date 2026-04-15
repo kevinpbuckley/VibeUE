@@ -467,11 +467,16 @@ For nested struct properties, use the exact dotted path returned by `get_task_pr
 ### Evaluators & Global Tasks
 
 ```python
-# Find available evaluator types
+# Find available evaluator types (includes both struct and Blueprint evaluator types)
 types = unreal.StateTreeService.get_available_evaluator_types()
 
-# Add global evaluator (runs every tick, data available to all states)
+# Add global evaluator by struct name (runs every tick, data available to all states)
 unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "FMyCustomEvaluator")
+
+# Add Blueprint evaluator by name, path, or generated class name
+unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "STE_PatrolPointManagement")
+unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "/Game/StateTree/Evaluators/STE_PatrolPointManagement")
+unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "STE_PatrolPointManagement_C")
 
 # Add global task (runs while tree is active)
 unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "FStateTreeDelayTask")
@@ -663,6 +668,36 @@ unreal.StateTreeService.bind_task_property_to_root_parameter(
     st_path, state_path, task_struct,
     "Duration",        # task property
     "IdlingTime"       # root parameter name
+)
+```
+
+#### Binding Evaluator Properties
+
+Evaluators are global (not tied to a state), so there is no `state_path` parameter.
+
+```python
+# Bind an evaluator property to a root parameter
+unreal.StateTreeService.bind_evaluator_property_to_root_parameter(
+    st_path,
+    "STE_PatrolPointManagement",  # evaluator struct name (or Blueprint wrapper name)
+    "PatrolTag",                  # evaluator property to bind
+    "PatrolTag"                   # root parameter name
+)
+
+# Bind an evaluator property to context data
+unreal.StateTreeService.bind_evaluator_property_to_context(
+    st_path,
+    "STE_PatrolPointManagement",  # evaluator struct name
+    "ActorRef",                   # evaluator property to bind
+    "Actor",                      # context name
+    ""                            # context property path (empty = whole object)
+)
+
+# Unbind an evaluator property
+unreal.StateTreeService.unbind_evaluator_property(
+    st_path,
+    "STE_PatrolPointManagement",
+    "PatrolTag"
 )
 ```
 

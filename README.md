@@ -1414,6 +1414,9 @@ Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place 
 - `remove_evaluator(asset_path, evaluator_struct_name, match_index)` - Remove an evaluator
 - `get_evaluator_property_names(asset_path, evaluator_struct_name, match_index)` - Get evaluator properties
 - `set_evaluator_property_value(asset_path, evaluator_struct_name, property_path, value, match_index)` - Set evaluator property
+- `bind_evaluator_property_to_root_parameter(asset_path, evaluator_struct_name, evaluator_property_path, parameter_path, match_index)` - Bind evaluator property to a root parameter
+- `bind_evaluator_property_to_context(asset_path, evaluator_struct_name, evaluator_property_path, context_name, context_property_path, match_index)` - Bind evaluator property to context data
+- `unbind_evaluator_property(asset_path, evaluator_struct_name, evaluator_property_path, match_index)` - Remove an evaluator property binding
 - `add_global_task(asset_path, task_struct_name)` - Add a global task
 - `remove_global_task(asset_path, task_struct_name, match_index)` - Remove a global task
 - `get_global_task_property_names(asset_path, task_struct_name, match_index)` - Get global task properties
