@@ -476,14 +476,18 @@ Create `CLAUDE.md` at your project root:
 ```markdown
 # My Unreal Project
 
-@Plugins/VibeUE/Content/samples/instructions.sample.md
+@Plugins/VibeUE/Content/samples/AGENTS.md.sample
 ```
 
 The `@` directive inlines the file automatically — no copying needed.
 
+### Generic agents (AGENTS.md)
+
+Copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to your project root as `AGENTS.md`. Read by OpenAI Codex, Cursor, and other agents that follow the AGENTS.md convention.
+
 ### GitHub Copilot
 
-Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
+Copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to:
 
 ```
 .github/copilot-instructions.md
@@ -491,7 +495,7 @@ Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
 
 ### Cursor
 
-Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
+Copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to:
 
 ```
 .cursor/rules/vibeue.mdc
@@ -499,7 +503,7 @@ Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
 
 ### Google Antigravity
 
-Copy `Plugins/VibeUE/Content/samples/instructions.sample.md` to:
+Copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to:
 
 ```
 .agent/rules/vibeue.md
