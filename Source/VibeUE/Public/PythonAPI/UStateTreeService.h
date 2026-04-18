@@ -773,8 +773,8 @@ public:
 	static bool AddEvaluator(const FString& AssetPath, const FString& EvaluatorStructName);
 
 	/**
-	 * Add a global task to the StateTree by struct type name.
-	 * @param TaskStructName FStateTreeTaskBase-derived struct name
+	 * Add a global task to the StateTree by struct type name or Blueprint task name/path.
+	 * @param TaskStructName FStateTreeTaskBase-derived struct name, or Blueprint task name/path/class
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool AddGlobalTask(const FString& AssetPath, const FString& TaskStructName);
@@ -942,6 +942,34 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool UnbindEvaluatorProperty(const FString& AssetPath, const FString& EvaluatorStructName,
 	                                    const FString& EvaluatorPropertyPath, int32 MatchIndex = -1);
+
+	/**
+	 * Bind a global task property to a root parameter path (e.g. parameter "PatrolTag" -> task property "PatrolTag").
+	 * Global tasks are global — no StatePath is needed.
+	 * @param MatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindGlobalTaskPropertyToRootParameter(const FString& AssetPath, const FString& TaskStructName,
+	                                                  const FString& TaskPropertyPath, const FString& ParameterPath,
+	                                                  int32 MatchIndex = -1);
+
+	/**
+	 * Bind a global task property to context data (e.g. context "Actor" path "TargetPawn" -> task property "ActorRef").
+	 * Leave ContextPropertyPath empty to bind the whole context object.
+	 * Global tasks are global — no StatePath is needed.
+	 * @param MatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindGlobalTaskPropertyToContext(const FString& AssetPath, const FString& TaskStructName,
+	                                            const FString& TaskPropertyPath,
+	                                            const FString& ContextName = TEXT("Actor"),
+	                                            const FString& ContextPropertyPath = TEXT(""),
+	                                            int32 MatchIndex = -1);
+
+	/** Remove the property binding on a global task property (unbind it). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UnbindGlobalTaskProperty(const FString& AssetPath, const FString& TaskStructName,
+	                                     const FString& TaskPropertyPath, int32 MatchIndex = -1);
 
 	/** Remove a global task by struct type name. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
