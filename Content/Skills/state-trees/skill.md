@@ -466,6 +466,13 @@ For nested struct properties, use the exact dotted path returned by `get_task_pr
 
 ### Evaluators & Global Tasks
 
+**Evaluators** run every tick and feed computed data to all states (read-only output).
+**Global Tasks** run for the entire lifetime of the StateTree (full task lifecycle: EnterState, Tick, ExitState).
+
+Both support C++ structs and Blueprint assets.
+
+#### Evaluators
+
 ```python
 # Find available evaluator types (includes both struct and Blueprint evaluator types)
 types = unreal.StateTreeService.get_available_evaluator_types()
@@ -473,13 +480,114 @@ types = unreal.StateTreeService.get_available_evaluator_types()
 # Add global evaluator by struct name (runs every tick, data available to all states)
 unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "FMyCustomEvaluator")
 
-# Add Blueprint evaluator by name, path, or generated class name
+# Add Blueprint evaluator by name, path, or generated class name (all three work)
 unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "STE_PatrolPointManagement")
 unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "/Game/StateTree/Evaluators/STE_PatrolPointManagement")
 unreal.StateTreeService.add_evaluator("/Game/AI/MyBehavior", "STE_PatrolPointManagement_C")
+```
 
-# Add global task (runs while tree is active)
+#### Global Tasks
+
+```python
+# Find available task types (use this to get the exact registered name for Blueprint tasks)
+types = unreal.StateTreeService.get_available_task_types()
+for t in types:
+    print(t)  # e.g. "STT_PatrolManagement_C"
+
+# Add a C++ struct global task
 unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "FStateTreeDelayTask")
+
+# Add a Blueprint global task — supports the same name forms as add_evaluator:
+# name, full asset path, or _C generated class name
+unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "STT_PatrolManagement")
+unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "/Game/StateTree/Tasks/STT_PatrolManagement")
+unreal.StateTreeService.add_global_task("/Game/AI/MyBehavior", "STT_PatrolManagement_C")
+```
+
+#### ⚠️ Always Check Before Adding — Global Tasks Accumulate
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+
+# Check existing global tasks before adding
+info = unreal.StateTreeService.get_state_tree_info(st_path)
+existing_global = [t.name for t in info.global_tasks]
+print(f"Existing global tasks: {existing_global}")
+
+if "STT PatrolManagement" not in existing_global:
+    result = unreal.StateTreeService.add_global_task(st_path, "STT_PatrolManagement")
+    print(f"Added global task: {result}")
+else:
+    print("Global task already present, skipping")
+```
+
+#### Binding Global Task Properties
+
+Global tasks support the same property binding patterns as per-state tasks. Use `bind_global_task_property_to_root_parameter` or `bind_global_task_property_to_context`.
+
+```python
+import unreal
+
+st_path = "/Game/StateTree/ST_Cube"
+
+# Inspect what properties the global task exposes
+props = unreal.StateTreeService.get_global_task_property_names(st_path, "STT_PatrolManagement")
+for p in props:
+    print(f"  {p.name}: {p.type} = {p.current_value!r}")
+
+# Set a property value directly
+unreal.StateTreeService.set_global_task_property_value(st_path, "STT_PatrolManagement", "PatrolTag", "Patrol1")
+
+# Bind a global task property to a root parameter
+unreal.StateTreeService.bind_global_task_property_to_root_parameter(
+    st_path,
+    "STT_PatrolManagement",   # task name (Blueprint name, _C class, or display name)
+    "PatrolTag",              # task property to bind
+    "PatrolTag"               # root parameter name
+)
+
+# Bind a global task property to the context Actor
+unreal.StateTreeService.bind_global_task_property_to_context(
+    st_path,
+    "STT_PatrolManagement",
+    "ActorRef",               # task property to bind
+    "Actor",                  # context name
+    ""                        # context property path (empty = whole object)
+)
+```
+
+#### Full Add + Bind Workflow
+
+```python
+import unreal
+
+st_path = "/Game/StateTree/ST_Cube"
+
+# 1. Check if already present
+info = unreal.StateTreeService.get_state_tree_info(st_path)
+existing = [t.name for t in info.global_tasks]
+
+if "STT PatrolManagement" not in existing:
+    ok = unreal.StateTreeService.add_global_task(st_path, "STT_PatrolManagement")
+    print(f"add_global_task: {ok}")
+    assert ok, "add_global_task returned False"
+
+# 2. Inspect properties
+props = unreal.StateTreeService.get_global_task_property_names(st_path, "STT_PatrolManagement")
+for p in props:
+    print(f"  {p.name}: {p.type} = {p.current_value!r}")
+
+# 3. Bind to root parameter (if PatrolTag root param exists)
+unreal.StateTreeService.bind_global_task_property_to_root_parameter(
+    st_path, "STT_PatrolManagement", "PatrolTag", "PatrolTag")
+
+# 4. Compile and save
+result = unreal.StateTreeService.compile_state_tree(st_path)
+assert result.success, result.errors
+unreal.StateTreeService.save_state_tree(st_path)
+print("Done")
 ```
 
 ### Transitions
@@ -787,6 +895,25 @@ Recommended pattern:
 When a user asks to rename, change, or list "colors" on a StateTree, they mean **theme colors** —
 the editor-only color labels in the StateTree's global color table. Do NOT load the materials skill
 or look for material parameters. Use `get_theme_colors`, `set_state_theme_color`, and `rename_theme_color`.
+
+### ⚠️ Blueprint Global Tasks — Use Name/Path, Not Wrapper Type
+
+`add_global_task` supports Blueprint tasks by name, asset path, or `_C` generated class — the same
+forms as `add_evaluator`. Do NOT pass `"StateTreeBlueprintTaskWrapper"` directly; that's an internal
+struct name and won't resolve to the correct Blueprint class.
+
+```python
+# WRONG — passes the raw wrapper type; the specific Blueprint class won't be set
+unreal.StateTreeService.add_global_task(st_path, "StateTreeBlueprintTaskWrapper")
+
+# CORRECT — any of these forms work
+unreal.StateTreeService.add_global_task(st_path, "STT_PatrolManagement")
+unreal.StateTreeService.add_global_task(st_path, "STT_PatrolManagement_C")
+unreal.StateTreeService.add_global_task(st_path, "/Game/StateTree/Tasks/STT_PatrolManagement")
+```
+
+When inspecting or binding, use the task's display name as it appears in `get_state_tree_info().global_tasks[N].name`
+(e.g. `"STT PatrolManagement"` — no underscore, no `_C`).
 
 ### ⚠️ Blueprint Task Struct Name in get_task_property_names / bind_task_property_to_context
 
