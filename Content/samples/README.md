@@ -4,7 +4,7 @@ This folder contains a project-generic template for AI coding assistant instruct
 
 ## Files
 
-- **instructions.sample.md** - Template instructions for any AI coding assistant
+- **AGENTS.md.sample** - Template instructions for any AI coding assistant
 
 ## What's Included
 
@@ -26,14 +26,24 @@ Create `CLAUDE.md` at your Unreal project root with a single import line:
 
 <!-- Add project-specific notes here -->
 
-@Plugins/VibeUE/Content/samples/instructions.sample.md
+@Plugins/VibeUE/Content/samples/AGENTS.md.sample
 ```
 
 The `@` directive tells Claude Code to inline the file automatically. No copying needed — updates to the sample are picked up immediately.
 
+### Generic agents (AGENTS.md)
+
+Copy `AGENTS.md.sample` to your project root as `AGENTS.md`:
+
+```
+AGENTS.md
+```
+
+Read by OpenAI Codex, Cursor, and other agents that follow the AGENTS.md convention.
+
 ### GitHub Copilot — Copy Required
 
-Copilot does not support file imports. Copy `instructions.sample.md` to:
+Copilot does not support file imports. Copy `AGENTS.md.sample` to:
 
 ```
 .github/copilot-instructions.md
@@ -43,7 +53,7 @@ You'll need to re-copy whenever the sample is updated.
 
 ### Cursor — Copy Required
 
-Cursor does not support file imports. Copy `instructions.sample.md` to:
+Cursor does not support file imports. Copy `AGENTS.md.sample` to:
 
 ```
 .cursor/rules/vibeue.mdc
@@ -55,7 +65,7 @@ You'll need to re-copy whenever the sample is updated.
 
 ### Google Antigravity — Copy Required
 
-Antigravity does not support file imports. Copy `instructions.sample.md` to your workspace rules directory:
+Antigravity does not support file imports. Copy `AGENTS.md.sample` to your workspace rules directory:
 
 ```
 .agent/rules/vibeue.md

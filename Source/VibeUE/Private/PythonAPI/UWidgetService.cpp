@@ -1022,7 +1022,31 @@ TSubclassOf<UWidget> UWidgetService::FindWidgetClass(const FString& TypeName)
 		}
 	}
 
-	// Fallback: search Asset Registry for a custom Widget Blueprint by name
+	// Fallback 1: dynamic UClass lookup — finds any native UWidget subclass by name
+	// without requiring it to be in the hardcoded map (e.g. WindowTitleBarArea, etc.)
+	{
+		// Try the bare name first, then with the standard 'U' prefix
+		const FString WithPrefix = FString(TEXT("U")) + TypeName;
+		for (const FString& Candidate : { TypeName, WithPrefix })
+		{
+			// Search all loaded UMG-family packages for the class
+			for (TObjectIterator<UClass> It; It; ++It)
+			{
+				UClass* Class = *It;
+				if (Class->IsChildOf(UWidget::StaticClass()) &&
+					!Class->HasAnyClassFlags(CLASS_Abstract) &&
+					(Class->GetName().Equals(Candidate, ESearchCase::IgnoreCase) ||
+					 Class->GetName().Equals(TypeName, ESearchCase::IgnoreCase)))
+				{
+					TSubclassOf<UWidget> Found(Class);
+					WidgetClassMap.Add(TypeName, Found);
+					return Found;
+				}
+			}
+		}
+	}
+
+	// Fallback 2: search Asset Registry for a custom Widget Blueprint by name
 	IAssetRegistry& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>("AssetRegistry").Get();
 	FARFilter Filter;
 	Filter.ClassPaths.Add(FTopLevelAssetPath(TEXT("/Script/UMGEditor.WidgetBlueprint")));
@@ -1101,48 +1125,79 @@ TArray<FWidgetInfo> UWidgetService::GetHierarchy(const FString& WidgetPath)
 		return Hierarchy;
 	}
 
-	// Build hierarchy recursively
-	TFunction<void(UWidget*, const FString&)> AddWidgetToHierarchy;
-	AddWidgetToHierarchy = [&](UWidget* Widget, const FString& ParentName)
+	// GetAllWidgets uses GetObjectsWithOuter and finds every widget regardless of
+	// slot initialisation state — this correctly handles UContentWidget subclasses
+	// (e.g. WindowWrapper / UWindowTitleBarArea) that return GetChildrenCount()==0
+	// at editor load time even though they have children in the designer.
+	TArray<UWidget*> AllWidgets;
+	WidgetBP->WidgetTree->GetAllWidgets(AllWidgets);
+	AllWidgets.AddUnique(RootWidget);
+
+	// Build a name-keyed info map from the flat list
+	TMap<FString, FWidgetInfo> InfoMap;
+	for (UWidget* Widget : AllWidgets)
 	{
 		if (!Widget)
 		{
-			return;
+			continue;
 		}
 
 		FWidgetInfo Info;
 		Info.WidgetName = Widget->GetName();
 		Info.WidgetClass = Widget->GetClass()->GetName();
-		Info.ParentWidget = ParentName;
 		Info.bIsRootWidget = (Widget == RootWidget);
 		Info.bIsVariable = Widget->bIsVariable;
+		InfoMap.Add(Info.WidgetName, Info);
+	}
 
-		// If it's a panel widget, collect children
-		if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
+	// Wire up parent/children using GetParent() — same approach as ListComponents
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (!Widget)
 		{
-			for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
-			{
-				if (UWidget* Child = PanelWidget->GetChildAt(i))
-				{
-					Info.Children.Add(Child->GetName());
-				}
-			}
+			continue;
 		}
 
-		Hierarchy.Add(Info);
-
-		// Recurse into children
-		if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
+		if (UPanelWidget* Parent = Widget->GetParent())
 		{
-			for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
+			const FString ParentName = Parent->GetName();
+			const FString ChildName = Widget->GetName();
+
+			if (FWidgetInfo* ChildInfo = InfoMap.Find(ChildName))
 			{
-				UWidget* Child = PanelWidget->GetChildAt(i);
-				AddWidgetToHierarchy(Child, Info.WidgetName);
+				ChildInfo->ParentWidget = ParentName;
 			}
+			if (FWidgetInfo* ParentInfo = InfoMap.Find(ParentName))
+			{
+				ParentInfo->Children.AddUnique(ChildName);
+			}
+		}
+	}
+
+	// Emit in depth-first order starting from root so callers get a sensible hierarchy
+	TFunction<void(const FString&)> EmitDepthFirst;
+	EmitDepthFirst = [&](const FString& Name)
+	{
+		FWidgetInfo* Info = InfoMap.Find(Name);
+		if (!Info)
+		{
+			return;
+		}
+		Hierarchy.Add(*Info);
+		InfoMap.Remove(Name); // guard against cycles
+		for (const FString& ChildName : Info->Children)
+		{
+			EmitDepthFirst(ChildName);
 		}
 	};
 
-	AddWidgetToHierarchy(RootWidget, FString());
+	EmitDepthFirst(RootWidget->GetName());
+
+	// Append any widgets not reachable from root (orphans should not exist, but be safe)
+	for (auto& Pair : InfoMap)
+	{
+		Hierarchy.Add(Pair.Value);
+	}
 
 	return Hierarchy;
 }
@@ -1171,6 +1226,10 @@ TArray<FWidgetInfo> UWidgetService::ListComponents(const FString& WidgetPath)
 	TArray<UWidget*> AllWidgets;
 	WidgetBP->WidgetTree->GetAllWidgets(AllWidgets);
 
+	UWidget* RootWidgetLC = WidgetBP->WidgetTree->RootWidget;
+
+	// First pass: build info map keyed by name
+	TMap<FString, FWidgetInfo> InfoMapLC;
 	for (UWidget* Widget : AllWidgets)
 	{
 		if (!Widget)
@@ -1182,27 +1241,38 @@ TArray<FWidgetInfo> UWidgetService::ListComponents(const FString& WidgetPath)
 		Info.WidgetName = Widget->GetName();
 		Info.WidgetClass = Widget->GetClass()->GetName();
 		Info.bIsVariable = Widget->bIsVariable;
-		Info.bIsRootWidget = (Widget == WidgetBP->WidgetTree->RootWidget);
+		Info.bIsRootWidget = (Widget == RootWidgetLC);
+		InfoMapLC.Add(Info.WidgetName, Info);
+	}
 
-		// Get parent
+	// Second pass: wire parent/children via GetParent() so UContentWidget subclasses
+	// (e.g. WindowWrapper) have correct Children arrays, not just ParentWidget strings
+	for (UWidget* Widget : AllWidgets)
+	{
+		if (!Widget)
+		{
+			continue;
+		}
+
 		if (UPanelWidget* Parent = Widget->GetParent())
 		{
-			Info.ParentWidget = Parent->GetName();
-		}
+			const FString ParentName = Parent->GetName();
+			const FString ChildName = Widget->GetName();
 
-		// Get children if panel
-		if (UPanelWidget* PanelWidget = Cast<UPanelWidget>(Widget))
-		{
-			for (int32 i = 0; i < PanelWidget->GetChildrenCount(); ++i)
+			if (FWidgetInfo* ChildInfo = InfoMapLC.Find(ChildName))
 			{
-				if (UWidget* Child = PanelWidget->GetChildAt(i))
-				{
-					Info.Children.Add(Child->GetName());
-				}
+				ChildInfo->ParentWidget = ParentName;
+			}
+			if (FWidgetInfo* ParentInfo = InfoMapLC.Find(ParentName))
+			{
+				ParentInfo->Children.AddUnique(ChildName);
 			}
 		}
+	}
 
-		Components.Add(Info);
+	for (auto& Pair : InfoMapLC)
+	{
+		Components.Add(Pair.Value);
 	}
 
 	return Components;

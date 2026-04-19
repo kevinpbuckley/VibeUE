@@ -1295,6 +1295,9 @@ void FMCPServer::ValidateVibeUEApiKeyAsync()
 
     UE_LOG(LogMCPServer, Log, TEXT("Validating VibeUE API key..."));
 
+    // Record the date of this validation attempt so day-rollover detection starts from now
+    LastValidationDate = FDateTime::Now().ToString(TEXT("%Y-%m-%d"));
+
     TWeakPtr<FMCPServer> WeakThis = Instance;
 
     TSharedRef<IHttpRequest, ESPMode::ThreadSafe> HttpRequest = FHttpModule::Get().CreateRequest();
@@ -1481,9 +1484,20 @@ void FMCPServer::ExportToolManifest() const
 
 void FMCPServer::ProcessPendingRequests()
 {
-    // Process any requests that need to run on game thread
-    // (Currently not used since tool execution happens synchronously)
-    
+    // Re-validate the API key when the calendar day rolls over so each day gets a usage log entry.
+    // Throttled to one date check per minute to avoid overhead at 60 Hz.
+    double Now = FPlatformTime::Seconds();
+    if (Now - LastDayCheckTime >= 60.0)
+    {
+        LastDayCheckTime = Now;
+        FString TodayStr = FDateTime::Now().ToString(TEXT("%Y-%m-%d"));
+        if (!LastValidationDate.IsEmpty() && TodayStr != LastValidationDate)
+        {
+            UE_LOG(LogMCPServer, Log, TEXT("New day detected (%s → %s), re-validating VibeUE API key"), *LastValidationDate, *TodayStr);
+            ValidateVibeUEApiKeyAsync();
+        }
+    }
+
     // Clean up stale SSE connections
     FScopeLock Lock(&SSELock);
     SSEConnections.RemoveAll([](const TSharedPtr<FMCPSSEConnection>& Conn) {

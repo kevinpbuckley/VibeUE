@@ -272,6 +272,12 @@ private:
     mutable bool   bCachedProxyRunning = false;
     mutable double LastProxyCheckTime  = -999.0;
 
+    /** Date string (YYYY-MM-DD) of the last API key validation — used to re-validate on day rollover */
+    FString LastValidationDate;
+
+    /** Wall-clock time of the last day-rollover check — throttled to once per minute */
+    double LastDayCheckTime = -999.0;
+
     /** Singleton instance */
     static TSharedPtr<FMCPServer> Instance;
 };
