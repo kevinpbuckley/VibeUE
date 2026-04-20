@@ -115,6 +115,16 @@ void FModule::StartupModule()
 {
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has started"));
 
+	// Skip all interactive services when running as a commandlet (e.g. -run=Cook).
+	// The MCP HTTP server and Python services keep threads alive that prevent
+	// UnrealEditor-Cmd.exe from exiting cleanly, causing UAT cook timeouts.
+	if (IsRunningCommandlet())
+	{
+		return;
+	}
+
+	bServicesInitialized = true;
+
 	// Clear screenshots directory from previous sessions to save disk space
 	FVibeUEPaths::ClearScreenshotsDir();
 
@@ -136,6 +146,12 @@ void FModule::StartupModule()
 
 void FModule::ShutdownModule()
 {
+	if (!bServicesInitialized)
+	{
+		UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
+		return;
+	}
+
 	// Unregister PreExit callback
 	FCoreDelegates::OnPreExit.RemoveAll(this);
 

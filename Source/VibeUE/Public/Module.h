@@ -24,4 +24,9 @@ public:
 	{
 		return FModuleManager::Get().IsModuleLoaded("VibeUE");
 	}
+
+private:
+	// False when running as a commandlet (cook, etc.) — services are skipped to
+	// avoid keeping UnrealEditor-Cmd.exe alive after the commandlet finishes.
+	bool bServicesInitialized = false;
 }; 
