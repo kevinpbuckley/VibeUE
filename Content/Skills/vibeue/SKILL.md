@@ -3,7 +3,7 @@ name: vibeue
 description: Unreal Engine 5 development using the VibeUE Python API. Use when working
   in Unreal Engine — blueprints, state trees, materials, actors, landscapes, animation,
   niagara, widgets, sound, foliage, data tables, gameplay tags, enhanced input, skeletons,
-  and more. Requires the VibeUE MCP server to be connected.
+  PCG (procedural content generation), and more. Requires the VibeUE MCP server to be connected.
 compatibility: Requires VibeUE MCP server
 ---
 
