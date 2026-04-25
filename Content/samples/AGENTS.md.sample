@@ -142,6 +142,7 @@ json_str = json.dumps(data)
 | `metasounds` | MetaSound Editor | Create and modify MetaSound Source assets — add nodes, wire pins, set defaults, play sounds procedurally |
 | `niagara-emitters` | Niagara Emitters | Configure Niagara emitter internals — modules, renderers, rapid iteration parameters, graph positioning |
 | `niagara-systems` | Niagara Systems | Create and manage Niagara particle systems — system lifecycle, adding/copying emitters, user parameters |
+| `pcg` | Procedural Content Generation (PCG) | Create, inspect, and edit PCG Graph assets — add nodes, configure settings, connect pins, and wire up procedural generation graphs |
 | `project-settings` | Project & Editor Settings | Configure Unreal Engine project settings and editor preferences including UI appearance and toolbar |
 | `screenshots` | Screenshot & Vision | Capture screenshots of the editor window, viewports, and blueprints for AI vision analysis |
 | `skeleton` | Skeleton & Skeletal Mesh | Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints |
