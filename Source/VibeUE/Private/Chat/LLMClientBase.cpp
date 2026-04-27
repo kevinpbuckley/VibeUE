@@ -278,6 +278,8 @@ void FLLMClientBase::ResetStreamingState()
 {
     StreamBuffer.Empty();
     AccumulatedContent.Empty();
+    AccumulatedReasoning.Empty();
+    LastReasoningDetailsJson.Empty();
     LastResponseModel.Empty();
     PendingToolCalls.Empty();
     bToolCallsDetectedInStream = false;
@@ -676,6 +678,20 @@ void FLLMClientBase::ProcessSSEChunk(const FString& JsonData)
                 }
             }
         }
+    }
+
+    // Capture reasoning content delta if present (DeepSeek/OpenAI thinking mode).
+    // Field name varies: DeepSeek direct uses "reasoning_content", OpenRouter
+    // normalizes to "reasoning". Either must be echoed back in the next request
+    // (as "reasoning_content") or the provider returns HTTP 400.
+    FString DeltaReasoning;
+    if (!(*DeltaObj)->TryGetStringField(TEXT("reasoning_content"), DeltaReasoning) || DeltaReasoning.IsEmpty())
+    {
+        (*DeltaObj)->TryGetStringField(TEXT("reasoning"), DeltaReasoning);
+    }
+    if (!DeltaReasoning.IsEmpty())
+    {
+        AccumulatedReasoning += DeltaReasoning;
     }
 
     // Get content if present
@@ -1223,6 +1239,34 @@ void FLLMClientBase::ProcessNonStreamingResponse(const FString& ResponseContent)
         return;
     }
     
+    // Capture reasoning content if present (DeepSeek/OpenAI thinking mode).
+    // Field name varies: DeepSeek direct uses "reasoning_content", OpenRouter
+    // normalizes to "reasoning". Either must be echoed back in the next request
+    // (as "reasoning_content") or the provider returns HTTP 400.
+    FString MessageReasoning;
+    if ((!(*MessageObj)->TryGetStringField(TEXT("reasoning_content"), MessageReasoning) || MessageReasoning.IsEmpty()))
+    {
+        (*MessageObj)->TryGetStringField(TEXT("reasoning"), MessageReasoning);
+    }
+    if (!MessageReasoning.IsEmpty())
+    {
+        AccumulatedReasoning = MessageReasoning;
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Captured reasoning content (%d chars)"), MessageReasoning.Len());
+    }
+
+    // Capture reasoning_details (OpenRouter structured array) — this is the
+    // canonical field that gets forwarded to providers across turns. Stored
+    // as raw JSON for replay.
+    const TArray<TSharedPtr<FJsonValue>>* ReasoningDetailsArray;
+    if ((*MessageObj)->TryGetArrayField(TEXT("reasoning_details"), ReasoningDetailsArray) && ReasoningDetailsArray->Num() > 0)
+    {
+        LastReasoningDetailsJson.Empty();
+        TSharedRef<TJsonWriter<>> DetailsWriter = TJsonWriterFactory<>::Create(&LastReasoningDetailsJson);
+        FJsonSerializer::Serialize(*ReasoningDetailsArray, DetailsWriter);
+        UE_LOG(LogLLMClientBase, Log, TEXT("[NON-STREAM] Captured reasoning_details (%d blocks, %d chars JSON)"),
+            ReasoningDetailsArray->Num(), LastReasoningDetailsJson.Len());
+    }
+
     // ALWAYS extract and display content first, even when tool_calls are present
     // This shows the LLM's reasoning/status message alongside tool execution
     FString Content;
@@ -1681,11 +1725,19 @@ void FLLMClientBase::HandleRequestComplete(FHttpRequestPtr Request, FHttpRespons
         {
             FString RawLogPath = FPaths::ProjectSavedDir() / TEXT("Logs") / TEXT("VibeUE_RawLLM.log");
             // Log summary instead of full response to avoid massive log files from streaming chunks
+            // For non-SSE (JSON) responses, also dump the body so we can verify
+            // fields like reasoning_content / reasoning are actually present.
+            // Skip dumping for SSE streams (event-stream / large chunked text).
+            bool bIsSSE = ContentType.Contains(TEXT("event-stream"));
             FString ResponseLog = FString::Printf(TEXT("\n========== RESPONSE [%s] ==========\nHTTP %d, Content-Type: %s, Length: %d bytes\n"),
                 *FDateTime::Now().ToString(),
                 ResponseCode,
                 *ContentType,
                 ResponseContent.Len());
+            if (!bIsSSE && ResponseContent.Len() < 200000)
+            {
+                ResponseLog += ResponseContent + TEXT("\n");
+            }
             FFileHelper::SaveStringToFile(ResponseLog, *RawLogPath, FFileHelper::EEncodingOptions::ForceUTF8, &IFileManager::Get(), FILEWRITE_Append);
             UE_LOG(LogLLMClientBase, Verbose, TEXT("Response summary logged to: %s"), *RawLogPath);
         }

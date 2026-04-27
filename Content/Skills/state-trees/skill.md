@@ -556,6 +556,16 @@ unreal.StateTreeService.bind_global_task_property_to_context(
     "Actor",                  # context name
     ""                        # context property path (empty = whole object)
 )
+
+# Bind a state task property to a property produced by a global task
+unreal.StateTreeService.bind_task_property_to_global_task_property(
+    st_path,
+    "Peaceful/Patrol",        # state path containing the task to update
+    "STT_MoveToPatrolPoint",  # state task name
+    "PatrolPointManager",     # target property on the state task
+    "STT_PatrolManagement",   # source global task name
+    "PatrolPointManager"      # source property on the global task
+)
 ```
 
 #### Full Add + Bind Workflow
@@ -776,6 +786,14 @@ unreal.StateTreeService.bind_task_property_to_root_parameter(
     st_path, state_path, task_struct,
     "Duration",        # task property
     "IdlingTime"       # root parameter name
+)
+
+# Bind a task property to a property exposed by a global task
+unreal.StateTreeService.bind_task_property_to_global_task_property(
+    st_path, state_path, task_struct,
+    "PatrolPointManager",     # task property
+    "STT_PatrolManagement",   # global task name
+    "PatrolPointManager"      # global task property
 )
 ```
 
@@ -1389,6 +1407,11 @@ unreal.StateTreeService.set_transition_condition_property_value(
 unreal.StateTreeService.bind_enter_condition_property_to_context(
     path, "Root/Idle", "StateTreeObjectIsValidCondition", "Object",
     "Actor", "TargetPawn")
+
+# Bind an enter condition property to a property exposed by a global task
+unreal.StateTreeService.bind_enter_condition_property_to_global_task_property(
+    path, "Peaceful/Patrol", "StateTreeObjectIsValidCondition", "Object",
+    "STT_PatrolManagement", "PatrolPointManager")
 
 # Bind a transition condition property to context data
 unreal.StateTreeService.bind_transition_condition_property_to_context(

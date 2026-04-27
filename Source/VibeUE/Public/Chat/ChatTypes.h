@@ -170,6 +170,14 @@ struct VIBEUE_API FChatMessage
     /** Chain-of-thought reasoning content (from <think> tags, not shown to user) */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
     FString ThinkingContent;
+
+    /** OpenRouter-style structured reasoning blocks captured from the assistant
+     *  response (raw JSON of the "reasoning_details" array). This is the canonical
+     *  field OpenRouter forwards to providers like DeepSeek across turns. The
+     *  flat "reasoning"/"reasoning_content" string fields are stripped before
+     *  forwarding, so we must echo this array back to satisfy thinking-mode models. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
+    FString ReasoningDetailsJson;
     
     /** When the message was sent or received */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Chat")
@@ -301,10 +309,36 @@ struct VIBEUE_API FChatMessage
         {
             JsonObject->SetStringField(TEXT("content"), Content);
         }
-        
+
+        // Echo reasoning back on assistant messages (DeepSeek/OpenAI thinking mode).
+        // The canonical OpenRouter input field is "reasoning_details" (a structured
+        // array) — the only one OpenRouter forwards to providers across turns. The
+        // flat "reasoning"/"reasoning_content" string fields are stripped. We emit
+        // all three for resilience: reasoning_details satisfies OpenRouter, and
+        // the strings cover DeepSeek-direct or other OpenAI-compatible routes.
+        // Without this, DeepSeek v4 rejects with HTTP 400 "reasoning_content must
+        // be passed back to the API".
+        if (Role == TEXT("assistant"))
+        {
+            if (!ReasoningDetailsJson.IsEmpty())
+            {
+                TArray<TSharedPtr<FJsonValue>> DetailsArray;
+                TSharedRef<TJsonReader<>> DetailsReader = TJsonReaderFactory<>::Create(ReasoningDetailsJson);
+                if (FJsonSerializer::Deserialize(DetailsReader, DetailsArray) && DetailsArray.Num() > 0)
+                {
+                    JsonObject->SetArrayField(TEXT("reasoning_details"), DetailsArray);
+                }
+            }
+            if (!ThinkingContent.IsEmpty())
+            {
+                JsonObject->SetStringField(TEXT("reasoning_content"), ThinkingContent);
+                JsonObject->SetStringField(TEXT("reasoning"), ThinkingContent);
+            }
+        }
+
         return JsonObject;
     }
-    
+
     /** Create from JSON (for persistence) */
     static FChatMessage FromJson(const TSharedPtr<FJsonObject>& JsonObject)
     {
@@ -315,6 +349,14 @@ struct VIBEUE_API FChatMessage
             JsonObject->TryGetStringField(TEXT("content"), Message.Content);
             JsonObject->TryGetStringField(TEXT("tool_call_id"), Message.ToolCallId);
             JsonObject->TryGetStringField(TEXT("model_used"), Message.ModelUsed);
+            JsonObject->TryGetStringField(TEXT("reasoning_content"), Message.ThinkingContent);
+            // reasoning_details is an array — read it back as raw JSON for replay
+            const TArray<TSharedPtr<FJsonValue>>* DetailsArray;
+            if (JsonObject->TryGetArrayField(TEXT("reasoning_details"), DetailsArray) && DetailsArray->Num() > 0)
+            {
+                TSharedRef<TJsonWriter<>> DetailsWriter = TJsonWriterFactory<>::Create(&Message.ReasoningDetailsJson);
+                FJsonSerializer::Serialize(*DetailsArray, DetailsWriter);
+            }
             
             FString TimestampStr;
             if (JsonObject->TryGetStringField(TEXT("timestamp"), TimestampStr))

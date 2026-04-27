@@ -123,6 +123,17 @@ private:
     /** Accumulated content from response (for non-streaming or final content) */
     FString AccumulatedContent;
 
+    /** Accumulated reasoning_content from response (DeepSeek/OpenAI thinking-mode field).
+     *  Must be echoed back in the next request for thinking-mode models or they reject
+     *  the call with HTTP 400 "reasoning_content must be passed back to the API". */
+    FString AccumulatedReasoning;
+
+    /** Raw JSON of the OpenRouter "reasoning_details" array from the response.
+     *  This is the canonical field that gets forwarded across turns; the flat
+     *  reasoning string fields are stripped by OpenRouter. Must be echoed back
+     *  on the assistant message for thinking-mode models like DeepSeek v4. */
+    FString LastReasoningDetailsJson;
+
     /** Actual model used by the backend (populated from response JSON "model" field) */
     FString LastResponseModel;
 
@@ -168,6 +179,12 @@ public:
 
     /** Get the actual model used by the backend (e.g. model chosen by auto-router) */
     const FString& GetLastResponseModel() const { return LastResponseModel; }
+
+    /** Get the reasoning_content captured from the last response (empty for non-thinking models) */
+    const FString& GetLastReasoningContent() const { return AccumulatedReasoning; }
+
+    /** Get the raw JSON of the reasoning_details array from the last response (empty if absent) */
+    const FString& GetLastReasoningDetailsJson() const { return LastReasoningDetailsJson; }
     
     /** Check if the last response was incomplete (finish_reason: null with tool intent) */
     bool WasResponseIncomplete() const { return bResponseIncomplete; }
