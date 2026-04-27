@@ -4411,6 +4411,80 @@ bool UStateTreeService::BindTaskPropertyToContext(const FString& AssetPath, cons
 #endif
 }
 
+bool UStateTreeService::BindTaskPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
+	const FString& TaskStructName, const FString& TaskPropertyPath,
+	const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
+	int32 TaskMatchIndex, int32 GlobalTaskMatchIndex)
+{
+	if (TaskPropertyPath.IsEmpty() || GlobalTaskPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToGlobalTaskProperty: TaskPropertyPath and GlobalTaskPropertyPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindTaskPropertyToGlobalTaskProperty: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* TaskNode = FindTaskNodeByStruct(State, TaskStructName, TaskMatchIndex);
+	if (!TaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToGlobalTaskProperty: Task not found in %s for struct '%s' at match index %d"),
+			*StatePath, *TaskStructName, TaskMatchIndex);
+		return false;
+	}
+
+	FStateTreeEditorNode* GlobalTaskNode = FindEditorNodeByStructInArray(EditorData->GlobalTasks, GlobalTaskStructName, GlobalTaskMatchIndex);
+	if (!GlobalTaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToGlobalTaskProperty: Global task '%s' not found at match index %d"),
+			*GlobalTaskStructName, GlobalTaskMatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(GlobalTaskNode->ID, GlobalTaskPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToGlobalTaskProperty: Invalid global task property path: %s"), *GlobalTaskPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(TaskNode->ID, TaskPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindTaskPropertyToGlobalTaskProperty: Invalid task property path: %s"), *TaskPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
 bool UStateTreeService::UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
 	const FString& TaskStructName, const FString& TaskPropertyPath, int32 TaskMatchIndex)
 {
@@ -4907,6 +4981,80 @@ bool UStateTreeService::BindEnterConditionPropertyToContext(const FString& Asset
 	if (!MakeBindingPath(CondNode->ID, ConditionPropertyPath, TargetPath))
 	{
 		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToContext: Invalid condition property path: %s"), *ConditionPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindEnterConditionPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
+	const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
+	int32 ConditionMatchIndex, int32 GlobalTaskMatchIndex)
+{
+	if (ConditionPropertyPath.IsEmpty() || GlobalTaskPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToGlobalTaskProperty: ConditionPropertyPath and GlobalTaskPropertyPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree)
+	{
+		return false;
+	}
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData)
+	{
+		return false;
+	}
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindEnterConditionPropertyToGlobalTaskProperty: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* CondNode = FindEditorNodeByStructInArray(State->EnterConditions, ConditionStructName, ConditionMatchIndex);
+	if (!CondNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToGlobalTaskProperty: Condition '%s' not found in state '%s'"),
+			*ConditionStructName, *StatePath);
+		return false;
+	}
+
+	FStateTreeEditorNode* GlobalTaskNode = FindEditorNodeByStructInArray(EditorData->GlobalTasks, GlobalTaskStructName, GlobalTaskMatchIndex);
+	if (!GlobalTaskNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToGlobalTaskProperty: Global task '%s' not found at match index %d"),
+			*GlobalTaskStructName, GlobalTaskMatchIndex);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(GlobalTaskNode->ID, GlobalTaskPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToGlobalTaskProperty: Invalid global task property path: %s"), *GlobalTaskPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(CondNode->ID, ConditionPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindEnterConditionPropertyToGlobalTaskProperty: Invalid condition property path: %s"), *ConditionPropertyPath);
 		return false;
 	}
 

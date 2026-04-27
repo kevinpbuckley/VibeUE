@@ -739,6 +739,18 @@ public:
 	                                     int32 TaskMatchIndex = -1);
 
 	/**
+	 * Bind a task property to a property exposed by a global task node.
+	 * Use this when a state task should read data produced by a global task in the same StateTree.
+	 * @param TaskMatchIndex Which matching state task to target for the struct type. -1 means the last matching task.
+	 * @param GlobalTaskMatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindTaskPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
+	                                                const FString& TaskStructName, const FString& TaskPropertyPath,
+	                                                const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
+	                                                int32 TaskMatchIndex = -1, int32 GlobalTaskMatchIndex = -1);
+
+	/**
 	 * Remove the property binding on a task property (unbind it).
 	 * After unbinding, the property reverts to its default/unbound value.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
@@ -818,6 +830,18 @@ public:
 	                                                const FString& ContextName = TEXT("Actor"),
 	                                                const FString& ContextPropertyPath = TEXT(""),
 	                                                int32 ConditionMatchIndex = -1);
+
+	/**
+	 * Bind an enter condition property to a property exposed by a global task node.
+	 * Use this when an enter condition should read data produced by a global task in the same StateTree.
+	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
+	 * @param GlobalTaskMatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindEnterConditionPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
+	                                                          const FString& ConditionStructName, const FString& ConditionPropertyPath,
+	                                                          const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
+	                                                          int32 ConditionMatchIndex = -1, int32 GlobalTaskMatchIndex = -1);
 
 	/**
 	 * Bind an enter condition property to a root parameter (e.g. parameter "CanChase" -> condition property "bLeft").

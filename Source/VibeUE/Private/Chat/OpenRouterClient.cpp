@@ -194,6 +194,22 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
         RequestBody->SetObjectField(TEXT("cache_control"), CacheControl);
     }
 
+    // Reasoning blocks (reasoning_details / reasoning_content) are provider-specific.
+    // Each provider returns reasoning in its own encrypted/signed format that only it
+    // can validate. Replaying one provider's reasoning to another causes 400 errors
+    // like "reasoning_content must be passed back to the API". Strip foreign reasoning
+    // by comparing the "provider/" prefix on ModelUsed vs the target ModelId.
+    auto GetProviderPrefix = [](const FString& ModelString) -> FString
+    {
+        int32 SlashIdx;
+        if (ModelString.FindChar(TEXT('/'), SlashIdx))
+        {
+            return ModelString.Left(SlashIdx);
+        }
+        return ModelString;
+    };
+    const FString TargetProvider = GetProviderPrefix(ModelId);
+
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Message : CachedMessages)
     {
@@ -204,6 +220,18 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FOpenRouterClient::BuildHttpReques
         {
             TC.Arguments = SanitizeForLLM(TC.Arguments);
         }
+
+        // Strip reasoning from cross-provider assistant messages.
+        if (Message.Role == TEXT("assistant") && !Message.ModelUsed.IsEmpty() && !TargetProvider.IsEmpty())
+        {
+            const FString MsgProvider = GetProviderPrefix(Message.ModelUsed);
+            if (!MsgProvider.IsEmpty() && MsgProvider != TargetProvider)
+            {
+                SanitizedMessage.ThinkingContent.Empty();
+                SanitizedMessage.ReasoningDetailsJson.Empty();
+            }
+        }
+
         MessagesArray.Add(MakeShared<FJsonValueObject>(SanitizedMessage.ToJson()));
     }
     RequestBody->SetArrayField(TEXT("messages"), MessagesArray);

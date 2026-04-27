@@ -409,6 +409,34 @@ void FChatSession::OnStreamComplete(bool bSuccess)
             }
         }
 
+        // Capture reasoning content (DeepSeek/OpenAI thinking mode). The provider rejects
+        // follow-up requests with HTTP 400 unless this is echoed back on the assistant
+        // message that produced it, so store it on the message for re-serialization.
+        // Inline <think>...</think> extraction above wins for ThinkingContent if both
+        // happened to be present, but reasoning_details is independent and always copied.
+        FString ReasoningFromClient;
+        FString ReasoningDetailsFromClient;
+        if (CurrentProvider == ELLMProvider::VibeUE && VibeUEClient.IsValid())
+        {
+            ReasoningFromClient = VibeUEClient->GetLastReasoningContent();
+            ReasoningDetailsFromClient = VibeUEClient->GetLastReasoningDetailsJson();
+        }
+        else if (OpenRouterClient.IsValid())
+        {
+            ReasoningFromClient = OpenRouterClient->GetLastReasoningContent();
+            ReasoningDetailsFromClient = OpenRouterClient->GetLastReasoningDetailsJson();
+        }
+        if (Message.ThinkingContent.IsEmpty() && !ReasoningFromClient.IsEmpty())
+        {
+            Message.ThinkingContent = ReasoningFromClient;
+            UE_LOG(LogChatSession, Log, TEXT("Captured reasoning string (%d chars) for replay"), ReasoningFromClient.Len());
+        }
+        if (!ReasoningDetailsFromClient.IsEmpty())
+        {
+            Message.ReasoningDetailsJson = ReasoningDetailsFromClient;
+            UE_LOG(LogChatSession, Log, TEXT("Captured reasoning_details (%d chars JSON) for replay"), ReasoningDetailsFromClient.Len());
+        }
+
         Message.bIsStreaming = false;
         OnMessageUpdated.ExecuteIfBound(CurrentStreamingMessageIndex, Message);
     }

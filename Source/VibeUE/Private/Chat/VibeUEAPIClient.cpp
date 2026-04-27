@@ -83,6 +83,25 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         return nullptr;
     }
 
+    // Reasoning blocks (reasoning_details / reasoning_content) are provider-specific.
+    // Each provider returns reasoning in its own encrypted/signed format that only it
+    // can validate (xAI returns "xai-responses-v1" encrypted blobs, DeepSeek expects
+    // its own "reasoning_content" string, Anthropic uses signed thinking blocks, etc.).
+    // Replaying one provider's reasoning to another provider causes 400 errors like
+    // "reasoning_content must be passed back to the API" because the receiver discards
+    // the foreign blocks and then sees the assistant turn as missing reasoning.
+    // Extract the provider prefix from "provider/model" model IDs to gate replay.
+    auto GetProviderPrefix = [](const FString& ModelString) -> FString
+    {
+        int32 SlashIdx;
+        if (ModelString.FindChar(TEXT('/'), SlashIdx))
+        {
+            return ModelString.Left(SlashIdx);
+        }
+        return ModelString;
+    };
+    const FString TargetProvider = GetProviderPrefix(ModelId);
+
     // Build messages array
     TArray<TSharedPtr<FJsonValue>> MessagesArray;
     for (const FChatMessage& Msg : Messages)
@@ -90,7 +109,18 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
         // Sanitize message content before serialization
         FChatMessage SanitizedMessage = Msg;
         SanitizedMessage.Content = SanitizeForLLM(Msg.Content);
-        
+
+        // Strip reasoning from cross-provider assistant messages.
+        if (Msg.Role == TEXT("assistant") && !Msg.ModelUsed.IsEmpty() && !TargetProvider.IsEmpty())
+        {
+            const FString MsgProvider = GetProviderPrefix(Msg.ModelUsed);
+            if (!MsgProvider.IsEmpty() && MsgProvider != TargetProvider)
+            {
+                SanitizedMessage.ThinkingContent.Empty();
+                SanitizedMessage.ReasoningDetailsJson.Empty();
+            }
+        }
+
         // Use ToJson() for consistent serialization (supports multimodal content)
         MessagesArray.Add(MakeShared<FJsonValueObject>(SanitizedMessage.ToJson()));
     }

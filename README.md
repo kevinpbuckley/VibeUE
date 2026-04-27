@@ -1411,6 +1411,7 @@ Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place 
 - `set_task_property_value_detailed(...)` - Set task property with structured result (failure reason + readback value)
 - `bind_task_property_to_root_parameter(asset_path, state_path, task_struct_name, task_property_path, parameter_path, task_match_index)` - Bind task property to a root parameter
 - `bind_task_property_to_context(asset_path, state_path, task_struct_name, task_property_path, context_name, context_property_path, task_match_index)` - Bind task property to context data
+- `bind_task_property_to_global_task_property(asset_path, state_path, task_struct_name, task_property_path, global_task_struct_name, global_task_property_path, task_match_index, global_task_match_index)` - Bind a state task property to a property on a global task
 - `unbind_task_property(asset_path, state_path, task_struct_name, task_property_path, task_match_index)` - Remove a task property binding
 
 **Evaluators & Global Tasks:**
@@ -1425,6 +1426,9 @@ Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place 
 - `remove_global_task(asset_path, task_struct_name, match_index)` - Remove a global task
 - `get_global_task_property_names(asset_path, task_struct_name, match_index)` - Get global task properties
 - `set_global_task_property_value(asset_path, task_struct_name, property_path, value, match_index)` - Set global task property
+- `bind_global_task_property_to_root_parameter(asset_path, task_struct_name, task_property_path, parameter_path, match_index)` - Bind global task property to a root parameter
+- `bind_global_task_property_to_context(asset_path, task_struct_name, task_property_path, context_name, context_property_path, match_index)` - Bind global task property to context data
+- `unbind_global_task_property(asset_path, task_struct_name, task_property_path, match_index)` - Remove a global task property binding
 
 **Enter Conditions:**
 - `add_enter_condition(asset_path, state_path, condition_struct_name)` - Add an enter condition to a state
@@ -1433,6 +1437,7 @@ Use `set_state_type`, `set_linked_subtree`, and `set_linked_asset` for in-place 
 - `get_enter_condition_property_names(asset_path, state_path, condition_struct_name, condition_match_index)` - Discover condition properties
 - `set_enter_condition_property_value(asset_path, state_path, condition_struct_name, property_path, value, condition_match_index)` - Set a condition property
 - `bind_enter_condition_property_to_context(asset_path, state_path, condition_struct_name, condition_property_path, context_name, context_property_path, condition_match_index)` - Bind an enter condition property to context data
+- `bind_enter_condition_property_to_global_task_property(asset_path, state_path, condition_struct_name, condition_property_path, global_task_struct_name, global_task_property_path, condition_match_index, global_task_match_index)` - Bind an enter condition property to a property on a global task
 - `bind_enter_condition_property_to_root_parameter(asset_path, state_path, condition_struct_name, condition_property_path, parameter_path, condition_match_index)` - Bind an enter condition property to a root parameter
 - `unbind_enter_condition_property(asset_path, state_path, condition_struct_name, condition_property_path, condition_match_index)` - Remove an enter condition property binding
 
