@@ -989,7 +989,7 @@ for n in nodes:
 
 ### Auto-Layout (`auto_layout_graph`)
 
-`auto_layout_graph` arranges all nodes in a graph using a Sugiyama-style layered layout (vendored from [howaajin/graphformatter](https://github.com/howaajin/graphformatter), MIT). The pipeline:
+`auto_layout_graph` arranges nodes in a graph using a Sugiyama-style layered layout (vendored from [howaajin/graphformatter](https://github.com/howaajin/graphformatter), MIT). The pipeline:
 
 1. **Find connected components** — each island of the graph (e.g. an unreferenced `Event Tick` left over from a template) is laid out independently and stacked vertically so islands never overlap.
 2. **Cycle removal** — feedback edges are temporarily removed so the rest of the pipeline sees a DAG.
@@ -997,18 +997,25 @@ for n in nodes:
 4. **Dummy nodes** — long edges that span multiple layers get virtual waypoints so crossing minimization works.
 5. **Crossing minimization** — barycenter-based ordering sweeps minimize edge crossings within each layer.
 6. **X-coordinate assignment** — Brandes-Köpf with the median heuristic produces tight, vertically-aligned columns.
-
-The signature is unchanged:
+7. **Comment-box re-wrap** — comment nodes are excluded from the algorithm, but their pre-layout children are remembered and the comment is resized after layout to wrap the same children at their new positions.
 
 ```python
-unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph")
+# Lay out the entire graph.
+unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph", [])
+
+# Lay out only a subset (selection-style). Pass node GUIDs (the node_id field
+# returned by get_nodes_in_graph). The subset's pre-layout top-left corner is
+# preserved so the rest of the graph stays put.
+nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph")
+selected_ids = [n.node_id for n in nodes if "Move" in n.node_title]
+unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph", selected_ids)
 ```
 
-It returns `(success: bool, error: str)` and is wrapped in a single transaction so users can Ctrl-Z to revert.
+Returns `error: str` (empty on success). Wrapped in a single transaction so users can Ctrl-Z to revert.
 
 **Notes:**
 - Node sizes are estimated from `NodeWidth/NodeHeight` when set, otherwise from title length and pin count — close enough for layout but not pixel-perfect.
-- Comment boxes are placed but not enlarged to wrap their contents (open the editor and Ctrl-A → arrange comments if you need that).
+- Comments without any children inside their pre-layout bounds are left alone (they don't get stranded at the origin).
 - Disconnected nodes (no links to anything) become single-node components and end up stacked at the bottom of the canvas.
 
 ### Make Struct and Make Instanced Struct
