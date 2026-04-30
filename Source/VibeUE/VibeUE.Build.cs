@@ -28,7 +28,9 @@ public class VibeUE : ModuleRules
 		
 		PrivateIncludePaths.AddRange(
 			new string[] {
-				// ... add other private include paths required here ...
+				// Vendored howaajin/graphformatter algorithmic core (MIT). See
+				// Private/ThirdParty/GraphFormatter/LICENSE-GraphFormatter.txt.
+				"VibeUE/Private/ThirdParty/GraphFormatter",
 			}
 		);
 		

@@ -1993,3 +1993,7 @@ MIT License — Copyright © 2025 Kevin Buckley / Buckley Builds LLC
 
 This project is open source and freely available under the [MIT License](LICENSE). You may use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, subject to the license terms.
 
+### Third-Party Components
+
+- **GraphFormatter** — `auto_layout_graph` is powered by a vendored copy of the Sugiyama-style layered layout algorithm from [howaajin/graphformatter](https://github.com/howaajin/graphformatter) (MIT License). The algorithmic core (cycle removal, BFS layering, dummy-node insertion, crossing minimization, Brandes-Köpf X-coordinate assignment) lives under `Source/VibeUE/Private/ThirdParty/GraphFormatter/`. See the bundled `LICENSE-GraphFormatter.txt` for the upstream copyright notice.
+
