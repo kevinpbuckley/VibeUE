@@ -8910,47 +8910,234 @@ bool UBlueprintService::AutoLayoutGraph(
 	const FVector2D PreTopLeft = PreEligibleBounds.bIsValid ? PreEligibleBounds.Min : FVector2D::ZeroVector;
 
 	// ── Configure & build the formatter graph ───────────────────────────
+	// Hierarchical layout: each comment with eligible children becomes a
+	// single SUPER-NODE in the outer graph, with the children laid out
+	// inside it as a sub-graph. The vendored formatter natively supports
+	// this via FFormatterNode::SetSubGraph — Format() recurses into the
+	// inner graph first, then sizes the super-node to its bounding box,
+	// so the outer pass aligns the comment-group as a unit alongside the
+	// non-grouped nodes.
 	FFormatterGraph::PositioningAlgorithm = EGraphFormatterPositioningAlgorithm::EFastAndSimpleMethodMedian;
 	FFormatterGraph::HorizontalSpacing = 100;
 	FFormatterGraph::VerticalSpacing = 80;
 	FFormatterGraph::MaxLayerNodes = 0;
 
-	TArray<TArray<UEdGraphNode*>> Components = FindConnectedComponents(EligibleNodes);
-	if (Components.Num() == 0)
+	const TSet<UEdGraphNode*> EligibleSet(EligibleNodes);
+
+	// (a) For each captured comment whose children intersect the eligible
+	//     set, build an inner FConnectedGraph and wrap it in a super-node.
+	struct FCommentGroup
 	{
+		UEdGraphNode_Comment* Comment;
+		TArray<UEdGraphNode*> EligibleChildren;
+		FFormatterNode* Super;
+		FConnectedGraph* Inner;
+	};
+
+	TArray<FCommentGroup> Groups;
+	TMap<UEdGraphNode*, int32> NodeToGroupIdx; // child node → index into Groups
+	for (const FCapturedComment& Cap : CapturedComments)
+	{
+		if (!Cap.Comment) continue;
+		FCommentGroup G;
+		G.Comment = Cap.Comment;
+		for (UEdGraphNode* Child : Cap.Children)
+		{
+			if (Child && EligibleSet.Contains(Child) && !NodeToGroupIdx.Contains(Child))
+			{
+				G.EligibleChildren.Add(Child);
+			}
+		}
+		if (G.EligibleChildren.Num() == 0) continue;
+
+		const TSet<UEdGraphNode*> ChildSet(G.EligibleChildren);
+		G.Inner = BuildConnectedComponent(G.EligibleChildren, ChildSet);
+		G.Super = new FFormatterNode();
+		G.Super->Guid = FGuid::NewGuid();
+		// Use the comment as the super's "OriginalNode" sentinel so that
+		// FConnectedGraph::GetBoundMap recurses into the inner subgraph
+		// (it skips nodes with null OriginalNode and never visits their
+		// SubGraph children). We discard the comment's own bound entry
+		// later — comments are repositioned by the explicit re-wrap pass.
+		G.Super->OriginalNode = G.Comment;
+		G.Super->SetSubGraph(G.Inner);
+
+		const int32 NewIdx = Groups.Add(G);
+		for (UEdGraphNode* Child : G.EligibleChildren)
+		{
+			NodeToGroupIdx.Add(Child, NewIdx);
+		}
+	}
+
+	// (b) Build standalone FFormatterNodes for eligible non-comment nodes
+	//     that aren't claimed by any group.
+	TMap<UEdGraphPin*, FFormatterPin*> StandalonePinMap;
+	TMap<UEdGraphNode*, FFormatterNode*> StandaloneNodeMap;
+	for (UEdGraphNode* EdNode : EligibleNodes)
+	{
+		if (NodeToGroupIdx.Contains(EdNode)) continue;
+		FFormatterNode* FNode = MakeFormatterNode(EdNode, StandalonePinMap);
+		StandaloneNodeMap.Add(EdNode, FNode);
+	}
+
+	// (c) Build entity adjacency: each "entity" is either a group's super
+	//     or a standalone FFormatterNode. We BFS over UEdGraphNode links to
+	//     find connected components of entities; same-group edges are
+	//     ignored (they live in the inner graph, not the outer one).
+	// Materialize entity tables. Ids: [0..Groups.Num()-1] = groups, then
+	// standalones in insertion order so id↔node lookup is stable & O(1).
+	TArray<UEdGraphNode*> StandaloneById;          // standalone-local index → UEdGraphNode*
+	TArray<FFormatterNode*> StandaloneFNodeById;   // standalone-local index → FFormatterNode*
+	TMap<UEdGraphNode*, int32> StandaloneEntityId; // UEdGraphNode* → global entity id
+	for (auto& Pair : StandaloneNodeMap)
+	{
+		StandaloneEntityId.Add(Pair.Key, Groups.Num() + StandaloneById.Num());
+		StandaloneById.Add(Pair.Key);
+		StandaloneFNodeById.Add(Pair.Value);
+	}
+	auto EntityIdOfFast = [&](UEdGraphNode* N) -> int32
+	{
+		if (const int32* GIdx = NodeToGroupIdx.Find(N)) return *GIdx;
+		if (const int32* SIdx = StandaloneEntityId.Find(N)) return *SIdx;
+		return INDEX_NONE;
+	};
+
+	const int32 EntityCount = Groups.Num() + StandaloneNodeMap.Num();
+	if (EntityCount == 0)
+	{
+		// Nothing to lay out (shouldn't happen — EligibleNodes was non-empty).
 		return true;
 	}
 
-	FFormatterGraph* RootFormatter = nullptr;
-	if (Components.Num() == 1)
+	// Adjacency list of entity ids.
+	TArray<TSet<int32>> EntityAdj;
+	EntityAdj.SetNum(EntityCount);
+	for (UEdGraphNode* EdNode : EligibleNodes)
 	{
-		TSet<UEdGraphNode*> CompSet(Components[0]);
-		RootFormatter = BuildConnectedComponent(Components[0], CompSet);
+		const int32 SrcId = EntityIdOfFast(EdNode);
+		if (SrcId == INDEX_NONE) continue;
+		for (UEdGraphPin* Pin : EdNode->Pins)
+		{
+			if (!Pin) continue;
+			for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+			{
+				if (!LinkedPin) continue;
+				UEdGraphNode* Other = LinkedPin->GetOwningNodeUnchecked();
+				if (!Other) continue;
+				const int32 DstId = EntityIdOfFast(Other);
+				if (DstId == INDEX_NONE || DstId == SrcId) continue;
+				EntityAdj[SrcId].Add(DstId);
+				EntityAdj[DstId].Add(SrcId);
+			}
+		}
+	}
+
+	// Find connected entity-components.
+	TArray<TArray<int32>> EntityComponents;
+	{
+		TArray<bool> Visited; Visited.Init(false, EntityCount);
+		for (int32 i = 0; i < EntityCount; ++i)
+		{
+			if (Visited[i]) continue;
+			TArray<int32> Comp;
+			TArray<int32> Stack; Stack.Push(i); Visited[i] = true;
+			while (Stack.Num() > 0)
+			{
+				const int32 Cur = Stack.Pop();
+				Comp.Add(Cur);
+				for (int32 N : EntityAdj[Cur])
+				{
+					if (!Visited[N]) { Visited[N] = true; Stack.Push(N); }
+				}
+			}
+			EntityComponents.Add(MoveTemp(Comp));
+		}
+	}
+
+	// (d) Build the outer formatter graph(s) — one FConnectedGraph per
+	//     entity-component. Inside each component we add the super-nodes
+	//     and standalone nodes, then wire outer edges (those crossing
+	//     entity boundaries).
+	auto BuildOuterComponentGraph = [&](const TArray<int32>& EntityIds) -> FConnectedGraph*
+	{
+		FConnectedGraph* Outer = new FConnectedGraph(/*InIsVerticalLayout=*/false);
+		TSet<int32> EntitySet(EntityIds);
+		// Add nodes (super or standalone) into the outer graph.
+		for (int32 EId : EntityIds)
+		{
+			if (EId < Groups.Num())
+			{
+				Outer->AddNode(Groups[EId].Super);
+			}
+			else
+			{
+				Outer->AddNode(StandaloneFNodeById[EId - Groups.Num()]);
+			}
+		}
+
+		// Wire outer edges: iterate every output pin of every node covered
+		// by this component, route each edge through Outer->OriginalPinsMap
+		// (which AddNode populated for super proxy pins and standalone pins
+		// alike). Skip same-entity edges and any edge whose target is in a
+		// different component.
+		auto WireFor = [&](UEdGraphNode* SrcNode, int32 SrcEId)
+		{
+			for (UEdGraphPin* SrcPin : SrcNode->Pins)
+			{
+				if (!SrcPin || SrcPin->Direction != EGPD_Output) continue;
+				FFormatterPin** SrcFP = Outer->OriginalPinsMap.Find(SrcPin);
+				if (!SrcFP || !*SrcFP) continue;
+				const float Weight = (SrcPin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) ? 99.0f : 1.0f;
+				for (UEdGraphPin* DstPin : SrcPin->LinkedTo)
+				{
+					if (!DstPin) continue;
+					UEdGraphNode* DstNode = DstPin->GetOwningNodeUnchecked();
+					if (!DstNode) continue;
+					const int32 DstEId = EntityIdOfFast(DstNode);
+					if (DstEId == INDEX_NONE || DstEId == SrcEId) continue;
+					if (!EntitySet.Contains(DstEId)) continue;
+					FFormatterPin** DstFP = Outer->OriginalPinsMap.Find(DstPin);
+					if (!DstFP || !*DstFP) continue;
+					(*SrcFP)->OwningNode->Connect(*SrcFP, *DstFP, Weight);
+				}
+			}
+		};
+
+		for (int32 EId : EntityIds)
+		{
+			if (EId < Groups.Num())
+			{
+				for (UEdGraphNode* Child : Groups[EId].EligibleChildren) WireFor(Child, EId);
+			}
+			else
+			{
+				WireFor(StandaloneById[EId - Groups.Num()], EId);
+			}
+		}
+		return Outer;
+	};
+
+	FFormatterGraph* RootFormatter = nullptr;
+	if (EntityComponents.Num() == 1)
+	{
+		RootFormatter = BuildOuterComponentGraph(EntityComponents[0]);
 	}
 	else
 	{
 		FDisconnectedGraph* Disc = new FDisconnectedGraph();
-		for (TArray<UEdGraphNode*>& Comp : Components)
+		for (const TArray<int32>& Comp : EntityComponents)
 		{
-			TSet<UEdGraphNode*> CompSet(Comp);
-			Disc->AddGraph(BuildConnectedComponent(Comp, CompSet));
+			Disc->AddGraph(BuildOuterComponentGraph(Comp));
 		}
 		RootFormatter = Disc;
 	}
 
 	RootFormatter->Format();
 
-	// Collect post-layout positions per UEdGraphNode.
+	// Collect post-layout positions for ALL real UEdGraphNodes via the
+	// recursive bound-map (it descends into each subgraph and returns
+	// FBox2Ds keyed by OriginalNode).
 	TMap<UEdGraphNode*, FVector2D> Positions;
-	if (Components.Num() == 1)
-	{
-		for (FFormatterNode* FN : RootFormatter->Nodes)
-		{
-			if (!FN || !FN->OriginalNode) continue;
-			Positions.Add(static_cast<UEdGraphNode*>(FN->OriginalNode), FN->GetPosition());
-		}
-	}
-	else
 	{
 		TMap<void*, FBox2D> BoundMap = RootFormatter->GetBoundMap();
 		for (auto& Pair : BoundMap)
@@ -8981,6 +9168,9 @@ bool UBlueprintService::AutoLayoutGraph(
 	{
 		UEdGraphNode* EdNode = Pair.Key;
 		if (!EdNode) continue;
+		// Skip comments — they get positioned by the re-wrap pass below
+		// using their children's NEW bounds (with proper padding).
+		if (EdNode->IsA<UEdGraphNode_Comment>()) continue;
 		const FVector2D Pos = Pair.Value + Translation;
 		EdNode->Modify();
 		EdNode->NodePosX = FMath::RoundToInt(Pos.X);
@@ -9029,9 +9219,10 @@ bool UBlueprintService::AutoLayoutGraph(
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
 	UE_LOG(LogTemp, Log,
-		TEXT("AutoLayoutGraph: placed %d node%s (%d component%s)%s; resized %d comment box%s in %s::%s"),
+		TEXT("AutoLayoutGraph: placed %d node%s (%d component%s, %d comment group%s)%s; resized %d comment box%s in %s::%s"),
 		PlacedCount, PlacedCount == 1 ? TEXT("") : TEXT("s"),
-		Components.Num(), Components.Num() == 1 ? TEXT("") : TEXT("s"),
+		EntityComponents.Num(), EntityComponents.Num() == 1 ? TEXT("") : TEXT("s"),
+		Groups.Num(), Groups.Num() == 1 ? TEXT("") : TEXT("s"),
 		(RequestedGuids.Num() > 0) ? TEXT(" [subset]") : TEXT(""),
 		ResizedCommentCount, ResizedCommentCount == 1 ? TEXT("") : TEXT("es"),
 		*BlueprintPath, *GraphName);
