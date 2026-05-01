@@ -2998,30 +2998,17 @@ public:
 	);
 
 	/**
-	 * Auto-layout nodes in an existing graph using a Sugiyama-style layered
-	 * layout (vendored howaajin/graphformatter, MIT). Does not modify any
-	 * connections or node logic — only positions.
-	 *
-	 * NodeIds: optional list of node GUID strings (FGuid::ToString format).
-	 *   - Empty array → lay out the entire graph.
-	 *   - Non-empty   → lay out only those nodes (selection-style). The
-	 *                   subset's pre-layout top-left corner is preserved so
-	 *                   the rest of the graph stays put.
-	 *
-	 * Comment boxes (UEdGraphNode_Comment) are NOT fed into the layered
-	 * algorithm (they have no pins). Instead, the children of each comment
-	 * are captured from its pre-layout bounds, and after layout the comment
-	 * is resized/moved to wrap the same children in their new positions.
+	 * Auto-layout all nodes in an existing graph.
+	 * Uses topological sort on execution flow + layered positioning.
+	 * Does not modify any connections or node logic — only positions.
 	 *
 	 * Python Usage:
 	 *   unreal.BlueprintService.auto_layout_graph("/Game/BP_Player", "EventGraph")
-	 *   unreal.BlueprintService.auto_layout_graph(bp, "EventGraph", ["A1B2...", "C3D4..."])
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
 	static bool AutoLayoutGraph(
 		const FString& BlueprintPath,
 		const FString& GraphName,
-		const TArray<FString>& NodeIds,
 		FString& OutError
 	);
 

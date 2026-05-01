@@ -8502,7 +8502,7 @@ bool UBlueprintService::BuildGraph(
 	if (bAutoLayout)
 	{
 		FString LayoutError;
-		AutoLayoutGraph(BlueprintPath, GraphName, /*NodeIds=*/TArray<FString>(), LayoutError);
+		AutoLayoutGraph(BlueprintPath, GraphName, LayoutError);
 		if (!LayoutError.IsEmpty())
 		{
 			OutResult.Warnings.Add(FString::Printf(TEXT("Auto-layout warning: %s"), *LayoutError));
@@ -8690,15 +8690,12 @@ namespace
 	// Find all connected components in the UEdGraph using an undirected
 	// flood-fill across pin links. Returns one TArray of nodes per component
 	// (deterministic order: components sorted by their first node's pointer).
-	// Comment nodes are excluded — they have no pins so each would become
-	// its own component, and we handle them separately by wrapping children.
-	static TArray<TArray<UEdGraphNode*>> FindConnectedComponents(const TArray<UEdGraphNode*>& EligibleNodes)
+	static TArray<TArray<UEdGraphNode*>> FindConnectedComponents(UEdGraph* InGraph)
 	{
-		TSet<UEdGraphNode*> EligibleSet(EligibleNodes);
 		TArray<TArray<UEdGraphNode*>> Components;
 		TSet<UEdGraphNode*> Visited;
 
-		for (UEdGraphNode* Seed : EligibleNodes)
+		for (UEdGraphNode* Seed : InGraph->Nodes)
 		{
 			if (!Seed || Visited.Contains(Seed)) continue;
 
@@ -8718,7 +8715,7 @@ namespace
 					{
 						if (!LinkedPin) continue;
 						UEdGraphNode* Other = LinkedPin->GetOwningNodeUnchecked();
-						if (Other && EligibleSet.Contains(Other) && !Visited.Contains(Other))
+						if (Other && !Visited.Contains(Other))
 						{
 							Visited.Add(Other);
 							Stack.Push(Other);
@@ -8731,88 +8728,11 @@ namespace
 
 		return Components;
 	}
-
-	// Capture, for each comment node, the set of non-comment nodes that
-	// currently fall inside its bounds. Returns one entry per comment.
-	// Children are determined by the upstream UE rule: a node is "under" a
-	// comment iff its bounding rect is fully contained within the comment's
-	// rect (we use a small slop tolerance to forgive edge-touching cases).
-	struct FCapturedComment
-	{
-		UEdGraphNode_Comment* Comment;
-		TArray<UEdGraphNode*> Children;
-		FVector2D OriginalTopLeft;
-	};
-
-	static FBox2D GetNodeBoundsApprox(const UEdGraphNode* Node)
-	{
-		const float W = Node->NodeWidth  > 0 ? static_cast<float>(Node->NodeWidth)  : 256.0f;
-		const float H = Node->NodeHeight > 0 ? static_cast<float>(Node->NodeHeight) : 128.0f;
-		const FVector2D Min(static_cast<float>(Node->NodePosX), static_cast<float>(Node->NodePosY));
-		return FBox2D(Min, Min + FVector2D(W, H));
-	}
-
-	static TArray<FCapturedComment> CaptureCommentChildren(
-		const TArray<UEdGraphNode*>& AllNodes,
-		const TArray<UEdGraphNode_Comment*>& Comments)
-	{
-		TArray<FCapturedComment> Captured;
-		Captured.Reserve(Comments.Num());
-
-		// Sort comments by area descending so a node lands in the smallest
-		// containing comment when nested. (Same heuristic upstream uses.)
-		TArray<UEdGraphNode_Comment*> SortedComments = Comments;
-		SortedComments.Sort([](const UEdGraphNode_Comment& A, const UEdGraphNode_Comment& B)
-		{
-			const float AreaA = static_cast<float>(A.NodeWidth) * static_cast<float>(A.NodeHeight);
-			const float AreaB = static_cast<float>(B.NodeWidth) * static_cast<float>(B.NodeHeight);
-			return AreaA > AreaB; // larger first
-		});
-
-		// Track which comment each node has been assigned to (smallest wins
-		// because we iterate large→small and overwrite).
-		TMap<UEdGraphNode*, UEdGraphNode_Comment*> Assignment;
-		for (UEdGraphNode_Comment* C : SortedComments)
-		{
-			if (!C) continue;
-			const FBox2D CBox = GetNodeBoundsApprox(C);
-			for (UEdGraphNode* N : AllNodes)
-			{
-				if (!N || N == C || N->IsA<UEdGraphNode_Comment>()) continue;
-				const FBox2D NBox = GetNodeBoundsApprox(N);
-				const bool bContained =
-					NBox.Min.X >= CBox.Min.X - 1.0f && NBox.Min.Y >= CBox.Min.Y - 1.0f &&
-					NBox.Max.X <= CBox.Max.X + 1.0f && NBox.Max.Y <= CBox.Max.Y + 1.0f;
-				if (bContained)
-				{
-					Assignment.Add(N, C);
-				}
-			}
-		}
-
-		for (UEdGraphNode_Comment* C : Comments)
-		{
-			if (!C) continue;
-			FCapturedComment Cap;
-			Cap.Comment = C;
-			Cap.OriginalTopLeft = FVector2D(static_cast<float>(C->NodePosX), static_cast<float>(C->NodePosY));
-			for (auto& Pair : Assignment)
-			{
-				if (Pair.Value == C)
-				{
-					Cap.Children.Add(Pair.Key);
-				}
-			}
-			Captured.Add(MoveTemp(Cap));
-		}
-		return Captured;
-	}
 }
 
 bool UBlueprintService::AutoLayoutGraph(
 	const FString& BlueprintPath,
 	const FString& GraphName,
-	const TArray<FString>& NodeIds,
 	FString& OutError)
 {
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
@@ -8838,84 +8758,17 @@ bool UBlueprintService::AutoLayoutGraph(
 		return true; // Nothing to layout
 	}
 
-	// ── Build the eligible-node set ─────────────────────────────────────
-	// If the caller provided NodeIds, lay out only that subset; otherwise
-	// lay out every non-comment node in the graph. Either way, comment
-	// nodes are excluded from the algorithm and resized to wrap children
-	// after the layout pass.
-	TSet<FGuid> RequestedGuids;
-	if (NodeIds.Num() > 0)
-	{
-		for (const FString& Id : NodeIds)
-		{
-			FGuid Parsed;
-			if (FGuid::Parse(Id, Parsed))
-			{
-				RequestedGuids.Add(Parsed);
-			}
-		}
-		if (RequestedGuids.Num() == 0)
-		{
-			OutError = TEXT("None of the supplied node_ids parsed as a valid FGuid");
-			return false;
-		}
-	}
-
-	TArray<UEdGraphNode*> EligibleNodes;
-	TArray<UEdGraphNode_Comment*> Comments;
-	for (UEdGraphNode* N : Graph->Nodes)
-	{
-		if (!N) continue;
-		if (UEdGraphNode_Comment* AsComment = Cast<UEdGraphNode_Comment>(N))
-		{
-			Comments.Add(AsComment);
-			continue;
-		}
-		if (RequestedGuids.Num() > 0 && !RequestedGuids.Contains(N->NodeGuid))
-		{
-			continue;
-		}
-		EligibleNodes.Add(N);
-	}
-
-	if (EligibleNodes.Num() == 0)
-	{
-		OutError = TEXT("No layoutable nodes (the graph has only comment boxes or the subset was empty)");
-		return false;
-	}
-
-	// Capture comment→children mapping from PRE-layout positions so we can
-	// re-wrap each comment around the same children after the layout pass.
-	// All comment nodes in the graph are considered, regardless of whether
-	// the caller passed a subset.
-	TArray<UEdGraphNode*> AllNonCommentNodes;
-	for (UEdGraphNode* N : Graph->Nodes)
-	{
-		if (N && !N->IsA<UEdGraphNode_Comment>())
-		{
-			AllNonCommentNodes.Add(N);
-		}
-	}
-	const TArray<FCapturedComment> CapturedComments = CaptureCommentChildren(AllNonCommentNodes, Comments);
-
-	// Remember pre-layout top-left of the eligible set so a subset layout
-	// can be translated back to where the user expects it (otherwise the
-	// algorithm would dump everything at the origin).
-	FBox2D PreEligibleBounds(ForceInit);
-	for (UEdGraphNode* N : EligibleNodes)
-	{
-		const FBox2D B = GetNodeBoundsApprox(N);
-		if (PreEligibleBounds.bIsValid) { PreEligibleBounds += B; } else { PreEligibleBounds = B; }
-	}
-	const FVector2D PreTopLeft = PreEligibleBounds.bIsValid ? PreEligibleBounds.Min : FVector2D::ZeroVector;
-
-	// ── Configure & build the formatter graph ───────────────────────────
+	// Configure the vendored layout to use the FAS Median strategy (Brandes-Köpf
+	// with median pick), which is the upstream default and gives the best
+	// general-purpose results on Blueprint-shaped graphs.
 	FFormatterGraph::PositioningAlgorithm = EGraphFormatterPositioningAlgorithm::EFastAndSimpleMethodMedian;
 	FFormatterGraph::HorizontalSpacing = 100;
 	FFormatterGraph::VerticalSpacing = 80;
-	FFormatterGraph::MaxLayerNodes = 0;
+	FFormatterGraph::MaxLayerNodes = 0; // 0 = no per-layer cap; the upstream default of 5 is for editor UX
 
-	TArray<TArray<UEdGraphNode*>> Components = FindConnectedComponents(EligibleNodes);
+	// Component-aware build: each connected component becomes a FConnectedGraph,
+	// and a FDisconnectedGraph stacks them vertically so islands never overlap.
+	TArray<TArray<UEdGraphNode*>> Components = FindConnectedComponents(Graph);
 	if (Components.Num() == 0)
 	{
 		return true;
@@ -8940,7 +8793,10 @@ bool UBlueprintService::AutoLayoutGraph(
 
 	RootFormatter->Format();
 
-	// Collect post-layout positions per UEdGraphNode.
+	// Collect post-layout positions per UEdGraphNode. For a single-component
+	// graph the FConnectedGraph holds its FFormatterNodes directly; for the
+	// disconnected case we use GetBoundMap() (FDisconnectedGraph aggregates
+	// across all child graphs and keys by OriginalNode pointer).
 	TMap<UEdGraphNode*, FVector2D> Positions;
 	if (Components.Num() == 1)
 	{
@@ -8963,16 +8819,9 @@ bool UBlueprintService::AutoLayoutGraph(
 	}
 
 	const FBox2D TotalBound = RootFormatter->GetTotalBound();
-	const FVector2D LayoutOrigin = TotalBound.bIsValid ? TotalBound.Min : FVector2D::ZeroVector;
+	const FVector2D Origin = TotalBound.bIsValid ? TotalBound.Min : FVector2D::ZeroVector;
+	const FVector2D Margin(100.0f, 100.0f);
 
-	// Translation: full-graph layout uses a fixed (100,100) margin from the
-	// origin so the result lives in positive canvas space; subset layout
-	// translates so the subset's pre-layout top-left is preserved.
-	const FVector2D Translation = (RequestedGuids.Num() > 0)
-		? (PreTopLeft - LayoutOrigin)
-		: (FVector2D(100.0f, 100.0f) - LayoutOrigin);
-
-	// ── Apply ───────────────────────────────────────────────────────────
 	FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "AutoLayoutGraph", "Auto-Layout Graph"));
 	Graph->Modify();
 
@@ -8981,59 +8830,20 @@ bool UBlueprintService::AutoLayoutGraph(
 	{
 		UEdGraphNode* EdNode = Pair.Key;
 		if (!EdNode) continue;
-		const FVector2D Pos = Pair.Value + Translation;
+		const FVector2D Pos = Pair.Value - Origin + Margin;
 		EdNode->Modify();
 		EdNode->NodePosX = FMath::RoundToInt(Pos.X);
 		EdNode->NodePosY = FMath::RoundToInt(Pos.Y);
 		++PlacedCount;
 	}
 
-	RootFormatter->DetachAndDestroy();
+	RootFormatter->DetachAndDestroy(); // also deletes the object
 	RootFormatter = nullptr;
-
-	// ── Re-wrap comment boxes around their (now-moved) children ─────────
-	// Padding mirrors the editor's default comment "fence" inset.
-	constexpr float CommentPadX     = 30.0f;
-	constexpr float CommentPadTop   = 40.0f; // extra room for the title bar
-	constexpr float CommentPadBot   = 30.0f;
-	int32 ResizedCommentCount = 0;
-	for (const FCapturedComment& Cap : CapturedComments)
-	{
-		if (!Cap.Comment) continue;
-
-		// Compute the new bounding box from children's NEW positions.
-		FBox2D Bounds(ForceInit);
-		int32 LiveChildren = 0;
-		for (UEdGraphNode* Child : Cap.Children)
-		{
-			if (!Child || !IsValid(Child)) continue;
-			const FBox2D ChildBox = GetNodeBoundsApprox(Child);
-			if (Bounds.bIsValid) { Bounds += ChildBox; } else { Bounds = ChildBox; }
-			++LiveChildren;
-		}
-
-		if (LiveChildren == 0)
-		{
-			// No children → leave the comment alone (don't strand it at 0,0).
-			continue;
-		}
-
-		Cap.Comment->Modify();
-		Cap.Comment->NodePosX = FMath::RoundToInt(Bounds.Min.X - CommentPadX);
-		Cap.Comment->NodePosY = FMath::RoundToInt(Bounds.Min.Y - CommentPadTop);
-		Cap.Comment->NodeWidth  = FMath::RoundToInt((Bounds.Max.X - Bounds.Min.X) + 2.0f * CommentPadX);
-		Cap.Comment->NodeHeight = FMath::RoundToInt((Bounds.Max.Y - Bounds.Min.Y) + CommentPadTop + CommentPadBot);
-		++ResizedCommentCount;
-	}
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 
-	UE_LOG(LogTemp, Log,
-		TEXT("AutoLayoutGraph: placed %d node%s (%d component%s)%s; resized %d comment box%s in %s::%s"),
-		PlacedCount, PlacedCount == 1 ? TEXT("") : TEXT("s"),
-		Components.Num(), Components.Num() == 1 ? TEXT("") : TEXT("s"),
-		(RequestedGuids.Num() > 0) ? TEXT(" [subset]") : TEXT(""),
-		ResizedCommentCount, ResizedCommentCount == 1 ? TEXT("") : TEXT("es"),
+	UE_LOG(LogTemp, Log, TEXT("AutoLayoutGraph: Sugiyama layout placed %d nodes (%d component%s) in %s::%s"),
+		PlacedCount, Components.Num(), Components.Num() == 1 ? TEXT("") : TEXT("s"),
 		*BlueprintPath, *GraphName);
 
 	return true;
