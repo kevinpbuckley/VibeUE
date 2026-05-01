@@ -997,7 +997,7 @@ for n in nodes:
 4. **Dummy nodes** — long edges that span multiple layers get virtual waypoints so crossing minimization works.
 5. **Crossing minimization** — barycenter-based ordering sweeps minimize edge crossings within each layer.
 6. **X-coordinate assignment** — Brandes-Köpf with the median heuristic produces tight, vertically-aligned columns.
-7. **Comment-aware hierarchical layout** — comment boxes are not flat-excluded; each comment with at least one eligible child is wrapped as a single SUPER-NODE in the outer layout, with the children's positions decided by an inner layout pass. The outer pass then treats the comment-group as one unit when arranging it alongside the rest of the nodes, so the comment box and everything inside it move together. After layout each comment is resized to wrap its children with editor-default padding (30px sides, 40px top, 30px bottom).
+7. **Comment-box re-wrap** — comment nodes are excluded from the algorithm, but their pre-layout children are remembered and the comment is resized after layout to wrap the same children at their new positions.
 
 ```python
 # Lay out the entire graph.
