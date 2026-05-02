@@ -225,6 +225,10 @@ struct FStateTreeStateInfo
 	/** Operand per enter condition: "Copy" (first), "And", "Or" */
 	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
 	TArray<FString> EnterConditionOperands;
+
+	/** Utility AI considerations for this state (StructType gives the consideration struct name, e.g. "FStateTreeConstantConsideration") */
+	UPROPERTY(BlueprintReadWrite, Category = "StateTree")
+	TArray<FStateTreeNodeInfo> Considerations;
 };
 
 /**
@@ -536,6 +540,62 @@ public:
 	/** Set the utility weight on a state (used when parent uses Utility-based selection). */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool SetStateWeight(const FString& AssetPath, const FString& StatePath, float Weight);
+
+	// ---- Utility AI Considerations ----
+
+	/** Get all registered consideration struct names (Constant, FloatInput, EnumInput, plus any custom). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FString> GetAvailableConsiderationTypes();
+
+	/**
+	 * Add a utility consideration to a state.
+	 * @param ConsiderationStructName  "Constant", "FloatInput", "EnumInput", or full struct name like "FStateTreeConstantConsideration"
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool AddConsideration(const FString& AssetPath, const FString& StatePath, const FString& ConsiderationStructName);
+
+	/** Remove a consideration by its 0-based index in the state's Considerations array. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool RemoveConsideration(const FString& AssetPath, const FString& StatePath, int32 ConsiderationIndex);
+
+	/** Get all editable properties on a consideration node (node struct + instance data). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FStateTreePropertyInfo> GetConsiderationPropertyNames(const FString& AssetPath, const FString& StatePath,
+	                                                                     const FString& ConsiderationStructName, int32 MatchIndex = -1);
+
+	/** Set a property value on a consideration node. */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool SetConsiderationPropertyValue(const FString& AssetPath, const FString& StatePath,
+	                                          const FString& ConsiderationStructName, const FString& PropertyPath,
+	                                          const FString& Value, int32 MatchIndex = -1);
+
+	/**
+	 * Bind a consideration property to context data (e.g. for FloatInput.Input or EnumInput.Input).
+	 * Leave ContextPropertyPath empty to bind the whole context object.
+	 * @param MatchIndex  Which matching consideration to target. -1 means the last matching one.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindConsiderationPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	                                               const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
+	                                               const FString& ContextName = TEXT("Actor"),
+	                                               const FString& ContextPropertyPath = TEXT(""),
+	                                               int32 MatchIndex = -1);
+
+	/**
+	 * Bind a consideration property to a root parameter.
+	 * @param MatchIndex  Which matching consideration to target. -1 means the last matching one.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool BindConsiderationPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	                                                     const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
+	                                                     const FString& ParameterPath,
+	                                                     int32 MatchIndex = -1);
+
+	/** Remove the property binding on a consideration property (unbind it). */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static bool UnbindConsiderationProperty(const FString& AssetPath, const FString& StatePath,
+	                                        const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
+	                                        int32 MatchIndex = -1);
 
 	/** Set whether a task's completion contributes to the owning state's completion. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
