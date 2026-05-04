@@ -42,6 +42,85 @@
 #include "Dom/JsonObject.h"
 #include "Dom/JsonValue.h"
 #include "Engine/Texture2D.h"
+#include "MaterialShared.h"
+#include "RHIDefinitions.h"
+
+// =================================================================
+// Diagnostics
+// =================================================================
+
+FMaterialDiagnostics UMaterialNodeService::GetMaterialDiagnostics(const FString& MaterialPath)
+{
+	FMaterialDiagnostics Result;
+
+	UMaterial* Material = LoadMaterialAsset(MaterialPath);
+	if (!Material)
+	{
+		return Result; // bSuccess stays false
+	}
+	Result.bSuccess = true;
+
+	// Force the latest compile state.
+	Material->ForceRecompileForRendering();
+
+	// Compile status / errors via the active material resource.
+	const EShaderPlatform ShaderPlatform = GMaxRHIShaderPlatform;
+	if (const FMaterialResource* Resource = Material->GetMaterialResource(ShaderPlatform))
+	{
+		const TArray<FString>& Errors = Resource->GetCompileErrors();
+		Result.CompileErrors = Errors;
+		Result.bIsCompiledOk = Errors.Num() == 0 && !Material->IsCompilingOrHadCompileError(ShaderPlatform);
+	}
+	else
+	{
+		Result.bIsCompiledOk = !Material->IsCompilingOrHadCompileError(ShaderPlatform);
+	}
+
+	// Referenced textures from the compiled shader (this is the reliable source of truth —
+	// `MaterialEditingLibrary::GetUsedTextures` returns 0 for many graphs even though the
+	// shader actually samples the textures).
+	TArray<UTexture*> Textures;
+	Material->GetUsedTextures(Textures, TOptional<EMaterialQualityLevel::Type>(), TOptional<EShaderPlatform>());
+	for (UTexture* Tex : Textures)
+	{
+		if (Tex)
+		{
+			Result.ReferencedTexturePaths.Add(Tex->GetPathName());
+		}
+	}
+
+	// Walk the graph for node-type counts.
+	TArray<UMaterialExpression*> AllExpr;
+	Material->GetAllExpressionsInMaterialAndFunctionsOfType<UMaterialExpression>(AllExpr);
+	Result.ExpressionCount = AllExpr.Num();
+
+	for (UMaterialExpression* E : AllExpr)
+	{
+		if (!E) continue;
+		if (E->IsA<UMaterialExpressionTextureSample>())
+		{
+			++Result.TextureSampleCount;
+		}
+		if (E->IsA<UMaterialExpressionTextureObjectParameter>())
+		{
+			++Result.TextureObjectParameterCount;
+		}
+		if (E->IsA<UMaterialExpressionMaterialFunctionCall>())
+		{
+			++Result.FunctionCallCount;
+		}
+		if (E->IsA<UMaterialExpressionScalarParameter>())
+		{
+			++Result.ScalarParameterCount;
+		}
+		if (E->IsA<UMaterialExpressionVectorParameter>())
+		{
+			++Result.VectorParameterCount;
+		}
+	}
+
+	return Result;
+}
 
 // =================================================================
 // Helper Methods
@@ -880,43 +959,39 @@ bool UMaterialNodeService::ConnectExpressions(
 	{
 		return false;
 	}
-	
+
 	UMaterialExpression* SourceExpr = FindExpressionById(Material, SourceExpressionId);
 	if (!SourceExpr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectExpressions: Source expression not found: %s"), *SourceExpressionId);
 		return false;
 	}
-	
+
 	UMaterialExpression* TargetExpr = FindExpressionById(Material, TargetExpressionId);
 	if (!TargetExpr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectExpressions: Target expression not found: %s"), *TargetExpressionId);
 		return false;
 	}
-	
-	int32 OutputIndex = FindOutputIndexByName(SourceExpr, SourceOutput);
-	if (OutputIndex < 0)
-	{
-		OutputIndex = 0;
-	}
-	
-	FExpressionInput* InputPtr = FindInputByName(TargetExpr, TargetInput);
-	if (!InputPtr)
-	{
-		TArray<FString> ValidInputs = GetExpressionInputNames(TargetExpr);
-		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectExpressions: Input '%s' not found. Valid inputs: %s"),
-			*TargetInput, *FString::Join(ValidInputs, TEXT(", ")));
-		return false;
-	}
-	
+
 	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Connect Material Expressions", "Connect Material Expressions"));
 	Material->Modify();
-	
-	InputPtr->Connect(OutputIndex, SourceExpr);
-	
+
+	// Delegate to UE's official API. This correctly handles MaterialFunctionCall inputs
+	// (which our previous Connect()-on-FExpressionInput path failed to wire properly,
+	// producing phantom connections that the shader compiler ignored).
+	const bool bConnected = UMaterialEditingLibrary::ConnectMaterialExpressions(
+		SourceExpr, SourceOutput, TargetExpr, TargetInput);
+
+	if (!bConnected)
+	{
+		const TArray<FString> ValidInputs = GetExpressionInputNames(TargetExpr);
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::ConnectExpressions: ConnectMaterialExpressions returned false. Source out='%s' Target in='%s'. Valid inputs: %s"),
+			*SourceOutput, *TargetInput, *FString::Join(ValidInputs, TEXT(", ")));
+		return false;
+	}
+
 	RefreshMaterialGraph(Material);
-	
 	return true;
 }
 
@@ -1687,18 +1762,18 @@ int32 UMaterialNodeService::BatchConnectExpressions(
 			continue;
 		}
 
-		int32 OutputIndex = FindOutputIndexByName(SourceExpr, SourceOutputs[i]);
-		if (OutputIndex < 0) OutputIndex = 0;
-
-		FExpressionInput* InputPtr = FindInputByName(TargetExpr, TargetInputs[i]);
-		if (!InputPtr)
+		// Use UE's official ConnectMaterialExpressions (same fix as ConnectExpressions —
+		// our previous direct-Connect path produced phantom wires for MaterialFunctionCall inputs).
+		if (UMaterialEditingLibrary::ConnectMaterialExpressions(
+				SourceExpr, SourceOutputs[i], TargetExpr, TargetInputs[i]))
 		{
-			UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::BatchConnectExpressions: Input '%s' not found at index %d"), *TargetInputs[i], i);
-			continue;
+			SuccessCount++;
 		}
-
-		InputPtr->Connect(OutputIndex, SourceExpr);
-		SuccessCount++;
+		else
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::BatchConnectExpressions: ConnectMaterialExpressions failed at index %d (out='%s' in='%s')"),
+				i, *SourceOutputs[i], *TargetInputs[i]);
+		}
 	}
 
 	// Single refresh at end

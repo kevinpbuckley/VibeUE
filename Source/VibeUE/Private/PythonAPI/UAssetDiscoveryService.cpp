@@ -174,16 +174,25 @@ bool UAssetDiscoveryService::FindAssetByPath(const FString& AssetPath, FAssetDat
 	// AssetName is just "Asset" (not the full path).
 	TArray<FAssetData> PackageAssets;
 	AssetRegistry->GetAssetsByPackageName(FName(*AssetPath), PackageAssets);
-	if (PackageAssets.Num() > 0)
+	for (const FAssetData& Candidate : PackageAssets)
 	{
-		OutAsset = PackageAssets[0];
+		// Reject empty package shells. After a manage_asset move the asset registry can
+		// retain a "/Script/CoreUObject.Package"-classed entry at the old path with no real
+		// asset behind it, which would otherwise be reported as found with a malformed
+		// asset_name (full path) and object_path ("<package>.<package>").
+		if (Candidate.AssetClassPath == FTopLevelAssetPath(TEXT("/Script/CoreUObject"), TEXT("Package")))
+		{
+			continue;
+		}
+		OutAsset = Candidate;
 		return true;
 	}
 
 	// Fall back to object-path lookup for callers that supply the full ".AssetName" suffix
 	// (e.g. "/Game/Folder/Asset.Asset").
 	FAssetData FoundAsset = AssetRegistry->GetAssetByObjectPath(FSoftObjectPath(AssetPath));
-	if (FoundAsset.IsValid())
+	if (FoundAsset.IsValid()
+		&& FoundAsset.AssetClassPath != FTopLevelAssetPath(TEXT("/Script/CoreUObject"), TEXT("Package")))
 	{
 		OutAsset = FoundAsset;
 		return true;

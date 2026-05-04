@@ -8989,6 +8989,410 @@ bool UBlueprintService::AutoLayoutGraph(
 }
 
 // ────────────────────────────────────────────────────────────────
+// AutoLayoutSelectedNodes
+// ────────────────────────────────────────────────────────────────
+
+bool UBlueprintService::AutoLayoutSelectedNodes(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const TArray<FString>& NodeIds,
+	FString& OutError)
+{
+	if (NodeIds.Num() == 0)
+	{
+		OutError = TEXT("NodeIds is empty — nothing to layout");
+		return false;
+	}
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		OutError = FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		Graph = FindGraph(Blueprint, GraphName);
+	}
+	if (!Graph)
+	{
+		OutError = FString::Printf(TEXT("Graph '%s' not found"), *GraphName);
+		return false;
+	}
+
+	// Build a lookup set from the requested GUIDs
+	TSet<FString> IdSet(NodeIds);
+
+	// Collect only the requested nodes
+	TArray<UEdGraphNode*> LayoutNodes;
+	for (UEdGraphNode* Node : Graph->Nodes)
+	{
+		if (Node && IdSet.Contains(Node->NodeGuid.ToString()))
+		{
+			LayoutNodes.Add(Node);
+		}
+	}
+
+	if (LayoutNodes.Num() == 0)
+	{
+		OutError = TEXT("None of the provided NodeIds matched any nodes in the graph");
+		return false;
+	}
+
+	// Build a fast lookup set of selected node pointers so adjacency stays within the selection
+	TSet<UEdGraphNode*> SelectedSet(LayoutNodes);
+
+	// ── Pass 1: Layer Assignment (longest-path from roots within the selection) ──
+	TMap<UEdGraphNode*, TArray<UEdGraphNode*>> ExecSuccessors;
+	TMap<UEdGraphNode*, TArray<UEdGraphNode*>> ExecPredecessors;
+	TMap<UEdGraphNode*, TArray<UEdGraphNode*>> DataConsumers;
+
+	for (UEdGraphNode* Node : LayoutNodes)
+	{
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (!Pin) continue;
+
+			if (Pin->Direction == EGPD_Output && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+				{
+					if (LinkedPin && LinkedPin->GetOwningNode() && SelectedSet.Contains(LinkedPin->GetOwningNode()))
+					{
+						UEdGraphNode* Target = LinkedPin->GetOwningNode();
+						ExecSuccessors.FindOrAdd(Node).AddUnique(Target);
+						ExecPredecessors.FindOrAdd(Target).AddUnique(Node);
+					}
+				}
+			}
+			else if (Pin->Direction == EGPD_Output && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+			{
+				for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+				{
+					if (LinkedPin && LinkedPin->GetOwningNode() && SelectedSet.Contains(LinkedPin->GetOwningNode()))
+					{
+						DataConsumers.FindOrAdd(Node).AddUnique(LinkedPin->GetOwningNode());
+					}
+				}
+			}
+		}
+	}
+
+	// Identify roots: selected nodes with no incoming exec from another selected node
+	TArray<UEdGraphNode*> Roots;
+	for (UEdGraphNode* Node : LayoutNodes)
+	{
+		bool bHasExecInput = false;
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+			{
+				for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+				{
+					if (LinkedPin && SelectedSet.Contains(LinkedPin->GetOwningNode()))
+					{
+						bHasExecInput = true;
+						break;
+					}
+				}
+			}
+			if (bHasExecInput) break;
+		}
+
+		bool bHasAnyExecPin = false;
+		for (UEdGraphPin* Pin : Node->Pins)
+		{
+			if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+			{
+				bHasAnyExecPin = true;
+				break;
+			}
+		}
+
+		if (!bHasExecInput && bHasAnyExecPin)
+		{
+			Roots.Add(Node);
+		}
+	}
+
+	// BFS to assign exec layers
+	TMap<UEdGraphNode*, int32> NodeLayer;
+	TQueue<UEdGraphNode*> Queue;
+
+	for (UEdGraphNode* Root : Roots)
+	{
+		NodeLayer.Add(Root, 0);
+		Queue.Enqueue(Root);
+	}
+
+	while (!Queue.IsEmpty())
+	{
+		UEdGraphNode* Current;
+		Queue.Dequeue(Current);
+		int32 CurrentLayer = NodeLayer[Current];
+		const TArray<UEdGraphNode*>* Succs = ExecSuccessors.Find(Current);
+		if (Succs)
+		{
+			for (UEdGraphNode* Succ : *Succs)
+			{
+				int32 NewLayer = CurrentLayer + 1;
+				int32* ExistingLayer = NodeLayer.Find(Succ);
+				if (!ExistingLayer || *ExistingLayer < NewLayer)
+				{
+					NodeLayer.Add(Succ, NewLayer);
+					Queue.Enqueue(Succ);
+				}
+			}
+		}
+	}
+
+	// Check if exec-based BFS produced meaningful layering; fall back to data-flow if not
+	bool bExecFlowIsFlat = true;
+	for (auto& Pair : NodeLayer)
+	{
+		if (Pair.Value > 0) { bExecFlowIsFlat = false; break; }
+	}
+
+	if (bExecFlowIsFlat && LayoutNodes.Num() > 1)
+	{
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> DataPredecessors;
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory != UEdGraphSchema_K2::PC_Exec)
+				{
+					for (UEdGraphPin* LinkedPin : Pin->LinkedTo)
+					{
+						if (LinkedPin && LinkedPin->GetOwningNode() && SelectedSet.Contains(LinkedPin->GetOwningNode()))
+						{
+							DataPredecessors.FindOrAdd(Node).AddUnique(LinkedPin->GetOwningNode());
+						}
+					}
+				}
+			}
+		}
+
+		NodeLayer.Empty();
+		TMap<UEdGraphNode*, int32> InDegree;
+		for (UEdGraphNode* Node : LayoutNodes) InDegree.FindOrAdd(Node);
+		for (auto& Pair : DataPredecessors) InDegree.FindOrAdd(Pair.Key) = Pair.Value.Num();
+
+		TQueue<UEdGraphNode*> DataQueue;
+		for (auto& Pair : InDegree)
+		{
+			if (Pair.Value == 0) { NodeLayer.Add(Pair.Key, 0); DataQueue.Enqueue(Pair.Key); }
+		}
+
+		while (!DataQueue.IsEmpty())
+		{
+			UEdGraphNode* Current;
+			DataQueue.Dequeue(Current);
+			int32 CurrentLayer = NodeLayer.FindRef(Current);
+			const TArray<UEdGraphNode*>* Consumers = DataConsumers.Find(Current);
+			if (Consumers)
+			{
+				for (UEdGraphNode* Consumer : *Consumers)
+				{
+					int32 NewLayer = CurrentLayer + 1;
+					int32* ExistingLayer = NodeLayer.Find(Consumer);
+					if (!ExistingLayer || *ExistingLayer < NewLayer)
+						NodeLayer.Add(Consumer, NewLayer);
+					int32& Deg = InDegree.FindOrAdd(Consumer);
+					Deg--;
+					if (Deg <= 0) DataQueue.Enqueue(Consumer);
+				}
+			}
+		}
+
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			if (!NodeLayer.Contains(Node)) NodeLayer.Add(Node, 0);
+		}
+	}
+	else
+	{
+		for (UEdGraphNode* Node : LayoutNodes)
+		{
+			if (NodeLayer.Contains(Node)) continue;
+
+			bool bHasExecPin = false;
+			for (UEdGraphPin* Pin : Node->Pins)
+			{
+				if (Pin && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) { bHasExecPin = true; break; }
+			}
+
+			if (!bHasExecPin)
+			{
+				int32 MinConsumerLayer = INT32_MAX;
+				const TArray<UEdGraphNode*>* Consumers = DataConsumers.Find(Node);
+				if (Consumers)
+				{
+					for (UEdGraphNode* Consumer : *Consumers)
+					{
+						const int32* ConsumerLayer = NodeLayer.Find(Consumer);
+						if (ConsumerLayer && *ConsumerLayer < MinConsumerLayer)
+							MinConsumerLayer = *ConsumerLayer;
+					}
+				}
+				if (MinConsumerLayer == INT32_MAX) MinConsumerLayer = 0;
+				NodeLayer.Add(Node, FMath::Max(0, MinConsumerLayer - 1));
+			}
+			else
+			{
+				NodeLayer.Add(Node, 0);
+			}
+		}
+	}
+
+	// ── Pass 2: Chain identification (flood-fill within selection) ──
+	TMap<UEdGraphNode*, TArray<UEdGraphNode*>> DataProviders;
+	for (auto& Pair : DataConsumers)
+		for (UEdGraphNode* Consumer : Pair.Value)
+			DataProviders.FindOrAdd(Consumer).AddUnique(Pair.Key);
+
+	TMap<UEdGraphNode*, int32> NodeChainId;
+	int32 NumChains = 0;
+	for (UEdGraphNode* StartNode : LayoutNodes)
+	{
+		if (NodeChainId.Contains(StartNode)) continue;
+		int32 ChainId = NumChains++;
+		TQueue<UEdGraphNode*> BFSQ;
+		BFSQ.Enqueue(StartNode);
+		NodeChainId.Add(StartNode, ChainId);
+		while (!BFSQ.IsEmpty())
+		{
+			UEdGraphNode* Cur;
+			BFSQ.Dequeue(Cur);
+			auto Visit = [&](UEdGraphNode* N)
+			{
+				if (N && SelectedSet.Contains(N) && !NodeChainId.Contains(N))
+				{
+					NodeChainId.Add(N, ChainId);
+					BFSQ.Enqueue(N);
+				}
+			};
+			if (const TArray<UEdGraphNode*>* S = ExecSuccessors.Find(Cur))   for (UEdGraphNode* N : *S) Visit(N);
+			if (const TArray<UEdGraphNode*>* P = ExecPredecessors.Find(Cur)) for (UEdGraphNode* N : *P) Visit(N);
+			if (const TArray<UEdGraphNode*>* P = DataProviders.Find(Cur))    for (UEdGraphNode* N : *P) Visit(N);
+			if (const TArray<UEdGraphNode*>* C = DataConsumers.Find(Cur))    for (UEdGraphNode* N : *C) Visit(N);
+		}
+	}
+
+	TMap<int32, int32> ChainEventCount;
+	TMap<int32, int32> ChainNodeCount;
+	for (auto& Pair : NodeChainId)
+	{
+		ChainNodeCount.FindOrAdd(Pair.Value)++;
+		if (Pair.Key->IsA<UK2Node_Event>() || Pair.Key->IsA<UK2Node_CustomEvent>())
+			ChainEventCount.FindOrAdd(Pair.Value)++;
+	}
+
+	TArray<int32> ChainOrder;
+	for (int32 i = 0; i < NumChains; i++) ChainOrder.Add(i);
+	ChainOrder.Sort([&](int32 A, int32 B)
+	{
+		int32 AE = ChainEventCount.FindRef(A), BE = ChainEventCount.FindRef(B);
+		if (AE != BE) return AE > BE;
+		return ChainNodeCount.FindRef(A) > ChainNodeCount.FindRef(B);
+	});
+
+	TMap<int32, int32> ChainRank;
+	for (int32 i = 0; i < ChainOrder.Num(); i++)
+		ChainRank.Add(ChainOrder[i], i);
+
+	// ── Pass 3: Group by (chain rank, layer) ──
+	TMap<int32, TMap<int32, TArray<UEdGraphNode*>>> ChainLayerMap;
+	for (auto& Pair : NodeLayer)
+	{
+		int32 Rank = ChainRank.FindRef(NodeChainId.FindRef(Pair.Key));
+		ChainLayerMap.FindOrAdd(Rank).FindOrAdd(Pair.Value).Add(Pair.Key);
+	}
+
+	for (auto& ChainPair : ChainLayerMap)
+	{
+		for (auto& LayerPair : ChainPair.Value)
+		{
+			LayerPair.Value.Sort([](const UEdGraphNode& A, const UEdGraphNode& B)
+			{
+				bool aIsEvent = A.IsA<UK2Node_Event>() || A.IsA<UK2Node_CustomEvent>();
+				bool bIsEvent = B.IsA<UK2Node_Event>() || B.IsA<UK2Node_CustomEvent>();
+				if (aIsEvent != bIsEvent) return aIsEvent;
+
+				bool aHasExec = false, bHasExec = false;
+				for (const UEdGraphPin* P : A.Pins)
+					if (P && P->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) { aHasExec = true; break; }
+				for (const UEdGraphPin* P : B.Pins)
+					if (P && P->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec) { bHasExec = true; break; }
+				if (aHasExec != bHasExec) return aHasExec;
+
+				return A.GetNodeTitle(ENodeTitleType::FullTitle).ToString()
+					 < B.GetNodeTitle(ENodeTitleType::FullTitle).ToString();
+			});
+		}
+	}
+
+	// ── Pass 4: Assign positions ──
+	// Use the top-left corner of the current bounding box of the selected nodes as origin,
+	// so the layout stays near where the selection was.
+	float OriginX = FLT_MAX, OriginY = FLT_MAX;
+	for (UEdGraphNode* Node : LayoutNodes)
+	{
+		OriginX = FMath::Min(OriginX, (float)Node->NodePosX);
+		OriginY = FMath::Min(OriginY, (float)Node->NodePosY);
+	}
+	if (OriginX == FLT_MAX) OriginX = 0.0f;
+	if (OriginY == FLT_MAX) OriginY = 0.0f;
+
+	const float ColumnWidth = 450.0f;
+	const float RowHeight   = 180.0f;
+	const float ChainGap    = 120.0f;
+
+	TArray<int32> SortedRanks;
+	ChainLayerMap.GetKeys(SortedRanks);
+	SortedRanks.Sort();
+
+	TMap<int32, float> ChainBaseY;
+	float CurY = OriginY;
+	for (int32 Rank : SortedRanks)
+	{
+		ChainBaseY.Add(Rank, CurY);
+		int32 MaxNodesInLayer = 0;
+		for (auto& LayerPair : ChainLayerMap[Rank])
+			MaxNodesInLayer = FMath::Max(MaxNodesInLayer, LayerPair.Value.Num());
+		CurY += (MaxNodesInLayer * RowHeight) + ChainGap;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("BlueprintService", "AutoLayoutSelected", "Auto-Layout Selected Nodes"));
+
+	for (auto& ChainPair : ChainLayerMap)
+	{
+		float BaseY = ChainBaseY.FindRef(ChainPair.Key);
+		for (auto& LayerPair : ChainPair.Value)
+		{
+			int32 LayerKey = LayerPair.Key;
+			const TArray<UEdGraphNode*>& Nodes = LayerPair.Value;
+			for (int32 NodeIdx = 0; NodeIdx < Nodes.Num(); NodeIdx++)
+			{
+				UEdGraphNode* Node = Nodes[NodeIdx];
+				Node->Modify();
+				Node->NodePosX = OriginX + (LayerKey * ColumnWidth);
+				Node->NodePosY = BaseY + (NodeIdx * RowHeight);
+			}
+		}
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("AutoLayoutSelectedNodes: Laid out %d/%d requested nodes in %d chains in %s::%s"),
+		LayoutNodes.Num(), NodeIds.Num(), NumChains, *BlueprintPath, *GraphName);
+
+	return true;
+}
+
+// ────────────────────────────────────────────────────────────────
 // GetGraphDefinition
 // ────────────────────────────────────────────────────────────────
 

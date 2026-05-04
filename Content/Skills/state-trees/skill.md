@@ -1363,6 +1363,162 @@ unreal.StateTreeService.move_task(path, "Root/Idle", "FStateTreeDelayTask", 0, 2
 unreal.StateTreeService.set_task_enabled(path, "Root/Idle", "FStateTreeDelayTask", 0, False)
 ```
 
+### Utility AI Considerations
+
+Considerations drive **utility-based state selection**. When a parent state has `SelectionBehavior` set to
+`TrySelectChildrenWithHighestUtility` or `TrySelectChildrenAtRandomWeightedByUtility`, each child state
+has a `Considerations` array. Each consideration computes a 0–1 score; scores are multiplied together
+to produce the child's final utility score.
+
+#### The three built-in consideration types
+
+| Short alias | Full struct name | Purpose |
+|---|---|---|
+| `"Constant"` | `FStateTreeConstantConsideration` | Static score (0–1 float) — set via `Constant` property |
+| `"FloatInput"` | `FStateTreeFloatInputConsideration` | Score driven by a bound float — `Input` property must be **bound** to context or a root parameter |
+| `"EnumInput"` | `FStateTreeEnumInputConsideration` | Score driven by an enum value — `Input` property must be **bound** |
+
+Short aliases (`"Constant"`, `"FloatInput"`, `"EnumInput"`) and the full `F`-prefixed struct names are
+both accepted by all consideration methods.
+
+#### Setting up a Utility parent state
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+
+# Step 1: Set the parent's selection behavior to utility-based
+unreal.StateTreeService.set_selection_behavior(st_path, "Root", "TrySelectChildrenWithHighestUtility")
+
+# Step 2: Add a Constant consideration to each child state (score = 1.0 means equal weight by default)
+unreal.StateTreeService.add_consideration(st_path, "Root/Idle", "Constant")
+unreal.StateTreeService.add_consideration(st_path, "Root/Walking", "Constant")
+
+# Step 3: Set the Constant value (clamp 0–1)
+unreal.StateTreeService.set_consideration_property_value(st_path, "Root/Idle", "Constant", "Constant", "0.3")
+unreal.StateTreeService.set_consideration_property_value(st_path, "Root/Walking", "Constant", "Constant", "0.7")
+
+# Step 4: Compile and save
+result = unreal.StateTreeService.compile_state_tree(st_path)
+assert result.success, result.errors
+unreal.StateTreeService.save_state_tree(st_path)
+```
+
+#### Adding and inspecting considerations
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+state_path = "Root/Chasing"
+
+# Discover all registered consideration struct names
+types = unreal.StateTreeService.get_available_consideration_types()
+for t in types:
+    print(t)  # e.g. FStateTreeConstantConsideration, FStateTreeFloatInputConsideration, ...
+
+# Add a FloatInput consideration (Input property must later be bound)
+unreal.StateTreeService.add_consideration(st_path, state_path, "FloatInput")
+
+# Inspect properties on the just-added consideration (MatchIndex -1 = last match)
+props = unreal.StateTreeService.get_consideration_property_names(st_path, state_path, "FloatInput")
+for p in props:
+    print(f"{p.name}: {p.type} = {p.current_value!r}")
+# Typical FloatInput output:
+#   Input: float = 0.000000          ← bindable; must be bound at runtime
+#   Interval: FFloatInterval          ← remaps Input range to [0,1]
+#   Interval.Min: float = 0.000000
+#   Interval.Max: float = 1.000000
+
+# Remove a consideration by 0-based index
+unreal.StateTreeService.remove_consideration(st_path, state_path, 0)
+```
+
+#### Check before adding — considerations accumulate
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+state_path = "Root/Idle"
+
+# CORRECT — check first
+info = unreal.StateTreeService.get_state_tree_info(st_path)
+for state in info.all_states:
+    if state.path == state_path:
+        existing = [c.struct_type for c in state.considerations]
+        print(f"Existing considerations: {existing}")
+        if not any("Constant" in s for s in existing):
+            unreal.StateTreeService.add_consideration(st_path, state_path, "Constant")
+            print("Added Constant consideration")
+        else:
+            print("Already has a Constant consideration, skipping")
+```
+
+#### Setting the Constant property
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+
+# Constant consideration — set the score directly (clamp 0–1)
+unreal.StateTreeService.set_consideration_property_value(
+    st_path, "Root/Idle", "Constant", "Constant", "1.0")
+
+# Multiple Constant considerations on the same state — use MatchIndex
+# MatchIndex 0 = first, 1 = second, -1 = last
+unreal.StateTreeService.set_consideration_property_value(
+    st_path, "Root/Idle", "Constant", "Constant", "0.5", 0)  # first Constant
+unreal.StateTreeService.set_consideration_property_value(
+    st_path, "Root/Idle", "Constant", "Constant", "0.9", 1)  # second Constant
+```
+
+#### Binding FloatInput or EnumInput to context or a root parameter
+
+A `FloatInput` or `EnumInput` consideration's `Input` property must be **bound** — you cannot set
+a raw float value on it. Use the binding methods instead:
+
+```python
+import unreal
+
+st_path = "/Game/AI/MyBehavior"
+state_path = "Root/Chasing"
+
+# Bind FloatInput.Input to a root parameter named "ThreatLevel"
+unreal.StateTreeService.bind_consideration_property_to_root_parameter(
+    st_path, state_path, "FloatInput", "Input", "ThreatLevel")
+
+# Bind FloatInput.Input to a context actor property
+unreal.StateTreeService.bind_consideration_property_to_context(
+    st_path, state_path, "FloatInput", "Input",
+    "Actor",           # context name
+    "HealthPercent"    # context property path
+)
+
+# Unbind a consideration property
+unreal.StateTreeService.unbind_consideration_property(
+    st_path, state_path, "FloatInput", "Input")
+```
+
+#### ⚠️ FloatInput / EnumInput Require a Bound Input — They Cannot Be Compiled Without One
+
+Adding a `FloatInput` or `EnumInput` consideration without binding `Input` will cause a **compile
+error**. Always bind `Input` before compiling.
+
+```python
+# WRONG — FloatInput.Input is unbound; compile will fail
+unreal.StateTreeService.add_consideration(st_path, state_path, "FloatInput")
+unreal.StateTreeService.compile_state_tree(st_path)  # ERROR: Input is unbound
+
+# CORRECT — bind first, then compile
+unreal.StateTreeService.add_consideration(st_path, state_path, "FloatInput")
+unreal.StateTreeService.bind_consideration_property_to_root_parameter(
+    st_path, state_path, "FloatInput", "Input", "ThreatLevel")
+unreal.StateTreeService.compile_state_tree(st_path)
+```
+
 ### Conditions
 
 ```python
@@ -1574,6 +1730,7 @@ for t in types:
 - `custom_tick_rate` (float)
 - `required_event_tag` (str) — required event tag to enter, empty if none
 - `enter_condition_operands` (list of str) — "Copy", "And", or "Or" per enter condition
+- `considerations` (list of `FStateTreeNodeInfo`) — utility AI considerations; each node's `struct_type` is the full struct name (e.g. `"StateTreeConstantConsideration"`)
 
 `FStateTreeNodeInfo` now includes:
 - `b_considered_for_completion` (bool) — whether task contributes to state completion (tasks only)

@@ -3013,6 +3013,32 @@ public:
 	);
 
 	/**
+	 * Auto-layout a specific subset of nodes in a graph.
+	 * Uses the same topological-sort layering as auto_layout_graph but only repositions
+	 * the nodes whose GUIDs are listed in NodeIds — all other nodes are untouched.
+	 *
+	 * NodeIds come from node_id fields returned by get_selected_nodes() or get_nodes_in_graph().
+	 *
+	 * Python Usage:
+	 *   # Layout whatever is currently selected in the editor
+	 *   selected = unreal.BlueprintService.get_selected_nodes("/Game/BP_Player")
+	 *   ids = [n.node_id for n in selected]
+	 *   unreal.BlueprintService.auto_layout_selected_nodes("/Game/BP_Player", "EventGraph", ids)
+	 *
+	 *   # Layout a hand-picked list of nodes by GUID
+	 *   unreal.BlueprintService.auto_layout_selected_nodes(
+	 *       "/Game/BP_Player", "EventGraph",
+	 *       ["GUID-A", "GUID-B", "GUID-C"])
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|BatchGraph")
+	static bool AutoLayoutSelectedNodes(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const TArray<FString>& NodeIds,
+		FString& OutError
+	);
+
+	/**
 	 * Get the definition of an existing graph in the batch builder format.
 	 * The returned definition can be fed back into BuildGraph.
 	 * Enables round-tripping and learning from hand-built graphs.

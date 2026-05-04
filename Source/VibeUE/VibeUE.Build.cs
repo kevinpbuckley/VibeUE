@@ -69,6 +69,7 @@ public class VibeUE : ModuleRules
 				"MovieScene",
 				"MovieSceneTracks",
 				"RenderCore",
+				"RHI",                    // For GMaxRHIShaderPlatform / GShaderPlatformForFeatureLevel (material diagnostics)
 				"EditorStyle",
 				"AssetTools",
 				"PropertyEditor",         // For property reflection
@@ -100,6 +101,8 @@ public class VibeUE : ModuleRules
 				"MetasoundFrontend",      // For FMetaSoundFrontendDocumentBuilder, FMetasoundFrontendClassName, ISearchEngine
 				"MetasoundGraphCore",     // For core MetaSound graph types
 				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
+				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
+				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 			}
 		);
 

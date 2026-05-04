@@ -21,6 +21,8 @@
 #include "StateTreeTaskBase.h"
 #include "StateTreeEvaluatorBase.h"
 #include "StateTreeConditionBase.h"
+#include "StateTreeConsiderationBase.h"
+#include "Considerations/StateTreeCommonConsiderations.h"
 
 // StateTree editor
 #include "StateTreeEditorData.h"
@@ -1744,6 +1746,11 @@ static void CollectStateInfo(const UStateTreeState* State, TArray<FStateTreeStat
 	for (const FStateTreeEditorNode& CondNode : State->EnterConditions)
 	{
 		Info.EnterConditionOperands.Add(OperandToString(CondNode.ExpressionOperand));
+	}
+
+	for (const FStateTreeEditorNode& ConsiderationNode : State->Considerations)
+	{
+		Info.Considerations.Add(NodeInfoFromEditorNode(ConsiderationNode));
 	}
 
 	for (int32 TransIdx = 0; TransIdx < State->Transitions.Num(); ++TransIdx)
@@ -3560,6 +3567,377 @@ bool UStateTreeService::SetStateWeight(const FString& AssetPath, const FString& 
 	}
 
 	State->Weight = FMath::Max(0.0f, Weight);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+// ---- Utility AI Considerations ----
+
+TArray<FString> UStateTreeService::GetAvailableConsiderationTypes()
+{
+	TArray<FString> Results;
+
+	UScriptStruct* ConsiderationBaseStruct = FStateTreeConsiderationBase::StaticStruct();
+	if (!ConsiderationBaseStruct) { return Results; }
+
+	for (TObjectIterator<UScriptStruct> It; It; ++It)
+	{
+		UScriptStruct* Struct = *It;
+		if (Struct && Struct != ConsiderationBaseStruct && Struct->IsChildOf(ConsiderationBaseStruct))
+		{
+			if (!Struct->HasMetaData(TEXT("Hidden")))
+			{
+				Results.Add(Struct->GetName());
+			}
+		}
+	}
+
+	Results.Sort();
+	return Results;
+}
+
+/** Resolve short consideration aliases ("Constant", "FloatInput", "EnumInput") to full F-prefixed struct names. */
+static FString ResolveConsiderationAlias(const FString& InName)
+{
+	if (InName.Equals(TEXT("Constant"), ESearchCase::IgnoreCase))   return TEXT("FStateTreeConstantConsideration");
+	if (InName.Equals(TEXT("FloatInput"), ESearchCase::IgnoreCase)) return TEXT("FStateTreeFloatInputConsideration");
+	if (InName.Equals(TEXT("EnumInput"), ESearchCase::IgnoreCase))  return TEXT("FStateTreeEnumInputConsideration");
+	return InName;
+}
+
+bool UStateTreeService::AddConsideration(const FString& AssetPath, const FString& StatePath, const FString& ConsiderationStructName)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("AddConsideration: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	// Allow short aliases: "Constant", "FloatInput", "EnumInput"
+	FString ResolvedStructName = ResolveConsiderationAlias(ConsiderationStructName);
+
+	UScriptStruct* ConsiderationStruct = FindNodeStruct(ResolvedStructName);
+	if (!ConsiderationStruct)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("AddConsideration: Struct not found: %s"), *ResolvedStructName);
+		return false;
+	}
+
+	if (!ConsiderationStruct->IsChildOf(FStateTreeConsiderationBase::StaticStruct()))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("AddConsideration: Struct '%s' is not a FStateTreeConsiderationBase"), *ResolvedStructName);
+		return false;
+	}
+
+	FStateTreeEditorNode& NewNode = State->Considerations.AddDefaulted_GetRef();
+	if (!InitEditorNodeFromStruct(NewNode, ConsiderationStruct))
+	{
+		State->Considerations.RemoveAt(State->Considerations.Num() - 1);
+		return false;
+	}
+
+	MarkStateTreeDirty(StateTree);
+	UE_LOG(LogStateTreeService, Log, TEXT("AddConsideration: Added '%s' to state '%s' in %s"),
+		*ResolvedStructName, *StatePath, *AssetPath);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::RemoveConsideration(const FString& AssetPath, const FString& StatePath, int32 ConsiderationIndex)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RemoveConsideration: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	if (!State->Considerations.IsValidIndex(ConsiderationIndex))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("RemoveConsideration: ConsiderationIndex %d out of range"), ConsiderationIndex);
+		return false;
+	}
+
+	State->Considerations.RemoveAt(ConsiderationIndex);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+TArray<FStateTreePropertyInfo> UStateTreeService::GetConsiderationPropertyNames(const FString& AssetPath,
+	const FString& StatePath, const FString& ConsiderationStructName, int32 MatchIndex)
+{
+	TArray<FStateTreePropertyInfo> Result;
+
+#if WITH_EDITORONLY_DATA
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return Result; }
+
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return Result; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State) { return Result; }
+
+	const FString ResolvedName = ResolveConsiderationAlias(ConsiderationStructName);
+	FStateTreeEditorNode* ConsiderationNode = FindEditorNodeByStructInArray(State->Considerations, ResolvedName, MatchIndex);
+	if (!ConsiderationNode) { return Result; }
+
+	TSet<FString> SeenPropertyPaths;
+	const UStruct* NodeStruct = nullptr;
+	void* NodeMemory = nullptr;
+	if (GetTaskNodeData(ConsiderationNode, NodeStruct, NodeMemory))
+	{
+		AppendEditableProperties(NodeStruct, NodeMemory, Result, &SeenPropertyPaths);
+	}
+	const UStruct* InstanceStruct = nullptr;
+	void* InstanceMemory = nullptr;
+	if (GetTaskInstanceData(ConsiderationNode, InstanceStruct, InstanceMemory))
+	{
+		AppendEditableProperties(InstanceStruct, InstanceMemory, Result, &SeenPropertyPaths);
+	}
+#endif
+
+	return Result;
+}
+
+bool UStateTreeService::SetConsiderationPropertyValue(const FString& AssetPath, const FString& StatePath,
+	const FString& ConsiderationStructName, const FString& PropertyPath, const FString& Value, int32 MatchIndex)
+{
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetConsiderationPropertyValue: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	const FString ResolvedName = ResolveConsiderationAlias(ConsiderationStructName);
+	FStateTreeEditorNode* ConsiderationNode = FindEditorNodeByStructInArray(State->Considerations, ResolvedName, MatchIndex);
+	if (!ConsiderationNode)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetConsiderationPropertyValue: Consideration '%s' not found in state '%s'"),
+			*ConsiderationStructName, *StatePath);
+		return false;
+	}
+
+	FProperty* Property = nullptr;
+	void* PropertyValuePtr = nullptr;
+	if (!ResolveTaskPropertyPath(ConsiderationNode, PropertyPath, Property, PropertyValuePtr))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetConsiderationPropertyValue: Could not resolve property path '%s'"), *PropertyPath);
+		return false;
+	}
+
+	if (!SetPropertyValueFromString(Property, PropertyValuePtr, Value))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("SetConsiderationPropertyValue: Failed to set property '%s'"), *PropertyPath);
+		return false;
+	}
+
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindConsiderationPropertyToContext(const FString& AssetPath, const FString& StatePath,
+	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
+	const FString& ContextName, const FString& ContextPropertyPath, int32 MatchIndex)
+{
+	if (ConsiderationPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToContext: ConsiderationPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToContext: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	const FString ResolvedName = ResolveConsiderationAlias(ConsiderationStructName);
+	FStateTreeEditorNode* ConsiderationNode = FindEditorNodeByStructInArray(State->Considerations, ResolvedName, MatchIndex);
+	if (!ConsiderationNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindConsiderationPropertyToContext: Consideration '%s' not found in state '%s'"),
+			*ConsiderationStructName, *StatePath);
+		return false;
+	}
+
+	FGuid ContextStructID;
+	if (!ResolveContextStructID(StateTree, ContextName, ContextStructID))
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindConsiderationPropertyToContext: Context '%s' not found. Ensure context actor class is set."),
+			*ContextName);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(ContextStructID, ContextPropertyPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToContext: Invalid context property path: %s"), *ContextPropertyPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(ConsiderationNode->ID, ConsiderationPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToContext: Invalid consideration property path: %s"), *ConsiderationPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::BindConsiderationPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
+	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
+	const FString& ParameterPath, int32 MatchIndex)
+{
+	if (ConsiderationPropertyPath.IsEmpty() || ParameterPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToRootParameter: ConsiderationPropertyPath and ParameterPath are required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToRootParameter: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	const FString ResolvedName = ResolveConsiderationAlias(ConsiderationStructName);
+	FStateTreeEditorNode* ConsiderationNode = FindEditorNodeByStructInArray(State->Considerations, ResolvedName, MatchIndex);
+	if (!ConsiderationNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("BindConsiderationPropertyToRootParameter: Consideration '%s' not found in state '%s'"),
+			*ConsiderationStructName, *StatePath);
+		return false;
+	}
+
+	FPropertyBindingPath SourcePath;
+	if (!MakeBindingPath(EditorData->GetRootParametersGuid(), ParameterPath, SourcePath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToRootParameter: Invalid parameter path: %s"), *ParameterPath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(ConsiderationNode->ID, ConsiderationPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("BindConsiderationPropertyToRootParameter: Invalid consideration property path: %s"), *ConsiderationPropertyPath);
+		return false;
+	}
+
+	EditorData->AddPropertyBinding(SourcePath, TargetPath);
+	MarkStateTreeDirty(StateTree);
+	return true;
+#else
+	return false;
+#endif
+}
+
+bool UStateTreeService::UnbindConsiderationProperty(const FString& AssetPath, const FString& StatePath,
+	const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath, int32 MatchIndex)
+{
+	if (ConsiderationPropertyPath.IsEmpty())
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindConsiderationProperty: ConsiderationPropertyPath is required"));
+		return false;
+	}
+
+	UStateTree* StateTree = LoadStateTree(AssetPath);
+	if (!StateTree) { return false; }
+
+#if WITH_EDITORONLY_DATA
+	UStateTreeEditorData* EditorData = GetEditorData(StateTree);
+	if (!EditorData) { return false; }
+
+	UStateTreeState* State = FindStateByPath(EditorData, StatePath);
+	if (!State)
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindConsiderationProperty: State not found: %s"), *StatePath);
+		return false;
+	}
+
+	const FString ResolvedName = ResolveConsiderationAlias(ConsiderationStructName);
+	FStateTreeEditorNode* ConsiderationNode = FindEditorNodeByStructInArray(State->Considerations, ResolvedName, MatchIndex);
+	if (!ConsiderationNode)
+	{
+		UE_LOG(LogStateTreeService, Warning,
+			TEXT("UnbindConsiderationProperty: Consideration '%s' not found in state '%s'"),
+			*ConsiderationStructName, *StatePath);
+		return false;
+	}
+
+	FPropertyBindingPath TargetPath;
+	if (!MakeBindingPath(ConsiderationNode->ID, ConsiderationPropertyPath, TargetPath))
+	{
+		UE_LOG(LogStateTreeService, Warning, TEXT("UnbindConsiderationProperty: Invalid consideration property path: %s"), *ConsiderationPropertyPath);
+		return false;
+	}
+
+	FStateTreeEditorPropertyBindings* Bindings = EditorData->GetPropertyEditorBindings();
+	if (!Bindings)
+	{
+		return false;
+	}
+
+	Bindings->RemoveBindings(TargetPath);
 	MarkStateTreeDirty(StateTree);
 	return true;
 #else
