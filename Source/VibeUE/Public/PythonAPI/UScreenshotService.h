@@ -105,6 +105,21 @@ public:
 	static FScreenshotResult CaptureActiveWindow(const FString& FilePath);
 
 	/**
+	 * Open an asset editor for the given asset path, force its tab to the foreground, and
+	 * capture the editor window. One-call replacement for the
+	 * "close other editors -> open target -> capture_editor_window" dance that was previously
+	 * required to reliably screenshot a specific asset's editor (material graph, blueprint
+	 * graph, etc.).
+	 *
+	 * @param AssetPath - Content Browser path to the asset (e.g. "/Game/Materials/M_Foo")
+	 * @param FilePath  - Output file path. Auto-normalized to ProjectSaved/VibeUE/Screenshots/<name>.png
+	 *                    when no extension is given.
+	 * @return Screenshot result; success means the asset's editor was focused and the file written.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	static FScreenshotResult CaptureAssetEditor(const FString& AssetPath, const FString& FilePath);
+
+	/**
 	 * Get information about open editor tabs.
 	 * Useful for understanding what the user is currently viewing.
 	 * @return Array of editor tab information

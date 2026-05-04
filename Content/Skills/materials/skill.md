@@ -20,6 +20,84 @@ keywords:
 
 ## Critical Rules
 
+### 🚨 Connecting Function Call Inputs: Use Bare Names, Not Display Names
+
+`get_expression_pins(mat, expr_id)` returns input pins with **display labels including type suffixes** like `"TextureObject (T2d)"`, `"TextureSize (V3)"`, `"Use High Quality Normals (SB)"`. **Never pass these display labels to `connect_expressions`** — UE's connect API matches against the *bare* input name only:
+
+```python
+# ❌ WRONG — display label with type suffix; connection fails silently or gets ignored
+unreal.MaterialNodeService.connect_expressions(mp, src_id, "", fn_id, "TextureObject (T2d)")
+
+# ✅ CORRECT — bare name
+unreal.MaterialNodeService.connect_expressions(mp, src_id, "", fn_id, "TextureObject")
+```
+
+The authoritative source for input names is `get_function_info(function_path).inputs` — those are the bare names (`TextureObject`, `TextureSize`, `WorldPosition`, etc.). For built-in expressions, use `get_inputs_for_material_expression` from `unreal.MaterialEditingLibrary`.
+
+> ⚠️ Why this is easy to miss: `get_expression_pins` returns `is_connected=True` for both real and phantom connections, and our service used to silently produce phantom wires when given display names. The wires would appear in the graph export but the shader compiler would never see the texture flow through. Always verify with `unreal.MaterialEditingLibrary.get_used_textures(mat)` after wiring — if it returns 0 on a material that samples textures, your connections are phantom.
+
+### 🚨 Verifying Wiring: Use `get_material_diagnostics`
+
+**`MaterialNodeService.get_material_diagnostics(path)` is the canonical way to verify a material is sampling textures and compiling cleanly.** It returns the real compile errors, the textures the shader actually references, and node-type counts. Always run it after non-trivial graph rewiring:
+
+```python
+diag = unreal.MaterialNodeService.get_material_diagnostics("/Game/Materials/M_Foo")
+assert diag.success
+print(f"compiled ok:                     {diag.is_compiled_ok}")
+print(f"compile errors ({len(diag.compile_errors)}):")
+for e in diag.compile_errors: print(f"  {e}")
+print(f"referenced textures ({len(diag.referenced_texture_paths)}):")
+for t in diag.referenced_texture_paths: print(f"  {t}")
+print(f"expression count:                {diag.expression_count}")
+print(f"texture sample count:            {diag.texture_sample_count}")
+print(f"texture object parameter count:  {diag.texture_object_parameter_count}")
+print(f"function call count:             {diag.function_call_count}")
+```
+
+Sample compile errors caught by this:
+- `"(Function WorldAlignedTexture) (Node TextureSample) Sampler type is Color, should be Masks for /Game/.../T_xevtfjz_2K_ORM"` — ORM/data textures need `SAMPLERTYPE_Masks` or `SAMPLERTYPE_LinearColor`, not the default `SAMPLERTYPE_Color`.
+- Type mismatch errors when wiring scalars to vector inputs without proper conversion.
+- Missing required inputs on function calls.
+
+**Why prefer this over the older signals:**
+
+`unreal.MaterialEditingLibrary.get_used_textures(mat)` is **unreliable** for multi-branch graphs (BC + Normal + ORM, or anything with ComponentMask after a function-call output). It returns `0` even when the material is sampling textures correctly. Don't use it as proof of broken wiring.
+
+Visual confirmation via the material editor preview is also useful but harder — see the next section.
+
+```python
+# One-shot: opens the asset editor, focuses it, captures.
+res = unreal.ScreenshotService.capture_asset_editor(
+    "/Game/Materials/M_Foo", "mat_preview")
+# Then attach_image(file_path=res.file_path) to inspect.
+```
+
+`ScreenshotService.capture_asset_editor` handles the open + focus + capture pipeline in one call.
+
+> ⚠️ Best-effort focus: when many asset editors are already open as tabs, the editor tab may not switch reliably. Close other asset editors first if the screenshot keeps catching the wrong tab:
+>
+> ```python
+> ed = unreal.get_editor_subsystem(unreal.AssetEditorSubsystem)
+> for path in [other_open_paths]:
+>     ed.close_all_editors_for_asset(unreal.load_asset(path))
+> ```
+
+### 🚨 Tiling on Basic Shapes: Prefer a Child MI with `Tiling` Override
+
+For Megascans `M_MS_Srf` and similar surface materials with a `Tiling` scalar parameter, the cleanest per-actor tiling fix is a **child material instance with `Tiling` overridden** — *not* a UV transform on the mesh. UV transforms apply to all faces uniformly and break orientation; the parent material's UV mapping is already correct per face.
+
+```python
+# ✅ CORRECT pattern for "this disc shows brick too sparse / too dense"
+r = unreal.MaterialService.create_instance(
+    "/Game/Fab/Megascans/.../MI_xevtfjz",
+    "MI_xevtfjz_Disc", "/Game/Materials/")
+unreal.MaterialService.set_instance_scalar_parameter(r.asset_path, "Tiling", 4.0)
+unreal.MaterialService.save_instance(r.asset_path)
+# assign r.asset_path to the actor
+```
+
+For triplanar / world-aligned (where the same material works on cube, sphere, cylinder with no UV concerns), build a master material wrapping `WorldAlignedTexture` / `WorldAlignedNormal` (functions live under `/Engine/Functions/Engine_MaterialFunctions01/Texturing/`). Use `TextureObjectParameter` (not `TextureSampleParameter2D`) to feed the `TextureObject` input on those functions — the function brings its own sampler. Feed `TextureSize` from a `Constant3Vector` or `Multiply(Scalar, Constant3Vector(1,1,1))`; **a bare scalar will broadcast incorrectly to V3** in this input slot.
+
 ### 🚨 Inspect Before Modifying Existing Materials
 
 Before adding, removing, or reconnecting nodes in an **existing** material, you **MUST** export and review the current graph first:

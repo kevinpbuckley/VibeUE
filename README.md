@@ -17,10 +17,10 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 29 specialized services with 950 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 30 specialized services with 996 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
-- **Domain Skills** - 31 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), and more
+- **Domain Skills** - 34 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Code, Cursor, and AntiGravity via MCP
 
@@ -328,40 +328,41 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (29 services, 950 methods)
+### 2. VibeUE Python API Services (30 services, 996 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
+| `StateTreeService` | 94 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, **utility AI considerations**, compile/save |
+| `BlueprintService` | 92 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
-| `BlueprintService` | 87 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder |
+| `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
-| `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
+| `MaterialNodeService` | 41 | Material graph expressions and connections, **material diagnostics (compile errors + sampler info)** |
+| `WidgetService` | 41 | UMG widget blueprints, components, snapshots, styling, animation, preview/PIE validation, and MVVM ViewModel bindings |
 | `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
+| `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
-| `MaterialService` | 30 | Materials and material instances |
-| `MetaSoundService` | 17 | MetaSound graph authoring, nodes, interfaces, inputs/outputs, and wiring |
 | `ActorService` | 33 | Level actor management, viewport camera control, transform lock/constraints |
-| `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
+| `MaterialService` | 30 | Materials and material instances |
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
+| `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
-| `MaterialNodeService` | 40 | Material graph expressions and connections |
+| `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
+| `UVMappingService` | 22 | **Per-LOD UV channel inspection, transforms, lightmap generation, per-region edits (by normal / polygon group / UV island), auto-unwrap (planar/box/cylindrical), packing, layout export** |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
 | `AssetDiscoveryService` | 20 | Asset search, import/export, references, move/rename workflows |
-| `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
-| `WidgetService` | 41 | UMG widget blueprints, components, snapshots, styling, animation, preview/PIE validation, and MVVM ViewModel bindings |
+| `ViewportService` | 19 | Viewport camera type (perspective/ortho), view mode, FOV, clip planes, exposure, game view, cinematic control, camera speed, viewport layout (single/quad) |
+| `MetaSoundService` | 17 | MetaSound graph authoring, nodes, interfaces, inputs/outputs, and wiring |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
+| `EditorTransactionService` | 16 | Undo/redo, transaction grouping, history inspection, buffer reset |
 | `FoliageService` | 15 | Foliage type management, scatter placement, layer-aware painting, instance queries |
-| `GameplayTagService` | 8 | Gameplay tag CRUD: add, remove, rename, list, filter, hierarchy inspection |
 | `DataTableService` | 15 | DataTable rows and structure |
 | `DataAssetService` | 11 | UDataAsset instances and properties |
-| `ScreenshotService` | 5 | Editor window and viewport screenshot capture for AI vision |
-| `ViewportService` | 19 | Viewport camera type (perspective/ortho), view mode, FOV, clip planes, exposure, game view, cinematic control, camera speed, viewport layout (single/quad) |
+| `GameplayTagService` | 8 | Gameplay tag CRUD: add, remove, rename, list, filter, hierarchy inspection |
+| `ScreenshotService` | 6 | Editor window, viewport, and **per-asset-editor** screenshot capture for AI vision |
 | `RuntimeVirtualTextureService` | 4 | Runtime Virtual Texture assets, RVT volume actors, and landscape RVT assignment |
-| `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
-| `StateTreeService` | 77 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, compile/save |
-| `EditorTransactionService` | 16 | Undo/redo, transaction grouping, history inspection, buffer reset |
 
 ### 3. Full Unreal Engine Python API
 Direct access to all `unreal.*` modules:
@@ -1344,9 +1345,9 @@ MetaSoundService provides programmatic MetaSound Source asset creation and editi
 - `set_node_input_default(asset_path, node_id, input_name, value, data_type)` - Set literal default on a node input
 - `set_node_location(asset_path, node_id, pos_x, pos_y)` - Update editor position
 
-### StateTreeService (77 methods)
+### StateTreeService (94 methods)
 
-StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, state type and linked-state configuration, non-destructive state reparenting, tasks, evaluators, conditions, transitions, parameters, theme colors, component overrides, property bindings, and compilation.
+StateTreeService provides full programmatic control over StateTree assets: creation, state hierarchy, state type and linked-state configuration, non-destructive state reparenting, tasks, evaluators, conditions, transitions, parameters, theme colors, component overrides, property bindings, **utility AI considerations (constants, weights, evaluator setup)**, and compilation.
 
 **Discovery & Info:**
 - `list_state_trees(directory_path)` - List all StateTree assets under a content path

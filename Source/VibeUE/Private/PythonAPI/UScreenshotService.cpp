@@ -20,7 +20,9 @@
 #endif
 
 #include "Editor.h"
+#include "EditorAssetLibrary.h"
 #include "Subsystems/AssetEditorSubsystem.h"
+#include "Toolkits/IToolkit.h"
 #include "Framework/Docking/TabManager.h"
 #include "Framework/Application/SlateApplication.h"
 #include "UnrealClient.h"
@@ -91,6 +93,80 @@ FScreenshotResult UScreenshotService::CaptureEditorWindow(const FString& FilePat
 	FString NormalizedPath = NormalizeSavePath(FilePath);
 	FScreenshotResult Result;
 	Result.FilePath = NormalizedPath;
+
+#if PLATFORM_WINDOWS
+	void* WindowHandle = FindEditorWindowHandle();
+	if (WindowHandle)
+	{
+		CaptureWindowToFile(WindowHandle, NormalizedPath, Result);
+	}
+	else
+	{
+		Result.bSuccess = false;
+		Result.Message = TEXT("Failed to find Unreal Editor window handle");
+	}
+#else
+	Result.bSuccess = false;
+	Result.Message = TEXT("Screenshot capture only supported on Windows platform");
+#endif
+
+	return Result;
+}
+
+FScreenshotResult UScreenshotService::CaptureAssetEditor(const FString& AssetPath, const FString& FilePath)
+{
+	FString NormalizedPath = NormalizeSavePath(FilePath);
+	FScreenshotResult Result;
+	Result.FilePath = NormalizedPath;
+
+	UObject* Asset = UEditorAssetLibrary::LoadAsset(AssetPath);
+	if (!Asset)
+	{
+		Result.bSuccess = false;
+		Result.Message = FString::Printf(TEXT("Failed to load asset: %s"), *AssetPath);
+		return Result;
+	}
+
+	UAssetEditorSubsystem* EditorSubsystem = GEditor ? GEditor->GetEditorSubsystem<UAssetEditorSubsystem>() : nullptr;
+	if (!EditorSubsystem)
+	{
+		Result.bSuccess = false;
+		Result.Message = TEXT("AssetEditorSubsystem not available");
+		return Result;
+	}
+
+	// OpenEditorForAsset returns true if it opens or focuses an existing editor.
+	if (!EditorSubsystem->OpenEditorForAsset(Asset))
+	{
+		Result.bSuccess = false;
+		Result.Message = FString::Printf(TEXT("Failed to open editor for asset: %s"), *AssetPath);
+		return Result;
+	}
+
+	// FindEditorForAsset(asset, bFocusIfOpen=true) is the standard way to bring an editor
+	// to the foreground. Combined with FocusWindow it covers both the case where the editor
+	// was just opened and the case where it was already open under another tab.
+	IAssetEditorInstance* EditorInstance = EditorSubsystem->FindEditorForAsset(Asset, /*bFocusIfOpen=*/true);
+	if (EditorInstance)
+	{
+		EditorInstance->FocusWindow(Asset);
+	}
+
+	// Pump Slate enough frames that the tab activation actually paints. A single Tick is
+	// usually too few — the docking system processes activation across multiple frames,
+	// and DWM capture sees stale content if we capture mid-transition.
+	if (FSlateApplication::IsInitialized())
+	{
+		FSlateApplication& Slate = FSlateApplication::Get();
+		for (int32 i = 0; i < 8; ++i)
+		{
+			Slate.Tick();
+		}
+		if (FSlateRenderer* Renderer = Slate.GetRenderer())
+		{
+			Renderer->Sync();
+		}
+	}
 
 #if PLATFORM_WINDOWS
 	void* WindowHandle = FindEditorWindowHandle();

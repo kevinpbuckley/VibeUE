@@ -373,12 +373,70 @@ struct FBatchCreateDescriptor
  * 
  * note: This replaces the JSON-based manage_material_node MCP tool
  */
+
+/**
+ * Comprehensive material compile/sampler diagnostics. Use this to verify a material is
+ * actually compiling and sampling textures — replaces the unreliable
+ * `MaterialEditingLibrary.get_used_textures` signal which returns 0 for many graphs
+ * that nonetheless render correctly.
+ */
+USTRUCT(BlueprintType)
+struct FMaterialDiagnostics
+{
+	GENERATED_BODY()
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	bool bSuccess = false;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	bool bIsCompiledOk = false;
+
+	/** Compile errors from the most recent compilation attempt. Empty when bIsCompiledOk. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	TArray<FString> CompileErrors;
+
+	/** All texture asset paths the material actually references (after compile). Reliable. */
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	TArray<FString> ReferencedTexturePaths;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 ExpressionCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 TextureSampleCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 TextureObjectParameterCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 FunctionCallCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 ScalarParameterCount = 0;
+
+	UPROPERTY(BlueprintReadWrite, Category = "VibeUE|Materials")
+	int32 VectorParameterCount = 0;
+};
+
 UCLASS()
 class VIBEUE_API UMaterialNodeService : public UObject
 {
 	GENERATED_BODY()
 
 public:
+	/**
+	 * Comprehensive material diagnostic — compile status, errors, and the textures the
+	 * shader actually references. Reliable replacement for `get_used_textures`.
+	 *
+	 * Use this after building a material graph to verify it compiles cleanly and samples
+	 * the expected textures. Particularly useful for materials with `MaterialFunctionCall`
+	 * nodes (triplanar / world-aligned), where `MaterialEditingLibrary.get_used_textures`
+	 * silently returns 0.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Material Diagnostics"))
+	static FMaterialDiagnostics GetMaterialDiagnostics(const FString& MaterialPath);
+
+
 	// =================================================================
 	// Discovery Actions
 	// =================================================================

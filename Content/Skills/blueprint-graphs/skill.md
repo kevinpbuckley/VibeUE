@@ -987,16 +987,35 @@ for n in nodes:
 # Then rebuild in a different graph or blueprint
 ```
 
-### Auto-Layout (`auto_layout_graph`)
+### Auto-Layout (`auto_layout_graph` / `auto_layout_selected_nodes`)
 
-`auto_layout_graph` arranges all nodes in a graph using a simplified Sugiyama algorithm:
-- Layers are assigned by BFS on execution (exec pin) flow
-- Pure data nodes are placed in the same layer as their first consumer
+Both methods use the same simplified Sugiyama algorithm:
+- Layers assigned by BFS on execution (exec pin) flow; falls back to data-flow BFS if exec flow is flat
+- Pure data nodes placed one column left of their first exec consumer
+- Independent event chains get separate vertical bands so they never overlap
 - Event/entry nodes sort to the top of each layer
-- Column width: 400px, Row height: 200px
+- Column width: 450 px, Row height: 180 px
+
+**`auto_layout_graph`** — repositions **every** node in the graph:
 
 ```python
 unreal.BlueprintService.auto_layout_graph(bp_path, "EventGraph")
+```
+
+**`auto_layout_selected_nodes`** — repositions **only the listed nodes**; everything else is untouched.
+Adjacency (exec + data edges) is computed within the selection only, so the layout is self-contained.
+The origin is anchored to the top-left corner of the selection's current bounding box.
+
+```python
+# Layout whatever is currently selected in the Blueprint Editor
+selected = unreal.BlueprintService.get_selected_nodes(bp_path)
+ids = [n.node_id for n in selected]
+unreal.BlueprintService.auto_layout_selected_nodes(bp_path, "EventGraph", ids)
+
+# Layout a hand-picked subset by GUID
+unreal.BlueprintService.auto_layout_selected_nodes(
+    bp_path, "EventGraph",
+    ["GUID-A", "GUID-B", "GUID-C"])
 ```
 
 ### Make Struct and Make Instanced Struct
