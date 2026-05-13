@@ -35,6 +35,7 @@
 #include "StateTreeEditingSubsystem.h"
 #include "StateTreeViewModel.h"
 #include "Editor.h"
+#include "Subsystems/AssetEditorSubsystem.h"
 
 // For class discovery
 #include "UObject/UObjectIterator.h"
@@ -2903,14 +2904,31 @@ bool UStateTreeService::SetStateExpanded(const FString& AssetPath, const FString
 	State->bExpanded = bExpanded;
 	MarkStateTreeDirty(StateTree);
 
-	// The open StateTree editor's tree widget caches expansion state and only re-reads
-	// UStateTreeState::bExpanded when the tree is rebuilt. Notify any open editor so the
-	// view reflects the change immediately instead of only after a close/reopen.
 	if (GEditor)
 	{
+		// Notify any open editor so it rebuilds its tree view. This is enough for the
+		// *expand* case: SStateTreeView::UpdateTree() re-reads bExpanded and calls
+		// SetItemExpansion(State, true) for expanded states.
 		if (UStateTreeEditingSubsystem* EditingSubsystem = GEditor->GetEditorSubsystem<UStateTreeEditingSubsystem>())
 		{
 			EditingSubsystem->FindOrAddViewModel(StateTree)->NotifyAssetChangedExternally();
+		}
+
+		// The *collapse* case can't be handled the same way: UpdateTree() only ever
+		// expands states, it never calls SetItemExpansion(State, false), so an already
+		// expanded row in the live STreeView stays expanded. The only thing that produces
+		// a correctly collapsed view is a freshly constructed tree widget, so if the asset
+		// has an open editor, close and reopen it (it then honors bExpanded on construction).
+		if (!bExpanded)
+		{
+			if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+			{
+				if (AssetEditorSubsystem->FindEditorsForAsset(StateTree).Num() > 0)
+				{
+					AssetEditorSubsystem->CloseAllEditorsForAsset(StateTree);
+					AssetEditorSubsystem->OpenEditorForAsset(StateTree);
+				}
+			}
 		}
 	}
 	return true;
