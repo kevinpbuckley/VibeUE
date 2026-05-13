@@ -4323,7 +4323,6 @@ bool UBlueprintService::RenameTimelineTrack(const FString& BlueprintPath, const 
 		}
 	}
 	Track->SetTrackName(NewName, Template);
-	Template->UpdateCachedNames();
 
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	UE_LOG(LogTemp, Log, TEXT("RenameTimelineTrack: Renamed '%s' -> '%s' on timeline '%s'"), *OldTrackName, *NewTrackName, *TimelineName);
@@ -4422,18 +4421,12 @@ bool UBlueprintService::RemoveTimelineKey(const FString& BlueprintPath, const FS
 	int32 Removed = 0;
 	for (FRichCurve* Curve : Curves)
 	{
-		TArray<FKeyHandle> ToRemove;
-		for (int32 i = 0; i < Curve->Keys.Num(); ++i)
-		{
-			if (FMath::IsNearlyEqual(Curve->Keys[i].Time, Time, Tolerance))
-			{
-				ToRemove.Add(Curve->GetKeyHandle(i));
-			}
-		}
-		for (const FKeyHandle KH : ToRemove)
+		FKeyHandle KH = Curve->FindKey(Time, Tolerance);
+		while (Curve->IsKeyHandleValid(KH))
 		{
 			Curve->DeleteKey(KH);
 			++Removed;
+			KH = Curve->FindKey(Time, Tolerance);
 		}
 	}
 	if (Removed == 0)
