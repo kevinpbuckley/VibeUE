@@ -2160,6 +2160,101 @@ public:
 		const FString& NodeId
 	);
 
+	// ── Timelines ──
+
+	/**
+	 * Add a Timeline node to a graph (and the backing UTimelineTemplate on the blueprint).
+	 * Equivalent to the "Add Timeline..." action. The new node has exec inputs
+	 * (Play, PlayFromStart, Stop, Reverse, ReverseFromEnd, SetNewTime / NewTime),
+	 * exec outputs (Update, Finished), and a Direction output; track output pins are
+	 * added by add_timeline_float_track / etc.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph to place the node in (e.g. "EventGraph")
+	 * @param TimelineName - Name for the timeline (also the component variable name). Must be unique.
+	 * @param Length - Timeline length in seconds (used when LengthMode is fixed-length)
+	 * @param bUseLastKeyFrame - If true, the timeline auto-sizes to the last keyframe instead of using Length
+	 * @param bAutoPlay - Whether the timeline auto-plays
+	 * @param bLoop - Whether the timeline loops
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) of the Timeline node, empty string on failure
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_timeline("/Game/StateTree/BP_Cube", "EventGraph", "LookAtTimeline", 0.5)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddTimeline(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TimelineName,
+		float Length = 5.0f,
+		bool bUseLastKeyFrame = false,
+		bool bAutoPlay = false,
+		bool bLoop = false,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a float interpolation track to an existing timeline. This creates an internal
+	 * UCurveFloat for the track and adds a matching float output pin to the Timeline node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline (as passed to add_timeline)
+	 * @param TrackName - Name of the new track (also the name of the output pin on the node)
+	 * @return True if the track was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_timeline_float_track("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineFloatTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add (or replace) a keyframe on a timeline float track's curve.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the float track
+	 * @param Time - Key time in seconds
+	 * @param Value - Key value
+	 * @param InterpMode - One of "Auto" (cubic, auto tangents — smooth), "Linear", "Constant", "CubicAuto", "CubicUser". Default "Auto".
+	 * @return True if the key was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_timeline_float_key("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha", 0.0, 0.0)
+	 *   unreal.BlueprintService.add_timeline_float_key("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha", 0.5, 1.0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineFloatKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float Value,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * List the timelines on a blueprint, with their float track names.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @return Array of "TimelineName" entries; each entry's ParameterType lists comma-separated float track names
+	 *
+	 * Example:
+	 *   for t in unreal.BlueprintService.get_timelines("/Game/StateTree/BP_Cube"):
+	 *       print(t.parameter_name, "tracks:", t.parameter_type)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static TArray<FBlueprintFunctionParameterInfo> GetTimelines(
+		const FString& BlueprintPath
+	);
+
 	/**
 	 * Add a Create Event node (implemented as UK2Node_CreateDelegate) to a graph.
 	 * Use this for delegate workflows where a function name must be converted into a delegate value.

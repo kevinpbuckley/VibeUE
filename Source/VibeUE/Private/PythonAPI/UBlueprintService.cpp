@@ -29,6 +29,9 @@
 #include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
 #include "K2Node_CreateDelegate.h"       // For create event nodes (add_create_delegate_node)
 #include "K2Node_MakeStruct.h"           // For STRUCT key: creating typed struct Make nodes
+#include "K2Node_Timeline.h"             // For UK2Node_Timeline (add_timeline)
+#include "Engine/TimelineTemplate.h"     // For UTimelineTemplate / FTTFloatTrack
+#include "Curves/CurveFloat.h"           // For UCurveFloat / FRichCurve (timeline float tracks)
 #include "EdGraphNode_Comment.h"         // For UEdGraphNode_Comment (comment box nodes)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
@@ -3779,6 +3782,271 @@ TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetCustomEventInputs(
 		Result.Add(Info);
 	}
 
+	return Result;
+}
+
+// ── Timelines ──
+
+// Resolve a timeline template on a blueprint by variable name.
+static UTimelineTemplate* VibeUE_ResolveTimeline(UBlueprint* Blueprint, const FString& TimelineName, FString& OutError)
+{
+	if (!Blueprint)
+	{
+		OutError = TEXT("Blueprint is null");
+		return nullptr;
+	}
+	UTimelineTemplate* Template = Blueprint->FindTimelineTemplateByVariableName(FName(*TimelineName));
+	if (!Template)
+	{
+		OutError = FString::Printf(TEXT("Timeline '%s' not found on %s"), *TimelineName, *Blueprint->GetName());
+	}
+	return Template;
+}
+
+// Find a float track on a timeline template by name.
+static FTTFloatTrack* VibeUE_FindFloatTrack(UTimelineTemplate* Template, const FString& TrackName)
+{
+	if (!Template)
+	{
+		return nullptr;
+	}
+	const FName Wanted(*TrackName);
+	return Template->FloatTracks.FindByPredicate([Wanted](const FTTFloatTrack& Track) { return Track.GetTrackName() == Wanted; });
+}
+
+FString UBlueprintService::AddTimeline(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& TimelineName,
+	float Length,
+	bool bUseLastKeyFrame,
+	bool bAutoPlay,
+	bool bLoop,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimeline: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	if (!FBlueprintEditorUtils::DoesSupportTimelines(Blueprint))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimeline: Blueprint %s does not support timelines"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimeline: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	const FName DesiredName = TimelineName.IsEmpty() ? FBlueprintEditorUtils::FindUniqueTimelineName(Blueprint) : FName(*TimelineName);
+	if (Blueprint->FindTimelineTemplateByVariableName(DesiredName))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimeline: Timeline '%s' already exists on %s"), *DesiredName.ToString(), *BlueprintPath);
+		return FString();
+	}
+
+	// Create the Timeline node.
+	UK2Node_Timeline* TimelineNode = NewObject<UK2Node_Timeline>(Graph);
+	Graph->AddNode(TimelineNode, false, false);
+	TimelineNode->CreateNewGuid();
+	TimelineNode->PostPlacedNewNode();
+	TimelineNode->NodePosX = PosX;
+	TimelineNode->NodePosY = PosY;
+	TimelineNode->TimelineName = DesiredName;
+	TimelineNode->bAutoPlay = bAutoPlay;
+	TimelineNode->bLoop = bLoop;
+
+	// Create the backing template (links to the node by name).
+	UTimelineTemplate* Template = FBlueprintEditorUtils::AddNewTimeline(Blueprint, DesiredName);
+	if (!Template)
+	{
+		FBlueprintEditorUtils::RemoveNode(Blueprint, TimelineNode, /*bDontRecompile*/true);
+		UE_LOG(LogTemp, Error, TEXT("AddTimeline: AddNewTimeline failed for '%s'"), *DesiredName.ToString());
+		return FString();
+	}
+	Template->bAutoPlay = bAutoPlay;
+	Template->bLoop = bLoop;
+	if (bUseLastKeyFrame)
+	{
+		Template->LengthMode = ETimelineLengthMode::TL_LastKeyFrame;
+	}
+	else
+	{
+		Template->LengthMode = ETimelineLengthMode::TL_TimelineLength;
+		Template->TimelineLength = Length;
+	}
+
+	TimelineNode->AllocateDefaultPins();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimeline: Added timeline '%s' in %s"), *DesiredName.ToString(), *GraphName);
+	return TimelineNode->NodeGuid.ToString();
+}
+
+bool UBlueprintService::AddTimelineFloatTrack(
+	const FString& BlueprintPath,
+	const FString& TimelineName,
+	const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: %s"), *Error);
+		return false;
+	}
+
+	if (TrackName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: TrackName is empty"));
+		return false;
+	}
+	const FName TrackFName(*TrackName);
+	if (!Template->IsNewTrackNameValid(TrackFName))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: Track name '%s' is not valid/unique on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+
+	UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template);
+	if (!TimelineNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: No Timeline node found for '%s'"), *TimelineName);
+		return false;
+	}
+
+	UClass* OwnerClass = Blueprint->GeneratedClass;
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatTrack: Blueprint has no GeneratedClass"));
+		return false;
+	}
+
+	TimelineNode->Modify();
+	Template->Modify();
+
+	FTTFloatTrack NewTrack;
+	NewTrack.SetTrackName(TrackFName, Template);
+	NewTrack.CurveFloat = NewObject<UCurveFloat>(OwnerClass, NAME_None, RF_Public | RF_Transactional);
+	const int32 NewIndex = Template->FloatTracks.Add(NewTrack);
+
+	FTTTrackId NewTrackId;
+	NewTrackId.TrackType = FTTTrackBase::TT_FloatInterp;
+	NewTrackId.TrackIndex = NewIndex;
+	Template->AddDisplayTrack(NewTrackId);
+
+	TimelineNode->ReconstructNode();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineFloatTrack: Added float track '%s' to timeline '%s'"), *TrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineFloatKey(
+	const FString& BlueprintPath,
+	const FString& TimelineName,
+	const FString& TrackName,
+	float Time,
+	float Value,
+	const FString& InterpMode)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatKey: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatKey: %s"), *Error);
+		return false;
+	}
+
+	FTTFloatTrack* Track = VibeUE_FindFloatTrack(Template, TrackName);
+	if (!Track || !Track->CurveFloat)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineFloatKey: Float track '%s' not found (or has no curve) on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+
+	ERichCurveInterpMode CurveInterp = RCIM_Cubic;
+	ERichCurveTangentMode CurveTangent = RCTM_Auto;
+	const FString Mode = InterpMode.TrimStartAndEnd();
+	if (Mode.Equals(TEXT("Linear"), ESearchCase::IgnoreCase))
+	{
+		CurveInterp = RCIM_Linear;
+	}
+	else if (Mode.Equals(TEXT("Constant"), ESearchCase::IgnoreCase))
+	{
+		CurveInterp = RCIM_Constant;
+	}
+	else if (Mode.Equals(TEXT("CubicUser"), ESearchCase::IgnoreCase))
+	{
+		CurveInterp = RCIM_Cubic;
+		CurveTangent = RCTM_User;
+	}
+	// "Auto" / "CubicAuto" / anything else → cubic + auto tangents (smooth)
+
+	UCurveFloat* Curve = Track->CurveFloat;
+	Curve->Modify();
+	FRichCurve& RichCurve = Curve->FloatCurve;
+	const FKeyHandle KeyHandle = RichCurve.AddKey(Time, Value, /*bUnwindRotation*/false, FKeyHandle());
+	RichCurve.SetKeyInterpMode(KeyHandle, CurveInterp);
+	RichCurve.SetKeyTangentMode(KeyHandle, CurveTangent);
+	RichCurve.AutoSetTangents();
+
+	if (UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template))
+	{
+		// Length may follow the last keyframe — refresh the node so any length-dependent state updates.
+		TimelineNode->ReconstructNode();
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineFloatKey: Added key (t=%.4f v=%.4f mode=%s) to '%s.%s'"), Time, Value, *Mode, *TimelineName, *TrackName);
+	return true;
+}
+
+TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetTimelines(const FString& BlueprintPath)
+{
+	TArray<FBlueprintFunctionParameterInfo> Result;
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("GetTimelines: Failed to load blueprint: %s"), *BlueprintPath);
+		return Result;
+	}
+
+	for (const UTimelineTemplate* Template : Blueprint->Timelines)
+	{
+		if (!Template)
+		{
+			continue;
+		}
+		FBlueprintFunctionParameterInfo Info;
+		Info.ParameterName = Template->GetVariableName().ToString();
+		TArray<FString> TrackNames;
+		for (const FTTFloatTrack& Track : Template->FloatTracks)
+		{
+			TrackNames.Add(Track.GetTrackName().ToString());
+		}
+		Info.ParameterType = FString::Join(TrackNames, TEXT(","));
+		Info.DefaultValue = FString::Printf(TEXT("Length=%.2f AutoPlay=%d Loop=%d"), Template->TimelineLength, Template->bAutoPlay ? 1 : 0, Template->bLoop ? 1 : 0);
+		Result.Add(Info);
+	}
 	return Result;
 }
 
