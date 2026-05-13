@@ -2063,6 +2063,104 @@ public:
 	);
 
 	/**
+	 * Add an input parameter (user-defined input pin) to an existing Custom Event node.
+	 * This is the equivalent of clicking "+ New Parameter" under Inputs in the Details panel
+	 * with a Custom Event node selected. The node is identified by its GUID (as returned by
+	 * add_custom_event_node / get_nodes_in_graph).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node (e.g. "EventGraph")
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Name of the new input pin
+	 * @param ParameterType - Type string (same format as add_variable, e.g. "float", "FRotator", "AActor")
+	 * @param bIsArray - Whether the parameter is an array
+	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
+	 * @return True if the pin was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation", "FRotator")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName,
+		const FString& ParameterType,
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * Remove an input parameter (user-defined input pin) from a Custom Event node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Name of the input pin to remove
+	 * @return True if the pin existed and was removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName
+	);
+
+	/**
+	 * Modify an existing input parameter on a Custom Event node — rename it, change its type, or both.
+	 * Existing connections are preserved where the change allows (a rename keeps wires; a type change
+	 * keeps wires only if the new type is compatible).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Current name of the input pin to modify
+	 * @param NewName - New name for the pin, or empty to keep the current name
+	 * @param NewType - New type string (same format as add_variable), or empty to keep the current type
+	 * @param bIsArray - Whether the new type is an array (only used when NewType is provided)
+	 * @param ContainerType - Container type for the new type: "Array", "Set", "Map", or empty (only used when NewType is provided)
+	 * @return True if the pin was found and modified
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.modify_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation", "TargetRotation", "FRotator")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ModifyCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName,
+		const FString& NewName = TEXT(""),
+		const FString& NewType = TEXT(""),
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * List the input parameters (user-defined input pins) of a Custom Event node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @return Array of parameter info (parameter_name / parameter_type), empty if the node has no inputs or isn't a Custom Event
+	 *
+	 * Example:
+	 *   for p in unreal.BlueprintService.get_custom_event_inputs("/Game/StateTree/BP_Cube", "EventGraph", node_id):
+	 *       print(p.parameter_name, p.parameter_type)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static TArray<FBlueprintFunctionParameterInfo> GetCustomEventInputs(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId
+	);
+
+	/**
 	 * Add a Create Event node (implemented as UK2Node_CreateDelegate) to a graph.
 	 * Use this for delegate workflows where a function name must be converted into a delegate value.
 	 *
@@ -3066,6 +3164,15 @@ private:
 
 	/** Helper to find a node by ID in a graph */
 	static UEdGraphNode* FindNodeById(UEdGraph* Graph, const FString& NodeId);
+
+	/** Resolve a Custom Event node by blueprint/graph/GUID. Returns nullptr and sets OutError on failure. */
+	static class UK2Node_CustomEvent* ResolveCustomEventNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		UBlueprint*& OutBlueprint,
+		FString& OutError
+	);
 
 	// ── Batch Graph Builder internals ──
 

@@ -3526,6 +3526,262 @@ FString UBlueprintService::AddCustomEventNode(
 	return SpawnedNode->NodeGuid.ToString();
 }
 
+// Returns true if the editable-pin node already has a user-defined pin with this name.
+// (Avoids UK2Node_EditablePinBase::UserDefinedPinExists, which isn't exported from BlueprintGraph.)
+static bool VibeUE_HasUserDefinedPin(const UK2Node_EditablePinBase* Node, const FName PinName)
+{
+	if (!Node)
+	{
+		return false;
+	}
+	for (const TSharedPtr<FUserPinInfo>& Info : Node->UserDefinedPins)
+	{
+		if (Info.IsValid() && Info->PinName == PinName)
+		{
+			return true;
+		}
+	}
+	return false;
+}
+
+UK2Node_CustomEvent* UBlueprintService::ResolveCustomEventNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId,
+	UBlueprint*& OutBlueprint,
+	FString& OutError)
+{
+	OutBlueprint = LoadBlueprint(BlueprintPath);
+	if (!OutBlueprint)
+	{
+		OutError = FString::Printf(TEXT("Failed to load blueprint: %s"), *BlueprintPath);
+		return nullptr;
+	}
+
+	UEdGraph* Graph = ResolveBlueprintGraph(OutBlueprint, GraphName);
+	if (!Graph)
+	{
+		OutError = FString::Printf(TEXT("Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return nullptr;
+	}
+
+	UEdGraphNode* Node = FindNodeById(Graph, NodeId);
+	if (!Node)
+	{
+		OutError = FString::Printf(TEXT("Node '%s' not found in graph '%s'"), *NodeId, *GraphName);
+		return nullptr;
+	}
+
+	UK2Node_CustomEvent* CustomEvent = Cast<UK2Node_CustomEvent>(Node);
+	if (!CustomEvent)
+	{
+		OutError = FString::Printf(TEXT("Node '%s' is a %s, not a Custom Event"), *NodeId, *Node->GetClass()->GetName());
+		return nullptr;
+	}
+
+	return CustomEvent;
+}
+
+bool UBlueprintService::AddCustomEventInput(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId,
+	const FString& ParameterName,
+	const FString& ParameterType,
+	bool bIsArray,
+	const FString& ContainerType)
+{
+	UBlueprint* Blueprint = nullptr;
+	FString Error;
+	UK2Node_CustomEvent* CustomEvent = ResolveCustomEventNode(BlueprintPath, GraphName, NodeId, Blueprint, Error);
+	if (!CustomEvent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventInput: %s"), *Error);
+		return false;
+	}
+
+	if (ParameterName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventInput: ParameterName is empty"));
+		return false;
+	}
+
+	if (VibeUE_HasUserDefinedPin(CustomEvent, FName(*ParameterName)))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventInput: Input '%s' already exists on node %s"), *ParameterName, *NodeId);
+		return false;
+	}
+
+	FEdGraphPinType PinType;
+	FString ParseError;
+	if (!FBlueprintTypeParser::ParseTypeString(ParameterType, PinType, bIsArray, ContainerType, ParseError))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventInput: Failed to parse type '%s': %s"), *ParameterType, *ParseError);
+		return false;
+	}
+
+	CustomEvent->Modify();
+	UEdGraphPin* NewPin = CustomEvent->CreateUserDefinedPin(FName(*ParameterName), PinType, EGPD_Output);
+	if (!NewPin)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCustomEventInput: CreateUserDefinedPin failed for '%s'"), *ParameterName);
+		return false;
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCustomEventInput: Added input '%s' (%s) to custom event %s"), *ParameterName, *ParameterType, *NodeId);
+	return true;
+}
+
+bool UBlueprintService::RemoveCustomEventInput(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId,
+	const FString& ParameterName)
+{
+	UBlueprint* Blueprint = nullptr;
+	FString Error;
+	UK2Node_CustomEvent* CustomEvent = ResolveCustomEventNode(BlueprintPath, GraphName, NodeId, Blueprint, Error);
+	if (!CustomEvent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveCustomEventInput: %s"), *Error);
+		return false;
+	}
+
+	if (!VibeUE_HasUserDefinedPin(CustomEvent, FName(*ParameterName)))
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveCustomEventInput: Input '%s' not found on node %s"), *ParameterName, *NodeId);
+		return false;
+	}
+
+	CustomEvent->Modify();
+	CustomEvent->RemoveUserDefinedPinByName(FName(*ParameterName));
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("RemoveCustomEventInput: Removed input '%s' from custom event %s"), *ParameterName, *NodeId);
+	return true;
+}
+
+bool UBlueprintService::ModifyCustomEventInput(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId,
+	const FString& ParameterName,
+	const FString& NewName,
+	const FString& NewType,
+	bool bIsArray,
+	const FString& ContainerType)
+{
+	UBlueprint* Blueprint = nullptr;
+	FString Error;
+	UK2Node_CustomEvent* CustomEvent = ResolveCustomEventNode(BlueprintPath, GraphName, NodeId, Blueprint, Error);
+	if (!CustomEvent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ModifyCustomEventInput: %s"), *Error);
+		return false;
+	}
+
+	const FName OldName(*ParameterName);
+	TSharedPtr<FUserPinInfo>* FoundPinInfo = CustomEvent->UserDefinedPins.FindByPredicate(
+		[OldName](const TSharedPtr<FUserPinInfo>& Info) { return Info.IsValid() && Info->PinName == OldName; });
+	if (!FoundPinInfo)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ModifyCustomEventInput: Input '%s' not found on node %s"), *ParameterName, *NodeId);
+		return false;
+	}
+	TSharedPtr<FUserPinInfo> PinInfo = *FoundPinInfo;
+
+	const bool bWantsRename = !NewName.IsEmpty() && FName(*NewName) != OldName;
+	const bool bWantsRetype = !NewType.IsEmpty();
+	if (!bWantsRename && !bWantsRetype)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ModifyCustomEventInput: Nothing to change for '%s' (provide NewName and/or NewType)"), *ParameterName);
+		return false;
+	}
+
+	FEdGraphPinType NewPinType;
+	if (bWantsRetype)
+	{
+		FString ParseError;
+		if (!FBlueprintTypeParser::ParseTypeString(NewType, NewPinType, bIsArray, ContainerType, ParseError))
+		{
+			UE_LOG(LogTemp, Error, TEXT("ModifyCustomEventInput: Failed to parse type '%s': %s"), *NewType, *ParseError);
+			return false;
+		}
+	}
+
+	if (bWantsRename && VibeUE_HasUserDefinedPin(CustomEvent, FName(*NewName)))
+	{
+		UE_LOG(LogTemp, Error, TEXT("ModifyCustomEventInput: An input named '%s' already exists on node %s"), *NewName, *NodeId);
+		return false;
+	}
+
+	CustomEvent->Modify();
+
+	// Update the live pin first so ReconstructNode() can carry connections across to the rebuilt pin.
+	if (UEdGraphPin* LivePin = CustomEvent->FindPin(OldName, EGPD_Output))
+	{
+		LivePin->Modify();
+		if (bWantsRename)
+		{
+			LivePin->PinName = FName(*NewName);
+		}
+		if (bWantsRetype)
+		{
+			LivePin->PinType = NewPinType;
+		}
+	}
+
+	if (bWantsRename)
+	{
+		PinInfo->PinName = FName(*NewName);
+	}
+	if (bWantsRetype)
+	{
+		PinInfo->PinType = NewPinType;
+	}
+
+	CustomEvent->ReconstructNode();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("ModifyCustomEventInput: Modified input '%s' on custom event %s (rename=%d retype=%d)"),
+		*ParameterName, *NodeId, bWantsRename ? 1 : 0, bWantsRetype ? 1 : 0);
+	return true;
+}
+
+TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetCustomEventInputs(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& NodeId)
+{
+	TArray<FBlueprintFunctionParameterInfo> Result;
+
+	UBlueprint* Blueprint = nullptr;
+	FString Error;
+	UK2Node_CustomEvent* CustomEvent = ResolveCustomEventNode(BlueprintPath, GraphName, NodeId, Blueprint, Error);
+	if (!CustomEvent)
+	{
+		UE_LOG(LogTemp, Error, TEXT("GetCustomEventInputs: %s"), *Error);
+		return Result;
+	}
+
+	for (const TSharedPtr<FUserPinInfo>& PinInfo : CustomEvent->UserDefinedPins)
+	{
+		if (!PinInfo.IsValid())
+		{
+			continue;
+		}
+		FBlueprintFunctionParameterInfo Info;
+		Info.ParameterName = PinInfo->PinName.ToString();
+		Info.ParameterType = FBlueprintTypeParser::GetFriendlyTypeName(PinInfo->PinType);
+		Info.bIsOutput = false;
+		Info.bIsReference = PinInfo->PinType.bIsReference;
+		Info.DefaultValue = PinInfo->PinDefaultValue;
+		Result.Add(Info);
+	}
+
+	return Result;
+}
+
 FString UBlueprintService::AddCreateEventNode(
 	const FString& BlueprintPath,
 	const FString& GraphName,
