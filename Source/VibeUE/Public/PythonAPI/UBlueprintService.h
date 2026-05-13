@@ -2256,6 +2256,230 @@ public:
 	);
 
 	/**
+	 * Modify settings on an existing timeline. Pass a sentinel to leave a setting unchanged:
+	 * empty string for NewName, a negative number for Length, and -1 for the int flags
+	 * (0 = false, 1 = true).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Current name of the timeline
+	 * @param NewName - New name (also renames the component variable & event-track functions), or "" to leave
+	 * @param Length - New fixed length in seconds, or < 0 to leave
+	 * @param UseLastKeyFrame - 1 = length follows last keyframe, 0 = fixed length, -1 = leave
+	 * @param AutoPlay - 1/0/-1
+	 * @param Loop - 1/0/-1
+	 * @param Replicated - 1/0/-1
+	 * @param IgnoreTimeDilation - 1/0/-1
+	 * @return True if the timeline was found and (any) change applied
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.modify_timeline("/Game/StateTree/BP_Cube", "LookAtTimeline", "", 0.75, -1, -1, -1, -1, -1)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ModifyTimeline(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& NewName = TEXT(""),
+		float Length = -1.0f,
+		int32 UseLastKeyFrame = -1,
+		int32 AutoPlay = -1,
+		int32 Loop = -1,
+		int32 Replicated = -1,
+		int32 IgnoreTimeDilation = -1
+	);
+
+	/**
+	 * Remove a timeline from a blueprint — deletes the Timeline node and its UTimelineTemplate.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline to remove
+	 * @return True if the timeline existed and was removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_timeline("/Game/StateTree/BP_Cube", "LookAtTimeline")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimeline(
+		const FString& BlueprintPath,
+		const FString& TimelineName
+	);
+
+	/**
+	 * Add a vector interpolation track (3-component UCurveVector) to a timeline.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new track (also the output pin name on the node)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineVectorTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add a linear-color interpolation track (4-component UCurveLinearColor) to a timeline.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new track (also the output pin name on the node)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineColorTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add an event track to a timeline. Event tracks add a named exec output pin on the Timeline
+	 * node that fires when playback crosses one of the track's keys.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new event track (also the exec output pin name)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineEventTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Remove a track of any type from a timeline (and its output pin on the node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track to remove
+	 * @return True if the track existed and was removed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimelineTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Rename a track on a timeline (and its output pin on the node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param OldTrackName - Current track name
+	 * @param NewTrackName - New track name (must be unique on the timeline)
+	 * @return True if the track was found and renamed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RenameTimelineTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& OldTrackName,
+		const FString& NewTrackName
+	);
+
+	/**
+	 * Add a key to a vector track. (Same interp-mode options as add_timeline_float_key, applied to all 3 components.)
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the vector track
+	 * @param Time - Key time in seconds
+	 * @param X / Y / Z - Component values
+	 * @param InterpMode - "Auto" (smooth), "Linear", "Constant", "CubicUser"
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineVectorKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float X,
+		float Y,
+		float Z,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * Add a key to a linear-color track. (Interp mode applied to all 4 channels.)
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the color track
+	 * @param Time - Key time in seconds
+	 * @param R / G / B / A - Channel values (0..1)
+	 * @param InterpMode - "Auto" (smooth), "Linear", "Constant", "CubicUser"
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineColorKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float R,
+		float G,
+		float B,
+		float A,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * Add a key (time only) to an event track.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the event track
+	 * @param Time - Time in seconds at which the event fires
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineEventKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time
+	);
+
+	/**
+	 * Remove a key near a given time from a track of any type (all component curves for vector/color).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track
+	 * @param Time - Key time in seconds
+	 * @param Tolerance - Time tolerance for matching the key (default 0.001)
+	 * @return True if at least one key was removed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimelineKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float Tolerance = 0.001f
+	);
+
+	/**
+	 * Remove all keys from a track (any type).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track to clear
+	 * @return True if the track was found and cleared
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ClearTimelineTrackKeys(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
 	 * Add a Create Event node (implemented as UK2Node_CreateDelegate) to a graph.
 	 * Use this for delegate workflows where a function name must be converted into a delegate value.
 	 *

@@ -32,6 +32,8 @@
 #include "K2Node_Timeline.h"             // For UK2Node_Timeline (add_timeline)
 #include "Engine/TimelineTemplate.h"     // For UTimelineTemplate / FTTFloatTrack
 #include "Curves/CurveFloat.h"           // For UCurveFloat / FRichCurve (timeline float tracks)
+#include "Curves/CurveVector.h"          // For UCurveVector (timeline vector tracks)
+#include "Curves/CurveLinearColor.h"     // For UCurveLinearColor (timeline color tracks)
 #include "EdGraphNode_Comment.h"         // For UEdGraphNode_Comment (comment box nodes)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
@@ -3814,6 +3816,114 @@ static FTTFloatTrack* VibeUE_FindFloatTrack(UTimelineTemplate* Template, const F
 	return Template->FloatTracks.FindByPredicate([Wanted](const FTTFloatTrack& Track) { return Track.GetTrackName() == Wanted; });
 }
 
+// Find a track of any type on the timeline by name. Returns the base pointer and fills the type + index.
+static FTTTrackBase* VibeUE_FindAnyTrack(UTimelineTemplate* Template, const FName Name, FTTTrackBase::ETrackType& OutType, int32& OutIndex)
+{
+	if (!Template)
+	{
+		return nullptr;
+	}
+	for (int32 i = 0; i < Template->FloatTracks.Num(); ++i)
+	{
+		if (Template->FloatTracks[i].GetTrackName() == Name) { OutType = FTTTrackBase::TT_FloatInterp; OutIndex = i; return &Template->FloatTracks[i]; }
+	}
+	for (int32 i = 0; i < Template->VectorTracks.Num(); ++i)
+	{
+		if (Template->VectorTracks[i].GetTrackName() == Name) { OutType = FTTTrackBase::TT_VectorInterp; OutIndex = i; return &Template->VectorTracks[i]; }
+	}
+	for (int32 i = 0; i < Template->LinearColorTracks.Num(); ++i)
+	{
+		if (Template->LinearColorTracks[i].GetTrackName() == Name) { OutType = FTTTrackBase::TT_LinearColorInterp; OutIndex = i; return &Template->LinearColorTracks[i]; }
+	}
+	for (int32 i = 0; i < Template->EventTracks.Num(); ++i)
+	{
+		if (Template->EventTracks[i].GetTrackName() == Name) { OutType = FTTTrackBase::TT_Event; OutIndex = i; return &Template->EventTracks[i]; }
+	}
+	return nullptr;
+}
+
+// Collect the FRichCurve(s) backing a track (1 for float/event, 3 for vector, 4 for linear color).
+static void VibeUE_TrackCurves(FTTTrackBase* Track, FTTTrackBase::ETrackType Type, TArray<FRichCurve*>& OutCurves)
+{
+	if (!Track)
+	{
+		return;
+	}
+	switch (Type)
+	{
+	case FTTTrackBase::TT_FloatInterp:
+		if (UCurveFloat* C = static_cast<FTTFloatTrack*>(Track)->CurveFloat) { OutCurves.Add(&C->FloatCurve); }
+		break;
+	case FTTTrackBase::TT_VectorInterp:
+		if (UCurveVector* C = static_cast<FTTVectorTrack*>(Track)->CurveVector) { for (int32 i = 0; i < 3; ++i) { OutCurves.Add(&C->FloatCurves[i]); } }
+		break;
+	case FTTTrackBase::TT_LinearColorInterp:
+		if (UCurveLinearColor* C = static_cast<FTTLinearColorTrack*>(Track)->CurveLinearColor) { for (int32 i = 0; i < 4; ++i) { OutCurves.Add(&C->FloatCurves[i]); } }
+		break;
+	case FTTTrackBase::TT_Event:
+		if (UCurveFloat* C = static_cast<FTTEventTrack*>(Track)->CurveKeys) { OutCurves.Add(&C->FloatCurve); }
+		break;
+	}
+}
+
+// Return the UObject curve(s) of a track (so callers can Modify() them).
+static void VibeUE_TrackCurveObjects(FTTTrackBase* Track, FTTTrackBase::ETrackType Type, TArray<UCurveBase*>& OutCurves)
+{
+	if (!Track)
+	{
+		return;
+	}
+	switch (Type)
+	{
+	case FTTTrackBase::TT_FloatInterp:
+		if (UCurveFloat* C = static_cast<FTTFloatTrack*>(Track)->CurveFloat) { OutCurves.Add(C); }
+		break;
+	case FTTTrackBase::TT_VectorInterp:
+		if (UCurveVector* C = static_cast<FTTVectorTrack*>(Track)->CurveVector) { OutCurves.Add(C); }
+		break;
+	case FTTTrackBase::TT_LinearColorInterp:
+		if (UCurveLinearColor* C = static_cast<FTTLinearColorTrack*>(Track)->CurveLinearColor) { OutCurves.Add(C); }
+		break;
+	case FTTTrackBase::TT_Event:
+		if (UCurveFloat* C = static_cast<FTTEventTrack*>(Track)->CurveKeys) { OutCurves.Add(C); }
+		break;
+	}
+}
+
+static void VibeUE_ParseInterp(const FString& InMode, ERichCurveInterpMode& OutInterp, ERichCurveTangentMode& OutTangent)
+{
+	OutInterp = RCIM_Cubic;
+	OutTangent = RCTM_Auto;
+	const FString Mode = InMode.TrimStartAndEnd();
+	if (Mode.Equals(TEXT("Linear"), ESearchCase::IgnoreCase)) { OutInterp = RCIM_Linear; }
+	else if (Mode.Equals(TEXT("Constant"), ESearchCase::IgnoreCase)) { OutInterp = RCIM_Constant; }
+	else if (Mode.Equals(TEXT("CubicUser"), ESearchCase::IgnoreCase)) { OutInterp = RCIM_Cubic; OutTangent = RCTM_User; }
+	// "Auto" / "CubicAuto" / anything else → cubic + auto tangents (smooth)
+}
+
+static void VibeUE_AddCurveKey(FRichCurve& Curve, float Time, float Value, ERichCurveInterpMode Interp, ERichCurveTangentMode Tangent)
+{
+	const FKeyHandle KeyHandle = Curve.AddKey(Time, Value, /*bUnwindRotation*/false, FKeyHandle());
+	Curve.SetKeyInterpMode(KeyHandle, Interp);
+	Curve.SetKeyTangentMode(KeyHandle, Tangent);
+	Curve.AutoSetTangents();
+}
+
+// Find the display index of a (type,index) track. Returns INDEX_NONE if not present.
+static int32 VibeUE_FindDisplayIndex(UTimelineTemplate* Template, FTTTrackBase::ETrackType Type, int32 TrackIndex)
+{
+	const int32 Num = Template->GetNumDisplayTracks();
+	for (int32 i = 0; i < Num; ++i)
+	{
+		const FTTTrackId Id = Template->GetDisplayTrackId(i);
+		if (Id.TrackType == static_cast<int32>(Type) && Id.TrackIndex == TrackIndex)
+		{
+			return i;
+		}
+	}
+	return INDEX_NONE;
+}
+
 FString UBlueprintService::AddTimeline(
 	const FString& BlueprintPath,
 	const FString& GraphName,
@@ -4039,15 +4149,399 @@ TArray<FBlueprintFunctionParameterInfo> UBlueprintService::GetTimelines(const FS
 		FBlueprintFunctionParameterInfo Info;
 		Info.ParameterName = Template->GetVariableName().ToString();
 		TArray<FString> TrackNames;
-		for (const FTTFloatTrack& Track : Template->FloatTracks)
-		{
-			TrackNames.Add(Track.GetTrackName().ToString());
-		}
+		for (const FTTFloatTrack& T : Template->FloatTracks) { TrackNames.Add(FString::Printf(TEXT("float:%s"), *T.GetTrackName().ToString())); }
+		for (const FTTVectorTrack& T : Template->VectorTracks) { TrackNames.Add(FString::Printf(TEXT("vector:%s"), *T.GetTrackName().ToString())); }
+		for (const FTTLinearColorTrack& T : Template->LinearColorTracks) { TrackNames.Add(FString::Printf(TEXT("color:%s"), *T.GetTrackName().ToString())); }
+		for (const FTTEventTrack& T : Template->EventTracks) { TrackNames.Add(FString::Printf(TEXT("event:%s"), *T.GetTrackName().ToString())); }
 		Info.ParameterType = FString::Join(TrackNames, TEXT(","));
-		Info.DefaultValue = FString::Printf(TEXT("Length=%.2f AutoPlay=%d Loop=%d"), Template->TimelineLength, Template->bAutoPlay ? 1 : 0, Template->bLoop ? 1 : 0);
+		Info.DefaultValue = FString::Printf(TEXT("Length=%.2f LengthMode=%s AutoPlay=%d Loop=%d Replicated=%d IgnoreTimeDilation=%d"),
+			Template->TimelineLength,
+			Template->LengthMode == ETimelineLengthMode::TL_LastKeyFrame ? TEXT("LastKeyFrame") : TEXT("Fixed"),
+			Template->bAutoPlay ? 1 : 0, Template->bLoop ? 1 : 0, Template->bReplicated ? 1 : 0, Template->bIgnoreTimeDilation ? 1 : 0);
 		Result.Add(Info);
 	}
 	return Result;
+}
+
+// Validate a new track add. Returns the template + node and the new-track FName, or nullptr on failure.
+static UTimelineTemplate* VibeUE_PrepareTrackAdd(const TCHAR* FnName, UBlueprint* Blueprint, const FString& TimelineName, const FString& TrackName,
+	FName& OutTrackFName, UK2Node_Timeline*& OutNode)
+{
+	OutNode = nullptr;
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("%s: %s"), FnName, *Error); return nullptr; }
+	if (TrackName.IsEmpty()) { UE_LOG(LogTemp, Error, TEXT("%s: TrackName is empty"), FnName); return nullptr; }
+	OutTrackFName = FName(*TrackName);
+	if (!Template->IsNewTrackNameValid(OutTrackFName))
+	{
+		UE_LOG(LogTemp, Error, TEXT("%s: Track name '%s' is not valid/unique on timeline '%s'"), FnName, *TrackName, *TimelineName);
+		return nullptr;
+	}
+	OutNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template);
+	if (!OutNode) { UE_LOG(LogTemp, Error, TEXT("%s: No Timeline node found for '%s'"), FnName, *TimelineName); return nullptr; }
+	if (!Blueprint->GeneratedClass) { UE_LOG(LogTemp, Error, TEXT("%s: Blueprint has no GeneratedClass"), FnName); return nullptr; }
+	return Template;
+}
+
+static void VibeUE_FinishTrackAdd(UBlueprint* Blueprint, UTimelineTemplate* Template, UK2Node_Timeline* Node, FTTTrackBase::ETrackType Type, int32 NewIndex)
+{
+	FTTTrackId NewTrackId;
+	NewTrackId.TrackType = static_cast<int32>(Type);
+	NewTrackId.TrackIndex = NewIndex;
+	Template->AddDisplayTrack(NewTrackId);
+	Node->ReconstructNode();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+}
+
+bool UBlueprintService::AddTimelineVectorTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FName TrackFName; UK2Node_Timeline* Node = nullptr;
+	UTimelineTemplate* Template = VibeUE_PrepareTrackAdd(TEXT("AddTimelineVectorTrack"), Blueprint, TimelineName, TrackName, TrackFName, Node);
+	if (!Template) { return false; }
+	Node->Modify(); Template->Modify();
+	FTTVectorTrack NewTrack;
+	NewTrack.SetTrackName(TrackFName, Template);
+	NewTrack.CurveVector = NewObject<UCurveVector>(Blueprint->GeneratedClass, NAME_None, RF_Public | RF_Transactional);
+	const int32 NewIndex = Template->VectorTracks.Add(NewTrack);
+	VibeUE_FinishTrackAdd(Blueprint, Template, Node, FTTTrackBase::TT_VectorInterp, NewIndex);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineVectorTrack: Added vector track '%s' to timeline '%s'"), *TrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineColorTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FName TrackFName; UK2Node_Timeline* Node = nullptr;
+	UTimelineTemplate* Template = VibeUE_PrepareTrackAdd(TEXT("AddTimelineColorTrack"), Blueprint, TimelineName, TrackName, TrackFName, Node);
+	if (!Template) { return false; }
+	Node->Modify(); Template->Modify();
+	FTTLinearColorTrack NewTrack;
+	NewTrack.SetTrackName(TrackFName, Template);
+	NewTrack.CurveLinearColor = NewObject<UCurveLinearColor>(Blueprint->GeneratedClass, NAME_None, RF_Public | RF_Transactional);
+	const int32 NewIndex = Template->LinearColorTracks.Add(NewTrack);
+	VibeUE_FinishTrackAdd(Blueprint, Template, Node, FTTTrackBase::TT_LinearColorInterp, NewIndex);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineColorTrack: Added color track '%s' to timeline '%s'"), *TrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineEventTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FName TrackFName; UK2Node_Timeline* Node = nullptr;
+	UTimelineTemplate* Template = VibeUE_PrepareTrackAdd(TEXT("AddTimelineEventTrack"), Blueprint, TimelineName, TrackName, TrackFName, Node);
+	if (!Template) { return false; }
+	Node->Modify(); Template->Modify();
+	FTTEventTrack NewTrack;
+	NewTrack.SetTrackName(TrackFName, Template);
+	NewTrack.CurveKeys = NewObject<UCurveFloat>(Blueprint->GeneratedClass, NAME_None, RF_Public | RF_Transactional);
+	NewTrack.CurveKeys->bIsEventCurve = true;
+	const int32 NewIndex = Template->EventTracks.Add(NewTrack);
+	VibeUE_FinishTrackAdd(Blueprint, Template, Node, FTTTrackBase::TT_Event, NewIndex);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineEventTrack: Added event track '%s' to timeline '%s'"), *TrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::RemoveTimelineTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineTrack: %s"), *Error); return false; }
+
+	FTTTrackBase::ETrackType Type; int32 Index;
+	if (!VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index))
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveTimelineTrack: Track '%s' not found on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+	UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template);
+	if (!TimelineNode) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineTrack: No Timeline node for '%s'"), *TimelineName); return false; }
+
+	TimelineNode->Modify();
+	Template->Modify();
+
+	const int32 DisplayIdx = VibeUE_FindDisplayIndex(Template, Type, Index);
+	if (DisplayIdx != INDEX_NONE)
+	{
+		Template->RemoveDisplayTrack(DisplayIdx);
+	}
+	switch (Type)
+	{
+	case FTTTrackBase::TT_FloatInterp: Template->FloatTracks.RemoveAt(Index); break;
+	case FTTTrackBase::TT_VectorInterp: Template->VectorTracks.RemoveAt(Index); break;
+	case FTTTrackBase::TT_LinearColorInterp: Template->LinearColorTracks.RemoveAt(Index); break;
+	case FTTTrackBase::TT_Event: Template->EventTracks.RemoveAt(Index); break;
+	}
+
+	TimelineNode->ReconstructNode();
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("RemoveTimelineTrack: Removed track '%s' from timeline '%s'"), *TrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::RenameTimelineTrack(const FString& BlueprintPath, const FString& TimelineName, const FString& OldTrackName, const FString& NewTrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: %s"), *Error); return false; }
+
+	const FName OldName(*OldTrackName);
+	const FName NewName(*NewTrackName);
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, OldName, Type, Index);
+	if (!Track)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: Track '%s' not found on timeline '%s'"), *OldTrackName, *TimelineName);
+		return false;
+	}
+	if (NewTrackName.IsEmpty() || !Template->IsNewTrackNameValid(NewName))
+	{
+		UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: New name '%s' is not valid/unique on timeline '%s'"), *NewTrackName, *TimelineName);
+		return false;
+	}
+	UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template);
+	if (!TimelineNode) { UE_LOG(LogTemp, Error, TEXT("RenameTimelineTrack: No Timeline node for '%s'"), *TimelineName); return false; }
+
+	TimelineNode->Modify();
+	Template->Modify();
+
+	for (UEdGraphPin* Pin : TimelineNode->Pins)
+	{
+		if (Pin && Pin->PinName == OldName)
+		{
+			Pin->Modify();
+			Pin->PinName = NewName;
+			break;
+		}
+	}
+	Track->SetTrackName(NewName, Template);
+	Template->UpdateCachedNames();
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("RenameTimelineTrack: Renamed '%s' -> '%s' on timeline '%s'"), *OldTrackName, *NewTrackName, *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineVectorKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float X, float Y, float Z, const FString& InterpMode)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorKey: %s"), *Error); return false; }
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index);
+	if (!Track || Type != FTTTrackBase::TT_VectorInterp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorKey: Vector track '%s' not found on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+	UCurveVector* Curve = static_cast<FTTVectorTrack*>(Track)->CurveVector;
+	if (!Curve) { UE_LOG(LogTemp, Error, TEXT("AddTimelineVectorKey: track '%s' has no curve"), *TrackName); return false; }
+	ERichCurveInterpMode I; ERichCurveTangentMode Tn; VibeUE_ParseInterp(InterpMode, I, Tn);
+	Curve->Modify();
+	const float V[3] = { X, Y, Z };
+	for (int32 i = 0; i < 3; ++i) { VibeUE_AddCurveKey(Curve->FloatCurves[i], Time, V[i], I, Tn); }
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineVectorKey: Added key (t=%.4f) to '%s.%s'"), Time, *TimelineName, *TrackName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineColorKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float R, float G, float B, float A, const FString& InterpMode)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorKey: %s"), *Error); return false; }
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index);
+	if (!Track || Type != FTTTrackBase::TT_LinearColorInterp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineColorKey: Color track '%s' not found on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+	UCurveLinearColor* Curve = static_cast<FTTLinearColorTrack*>(Track)->CurveLinearColor;
+	if (!Curve) { UE_LOG(LogTemp, Error, TEXT("AddTimelineColorKey: track '%s' has no curve"), *TrackName); return false; }
+	ERichCurveInterpMode I; ERichCurveTangentMode Tn; VibeUE_ParseInterp(InterpMode, I, Tn);
+	Curve->Modify();
+	const float V[4] = { R, G, B, A };
+	for (int32 i = 0; i < 4; ++i) { VibeUE_AddCurveKey(Curve->FloatCurves[i], Time, V[i], I, Tn); }
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineColorKey: Added key (t=%.4f) to '%s.%s'"), Time, *TimelineName, *TrackName);
+	return true;
+}
+
+bool UBlueprintService::AddTimelineEventKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventKey: %s"), *Error); return false; }
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index);
+	if (!Track || Type != FTTTrackBase::TT_Event)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddTimelineEventKey: Event track '%s' not found on timeline '%s'"), *TrackName, *TimelineName);
+		return false;
+	}
+	UCurveFloat* Curve = static_cast<FTTEventTrack*>(Track)->CurveKeys;
+	if (!Curve) { UE_LOG(LogTemp, Error, TEXT("AddTimelineEventKey: track '%s' has no curve"), *TrackName); return false; }
+	Curve->Modify();
+	// Event keys are constant-interp markers; value is irrelevant.
+	VibeUE_AddCurveKey(Curve->FloatCurve, Time, 1.0f, RCIM_Constant, RCTM_Auto);
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddTimelineEventKey: Added event key (t=%.4f) to '%s.%s'"), Time, *TimelineName, *TrackName);
+	return true;
+}
+
+bool UBlueprintService::RemoveTimelineKey(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName, float Time, float Tolerance)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineKey: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineKey: %s"), *Error); return false; }
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index);
+	if (!Track) { UE_LOG(LogTemp, Error, TEXT("RemoveTimelineKey: Track '%s' not found on timeline '%s'"), *TrackName, *TimelineName); return false; }
+
+	TArray<UCurveBase*> CurveObjs; VibeUE_TrackCurveObjects(Track, Type, CurveObjs);
+	TArray<FRichCurve*> Curves; VibeUE_TrackCurves(Track, Type, Curves);
+	for (UCurveBase* C : CurveObjs) { C->Modify(); }
+
+	int32 Removed = 0;
+	for (FRichCurve* Curve : Curves)
+	{
+		TArray<FKeyHandle> ToRemove;
+		for (int32 i = 0; i < Curve->Keys.Num(); ++i)
+		{
+			if (FMath::IsNearlyEqual(Curve->Keys[i].Time, Time, Tolerance))
+			{
+				ToRemove.Add(Curve->GetKeyHandle(i));
+			}
+		}
+		for (const FKeyHandle KH : ToRemove)
+		{
+			Curve->DeleteKey(KH);
+			++Removed;
+		}
+	}
+	if (Removed == 0)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveTimelineKey: No key near t=%.4f on '%s.%s'"), Time, *TimelineName, *TrackName);
+		return false;
+	}
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("RemoveTimelineKey: Removed %d key(s) near t=%.4f from '%s.%s'"), Removed, Time, *TimelineName, *TrackName);
+	return true;
+}
+
+bool UBlueprintService::ClearTimelineTrackKeys(const FString& BlueprintPath, const FString& TimelineName, const FString& TrackName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("ClearTimelineTrackKeys: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("ClearTimelineTrackKeys: %s"), *Error); return false; }
+	FTTTrackBase::ETrackType Type; int32 Index;
+	FTTTrackBase* Track = VibeUE_FindAnyTrack(Template, FName(*TrackName), Type, Index);
+	if (!Track) { UE_LOG(LogTemp, Error, TEXT("ClearTimelineTrackKeys: Track '%s' not found on timeline '%s'"), *TrackName, *TimelineName); return false; }
+
+	TArray<UCurveBase*> CurveObjs; VibeUE_TrackCurveObjects(Track, Type, CurveObjs);
+	TArray<FRichCurve*> Curves; VibeUE_TrackCurves(Track, Type, Curves);
+	for (UCurveBase* C : CurveObjs) { C->Modify(); }
+	for (FRichCurve* Curve : Curves) { Curve->Reset(); }
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("ClearTimelineTrackKeys: Cleared all keys on '%s.%s'"), *TimelineName, *TrackName);
+	return true;
+}
+
+bool UBlueprintService::ModifyTimeline(const FString& BlueprintPath, const FString& TimelineName, const FString& NewName,
+	float Length, int32 UseLastKeyFrame, int32 AutoPlay, int32 Loop, int32 Replicated, int32 IgnoreTimeDilation)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("ModifyTimeline: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("ModifyTimeline: %s"), *Error); return false; }
+	UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template);
+
+	bool bChanged = false;
+
+	if (!NewName.IsEmpty())
+	{
+		const FName Old = Template->GetVariableName();
+		const FName New(*NewName);
+		if (Old != New)
+		{
+			if (!FBlueprintEditorUtils::RenameTimeline(Blueprint, Old, New))
+			{
+				UE_LOG(LogTemp, Error, TEXT("ModifyTimeline: RenameTimeline '%s' -> '%s' failed"), *Old.ToString(), *NewName);
+				return false;
+			}
+			bChanged = true;
+			// Re-resolve under the new name for any further changes.
+			Template = Blueprint->FindTimelineTemplateByVariableName(New);
+			TimelineNode = Template ? FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template) : nullptr;
+			if (!Template) { return bChanged; }
+		}
+	}
+
+	Template->Modify();
+	if (TimelineNode) { TimelineNode->Modify(); }
+
+	if (UseLastKeyFrame >= 0)
+	{
+		Template->LengthMode = (UseLastKeyFrame != 0) ? ETimelineLengthMode::TL_LastKeyFrame : ETimelineLengthMode::TL_TimelineLength;
+		bChanged = true;
+	}
+	if (Length >= 0.0f)
+	{
+		Template->TimelineLength = Length;
+		if (UseLastKeyFrame < 0) { Template->LengthMode = ETimelineLengthMode::TL_TimelineLength; }
+		bChanged = true;
+	}
+	if (AutoPlay >= 0) { Template->bAutoPlay = (AutoPlay != 0); if (TimelineNode) { TimelineNode->bAutoPlay = (AutoPlay != 0); } bChanged = true; }
+	if (Loop >= 0) { Template->bLoop = (Loop != 0); if (TimelineNode) { TimelineNode->bLoop = (Loop != 0); } bChanged = true; }
+	if (Replicated >= 0) { Template->bReplicated = (Replicated != 0); if (TimelineNode) { TimelineNode->bReplicated = (Replicated != 0); } bChanged = true; }
+	if (IgnoreTimeDilation >= 0) { Template->bIgnoreTimeDilation = (IgnoreTimeDilation != 0); if (TimelineNode) { TimelineNode->bIgnoreTimeDilation = (IgnoreTimeDilation != 0); } bChanged = true; }
+
+	if (!bChanged)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("ModifyTimeline: nothing to change for '%s'"), *TimelineName);
+		return false;
+	}
+	if (TimelineNode) { TimelineNode->ReconstructNode(); }
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("ModifyTimeline: updated timeline '%s'"), *TimelineName);
+	return true;
+}
+
+bool UBlueprintService::RemoveTimeline(const FString& BlueprintPath, const FString& TimelineName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint) { UE_LOG(LogTemp, Error, TEXT("RemoveTimeline: Failed to load blueprint: %s"), *BlueprintPath); return false; }
+	FString Error;
+	UTimelineTemplate* Template = VibeUE_ResolveTimeline(Blueprint, TimelineName, Error);
+	if (!Template) { UE_LOG(LogTemp, Error, TEXT("RemoveTimeline: %s"), *Error); return false; }
+
+	if (UK2Node_Timeline* TimelineNode = FBlueprintEditorUtils::FindNodeForTimeline(Blueprint, Template))
+	{
+		FBlueprintEditorUtils::RemoveNode(Blueprint, TimelineNode, /*bDontRecompile*/true);
+	}
+	FBlueprintEditorUtils::RemoveTimeline(Blueprint, Template, /*bDontRecompile*/false);
+	UE_LOG(LogTemp, Log, TEXT("RemoveTimeline: Removed timeline '%s' from %s"), *TimelineName, *BlueprintPath);
+	return true;
 }
 
 FString UBlueprintService::AddCreateEventNode(
