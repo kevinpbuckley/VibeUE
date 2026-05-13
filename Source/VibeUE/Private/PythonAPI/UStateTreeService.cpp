@@ -2902,6 +2902,17 @@ bool UStateTreeService::SetStateExpanded(const FString& AssetPath, const FString
 
 	State->bExpanded = bExpanded;
 	MarkStateTreeDirty(StateTree);
+
+	// The open StateTree editor's tree widget caches expansion state and only re-reads
+	// UStateTreeState::bExpanded when the tree is rebuilt. Notify any open editor so the
+	// view reflects the change immediately instead of only after a close/reopen.
+	if (GEditor)
+	{
+		if (UStateTreeEditingSubsystem* EditingSubsystem = GEditor->GetEditorSubsystem<UStateTreeEditingSubsystem>())
+		{
+			EditingSubsystem->FindOrAddViewModel(StateTree)->NotifyAssetChangedExternally();
+		}
+	}
 	return true;
 #else
 	return false;
