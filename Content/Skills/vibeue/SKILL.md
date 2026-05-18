@@ -34,7 +34,9 @@ manage_skills(action="load", skill_name="materials")
 ```
 
 The loaded skill returns:
-- `vibeue_apis` — live method signatures discovered at runtime (use these, not guesses)
 - `content` — workflows, gotchas, and property formats for the domain
+- `vibeue_classes` / `unreal_classes` — class names to feed into `discover_python_class('unreal.<ClassName>', method_filter='<keyword>')` to get live method signatures
+- `COMMON_MISTAKES` — extracted "common mistakes" section (when the skill has one)
+- `available_sections` — sibling sub-docs you can load via `skill_name="<skill>/<section>"` for deeper reference material
 
-Always use `vibeue_apis` for exact method names and parameters.
+Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never guess method names from the skill content alone.
