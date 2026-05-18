@@ -1414,6 +1414,106 @@ public:
 	);
 
 	// ============================================================================
+	// EVENT DISPATCHER MANAGEMENT
+	// ============================================================================
+
+	/**
+	 * Add a Blueprint Event Dispatcher (multicast delegate) to a blueprint.
+	 * This is the same as clicking "+" under the "Event Dispatchers" section in the
+	 * Blueprint editor's My Blueprint panel. Creates both the multicast delegate
+	 * member variable AND the signature graph that defines its parameters.
+	 *
+	 * The skeleton class is recompiled immediately so the dispatcher is callable
+	 * right after this returns — you do not need to compile the blueprint before
+	 * calling add_call_delegate_node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher (e.g. "OnFinishedLooking")
+	 * @return True if successful, false if the name already exists or creation failed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_event_dispatcher("/Game/StateTree/BP_Cube", "FinishedLooking")
+	 *   # Then to broadcast it:
+	 *   node_id = unreal.BlueprintService.add_call_delegate_node(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph", "FinishedLooking", 1400, -700)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddEventDispatcher(
+		const FString& BlueprintPath,
+		const FString& DispatcherName
+	);
+
+	/**
+	 * Remove a Blueprint Event Dispatcher and its signature graph.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher to remove
+	 * @return True if found and removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_event_dispatcher("/Game/BP_Player", "OnHealthChanged")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveEventDispatcher(
+		const FString& BlueprintPath,
+		const FString& DispatcherName
+	);
+
+	/**
+	 * Add a parameter to an Event Dispatcher's signature. Parameters become inputs
+	 * on the dispatcher's "Call" node and are received by all subscribers.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher
+	 * @param ParameterName - Name of the new parameter
+	 * @param ParameterType - Type string (same format as add_variable)
+	 * @param bIsArray - Whether the parameter is an array
+	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_event_dispatcher_parameter(
+	 *       "/Game/BP_Player", "OnHealthChanged", "NewHealth", "float")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddEventDispatcherParameter(
+		const FString& BlueprintPath,
+		const FString& DispatcherName,
+		const FString& ParameterName,
+		const FString& ParameterType,
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * Add a "Call <Dispatcher>" node (UK2Node_CallDelegate) to a graph.
+	 * This is the broadcast node — wire the execution flow into its "execute" pin
+	 * to fire all subscribers of the dispatcher.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint that owns the dispatcher
+	 * @param GraphName - Name of the graph to place the node in (e.g. "EventGraph")
+	 * @param DispatcherName - Name of the event dispatcher to call
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_call_delegate_node(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph", "FinishedLooking", 1400, -700)
+	 *   unreal.BlueprintService.connect_nodes(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph",
+	 *       timeline_id, "Finished", node_id, "execute")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCallDelegateNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& DispatcherName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	// ============================================================================
 	// FUNCTION MANAGEMENT (Phase 2)
 	// ============================================================================
 
@@ -2060,6 +2160,423 @@ public:
 		const FString& EventName,
 		float PosX = 0.0f,
 		float PosY = 0.0f
+	);
+
+	/**
+	 * Add an input parameter (user-defined input pin) to an existing Custom Event node.
+	 * This is the equivalent of clicking "+ New Parameter" under Inputs in the Details panel
+	 * with a Custom Event node selected. The node is identified by its GUID (as returned by
+	 * add_custom_event_node / get_nodes_in_graph).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node (e.g. "EventGraph")
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Name of the new input pin
+	 * @param ParameterType - Type string (same format as add_variable, e.g. "float", "FRotator", "AActor")
+	 * @param bIsArray - Whether the parameter is an array
+	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
+	 * @return True if the pin was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation", "FRotator")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName,
+		const FString& ParameterType,
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * Remove an input parameter (user-defined input pin) from a Custom Event node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Name of the input pin to remove
+	 * @return True if the pin existed and was removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName
+	);
+
+	/**
+	 * Modify an existing input parameter on a Custom Event node — rename it, change its type, or both.
+	 * Existing connections are preserved where the change allows (a rename keeps wires; a type change
+	 * keeps wires only if the new type is compatible).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @param ParameterName - Current name of the input pin to modify
+	 * @param NewName - New name for the pin, or empty to keep the current name
+	 * @param NewType - New type string (same format as add_variable), or empty to keep the current type
+	 * @param bIsArray - Whether the new type is an array (only used when NewType is provided)
+	 * @param ContainerType - Container type for the new type: "Array", "Set", "Map", or empty (only used when NewType is provided)
+	 * @return True if the pin was found and modified
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.modify_custom_event_input("/Game/StateTree/BP_Cube", "EventGraph", node_id, "Rotation", "TargetRotation", "FRotator")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ModifyCustomEventInput(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		const FString& ParameterName,
+		const FString& NewName = TEXT(""),
+		const FString& NewType = TEXT(""),
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * List the input parameters (user-defined input pins) of a Custom Event node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph containing the node
+	 * @param NodeId - GUID of the Custom Event node
+	 * @return Array of parameter info (parameter_name / parameter_type), empty if the node has no inputs or isn't a Custom Event
+	 *
+	 * Example:
+	 *   for p in unreal.BlueprintService.get_custom_event_inputs("/Game/StateTree/BP_Cube", "EventGraph", node_id):
+	 *       print(p.parameter_name, p.parameter_type)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static TArray<FBlueprintFunctionParameterInfo> GetCustomEventInputs(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId
+	);
+
+	// ── Timelines ──
+
+	/**
+	 * Add a Timeline node to a graph (and the backing UTimelineTemplate on the blueprint).
+	 * Equivalent to the "Add Timeline..." action. The new node has exec inputs
+	 * (Play, PlayFromStart, Stop, Reverse, ReverseFromEnd, SetNewTime / NewTime),
+	 * exec outputs (Update, Finished), and a Direction output; track output pins are
+	 * added by add_timeline_float_track / etc.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param GraphName - Name of the graph to place the node in (e.g. "EventGraph")
+	 * @param TimelineName - Name for the timeline (also the component variable name). Must be unique.
+	 * @param Length - Timeline length in seconds (used when LengthMode is fixed-length)
+	 * @param bUseLastKeyFrame - If true, the timeline auto-sizes to the last keyframe instead of using Length
+	 * @param bAutoPlay - Whether the timeline auto-plays
+	 * @param bLoop - Whether the timeline loops
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) of the Timeline node, empty string on failure
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_timeline("/Game/StateTree/BP_Cube", "EventGraph", "LookAtTimeline", 0.5)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddTimeline(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& TimelineName,
+		float Length = 5.0f,
+		bool bUseLastKeyFrame = false,
+		bool bAutoPlay = false,
+		bool bLoop = false,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a float interpolation track to an existing timeline. This creates an internal
+	 * UCurveFloat for the track and adds a matching float output pin to the Timeline node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline (as passed to add_timeline)
+	 * @param TrackName - Name of the new track (also the name of the output pin on the node)
+	 * @return True if the track was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_timeline_float_track("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineFloatTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add (or replace) a keyframe on a timeline float track's curve.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the float track
+	 * @param Time - Key time in seconds
+	 * @param Value - Key value
+	 * @param InterpMode - One of "Auto" (cubic, auto tangents — smooth), "Linear", "Constant", "CubicAuto", "CubicUser". Default "Auto".
+	 * @return True if the key was added
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_timeline_float_key("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha", 0.0, 0.0)
+	 *   unreal.BlueprintService.add_timeline_float_key("/Game/StateTree/BP_Cube", "LookAtTimeline", "Alpha", 0.5, 1.0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineFloatKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float Value,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * List the timelines on a blueprint, with their float track names.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @return Array of "TimelineName" entries; each entry's ParameterType lists comma-separated float track names
+	 *
+	 * Example:
+	 *   for t in unreal.BlueprintService.get_timelines("/Game/StateTree/BP_Cube"):
+	 *       print(t.parameter_name, "tracks:", t.parameter_type)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static TArray<FBlueprintFunctionParameterInfo> GetTimelines(
+		const FString& BlueprintPath
+	);
+
+	/**
+	 * Modify settings on an existing timeline. Pass a sentinel to leave a setting unchanged:
+	 * empty string for NewName, a negative number for Length, and -1 for the int flags
+	 * (0 = false, 1 = true).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Current name of the timeline
+	 * @param NewName - New name (also renames the component variable & event-track functions), or "" to leave
+	 * @param Length - New fixed length in seconds, or < 0 to leave
+	 * @param UseLastKeyFrame - 1 = length follows last keyframe, 0 = fixed length, -1 = leave
+	 * @param AutoPlay - 1/0/-1
+	 * @param Loop - 1/0/-1
+	 * @param Replicated - 1/0/-1
+	 * @param IgnoreTimeDilation - 1/0/-1
+	 * @return True if the timeline was found and (any) change applied
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.modify_timeline("/Game/StateTree/BP_Cube", "LookAtTimeline", "", 0.75, -1, -1, -1, -1, -1)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ModifyTimeline(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& NewName = TEXT(""),
+		float Length = -1.0f,
+		int32 UseLastKeyFrame = -1,
+		int32 AutoPlay = -1,
+		int32 Loop = -1,
+		int32 Replicated = -1,
+		int32 IgnoreTimeDilation = -1
+	);
+
+	/**
+	 * Remove a timeline from a blueprint — deletes the Timeline node and its UTimelineTemplate.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline to remove
+	 * @return True if the timeline existed and was removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_timeline("/Game/StateTree/BP_Cube", "LookAtTimeline")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimeline(
+		const FString& BlueprintPath,
+		const FString& TimelineName
+	);
+
+	/**
+	 * Add a vector interpolation track (3-component UCurveVector) to a timeline.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new track (also the output pin name on the node)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineVectorTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add a linear-color interpolation track (4-component UCurveLinearColor) to a timeline.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new track (also the output pin name on the node)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineColorTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Add an event track to a timeline. Event tracks add a named exec output pin on the Timeline
+	 * node that fires when playback crosses one of the track's keys.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the new event track (also the exec output pin name)
+	 * @return True if the track was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineEventTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Remove a track of any type from a timeline (and its output pin on the node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track to remove
+	 * @return True if the track existed and was removed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimelineTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
+	);
+
+	/**
+	 * Rename a track on a timeline (and its output pin on the node).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param OldTrackName - Current track name
+	 * @param NewTrackName - New track name (must be unique on the timeline)
+	 * @return True if the track was found and renamed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RenameTimelineTrack(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& OldTrackName,
+		const FString& NewTrackName
+	);
+
+	/**
+	 * Add a key to a vector track. (Same interp-mode options as add_timeline_float_key, applied to all 3 components.)
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the vector track
+	 * @param Time - Key time in seconds
+	 * @param X / Y / Z - Component values
+	 * @param InterpMode - "Auto" (smooth), "Linear", "Constant", "CubicUser"
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineVectorKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float X,
+		float Y,
+		float Z,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * Add a key to a linear-color track. (Interp mode applied to all 4 channels.)
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the color track
+	 * @param Time - Key time in seconds
+	 * @param R / G / B / A - Channel values (0..1)
+	 * @param InterpMode - "Auto" (smooth), "Linear", "Constant", "CubicUser"
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineColorKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float R,
+		float G,
+		float B,
+		float A,
+		const FString& InterpMode = TEXT("Auto")
+	);
+
+	/**
+	 * Add a key (time only) to an event track.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the event track
+	 * @param Time - Time in seconds at which the event fires
+	 * @return True if the key was added
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddTimelineEventKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time
+	);
+
+	/**
+	 * Remove a key near a given time from a track of any type (all component curves for vector/color).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track
+	 * @param Time - Key time in seconds
+	 * @param Tolerance - Time tolerance for matching the key (default 0.001)
+	 * @return True if at least one key was removed
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveTimelineKey(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName,
+		float Time,
+		float Tolerance = 0.001f
+	);
+
+	/**
+	 * Remove all keys from a track (any type).
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param TimelineName - Name of the timeline
+	 * @param TrackName - Name of the track to clear
+	 * @return True if the track was found and cleared
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool ClearTimelineTrackKeys(
+		const FString& BlueprintPath,
+		const FString& TimelineName,
+		const FString& TrackName
 	);
 
 	/**
@@ -3066,6 +3583,15 @@ private:
 
 	/** Helper to find a node by ID in a graph */
 	static UEdGraphNode* FindNodeById(UEdGraph* Graph, const FString& NodeId);
+
+	/** Resolve a Custom Event node by blueprint/graph/GUID. Returns nullptr and sets OutError on failure. */
+	static class UK2Node_CustomEvent* ResolveCustomEventNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& NodeId,
+		UBlueprint*& OutBlueprint,
+		FString& OutError
+	);
 
 	// ── Batch Graph Builder internals ──
 

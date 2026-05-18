@@ -9,8 +9,8 @@ This folder contains a project-generic template for AI coding assistant instruct
 ## What's Included
 
 - **VibeUE MCP Integration** - MCP tool guidance and discovery workflow
-- **Skills System** - All 22 available skills with descriptions and when to load each
-- **Skill Response Usage** - How to use `vibeue_apis` for correct method signatures
+- **Skills System** - Index + on-demand sub-doc loading pattern (`skill_name="<skill>/<section>"`)
+- **Skill Response Usage** - How to read the load response (`vibeue_classes`, `available_sections`, `COMMON_MISTAKES`) and chain into `discover_python_class` for real method signatures
 - **Log Reading** - How to read Unreal and VibeUE logs via MCP
 
 ---

@@ -14,6 +14,12 @@ keywords:
   - component
   - compile
   - introspection
+  - event dispatcher
+  - dispatcher
+  - delegate
+  - multicast
+  - broadcast
+  - call delegate
 related_skills:
   - blueprint-graphs
 ---
@@ -92,6 +98,47 @@ unreal.BlueprintService.add_variable(bp_path, "FinishRotatingDispatcher", "FStat
 `"EventDispatcher"` is a Blueprint-only concept and is not a valid type string. The correct type
 for StateTree delegate transitions is the USTRUCT `FStateTreeDelegateDispatcher`.
 After adding this variable, use `bind_transition_to_delegate` on the StateTree to link it to a transition.
+
+### Event Dispatchers (regular Blueprint multicast delegates)
+
+Use the dedicated dispatcher API — **NOT** `add_variable` — to create the multicast delegates that appear in the Blueprint editor's *Event Dispatchers* section:
+
+| Method | What it does |
+|---|---|
+| `add_event_dispatcher(bp_path, name)` | Adds the dispatcher (member variable + signature graph). Skeleton is recompiled inline; the dispatcher is callable immediately. |
+| `add_event_dispatcher_parameter(bp_path, name, param_name, param_type, is_array=False, container_type="")` | Adds a parameter to the dispatcher's signature. Subscribers receive these as inputs. |
+| `add_call_delegate_node(bp_path, graph, name, pos_x, pos_y)` | Spawns the "Call <Name>" broadcast node on a `UK2Node_CallDelegate`. Wire the broadcast into its `execute` pin. |
+| `remove_event_dispatcher(bp_path, name)` | Removes the dispatcher and its signature graph. |
+
+```python
+import unreal
+
+bp = "/Game/StateTree/BP_Cube"
+
+# 1. Create the dispatcher (no compile needed before placing nodes — skeleton is regenerated inline)
+unreal.BlueprintService.add_event_dispatcher(bp, "FinishedLooking")
+
+# 2. (Optional) Add parameters to the signature
+unreal.BlueprintService.add_event_dispatcher_parameter(bp, "FinishedLooking", "Direction", "FRotator")
+
+# 3. Spawn the Call node and wire something into its execute pin
+call_id = unreal.BlueprintService.add_call_delegate_node(bp, "EventGraph", "FinishedLooking", 1400, -700)
+unreal.BlueprintService.connect_nodes(bp, "EventGraph", timeline_id, "Finished", call_id, "execute")
+
+# 4. Compile + save
+unreal.BlueprintService.compile_blueprint(bp)
+unreal.EditorAssetLibrary.save_asset(bp)
+```
+
+**Pins on the Call node:** `execute` (input exec), `then` (output exec), `self` (input target — defaulted to Self), plus one input pin per signature parameter.
+
+**Subscribing to it elsewhere:** use `add_delegate_bind_node(other_bp, graph, "<owner class>", "FinishedLooking", x, y)` paired with `add_custom_event_node` (or `add_create_delegate_node`) to bind a callback.
+
+**Common mistakes:**
+
+- ❌ `add_variable(bp, "FinishedLooking", "EventDispatcher")` — `"EventDispatcher"` is not a real type string; use `add_event_dispatcher` instead.
+- ❌ Treating the dispatcher like a regular variable (`add_get_variable_node` on it produces a delegate-getter, not a broadcast). The broadcast node is `UK2Node_CallDelegate` and is created only by `add_call_delegate_node`.
+- ❌ Skipping `compile_blueprint` before saving the asset. The skeleton compiles inline on dispatcher creation, but the final asset still needs `compile_blueprint` before `save_asset` to ensure the generated class is up-to-date.
 
 ---
 

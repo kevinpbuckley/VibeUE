@@ -16,6 +16,10 @@
 
 DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 
+// Forward declarations for helpers used by ListSkills before they are defined further down.
+static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir);
+static void ParseSkillSpec(const FString& RawSkillName, FString& OutFolder, FString& OutSubDoc);
+
 /**
  * Extract a COMMON_MISTAKES section from skill markdown content.
  * Looks for headings: "## COMMON_MISTAKES" or "### ⚠️ Common Mistakes to Avoid"
@@ -431,16 +435,9 @@ static FString ListSkills()
 			return true;
 		}
 
-		// Count markdown files in skill directory (excluding skill.md)
-		int32 FileCount = 0;
-		PlatformFile.IterateDirectoryRecursively(*SkillDirPath, [&](const TCHAR* FileOrDir, bool bIsDir) -> bool
-		{
-			if (!bIsDir && FString(FileOrDir).EndsWith(TEXT(".md")))
-			{
-				FileCount++;
-			}
-			return true;
-		});
+		// Enumerate sibling sub-doc files so list callers can see at a glance
+		// what additional sections are loadable for this skill.
+		TArray<TSharedPtr<FJsonValue>> SectionsArray = EnumerateSections(SkillDirPath);
 
 		// Build skill info object
 		TSharedPtr<FJsonObject> SkillInfo = MakeShared<FJsonObject>();
@@ -451,16 +448,15 @@ static FString ListSkills()
 			SkillInfo->SetField(Pair.Key, Pair.Value);
 		}
 
-		// Add computed fields
-		SkillInfo->SetNumberField(TEXT("file_count"), FileCount);
-
-		// Estimate token count (rough: 100 tokens per file, adjusted by file count)
-		int32 EstimatedTokens = FileCount * 800; // Average ~800 tokens per content file
-		SkillInfo->SetNumberField(TEXT("estimated_tokens"), EstimatedTokens);
+		// Always include `sections` (empty array when no sub-docs exist) so the
+		// agent can rely on the field being present and decide which sub-doc
+		// to load via `manage_skills(action="load", skill_name="<skill>/<section>")`.
+		SkillInfo->SetArrayField(TEXT("sections"), SectionsArray);
+		SkillInfo->SetNumberField(TEXT("section_count"), SectionsArray.Num());
 
 		SkillsArray.Add(MakeShared<FJsonValueObject>(SkillInfo));
 
-		UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill metadata: %s (%d files)"), *SkillName, FileCount);
+		UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill metadata: %s (%d sub-docs)"), *SkillName, SectionsArray.Num());
 
 		return true; // Continue iteration
 	});
@@ -469,6 +465,10 @@ static FString ListSkills()
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
 	ResultObj->SetBoolField(TEXT("success"), true);
 	ResultObj->SetArrayField(TEXT("skills"), SkillsArray);
+	ResultObj->SetStringField(TEXT("usage"),
+		TEXT("Each skill entry has a `sections` array. Load the index with "
+			 "`manage_skills(action='load', skill_name='<skill>')` to get workflows and gotchas. "
+			 "Load a specific sub-doc with `skill_name='<skill>/<section>'` to pull deeper reference material on demand."));
 
 	FString ResultJson;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultJson);
@@ -757,21 +757,138 @@ static FString ResolveSkillDirectory(const FString& SkillName)
  */
 struct FSkillData
 {
-	FString SkillName;
-	FString SkillDir;
+	FString RequestedName;                                   // Original input — e.g. "state-trees" or "state-trees/transitions"
+	FString SkillName;                                       // Resolved folder name — e.g. "state-trees"
+	FString SkillDir;                                        // Absolute path to skill folder
+	FString SubDocName;                                      // Empty for index load; otherwise the sub-doc filename without .md
 	TArray<FString> VibeUEClassNames;
 	TArray<FString> UnrealClassNames;
-	TArray<FString> MarkdownFiles;
+	TArray<FString> MarkdownFiles;                           // Files whose contents will be returned (1 element after split refactor)
+	TArray<TSharedPtr<FJsonValue>> AvailableSections;        // {name, description} for sibling .md files (excluding skill.md)
 };
 
 /**
- * Load skill data from a directory (classes and file list, but not content yet)
+ * Split a skill spec like "state-trees" or "state-trees/transitions" into
+ * its folder portion and optional sub-doc portion. Accepts both forward and
+ * back slashes; only the FIRST separator is honored, so nested folders are
+ * treated as one sub-doc name (we don't currently support nested subfolders).
  */
-static bool LoadSkillData(const FString& SkillName, FSkillData& OutData)
+static void ParseSkillSpec(const FString& RawSkillName, FString& OutFolder, FString& OutSubDoc)
 {
-	OutData.SkillName = SkillName;
-	OutData.SkillDir = ResolveSkillDirectory(SkillName);
-	
+	int32 SlashIdx = INDEX_NONE;
+	if (!RawSkillName.FindChar(TEXT('/'), SlashIdx))
+	{
+		RawSkillName.FindChar(TEXT('\\'), SlashIdx);
+	}
+
+	if (SlashIdx != INDEX_NONE)
+	{
+		OutFolder = RawSkillName.Left(SlashIdx).TrimStartAndEnd();
+		OutSubDoc = RawSkillName.Mid(SlashIdx + 1).TrimStartAndEnd();
+		// Strip a trailing .md if the caller included it
+		if (OutSubDoc.EndsWith(TEXT(".md"), ESearchCase::IgnoreCase))
+		{
+			OutSubDoc = OutSubDoc.Left(OutSubDoc.Len() - 3);
+		}
+	}
+	else
+	{
+		OutFolder = RawSkillName.TrimStartAndEnd();
+		OutSubDoc.Empty();
+	}
+}
+
+/**
+ * Enumerate sibling .md files inside a skill directory (excluding skill.md itself).
+ * Each entry is a JSON object with `name` (bare filename without .md) and, when
+ * the sub-doc has its own YAML frontmatter `description:`, a `description` field.
+ * Sub-docs are the loadable sections returned when the agent requests
+ * `skill_name="<folder>/<section>"`.
+ */
+static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir)
+{
+	TArray<TSharedPtr<FJsonValue>> Sections;
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+
+	if (SkillDir.IsEmpty() || !PlatformFile.DirectoryExists(*SkillDir))
+	{
+		return Sections;
+	}
+
+	PlatformFile.IterateDirectory(*SkillDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (bIsDirectory)
+		{
+			return true;
+		}
+
+		FString FilePath = FString(FilenameOrDirectory);
+		FString FileName = FPaths::GetCleanFilename(FilePath);
+
+		if (!FileName.EndsWith(TEXT(".md"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+		if (FileName.Equals(TEXT("skill.md"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		TSharedPtr<FJsonObject> SectionObj = MakeShared<FJsonObject>();
+		SectionObj->SetStringField(TEXT("name"), FPaths::GetBaseFilename(FileName));
+
+		// Pull description from sub-doc frontmatter if present, so list / load responses
+		// can show the agent what each sub-doc covers without loading them all.
+		FString FileContent;
+		if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+		{
+			TSharedPtr<FJsonObject> Frontmatter = ParseYAMLFrontmatter(FileContent);
+			if (Frontmatter.IsValid())
+			{
+				FString Desc;
+				if (Frontmatter->TryGetStringField(TEXT("description"), Desc))
+				{
+					SectionObj->SetStringField(TEXT("description"), Desc);
+				}
+			}
+		}
+
+		Sections.Add(MakeShared<FJsonValueObject>(SectionObj));
+		return true;
+	});
+
+	// Stable alphabetical order so the agent sees a consistent menu
+	Sections.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+	{
+		FString NameA, NameB;
+		if (A->AsObject().IsValid()) A->AsObject()->TryGetStringField(TEXT("name"), NameA);
+		if (B->AsObject().IsValid()) B->AsObject()->TryGetStringField(TEXT("name"), NameB);
+		return NameA < NameB;
+	});
+
+	return Sections;
+}
+
+/**
+ * Load skill data from a directory.
+ *
+ * `RawSkillName` may be either a bare skill folder name (e.g. "state-trees")
+ * or a sub-doc path (e.g. "state-trees/transitions"). In both cases the root
+ * `skill.md` is consulted for the class metadata (`vibeue_classes` /
+ * `unreal_classes`). For an index load only `skill.md` is selected as the
+ * file to return; for a sub-doc load only `<folder>/<subdoc>.md` is selected.
+ *
+ * We deliberately do NOT recursively concatenate every .md in the folder
+ * anymore — large skills were blowing past the MCP tool-output token cap.
+ * Sibling .md files are surfaced as `AvailableSections` so the agent can
+ * decide whether to load any of them explicitly.
+ */
+static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
+{
+	OutData.RequestedName = RawSkillName;
+	ParseSkillSpec(RawSkillName, OutData.SkillName, OutData.SubDocName);
+
+	OutData.SkillDir = ResolveSkillDirectory(OutData.SkillName);
 	if (OutData.SkillDir.IsEmpty())
 	{
 		return false;
@@ -779,9 +896,9 @@ static bool LoadSkillData(const FString& SkillName, FSkillData& OutData)
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	// Read skill.md to get the class lists
+	// Always read root skill.md for the class lists — they live on the index
+	// regardless of which sub-doc the agent ultimately loads.
 	FString SkillMdPath = OutData.SkillDir / TEXT("skill.md");
-
 	if (PlatformFile.FileExists(*SkillMdPath))
 	{
 		FString SkillMdContent;
@@ -790,7 +907,6 @@ static bool LoadSkillData(const FString& SkillName, FSkillData& OutData)
 			TSharedPtr<FJsonObject> SkillFrontmatter = ParseYAMLFrontmatter(SkillMdContent);
 			if (SkillFrontmatter.IsValid())
 			{
-				// Extract vibeue_classes array
 				const TArray<TSharedPtr<FJsonValue>>* VibeUEArray = nullptr;
 				if (SkillFrontmatter->TryGetArrayField(TEXT("vibeue_classes"), VibeUEArray) && VibeUEArray)
 				{
@@ -804,7 +920,6 @@ static bool LoadSkillData(const FString& SkillName, FSkillData& OutData)
 					}
 				}
 
-				// Extract unreal_classes array
 				const TArray<TSharedPtr<FJsonValue>>* UnrealArray = nullptr;
 				if (SkillFrontmatter->TryGetArrayField(TEXT("unreal_classes"), UnrealArray) && UnrealArray)
 				{
@@ -821,21 +936,33 @@ static bool LoadSkillData(const FString& SkillName, FSkillData& OutData)
 		}
 	}
 
-	// Collect all .md files in the skill directory
-	PlatformFile.IterateDirectoryRecursively(*OutData.SkillDir, [&](const TCHAR* FileOrDir, bool bIsDir) -> bool
+	// Select which file(s) to return based on whether a sub-doc was requested.
+	if (!OutData.SubDocName.IsEmpty())
 	{
-		if (!bIsDir)
+		FString SubDocPath = OutData.SkillDir / (OutData.SubDocName + TEXT(".md"));
+		if (!PlatformFile.FileExists(*SubDocPath))
 		{
-			FString FilePath = FString(FileOrDir);
-			if (FilePath.EndsWith(TEXT(".md")))
-			{
-				OutData.MarkdownFiles.Add(FilePath);
-			}
+			UE_LOG(LogSkillsTools, Warning, TEXT("Sub-doc not found: '%s' in skill '%s' (looked at %s)"),
+				*OutData.SubDocName, *OutData.SkillName, *SubDocPath);
+			return false;
 		}
-		return true;
-	});
+		OutData.MarkdownFiles.Add(SubDocPath);
+	}
+	else if (PlatformFile.FileExists(*SkillMdPath))
+	{
+		OutData.MarkdownFiles.Add(SkillMdPath);
+	}
+	else
+	{
+		// No skill.md at all — nothing usable in this folder
+		UE_LOG(LogSkillsTools, Warning, TEXT("Skill folder has no skill.md: %s"), *OutData.SkillDir);
+		return false;
+	}
 
-	OutData.MarkdownFiles.Sort();
+	// Always populate the section menu so the response can advertise
+	// other sub-docs the agent could load next.
+	OutData.AvailableSections = EnumerateSections(OutData.SkillDir);
+
 	return true;
 }
 
@@ -914,22 +1041,28 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	FString ConcatenatedContent;
 	TArray<FString> FilesLoaded;
 	TArray<FString> LoadedSkillNames;
+	TArray<TSharedPtr<FJsonValue>> PerSkillSections;
 	int32 TotalTokens = 0;
 
 	for (const FSkillData& Data : AllSkillData)
 	{
-		LoadedSkillNames.Add(FPaths::GetCleanFilename(Data.SkillDir));
+		// Reported name reflects what the agent asked for: "<skill>" or "<skill>/<subdoc>".
+		FString FolderName = FPaths::GetCleanFilename(Data.SkillDir);
+		FString ReportedName = Data.SubDocName.IsEmpty()
+			? FolderName
+			: (FolderName + TEXT("/") + Data.SubDocName);
+		LoadedSkillNames.Add(ReportedName);
 
 		// Add skill separator
 		if (!ConcatenatedContent.IsEmpty())
 		{
 			ConcatenatedContent += TEXT("\n\n========================================\n");
-			ConcatenatedContent += FString::Printf(TEXT("# SKILL: %s\n"), *FPaths::GetCleanFilename(Data.SkillDir));
+			ConcatenatedContent += FString::Printf(TEXT("# SKILL: %s\n"), *ReportedName);
 			ConcatenatedContent += TEXT("========================================\n\n");
 		}
 		else
 		{
-			ConcatenatedContent += FString::Printf(TEXT("# SKILL: %s\n\n"), *FPaths::GetCleanFilename(Data.SkillDir));
+			ConcatenatedContent += FString::Printf(TEXT("# SKILL: %s\n\n"), *ReportedName);
 		}
 
 		// Add files from this skill
@@ -948,6 +1081,13 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 				ConcatenatedContent += FileContent;
 			}
 		}
+
+		// Per-skill section menu so the agent can decide to follow up with
+		// `manage_skills(action='load', skill_name='<folder>/<section>')`.
+		TSharedPtr<FJsonObject> SkillSectionsObj = MakeShared<FJsonObject>();
+		SkillSectionsObj->SetStringField(TEXT("skill"), FolderName);
+		SkillSectionsObj->SetArrayField(TEXT("sections"), Data.AvailableSections);
+		PerSkillSections.Add(MakeShared<FJsonValueObject>(SkillSectionsObj));
 	}
 
 	TotalTokens = ConcatenatedContent.Len() / 4;
@@ -994,12 +1134,20 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	}
 	ResultObj->SetArrayField(TEXT("unreal_classes"), UnrealClassesArray);
 
+	// Per-skill sub-doc menu so the agent can follow up with targeted
+	// `skill_name="<skill>/<section>"` loads without re-listing the catalogue.
+	ResultObj->SetArrayField(TEXT("available_sections"), PerSkillSections);
+	ResultObj->SetStringField(TEXT("available_sections_usage"),
+		TEXT("Each entry has a `skill` (folder name) and `sections` (loadable sub-docs). "
+			 "Load one with manage_skills(action='load', skill_name='<skill>/<section>')."));
+
 	// Prepend instruction to use discovery tools
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
 		TEXT("1. Call `discover_python_class('unreal.ClassName', method_filter='keyword')` to find methods\n")
 		TEXT("2. Read the COMMON_MISTAKES section above to avoid wrong method names\n")
-		TEXT("3. The workflows below show patterns but USE DISCOVERED SIGNATURES for exact syntax\n\n")
-		TEXT("4. WidgetService does NOT have create_widget() - use BlueprintService with 'UserWidget' parent\n\n")
+		TEXT("3. The workflows below show patterns but USE DISCOVERED SIGNATURES for exact syntax\n")
+		TEXT("4. Load sub-docs from `available_sections` only when you need deeper reference material\n\n")
+		TEXT("5. WidgetService does NOT have create_widget() - use BlueprintService with 'UserWidget' parent\n\n")
 		+ ConcatenatedContent;
 	ResultObj->SetStringField(TEXT("content"), ContentWithWarning);
 
@@ -1086,8 +1234,14 @@ static FString LoadSingleSkill(const FString& SkillName)
 		}
 	}
 
-	// Get skill name from directory
+	// Skill folder name (without any sub-doc suffix), used as the dedup/injection key
 	FString ActualSkillName = FPaths::GetCleanFilename(SkillData.SkillDir);
+
+	// Reported name — includes "<folder>/<subdoc>" when a sub-doc was loaded, so
+	// the agent and dedup keying both reflect what was actually pulled in.
+	FString ReportedName = SkillData.SubDocName.IsEmpty()
+		? ActualSkillName
+		: (ActualSkillName + TEXT("/") + SkillData.SubDocName);
 
 	// NOTE: We no longer auto-discover methods here
 	// The AI should call discover_python_class with a method_filter to get what it needs
@@ -1096,10 +1250,15 @@ static FString LoadSingleSkill(const FString& SkillName)
 	// Build result JSON
 	TSharedPtr<FJsonObject> ResultObj = MakeShared<FJsonObject>();
 	ResultObj->SetBoolField(TEXT("success"), true);
-	ResultObj->SetStringField(TEXT("skill_name"), ActualSkillName);
-	
+	ResultObj->SetStringField(TEXT("skill_name"), ReportedName);
+
+	if (!SkillData.SubDocName.IsEmpty())
+	{
+		ResultObj->SetStringField(TEXT("loaded_section"), SkillData.SubDocName);
+	}
+
 	// Instructions for AI to discover methods
-	ResultObj->SetStringField(TEXT("IMPORTANT"), 
+	ResultObj->SetStringField(TEXT("IMPORTANT"),
 		TEXT("BEFORE writing code, call discover_python_class to get method signatures. ")
 		TEXT("Example: discover_python_class('unreal.BlueprintService', method_filter='variable') ")
 		TEXT("to find all variable-related methods. The 'content' below has workflows and gotchas."));
@@ -1118,7 +1277,7 @@ static FString LoadSingleSkill(const FString& SkillName)
 		VibeUEClassesArray.Add(MakeShared<FJsonValueString>(ClassName));
 	}
 	ResultObj->SetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray);
-	ResultObj->SetStringField(TEXT("vibeue_classes_usage"), 
+	ResultObj->SetStringField(TEXT("vibeue_classes_usage"),
 		TEXT("Call discover_python_class('unreal.ClassName', method_filter='keyword') to get methods"));
 
 	TArray<TSharedPtr<FJsonValue>> UnrealClassesArray;
@@ -1128,12 +1287,23 @@ static FString LoadSingleSkill(const FString& SkillName)
 	}
 	ResultObj->SetArrayField(TEXT("unreal_classes"), UnrealClassesArray);
 
+	// Sub-doc menu so the agent knows what else is loadable for this skill
+	// without needing to re-list the catalogue.
+	ResultObj->SetArrayField(TEXT("available_sections"), SkillData.AvailableSections);
+	if (SkillData.AvailableSections.Num() > 0)
+	{
+		ResultObj->SetStringField(TEXT("available_sections_usage"),
+			FString::Printf(TEXT("Load a sub-doc with manage_skills(action='load', skill_name='%s/<section>'). Available sections listed above."),
+				*ActualSkillName));
+	}
+
 	// Content LAST - workflows and gotchas only, not method signatures
 	// Prepend critical instruction to content so AI CANNOT miss it
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
 		TEXT("1. Call discover_python_class('unreal.ClassName', method_filter='keyword') to find methods\n")
 		TEXT("2. Read COMMON_MISTAKES above to avoid common errors\n")
-		TEXT("3. Use the workflows below for common patterns\n\n")
+		TEXT("3. Use the workflows below for common patterns\n")
+		TEXT("4. Load a sub-doc (if listed in available_sections) when you need deeper reference material\n\n")
 		+ ConcatenatedContent;
 	ResultObj->SetStringField(TEXT("content"), ContentWithWarning);
 
@@ -1152,8 +1322,8 @@ static FString LoadSingleSkill(const FString& SkillName)
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ResultJson);
 	FJsonSerializer::Serialize(ResultObj.ToSharedRef(), Writer);
 
-	UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill '%s': %d files, ~%d tokens, %d VibeUE + %d Unreal classes"), 
-		*ActualSkillName, FilesLoaded.Num(), TokenCount, SkillData.VibeUEClassNames.Num(), SkillData.UnrealClassNames.Num());
+	UE_LOG(LogSkillsTools, Log, TEXT("Loaded skill '%s': %d files, ~%d tokens, %d VibeUE + %d Unreal classes, %d sub-docs available"),
+		*ReportedName, FilesLoaded.Num(), TokenCount, SkillData.VibeUEClassNames.Num(), SkillData.UnrealClassNames.Num(), SkillData.AvailableSections.Num());
 
 	return ResultJson;
 }
@@ -1312,13 +1482,19 @@ static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
 
 // Register manage_skills tool
 REGISTER_VIBEUE_TOOL(manage_skills,
-	"Discover and load domain-specific knowledge skills. Use 'list' to see available skills, 'suggest' to find skills matching a query, 'load' to load a skill by name or display_name. Use 'skill_names' array to load multiple skills with deduplicated discovery.",
+	"Discover and load domain-specific knowledge skills (workflows, gotchas, property formats). "
+	"Skills are organized as an INDEX (skill.md — concise workflows + gotchas) plus optional SUB-DOCS (siblings — deeper reference material loaded on demand). "
+	"Actions: "
+	"'list' — return every skill with its description, classes, and a `sections` array naming each loadable sub-doc. Call this once to discover what's available without loading content. "
+	"'suggest' — keyword search across skill names/descriptions/keywords. Use when you know the domain but not the skill name. "
+	"'load' — load a skill's index (just `skill.md`) OR a specific sub-doc. Use `skill_name='<skill>'` for the index, `skill_name='<skill>/<section>'` for a sub-doc (e.g. 'state-trees/transitions'). The response includes `available_sections` so you can decide whether you need to load any sub-doc. "
+	"Use `skill_names` (array) to batch-load multiple in one call with deduplicated class lists.",
 	"Skills",
 	TOOL_PARAMS(
 		TOOL_PARAM("action", "Action to perform: 'list', 'suggest', or 'load'", "string", true),
 		TOOL_PARAM("query", "Query string to match against skill keywords (for 'suggest' action)", "string", false),
-		TOOL_PARAM("skill_name", "Name of a single skill to load (for 'load' action). Can be directory name, 'name' field, or 'display_name' field from skill.md", "string", false),
-		TOOL_PARAM("skill_names", "Array of skill names to load together with deduplicated discovery (for 'load' action). More efficient when loading multiple related skills.", "array", false)
+		TOOL_PARAM("skill_name", "Skill to load (for 'load' action). Accepts: directory name (e.g. 'state-trees'), `name`/`display_name` field from frontmatter, or a sub-doc path like 'state-trees/transitions' to load only that sibling .md file. Index loads (no slash) return just skill.md; sub-doc loads return only the requested file. Class metadata (vibeue_classes/unreal_classes) always comes from the index.", "string", false),
+		TOOL_PARAM("skill_names", "Array of skills to load together (for 'load' action). Each entry follows the same syntax as `skill_name`. Use this when you need several related skills in one call.", "array", false)
 	),
 	{
 		FString RawAction = ExtractParamFromJson(Params, TEXT("action"));
