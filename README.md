@@ -17,7 +17,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 30 specialized services with 996 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 30 specialized services with 1020 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 34 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, and more
@@ -123,7 +123,9 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`
+Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
+
+**Sub-docs (lazy-loaded deep reference material)** — Several skills are split into a concise `skill.md` index plus sibling sub-docs. Load a sub-doc with `skill_name="<skill>/<section>"` (e.g. `state-trees/api-reference`, `blueprint-graphs/build-graph`, `landscape/workflows-editing`). The index response lists every available sub-doc under `available_sections`. This keeps each load small while keeping deep reference material one call away.
 
 ##### Asset Workflow Tool
 
@@ -328,13 +330,13 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (30 services, 996 methods)
+### 2. VibeUE Python API Services (30 services, 1020 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `StateTreeService` | 94 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, **utility AI considerations**, compile/save |
-| `BlueprintService` | 92 | Blueprint lifecycle, variables, functions, components, nodes, batch graph builder, subset auto-layout |
+| `BlueprintService` | 116 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
@@ -549,7 +551,9 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `viewport`
+Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
+
+**Skills with sub-docs** — `animsequence`, `blueprint-graphs`, `landscape`, `landscape-auto-material`, and `state-trees` are split into a concise `skill.md` index plus sibling reference sub-docs. The index lists every available sub-doc under `available_sections` and you load one with `skill_name="<skill>/<section>"`. Examples: `state-trees/api-reference`, `state-trees/blueprint-tasks`, `state-trees/event-payloads`, `blueprint-graphs/build-graph`, `blueprint-graphs/array-operations`, `landscape/workflows-editing`.
 
 ### Using Skills
 
@@ -573,6 +577,8 @@ Skill response includes:
 - `unreal_classes` - Native UE classes (e.g., EditorAssetLibrary)
 - `content` - Markdown with workflows and critical rules
 - `COMMON_MISTAKES` - Quick reference for frequent errors
+- `available_sections` - Loadable sub-docs (deeper reference material). Each entry has a `name` and short `description`; load one with `skill_name="<skill>/<section>"`.
+- `loaded_section` - Present only when a sub-doc was loaded; identifies which file the response came from.
 
 ### Workflow with Skills
 
@@ -619,19 +625,21 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (87 methods)
+### BlueprintService (116 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
 - `compile_blueprint(path)` - Compile blueprint
 - `reparent_blueprint(path, new_parent)` - Change parent class
+- `get_blueprint_info(path)` - Detailed info (variables, functions, components, parent)
 
 **Variables:**
 - `add_variable(path, name, type, default, ...)` - Add variable
 - `remove_variable(path, name)` - Remove variable
 - `list_variables(path)` - List all variables
 - `get_variable_info(path, name)` - Get variable details
-- `modify_variable(path, name, ...)` - Modify properties
+- `modify_variable(path, name, ...)` - Modify properties (rename, category, flags, replication)
+- `set_variable_default_value(path, name, value)` - Update only the default
 - `search_variable_types(filter, category)` - Find available types
 
 **Functions:**
@@ -640,19 +648,56 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `add_function_input/output(...)` - Add parameters
 - `add_function_local_variable(...)` - Add local variables
 - `get_function_info(path, name)` - Get function details
+- `override_function(path, function_name)` - Override an inherited virtual/event function
 
 **Components:**
 - `add_component(path, type, name, parent)` - Add component
 - `remove_component(path, name)` - Remove component
+- `reparent_component(path, name, new_parent)` - Reparent in the SCS hierarchy
 - `get/set_component_property(...)` - Property access
 - `get_component_hierarchy(path)` - Get hierarchy
 
-**Nodes:**
-- `add_*_node(...)` - Add nodes (branch, variable, math, etc.)
-- `connect_nodes(...)` - Connect pins
-- `get_nodes_in_graph(path, graph)` - List nodes
-- `discover_nodes(path, search, category)` - Find node types
-- `create_node_by_key(...)` - Create any node type
+**Nodes & Graph Editing:**
+- `add_*_node(...)` - Add nodes (branch, variable, math, cast, event, custom event, function call, etc.)
+- `add_validated_get_node(...)`, `add_member_get_node(...)` - Specialized variable getter nodes
+- `add_function_call_on_variable(...)` - One-shot getter + call on a variable
+- `connect_nodes(...)`, `disconnect_pin(...)` - Wire / unwire pins
+- `set_node_pin_value(...)`, `split_pin(...)`, `recombine_pin(...)` - Per-pin edits
+- `get_nodes_in_graph(path, graph)`, `get_connections(...)`, `get_node_pins(...)`, `get_node_details(...)` - Inspect graphs
+- `get_selected_nodes(path)` - Read the user's live editor selection
+- `discover_nodes(path, search)` / `create_node_by_key(...)` - Action-database-driven node lookup + spawn
+- `build_graph(...)` - Batch graph builder (create many nodes + connections in one shot)
+- `auto_layout_graph(...)`, `auto_layout_selected_nodes(...)` - Apply UE auto-layout
+- `add_comment_node(...)`, `add_comment_around_nodes(...)` - Comment-box authoring (programmatic equivalent of the `C` hotkey)
+- `delete_node(...)`, `node_exists(...)`, `refresh_node(...)` - Node lifecycle
+
+**Custom Events (full input-pin CRUD):**
+- `add_custom_event_node(path, graph, name, x, y)` - Create a Custom Event
+- `add_custom_event_input(path, graph, node_id, param_name, type, ...)` - Add a user-defined input pin
+- `get_custom_event_inputs(path, graph, node_id)` - Inspect existing inputs
+- `modify_custom_event_input(path, graph, node_id, param_name, new_name, new_type, ...)` - Rename/retype (preserves connections where compatible)
+- `remove_custom_event_input(path, graph, node_id, param_name)` - Remove a pin
+
+**Event Dispatchers (Blueprint multicast delegates):**
+- `add_event_dispatcher(path, name)` - Add a dispatcher (member variable + signature graph; skeleton recompiles inline)
+- `remove_event_dispatcher(path, name)` - Remove the dispatcher and its signature graph
+- `add_event_dispatcher_parameter(path, name, param_name, param_type, ...)` - Add an input on the signature
+- `add_call_delegate_node(path, graph, name, x, y)` - Spawn the `UK2Node_CallDelegate` (broadcast) node
+- `add_delegate_bind_node(path, graph, target_class, delegate_name, x, y)` - Spawn a Bind Event node to subscribe
+- `add_create_delegate_node(...)`, `add_create_event_node(...)` - Wrap a function as a delegate reference
+
+**Timelines (full track + key CRUD):**
+- `add_timeline(path, graph, name, length, use_last_key, auto_play, loop, x, y)` - Create a Timeline component + node
+- `modify_timeline(...)`, `remove_timeline(...)`, `get_timelines(path)` - Lifecycle / inspection
+- `add_timeline_float_track`, `add_timeline_vector_track`, `add_timeline_color_track`, `add_timeline_event_track` - Add tracks (each adds the matching output pin on the Timeline node)
+- `rename_timeline_track(...)`, `remove_timeline_track(...)`, `clear_timeline_track_keys(...)` - Track management
+- `add_timeline_float_key`, `add_timeline_vector_key`, `add_timeline_color_key`, `add_timeline_event_key` - Keyframe authoring with selectable interp modes (Auto/Linear/Constant/CubicUser)
+- `remove_timeline_key(...)` - Remove a key by handle/index
+
+**Introspection:**
+- `list_components`, `list_variables`, `list_functions`, `list_function_local_variables`, `list_overridable_functions`
+- `get_function_parameters(...)`, `get_graph_definition(...)`, `get_available_components(...)`
+- `compare_components(...)`, `diff_blueprints(...)`
 
 ### AnimGraphService (38 methods)
 
