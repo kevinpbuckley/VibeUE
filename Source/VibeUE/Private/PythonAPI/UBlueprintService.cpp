@@ -28,6 +28,7 @@
 #include "K2Node_EnhancedInputAction.h"  // For Enhanced Input Action event nodes
 #include "K2Node_AddDelegate.h"          // For delegate bind nodes (add_delegate_bind_node)
 #include "K2Node_CreateDelegate.h"       // For create event nodes (add_create_delegate_node)
+#include "K2Node_CallDelegate.h"         // For dispatcher broadcast nodes (add_call_delegate_node)
 #include "K2Node_MakeStruct.h"           // For STRUCT key: creating typed struct Make nodes
 #include "K2Node_Timeline.h"             // For UK2Node_Timeline (add_timeline)
 #include "Engine/TimelineTemplate.h"     // For UTimelineTemplate / FTTFloatTrack
@@ -2140,6 +2141,275 @@ TArray<FVariableTypeInfo> UBlueprintService::SearchVariableTypes(
 		Results.Num(), *SearchTerm, *Category);
 
 	return Results;
+}
+
+// ============================================================================
+// EVENT DISPATCHER MANAGEMENT
+// ============================================================================
+
+namespace
+{
+	// Locate a delegate signature graph by name on a blueprint.
+	static UEdGraph* FindDelegateSignatureGraph(UBlueprint* Blueprint, const FString& DispatcherName)
+	{
+		if (!Blueprint)
+		{
+			return nullptr;
+		}
+		for (UEdGraph* Graph : Blueprint->DelegateSignatureGraphs)
+		{
+			if (Graph && Graph->GetName().Equals(DispatcherName, ESearchCase::IgnoreCase))
+			{
+				return Graph;
+			}
+		}
+		return nullptr;
+	}
+
+	// Resolve a multicast delegate property from the blueprint's skeleton or generated class.
+	static FMulticastDelegateProperty* FindDispatcherProperty(UBlueprint* Blueprint, const FString& DispatcherName)
+	{
+		if (!Blueprint)
+		{
+			return nullptr;
+		}
+		const FName DispatcherFName(*DispatcherName);
+		auto FindOn = [&DispatcherName, &DispatcherFName](UClass* Class) -> FMulticastDelegateProperty*
+		{
+			if (!Class)
+			{
+				return nullptr;
+			}
+			for (TFieldIterator<FMulticastDelegateProperty> It(Class); It; ++It)
+			{
+				if (It->GetFName() == DispatcherFName || It->GetName().Equals(DispatcherName, ESearchCase::IgnoreCase))
+				{
+					return *It;
+				}
+			}
+			return nullptr;
+		};
+		if (FMulticastDelegateProperty* P = FindOn(Blueprint->SkeletonGeneratedClass)) { return P; }
+		return FindOn(Blueprint->GeneratedClass);
+	}
+}
+
+bool UBlueprintService::AddEventDispatcher(
+	const FString& BlueprintPath,
+	const FString& DispatcherName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcher: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	if (DispatcherName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcher: DispatcherName is empty"));
+		return false;
+	}
+
+	// Idempotency check — fail if a variable, signature graph, or any other Kismet member with this name already exists.
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName.ToString().Equals(DispatcherName, ESearchCase::IgnoreCase))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("AddEventDispatcher: A variable named '%s' already exists in %s"), *DispatcherName, *BlueprintPath);
+			return false;
+		}
+	}
+	if (FindDelegateSignatureGraph(Blueprint, DispatcherName))
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AddEventDispatcher: A signature graph named '%s' already exists in %s"), *DispatcherName, *BlueprintPath);
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "AddEventDispatcher", "Add Event Dispatcher"));
+	Blueprint->Modify();
+
+	const FName DispatcherFName(*DispatcherName);
+	const UEdGraphSchema_K2* K2Schema = GetDefault<UEdGraphSchema_K2>();
+	check(K2Schema);
+
+	// 1. Add the multicast delegate member variable
+	FEdGraphPinType DelegateType;
+	DelegateType.PinCategory = UEdGraphSchema_K2::PC_MCDelegate;
+	if (!FBlueprintEditorUtils::AddMemberVariable(Blueprint, DispatcherFName, DelegateType))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcher: AddMemberVariable failed for '%s' on %s"), *DispatcherName, *BlueprintPath);
+		return false;
+	}
+
+	// 2. Create the signature graph
+	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint, DispatcherFName, UEdGraph::StaticClass(), UEdGraphSchema_K2::StaticClass());
+	if (!NewGraph)
+	{
+		FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, DispatcherFName);
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcher: CreateNewGraph failed for '%s' on %s"), *DispatcherName, *BlueprintPath);
+		return false;
+	}
+	NewGraph->bEditable = false;
+
+	// 3. Configure the signature graph: default nodes + function entry as multicast delegate signature
+	K2Schema->CreateDefaultNodesForGraph(*NewGraph);
+	K2Schema->CreateFunctionGraphTerminators(*NewGraph, static_cast<UClass*>(nullptr));
+	K2Schema->AddExtraFunctionFlags(NewGraph, (FUNC_BlueprintCallable | FUNC_BlueprintEvent | FUNC_Public));
+	K2Schema->MarkFunctionEntryAsEditable(NewGraph, true);
+
+	Blueprint->DelegateSignatureGraphs.Add(NewGraph);
+
+	// 4. Trigger skeleton recompile so the FMulticastDelegateProperty is available immediately
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("AddEventDispatcher: Added '%s' to %s"), *DispatcherName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::RemoveEventDispatcher(
+	const FString& BlueprintPath,
+	const FString& DispatcherName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveEventDispatcher: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UEdGraph* SignatureGraph = FindDelegateSignatureGraph(Blueprint, DispatcherName);
+	bool bHadVariable = false;
+	for (const FBPVariableDescription& Var : Blueprint->NewVariables)
+	{
+		if (Var.VarName.ToString().Equals(DispatcherName, ESearchCase::IgnoreCase))
+		{
+			bHadVariable = true;
+			break;
+		}
+	}
+
+	if (!SignatureGraph && !bHadVariable)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("RemoveEventDispatcher: '%s' not found on %s"), *DispatcherName, *BlueprintPath);
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "RemoveEventDispatcher", "Remove Event Dispatcher"));
+	Blueprint->Modify();
+
+	if (SignatureGraph)
+	{
+		Blueprint->DelegateSignatureGraphs.Remove(SignatureGraph);
+		FBlueprintEditorUtils::RemoveGraph(Blueprint, SignatureGraph, EGraphRemoveFlags::Recompile);
+	}
+
+	if (bHadVariable)
+	{
+		FBlueprintEditorUtils::RemoveMemberVariable(Blueprint, FName(*DispatcherName));
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("RemoveEventDispatcher: Removed '%s' from %s"), *DispatcherName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::AddEventDispatcherParameter(
+	const FString& BlueprintPath,
+	const FString& DispatcherName,
+	const FString& ParameterName,
+	const FString& ParameterType,
+	bool bIsArray,
+	const FString& ContainerType)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcherParameter: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	UEdGraph* SignatureGraph = FindDelegateSignatureGraph(Blueprint, DispatcherName);
+	if (!SignatureGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcherParameter: Dispatcher '%s' not found on %s"), *DispatcherName, *BlueprintPath);
+		return false;
+	}
+
+	FEdGraphPinType PinType;
+	FString ErrorMessage;
+	if (!FBlueprintTypeParser::ParseTypeString(ParameterType, PinType, bIsArray, ContainerType, ErrorMessage))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcherParameter: Failed to parse type '%s': %s"), *ParameterType, *ErrorMessage);
+		return false;
+	}
+
+	TArray<UK2Node_FunctionEntry*> EntryNodes;
+	SignatureGraph->GetNodesOfClass(EntryNodes);
+	if (EntryNodes.Num() == 0 || !EntryNodes[0])
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddEventDispatcherParameter: No entry node found in signature graph '%s'"), *DispatcherName);
+		return false;
+	}
+
+	const FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "AddEventDispatcherParam", "Add Event Dispatcher Parameter"));
+	Blueprint->Modify();
+
+	EntryNodes[0]->CreateUserDefinedPin(FName(*ParameterName), PinType, EGPD_Output);
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddEventDispatcherParameter: Added '%s' (%s) to dispatcher '%s' on %s"),
+		*ParameterName, *ParameterType, *DispatcherName, *BlueprintPath);
+	return true;
+}
+
+FString UBlueprintService::AddCallDelegateNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& DispatcherName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCallDelegateNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCallDelegateNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	FMulticastDelegateProperty* DelegateProp = FindDispatcherProperty(Blueprint, DispatcherName);
+	if (!DelegateProp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddCallDelegateNode: Dispatcher '%s' not found on %s (compile the blueprint after add_event_dispatcher if you haven't)"),
+			*DispatcherName, *BlueprintPath);
+		return FString();
+	}
+
+	UK2Node_CallDelegate* CallNode = NewObject<UK2Node_CallDelegate>(Graph);
+	CallNode->SetFromProperty(DelegateProp, /*bSelfContext=*/true, Blueprint->SkeletonGeneratedClass ? Blueprint->SkeletonGeneratedClass : Blueprint->GeneratedClass);
+
+	Graph->AddNode(CallNode, false, false);
+	CallNode->CreateNewGuid();
+	CallNode->PostPlacedNewNode();
+	CallNode->AllocateDefaultPins();
+
+	CallNode->NodePosX = PosX;
+	CallNode->NodePosY = PosY;
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddCallDelegateNode: Added Call %s in %s on %s"),
+		*DispatcherName, *GraphName, *BlueprintPath);
+
+	return CallNode->NodeGuid.ToString();
 }
 
 // ============================================================================

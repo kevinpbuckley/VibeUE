@@ -1414,6 +1414,106 @@ public:
 	);
 
 	// ============================================================================
+	// EVENT DISPATCHER MANAGEMENT
+	// ============================================================================
+
+	/**
+	 * Add a Blueprint Event Dispatcher (multicast delegate) to a blueprint.
+	 * This is the same as clicking "+" under the "Event Dispatchers" section in the
+	 * Blueprint editor's My Blueprint panel. Creates both the multicast delegate
+	 * member variable AND the signature graph that defines its parameters.
+	 *
+	 * The skeleton class is recompiled immediately so the dispatcher is callable
+	 * right after this returns — you do not need to compile the blueprint before
+	 * calling add_call_delegate_node.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher (e.g. "OnFinishedLooking")
+	 * @return True if successful, false if the name already exists or creation failed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_event_dispatcher("/Game/StateTree/BP_Cube", "FinishedLooking")
+	 *   # Then to broadcast it:
+	 *   node_id = unreal.BlueprintService.add_call_delegate_node(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph", "FinishedLooking", 1400, -700)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddEventDispatcher(
+		const FString& BlueprintPath,
+		const FString& DispatcherName
+	);
+
+	/**
+	 * Remove a Blueprint Event Dispatcher and its signature graph.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher to remove
+	 * @return True if found and removed
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_event_dispatcher("/Game/BP_Player", "OnHealthChanged")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveEventDispatcher(
+		const FString& BlueprintPath,
+		const FString& DispatcherName
+	);
+
+	/**
+	 * Add a parameter to an Event Dispatcher's signature. Parameters become inputs
+	 * on the dispatcher's "Call" node and are received by all subscribers.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param DispatcherName - Name of the event dispatcher
+	 * @param ParameterName - Name of the new parameter
+	 * @param ParameterType - Type string (same format as add_variable)
+	 * @param bIsArray - Whether the parameter is an array
+	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_event_dispatcher_parameter(
+	 *       "/Game/BP_Player", "OnHealthChanged", "NewHealth", "float")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddEventDispatcherParameter(
+		const FString& BlueprintPath,
+		const FString& DispatcherName,
+		const FString& ParameterName,
+		const FString& ParameterType,
+		bool bIsArray = false,
+		const FString& ContainerType = TEXT("")
+	);
+
+	/**
+	 * Add a "Call <Dispatcher>" node (UK2Node_CallDelegate) to a graph.
+	 * This is the broadcast node — wire the execution flow into its "execute" pin
+	 * to fire all subscribers of the dispatcher.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint that owns the dispatcher
+	 * @param GraphName - Name of the graph to place the node in (e.g. "EventGraph")
+	 * @param DispatcherName - Name of the event dispatcher to call
+	 * @param PosX - X position in the graph
+	 * @param PosY - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   node_id = unreal.BlueprintService.add_call_delegate_node(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph", "FinishedLooking", 1400, -700)
+	 *   unreal.BlueprintService.connect_nodes(
+	 *       "/Game/StateTree/BP_Cube", "EventGraph",
+	 *       timeline_id, "Finished", node_id, "execute")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddCallDelegateNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& DispatcherName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	// ============================================================================
 	// FUNCTION MANAGEMENT (Phase 2)
 	// ============================================================================
 
