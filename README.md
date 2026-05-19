@@ -336,7 +336,7 @@ High-level services exposed to Python for common game development tasks:
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `StateTreeService` | 94 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, **utility AI considerations**, compile/save |
-| `BlueprintService` | 116 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
+| `BlueprintService` | 117 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes + bind-on-variable**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
@@ -683,7 +683,8 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `remove_event_dispatcher(path, name)` - Remove the dispatcher and its signature graph
 - `add_event_dispatcher_parameter(path, name, param_name, param_type, ...)` - Add an input on the signature
 - `add_call_delegate_node(path, graph, name, x, y)` - Spawn the `UK2Node_CallDelegate` (broadcast) node
-- `add_delegate_bind_node(path, graph, target_class, delegate_name, x, y)` - Spawn a Bind Event node to subscribe
+- `add_delegate_bind_node(path, graph, target_class, delegate_name, x, y)` - Spawn a Bind Event node to subscribe. `target_class` accepts `"Self"`, native class names, Blueprint asset paths, or short BP names with/without `_C`
+- `add_delegate_bind_on_variable(path, graph, variable_name, delegate_name, x, y)` - One-shot: derives owner class from a variable's type, creates Bind Event + Get, auto-wires Target (mirrors `add_function_call_on_variable`)
 - `add_create_delegate_node(...)`, `add_create_event_node(...)` - Wrap a function as a delegate reference
 
 **Timelines (full track + key CRUD):**

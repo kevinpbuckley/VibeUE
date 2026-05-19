@@ -8180,15 +8180,7 @@ FString UBlueprintService::AddDelegateBindNode(
 	}
 	else
 	{
-		OwnerClass = FindFirstObject<UClass>(*TargetClass, EFindFirstObjectOptions::ExactClass);
-		if (!OwnerClass)
-		{
-			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("U%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
-		}
-		if (!OwnerClass)
-		{
-			OwnerClass = FindFirstObject<UClass>(*FString::Printf(TEXT("A%s"), *TargetClass), EFindFirstObjectOptions::ExactClass);
-		}
+		OwnerClass = ResolveClassByName(TargetClass);
 	}
 
 	if (!OwnerClass)
@@ -8226,6 +8218,141 @@ FString UBlueprintService::AddDelegateBindNode(
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
 	UE_LOG(LogTemp, Log, TEXT("AddDelegateBindNode: Added bind node for %s::%s in %s"), *OwnerClass->GetName(), *DelegateName, *GraphName);
+
+	return DelegateNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddDelegateBindOnVariable(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& VariableName,
+	const FString& DelegateName,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	if (!Blueprint->GeneratedClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Blueprint '%s' has no GeneratedClass — compile it first"), *BlueprintPath);
+		return FString();
+	}
+
+	// Resolve the variable's owner class via its property on the GeneratedClass.
+	FProperty* VarProperty = Blueprint->GeneratedClass->FindPropertyByName(FName(*VariableName));
+	if (!VarProperty)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Variable '%s' not found on %s"), *VariableName, *BlueprintPath);
+		return FString();
+	}
+
+	UClass* OwnerClass = nullptr;
+	if (FObjectProperty* ObjProp = CastField<FObjectProperty>(VarProperty))
+	{
+		OwnerClass = ObjProp->PropertyClass;
+	}
+	else if (FClassProperty* ClassProp = CastField<FClassProperty>(VarProperty))
+	{
+		OwnerClass = ClassProp->MetaClass;
+	}
+
+	if (!OwnerClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Variable '%s' is not an object reference — cannot bind to a delegate on it"), *VariableName);
+		return FString();
+	}
+
+	// Find the multicast delegate on the owner class (case-insensitive).
+	FMulticastDelegateProperty* DelegateProp = nullptr;
+	for (TFieldIterator<FMulticastDelegateProperty> PropIt(OwnerClass); PropIt; ++PropIt)
+	{
+		if (PropIt->GetName().Equals(DelegateName, ESearchCase::IgnoreCase))
+		{
+			DelegateProp = *PropIt;
+			break;
+		}
+	}
+
+	if (!DelegateProp)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddDelegateBindOnVariable: Delegate '%s' not found on class '%s' (from variable '%s')"), *DelegateName, *OwnerClass->GetName(), *VariableName);
+		return FString();
+	}
+
+	// Create the bind node (Target is NOT self — it's the variable's class).
+	UK2Node_AddDelegate* DelegateNode = NewObject<UK2Node_AddDelegate>(Graph);
+	DelegateNode->SetFromProperty(DelegateProp, /*bSelfContext=*/false, OwnerClass);
+	Graph->AddNode(DelegateNode, false, false);
+	DelegateNode->CreateNewGuid();
+	DelegateNode->PostPlacedNewNode();
+	DelegateNode->AllocateDefaultPins();
+	DelegateNode->NodePosX = PosX;
+	DelegateNode->NodePosY = PosY;
+
+	// Create a Get node for the variable to the left of the bind node.
+	UK2Node_VariableGet* GetterNode = NewObject<UK2Node_VariableGet>(Graph);
+	GetterNode->VariableReference.SetSelfMember(FName(*VariableName));
+	Graph->AddNode(GetterNode, false, false);
+	GetterNode->CreateNewGuid();
+	GetterNode->PostPlacedNewNode();
+	GetterNode->AllocateDefaultPins();
+	GetterNode->NodePosX = PosX - 250.0f;
+	GetterNode->NodePosY = PosY + 16.0f;
+
+	// Wire variable output -> bind node's Target (self) pin.
+	UEdGraphPin* VarOutPin = nullptr;
+	for (UEdGraphPin* Pin : GetterNode->Pins)
+	{
+		if (Pin && Pin->Direction == EGPD_Output)
+		{
+			VarOutPin = Pin;
+			break;
+		}
+	}
+
+	UEdGraphPin* SelfPin = DelegateNode->FindPin(UEdGraphSchema_K2::PN_Self, EGPD_Input);
+	if (!SelfPin)
+	{
+		// Fallback: first input object pin (some delegate node variants name it differently).
+		for (UEdGraphPin* Pin : DelegateNode->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Input && Pin->PinType.PinCategory == UEdGraphSchema_K2::PC_Object)
+			{
+				SelfPin = Pin;
+				break;
+			}
+		}
+	}
+
+	if (VarOutPin && SelfPin)
+	{
+		const UEdGraphSchema* Schema = Graph->GetSchema();
+		Schema->TryCreateConnection(VarOutPin, SelfPin);
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("AddDelegateBindOnVariable: Created nodes but could not auto-wire Target pin for %s::%s (var pin: %s, self pin: %s)"),
+			*OwnerClass->GetName(), *DelegateName,
+			VarOutPin ? TEXT("ok") : TEXT("missing"),
+			SelfPin ? TEXT("ok") : TEXT("missing"));
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+	UE_LOG(LogTemp, Log, TEXT("AddDelegateBindOnVariable: %s::%s bound via variable '%s' in %s — bind=%s, getter=%s"),
+		*OwnerClass->GetName(), *DelegateName, *VariableName, *GraphName,
+		*DelegateNode->NodeGuid.ToString(), *GetterNode->NodeGuid.ToString());
 
 	return DelegateNode->NodeGuid.ToString();
 }
