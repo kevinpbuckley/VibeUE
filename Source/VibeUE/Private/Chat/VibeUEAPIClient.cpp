@@ -199,9 +199,12 @@ TSharedPtr<IHttpRequest, ESPMode::ThreadSafe> FVibeUEAPIClient::BuildHttpRequest
     // Disable keep-alive to prevent stale connections causing stuck requests
     Request->SetHeader(TEXT("Connection"), TEXT("close"));
     Request->SetContentAsString(RequestBodyString);
-    // Set timeout to 120 seconds - LLM inference with tools and large context can take time
-    // especially with chain-of-thought reasoning enabled
-    Request->SetTimeout(120.0f);
+    // Reasoning models with large tool sets can take a long time to emit the first token
+    // (DeepSeek V4 Pro, etc.). 300s leaves headroom before the 3-retry path fires.
+    Request->SetTimeout(300.0f);
+    // Activity timeout is separate from overall timeout: UE/curl aborts the request if no
+    // bytes arrive for this long. Default is ~30s, which DeepSeek V4 Pro TTFT exceeds.
+    Request->SetActivityTimeout(300.0f);
 
     return Request;
 }
