@@ -91,7 +91,17 @@ $ExcludeDevFiles = @(
     "FAB_Tech_Details.md",   # FAB submission details not needed by end users
     "FAB-Checklist.md",      # Internal checklist not needed by end users
     ".gitignore",            # Git-specific file not needed by end users
-    "vibeue-proxy.json"      # Local proxy config with bearer token (auto-generated at runtime)
+    # --- VibeUE MCP proxy: external/standalone tooling, NOT needed by the in-editor
+    #     plugin and rejected by Epic/FAB review (standalone server + process-spawning .bat) ---
+    "vibeue-proxy.json",     # Local proxy config with bearer token (auto-generated at runtime)
+    "vibeue-proxy.py",       # Standalone HTTP proxy server (opens a port; for use when UE is closed)
+    "start-vibeue-proxy.bat" # Proxy launcher (kills/spawns background process, Windows startup helper)
+)
+
+# Folders that exist only to hold the excluded proxy tooling (avoids shipping an empty dir).
+# Content/Python currently contains ONLY the proxy script + launcher above.
+$ExcludeProxyDirs = @(
+    (Join-Path $SourceDir "Content\Python")
 )
 
 # Note: test_prompts folder is now included for user reference and examples
@@ -104,7 +114,7 @@ $RobocopyArgs = @(
     $PackageDir,
     "/E",                # Copy subdirectories including empty ones
     "/XD"                # Exclude directories
-) + $ExcludeDirectories + @(
+) + $ExcludeDirectories + $ExcludeProxyDirs + @(
     "/XF"                # Exclude files
 ) + $ExcludeFiles + $ExcludeDevFiles
 
