@@ -1,10 +1,11 @@
 ---
 name: animation-blueprint
 display_name: Animation Blueprints
-description: Navigate and inspect Animation Blueprints, state machines, states, and transitions
+description: Navigate, inspect AND author Animation Blueprints, state machines, states, transitions and transition rules
 vibeue_classes:
   - AnimGraphService
   - AssetDiscoveryService
+  - BlueprintService
 unreal_classes:
   - EditorAssetLibrary
 keywords:
@@ -14,11 +15,43 @@ keywords:
   - state machine
   - state
   - transition
+  - transition rule
   - animgraph
   - locomotion
+  - combat
+  - authoring
 ---
 
 # Animation Blueprint Skill
+
+## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
+
+`add_transition()` only draws the arrow between two states. The transition's rule graph
+starts empty, which evaluates to **false**, so the transition is **inert** — the state
+machine will never move. You MUST set a rule on every transition:
+
+```python
+import unreal
+abp = "/Game/ABP_Character"
+
+# 1) Add the bool/float variable the rule reads (on the AnimBP), then COMPILE so it resolves
+unreal.BlueprintService.add_variable(abp, "bIsDead", "bool")
+unreal.BlueprintService.compile_blueprint(abp)
+
+# 2) Draw the transition
+unreal.AnimGraphService.add_transition(abp, "Locomotion", "Idle", "Dead", 0.2)
+
+# 3) Give it a rule — THIS is what makes it fire
+unreal.AnimGraphService.set_transition_rule_from_bool(abp, "Locomotion", "Idle", "Dead", "bIsDead")
+```
+
+Rule options:
+- `set_transition_rule_from_bool(abp, machine, src, dst, bool_var, invert=False)`
+- `set_transition_rule_comparison(abp, machine, src, dst, float_var, op, value)` — op ∈ `greater/less/greater_equal/less_equal/equal/not_equal`
+- `set_transition_rule_automatic(abp, machine, src, dst, trigger_time=-1.0)` — fires when the source state's animation is (almost) finished; perfect for one-shots (attack→idle)
+- `clear_transition_rule(...)` — non-destructively reset a rule
+
+After authoring, **always** run `validate_state_machine()` (see below) and compile.
 
 ## Critical Rules
 
@@ -185,6 +218,88 @@ for t in transitions:
 idle_transitions = unreal.AnimGraphService.get_state_transitions(abp_path, machine_name, "Idle")
 ```
 
+---
+
+## Authoring State Machines (build / edit)
+
+### ⭐ Fastest path: declarative `build_state_machine`
+
+Build (or extend) a whole machine from one JSON spec in a single atomic, idempotent call.
+Re-running it never duplicates existing states/transitions. It sets animations, rules,
+the entry state, then compiles — and returns a JSON report.
+
+```python
+import unreal, json
+
+abp = "/Game/ABP_Character"
+
+# Add the variables the rules read FIRST, then compile so the rules can resolve them
+unreal.BlueprintService.add_variable(abp, "Speed", "float")
+unreal.BlueprintService.add_variable(abp, "bAttack", "bool")
+unreal.BlueprintService.compile_blueprint(abp)
+
+spec = {
+    "states": [
+        {"name": "Idle",   "animation": "/Game/Anims/Idle",   "loop": True,  "pos": [0, 0]},
+        {"name": "Walk",   "animation": "/Game/Anims/Walk",   "loop": True,  "pos": [350, 0]},
+        {"name": "Attack", "animation": "/Game/Anims/Attack", "loop": False, "pos": [350, 250]},
+    ],
+    "transitions": [
+        {"from": "Idle",   "to": "Walk",   "rule": {"type": "comparison", "variable": "Speed", "op": "greater", "value": 10}, "blend": 0.15},
+        {"from": "Walk",   "to": "Idle",   "rule": {"type": "comparison", "variable": "Speed", "op": "less_equal", "value": 10}},
+        {"from": "Idle",   "to": "Attack", "rule": {"type": "bool", "variable": "bAttack"}},
+        {"from": "Attack", "to": "Idle",   "rule": {"type": "automatic"}},  # when the attack anim ends
+    ],
+    "entry": "Idle",
+}
+
+report = json.loads(unreal.AnimGraphService.build_state_machine(abp, "Locomotion", json.dumps(spec)))
+print(report)  # {"success":true,"states_created":3,"transitions_created":4,"errors":[]}
+```
+
+`rule.type` ∈ `bool` (`variable`, optional `invert`), `comparison` (`variable`,`op`,`value`),
+`automatic` (optional `trigger_time`), `always` (always-true), or omit `rule` to leave it inert.
+
+### Manual / incremental authoring
+
+```python
+import unreal
+abp = "/Game/ABP_Character"
+
+# State machine + states
+unreal.AnimGraphService.add_state_machine(abp, "Locomotion", 0, 0)
+unreal.AnimGraphService.add_state(abp, "Locomotion", "Idle", 0, 0)
+unreal.AnimGraphService.add_state(abp, "Locomotion", "Walk", 350, 0)
+
+# One call: create+assign the sequence player inside the state AND wire it to Output Pose
+unreal.AnimGraphService.set_state_animation(abp, "Locomotion", "Idle", "/Game/Anims/Idle", True)
+unreal.AnimGraphService.set_state_animation(abp, "Locomotion", "Walk", "/Game/Anims/Walk", True)
+
+# Default/entry state
+unreal.AnimGraphService.set_entry_state(abp, "Locomotion", "Idle")
+
+# Transitions + rules (rules are mandatory — see top gotcha)
+unreal.AnimGraphService.add_transition(abp, "Locomotion", "Idle", "Walk", 0.15)
+unreal.AnimGraphService.set_transition_rule_comparison(abp, "Locomotion", "Idle", "Walk", "Speed", "greater", 10.0)
+unreal.AnimGraphService.set_transition_priority(abp, "Locomotion", "Idle", "Walk", 1)
+
+unreal.BlueprintService.compile_blueprint(abp)
+```
+
+### Verify before claiming success — `validate_state_machine`
+
+```python
+result = unreal.AnimGraphService.validate_state_machine(abp, "Locomotion")
+print(f"valid={result.is_valid}  states={result.state_count}  transitions={result.transition_count}")
+for e in result.errors:   print("ERROR:", e)    # inert transitions, no entry state
+for w in result.warnings: print("WARN :", w)    # unreachable states, states with no animation
+```
+
+Treat any `errors` as a build failure. The most common error is an **inert transition**
+(a transition with no rule) — fix it with one of the `set_transition_rule_*` calls.
+
+---
+
 ### Find Used Animation Sequences
 
 ```python
@@ -248,6 +363,22 @@ unreal.AnimGraphService.focus_node(abp_path, node_id)
 | `priority` | int | Priority (lower = higher) |
 | `blend_duration` | float | Crossfade time in seconds |
 | `is_automatic` | bool | Auto-transition based on sequence |
+| `rule_type` | string | `None` (inert), `Bool`, `Comparison`, `Automatic`, `Custom` |
+| `rule_variable` | string | Bound variable name (for Bool/Comparison rules) |
+| `rule_summary` | string | Human-readable rule, e.g. `Speed > 150`, `bIsDead == true` |
+| `has_rule` | bool | **False = inert (never fires).** True = transition can fire |
+
+### AnimStateMachineValidationResult
+
+Returned by `validate_state_machine()`.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `is_valid` | bool | True when there are no blocking errors |
+| `state_count` | int | Number of states |
+| `transition_count` | int | Number of transitions |
+| `errors` | [string] | Blocking problems (inert transitions, no entry state) |
+| `warnings` | [string] | Non-blocking issues (unreachable states, states with no animation) |
 
 ---
 

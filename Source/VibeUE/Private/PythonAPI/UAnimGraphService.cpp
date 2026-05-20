@@ -19,6 +19,7 @@
 #include "AnimGraphNode_ModifyBone.h"
 #include "AnimGraphNode_Root.h"
 #include "AnimGraphNode_StateResult.h"
+#include "AnimGraphNode_TransitionResult.h"
 #include "AnimStateNode.h"
 #include "AnimStateNodeBase.h"
 #include "AnimStateConduitNode.h"
@@ -45,6 +46,16 @@
 #include "Kismet2/KismetEditorUtilities.h"
 #include "Kismet2/Kismet2NameValidators.h"
 #include "GraphEditorActions.h"
+#include "K2Node_VariableGet.h"
+#include "K2Node_CallFunction.h"
+#include "EdGraphSchema_K2.h"
+#include "Kismet/KismetMathLibrary.h"
+#include "AlphaBlend.h"
+#include "ScopedTransaction.h"
+#include "Dom/JsonObject.h"
+#include "Serialization/JsonReader.h"
+#include "Serialization/JsonSerializer.h"
+#include "UObject/UnrealType.h"
 
 // ============================================================================
 // PRIVATE HELPERS
@@ -681,6 +692,7 @@ TArray<FAnimTransitionInfo> UAnimGraphService::GetStateTransitions(const FString
 		Info.Priority = TransitionNode->PriorityOrder;
 		Info.BlendDuration = TransitionNode->CrossfadeDuration;
 		Info.bIsAutomatic = TransitionNode->bAutomaticRuleBasedOnSequencePlayerInState;
+		DescribeTransitionRule(TransitionNode, Info);
 
 		Transitions.Add(Info);
 	}
@@ -2014,4 +2026,1064 @@ FString UAnimGraphService::AddModifyBoneNode(const FString& AnimBlueprintPath, c
 
 	UE_LOG(LogTemp, Log, TEXT("AddModifyBoneNode: Created in '%s' for bone '%s'"), *GraphName, *BoneName);
 	return NewNode->NodeGuid.ToString();
+}
+
+// ============================================================================
+// FILE-LOCAL HELPERS (transition rule authoring)
+// ============================================================================
+
+namespace
+{
+	/** Get the single value output pin of a pure variable-get node. */
+	UEdGraphPin* GetVariableValuePin(UK2Node_VariableGet* VarNode)
+	{
+		if (!VarNode)
+		{
+			return nullptr;
+		}
+		for (UEdGraphPin* Pin : VarNode->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Output && Pin->PinName != UEdGraphSchema_K2::PN_Self)
+			{
+				return Pin;
+			}
+		}
+		return nullptr;
+	}
+
+	/** Map a comparison keyword to a KismetMathLibrary function name. Empty string = unknown op. */
+	FString ComparisonToFunctionName(const FString& Op)
+	{
+		const FString S = Op.ToLower();
+		if (S == TEXT("greater") || S == TEXT(">")) return TEXT("Greater_DoubleDouble");
+		if (S == TEXT("less") || S == TEXT("<")) return TEXT("Less_DoubleDouble");
+		if (S == TEXT("greater_equal") || S == TEXT(">=") || S == TEXT("gequal")) return TEXT("GreaterEqual_DoubleDouble");
+		if (S == TEXT("less_equal") || S == TEXT("<=") || S == TEXT("lequal")) return TEXT("LessEqual_DoubleDouble");
+		if (S == TEXT("equal") || S == TEXT("==")) return TEXT("EqualEqual_DoubleDouble");
+		if (S == TEXT("not_equal") || S == TEXT("!=")) return TEXT("NotEqual_DoubleDouble");
+		return FString();
+	}
+
+	/** Map a KismetMathLibrary comparison function name back to an operator symbol (for introspection). */
+	FString FunctionNameToSymbol(const FString& FnName)
+	{
+		if (FnName == TEXT("Greater_DoubleDouble")) return TEXT(">");
+		if (FnName == TEXT("Less_DoubleDouble")) return TEXT("<");
+		if (FnName == TEXT("GreaterEqual_DoubleDouble")) return TEXT(">=");
+		if (FnName == TEXT("LessEqual_DoubleDouble")) return TEXT("<=");
+		if (FnName == TEXT("EqualEqual_DoubleDouble")) return TEXT("==");
+		if (FnName == TEXT("NotEqual_DoubleDouble")) return TEXT("!=");
+		return FnName;
+	}
+
+	/** Parse an alpha-blend keyword into EAlphaBlendOption (defaults to Linear). */
+	EAlphaBlendOption ParseBlendOption(const FString& In)
+	{
+		const FString S = In.ToLower();
+		if (S == TEXT("cubic")) return EAlphaBlendOption::Cubic;
+		if (S == TEXT("hermitecubic") || S == TEXT("hermite")) return EAlphaBlendOption::HermiteCubic;
+		if (S == TEXT("sinusoidal") || S == TEXT("sin")) return EAlphaBlendOption::Sinusoidal;
+		if (S == TEXT("quadraticinout") || S == TEXT("quadratic")) return EAlphaBlendOption::QuadraticInOut;
+		if (S == TEXT("cubicinout")) return EAlphaBlendOption::CubicInOut;
+		if (S == TEXT("expinout") || S == TEXT("exp")) return EAlphaBlendOption::ExpInOut;
+		if (S == TEXT("circularin")) return EAlphaBlendOption::CircularIn;
+		if (S == TEXT("circularout")) return EAlphaBlendOption::CircularOut;
+		if (S == TEXT("circularinout")) return EAlphaBlendOption::CircularInOut;
+		return EAlphaBlendOption::Linear;
+	}
+}
+
+// ============================================================================
+// PRIVATE HELPERS (state machine authoring)
+// ============================================================================
+
+UAnimStateTransitionNode* UAnimGraphService::ResolveTransition(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, UAnimBlueprint*& OutBlueprint)
+{
+	OutBlueprint = nullptr;
+	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
+	if (!AnimBlueprint)
+	{
+		return nullptr;
+	}
+	UAnimGraphNode_StateMachine* StateMachineNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+	if (!StateMachineNode || !StateMachineNode->EditorStateMachineGraph)
+	{
+		return nullptr;
+	}
+	UAnimStateTransitionNode* Transition = FindTransitionNode(StateMachineNode->EditorStateMachineGraph, SourceStateName, DestStateName);
+	if (!Transition)
+	{
+		return nullptr;
+	}
+	OutBlueprint = AnimBlueprint;
+	return Transition;
+}
+
+UAnimGraphNode_TransitionResult* UAnimGraphService::GetTransitionResultNode(UAnimStateTransitionNode* Transition)
+{
+	if (!Transition)
+	{
+		return nullptr;
+	}
+	UAnimationTransitionGraph* TransitionGraph = Cast<UAnimationTransitionGraph>(Transition->BoundGraph);
+	if (!TransitionGraph)
+	{
+		return nullptr;
+	}
+	return TransitionGraph->GetResultNode();
+}
+
+void UAnimGraphService::ResetTransitionRule(UAnimStateTransitionNode* Transition)
+{
+	if (!Transition)
+	{
+		return;
+	}
+
+	Transition->bAutomaticRuleBasedOnSequencePlayerInState = false;
+
+	UAnimationTransitionGraph* TransitionGraph = Cast<UAnimationTransitionGraph>(Transition->BoundGraph);
+	if (!TransitionGraph)
+	{
+		return;
+	}
+
+	UAnimGraphNode_TransitionResult* ResultNode = TransitionGraph->GetResultNode();
+	if (ResultNode)
+	{
+		if (UEdGraphPin* CanEnterPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input))
+		{
+			CanEnterPin->BreakAllPinLinks();
+			CanEnterPin->DefaultValue = TEXT("false");
+		}
+	}
+
+	// Remove every rule-logic node, leaving only the result node intact.
+	TArray<UEdGraphNode*> NodesToRemove;
+	for (UEdGraphNode* Node : TransitionGraph->Nodes)
+	{
+		if (Node && Node != ResultNode)
+		{
+			NodesToRemove.Add(Node);
+		}
+	}
+	for (UEdGraphNode* Node : NodesToRemove)
+	{
+		TransitionGraph->RemoveNode(Node);
+	}
+}
+
+UAnimGraphNode_Base* UAnimGraphService::FindStateAssetPlayer(UAnimStateNodeBase* StateNode)
+{
+	if (!StateNode)
+	{
+		return nullptr;
+	}
+	UEdGraph* StateGraph = StateNode->GetBoundGraph();
+	if (!StateGraph)
+	{
+		return nullptr;
+	}
+	for (UEdGraphNode* Node : StateGraph->Nodes)
+	{
+		if (UAnimGraphNode_SequencePlayer* SeqPlayer = Cast<UAnimGraphNode_SequencePlayer>(Node))
+		{
+			return SeqPlayer;
+		}
+	}
+	for (UEdGraphNode* Node : StateGraph->Nodes)
+	{
+		if (UAnimGraphNode_BlendSpacePlayer* BSPlayer = Cast<UAnimGraphNode_BlendSpacePlayer>(Node))
+		{
+			return BSPlayer;
+		}
+	}
+	return nullptr;
+}
+
+void UAnimGraphService::DescribeTransitionRule(UAnimStateTransitionNode* Transition, FAnimTransitionInfo& OutInfo)
+{
+	OutInfo.RuleType = TEXT("None");
+	OutInfo.RuleVariable = TEXT("");
+	OutInfo.RuleSummary = TEXT("inert (never fires)");
+	OutInfo.bHasRule = false;
+
+	if (!Transition)
+	{
+		return;
+	}
+
+	if (Transition->bAutomaticRuleBasedOnSequencePlayerInState)
+	{
+		OutInfo.RuleType = TEXT("Automatic");
+		OutInfo.RuleSummary = TEXT("auto (asset player time remaining)");
+		OutInfo.bHasRule = true;
+		return;
+	}
+
+	UAnimGraphNode_TransitionResult* ResultNode = GetTransitionResultNode(Transition);
+	if (!ResultNode)
+	{
+		return;
+	}
+	UEdGraphPin* CanEnterPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
+	if (!CanEnterPin)
+	{
+		return;
+	}
+
+	if (CanEnterPin->LinkedTo.Num() == 0)
+	{
+		if (CanEnterPin->DefaultValue.ToLower() == TEXT("true"))
+		{
+			OutInfo.RuleType = TEXT("Custom");
+			OutInfo.RuleSummary = TEXT("always true");
+			OutInfo.bHasRule = true;
+		}
+		return;
+	}
+
+	UEdGraphPin* SourcePin = CanEnterPin->LinkedTo[0];
+	UEdGraphNode* SourceNode = SourcePin ? SourcePin->GetOwningNodeUnchecked() : nullptr;
+
+	if (UK2Node_VariableGet* VarGet = Cast<UK2Node_VariableGet>(SourceNode))
+	{
+		OutInfo.RuleType = TEXT("Bool");
+		OutInfo.RuleVariable = VarGet->GetVarName().ToString();
+		OutInfo.RuleSummary = FString::Printf(TEXT("%s == true"), *OutInfo.RuleVariable);
+		OutInfo.bHasRule = true;
+		return;
+	}
+
+	if (UK2Node_CallFunction* CallFn = Cast<UK2Node_CallFunction>(SourceNode))
+	{
+		const FString FnName = CallFn->FunctionReference.GetMemberName().ToString();
+
+		if (FnName == TEXT("Not_PreBool"))
+		{
+			FString VarName;
+			if (UEdGraphPin* APin = CallFn->FindPin(TEXT("A"), EGPD_Input))
+			{
+				if (APin->LinkedTo.Num() > 0)
+				{
+					if (UK2Node_VariableGet* VG = Cast<UK2Node_VariableGet>(APin->LinkedTo[0]->GetOwningNodeUnchecked()))
+					{
+						VarName = VG->GetVarName().ToString();
+					}
+				}
+			}
+			OutInfo.RuleType = TEXT("Bool");
+			OutInfo.RuleVariable = VarName;
+			OutInfo.RuleSummary = VarName.IsEmpty() ? TEXT("NOT (bool)") : FString::Printf(TEXT("%s == false"), *VarName);
+			OutInfo.bHasRule = true;
+			return;
+		}
+
+		// Treat as a numeric comparison.
+		FString VarName;
+		if (UEdGraphPin* APin = CallFn->FindPin(TEXT("A"), EGPD_Input))
+		{
+			if (APin->LinkedTo.Num() > 0)
+			{
+				if (UK2Node_VariableGet* VG = Cast<UK2Node_VariableGet>(APin->LinkedTo[0]->GetOwningNodeUnchecked()))
+				{
+					VarName = VG->GetVarName().ToString();
+				}
+			}
+		}
+		FString BVal;
+		if (UEdGraphPin* BPin = CallFn->FindPin(TEXT("B"), EGPD_Input))
+		{
+			BVal = BPin->DefaultValue;
+		}
+		OutInfo.RuleType = TEXT("Comparison");
+		OutInfo.RuleVariable = VarName;
+		OutInfo.RuleSummary = FString::Printf(TEXT("%s %s %s"), *VarName, *FunctionNameToSymbol(FnName), *BVal);
+		OutInfo.bHasRule = true;
+		return;
+	}
+
+	OutInfo.RuleType = TEXT("Custom");
+	OutInfo.RuleSummary = TEXT("custom rule graph");
+	OutInfo.bHasRule = true;
+}
+
+// ============================================================================
+// ENTRY STATE / TRANSITION SETTINGS
+// ============================================================================
+
+bool UAnimGraphService::SetEntryState(const FString& AnimBlueprintPath, const FString& StateMachineName, const FString& StateName)
+{
+	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
+	if (!AnimBlueprint)
+	{
+		return false;
+	}
+
+	UAnimGraphNode_StateMachine* StateMachineNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+	if (!StateMachineNode || !StateMachineNode->EditorStateMachineGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetEntryState: State machine '%s' not found"), *StateMachineName);
+		return false;
+	}
+
+	UAnimationStateMachineGraph* SMGraph = Cast<UAnimationStateMachineGraph>(StateMachineNode->EditorStateMachineGraph);
+	if (!SMGraph || !SMGraph->EntryNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetEntryState: State machine '%s' has no entry node"), *StateMachineName);
+		return false;
+	}
+
+	UAnimStateNodeBase* TargetState = FindStateNode(SMGraph, StateName);
+	if (!TargetState)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetEntryState: State '%s' not found"), *StateName);
+		return false;
+	}
+
+	UEdGraphPin* EntryOutPin = SMGraph->EntryNode->GetOutputPin();
+	UEdGraphPin* StateInPin = TargetState->GetInputPin();
+	if (!EntryOutPin || !StateInPin)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetEntryState: Could not resolve entry/state pins"));
+		return false;
+	}
+
+	EntryOutPin->BreakAllPinLinks();
+	EntryOutPin->MakeLinkTo(StateInPin);
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetEntryState: '%s' is now the entry state of '%s'"), *StateName, *StateMachineName);
+	return true;
+}
+
+bool UAnimGraphService::SetTransitionPriority(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, int32 Priority)
+{
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionPriority: transition '%s'->'%s' not found"), *SourceStateName, *DestStateName);
+		return false;
+	}
+
+	Transition->PriorityOrder = Priority;
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetTransitionPriority: '%s'->'%s' priority = %d"), *SourceStateName, *DestStateName, Priority);
+	return true;
+}
+
+bool UAnimGraphService::SetTransitionBlend(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, float BlendDuration, const FString& BlendMode)
+{
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionBlend: transition '%s'->'%s' not found"), *SourceStateName, *DestStateName);
+		return false;
+	}
+
+	Transition->CrossfadeDuration = FMath::Max(0.0f, BlendDuration);
+	Transition->BlendMode = ParseBlendOption(BlendMode);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetTransitionBlend: '%s'->'%s' blend %.2fs (%s)"), *SourceStateName, *DestStateName, BlendDuration, *BlendMode);
+	return true;
+}
+
+// ============================================================================
+// TRANSITION RULES
+// ============================================================================
+
+bool UAnimGraphService::SetTransitionRuleFromBool(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, const FString& BoolVariableName, bool bInvert)
+{
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleFromBool: transition '%s'->'%s' not found in '%s'"), *SourceStateName, *DestStateName, *StateMachineName);
+		return false;
+	}
+
+	UClass* VarClass = AnimBlueprint->SkeletonGeneratedClass ? AnimBlueprint->SkeletonGeneratedClass : AnimBlueprint->GeneratedClass;
+	FProperty* Prop = VarClass ? VarClass->FindPropertyByName(FName(*BoolVariableName)) : nullptr;
+	if (!Prop || !Prop->IsA<FBoolProperty>())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleFromBool: bool variable '%s' not found on AnimBP (add it and compile first)"), *BoolVariableName);
+		return false;
+	}
+
+	ResetTransitionRule(Transition);
+
+	UAnimGraphNode_TransitionResult* ResultNode = GetTransitionResultNode(Transition);
+	UEdGraph* RuleGraph = Transition->BoundGraph;
+	if (!ResultNode || !RuleGraph)
+	{
+		return false;
+	}
+	UEdGraphPin* CanEnterPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
+	if (!CanEnterPin)
+	{
+		return false;
+	}
+
+	FGraphNodeCreator<UK2Node_VariableGet> VarCreator(*RuleGraph);
+	UK2Node_VariableGet* VarNode = VarCreator.CreateNode();
+	VarNode->VariableReference.SetSelfMember(FName(*BoolVariableName));
+	VarNode->NodePosX = ResultNode->NodePosX - (bInvert ? 500 : 280);
+	VarNode->NodePosY = ResultNode->NodePosY;
+	VarCreator.Finalize();
+
+	UEdGraphPin* VarOutPin = GetVariableValuePin(VarNode);
+	if (!VarOutPin)
+	{
+		RuleGraph->RemoveNode(VarNode);
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleFromBool: failed to resolve value pin for '%s'"), *BoolVariableName);
+		return false;
+	}
+
+	if (bInvert)
+	{
+		UFunction* NotFn = UKismetMathLibrary::StaticClass()->FindFunctionByName(FName(TEXT("Not_PreBool")));
+		if (!NotFn)
+		{
+			RuleGraph->RemoveNode(VarNode);
+			return false;
+		}
+		FGraphNodeCreator<UK2Node_CallFunction> FnCreator(*RuleGraph);
+		UK2Node_CallFunction* NotNode = FnCreator.CreateNode();
+		NotNode->SetFromFunction(NotFn);
+		NotNode->NodePosX = ResultNode->NodePosX - 250;
+		NotNode->NodePosY = ResultNode->NodePosY;
+		FnCreator.Finalize();
+
+		UEdGraphPin* APin = NotNode->FindPin(TEXT("A"), EGPD_Input);
+		UEdGraphPin* RetPin = NotNode->GetReturnValuePin();
+		if (!APin || !RetPin)
+		{
+			return false;
+		}
+		VarOutPin->MakeLinkTo(APin);
+		RetPin->MakeLinkTo(CanEnterPin);
+	}
+	else
+	{
+		VarOutPin->MakeLinkTo(CanEnterPin);
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetTransitionRuleFromBool: '%s'->'%s' driven by %s%s"),
+		*SourceStateName, *DestStateName, bInvert ? TEXT("NOT ") : TEXT(""), *BoolVariableName);
+	return true;
+}
+
+bool UAnimGraphService::SetTransitionRuleComparison(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, const FString& FloatVariableName, const FString& Comparison, float Threshold)
+{
+	const FString FnName = ComparisonToFunctionName(Comparison);
+	if (FnName.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: unknown comparison '%s' (use greater/less/greater_equal/less_equal/equal/not_equal)"), *Comparison);
+		return false;
+	}
+
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: transition '%s'->'%s' not found"), *SourceStateName, *DestStateName);
+		return false;
+	}
+
+	UClass* VarClass = AnimBlueprint->SkeletonGeneratedClass ? AnimBlueprint->SkeletonGeneratedClass : AnimBlueprint->GeneratedClass;
+	FProperty* Prop = VarClass ? VarClass->FindPropertyByName(FName(*FloatVariableName)) : nullptr;
+	if (!Prop || !Prop->IsA<FNumericProperty>())
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: numeric variable '%s' not found on AnimBP (add it and compile first)"), *FloatVariableName);
+		return false;
+	}
+
+	UFunction* CmpFn = UKismetMathLibrary::StaticClass()->FindFunctionByName(FName(*FnName));
+	if (!CmpFn)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: math function '%s' not found"), *FnName);
+		return false;
+	}
+
+	ResetTransitionRule(Transition);
+
+	UAnimGraphNode_TransitionResult* ResultNode = GetTransitionResultNode(Transition);
+	UEdGraph* RuleGraph = Transition->BoundGraph;
+	if (!ResultNode || !RuleGraph)
+	{
+		return false;
+	}
+	UEdGraphPin* CanEnterPin = ResultNode->FindPin(TEXT("bCanEnterTransition"), EGPD_Input);
+	if (!CanEnterPin)
+	{
+		return false;
+	}
+
+	FGraphNodeCreator<UK2Node_VariableGet> VarCreator(*RuleGraph);
+	UK2Node_VariableGet* VarNode = VarCreator.CreateNode();
+	VarNode->VariableReference.SetSelfMember(FName(*FloatVariableName));
+	VarNode->NodePosX = ResultNode->NodePosX - 550;
+	VarNode->NodePosY = ResultNode->NodePosY;
+	VarCreator.Finalize();
+
+	UEdGraphPin* VarOutPin = GetVariableValuePin(VarNode);
+	if (!VarOutPin)
+	{
+		RuleGraph->RemoveNode(VarNode);
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: failed to resolve value pin for '%s'"), *FloatVariableName);
+		return false;
+	}
+
+	FGraphNodeCreator<UK2Node_CallFunction> FnCreator(*RuleGraph);
+	UK2Node_CallFunction* CmpNode = FnCreator.CreateNode();
+	CmpNode->SetFromFunction(CmpFn);
+	CmpNode->NodePosX = ResultNode->NodePosX - 280;
+	CmpNode->NodePosY = ResultNode->NodePosY;
+	FnCreator.Finalize();
+
+	UEdGraphPin* APin = CmpNode->FindPin(TEXT("A"), EGPD_Input);
+	UEdGraphPin* BPin = CmpNode->FindPin(TEXT("B"), EGPD_Input);
+	UEdGraphPin* RetPin = CmpNode->GetReturnValuePin();
+	if (!APin || !BPin || !RetPin)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleComparison: comparison node pins missing"));
+		return false;
+	}
+
+	VarOutPin->MakeLinkTo(APin);
+	BPin->DefaultValue = FString::SanitizeFloat(Threshold);
+	RetPin->MakeLinkTo(CanEnterPin);
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetTransitionRuleComparison: '%s'->'%s' rule = %s %s %.3f"),
+		*SourceStateName, *DestStateName, *FloatVariableName, *FunctionNameToSymbol(FnName), Threshold);
+	return true;
+}
+
+bool UAnimGraphService::SetTransitionRuleAutomatic(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName, float TriggerTime)
+{
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetTransitionRuleAutomatic: transition '%s'->'%s' not found"), *SourceStateName, *DestStateName);
+		return false;
+	}
+
+	ResetTransitionRule(Transition);
+	Transition->bAutomaticRuleBasedOnSequencePlayerInState = true;
+	Transition->AutomaticRuleTriggerTime = TriggerTime;
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetTransitionRuleAutomatic: '%s'->'%s' auto (trigger %.3f)"), *SourceStateName, *DestStateName, TriggerTime);
+	return true;
+}
+
+bool UAnimGraphService::ClearTransitionRule(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SourceStateName, const FString& DestStateName)
+{
+	UAnimBlueprint* AnimBlueprint = nullptr;
+	UAnimStateTransitionNode* Transition = ResolveTransition(AnimBlueprintPath, StateMachineName, SourceStateName, DestStateName, AnimBlueprint);
+	if (!Transition || !AnimBlueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("ClearTransitionRule: transition '%s'->'%s' not found"), *SourceStateName, *DestStateName);
+		return false;
+	}
+
+	ResetTransitionRule(Transition);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("ClearTransitionRule: cleared '%s'->'%s'"), *SourceStateName, *DestStateName);
+	return true;
+}
+
+// ============================================================================
+// HIGH-LEVEL STATE AUTHORING
+// ============================================================================
+
+FString UAnimGraphService::SetStateAnimation(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& StateName, const FString& AnimSequencePath, bool bLoop, float PlayRate)
+{
+	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
+	if (!AnimBlueprint)
+	{
+		return FString();
+	}
+
+	UAnimGraphNode_StateMachine* StateMachineNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+	if (!StateMachineNode || !StateMachineNode->EditorStateMachineGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetStateAnimation: state machine '%s' not found"), *StateMachineName);
+		return FString();
+	}
+
+	UAnimStateNode* StateNode = Cast<UAnimStateNode>(FindStateNode(StateMachineNode->EditorStateMachineGraph, StateName));
+	if (!StateNode)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetStateAnimation: state '%s' not found (or is a conduit)"), *StateName);
+		return FString();
+	}
+
+	UEdGraph* StateGraph = StateNode->GetBoundGraph();
+	if (!StateGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetStateAnimation: state '%s' has no graph"), *StateName);
+		return FString();
+	}
+
+	UAnimSequence* Sequence = Cast<UAnimSequence>(UEditorAssetLibrary::LoadAsset(AnimSequencePath));
+	if (!Sequence)
+	{
+		UE_LOG(LogTemp, Error, TEXT("SetStateAnimation: could not load sequence '%s'"), *AnimSequencePath);
+		return FString();
+	}
+
+	UAnimGraphNode_SequencePlayer* SeqPlayer = Cast<UAnimGraphNode_SequencePlayer>(FindStateAssetPlayer(StateNode));
+	if (!SeqPlayer)
+	{
+		FGraphNodeCreator<UAnimGraphNode_SequencePlayer> Creator(*StateGraph);
+		SeqPlayer = Creator.CreateNode();
+		SeqPlayer->NodePosX = -350;
+		SeqPlayer->NodePosY = 0;
+		Creator.Finalize();
+	}
+
+	SeqPlayer->Node.SetSequence(Sequence);
+	SeqPlayer->Node.SetLoopAnimation(bLoop);
+	SeqPlayer->Node.SetPlayRate(PlayRate);
+
+	// Wire the player's pose output to the state's Output Pose (result) node.
+	UAnimGraphNode_StateResult* ResultNode = nullptr;
+	for (UEdGraphNode* Node : StateGraph->Nodes)
+	{
+		if (UAnimGraphNode_StateResult* Result = Cast<UAnimGraphNode_StateResult>(Node))
+		{
+			ResultNode = Result;
+			break;
+		}
+	}
+	if (ResultNode)
+	{
+		UEdGraphPin* OutPin = nullptr;
+		for (UEdGraphPin* Pin : SeqPlayer->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Output)
+			{
+				OutPin = Pin;
+				break;
+			}
+		}
+		UEdGraphPin* InPin = nullptr;
+		for (UEdGraphPin* Pin : ResultNode->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Input)
+			{
+				InPin = Pin;
+				break;
+			}
+		}
+		if (OutPin && InPin && !OutPin->LinkedTo.Contains(InPin))
+		{
+			InPin->BreakAllPinLinks();
+			OutPin->MakeLinkTo(InPin);
+		}
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(AnimBlueprint);
+	UE_LOG(LogTemp, Log, TEXT("SetStateAnimation: '%s' in '%s' -> %s (loop=%d, rate=%.2f)"),
+		*StateName, *StateMachineName, *AnimSequencePath, bLoop ? 1 : 0, PlayRate);
+	return SeqPlayer->NodeGuid.ToString();
+}
+
+FString UAnimGraphService::BuildStateMachine(const FString& AnimBlueprintPath, const FString& StateMachineName,
+	const FString& SpecJson, float PosX, float PosY)
+{
+	TArray<FString> Errors;
+	int32 StatesCreated = 0;
+	int32 TransitionsCreated = 0;
+
+	auto MakeReport = [&](bool bSuccess) -> FString
+	{
+		TSharedRef<FJsonObject> Report = MakeShared<FJsonObject>();
+		Report->SetBoolField(TEXT("success"), bSuccess);
+		Report->SetStringField(TEXT("machine"), StateMachineName);
+		Report->SetNumberField(TEXT("states_created"), StatesCreated);
+		Report->SetNumberField(TEXT("transitions_created"), TransitionsCreated);
+		TArray<TSharedPtr<FJsonValue>> ErrArr;
+		for (const FString& E : Errors)
+		{
+			ErrArr.Add(MakeShared<FJsonValueString>(E));
+		}
+		Report->SetArrayField(TEXT("errors"), ErrArr);
+		FString Out;
+		TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&Out);
+		FJsonSerializer::Serialize(Report, Writer);
+		return Out;
+	};
+
+	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
+	if (!AnimBlueprint)
+	{
+		Errors.Add(TEXT("Failed to load AnimBlueprint"));
+		return MakeReport(false);
+	}
+
+	TSharedPtr<FJsonObject> Root;
+	TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(SpecJson);
+	if (!FJsonSerializer::Deserialize(Reader, Root) || !Root.IsValid())
+	{
+		Errors.Add(TEXT("Invalid JSON spec"));
+		return MakeReport(false);
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("VibeUE", "BuildStateMachine", "VibeUE: Build State Machine"));
+
+	if (!FindStateMachineNode(AnimBlueprint, StateMachineName))
+	{
+		const FString NewMachineId = AddStateMachine(AnimBlueprintPath, StateMachineName, PosX, PosY);
+		if (NewMachineId.IsEmpty())
+		{
+			Errors.Add(FString::Printf(TEXT("Failed to create state machine '%s'"), *StateMachineName));
+			return MakeReport(false);
+		}
+	}
+
+	FString FirstStateName;
+
+	// --- States ---
+	const TArray<TSharedPtr<FJsonValue>>* StatesArr = nullptr;
+	if (Root->TryGetArrayField(TEXT("states"), StatesArr) && StatesArr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *StatesArr)
+		{
+			if (!Value.IsValid() || Value->Type != EJson::Object)
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> StateObj = Value->AsObject();
+			if (!StateObj.IsValid())
+			{
+				continue;
+			}
+
+			FString SName;
+			if (!StateObj->TryGetStringField(TEXT("name"), SName) || SName.IsEmpty())
+			{
+				Errors.Add(TEXT("State entry missing 'name'"));
+				continue;
+			}
+			if (FirstStateName.IsEmpty())
+			{
+				FirstStateName = SName;
+			}
+
+			float SX = PosX;
+			float SY = PosY;
+			const TArray<TSharedPtr<FJsonValue>>* PosArr = nullptr;
+			if (StateObj->TryGetArrayField(TEXT("pos"), PosArr) && PosArr && PosArr->Num() >= 2)
+			{
+				SX = (float)(*PosArr)[0]->AsNumber();
+				SY = (float)(*PosArr)[1]->AsNumber();
+			}
+
+			UAnimGraphNode_StateMachine* SMNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+			UEdGraph* SMGraph = SMNode ? SMNode->EditorStateMachineGraph : nullptr;
+			if (!SMGraph || !FindStateNode(SMGraph, SName))
+			{
+				const FString StateId = AddState(AnimBlueprintPath, StateMachineName, SName, SX, SY);
+				if (StateId.IsEmpty())
+				{
+					Errors.Add(FString::Printf(TEXT("Failed to add state '%s'"), *SName));
+					continue;
+				}
+				StatesCreated++;
+			}
+
+			FString Anim;
+			if (StateObj->TryGetStringField(TEXT("animation"), Anim) && !Anim.IsEmpty())
+			{
+				bool bLoop = true;
+				StateObj->TryGetBoolField(TEXT("loop"), bLoop);
+				double Rate = 1.0;
+				StateObj->TryGetNumberField(TEXT("play_rate"), Rate);
+				if (SetStateAnimation(AnimBlueprintPath, StateMachineName, SName, Anim, bLoop, (float)Rate).IsEmpty())
+				{
+					Errors.Add(FString::Printf(TEXT("Failed to set animation '%s' on state '%s'"), *Anim, *SName));
+				}
+			}
+		}
+	}
+
+	// --- Transitions ---
+	const TArray<TSharedPtr<FJsonValue>>* TransArr = nullptr;
+	if (Root->TryGetArrayField(TEXT("transitions"), TransArr) && TransArr)
+	{
+		for (const TSharedPtr<FJsonValue>& Value : *TransArr)
+		{
+			if (!Value.IsValid() || Value->Type != EJson::Object)
+			{
+				continue;
+			}
+			TSharedPtr<FJsonObject> TransObj = Value->AsObject();
+			if (!TransObj.IsValid())
+			{
+				continue;
+			}
+
+			FString From;
+			FString To;
+			if (!TransObj->TryGetStringField(TEXT("from"), From) || !TransObj->TryGetStringField(TEXT("to"), To))
+			{
+				Errors.Add(TEXT("Transition entry missing 'from'/'to'"));
+				continue;
+			}
+
+			double Blend = 0.2;
+			TransObj->TryGetNumberField(TEXT("blend"), Blend);
+
+			UAnimGraphNode_StateMachine* SMNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+			UEdGraph* SMGraph = SMNode ? SMNode->EditorStateMachineGraph : nullptr;
+			if (!SMGraph || !FindTransitionNode(SMGraph, From, To))
+			{
+				const FString TransId = AddTransition(AnimBlueprintPath, StateMachineName, From, To, (float)Blend);
+				if (TransId.IsEmpty())
+				{
+					Errors.Add(FString::Printf(TEXT("Failed to add transition '%s'->'%s'"), *From, *To));
+					continue;
+				}
+				TransitionsCreated++;
+			}
+			else
+			{
+				SetTransitionBlend(AnimBlueprintPath, StateMachineName, From, To, (float)Blend, TEXT("Linear"));
+			}
+
+			double PriorityD = 0.0;
+			if (TransObj->TryGetNumberField(TEXT("priority"), PriorityD))
+			{
+				SetTransitionPriority(AnimBlueprintPath, StateMachineName, From, To, (int32)PriorityD);
+			}
+
+			const TSharedPtr<FJsonObject>* RuleObjPtr = nullptr;
+			if (TransObj->TryGetObjectField(TEXT("rule"), RuleObjPtr) && RuleObjPtr && RuleObjPtr->IsValid())
+			{
+				const TSharedPtr<FJsonObject> RuleObj = *RuleObjPtr;
+				FString RType;
+				RuleObj->TryGetStringField(TEXT("type"), RType);
+				RType = RType.ToLower();
+
+				if (RType == TEXT("bool"))
+				{
+					FString Var;
+					bool bInv = false;
+					RuleObj->TryGetStringField(TEXT("variable"), Var);
+					RuleObj->TryGetBoolField(TEXT("invert"), bInv);
+					if (!SetTransitionRuleFromBool(AnimBlueprintPath, StateMachineName, From, To, Var, bInv))
+					{
+						Errors.Add(FString::Printf(TEXT("Failed bool rule on '%s'->'%s' (variable '%s')"), *From, *To, *Var));
+					}
+				}
+				else if (RType == TEXT("comparison"))
+				{
+					FString Var;
+					FString Op;
+					double Val = 0.0;
+					RuleObj->TryGetStringField(TEXT("variable"), Var);
+					RuleObj->TryGetStringField(TEXT("op"), Op);
+					RuleObj->TryGetNumberField(TEXT("value"), Val);
+					if (!SetTransitionRuleComparison(AnimBlueprintPath, StateMachineName, From, To, Var, Op, (float)Val))
+					{
+						Errors.Add(FString::Printf(TEXT("Failed comparison rule on '%s'->'%s'"), *From, *To));
+					}
+				}
+				else if (RType == TEXT("automatic"))
+				{
+					double Trig = -1.0;
+					RuleObj->TryGetNumberField(TEXT("trigger_time"), Trig);
+					SetTransitionRuleAutomatic(AnimBlueprintPath, StateMachineName, From, To, (float)Trig);
+				}
+				else if (RType == TEXT("always"))
+				{
+					UAnimBlueprint* RuleBP = nullptr;
+					UAnimStateTransitionNode* RuleTrans = ResolveTransition(AnimBlueprintPath, StateMachineName, From, To, RuleBP);
+					if (RuleTrans)
+					{
+						ResetTransitionRule(RuleTrans);
+						if (UAnimGraphNode_TransitionResult* RN = GetTransitionResultNode(RuleTrans))
+						{
+							if (UEdGraphPin* CEP = RN->FindPin(TEXT("bCanEnterTransition"), EGPD_Input))
+							{
+								CEP->DefaultValue = TEXT("true");
+							}
+						}
+						if (RuleBP)
+						{
+							FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(RuleBP);
+						}
+					}
+				}
+			}
+		}
+	}
+
+	// --- Entry ---
+	FString Entry;
+	if (!Root->TryGetStringField(TEXT("entry"), Entry) || Entry.IsEmpty())
+	{
+		Entry = FirstStateName;
+	}
+	if (!Entry.IsEmpty())
+	{
+		if (!SetEntryState(AnimBlueprintPath, StateMachineName, Entry))
+		{
+			Errors.Add(FString::Printf(TEXT("Failed to set entry state '%s'"), *Entry));
+		}
+	}
+
+	FKismetEditorUtilities::CompileBlueprint(AnimBlueprint);
+
+	return MakeReport(Errors.Num() == 0);
+}
+
+FAnimStateMachineValidationResult UAnimGraphService::ValidateStateMachine(const FString& AnimBlueprintPath, const FString& StateMachineName)
+{
+	FAnimStateMachineValidationResult Result;
+
+	UAnimBlueprint* AnimBlueprint = LoadAnimBlueprint(AnimBlueprintPath);
+	if (!AnimBlueprint)
+	{
+		Result.Errors.Add(TEXT("Failed to load AnimBlueprint"));
+		return Result;
+	}
+
+	UAnimGraphNode_StateMachine* StateMachineNode = FindStateMachineNode(AnimBlueprint, StateMachineName);
+	if (!StateMachineNode || !StateMachineNode->EditorStateMachineGraph)
+	{
+		Result.Errors.Add(FString::Printf(TEXT("State machine '%s' not found"), *StateMachineName));
+		return Result;
+	}
+
+	UAnimationStateMachineGraph* SMGraph = Cast<UAnimationStateMachineGraph>(StateMachineNode->EditorStateMachineGraph);
+	if (!SMGraph)
+	{
+		Result.Errors.Add(TEXT("State machine graph is invalid"));
+		return Result;
+	}
+
+	TArray<UAnimStateNode*> States;
+	TArray<UAnimStateTransitionNode*> Transitions;
+	for (UEdGraphNode* Node : SMGraph->Nodes)
+	{
+		if (UAnimStateNode* State = Cast<UAnimStateNode>(Node))
+		{
+			States.Add(State);
+		}
+		else if (UAnimStateTransitionNode* Transition = Cast<UAnimStateTransitionNode>(Node))
+		{
+			Transitions.Add(Transition);
+		}
+	}
+	Result.StateCount = States.Num();
+	Result.TransitionCount = Transitions.Num();
+
+	// Entry state
+	UAnimStateNodeBase* EntryTarget = nullptr;
+	if (SMGraph->EntryNode)
+	{
+		if (UEdGraphPin* EntryOut = SMGraph->EntryNode->GetOutputPin())
+		{
+			if (EntryOut->LinkedTo.Num() > 0 && EntryOut->LinkedTo[0])
+			{
+				EntryTarget = Cast<UAnimStateNodeBase>(EntryOut->LinkedTo[0]->GetOwningNodeUnchecked());
+			}
+		}
+	}
+	if (!EntryTarget)
+	{
+		Result.Errors.Add(TEXT("No entry state set (state machine has no default state, will not run)"));
+	}
+
+	// States with no animation/pose
+	for (UAnimStateNode* State : States)
+	{
+		bool bHasPose = false;
+		if (UEdGraph* StateGraph = State->GetBoundGraph())
+		{
+			for (UEdGraphNode* Node : StateGraph->Nodes)
+			{
+				if (UAnimGraphNode_StateResult* ResultNode = Cast<UAnimGraphNode_StateResult>(Node))
+				{
+					for (UEdGraphPin* Pin : ResultNode->Pins)
+					{
+						if (Pin && Pin->Direction == EGPD_Input && Pin->LinkedTo.Num() > 0)
+						{
+							bHasPose = true;
+							break;
+						}
+					}
+				}
+			}
+		}
+		if (!bHasPose)
+		{
+			Result.Warnings.Add(FString::Printf(TEXT("State '%s' has no animation connected to its Output Pose"), *State->GetStateName()));
+		}
+	}
+
+	// Inert transitions
+	for (UAnimStateTransitionNode* Transition : Transitions)
+	{
+		FAnimTransitionInfo Info;
+		DescribeTransitionRule(Transition, Info);
+		if (!Info.bHasRule)
+		{
+			UAnimStateNodeBase* Prev = Transition->GetPreviousState();
+			UAnimStateNodeBase* Next = Transition->GetNextState();
+			Result.Errors.Add(FString::Printf(TEXT("Transition '%s'->'%s' is inert (no rule) and will never fire"),
+				Prev ? *Prev->GetStateName() : TEXT("?"), Next ? *Next->GetStateName() : TEXT("?")));
+		}
+	}
+
+	// Reachability from entry
+	if (EntryTarget)
+	{
+		TSet<UAnimStateNodeBase*> Reachable;
+		TArray<UAnimStateNodeBase*> Stack;
+		Reachable.Add(EntryTarget);
+		Stack.Add(EntryTarget);
+		while (Stack.Num() > 0)
+		{
+			UAnimStateNodeBase* Current = Stack.Pop();
+			for (UAnimStateTransitionNode* Transition : Transitions)
+			{
+				if (Transition->GetPreviousState() == Current)
+				{
+					UAnimStateNodeBase* Next = Transition->GetNextState();
+					if (Next && !Reachable.Contains(Next))
+					{
+						Reachable.Add(Next);
+						Stack.Add(Next);
+					}
+				}
+			}
+		}
+		for (UAnimStateNode* State : States)
+		{
+			if (!Reachable.Contains(State))
+			{
+				Result.Warnings.Add(FString::Printf(TEXT("State '%s' is unreachable from the entry state"), *State->GetStateName()));
+			}
+		}
+	}
+
+	Result.bIsValid = (Result.Errors.Num() == 0);
+	return Result;
 }

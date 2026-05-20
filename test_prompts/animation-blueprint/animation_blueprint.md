@@ -397,4 +397,100 @@ Get complete information about SandboxCharacter_CMC_ABP including all variables,
 
 Compare ABP_TestCharacter with SandboxCharacter_CMC_ABP and list what's missing.
 
+---
+
+# State Machine Authoring & Transition Rules (issue #389)
+
+These prompts exercise the authoring API that makes a state machine actually *run*:
+transition rules, entry state, one-call state animation, the declarative builder, and validation.
+
+## 63 - Set State Animation in One Call
+
+In ABP_TestCharacter's Locomotion machine, set the Idle state's animation to an idle loop
+in a single call (it should create the sequence player inside the state AND connect it to the
+Output Pose). Verify the state now has a pose connected.
+
+---
+
+## 64 - Set the Entry / Default State
+
+Make "Idle" the entry (default) state of the Locomotion state machine. Verify the entry node
+now points at Idle.
+
+---
+
+## 65 - Bool Transition Rule
+
+Add a bool variable `bIsMoving` to ABP_TestCharacter and compile. Then set the Idle→Moving
+transition rule so it fires when `bIsMoving` is true. Confirm the transition reports
+`has_rule = true` and `rule_summary` mentions bIsMoving.
+
+---
+
+## 66 - Inverted Bool Rule
+
+Set the Moving→Idle transition to fire when `bIsMoving` is **false** (inverted bool rule).
+
+---
+
+## 67 - Comparison Transition Rule
+
+Add a float variable `Speed` and compile. Set Idle→Moving to fire when `Speed > 10`, using a
+comparison rule. Confirm the rule summary reads like `Speed > 10`.
+
+---
+
+## 68 - Automatic (Time-Remaining) Rule
+
+Add an "Attack" state with a non-looping attack montage/sequence, plus an Attack→Idle
+transition. Make Attack→Idle automatic so it fires when the attack animation is nearly done.
+
+---
+
+## 69 - Transition Priority
+
+Give Idle→Moving a higher priority (lower number) than any other transition out of Idle.
+
+---
+
+## 70 - Detect Inert Transitions (Rule Introspection)
+
+List every transition in the Locomotion machine and report which ones are inert (have no rule
+and will never fire). Use the rule_type / has_rule fields.
+
+---
+
+## 71 - Validate the State Machine
+
+Validate the Locomotion state machine. Report is_valid plus all errors and warnings
+(inert transitions, missing entry state, states with no animation, unreachable states).
+Then fix any errors and validate again until it is valid.
+
+---
+
+## 72 - Build a Whole State Machine Declaratively
+
+Using a single declarative build call, create a "CombatLocomotion" state machine on
+ABP_TestCharacter with: Idle (loop), Walk (loop), Run (loop), Attack (one-shot). Wire it up:
+Idle→Walk when Speed > 10, Walk→Run when Speed > 350, Run→Walk when Speed <= 350,
+Walk→Idle when Speed <= 10, Idle→Attack when bAttack, Attack→Idle automatic. Entry = Idle.
+Add the Speed (float) and bAttack (bool) variables and compile first. Report the JSON result,
+then validate the machine and confirm it is valid with zero errors.
+
+---
+
+## 73 - Re-run the Build (Idempotency)
+
+Run the exact same declarative build from #72 again. Confirm it does NOT duplicate any states
+or transitions (states_created and transitions_created should both be 0) and the machine still
+validates clean.
+
+---
+
+## 74 - Non-Destructive Rule Edit
+
+Change the Idle→Walk rule from `Speed > 10` to `Speed > 25` without removing/recreating the
+transition. Confirm the source/dest connections and blend duration are unchanged and only the
+threshold updated.
+
 

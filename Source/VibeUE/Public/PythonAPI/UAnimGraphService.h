@@ -99,6 +99,51 @@ struct FAnimTransitionInfo
 	/** Whether this is an automatic transition */
 	UPROPERTY(BlueprintReadWrite, Category = "Animation")
 	bool bIsAutomatic = false;
+
+	/** Classification of the rule driving this transition: "None" (inert), "Bool", "Comparison", "Automatic", "Custom" */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString RuleType;
+
+	/** Name of the bound variable driving the rule (if RuleType is "Bool" or "Comparison"), else empty */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString RuleVariable;
+
+	/** Human-readable description of the rule (e.g. "bIsDead == true", "Speed > 150", "auto (time remaining)") */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	FString RuleSummary;
+
+	/** True when the transition has functional rule logic and can actually fire. False = inert (never fires). */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bHasRule = false;
+};
+
+/**
+ * Result of validating a state machine for common authoring mistakes.
+ */
+USTRUCT(BlueprintType)
+struct FAnimStateMachineValidationResult
+{
+	GENERATED_BODY()
+
+	/** True when there are no blocking errors (warnings may still be present) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	bool bIsValid = false;
+
+	/** Number of states found (excludes entry/conduit) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 StateCount = 0;
+
+	/** Number of transitions found */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	int32 TransitionCount = 0;
+
+	/** Blocking problems that make the machine non-functional (e.g. inert transitions, no entry state) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> Errors;
+
+	/** Non-blocking issues worth attention (e.g. unreachable states, states with no animation) */
+	UPROPERTY(BlueprintReadWrite, Category = "Animation")
+	TArray<FString> Warnings;
 };
 
 /**
@@ -719,6 +764,251 @@ public:
 		const FString& SourceStateName,
 		const FString& DestStateName);
 
+	/**
+	 * Set which state the state machine's Entry node points to.
+	 * Non-destructively re-links the entry: breaks the old entry link and links to the chosen state.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param StateName - Name of the state to make the entry/default state
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.AnimGraphService.set_entry_state("/Game/ABP_Character", "Locomotion", "Idle")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	static bool SetEntryState(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& StateName);
+
+	/**
+	 * Set the priority order of a transition (lower = higher priority when several rules go true at once).
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state
+	 * @param DestStateName - Destination state
+	 * @param Priority - Priority order (default 1; smaller wins)
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	static bool SetTransitionPriority(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		int32 Priority = 1);
+
+	/**
+	 * Set the crossfade/blend settings of a transition.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state
+	 * @param DestStateName - Destination state
+	 * @param BlendDuration - Crossfade duration in seconds
+	 * @param BlendMode - Alpha blend option: "Linear", "Cubic", "HermiteCubic", "Sinusoidal",
+	 *                    "QuadraticInOut", "CubicInOut", "ExpInOut" (default "Linear")
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	static bool SetTransitionBlend(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		float BlendDuration = 0.2f,
+		const FString& BlendMode = TEXT("Linear"));
+
+	// ============================================================================
+	// TRANSITION RULES
+	// ============================================================================
+
+	/**
+	 * Drive a transition's "Can Enter Transition" result from a Blueprint bool variable.
+	 * This is what makes a transition actually fire. Without a rule the transition is inert.
+	 * Non-destructive: clears any prior rule logic in the transition graph first, then wires the variable.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state
+	 * @param DestStateName - Destination state
+	 * @param BoolVariableName - Name of an existing bool member variable on the AnimBP (e.g. "bIsDead")
+	 * @param bInvert - If true, transition fires when the variable is FALSE (inserts a NOT)
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.AnimGraphService.set_transition_rule_from_bool(
+	 *       "/Game/ABP_Character", "Locomotion", "Idle", "Dead", "bIsDead")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	static bool SetTransitionRuleFromBool(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		const FString& BoolVariableName,
+		bool bInvert = false);
+
+	/**
+	 * Drive a transition from a numeric comparison against a Blueprint float variable
+	 * (e.g. Speed > 150). Non-destructive: clears prior rule logic first.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state
+	 * @param DestStateName - Destination state
+	 * @param FloatVariableName - Name of an existing float member variable (e.g. "Speed")
+	 * @param Comparison - One of "greater", "less", "greater_equal", "less_equal", "equal", "not_equal"
+	 * @param Threshold - The constant to compare against
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.AnimGraphService.set_transition_rule_comparison(
+	 *       "/Game/ABP_Character", "Locomotion", "Idle", "Walk", "Speed", "greater", 10.0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	static bool SetTransitionRuleComparison(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		const FString& FloatVariableName,
+		const FString& Comparison,
+		float Threshold);
+
+	/**
+	 * Make a transition fire automatically based on the source state's most relevant asset
+	 * player remaining time. Ideal for one-shot animations (attack -> idle, hit-react -> idle).
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state (must contain a sequence/asset player)
+	 * @param DestStateName - Destination state
+	 * @param TriggerTime - Seconds before the asset ends to trigger. < 0 means trigger
+	 *                      'CrossfadeDuration' seconds before end (default -1.0)
+	 * @return True if successful
+	 *
+	 * Example:
+	 *   unreal.AnimGraphService.set_transition_rule_automatic(
+	 *       "/Game/ABP_Character", "Combat", "Attack", "Idle")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	static bool SetTransitionRuleAutomatic(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		float TriggerTime = -1.0f);
+
+	/**
+	 * Remove the rule logic from a transition (non-destructive reset of the rule graph).
+	 * Breaks the link into the result node and clears the automatic flag, leaving the
+	 * transition node and its source/dest connections intact.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param SourceStateName - Source state
+	 * @param DestStateName - Destination state
+	 * @return True if successful
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	static bool ClearTransitionRule(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName);
+
+	// ============================================================================
+	// HIGH-LEVEL STATE AUTHORING
+	// ============================================================================
+
+	/**
+	 * Set the animation for a state in one call: ensures a sequence player exists inside the
+	 * state's graph, assigns the animation, sets loop/play-rate, and connects it to the state's
+	 * Output Pose. Non-destructive: reuses an existing sequence player if the state already has one.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @param StateName - Name of the state
+	 * @param AnimSequencePath - Path to the animation sequence asset
+	 * @param bLoop - Whether the animation should loop (default true)
+	 * @param PlayRate - Playback rate multiplier (default 1.0)
+	 * @return Node GUID of the sequence player if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   unreal.AnimGraphService.set_state_animation(
+	 *       "/Game/ABP_Character", "Locomotion", "Idle", "/Game/Anims/Idle_Loop", True)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	static FString SetStateAnimation(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& StateName,
+		const FString& AnimSequencePath,
+		bool bLoop = true,
+		float PlayRate = 1.0f);
+
+	/**
+	 * Build (or extend) an entire state machine from a single JSON spec in one atomic transaction.
+	 * Idempotent: existing states/transitions are reused, not duplicated. Compiles at the end and
+	 * returns a JSON report of what was created and any errors.
+	 *
+	 * Spec format:
+	 * {
+	 *   "states": [
+	 *     {"name": "Idle",   "animation": "/Game/Anims/Idle",   "loop": true,  "pos": [0, 0]},
+	 *     {"name": "Walk",   "animation": "/Game/Anims/Walk",   "loop": true,  "pos": [300, 0]},
+	 *     {"name": "Attack", "animation": "/Game/Anims/Attack", "loop": false, "pos": [600, 0]}
+	 *   ],
+	 *   "transitions": [
+	 *     {"from": "Idle",   "to": "Walk",   "rule": {"type": "comparison", "variable": "Speed", "op": "greater", "value": 10}, "blend": 0.2},
+	 *     {"from": "Walk",   "to": "Idle",   "rule": {"type": "comparison", "variable": "Speed", "op": "less_equal", "value": 10}},
+	 *     {"from": "Idle",   "to": "Attack", "rule": {"type": "bool", "variable": "bAttack"}},
+	 *     {"from": "Attack", "to": "Idle",   "rule": {"type": "automatic"}}
+	 *   ],
+	 *   "entry": "Idle"
+	 * }
+	 *
+	 * rule.type is one of: "bool" (uses "variable", optional "invert"),
+	 *   "comparison" (uses "variable", "op", "value"), "automatic" (optional "trigger_time"),
+	 *   "always" (always-true), or omit "rule" to leave the transition inert.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine (created if it does not exist)
+	 * @param SpecJson - JSON string describing states, transitions and entry
+	 * @param PosX - X position of the state machine node in the AnimGraph if it must be created
+	 * @param PosY - Y position of the state machine node in the AnimGraph if it must be created
+	 * @return JSON report string: {"success", "machine", "states_created", "transitions_created", "errors": [...]}
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	static FString BuildStateMachine(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SpecJson,
+		float PosX = 0.0f,
+		float PosY = 0.0f);
+
+	/**
+	 * Validate a state machine for the most common authoring mistakes and return a structured report.
+	 * Flags: no entry state, inert transitions (rule graph drives nothing -> never fires),
+	 * states with no animation wired to Output Pose, and unreachable states.
+	 *
+	 * @param AnimBlueprintPath - Full path to the Animation Blueprint
+	 * @param StateMachineName - Name of the state machine
+	 * @return Validation result with errors/warnings
+	 *
+	 * Example:
+	 *   result = unreal.AnimGraphService.validate_state_machine("/Game/ABP_Character", "Locomotion")
+	 *   if not result.is_valid:
+	 *       for err in result.errors: print(err)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	static FAnimStateMachineValidationResult ValidateStateMachine(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName);
+
 	// ============================================================================
 	// ANIMGRAPH CONNECTIONS
 	// ============================================================================
@@ -915,4 +1205,24 @@ private:
 
 	/** Get the editor for an Animation Blueprint, opening it if necessary */
 	static class IAnimationBlueprintEditor* GetAnimBlueprintEditor(class UAnimBlueprint* AnimBlueprint);
+
+	/** Resolve blueprint + state machine graph + transition node in one step. Returns null on any failure. */
+	static class UAnimStateTransitionNode* ResolveTransition(
+		const FString& AnimBlueprintPath,
+		const FString& StateMachineName,
+		const FString& SourceStateName,
+		const FString& DestStateName,
+		class UAnimBlueprint*& OutBlueprint);
+
+	/** Get the transition result node ("Can Enter Transition") for a transition's rule graph. */
+	static class UAnimGraphNode_TransitionResult* GetTransitionResultNode(class UAnimStateTransitionNode* Transition);
+
+	/** Non-destructively clear a transition's rule graph: break the result input link, remove rule logic nodes, reset automatic flag. */
+	static void ResetTransitionRule(class UAnimStateTransitionNode* Transition);
+
+	/** Find the sequence/asset player node inside a state's graph that feeds (directly) the Output Pose, if any. */
+	static class UAnimGraphNode_Base* FindStateAssetPlayer(class UAnimStateNodeBase* StateNode);
+
+	/** Describe the rule driving a transition (for introspection). Fills RuleType/RuleVariable/RuleSummary/bHasRule. */
+	static void DescribeTransitionRule(class UAnimStateTransitionNode* Transition, FAnimTransitionInfo& OutInfo);
 };

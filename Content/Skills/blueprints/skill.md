@@ -132,7 +132,9 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 **Pins on the Call node:** `execute` (input exec), `then` (output exec), `self` (input target — defaulted to Self), plus one input pin per signature parameter.
 
-**Subscribing to it elsewhere:** use `add_delegate_bind_node(other_bp, graph, "<owner class>", "FinishedLooking", x, y)` paired with `add_custom_event_node` (or `add_create_delegate_node`) to bind a callback.
+**Subscribing to it elsewhere:**
+- **Preferred** — `add_delegate_bind_on_variable(other_bp, graph, variable_name, "FinishedLooking", x, y)` when the dispatcher lives on the class of an existing variable (e.g. `Cube : BP_Cube_C`). Mirrors `add_function_call_on_variable`: derives the owner class from the variable's type, creates the bind node + Get, and auto-wires Target. Pair with `add_custom_event_node` and wire `CustomEvent.OutputDelegate → Bind.Delegate`.
+- **Lower-level** — `add_delegate_bind_node(other_bp, graph, "<owner class>", "FinishedLooking", x, y)` when you have no variable to derive from. `<owner class>` accepts `"Self"`, native class names (with/without U/A prefix), Blueprint asset paths (`/Game/.../BP_Cube`), or short BP names with/without `_C` (`BP_Cube`, `BP_Cube_C`). You wire the Target pin yourself.
 
 **Common mistakes:**
 

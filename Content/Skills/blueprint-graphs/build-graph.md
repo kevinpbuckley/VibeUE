@@ -188,6 +188,57 @@ print(f"Success: {result.b_success}, errors: {result.errors}")
 
 **Target (self)** on the Broadcast node connects to `self` by default when the Blueprint is the correct class (`StateTreeTaskBlueprintBase`). You do not need to wire it manually.
 
+### Subscribe to an Event Dispatcher on Another Blueprint (Bind Event)
+
+The inverse of broadcast: a StateTree task Blueprint wants to **subscribe** to an event dispatcher (multicast delegate) declared on another Blueprint exposed via an Input variable (e.g. `Cube : BP_Cube_C` with dispatcher `FinishedLooking`), then call `Finish Task` when it fires.
+
+**Preferred — `add_delegate_bind_on_variable` (one call, no class string).**
+Mirrors `add_function_call_on_variable`: it reads the variable's type, finds the delegate on that class, creates the bind node + variable Get, and wires the Target (self) pin for you.
+
+```python
+import unreal
+
+bp = "/Game/StateTree/Tasks/STT_LookInRandomDirection"
+g  = "EventGraph"
+
+# Existing node GUIDs (from get_nodes_in_graph)
+look_at_id = "<Look At node GUID>"
+
+# One-shot: derives BP_Cube_C from the Cube variable's type, creates bind + Get,
+# wires Get -> Target. Returns the bind node GUID.
+bind_id = unreal.BlueprintService.add_delegate_bind_on_variable(
+    bp, g, "Cube", "FinishedLooking", 960.0, 0.0)
+
+# Add the Custom Event + FinishTask call and wire the remaining pins.
+custom_id = unreal.BlueprintService.add_custom_event_node(bp, g, "OnFinishedLooking", 960.0, 240.0)
+finish_id = unreal.BlueprintService.add_function_call_node(
+    bp, g, "StateTreeTaskBlueprintBase", "FinishTask", 1480.0, 240.0)
+
+# 1) upstream exec -> bind
+unreal.BlueprintService.connect_nodes(bp, g, look_at_id, "then",       bind_id,   "execute")
+# 2) custom event's delegate output -> bind's Delegate pin
+unreal.BlueprintService.connect_nodes(bp, g, custom_id,  "OutputDelegate", bind_id, "Delegate")
+# 3) custom event fires -> FinishTask
+unreal.BlueprintService.connect_nodes(bp, g, custom_id,  "then",       finish_id, "execute")
+
+unreal.BlueprintService.compile_blueprint(bp)
+unreal.EditorAssetLibrary.save_asset(bp)
+```
+
+**Pin names on `K2Node_AddDelegate` (the bind node):**
+- exec in: `execute`
+- exec out: `then`
+- Target: `self` (object input — already wired for you by `add_delegate_bind_on_variable`)
+- Delegate: `Delegate` (input — wire a Custom Event's `OutputDelegate` here)
+
+**Lower-level alternative — `add_delegate_bind_node`** (when you don't have a variable to derive the class from, e.g. you want to bind in code without a member variable). `target_class` resolution accepts any of:
+- `"Self"` / `""` — the current Blueprint
+- Native class with or without prefix: `"Actor"`, `"AActor"`, `"UButton"`
+- Blueprint asset path: `"/Game/StateTree/BP_Cube"` (or `.BP_Cube_C`)
+- Short Blueprint name with or without `_C`: `"BP_Cube"`, `"BP_Cube_C"`
+
+You also need to compose the variable Get and wire Target yourself when using this primitive.
+
 ### Round-Trip: Export → Modify → Rebuild
 
 Use `get_graph_definition` to capture an existing graph, modify the definition, then

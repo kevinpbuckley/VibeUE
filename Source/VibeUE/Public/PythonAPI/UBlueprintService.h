@@ -2729,7 +2729,11 @@ public:
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param GraphName - Name of the graph (e.g. "EventGraph")
-	 * @param TargetClass - Class that owns the delegate. Use "Self" or "" for the blueprint's own class.
+	 * @param TargetClass - Class that owns the delegate. Accepts:
+	 *   - "Self" or "" for the blueprint's own class
+	 *   - A native class name with or without U/A prefix (e.g. "Actor", "UButton")
+	 *   - A Blueprint asset path (e.g. "/Game/StateTree/BP_Cube")
+	 *   - A short Blueprint name with or without _C suffix (e.g. "BP_Cube", "BP_Cube_C")
 	 * @param DelegateName - Name of the multicast delegate property (e.g. "OnActorBeginOverlap")
 	 * @param PosX - X position in the graph
 	 * @param PosY - Y position in the graph
@@ -2738,12 +2742,56 @@ public:
 	 * Example:
 	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/BP_Player", "EventGraph", "Self", "OnDamageTaken", 200, 100)
 	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/WBP_HUD", "EventGraph", "UButton", "OnClicked", 300, 200)
+	 *   node_id = unreal.BlueprintService.add_delegate_bind_node("/Game/STT_LookAt", "EventGraph", "BP_Cube", "FinishedLooking", 960, 0)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static FString AddDelegateBindNode(
 		const FString& BlueprintPath,
 		const FString& GraphName,
 		const FString& TargetClass,
+		const FString& DelegateName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Convenience: bind to an event dispatcher declared on a Blueprint variable's class in one shot.
+	 *
+	 * Resolves the variable's type to its owner class (e.g. variable "Cube : BP_Cube_C" -> BP_Cube_C),
+	 * finds the named multicast delegate on that class, creates a "Bind Event to <Delegate>" node and
+	 * a Get node for the variable, and wires the variable's output pin into the bind node's Target (self).
+	 *
+	 * The variable must be an object-reference type (UObject subclass). For inherited variables the
+	 * owner class is read from the GeneratedClass property, so this works for variables defined on
+	 * parent classes too.
+	 *
+	 * After calling this you still need to:
+	 *   - Wire the bind node's exec input ("execute") from your upstream node
+	 *   - Wire a Custom Event's "OutputDelegate" pin into the bind node's "Delegate" pin
+	 *
+	 * @param BlueprintPath - Full path to the blueprint that contains the graph
+	 * @param GraphName     - Name of the graph (e.g. "EventGraph")
+	 * @param VariableName  - Variable on this blueprint whose type owns the event dispatcher
+	 * @param DelegateName  - Multicast delegate (event dispatcher) on the variable's class
+	 * @param PosX          - X position for the bind node
+	 * @param PosY          - Y position for the bind node
+	 * @return Node ID (GUID) of the bind node if successful, empty string otherwise
+	 *
+	 * Example:
+	 *   # Cube is a BP_Cube_C variable on STT_LookInRandomDirection.
+	 *   # BP_Cube has an event dispatcher "FinishedLooking".
+	 *   bind_id = unreal.BlueprintService.add_delegate_bind_on_variable(
+	 *       "/Game/StateTree/Tasks/STT_LookInRandomDirection",
+	 *       "EventGraph",
+	 *       "Cube",
+	 *       "FinishedLooking",
+	 *       960, 0)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddDelegateBindOnVariable(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& VariableName,
 		const FString& DelegateName,
 		float PosX = 0.0f,
 		float PosY = 0.0f

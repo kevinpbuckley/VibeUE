@@ -17,7 +17,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 30 specialized services with 1020 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 30 specialized services with 1030 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 34 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, and more
@@ -336,14 +336,14 @@ High-level services exposed to Python for common game development tasks:
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `StateTreeService` | 94 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, **utility AI considerations**, compile/save |
-| `BlueprintService` | 116 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
+| `BlueprintService` | 117 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes + bind-on-variable**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `MaterialNodeService` | 41 | Material graph expressions and connections, **material diagnostics (compile errors + sampler info)** |
 | `WidgetService` | 41 | UMG widget blueprints, components, snapshots, styling, animation, preview/PIE validation, and MVVM ViewModel bindings |
-| `AnimGraphService` | 38 | Animation Blueprint state machines, states, transitions, anim nodes |
+| `AnimGraphService` | 48 | Animation Blueprint state machines, states, transitions, transition rules, declarative builder, validation, anim nodes |
 | `SoundCueService` | 38 | Sound cue graph editing, sound node creation, wiring, and audio behavior authoring |
 | `NiagaraService` | 37 | Niagara system lifecycle, emitters, parameters, settings discovery |
 | `ActorService` | 33 | Level actor management, viewport camera control, transform lock/constraints |
@@ -683,7 +683,8 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `remove_event_dispatcher(path, name)` - Remove the dispatcher and its signature graph
 - `add_event_dispatcher_parameter(path, name, param_name, param_type, ...)` - Add an input on the signature
 - `add_call_delegate_node(path, graph, name, x, y)` - Spawn the `UK2Node_CallDelegate` (broadcast) node
-- `add_delegate_bind_node(path, graph, target_class, delegate_name, x, y)` - Spawn a Bind Event node to subscribe
+- `add_delegate_bind_node(path, graph, target_class, delegate_name, x, y)` - Spawn a Bind Event node to subscribe. `target_class` accepts `"Self"`, native class names, Blueprint asset paths, or short BP names with/without `_C`
+- `add_delegate_bind_on_variable(path, graph, variable_name, delegate_name, x, y)` - One-shot: derives owner class from a variable's type, creates Bind Event + Get, auto-wires Target (mirrors `add_function_call_on_variable`)
 - `add_create_delegate_node(...)`, `add_create_event_node(...)` - Wrap a function as a delegate reference
 
 **Timelines (full track + key CRUD):**
@@ -699,9 +700,20 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `get_function_parameters(...)`, `get_graph_definition(...)`, `get_available_components(...)`
 - `compare_components(...)`, `diff_blueprints(...)`
 
-### AnimGraphService (38 methods)
+### AnimGraphService (48 methods)
 
-AnimGraphService provides comprehensive Animation Blueprint manipulation for state machines, states, transitions, and animation nodes:
+AnimGraphService provides comprehensive Animation Blueprint manipulation for state machines, states, transitions, transition rules, and animation nodes — including a declarative one-call builder and a validation pass so AI-authored machines actually run:
+
+**High-Level Authoring (recommended):**
+- `build_state_machine(path, machine, spec_json, x, y)` - Build/extend an entire state machine (states, animations, transitions, rules, entry) from one JSON spec, atomically and idempotently; compiles and returns a JSON report
+- `set_state_animation(path, machine, state, anim_path, loop, play_rate)` - One call: create/assign the state's sequence player AND wire it to Output Pose
+- `validate_state_machine(path, machine)` - Report inert transitions, missing entry state, states with no animation, unreachable states
+
+**Transition Rules (a transition with NO rule never fires):**
+- `set_transition_rule_from_bool(path, machine, source, dest, bool_var, invert)` - Drive a transition from a bool variable
+- `set_transition_rule_comparison(path, machine, source, dest, float_var, op, value)` - Numeric comparison rule (greater/less/greater_equal/less_equal/equal/not_equal)
+- `set_transition_rule_automatic(path, machine, source, dest, trigger_time)` - Auto-fire when the source state's animation is (almost) finished (one-shots)
+- `clear_transition_rule(path, machine, source, dest)` - Non-destructively reset a transition's rule
 
 **State Machine Management:**
 - `add_state_machine(path, name, x, y)` - Add state machine to AnimGraph
@@ -711,14 +723,17 @@ AnimGraphService provides comprehensive Animation Blueprint manipulation for sta
 **State Management:**
 - `add_state(path, machine, name, x, y)` - Add state to state machine
 - `remove_state(path, machine, name, remove_transitions)` - Remove state
+- `set_entry_state(path, machine, state)` - Set the entry/default state (non-destructive re-link)
 - `list_states_in_machine(path, machine)` - List all states and transitions
 - `get_state_info(path, machine, state)` - Get detailed state info
 - `open_anim_state(path, machine, state)` - Open state in editor
 
 **Transition Management:**
-- `add_transition(path, machine, source, dest, blend_duration)` - Add transition
+- `add_transition(path, machine, source, dest, blend_duration)` - Add transition (remember to set a rule!)
 - `remove_transition(path, machine, source, dest)` - Remove transition
-- `get_state_transitions(path, machine, state)` - Get transitions for state
+- `set_transition_priority(path, machine, source, dest, priority)` - Set priority order (lower wins)
+- `set_transition_blend(path, machine, source, dest, blend_duration, blend_mode)` - Set crossfade duration / blend mode
+- `get_state_transitions(path, machine, state)` - Get transitions for state (now includes rule_type/rule_summary/has_rule)
 - `open_transition(path, machine, source, dest)` - Open transition rule in editor
 
 **Conduit Management:**
