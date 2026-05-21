@@ -10,7 +10,7 @@ Load the `screenshots` skill for capture methods, `attach_image` tool usage, cam
 
 VibeUE uses a **two-tier lazy-loading skills system** to keep responses small while still surfacing deep reference material when needed:
 
-- **Index (`skill.md`)** — concise workflows + critical gotchas + property formats. Loaded with `skill_name="<skill>"`. Always lean enough to fit in a single tool response.
+- **Index (`SKILL.md`)** — concise workflows + critical gotchas + property formats. Loaded with `skill_name="<skill>"`. Always lean enough to fit in a single tool response.
 - **Sub-docs (sibling `.md` files)** — deeper reference material (full API tables, edge-case catalogues, long recipes). Loaded on demand with `skill_name="<skill>/<section>"`. Listed in the index's `available_sections` field so you know what exists.
 
 **⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do and WHY. To get exact method signatures, call `discover_python_class('unreal.ClassName', method_filter='keyword')` on the classes named in the skill's `vibeue_classes` field.

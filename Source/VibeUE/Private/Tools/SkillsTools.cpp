@@ -408,22 +408,22 @@ static FString ListSkills()
 
 		FString SkillDirPath = FString(FilenameOrDirectory);
 		FString SkillName = FPaths::GetCleanFilename(SkillDirPath);
-		FString SkillMdPath = SkillDirPath / TEXT("skill.md");
+		FString SkillMdPath = SkillDirPath / TEXT("SKILL.md");
 
 		UE_LOG(LogSkillsTools, Verbose, TEXT("Found skill directory: %s"), *SkillName);
 
-		// Check if skill.md exists
+		// Check if SKILL.md exists
 		if (!PlatformFile.FileExists(*SkillMdPath))
 		{
-			UE_LOG(LogSkillsTools, Warning, TEXT("Skill '%s' missing skill.md, skipping"), *SkillName);
+			UE_LOG(LogSkillsTools, Warning, TEXT("Skill '%s' missing SKILL.md, skipping"), *SkillName);
 			return true;
 		}
 
-		// Read skill.md
+		// Read SKILL.md
 		FString SkillMdContent;
 		if (!FFileHelper::LoadFileToString(SkillMdContent, *SkillMdPath))
 		{
-			UE_LOG(LogSkillsTools, Warning, TEXT("Failed to read skill.md for '%s'"), *SkillName);
+			UE_LOG(LogSkillsTools, Warning, TEXT("Failed to read SKILL.md for '%s'"), *SkillName);
 			return true;
 		}
 
@@ -516,7 +516,7 @@ static FString SuggestSkills(const FString& Query)
 
 		FString SkillDirPath = FString(FilenameOrDirectory);
 		FString SkillName = FPaths::GetCleanFilename(SkillDirPath);
-		FString SkillMdPath = SkillDirPath / TEXT("skill.md");
+		FString SkillMdPath = SkillDirPath / TEXT("SKILL.md");
 
 		if (!PlatformFile.FileExists(*SkillMdPath))
 		{
@@ -690,7 +690,7 @@ static FString ResolveSkillDirectory(const FString& SkillName)
 		return DirectPath;
 	}
 
-	// 2. Scan all skill.md files and match on name or display_name
+	// 2. Scan all SKILL.md files and match on name or display_name
 	FString ResolvedPath;
 
 	PlatformFile.IterateDirectory(*SkillsDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
@@ -701,14 +701,14 @@ static FString ResolveSkillDirectory(const FString& SkillName)
 		}
 
 		FString SkillDirPath = FString(FilenameOrDirectory);
-		FString SkillMdPath = SkillDirPath / TEXT("skill.md");
+		FString SkillMdPath = SkillDirPath / TEXT("SKILL.md");
 
 		if (!PlatformFile.FileExists(*SkillMdPath))
 		{
 			return true;
 		}
 
-		// Read and parse skill.md
+		// Read and parse SKILL.md
 		FString SkillMdContent;
 		if (!FFileHelper::LoadFileToString(SkillMdContent, *SkillMdPath))
 		{
@@ -742,7 +742,7 @@ static FString ResolveSkillDirectory(const FString& SkillName)
 
 	if (!ResolvedPath.IsEmpty())
 	{
-		UE_LOG(LogSkillsTools, Log, TEXT("Resolved '%s' via skill.md metadata: %s"), *SkillName, *ResolvedPath);
+		UE_LOG(LogSkillsTools, Log, TEXT("Resolved '%s' via SKILL.md metadata: %s"), *SkillName, *ResolvedPath);
 	}
 	else
 	{
@@ -764,7 +764,7 @@ struct FSkillData
 	TArray<FString> VibeUEClassNames;
 	TArray<FString> UnrealClassNames;
 	TArray<FString> MarkdownFiles;                           // Files whose contents will be returned (1 element after split refactor)
-	TArray<TSharedPtr<FJsonValue>> AvailableSections;        // {name, description} for sibling .md files (excluding skill.md)
+	TArray<TSharedPtr<FJsonValue>> AvailableSections;        // {name, description} for sibling .md files (excluding SKILL.md)
 };
 
 /**
@@ -799,7 +799,7 @@ static void ParseSkillSpec(const FString& RawSkillName, FString& OutFolder, FStr
 }
 
 /**
- * Enumerate sibling .md files inside a skill directory (excluding skill.md itself).
+ * Enumerate sibling .md files inside a skill directory (excluding SKILL.md itself).
  * Each entry is a JSON object with `name` (bare filename without .md) and, when
  * the sub-doc has its own YAML frontmatter `description:`, a `description` field.
  * Sub-docs are the loadable sections returned when the agent requests
@@ -829,7 +829,7 @@ static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir)
 		{
 			return true;
 		}
-		if (FileName.Equals(TEXT("skill.md"), ESearchCase::IgnoreCase))
+		if (FileName.Equals(TEXT("SKILL.md"), ESearchCase::IgnoreCase))
 		{
 			return true;
 		}
@@ -874,8 +874,8 @@ static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir)
  *
  * `RawSkillName` may be either a bare skill folder name (e.g. "state-trees")
  * or a sub-doc path (e.g. "state-trees/transitions"). In both cases the root
- * `skill.md` is consulted for the class metadata (`vibeue_classes` /
- * `unreal_classes`). For an index load only `skill.md` is selected as the
+ * `SKILL.md` is consulted for the class metadata (`vibeue_classes` /
+ * `unreal_classes`). For an index load only `SKILL.md` is selected as the
  * file to return; for a sub-doc load only `<folder>/<subdoc>.md` is selected.
  *
  * We deliberately do NOT recursively concatenate every .md in the folder
@@ -896,9 +896,9 @@ static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	// Always read root skill.md for the class lists — they live on the index
+	// Always read root SKILL.md for the class lists — they live on the index
 	// regardless of which sub-doc the agent ultimately loads.
-	FString SkillMdPath = OutData.SkillDir / TEXT("skill.md");
+	FString SkillMdPath = OutData.SkillDir / TEXT("SKILL.md");
 	if (PlatformFile.FileExists(*SkillMdPath))
 	{
 		FString SkillMdContent;
@@ -954,8 +954,8 @@ static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
 	}
 	else
 	{
-		// No skill.md at all — nothing usable in this folder
-		UE_LOG(LogSkillsTools, Warning, TEXT("Skill folder has no skill.md: %s"), *OutData.SkillDir);
+		// No SKILL.md at all — nothing usable in this folder
+		UE_LOG(LogSkillsTools, Warning, TEXT("Skill folder has no SKILL.md: %s"), *OutData.SkillDir);
 		return false;
 	}
 
@@ -1483,17 +1483,17 @@ static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
 // Register manage_skills tool
 REGISTER_VIBEUE_TOOL(manage_skills,
 	"Discover and load domain-specific knowledge skills (workflows, gotchas, property formats). "
-	"Skills are organized as an INDEX (skill.md — concise workflows + gotchas) plus optional SUB-DOCS (siblings — deeper reference material loaded on demand). "
+	"Skills are organized as an INDEX (SKILL.md — concise workflows + gotchas) plus optional SUB-DOCS (siblings — deeper reference material loaded on demand). "
 	"Actions: "
 	"'list' — return every skill with its description, classes, and a `sections` array naming each loadable sub-doc. Call this once to discover what's available without loading content. "
 	"'suggest' — keyword search across skill names/descriptions/keywords. Use when you know the domain but not the skill name. "
-	"'load' — load a skill's index (just `skill.md`) OR a specific sub-doc. Use `skill_name='<skill>'` for the index, `skill_name='<skill>/<section>'` for a sub-doc (e.g. 'state-trees/transitions'). The response includes `available_sections` so you can decide whether you need to load any sub-doc. "
+	"'load' — load a skill's index (just `SKILL.md`) OR a specific sub-doc. Use `skill_name='<skill>'` for the index, `skill_name='<skill>/<section>'` for a sub-doc (e.g. 'state-trees/transitions'). The response includes `available_sections` so you can decide whether you need to load any sub-doc. "
 	"Use `skill_names` (array) to batch-load multiple in one call with deduplicated class lists.",
 	"Skills",
 	TOOL_PARAMS(
 		TOOL_PARAM("action", "Action to perform: 'list', 'suggest', or 'load'", "string", true),
 		TOOL_PARAM("query", "Query string to match against skill keywords (for 'suggest' action)", "string", false),
-		TOOL_PARAM("skill_name", "Skill to load (for 'load' action). Accepts: directory name (e.g. 'state-trees'), `name`/`display_name` field from frontmatter, or a sub-doc path like 'state-trees/transitions' to load only that sibling .md file. Index loads (no slash) return just skill.md; sub-doc loads return only the requested file. Class metadata (vibeue_classes/unreal_classes) always comes from the index.", "string", false),
+		TOOL_PARAM("skill_name", "Skill to load (for 'load' action). Accepts: directory name (e.g. 'state-trees'), `name`/`display_name` field from frontmatter, or a sub-doc path like 'state-trees/transitions' to load only that sibling .md file. Index loads (no slash) return just SKILL.md; sub-doc loads return only the requested file. Class metadata (vibeue_classes/unreal_classes) always comes from the index.", "string", false),
 		TOOL_PARAM("skill_names", "Array of skills to load together (for 'load' action). Each entry follows the same syntax as `skill_name`. Use this when you need several related skills in one call.", "array", false)
 	),
 	{

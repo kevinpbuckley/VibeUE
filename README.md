@@ -125,7 +125,7 @@ manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 
 Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
 
-**Sub-docs (lazy-loaded deep reference material)** — Several skills are split into a concise `skill.md` index plus sibling sub-docs. Load a sub-doc with `skill_name="<skill>/<section>"` (e.g. `state-trees/api-reference`, `blueprint-graphs/build-graph`, `landscape/workflows-editing`). The index response lists every available sub-doc under `available_sections`. This keeps each load small while keeping deep reference material one call away.
+**Sub-docs (lazy-loaded deep reference material)** — Several skills are split into a concise `SKILL.md` index plus sibling sub-docs. Load a sub-doc with `skill_name="<skill>/<section>"` (e.g. `state-trees/api-reference`, `blueprint-graphs/build-graph`, `landscape/workflows-editing`). The index response lists every available sub-doc under `available_sections`. This keeps each load small while keeping deep reference material one call away.
 
 ##### Asset Workflow Tool
 
@@ -547,13 +547,13 @@ Each skill includes:
 - **Common Mistakes** - Things to avoid (wrong property names, etc.)
 - **Property Formats** - How to format values in Unreal string syntax
 
-**Domain Skills** (dynamically discovered from `Content/Skills/*/skill.md`):
+**Domain Skills** (dynamically discovered from `Content/Skills/*/SKILL.md`):
 
-Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `skill.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
+Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `SKILL.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
 Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
 
-**Skills with sub-docs** — `animsequence`, `blueprint-graphs`, `landscape`, `landscape-auto-material`, and `state-trees` are split into a concise `skill.md` index plus sibling reference sub-docs. The index lists every available sub-doc under `available_sections` and you load one with `skill_name="<skill>/<section>"`. Examples: `state-trees/api-reference`, `state-trees/blueprint-tasks`, `state-trees/event-payloads`, `blueprint-graphs/build-graph`, `blueprint-graphs/array-operations`, `landscape/workflows-editing`.
+**Skills with sub-docs** — `animsequence`, `blueprint-graphs`, `landscape`, `landscape-auto-material`, and `state-trees` are split into a concise `SKILL.md` index plus sibling reference sub-docs. The index lists every available sub-doc under `available_sections` and you load one with `skill_name="<skill>/<section>"`. Examples: `state-trees/api-reference`, `state-trees/blueprint-tasks`, `state-trees/event-payloads`, `blueprint-graphs/build-graph`, `blueprint-graphs/array-operations`, `landscape/workflows-editing`.
 
 ### Using Skills
 
@@ -1939,7 +1939,7 @@ The system prompt supports dynamic token replacement. When the instructions are 
 
 | Token | Replacement | Source |
 |-------|-------------|--------|
-| `{SKILLS}` | Skills table with names, descriptions, and services | Scanned from `Content/Skills/*/skill.md` frontmatter |
+| `{SKILLS}` | Skills table with names, descriptions, and services | Scanned from `Content/Skills/*/SKILL.md` frontmatter |
 
 **Example usage in `vibeue.instructions.md`:**
 
@@ -1961,7 +1961,7 @@ Load skills using `manage_skills(action="load", skill_name="<name>")`:
 ...
 ```
 
-This allows the skills list to stay in sync automatically when skills are added, removed, or modified. Each skill's metadata is defined in its `skill.md` YAML frontmatter:
+This allows the skills list to stay in sync automatically when skills are added, removed, or modified. Each skill's metadata is defined in its `SKILL.md` YAML frontmatter:
 
 ```yaml
 ---
