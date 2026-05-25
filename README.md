@@ -41,7 +41,7 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
 | `manage_skills` | Load domain-specific knowledge on demand |
-| `manage_asset` | Search, open, save, move, duplicate, and delete assets safely |
+| `manage_asset` | Search, open, save, move, duplicate, delete, and import (image files from disk) assets safely |
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
 | `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
 | `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
@@ -143,6 +143,10 @@ manage_asset(action="save_all")
 
 # Move or rename while preserving references
 manage_asset(action="move", source_path="/Game/StateTree/STT_Rotate", destination_path="/Game/StateTree/Tasks/STT_Rotate")
+
+# Import an image file from disk into the Content Browser (png/jpg/tga/exr/psd/...)
+# Use this instead of Python import_asset_tasks, which crashes the editor from a tool call.
+manage_asset(action="import", source_file_path="C:/Images/rocks.jpg", destination_path="/Game/UI/Textures", asset_name="T_Rocks")
 ```
 
 **Important:** Use `move`, not duplicate + delete, when the intent is a rename or relocation. Duplicate creates a second asset identity.
@@ -354,7 +358,7 @@ High-level services exposed to Python for common game development tasks:
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
 | `UVMappingService` | 22 | **Per-LOD UV channel inspection, transforms, lightmap generation, per-region edits (by normal / polygon group / UV island), auto-unwrap (planar/box/cylindrical), packing, layout export** |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
-| `AssetDiscoveryService` | 20 | Asset search, import/export, references, move/rename workflows |
+| `AssetDiscoveryService` | 21 | Asset search, import (image files from disk) / export, references, move/rename workflows |
 | `ViewportService` | 19 | Viewport camera type (perspective/ortho), view mode, FOV, clip planes, exposure, game view, cinematic control, camera speed, viewport layout (single/quad) |
 | `MetaSoundService` | 17 | MetaSound graph authoring, nodes, interfaces, inputs/outputs, and wiring |
 | `ProjectSettingsService` | 16 | Project settings, editor preferences, UI configuration |
@@ -908,11 +912,12 @@ AnimMontageService provides comprehensive CRUD operations for Animation Montage 
 - `add_modifier/trigger(...)` - Add modifiers/triggers
 - `get_available_keys(filter)` - List bindable keys
 
-### AssetDiscoveryService (20 methods)
+### AssetDiscoveryService (21 methods)
 
 - `search_assets(term, type)` - Find assets
 - `save_asset(path)` / `save_all_assets()` - Save
-- `import_texture(file, dest)` - Import texture
+- `import_asset(file, dest_folder, name)` - Import an image file from disk (crash-safe; returns asset path + error)
+- `import_texture(file, dest)` - Import texture (full asset path; uses the same safe importer)
 - `export_texture(asset, file)` - Export texture
 - `get_asset_dependencies/referencers(path)` - References
 

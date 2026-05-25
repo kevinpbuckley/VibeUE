@@ -13,6 +13,10 @@
 #include "ContentBrowserModule.h"
 #include "IContentBrowserSingleton.h"
 #include "Misc/PackageName.h"
+#include "Misc/Paths.h"
+#include "Misc/FileHelper.h"
+#include "Factories/TextureFactory.h"
+#include "UObject/Package.h"
 
 namespace
 {
@@ -451,54 +455,135 @@ int32 UAssetDiscoveryService::SaveAllAssets()
 
 bool UAssetDiscoveryService::ImportTexture(const FString& SourceFilePath, const FString& DestinationPath)
 {
-	if (SourceFilePath.IsEmpty() || DestinationPath.IsEmpty())
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ImportTexture: SourceFilePath or DestinationPath is empty"));
-		return false;
-	}
-
-	if (!FPaths::FileExists(SourceFilePath))
-	{
-		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ImportTexture: Source file does not exist: %s"), *SourceFilePath);
-		return false;
-	}
-
-	// Get asset tools
-	FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>("AssetTools");
-	IAssetTools& AssetTools = AssetToolsModule.Get();
-
-	// Parse destination path into package path and asset name
+	// Split the destination asset path into folder + name and delegate to the safe importer.
 	FString PackagePath, AssetName;
-	DestinationPath.Split(TEXT("/"), &PackagePath, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd);
-	if (PackagePath.IsEmpty())
+	if (!DestinationPath.Split(TEXT("/"), &PackagePath, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd) || PackagePath.IsEmpty())
 	{
 		PackagePath = TEXT("/Game");
 		AssetName = DestinationPath;
 	}
 
-	// Import the texture
-	TArray<FString> FilesToImport;
-	FilesToImport.Add(SourceFilePath);
-
-	TArray<UObject*> ImportedAssets = AssetTools.ImportAssets(FilesToImport, PackagePath);
-	
-	if (ImportedAssets.Num() > 0 && ImportedAssets[0])
+	FString Error;
+	const FString Result = ImportAsset(SourceFilePath, PackagePath, AssetName, Error);
+	if (Result.IsEmpty())
 	{
-		// Rename if needed
-		UObject* ImportedAsset = ImportedAssets[0];
-		FString CurrentName = ImportedAsset->GetName();
-		if (CurrentName != AssetName && !AssetName.IsEmpty())
-		{
-			FString NewPath = PackagePath / AssetName;
-			UEditorAssetLibrary::RenameAsset(ImportedAsset->GetPathName(), NewPath);
-		}
-		
-		UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportTexture: Successfully imported texture to %s"), *DestinationPath);
-		return true;
+		UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ImportTexture: %s"), *Error);
+		return false;
+	}
+	return true;
+}
+
+FString UAssetDiscoveryService::ImportAsset(
+	const FString& SourceFilePath,
+	const FString& DestinationFolder,
+	const FString& AssetName,
+	FString& OutError)
+{
+	OutError.Empty();
+
+	if (SourceFilePath.IsEmpty() || DestinationFolder.IsEmpty())
+	{
+		OutError = TEXT("SourceFilePath and DestinationFolder are both required");
+		return FString();
 	}
 
-	UE_LOG(LogTemp, Warning, TEXT("UAssetDiscoveryService::ImportTexture: Failed to import texture from %s"), *SourceFilePath);
-	return false;
+	if (!FPaths::FileExists(SourceFilePath))
+	{
+		OutError = FString::Printf(TEXT("Source file does not exist: %s"), *SourceFilePath);
+		return FString();
+	}
+
+	// Resolve the asset name (derive from the file name when not provided) and sanitize it.
+	FString FinalName = AssetName.IsEmpty() ? FPaths::GetBaseFilename(SourceFilePath) : AssetName;
+	{
+		FString Sanitized;
+		for (TCHAR Ch : FinalName)
+		{
+			Sanitized.AppendChar((FChar::IsAlnum(Ch) || Ch == TEXT('_')) ? Ch : TEXT('_'));
+		}
+		FinalName = Sanitized;
+	}
+	if (FinalName.IsEmpty())
+	{
+		OutError = TEXT("Could not derive a valid asset name");
+		return FString();
+	}
+
+	// Normalize the destination folder into a content path.
+	FString Folder = DestinationFolder;
+	Folder.RemoveFromEnd(TEXT("/"));
+	if (!Folder.StartsWith(TEXT("/")))
+	{
+		OutError = FString::Printf(TEXT("DestinationFolder must be a content path like /Game/...: '%s'"), *DestinationFolder);
+		return FString();
+	}
+
+	// Only image formats are handled by this fast factory path.
+	const FString Ext = FPaths::GetExtension(SourceFilePath).ToLower();
+	static const TSet<FString> ImageExts = {
+		TEXT("png"), TEXT("jpg"), TEXT("jpeg"), TEXT("bmp"), TEXT("tga"),
+		TEXT("dds"), TEXT("exr"), TEXT("hdr"), TEXT("tiff"), TEXT("tif"),
+		TEXT("psd"), TEXT("pcx")
+	};
+	if (!ImageExts.Contains(Ext))
+	{
+		OutError = FString::Printf(
+			TEXT("Unsupported file type '.%s'. Supported image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx."),
+			*Ext);
+		return FString();
+	}
+
+	// Read the file into memory and feed it straight to the texture factory. We deliberately
+	// avoid IAssetTools::ImportAssets / ImportAssetTasks: those pump the game-thread task graph,
+	// which trips a RecursionGuard assertion when called from inside an MCP tool's AsyncTask.
+	TArray<uint8> FileData;
+	if (!FFileHelper::LoadFileToArray(FileData, *SourceFilePath) || FileData.Num() == 0)
+	{
+		OutError = FString::Printf(TEXT("Failed to read file: %s"), *SourceFilePath);
+		return FString();
+	}
+
+	const FString PackageName = Folder / FinalName;
+	UPackage* Package = CreatePackage(*PackageName);
+	if (!Package)
+	{
+		OutError = FString::Printf(TEXT("Failed to create package: %s"), *PackageName);
+		return FString();
+	}
+	Package->FullyLoad();
+
+	UTextureFactory* Factory = NewObject<UTextureFactory>();
+	Factory->AddToRoot();
+	UTextureFactory::SuppressImportOverwriteDialog();
+
+	const uint8* BufferStart = FileData.GetData();
+	const uint8* BufferEnd   = BufferStart + FileData.Num();
+
+	UObject* NewObj = Factory->FactoryCreateBinary(
+		UTexture2D::StaticClass(),
+		Package,
+		FName(*FinalName),
+		RF_Public | RF_Standalone,
+		nullptr,
+		*Ext,
+		BufferStart,
+		BufferEnd,
+		GWarn);
+
+	Factory->RemoveFromRoot();
+
+	if (!NewObj)
+	{
+		OutError = FString::Printf(TEXT("Texture factory failed to import '%s'"), *SourceFilePath);
+		return FString();
+	}
+
+	FAssetRegistryModule::AssetCreated(NewObj);
+	Package->MarkPackageDirty();
+	UEditorAssetLibrary::SaveLoadedAsset(NewObj, false);
+
+	UE_LOG(LogTemp, Log, TEXT("UAssetDiscoveryService::ImportAsset: imported '%s' -> '%s'"), *SourceFilePath, *NewObj->GetPathName());
+	return NewObj->GetPathName();
 }
 
 bool UAssetDiscoveryService::ExportTexture(const FString& AssetPath, const FString& ExportFilePath)

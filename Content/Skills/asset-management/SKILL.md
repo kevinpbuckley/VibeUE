@@ -33,6 +33,32 @@ cubes = [a for a in engine_assets if "Cube" in str(a.asset_name)]
 | `asset.path` | `asset.package_path` |
 | `asset.asset_class` | `asset.asset_class_path` |
 
+### ⚠️ Importing Image Files From Disk — Use the Built-in Importer
+
+To bring an image file from disk into the Content Browser, use the **`manage_asset` import action**
+(or `AssetDiscoveryService.import_asset`). Do **NOT** call `unreal.AssetToolsHelpers...import_asset_tasks`
+or `ImportAssets` from `execute_python_code` — those pump the game-thread task graph and trip a
+`RecursionGuard` assertion that **crashes the editor** when run from inside a tool call.
+
+```python
+# PREFERRED — MCP tool (robust, no crash)
+# manage_asset(action="import",
+#              source_file_path="C:/Images/rocks.jpg",
+#              destination_path="/Game/UI/Textures",
+#              asset_name="T_Rocks")
+
+# Python equivalent (same safe C++ path)
+import unreal
+path, err = unreal.AssetDiscoveryService.import_asset(
+    "C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
+print(path or err)
+
+# WRONG — crashes the editor (TaskGraph RecursionGuard assertion)
+# tasks = [unreal.AssetImportTask()]; unreal.AssetToolsHelpers.get_asset_tools().import_asset_tasks(tasks)
+```
+
+Supported image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
+
 ### ⚠️ Asset Paths Must Be Content Browser Paths
 
 Use `/Game/...` paths, **not** file system paths.
@@ -70,7 +96,6 @@ unreal.AssetDiscoveryService.move_asset(
 | `asset_exists()` | `find_asset_by_path()` → check for None |
 | `is_asset_in_use()` | `get_asset_referencers()` → check if empty |
 | `rename_asset()` | `move_asset(old_path, new_path)` |
-| `import_asset()` | `import_texture()` for textures only |
 | `export_asset()` | `export_texture()` for textures only |
 
 ---
@@ -172,12 +197,22 @@ else:
 ```python
 import unreal
 
-# Import (file system → project)
+# Import (disk → Content Browser). Returns (asset_path, error); asset_path is "" on failure.
+# Pass a destination FOLDER + optional asset name.
+path, err = unreal.AssetDiscoveryService.import_asset(
+    "C:/Textures/logo.png", "/Game/Textures", "T_Logo")
+print(path or err)
+
+# import_texture(src, dest_asset_path) still works (takes a full asset path) and now uses the
+# same crash-safe importer under the hood:
 unreal.AssetDiscoveryService.import_texture("C:/Textures/logo.png", "/Game/Textures/T_Logo")
 
 # Export (project → file system)
 unreal.AssetDiscoveryService.export_texture("/Game/Textures/T_Logo", "C:/Exports/logo.png")
 ```
+
+> Prefer the `manage_asset` import action in tool flows:
+> `manage_asset(action="import", source_file_path="C:/Textures/logo.png", destination_path="/Game/Textures", asset_name="T_Logo")`
 
 ### Editor State & Content Browser
 

@@ -212,6 +212,33 @@ public:
 	static bool ImportTexture(const FString& SourceFilePath, const FString& DestinationPath);
 
 	/**
+	 * Import an image file from disk into the Content Browser as a Texture2D.
+	 *
+	 * Uses the texture factory's direct binary path (FactoryCreateBinary) rather than
+	 * AssetTools::ImportAssets/ImportAssetTasks. The high-level import APIs pump the
+	 * game-thread task graph, which asserts (RecursionGuard) when invoked from inside an
+	 * MCP tool call (those run inside an AsyncTask on the game thread). This path is safe
+	 * to call from execute_python_code and from the manage_asset 'import' action.
+	 *
+	 * Supported formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
+	 *
+	 * @param SourceFilePath    - Absolute path to the image file on disk
+	 * @param DestinationFolder - Content Browser folder (e.g. "/Game/UI/Textures")
+	 * @param AssetName         - Optional asset name; if empty, derived from the file name
+	 * @param OutError          - Receives a human-readable error message on failure
+	 * @return The created asset's object path (e.g. "/Game/UI/Textures/T_Foo.T_Foo"), or empty on failure
+	 *
+	 * Example:
+	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	static FString ImportAsset(
+		const FString& SourceFilePath,
+		const FString& DestinationFolder,
+		const FString& AssetName,
+		FString& OutError);
+
+	/**
 	 * Export a texture to the file system for external analysis.
 	 *
 	 * @param AssetPath - Path to the texture asset
