@@ -1184,8 +1184,15 @@ TArray<FWidgetInfo> UWidgetService::GetHierarchy(const FString& WidgetPath)
 			return;
 		}
 		Hierarchy.Add(*Info);
+
+		// Copy the child names BEFORE removing the entry. InfoMap.Remove(Name) destructs
+		// *Info (freeing its Children array), so iterating Info->Children afterward is a
+		// use-after-free — an access violation that crashes the Python interpreter and the
+		// editor along with it. Recursive calls also mutate InfoMap, which can reallocate
+		// its storage and invalidate any outstanding element pointers.
+		TArray<FString> ChildNames = Info->Children;
 		InfoMap.Remove(Name); // guard against cycles
-		for (const FString& ChildName : Info->Children)
+		for (const FString& ChildName : ChildNames)
 		{
 			EmitDepthFirst(ChildName);
 		}

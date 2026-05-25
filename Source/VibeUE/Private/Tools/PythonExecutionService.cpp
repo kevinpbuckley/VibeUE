@@ -15,6 +15,13 @@
 // UE5 assert exception code (check() failures raise this via RaiseException)
 static constexpr DWORD UE_ASSERT_EXCEPTION_CODE = 0x4000;
 
+// Tracks whether a hard crash (SEH-caught access violation or assertion) has happened during
+// Python execution this editor session. An access violation cannot be safely recovered in-process
+// — the CPython runtime state is undefined afterwards — so once this is set we tell the caller to
+// restart the editor instead of letting every later call fail with the same cryptic error.
+// Cleared whenever a command completes without a hard crash (the interpreter is proven alive).
+static bool GbPythonInterpreterCrashed = false;
+
 // Mirror UE5's FAssertInfo struct layout (defined in WindowsPlatformCrashContext.cpp)
 struct FVibeUEAssertInfo
 {
@@ -217,7 +224,26 @@ TResult<FPythonExecutionResult> FPythonExecutionService::ExecuteCode(
 		{
 			CrashMessage = FString::Printf(TEXT("Python execution caused a crash (exception code: 0x%08X). The Python code may have accessed invalid memory."), SEHResult.ExceptionCode);
 		}
+
+		// A caught access violation / assertion leaves the CPython runtime in an undefined state;
+		// it cannot be reinitialized in-process. Give the caller actionable guidance instead of
+		// letting subsequent calls fail identically with no explanation.
+		if (GbPythonInterpreterCrashed)
+		{
+			CrashMessage += TEXT(" NOTE: the Python interpreter has now crashed more than once this session and is unrecoverable in-process — restart the editor (BuildAndLaunch) to restore Python execution.");
+		}
+		else
+		{
+			CrashMessage += TEXT(" NOTE: the interpreter may now be unstable; if further commands keep failing identically, restart the editor (BuildAndLaunch).");
+		}
+		GbPythonInterpreterCrashed = true;
+
 		UE_LOG(LogTemp, Error, TEXT("%s"), *CrashMessage);
+	}
+	else
+	{
+		// Completed without a hard crash (a normal Python exception is fine) — interpreter is alive.
+		GbPythonInterpreterCrashed = false;
 	}
 #else
 	// Non-Windows platforms - use regular try/catch
