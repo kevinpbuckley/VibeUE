@@ -186,7 +186,7 @@ FString FLLMClientBase::GenerateSkillsSection()
 
     for (const FString& SkillDirName : SkillDirs)
     {
-        FString SkillMdPath = SkillsDir / SkillDirName / TEXT("skill.md");
+        FString SkillMdPath = SkillsDir / SkillDirName / TEXT("SKILL.md");
 
         if (!FPaths::FileExists(SkillMdPath))
         {

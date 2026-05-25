@@ -3622,6 +3622,40 @@ public:
 		FString& OutError
 	);
 
+	/**
+	 * Add a Blueprint Interface to a blueprint.
+	 * Equivalent to: Class Settings → Interfaces → Add in the editor.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param InterfacePath - Interface asset path or short name (e.g., "BPI_TestInterface" or "/Game/interface/BPI_TestInterface")
+	 * @return True if the interface was added successfully (or already implemented)
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.add_interface("/Game/BP_Player", "BPI_TestInterface")
+	 *   unreal.BlueprintService.add_interface("/Game/BP_Player", "/Game/interface/BPI_TestInterface")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool AddInterface(
+		const FString& BlueprintPath,
+		const FString& InterfacePath
+	);
+
+	/**
+	 * Remove a Blueprint Interface from a blueprint.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint
+	 * @param InterfacePath - Interface asset path or short name
+	 * @return True if the interface was removed successfully
+	 *
+	 * Example:
+	 *   unreal.BlueprintService.remove_interface("/Game/BP_Player", "BPI_TestInterface")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool RemoveInterface(
+		const FString& BlueprintPath,
+		const FString& InterfacePath
+	);
+
 private:
 	/** Helper to load blueprint from path */
 	static UBlueprint* LoadBlueprint(const FString& BlueprintPath);

@@ -213,7 +213,7 @@ public:
 
     /**
      * Generate the skills section by scanning Content/Skills directories
-     * Reads skill.md frontmatter to build a dynamic table of available skills
+     * Reads SKILL.md frontmatter to build a dynamic table of available skills
      * @return Formatted markdown table of skills with names, descriptions, and services
      */
     static FString GenerateSkillsSection();

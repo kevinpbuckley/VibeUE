@@ -11008,3 +11008,158 @@ bool UBlueprintService::GetGraphDefinition(
 
 	return true;
 }
+
+bool UBlueprintService::AddInterface(
+	const FString& BlueprintPath,
+	const FString& InterfacePath)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInterface: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	if (InterfacePath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInterface: Interface path is empty"));
+		return false;
+	}
+
+	// Resolve interface class - try multiple strategies
+	UClass* InterfaceClass = nullptr;
+
+	// Strategy 1: Try loading as a Blueprint asset path
+	UBlueprint* InterfaceBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *InterfacePath));
+	if (InterfaceBP)
+	{
+		InterfaceClass = InterfaceBP->GeneratedClass;
+	}
+
+	// Strategy 2: Try with _C suffix as a class path
+	if (!InterfaceClass)
+	{
+		FString ClassPath = InterfacePath;
+		if (!ClassPath.EndsWith(TEXT("_C")))
+		{
+			ClassPath = InterfacePath + TEXT(".") + FPaths::GetCleanFilename(InterfacePath) + TEXT("_C");
+		}
+		InterfaceClass = LoadClass<UObject>(nullptr, *ClassPath);
+	}
+
+	// Strategy 3: Search by short name across all loaded Blueprint assets
+	if (!InterfaceClass)
+	{
+		for (TObjectIterator<UBlueprint> It; It; ++It)
+		{
+			if (It->GetName().Equals(InterfacePath, ESearchCase::IgnoreCase) ||
+				It->GetName().Equals(InterfacePath.Replace(TEXT("/"), TEXT("")), ESearchCase::IgnoreCase))
+			{
+				if (It->BlueprintType == BPTYPE_Interface)
+				{
+					InterfaceClass = It->GeneratedClass;
+					UE_LOG(LogTemp, Log, TEXT("AddInterface: Resolved interface '%s' via object search to '%s'"), *InterfacePath, *It->GetPathName());
+					break;
+				}
+			}
+		}
+	}
+
+	if (!InterfaceClass)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInterface: Interface '%s' not found. Provide the full asset path (e.g., /Game/interface/BPI_TestInterface)"), *InterfacePath);
+		return false;
+	}
+
+	// The resolved class must actually be an interface. Implementing a non-interface
+	// class and then compiling trips an engine assertion in the Kismet compiler
+	// (Interface->HasAnyClassFlags(CLASS_Interface)), which crashes the editor.
+	// Reject it here instead.
+	if (!InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInterface: '%s' resolves to '%s', which is not a Blueprint Interface. Provide a Blueprint Interface asset."),
+			*InterfacePath, *InterfaceClass->GetName());
+		return false;
+	}
+
+	// Check if interface is already implemented
+	for (const FBPInterfaceDescription& Desc : Blueprint->ImplementedInterfaces)
+	{
+		if (Desc.Interface == InterfaceClass)
+		{
+			UE_LOG(LogTemp, Log, TEXT("AddInterface: Interface '%s' is already implemented on '%s'"), *InterfaceClass->GetName(), *Blueprint->GetName());
+			return true;
+		}
+	}
+
+	// Add the interface
+	FTopLevelAssetPath InterfaceAssetPath = InterfaceClass->GetClassPathName();
+	FBlueprintEditorUtils::ImplementNewInterface(Blueprint, InterfaceAssetPath);
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("AddInterface: Added interface '%s' to '%s'"),
+		*InterfaceClass->GetName(), *Blueprint->GetName());
+
+	return true;
+}
+
+bool UBlueprintService::RemoveInterface(
+	const FString& BlueprintPath,
+	const FString& InterfacePath)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveInterface: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	if (InterfacePath.IsEmpty())
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveInterface: Interface path is empty"));
+		return false;
+	}
+
+	// Find the interface in the implemented list
+	UClass* InterfaceClass = nullptr;
+	int32 FoundIndex = INDEX_NONE;
+
+	for (int32 i = 0; i < Blueprint->ImplementedInterfaces.Num(); ++i)
+	{
+		const FBPInterfaceDescription& Desc = Blueprint->ImplementedInterfaces[i];
+		if (Desc.Interface)
+		{
+			FString InterfaceName = Desc.Interface->GetName();
+			FString InterfacePkgPath = Desc.Interface->GetPathName();
+
+			if (InterfaceName.Equals(InterfacePath, ESearchCase::IgnoreCase) ||
+				InterfaceName.Equals(InterfacePath + TEXT("_C"), ESearchCase::IgnoreCase) ||
+				InterfacePkgPath.Contains(InterfacePath))
+			{
+				InterfaceClass = Desc.Interface;
+				FoundIndex = i;
+				break;
+			}
+		}
+	}
+
+	if (FoundIndex == INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Error, TEXT("RemoveInterface: Interface '%s' not found on blueprint '%s'"), *InterfacePath, *Blueprint->GetName());
+		return false;
+	}
+
+	// Remove the interface
+	FTopLevelAssetPath InterfaceAssetPath = InterfaceClass->GetClassPathName();
+	FBlueprintEditorUtils::RemoveInterface(Blueprint, InterfaceAssetPath);
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+	FKismetEditorUtilities::CompileBlueprint(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("RemoveInterface: Removed interface '%s' from '%s'"),
+		*InterfaceClass->GetName(), *Blueprint->GetName());
+
+	return true;
+}

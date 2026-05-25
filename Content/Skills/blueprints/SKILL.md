@@ -20,6 +20,10 @@ keywords:
   - multicast
   - broadcast
   - call delegate
+  - interface
+  - blueprint interface
+  - implement interface
+  - add interface
 related_skills:
   - blueprint-graphs
 ---
@@ -141,6 +145,43 @@ unreal.EditorAssetLibrary.save_asset(bp)
 - ❌ `add_variable(bp, "FinishedLooking", "EventDispatcher")` — `"EventDispatcher"` is not a real type string; use `add_event_dispatcher` instead.
 - ❌ Treating the dispatcher like a regular variable (`add_get_variable_node` on it produces a delegate-getter, not a broadcast). The broadcast node is `UK2Node_CallDelegate` and is created only by `add_call_delegate_node`.
 - ❌ Skipping `compile_blueprint` before saving the asset. The skeleton compiles inline on dispatcher creation, but the final asset still needs `compile_blueprint` before `save_asset` to ensure the generated class is up-to-date.
+
+### Blueprint Interfaces (implement / remove)
+
+Add or remove a Blueprint Interface on a Blueprint class — the equivalent of *Class Settings → Interfaces → Add* in the editor.
+
+| Method | What it does |
+|---|---|
+| `add_interface(bp_path, interface)` | Implements the interface on the Blueprint. No-op (returns `True`) if it is already implemented. Marks the Blueprint structurally modified and recompiles it inline. |
+| `remove_interface(bp_path, interface)` | Removes the interface from the Blueprint. Marks structurally modified and recompiles inline. |
+
+```python
+import unreal
+
+bp = "/Game/Blueprints/BP_Player"
+
+# Prefer the FULL interface asset path — most reliable resolution
+unreal.BlueprintService.add_interface(bp, "/Game/Interfaces/BPI_Interactable")
+
+# Short name also works IF the interface asset is already loaded in the editor
+unreal.BlueprintService.add_interface(bp, "BPI_Interactable")
+
+# Persist (both methods compile inline, but still save the asset)
+unreal.EditorAssetLibrary.save_asset(bp)
+
+# Remove it later
+unreal.BlueprintService.remove_interface(bp, "BPI_Interactable")
+unreal.EditorAssetLibrary.save_asset(bp)
+```
+
+**Notes & gotchas:**
+
+- **Prefer the full asset path** (e.g. `/Game/Interfaces/BPI_Interactable`). Short-name resolution only finds interface Blueprints that are *already loaded* in the editor; a full path always loads and resolves.
+- Both methods **recompile the Blueprint inline** (`CompileBlueprint`) but do **not** save it — call `EditorAssetLibrary.save_asset(bp)` afterward to persist.
+- `add_interface` is idempotent — calling it for an interface that is already implemented returns `True` without duplicating it.
+- After adding an interface, its functions appear as overridable events/functions; use `override_function(bp_path, function_name)` to implement them in the graph.
+- Both return `bool` (`True` on success). A `False` from `add_interface` means either the interface path could not be resolved, or it resolved to an asset that is **not a Blueprint Interface** (e.g. a normal Blueprint or one merely parented to `UInterface`) — check the log and pass a real Blueprint Interface asset path.
+- The interface must be a true Blueprint Interface (`BPTYPE_Interface`), created with `BlueprintInterfaceFactory`. `add_interface` validates this and returns `False` for non-interface classes rather than letting the compile fail.
 
 ---
 

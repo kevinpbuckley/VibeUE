@@ -78,4 +78,37 @@ Does anything reference the AssetSearchTest blueprint?
 
 ---
 
+## Importing an Image From Disk
+
+Find an existing image file on disk to import — e.g. one of the .png files in the project's
+Saved/Screenshots folder. (If none exist, take an editor screenshot to disk first.)
+
+---
+
+Import that image file into /Game/ImportTest as a texture called T_ImportSmoke. Use the asset
+manager's import — do NOT use Python import_asset_tasks (that crashes the editor).
+
+---
+
+Confirm the texture asset now exists in the Content Browser at /Game/ImportTest/T_ImportSmoke.
+
+---
+
+Try to import a file that does not exist on disk. It should fail gracefully with a clear error,
+not crash.
+
+---
+
+Try to import a .txt (non-image) file. It should fail gracefully and report that the file type is
+unsupported.
+
+---
+
+## Cleanup
+
+Delete the test assets created above (AssetSearchTest, AssetWidgetTest, their Backups, and
+T_ImportSmoke).
+
+---
+
 
