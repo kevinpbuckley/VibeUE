@@ -336,7 +336,7 @@ High-level services exposed to Python for common game development tasks:
 | Service | Methods | Domain |
 |---------|---------|--------|
 | `StateTreeService` | 94 | StateTree asset creation, state hierarchy, state type/link configuration, editor selection, tasks, evaluators, conditions, transitions, delegate bindings, parameters, component overrides, property bindings, **utility AI considerations**, compile/save |
-| `BlueprintService` | 117 | Blueprint lifecycle, variables, functions, components, nodes, **event dispatchers (multicast delegates) + broadcast nodes + bind-on-variable**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
+| `BlueprintService` | 119 | Blueprint lifecycle, variables, functions, components, **interfaces (add/remove)**, nodes, **event dispatchers (multicast delegates) + broadcast nodes + bind-on-variable**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
@@ -625,7 +625,7 @@ All services are available via `unreal.<ServiceName>.<method>()`.
 unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 ```
 
-### BlueprintService (116 methods)
+### BlueprintService (118 methods)
 
 **Lifecycle:**
 - `create_blueprint(name, parent_class, path)` - Create new blueprint
@@ -656,6 +656,10 @@ unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprint
 - `reparent_component(path, name, new_parent)` - Reparent in the SCS hierarchy
 - `get/set_component_property(...)` - Property access
 - `get_component_hierarchy(path)` - Get hierarchy
+
+**Interfaces:**
+- `add_interface(path, interface)` - Implement a Blueprint Interface (idempotent; recompiles inline)
+- `remove_interface(path, interface)` - Remove a Blueprint Interface
 
 **Nodes & Graph Editing:**
 - `add_*_node(...)` - Add nodes (branch, variable, math, cast, event, custom event, function call, etc.)

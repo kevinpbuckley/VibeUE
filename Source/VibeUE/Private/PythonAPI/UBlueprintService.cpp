@@ -11071,6 +11071,17 @@ bool UBlueprintService::AddInterface(
 		return false;
 	}
 
+	// The resolved class must actually be an interface. Implementing a non-interface
+	// class and then compiling trips an engine assertion in the Kismet compiler
+	// (Interface->HasAnyClassFlags(CLASS_Interface)), which crashes the editor.
+	// Reject it here instead.
+	if (!InterfaceClass->HasAnyClassFlags(CLASS_Interface))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddInterface: '%s' resolves to '%s', which is not a Blueprint Interface. Provide a Blueprint Interface asset."),
+			*InterfacePath, *InterfaceClass->GetName());
+		return false;
+	}
+
 	// Check if interface is already implemented
 	for (const FBPInterfaceDescription& Desc : Blueprint->ImplementedInterfaces)
 	{
