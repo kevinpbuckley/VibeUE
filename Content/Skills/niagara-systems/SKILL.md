@@ -1,9 +1,10 @@
 ---
 name: niagara-systems
 display_name: Niagara Systems
-description: Create and manage Niagara particle systems - system lifecycle, adding/copying emitters, user parameters, system script settings
+description: Create and manage Niagara particle systems - system lifecycle, adding/copying emitters, user parameters, system script settings, scratch-pad authoring
 vibeue_classes:
   - NiagaraService
+  - NiagaraScratchPadService
 unreal_classes:
   - EditorAssetLibrary
   - NiagaraSystem
@@ -16,6 +17,9 @@ keywords:
   - copy system
   - system parameter
   - NiagaraService
+  - NiagaraScratchPadService
+  - scratch pad
+  - custom hlsl
   - create_system
   - copy_system
   - System.Color
@@ -32,7 +36,9 @@ keywords:
 - Discover ALL editable settings across entire system
 - System info and diagnostics
 
-For **emitter-level** operations (modules, renderers, internal params), load the `niagara-emitters` skill.
+For **emitter-level module work** (built-in modules, renderers, rapid iteration params) load
+`niagara-emitters`. For **building scratch-pad module graphs** (Custom HLSL, Map Get/Set, Op,
+typed pins, wiring), use **`NiagaraScratchPadService`** — also documented in the `niagara-emitters` skill.
 
 ---
 

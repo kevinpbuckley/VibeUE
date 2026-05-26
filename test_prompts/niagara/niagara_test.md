@@ -277,3 +277,42 @@ Search for niagara systems with "Test" in the name to verify NS_SmokeTest is sav
 ## Complete
 
 All tests complete! NS_SmokeTest should have one emitter (Sparks) remaining.
+
+---
+
+## Scratch-Pad Smoke (NiagaraScratchPadService)
+
+These turns sanity-check the new scratch-pad service. The deep-dive variant lives in
+`scratchpad_trackpainter.md`.
+
+---
+
+Add an empty scratch module called `ScratchSmoke` to the `Sparks` emitter of `NS_SmokeTest`
+on the `ParticleUpdate` stage via `NiagaraScratchPadService.create_scratch_module`.
+
+---
+
+Resolve the scratch script path for `ScratchSmoke` with `get_scratch_script_path` and list
+its graph nodes - the default template should include MapGet, MapSet, an Input, and an Output.
+
+---
+
+Add a Custom HLSL node to `ScratchSmoke` with body `Out = In * 2.0;`. Add an `Input` `float`
+pin named `In` and an `Output` `float` pin named `Out`. Add a module input `Scale` of type
+`float`, then connect MapGet's `Module.Scale` output -> the Custom HLSL `In` input.
+
+---
+
+Call `apply_changes` on `NS_SmokeTest` and then `compile_with_results`. The system should
+compile with zero errors.
+
+---
+
+Verify that `NiagaraEmitterService.get_module_info(NS_SmokeTest, Sparks, ScratchSmoke)`
+now returns a non-empty `script_asset_path` (this was empty for scratch modules before).
+
+---
+
+Delete the `ScratchSmoke` module via `NiagaraEmitterService.remove_module`. The removal must
+keep the stack chain intact - no `StackNodeGroups` assert and no editor crash. Recompile and
+confirm zero errors.
