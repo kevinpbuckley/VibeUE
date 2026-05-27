@@ -1,0 +1,39 @@
+{
+  "level_name": "Verkhova",
+
+  "landcover_grid": "example_data/landcover_grid.json",
+  "river_world":    "example_data/river_world.json",
+  "output_dir":     null,
+
+  "layers": { "crop": "L1", "soil": "L2", "flood": "L3", "forest": "L4" },
+
+  "seed": 7,
+
+  "field_coverage": [50, 60],
+  "tree_coverage":  [30, 40],
+  "field_crop_threshold": 0.12,
+  "forest_fringe_iters": 9,
+
+  "road": {
+    "main_verticals":   3,
+    "main_horizontals": 2,
+    "dirt_spacing_km":  1.7,
+    "diagonals":        3
+  },
+
+  "pois": {
+    "target_count":     16,
+    "min_spacing_frac": 0.085
+  },
+
+  "_comments": {
+    "level_name": "Outputs are written to a folder of this name.",
+    "landcover_grid / river_world": "Paths (relative to this config) to the two files produced by build_inputs.py from your VibeUE export. See MapDesigner.md Stage 0.",
+    "layers": "Map your exported weight-layer keys (L1..Ln) to the four design categories. 'flood' is your water/wet layer; 'forest' drives where strategic woods are seeded.",
+    "field_coverage / tree_coverage": "MapDesigner.md target bands (% of play area). The script reports PASS/FAIL against these.",
+    "field_crop_threshold": "Min crop-layer weight for a cell to be field-eligible. Lower = more fields.",
+    "forest_fringe_iters": "Width of the young-growth treeline ringing each wood; raise to lift tree coverage without taking field.",
+    "road": "main_verticals/horizontals = number of paved arteries; dirt_spacing_km = grid pitch; diagonals = extra non-grid connectors.",
+    "pois": "target_count auto-scales with map area if you omit it; min_spacing_frac keeps POIs spread out (fraction of map span)."
+  }
+}
