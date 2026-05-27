@@ -668,6 +668,15 @@ public:
 		const FString& OutputFilePath);
 
 	/**
+	 * Load a landcover_grid.json file (host-Python format) into a grid struct.
+	 * Used by tests / by callers who already have a JSON fixture and want to
+	 * skip the live-landscape export step.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|MapBlockout")
+	static FMapBlockoutLandcoverGrid LoadLandcoverGridJson(
+		const FString& FilePath);
+
+	/**
 	 * Extract river centerline polylines from a binary water mask (skeletonize +
 	 * simplify). Use this when the source landscape has hand-painted water but no
 	 * Mapbox-derived river_world.json.
