@@ -412,6 +412,10 @@ TArray<FNiagaraModuleInfo_Custom> UNiagaraEmitterService::ListModules(
 		ModuleInfo.ModuleType = TypeString;
 		ModuleInfo.ModuleIndex = ModuleIndex++;
 		ModuleInfo.bIsEnabled = FunctionCall->IsNodeEnabled();
+		// Expose the referenced script's path. For scratch-pad modules this is the in-package
+		// scratch UNiagaraScript path (e.g. /Game/VFX/NS_Fx.NS_Fx:ScratchPads.ScratchModule);
+		// for regular asset modules it is the script asset path. (Previously left empty.)
+		ModuleInfo.ScriptAssetPath = FunctionCall->FunctionScript ? FunctionCall->FunctionScript->GetPathName() : FString();
 
 		Result.Add(ModuleInfo);
 	}
@@ -562,11 +566,18 @@ bool UNiagaraEmitterService::AddModule(
 	// Mark graph for modification
 	Graph->Modify();
 
+	// (NOTE: a stack-group pre-validation guard would be ideal here to fail cleanly instead of
+	// triggering the "StackNodeGroups.Num() >= 2" assert seen in prior sessions, but the helpers
+	// that compute stack groups - FNiagaraStackGraphUtilities::GetStackNodeGroups etc. - are
+	// declared without NIAGARAEDITOR_API and so are not callable cross-module. We rely on
+	// AddScriptModuleToStack itself; the matching tightening in RemoveModule below prevents
+	// us from CREATING the broken-stack condition in the first place.)
+
 	// Use the exported overload of AddScriptModuleToStack that takes individual parameters
 	// NIAGARAEDITOR_API UNiagaraNodeFunctionCall* AddScriptModuleToStack(UNiagaraScript* ModuleScript, UNiagaraNodeOutput& TargetOutputNode, int32 TargetIndex, FString SuggestedName, const FGuid& VersionGuid)
 	UNiagaraNodeFunctionCall* NewModuleNode = FNiagaraStackGraphUtilities::AddScriptModuleToStack(
-		ModuleScript, 
-		*OutputNode, 
+		ModuleScript,
+		*OutputNode,
 		INDEX_NONE,  // Add at end
 		FString(),   // Use default name
 		FGuid());    // Use default version
@@ -660,17 +671,59 @@ bool UNiagaraEmitterService::RemoveModule(
 	// Mark graph for modification
 	Graph->Modify();
 
-	// Remove the node from the graph using standard UEdGraph methods
-	// First break all pin links
-	for (UEdGraphPin* Pin : TargetModule->Pins)
+	// Splice the module out of the parameter-map stack chain before removing the node:
+	// reconnect the upstream parameter-map output to the downstream parameter-map input(s) so
+	// the chain stays continuous. The previous implementation broke every link and left a hole
+	// that later asserted (StackNodeGroups.Num() >= 2) and crashed the editor.
+	// (FNiagaraStackGraphUtilities::DisconnectStackNodeGroup is the canonical helper but it is
+	// not exported across modules; we implement the same effect using only exported APIs.)
+	bool bSpliced = false;
+	UScriptStruct* ParamMapStruct = FNiagaraTypeDefinition::GetParameterMapStruct();
+	const UEdGraphSchema_Niagara* NSchema = Cast<UEdGraphSchema_Niagara>(Graph->GetSchema());
+	if (ParamMapStruct && NSchema)
 	{
-		if (Pin)
+		UEdGraphPin* MapIn  = nullptr;
+		UEdGraphPin* MapOut = nullptr;
+		for (UEdGraphPin* P : TargetModule->Pins)
 		{
-			Pin->BreakAllPinLinks();
+			if (!P || !P->PinType.PinSubCategoryObject.IsValid()) continue;
+			if (P->PinType.PinSubCategoryObject.Get() != ParamMapStruct) continue;
+			if (P->Direction == EGPD_Input)  MapIn  = P;
+			else                              MapOut = P;
+		}
+		if (MapIn && MapOut && MapIn->LinkedTo.Num() > 0 && MapOut->LinkedTo.Num() > 0)
+		{
+			UEdGraphPin* Upstream = MapIn->LinkedTo[0];
+			// Reconnect every downstream consumer to upstream. Take a copy because
+			// TryCreateConnection mutates LinkedTo arrays.
+			TArray<UEdGraphPin*> Downstreams = MapOut->LinkedTo;
+			for (UEdGraphPin* D : Downstreams)
+			{
+				if (D) { NSchema->TryCreateConnection(Upstream, D); }
+			}
+			bSpliced = true;
 		}
 	}
 
-	// Remove the node from the graph
+	if (!bSpliced)
+	{
+		// Edge of stack or non-stack node: just break every link.
+		for (UEdGraphPin* Pin : TargetModule->Pins)
+		{
+			if (Pin) { Pin->BreakAllPinLinks(); }
+		}
+	}
+	else
+	{
+		// Break only the links still attached to TargetModule (the upstream->downstream wires
+		// are now in place; we just need to detach the module itself).
+		for (UEdGraphPin* Pin : TargetModule->Pins)
+		{
+			if (Pin) { Pin->BreakAllPinLinks(); }
+		}
+	}
+
+	// Remove the (now-orphaned) node from the graph
 	Graph->RemoveNode(TargetModule);
 
 	// Mark the system as dirty
@@ -681,7 +734,7 @@ bool UNiagaraEmitterService::RemoveModule(
 	System->RequestCompile(false);
 	System->WaitForCompilationComplete();
 
-	UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::RemoveModule - Successfully removed module: %s from %s"), 
+	UE_LOG(LogTemp, Log, TEXT("UNiagaraEmitterService::RemoveModule - Successfully removed module: %s from %s"),
 		*ModuleName, *EmitterName);
 
 	return true;
@@ -856,15 +909,45 @@ bool UNiagaraEmitterService::SetModuleInput(
 		return false;
 	}
 
-	// Find the input pin matching the InputName
-	UEdGraphPin* TargetPin = nullptr;
-	for (UEdGraphPin* Pin : TargetModule->Pins)
+	// Find the input pin matching the InputName.
+	// Modules expose stack inputs via pins whose names live in the parameter-map "Module." namespace
+	// (e.g. "Module.GridWidth"). Callers often pass the bare name ("GridWidth"); SetVariables and
+	// Set Parameters modules in particular were returning NOT FOUND because of this. Try several
+	// well-known variants (exact, Module./Output./Particles. prefixes, then case-insensitive substring)
+	// and on miss return a diagnostic listing the actual input pin names so the caller can self-correct.
+	const TArray<FString> Candidates =
 	{
-		if (Pin && Pin->Direction == EGPD_Input)
+		InputName,
+		FString::Printf(TEXT("Module.%s"),    *InputName),
+		FString::Printf(TEXT("Output.%s"),    *InputName),
+		FString::Printf(TEXT("Particles.%s"), *InputName),
+		// Niagara's RI parameter naming convention for module inputs:
+		// Constants.<Emitter>.<Module>.<Input>   (e.g. "Constants.TestEmitter.EmitterState.Loop Delay")
+		FString::Printf(TEXT("Constants.%s.%s.%s"), *EmitterName, *ModuleName, *InputName),
+	};
+
+	UEdGraphPin* TargetPin = nullptr;
+	for (const FString& Candidate : Candidates)
+	{
+		for (UEdGraphPin* Pin : TargetModule->Pins)
 		{
-			FString PinName = Pin->PinName.ToString();
-			if (PinName.Equals(InputName, ESearchCase::IgnoreCase) ||
-				PinName.Contains(InputName, ESearchCase::IgnoreCase))
+			if (!Pin || Pin->Direction != EGPD_Input) continue;
+			if (Pin->PinName.ToString().Equals(Candidate, ESearchCase::IgnoreCase))
+			{
+				TargetPin = Pin;
+				break;
+			}
+		}
+		if (TargetPin) break;
+	}
+
+	// Last-resort substring match (preserves prior behavior for partial names).
+	if (!TargetPin)
+	{
+		for (UEdGraphPin* Pin : TargetModule->Pins)
+		{
+			if (!Pin || Pin->Direction != EGPD_Input) continue;
+			if (Pin->PinName.ToString().Contains(InputName, ESearchCase::IgnoreCase))
 			{
 				TargetPin = Pin;
 				break;
@@ -874,7 +957,37 @@ bool UNiagaraEmitterService::SetModuleInput(
 
 	if (!TargetPin)
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UNiagaraEmitterService::SetModuleInput - Input pin not found: %s on module %s"), *InputName, *ModuleName);
+		// Scratch-pad modules (and many other modules whose inputs are stored as rapid-iteration
+		// parameters rather than as visible pins on the stack function-call node) won't have an
+		// input pin to find at all - the stack just shows "InputMap". Fall back to
+		// NiagaraService::SetRapidIterationParam, trying the same prefix variants. This is the
+		// canonical write path the Niagara editor UI itself uses for module input edits.
+		for (const FString& Candidate : Candidates)
+		{
+			if (UNiagaraService::SetRapidIterationParam(SystemPath, EmitterName, Candidate, Value))
+			{
+				UE_LOG(LogTemp, Log,
+					TEXT("UNiagaraEmitterService::SetModuleInput - Set '%s' on '%s' via rapid-iteration parameter '%s' = %s"),
+					*InputName, *ModuleName, *Candidate, *Value);
+				return true;
+			}
+		}
+
+		FString Available;
+		for (UEdGraphPin* Pin : TargetModule->Pins)
+		{
+			if (Pin && Pin->Direction == EGPD_Input)
+			{
+				if (!Available.IsEmpty()) Available += TEXT(", ");
+				Available += Pin->PinName.ToString();
+			}
+		}
+		UE_LOG(LogTemp, Warning,
+			TEXT("UNiagaraEmitterService::SetModuleInput - Input not found: '%s' on module '%s'. Available pins: [%s]. ")
+			TEXT("RI-param variants tried (Module./Output./Particles./Constants.%s.%s.) - none matched. ")
+			TEXT("For freshly-authored scratch-pad module inputs, link them to a User parameter in the editor first ")
+			TEXT("(or use NiagaraService.set_parameter on a User.X that's bound to this input)."),
+			*InputName, *ModuleName, *Available, *EmitterName, *ModuleName);
 		return false;
 	}
 

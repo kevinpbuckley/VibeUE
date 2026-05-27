@@ -17,7 +17,7 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 30 specialized services with 1030 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara, Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 31 specialized services with 1049 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara (systems + emitters + **scratch-pad graph authoring**), Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
 - **Domain Skills** - 34 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, and more
@@ -355,6 +355,7 @@ High-level services exposed to Python for common game development tasks:
 | `EngineSettingsService` | 23 | Engine settings, rendering, physics, audio, cvars, scalability |
 | `InputService` | 23 | Enhanced Input actions, contexts, modifiers, triggers |
 | `NiagaraEmitterService` | 23 | Niagara emitter modules, renderers, properties |
+| `NiagaraScratchPadService` | 19 | Niagara scratch-pad module authoring: create modules, add Map Get/Set/Op/Custom HLSL nodes, typed pins, wire pins, declare module inputs/outputs |
 | `LandscapeMaterialService` | 22 | Landscape material layers, blend nodes, auto-material creation, layer info objects, grass output |
 | `UVMappingService` | 22 | **Per-LOD UV channel inspection, transforms, lightmap generation, per-region edits (by normal / polygon group / UV island), auto-unwrap (planar/box/cylindrical), packing, layout export** |
 | `EnumStructService` | 20 | User-defined enums and structs (create, edit, delete) |
@@ -1232,6 +1233,43 @@ FoliageService provides foliage type management, instance scattering, layer-awar
 **Emitter Properties:**
 - `get_emitter_properties(system, emitter)` - Get lifecycle and property info
 - `get_rapid_iteration_parameters(system, emitter, type)` - Get rapid iteration parameters
+
+### NiagaraScratchPadService (19 methods)
+
+Authors scratch-pad module graphs from Python without an open editor. `NiagaraEmitterService` can list/add stack modules; `NiagaraScratchPadService` reaches *inside* a scratch module to build its node graph - Map Get reads, Map Set writes, math (`UNiagaraNodeOp`), Custom HLSL with typed input/output pins, and schema-validated pin connections.
+
+**Module lifecycle:**
+- `create_scratch_module(system, emitter, stage, name)` - Create an empty scratch module on a stage
+- `get_scratch_script_path(system, emitter, module)` - Resolve the backing scratch UNiagaraScript's object path
+- `list_scratch_modules(system, emitter)` - List all scratch modules across the emitter's stacks
+
+**Graph inspection:**
+- `list_nodes(system, emitter, module)` - List nodes in the scratch graph
+- `get_node_pins(system, emitter, module, node_id)` - Get a node's input/output pins
+- `list_connections(system, emitter, module)` - List all wires
+
+**Node authoring:**
+- `add_node(system, emitter, module, node_type, x, y)` - Create MapGet/MapSet/If/Input nodes
+- `add_op_node(system, emitter, module, op_name, x, y)` - Create a math op node (e.g. `Numeric::Multiply`)
+- `add_custom_hlsl_node(system, emitter, module, code, x, y)` - Create a Custom HLSL node with code
+- `set_custom_hlsl_code(system, emitter, module, node_id, code)` - Replace HLSL body
+- `get_custom_hlsl_code(system, emitter, module, node_id)` - Read HLSL body
+- `add_pin(system, emitter, module, node_id, direction, type, name)` - Add a typed pin (Custom HLSL via RequestNewTypedPin, MapGet/Set via AddParameterPin)
+- `delete_node(system, emitter, module, node_id)`
+- `set_node_position(system, emitter, module, node_id, x, y)`
+
+**Wiring:**
+- `connect_pins(system, emitter, module, from_node, from_pin, to_node, to_pin)` - Validated through `UEdGraphSchema_Niagara::TryCreateConnection`
+- `disconnect_pin(system, emitter, module, node_id, pin_name)`
+
+**Module signature helpers:**
+- `add_module_input(system, emitter, module, input_name, type)` - Adds `Module.<name>` to the Map Get (creating it if needed). Exposes the input on the stack.
+- `add_module_output(system, emitter, module, output_name, type)` - Adds a write to the Map Set.
+
+**Apply:**
+- `apply_changes(system_path)` - Refreshes every scratch-referencing stack module, rebuilds emitter nodes, recompiles, and saves. Call once at the end of a batch of edits.
+
+See the [`niagara-emitters` skill](Content/Skills/niagara-emitters/SKILL.md) for an end-to-end example that builds a Custom-HLSL splat module.
 
 ### ScreenshotService (5 methods)
 
