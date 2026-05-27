@@ -255,7 +255,7 @@ struct FMapBlockoutConfig
 	FMapBlockoutRoadConfig Road;
 
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
-	FMapBlockoutPOIConfig POIs;
+	FMapBlockoutPOIConfig Pois;
 
 	/** Optional precise river polylines (overrides flood-layer-derived water). */
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
@@ -373,7 +373,7 @@ struct FMapBlockoutPOIResult
 	bool bSuccess = false;
 
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
-	TArray<FMapBlockoutPOI> POIs;
+	TArray<FMapBlockoutPOI> Pois;
 
 	/** Any service roads added by this stage (appended to the Stage 1 network). */
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
@@ -540,7 +540,7 @@ struct FMapBlockoutState
 	FMapBlockoutRoadNetworkResult Stage1Roads;
 
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
-	FMapBlockoutPOIResult Stage2POIs;
+	FMapBlockoutPOIResult Stage2Pois;
 
 	UPROPERTY(BlueprintReadWrite, Category = "MapBlockout")
 	FMapBlockoutFieldResult Stage3Fields;
@@ -706,7 +706,7 @@ public:
 
 	/** Stage 2 — Points of Interest. */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|MapBlockout")
-	static FMapBlockoutPOIResult PlacePOIs(
+	static FMapBlockoutPOIResult PlacePois(
 		const FMapBlockoutLandcoverGrid& Grid,
 		const FMapBlockoutRoadNetworkResult& Roads,
 		const FMapBlockoutConfig& Config);
@@ -716,7 +716,7 @@ public:
 	static FMapBlockoutFieldResult PlaceFields(
 		const FMapBlockoutLandcoverGrid& Grid,
 		const FMapBlockoutRoadNetworkResult& Roads,
-		const FMapBlockoutPOIResult& POIs,
+		const FMapBlockoutPOIResult& Pois,
 		const FMapBlockoutConfig& Config);
 
 	/** Stage 4 — Trees, Forests, Underbrush. */
@@ -724,7 +724,7 @@ public:
 	static FMapBlockoutFoliageResult PlaceFoliage(
 		const FMapBlockoutLandcoverGrid& Grid,
 		const FMapBlockoutRoadNetworkResult& Roads,
-		const FMapBlockoutPOIResult& POIs,
+		const FMapBlockoutPOIResult& Pois,
 		const FMapBlockoutFieldResult& Fields,
 		const FMapBlockoutConfig& Config);
 
@@ -733,7 +733,7 @@ public:
 	static FMapBlockoutRailwayResult PlaceRailway(
 		const FMapBlockoutLandcoverGrid& Grid,
 		const FMapBlockoutRoadNetworkResult& Roads,
-		const FMapBlockoutPOIResult& POIs,
+		const FMapBlockoutPOIResult& Pois,
 		const FMapBlockoutFieldResult& Fields,
 		const FMapBlockoutFoliageResult& Foliage,
 		const FMapBlockoutConfig& Config);
@@ -831,8 +831,8 @@ public:
 	 * @param BuildingMeshPath - optional default mesh for buildings (empty = empty actors)
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|MapBlockout")
-	static FMapBlockoutMaterializeResult MaterializePOIsAsActors(
-		const FMapBlockoutPOIResult& POIs,
+	static FMapBlockoutMaterializeResult MaterializePoisAsActors(
+		const FMapBlockoutPOIResult& Pois,
 		const FString& FolderPath,
 		const FString& BuildingMeshPath = TEXT(""));
 

@@ -434,38 +434,70 @@ FMapBlockoutRoadNetworkResult UMapBlockoutService::GenerateRoads(
 		}
 	}
 
-	// Rasterize + prune orphans (largest connected component).
+	// Rasterize + prune orphan road runs (keep only the largest connected
+	// component). Matches the Python reference's "no roads that connect to
+	// nothing" rule. Connectivity is measured AFTER pruning + re-rasterizing,
+	// so a clean network reports ~100% even when initial line-clip produced
+	// some islands.
 	TArray<uint8> RoadMask;
 	RasterizeRoads(Result.Roads, C, RoadMask);
 
-	TArray<int32> Labels; int32 NComp = MapBlockoutMath::LabelConnectedComponents(RoadMask, WORK_W, WORK_H, Labels);
-	float ConnectivityFrac = 0.0f;
-	if (NComp > 0)
 	{
-		TArray<int32> Sizes; MapBlockoutMath::ComponentSizes(Labels, NComp, Sizes);
-		int32 MainLabel = 1, MainSize = Sizes.Num() > 0 ? Sizes[0] : 0;
-		for (int32 L = 0; L < Sizes.Num(); ++L) { if (Sizes[L] > MainSize) { MainSize = Sizes[L]; MainLabel = L + 1; } }
-		const int32 TotalRoadCells = MapBlockoutMath::CountNonZero(RoadMask);
-		ConnectivityFrac = TotalRoadCells > 0 ? float(MainSize) / float(TotalRoadCells) : 0.0f;
-
+		TArray<int32> Labels;
+		int32 NComp = MapBlockoutMath::LabelConnectedComponents(RoadMask, WORK_W, WORK_H, Labels);
 		if (NComp > 1)
 		{
-			// Drop runs whose majority of pixels lie outside the main component.
+			TArray<int32> Sizes; MapBlockoutMath::ComponentSizes(Labels, NComp, Sizes);
+			int32 MainLabel = 1, MainSize = Sizes.Num() > 0 ? Sizes[0] : 0;
+			for (int32 L = 0; L < Sizes.Num(); ++L)
+			{
+				if (Sizes[L] > MainSize) { MainSize = Sizes[L]; MainLabel = L + 1; }
+			}
+
 			TArray<FMapBlockoutRoad> Kept;
 			for (const FMapBlockoutRoad& Rd : Result.Roads)
 			{
 				int32 Hit = 0, Total = 0;
-				for (int32 I = 0; I < Rd.Points.Num(); I += 3)
+				// Sample more densely than every 3rd point and also count nearby
+				// labelled cells (rasterized roads are several cells wide post-
+				// dilation, so a single sampled cell can land on a transparent
+				// neighbour gap and miss the main label).
+				for (int32 I = 0; I < Rd.Points.Num(); ++I)
 				{
 					const int32 Col = W2Col(Rd.Points[I].X, C);
 					const int32 Row = W2Row(Rd.Points[I].Y, C);
-					if (Labels[Row * WORK_W + Col] == MainLabel) { ++Hit; }
+					bool bIn = false;
+					for (int32 Dy = -2; Dy <= 2 && !bIn; ++Dy)
+					{
+						for (int32 Dx = -2; Dx <= 2 && !bIn; ++Dx)
+						{
+							const int32 Cc = FMath::Clamp(Col + Dx, 0, WORK_W - 1);
+							const int32 Rr = FMath::Clamp(Row + Dy, 0, WORK_H - 1);
+							if (Labels[Rr * WORK_W + Cc] == MainLabel) { bIn = true; }
+						}
+					}
+					if (bIn) { ++Hit; }
 					++Total;
 				}
 				if (Total > 0 && Hit * 2 >= Total) { Kept.Add(Rd); }
 			}
 			Result.Roads = MoveTemp(Kept);
 			RasterizeRoads(Result.Roads, C, RoadMask);
+		}
+	}
+
+	// Recompute connectivity AFTER pruning. The check below uses this value.
+	float ConnectivityFrac = 0.0f;
+	{
+		TArray<int32> Labels;
+		const int32 NComp = MapBlockoutMath::LabelConnectedComponents(RoadMask, WORK_W, WORK_H, Labels);
+		if (NComp > 0)
+		{
+			TArray<int32> Sizes; MapBlockoutMath::ComponentSizes(Labels, NComp, Sizes);
+			int32 MainSize = Sizes.Num() > 0 ? Sizes[0] : 0;
+			for (int32 L = 0; L < Sizes.Num(); ++L) { MainSize = FMath::Max(MainSize, Sizes[L]); }
+			const int32 TotalRoadCells = MapBlockoutMath::CountNonZero(RoadMask);
+			ConnectivityFrac = TotalRoadCells > 0 ? float(MainSize) / float(TotalRoadCells) : 0.0f;
 		}
 	}
 
@@ -487,7 +519,7 @@ FMapBlockoutRoadNetworkResult UMapBlockoutService::GenerateRoads(
 
 
 // =========================================================================
-// STAGE 2 -- POIs + BUILDINGS
+// STAGE 2 -- Pois + BUILDINGS
 // =========================================================================
 
 namespace
@@ -566,11 +598,11 @@ namespace
 		MapBlockoutMath::Dilate(OutMask, WORK_W, WORK_H, 2);
 	}
 
-	void RasterizePOIDiscs(const TArray<FMapBlockoutPOI>& POIs, const FStageCtx& C,
+	void RasterizePOIDiscs(const TArray<FMapBlockoutPOI>& Pois, const FStageCtx& C,
 		float Scale, TArray<uint8>& OutMask)
 	{
 		OutMask.SetNumZeroed(WORK_W * WORK_H);
-		for (const FMapBlockoutPOI& P : POIs)
+		for (const FMapBlockoutPOI& P : Pois)
 		{
 			MapBlockoutMath::RasterizeDisk(OutMask, WORK_W, WORK_H,
 				W2Col(P.Center.X, C), W2Row(P.Center.Y, C),
@@ -579,7 +611,7 @@ namespace
 	}
 }
 
-FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
+FMapBlockoutPOIResult UMapBlockoutService::PlacePois(
 	const FMapBlockoutLandcoverGrid& Grid,
 	const FMapBlockoutRoadNetworkResult& Roads,
 	const FMapBlockoutConfig& Config)
@@ -636,7 +668,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 	// Greedy spread with min spacing.
 	FRandomStream Rng(Config.Seed + 5);
 	for (int32 I = Inters.Num() - 1; I > 0; --I) { int32 J = Rng.RandRange(0, I); if (J != I) { Inters.Swap(I, J); } }
-	const float MinSp = C.Span * FMath::Max(0.001f, Config.POIs.MinSpacingFrac);
+	const float MinSp = C.Span * FMath::Max(0.001f, Config.Pois.MinSpacingFrac);
 	TArray<FVector2D> Chosen;
 	for (const FVector2D& P : Inters)
 	{
@@ -645,7 +677,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 		if (bOk) { Chosen.Add(P); }
 	}
 	const int32 POIMin = FMath::Max(6, FMath::RoundToInt(15.0f * (C.MapKm * C.MapKm) / 144.0f));
-	int32 Target = Config.POIs.TargetCount;
+	int32 Target = Config.Pois.TargetCount;
 	if (Target <= 0) { Target = FMath::Max(POIMin, FMath::RoundToInt(16.0f * (C.MapKm * C.MapKm) / 144.0f)); }
 	if (Chosen.Num() > FMath::Max(Target, POIMin)) { Chosen.SetNum(FMath::Max(Target, POIMin)); }
 
@@ -742,7 +774,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 		D.Center.Y += R.FRandRange(-C.Span * 0.005f, C.Span * 0.005f);
 	}
 
-	// Convert drafts -> result POIs (without buildings yet).
+	// Convert drafts -> result Pois (without buildings yet).
 	for (const FPOIDraft& D : Drafts)
 	{
 		FMapBlockoutPOI POI;
@@ -750,7 +782,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 		POI.Type = D.Type;
 		POI.Center = D.Center;
 		POI.RadiusCm = D.RadiusCm;
-		Result.POIs.Add(POI);
+		Result.Pois.Add(POI);
 	}
 
 	// Generate buildings per POI type. Mirrors place_street() / compound() from
@@ -842,7 +874,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 	for (int32 I = 0; I < Drafts.Num(); ++I)
 	{
 		const FPOIDraft& D = Drafts[I];
-		FMapBlockoutPOI& POI = Result.POIs[I];
+		FMapBlockoutPOI& POI = Result.Pois[I];
 		TArray<TPair<float, TArray<FVector2D>>> RunsHere;
 		RunsThrough(D.Center, D.RadiusCm, RunsHere);
 		FRandomStream Rng2(GetTypeHash(D.Name));
@@ -913,7 +945,7 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 	RoadFilt = RoadMask;
 	MapBlockoutMath::Dilate(RoadFilt, WORK_W, WORK_H, 3);
 
-	for (FMapBlockoutPOI& POI : Result.POIs)
+	for (FMapBlockoutPOI& POI : Result.Pois)
 	{
 		TArray<FMapBlockoutBuilding> Kept;
 		for (const FMapBlockoutBuilding& B : POI.Buildings)
@@ -929,29 +961,29 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 	TArray<FString> OffNetwork;
 	bool bTypeOK = true;
 	float MinSpacing = FLT_MAX;
-	for (int32 I = 0; I < Result.POIs.Num(); ++I)
+	for (int32 I = 0; I < Result.Pois.Num(); ++I)
 	{
 		TArray<TPair<float, TArray<FVector2D>>> RunsHere;
-		RunsThrough(Result.POIs[I].Center, Result.POIs[I].RadiusCm, RunsHere);
-		if (RunsHere.Num() == 0) { OffNetwork.Add(Result.POIs[I].Name); }
+		RunsThrough(Result.Pois[I].Center, Result.Pois[I].RadiusCm, RunsHere);
+		if (RunsHere.Num() == 0) { OffNetwork.Add(Result.Pois[I].Name); }
 
 		// Type-road match
-		const EMapBlockoutPOIType T = Result.POIs[I].Type;
-		const FVector2D CtrXY = Result.POIs[I].Center;
+		const EMapBlockoutPOIType T = Result.Pois[I].Type;
+		const FVector2D CtrXY = Result.Pois[I].Center;
 		const bool bOnMain = MainXSnap.Contains(FMath::RoundToInt(CtrXY.X)) || MainYSnap.Contains(FMath::RoundToInt(CtrXY.Y));
 		const bool bOnDirt = DirtXSnap.Contains(FMath::RoundToInt(CtrXY.X)) || DirtYSnap.Contains(FMath::RoundToInt(CtrXY.Y));
 		if ((T == EMapBlockoutPOIType::Town || T == EMapBlockoutPOIType::Industrial) && !bOnMain) { bTypeOK = false; }
 		if (T == EMapBlockoutPOIType::Farmstead && !bOnDirt) { bTypeOK = false; }
 
-		for (int32 J = I + 1; J < Result.POIs.Num(); ++J)
+		for (int32 J = I + 1; J < Result.Pois.Num(); ++J)
 		{
-			MinSpacing = FMath::Min(MinSpacing, Dist(Result.POIs[I].Center, Result.POIs[J].Center));
+			MinSpacing = FMath::Min(MinSpacing, Dist(Result.Pois[I].Center, Result.Pois[J].Center));
 		}
 	}
 
 	// Rasterize building/POI masks for overlap-check.
 	TArray<FMapBlockoutBuilding> AllB;
-	for (const FMapBlockoutPOI& P : Result.POIs) { AllB.Append(P.Buildings); }
+	for (const FMapBlockoutPOI& P : Result.Pois) { AllB.Append(P.Buildings); }
 	TArray<uint8> BldMask; RasterizeBuildings(AllB, C, BldMask);
 	TArray<uint8> Tmp;
 	MapBlockoutMath::MaskAnd(BldMask, RoadMask, Tmp);
@@ -960,19 +992,19 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePOIs(
 	int32 BldInWater = 0;
 	for (const FMapBlockoutBuilding& B : AllB) { if (WaterAt(C, B.World.X, B.World.Y)) { ++BldInWater; } }
 	int32 POIInWater = 0;
-	for (const FMapBlockoutPOI& P : Result.POIs) { if (WaterAt(C, P.Center.X, P.Center.Y)) { ++POIInWater; } }
+	for (const FMapBlockoutPOI& P : Result.Pois) { if (WaterAt(C, P.Center.X, P.Center.Y)) { ++POIInWater; } }
 
-	Result.Gate.Checks.Add(Chk(TEXT("POI Count"), Result.POIs.Num() >= POIMin,
-		FString::Printf(TEXT("%d POIs (need >=%d for %.0f km)"), Result.POIs.Num(), POIMin, C.MapKm)));
+	Result.Gate.Checks.Add(Chk(TEXT("POI Count"), Result.Pois.Num() >= POIMin,
+		FString::Printf(TEXT("%d Pois (need >=%d for %.0f km)"), Result.Pois.Num(), POIMin, C.MapKm)));
 	Result.Gate.Checks.Add(Chk(TEXT("On-Network"), OffNetwork.Num() == 0,
-		OffNetwork.Num() ? FString::Printf(TEXT("%d off-network"), OffNetwork.Num()) : TEXT("all POIs on roads")));
+		OffNetwork.Num() ? FString::Printf(TEXT("%d off-network"), OffNetwork.Num()) : TEXT("all Pois on roads")));
 	Result.Gate.Checks.Add(Chk(TEXT("Type-Road Match"), bTypeOK, TEXT("towns/depot on main, farms on dirt")));
 	Result.Gate.Checks.Add(Chk(TEXT("Distribution"), MinSpacing >= MinSp * 0.9f,
 		FString::Printf(TEXT("min spacing=%.2f km"), MinSpacing / KM)));
 	Result.Gate.Checks.Add(Chk(TEXT("Buildings Off Roads"), BldOnRoad == 0,
 		FString::Printf(TEXT("%d px on road"), BldOnRoad)));
 	Result.Gate.Checks.Add(Chk(TEXT("No River Overlap"), BldInWater == 0 && POIInWater == 0,
-		FString::Printf(TEXT("buildings in water=%d, POIs in water=%d"), BldInWater, POIInWater)));
+		FString::Printf(TEXT("buildings in water=%d, Pois in water=%d"), BldInWater, POIInWater)));
 	Result.Gate.Checks.Add(Chk(TEXT("Layout Realism"), true));
 	Result.Gate.Checks.Add(Chk(TEXT("AAA FPS Combat Design"), true));
 	Result.Gate.Checks.Add(Chk(TEXT("Boundary Circle (green)"), true));
@@ -1040,7 +1072,7 @@ namespace
 FMapBlockoutFieldResult UMapBlockoutService::PlaceFields(
 	const FMapBlockoutLandcoverGrid& Grid,
 	const FMapBlockoutRoadNetworkResult& Roads,
-	const FMapBlockoutPOIResult& POIs,
+	const FMapBlockoutPOIResult& Pois,
 	const FMapBlockoutConfig& Config)
 {
 	FMapBlockoutFieldResult Result;
@@ -1049,9 +1081,9 @@ FMapBlockoutFieldResult UMapBlockoutService::PlaceFields(
 	TArray<uint8> RoadMask, BldMask, POIDiscMask, DividerMask;
 	RasterizeRoads(Roads.Roads, C, RoadMask);
 	TArray<FMapBlockoutBuilding> AllB;
-	for (const FMapBlockoutPOI& P : POIs.POIs) { AllB.Append(P.Buildings); }
+	for (const FMapBlockoutPOI& P : Pois.Pois) { AllB.Append(P.Buildings); }
 	RasterizeBuildings(AllB, C, BldMask);
-	RasterizePOIDiscs(POIs.POIs, C, 0.95f, POIDiscMask);
+	RasterizePOIDiscs(Pois.Pois, C, 0.95f, POIDiscMask);
 	TArray<float> AllX, AllY; BuildAllLines(Config, C, AllX, AllY);
 	ComputeDividerMask(C, AllX, AllY, DividerMask);
 
@@ -1183,7 +1215,7 @@ namespace
 FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 	const FMapBlockoutLandcoverGrid& Grid,
 	const FMapBlockoutRoadNetworkResult& Roads,
-	const FMapBlockoutPOIResult& POIs,
+	const FMapBlockoutPOIResult& Pois,
 	const FMapBlockoutFieldResult& Fields,
 	const FMapBlockoutConfig& Config)
 {
@@ -1193,7 +1225,7 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 	TArray<uint8> RoadMask, BldMask;
 	RasterizeRoads(Roads.Roads, C, RoadMask);
 	TArray<FMapBlockoutBuilding> AllB;
-	for (const FMapBlockoutPOI& P : POIs.POIs) { AllB.Append(P.Buildings); }
+	for (const FMapBlockoutPOI& P : Pois.Pois) { AllB.Append(P.Buildings); }
 	RasterizeBuildings(AllB, C, BldMask);
 
 	const int32 N = WORK_W * WORK_H;
@@ -1248,13 +1280,13 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 	// Strongpoint forest ring (Stage 4 CHECK: at least one POI fully ringed).
 	TArray<uint8> Strat; Strat.SetNumZeroed(N);
 	int32 StrongIdx = INDEX_NONE;
-	for (int32 I = 0; I < POIs.POIs.Num(); ++I)
+	for (int32 I = 0; I < Pois.Pois.Num(); ++I)
 	{
-		if (POIs.POIs[I].Type == EMapBlockoutPOIType::Strongpoint) { StrongIdx = I; break; }
+		if (Pois.Pois[I].Type == EMapBlockoutPOIType::Strongpoint) { StrongIdx = I; break; }
 	}
 	if (StrongIdx != INDEX_NONE)
 	{
-		const FMapBlockoutPOI& SP = POIs.POIs[StrongIdx];
+		const FMapBlockoutPOI& SP = Pois.Pois[StrongIdx];
 		TArray<uint8> Ring, Hole;
 		OrganicBlob(C, SP.Center.X, SP.Center.Y, SP.RadiusCm + C.Span * 0.058f, 101, 0.10f, 0.0f, Ring);
 		DiscMask(C, SP.Center.X, SP.Center.Y, SP.RadiusCm + C.Span * 0.004f, Hole);
@@ -1357,7 +1389,7 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 	}
 
 	// In-POI sparse trees (small dabs).
-	for (const FMapBlockoutPOI& POI : POIs.POIs)
+	for (const FMapBlockoutPOI& POI : Pois.Pois)
 	{
 		FRandomStream Rng(GetTypeHash(POI.Name) + 9u);
 		const int32 NTrees = (POI.Type == EMapBlockoutPOIType::Town || POI.Type == EMapBlockoutPOIType::Industrial) ? 8 : 16;
@@ -1433,7 +1465,7 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 	float RingPct = 0.0f;
 	if (StrongIdx != INDEX_NONE)
 	{
-		const FMapBlockoutPOI& SP = POIs.POIs[StrongIdx];
+		const FMapBlockoutPOI& SP = Pois.Pois[StrongIdx];
 		TArray<uint8> Outer, Inner;
 		DiscMask(C, SP.Center.X, SP.Center.Y, SP.RadiusCm + C.Span * 0.046f, Outer);
 		DiscMask(C, SP.Center.X, SP.Center.Y, SP.RadiusCm + C.Span * 0.007f, Inner);
@@ -1481,7 +1513,7 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 FMapBlockoutRailwayResult UMapBlockoutService::PlaceRailway(
 	const FMapBlockoutLandcoverGrid& Grid,
 	const FMapBlockoutRoadNetworkResult& Roads,
-	const FMapBlockoutPOIResult& POIs,
+	const FMapBlockoutPOIResult& Pois,
 	const FMapBlockoutFieldResult& Fields,
 	const FMapBlockoutFoliageResult& Foliage,
 	const FMapBlockoutConfig& Config)
@@ -1574,7 +1606,7 @@ FMapBlockoutRailwayResult UMapBlockoutService::PlaceRailway(
 	// Stage 5 gate.
 	TArray<uint8> BldMask;
 	TArray<FMapBlockoutBuilding> AllB;
-	for (const FMapBlockoutPOI& P : POIs.POIs) { AllB.Append(P.Buildings); }
+	for (const FMapBlockoutPOI& P : Pois.Pois) { AllB.Append(P.Buildings); }
 	RasterizeBuildings(AllB, C, BldMask);
 	TArray<uint8> Tmp;
 	MapBlockoutMath::MaskAnd(RailMask, BldMask, Tmp);
@@ -1633,7 +1665,7 @@ FMapBlockoutGateResult UMapBlockoutService::RunFinalPass(const FMapBlockoutState
 				FString::Printf(TEXT("%d failed"), G.FailedCount)));
 	};
 	AddRecap(1, State.Stage1Roads.Gate, TEXT("Roads"));
-	AddRecap(2, State.Stage2POIs.Gate, TEXT("POIs"));
+	AddRecap(2, State.Stage2Pois.Gate, TEXT("Pois"));
 	AddRecap(3, State.Stage3Fields.Gate, TEXT("Fields"));
 	AddRecap(4, State.Stage4Foliage.Gate, TEXT("Foliage"));
 	AddRecap(5, State.Stage5Railway.Gate, TEXT("Rail/Bridges"));
@@ -1701,9 +1733,9 @@ namespace
 	}
 
 	void DrawBuildingsToBitmap(TArray<FColor>& Bmp, const FStageCtx& C,
-		const FMapBlockoutPOIResult& POIs)
+		const FMapBlockoutPOIResult& Pois)
 	{
-		for (const FMapBlockoutPOI& POI : POIs.POIs)
+		for (const FMapBlockoutPOI& POI : Pois.Pois)
 		{
 			for (const FMapBlockoutBuilding& B : POI.Buildings)
 			{
@@ -1716,9 +1748,9 @@ namespace
 	}
 
 	void DrawPOIBoundariesToBitmap(TArray<FColor>& Bmp, const FStageCtx& C,
-		const FMapBlockoutPOIResult& POIs)
+		const FMapBlockoutPOIResult& Pois)
 	{
-		for (const FMapBlockoutPOI& POI : POIs.POIs)
+		for (const FMapBlockoutPOI& POI : Pois.Pois)
 		{
 			MapBlockoutImage::DrawCircleOutline(Bmp, WORK_W, WORK_H,
 				W2Col(POI.Center.X, C), W2Row(POI.Center.Y, C),
@@ -1835,8 +1867,8 @@ FString UMapBlockoutService::RenderStageSnapshot(
 
 	if (Stage >= 2)
 	{
-		DrawBuildingsToBitmap(MapBmp, C, State.Stage2POIs);
-		DrawPOIBoundariesToBitmap(MapBmp, C, State.Stage2POIs);
+		DrawBuildingsToBitmap(MapBmp, C, State.Stage2Pois);
+		DrawPOIBoundariesToBitmap(MapBmp, C, State.Stage2Pois);
 	}
 	if (Stage >= 5)
 	{
@@ -1847,7 +1879,7 @@ FString UMapBlockoutService::RenderStageSnapshot(
 	TArray<FColor> Canvas; ComposeCanvas(MapBmp, Canvas);
 	static const TCHAR* TitleFmt[] = {
 		TEXT("STAGE 1 - ROADWAYS"),
-		TEXT("STAGE 2 - ROADS + POIS"),
+		TEXT("STAGE 2 - ROADS + Pois"),
 		TEXT("STAGE 3 - + FIELDS"),
 		TEXT("STAGE 4 - + TREES / FORESTS / SCRUB"),
 		TEXT("STAGE 5 - + RAILWAY + BRIDGES"),
@@ -1893,8 +1925,8 @@ TArray<FString> UMapBlockoutService::RenderFinalDeliverables(
 			State.Stage4Foliage.TreelineMask.Cells, MapBlockoutImage::Colors::Treeline);
 		DrawRoadsToBitmap(MapBmp, C, State.Stage1Roads);
 		DrawRailToBitmap(MapBmp, C, State.Stage5Railway);
-		DrawBuildingsToBitmap(MapBmp, C, State.Stage2POIs);
-		DrawPOIBoundariesToBitmap(MapBmp, C, State.Stage2POIs);
+		DrawBuildingsToBitmap(MapBmp, C, State.Stage2Pois);
+		DrawPOIBoundariesToBitmap(MapBmp, C, State.Stage2Pois);
 		DrawBridgesToBitmap(MapBmp, C, State.Stage5Railway);
 
 		TArray<FColor> Canvas; ComposeCanvas(MapBmp, Canvas);
@@ -1943,7 +1975,7 @@ TArray<FString> UMapBlockoutService::RenderFinalDeliverables(
 		TArray<float> Density; Density.SetNumZeroed(N);
 		TArray<uint8> RoadMask; RasterizeRoads(State.Stage1Roads.Roads, C, RoadMask);
 		TArray<FMapBlockoutBuilding> AllB;
-		for (const FMapBlockoutPOI& P : State.Stage2POIs.POIs) { AllB.Append(P.Buildings); }
+		for (const FMapBlockoutPOI& P : State.Stage2Pois.Pois) { AllB.Append(P.Buildings); }
 		TArray<uint8> BldMask; RasterizeBuildings(AllB, C, BldMask);
 		TArray<uint8> RailMask; RailMask.SetNumZeroed(N);
 		for (const FMapBlockoutRoad& R : State.Stage5Railway.RailLines)
@@ -2010,15 +2042,15 @@ FMapBlockoutPipelineResult UMapBlockoutService::RunFullPipeline(
 		return Result;
 	}
 
-	Result.FinalState.Stage2POIs = PlacePOIs(Grid, Result.FinalState.Stage1Roads, Config);
-	if (!Result.FinalState.Stage2POIs.Gate.bAllPassed)
+	Result.FinalState.Stage2Pois = PlacePois(Grid, Result.FinalState.Stage1Roads, Config);
+	if (!Result.FinalState.Stage2Pois.Gate.bAllPassed)
 	{
 		Result.ErrorMessage = TEXT("Stage 2 gate failed.");
 		return Result;
 	}
 
 	Result.FinalState.Stage3Fields = PlaceFields(Grid,
-		Result.FinalState.Stage1Roads, Result.FinalState.Stage2POIs, Config);
+		Result.FinalState.Stage1Roads, Result.FinalState.Stage2Pois, Config);
 	if (!Result.FinalState.Stage3Fields.Gate.bAllPassed)
 	{
 		Result.ErrorMessage = TEXT("Stage 3 gate failed.");
@@ -2026,7 +2058,7 @@ FMapBlockoutPipelineResult UMapBlockoutService::RunFullPipeline(
 	}
 
 	Result.FinalState.Stage4Foliage = PlaceFoliage(Grid,
-		Result.FinalState.Stage1Roads, Result.FinalState.Stage2POIs,
+		Result.FinalState.Stage1Roads, Result.FinalState.Stage2Pois,
 		Result.FinalState.Stage3Fields, Config);
 	if (!Result.FinalState.Stage4Foliage.Gate.bAllPassed)
 	{
@@ -2035,7 +2067,7 @@ FMapBlockoutPipelineResult UMapBlockoutService::RunFullPipeline(
 	}
 
 	Result.FinalState.Stage5Railway = PlaceRailway(Grid,
-		Result.FinalState.Stage1Roads, Result.FinalState.Stage2POIs,
+		Result.FinalState.Stage1Roads, Result.FinalState.Stage2Pois,
 		Result.FinalState.Stage3Fields, Result.FinalState.Stage4Foliage, Config);
 	if (!Result.FinalState.Stage5Railway.Gate.bAllPassed)
 	{

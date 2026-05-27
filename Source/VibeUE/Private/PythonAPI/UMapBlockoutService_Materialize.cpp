@@ -168,32 +168,32 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializeFieldsAsPaint(
 
 
 // =========================================================================
-// POIs as actors
+// Pois as actors
 // =========================================================================
 
-FMapBlockoutMaterializeResult UMapBlockoutService::MaterializePOIsAsActors(
-	const FMapBlockoutPOIResult& POIs,
+FMapBlockoutMaterializeResult UMapBlockoutService::MaterializePoisAsActors(
+	const FMapBlockoutPOIResult& Pois,
 	const FString& FolderPath, const FString& BuildingMeshPath)
 {
 	FMapBlockoutMaterializeResult Result;
-	if (!POIs.bSuccess || !POIs.Gate.bAllPassed)
+	if (!Pois.bSuccess || !Pois.Gate.bAllPassed)
 	{
-		Result.ErrorMessage = TEXT("MaterializePOIsAsActors: POIs stage has not passed.");
+		Result.ErrorMessage = TEXT("MaterializePoisAsActors: Pois stage has not passed.");
 		return Result;
 	}
 
 	UWorld* World = GetEditorWorld();
 	if (!World)
 	{
-		Result.ErrorMessage = TEXT("MaterializePOIsAsActors: no editor world.");
+		Result.ErrorMessage = TEXT("MaterializePoisAsActors: no editor world.");
 		return Result;
 	}
 
 	UStaticMesh* BuildingMesh = LoadStaticMesh(BuildingMeshPath);
-	const FString PoiFolder = FolderPath.IsEmpty() ? TEXT("MapBlockout/POIs") : FolderPath;
+	const FString PoiFolder = FolderPath.IsEmpty() ? TEXT("MapBlockout/Pois") : FolderPath;
 
 	int32 Spawned = 0;
-	for (const FMapBlockoutPOI& POI : POIs.POIs)
+	for (const FMapBlockoutPOI& POI : Pois.Pois)
 	{
 		FActorSpawnParameters Params;
 		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
@@ -236,7 +236,7 @@ FMapBlockoutMaterializeResult UMapBlockoutService::MaterializePOIsAsActors(
 	Result.bSuccess = (Spawned > 0);
 	if (!Result.bSuccess)
 	{
-		Result.ErrorMessage = TEXT("MaterializePOIsAsActors: no actors spawned.");
+		Result.ErrorMessage = TEXT("MaterializePoisAsActors: no actors spawned.");
 	}
 	return Result;
 }
