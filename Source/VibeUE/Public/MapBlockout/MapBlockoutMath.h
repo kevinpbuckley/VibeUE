@@ -45,6 +45,33 @@ namespace MapBlockoutMath
 	VIBEUE_API void Erode(
 		TArray<uint8>& InOut, int32 W, int32 H, int32 Radius);
 
+	/** Erode then dilate (removes small noise specks). */
+	VIBEUE_API void BinaryOpening(
+		TArray<uint8>& InOut, int32 W, int32 H, int32 Radius);
+
+	/** Dilate then erode (closes small gaps inside shapes). */
+	VIBEUE_API void BinaryClosing(
+		TArray<uint8>& InOut, int32 W, int32 H, int32 Radius);
+
+	/**
+	 * Compute the size (pixel count) of every connected component.
+	 * Caller passes the label grid from LabelConnectedComponents.
+	 * OutSizes[K-1] is the size of label K (labels are 1..NumComponents).
+	 */
+	VIBEUE_API void ComponentSizes(
+		const TArray<int32>& Labels, int32 NumComponents,
+		TArray<int32>& OutSizes);
+
+	/**
+	 * Generate a deterministic noise field at full resolution: samples a small
+	 * (W/BlockSize) x (H/BlockSize) grid of uniform-random values seeded by Seed,
+	 * then bilinearly upsamples to W x H. Equivalent to numpy's
+	 * `Image.fromarray(rng.rand(H//div, W//div)*255).resize((W,H), BICUBIC)/255`
+	 * used by the host-Python reference's `_noise()` helper.
+	 */
+	VIBEUE_API void GenerateNoiseField(
+		TArray<float>& Out, int32 W, int32 H, int32 BlockSize, uint32 Seed);
+
 	/**
 	 * Euclidean distance transform: for every cell, the distance to the nearest
 	 * non-zero cell (in cell units). Felzenszwalb-Huttenlocher 1D-pass algorithm.

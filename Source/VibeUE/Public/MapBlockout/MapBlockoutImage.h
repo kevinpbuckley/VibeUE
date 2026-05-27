@@ -78,13 +78,32 @@ namespace MapBlockoutImage
 		const TArray<float>& Density, int32 W, int32 H,
 		TArray<FColor>& OutBitmap);
 
+	/** One entry in the color key (a color swatch + text label). */
+	struct FKeyEntry
+	{
+		FColor Color;
+		FString Label;
+		/** "swatch" = filled rect; "line" = horizontal line; "ring" = outlined circle. */
+		FString Style;
+
+		FKeyEntry(FColor InColor, const FString& InLabel, const FString& InStyle = TEXT("swatch"))
+			: Color(InColor), Label(InLabel), Style(InStyle) {}
+	};
+
 	/**
 	 * Draws the top-right color key panel with the MapDesigner color chart.
 	 * Panel must not cover the map area; caller passes in the allowed panel rect.
+	 * Returns the panel's left X (used by snapshot renderer's "Color Key off map" check).
 	 */
-	VIBEUE_API void DrawColorKey(
+	VIBEUE_API int32 DrawColorKey(
 		TArray<FColor>& Bitmap, int32 W, int32 H,
-		int32 PanelLeft, int32 PanelTop, int32 PanelWidth, int32 PanelHeight);
+		int32 PanelLeft, int32 PanelTop, int32 PanelWidth,
+		const FString& Title, const TArray<FKeyEntry>& Entries);
+
+	/** Filled solid text using a built-in 5x7 ASCII bitmap font. Scale=1 → 5x7 chars. */
+	VIBEUE_API void DrawText5x7(
+		TArray<FColor>& Bitmap, int32 W, int32 H,
+		int32 X, int32 Y, const FString& Text, FColor Color, int32 Scale = 2);
 
 	/**
 	 * Encode a bitmap to a 24-bit PNG file at OutputPath (creates parent dirs).
