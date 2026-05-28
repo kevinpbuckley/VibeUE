@@ -42,7 +42,7 @@ Load the bundled Verkhova fixture from `Plugins/VibeUE/Source/VibeUE/Tests/MapBl
 
 ## Stage 1 — Roads
 
-Build a `MapBlockoutConfig` with `level_name="VerkhovaTest"`, seed=7, map the layers `crop=L1, soil=L2, flood=L3, forest=L4` (those are the layer names in the Verkhova fixture). Then call `generate_roads` against the Verkhova grid + this config.
+Build a `MapBlockoutConfig` with `level_name="VerkhovaTest"`, seed=7, map the layers `crop=L1, soil=L2, flood=L3, forest=L4` (those are the layer names in the Verkhova fixture). Set `tree_coverage_band = Vector2D(25, 40)` — Verkhova's crop layer is very dense (mean weight 0.627), so the default (30, 40) tree floor leaves no headroom after fields claim 58–59% coverage. The (25, 40) band is the validated working setting for this fixture; the contributor can use (30, 40) on landscapes with less aggressive cropland. Then call `generate_roads` against the Verkhova grid + this config.
 
 How many roads did it produce? How many are Main vs Dirt? Did the Stage 1 gate pass? Show the failing checks if any.
 

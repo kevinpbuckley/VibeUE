@@ -164,8 +164,13 @@ namespace
 			for (int32 i = 0; i < N; ++i) { C.Water[i] = C.Flood[i] > Thr ? 1 : 0; }
 			MapBlockoutMath::BinaryOpening(C.Water, WORK_W, WORK_H, 1);
 		}
+		// Match the Python reference's `binary_dilation(WATER, iterations=3)` which
+		// uses a 4-connectivity cross structuring element — Manhattan distance
+		// of 3 = 25 cells in the diamond. A radius-2 box (25 cells) is the same
+		// area; a radius-3 box (49 cells) over-buffers by ~2x and steals ~5pp of
+		// headroom from Stage 3.
 		C.WaterBuf = C.Water;
-		MapBlockoutMath::Dilate(C.WaterBuf, WORK_W, WORK_H, 3);
+		MapBlockoutMath::Dilate(C.WaterBuf, WORK_W, WORK_H, 2);
 	}
 
 	// =====================================================================
@@ -257,7 +262,7 @@ namespace
 	void RasterizeRoads(const TArray<FMapBlockoutRoad>& Roads, const FStageCtx& C,
 		TArray<uint8>& OutMask)
 	{
-		OutMask.SetNumZeroed(WORK_W * WORK_H);
+		OutMask.Init(0, WORK_W * WORK_H);
 		for (const FMapBlockoutRoad& R : Roads)
 		{
 			const int32 ThickPx = FMath::Max(3,
@@ -337,7 +342,18 @@ FMapBlockoutRoadNetworkResult UMapBlockoutService::GenerateRoads(
 		Out.Sort();
 		return Out;
 	};
-	TArray<float> AllX = MergeSorted(GridX, MainX);
+	// Horizontals span [HXMin, HXMax]; verticals at X outside this range have no
+	// horizontal to cross and become orphan columns. Drop them up-front.
+	const float HXMin = C.WorldLo + C.Span * 0.021f;
+	const float HXMax = C.WorldHi - C.Span * 0.021f;
+	TArray<float> AllX;
+	{
+		TArray<float> GridXClipped, MainXClipped;
+		for (float X : GridX) { if (X > HXMin && X < HXMax) { GridXClipped.Add(X); } }
+		for (float X : MainX) { if (X > HXMin && X < HXMax) { MainXClipped.Add(X); } }
+		MainX = MoveTemp(MainXClipped);
+		AllX = MergeSorted(GridXClipped, MainX);
+	}
 	TArray<float> AllY;
 	{
 		TArray<float> GridYBand;
@@ -434,56 +450,49 @@ FMapBlockoutRoadNetworkResult UMapBlockoutService::GenerateRoads(
 		}
 	}
 
-	// Rasterize + prune orphan road runs (keep only the largest connected
-	// component). Matches the Python reference's "no roads that connect to
-	// nothing" rule. Connectivity is measured AFTER pruning + re-rasterizing,
-	// so a clean network reports ~100% even when initial line-clip produced
-	// some islands.
+	// Rasterize + prune orphan road runs. Matches the Python reference's "no
+	// roads that connect to nothing" rule. We iterate: each pass drops runs
+	// that don't live in the largest connected component, re-rasterizes, and
+	// re-labels. Removing a fragment can disconnect runs that were only
+	// connected *through* that fragment, so a single pass is not enough.
 	TArray<uint8> RoadMask;
 	RasterizeRoads(Result.Roads, C, RoadMask);
 
+	for (int32 Iter = 0; Iter < 8; ++Iter)
 	{
 		TArray<int32> Labels;
-		int32 NComp = MapBlockoutMath::LabelConnectedComponents(RoadMask, WORK_W, WORK_H, Labels);
-		if (NComp > 1)
-		{
-			TArray<int32> Sizes; MapBlockoutMath::ComponentSizes(Labels, NComp, Sizes);
-			int32 MainLabel = 1, MainSize = Sizes.Num() > 0 ? Sizes[0] : 0;
-			for (int32 L = 0; L < Sizes.Num(); ++L)
-			{
-				if (Sizes[L] > MainSize) { MainSize = Sizes[L]; MainLabel = L + 1; }
-			}
+		const int32 NComp = MapBlockoutMath::LabelConnectedComponents(RoadMask, WORK_W, WORK_H, Labels);
+		if (NComp <= 1) { break; }
 
-			TArray<FMapBlockoutRoad> Kept;
-			for (const FMapBlockoutRoad& Rd : Result.Roads)
-			{
-				int32 Hit = 0, Total = 0;
-				// Sample more densely than every 3rd point and also count nearby
-				// labelled cells (rasterized roads are several cells wide post-
-				// dilation, so a single sampled cell can land on a transparent
-				// neighbour gap and miss the main label).
-				for (int32 I = 0; I < Rd.Points.Num(); ++I)
-				{
-					const int32 Col = W2Col(Rd.Points[I].X, C);
-					const int32 Row = W2Row(Rd.Points[I].Y, C);
-					bool bIn = false;
-					for (int32 Dy = -2; Dy <= 2 && !bIn; ++Dy)
-					{
-						for (int32 Dx = -2; Dx <= 2 && !bIn; ++Dx)
-						{
-							const int32 Cc = FMath::Clamp(Col + Dx, 0, WORK_W - 1);
-							const int32 Rr = FMath::Clamp(Row + Dy, 0, WORK_H - 1);
-							if (Labels[Rr * WORK_W + Cc] == MainLabel) { bIn = true; }
-						}
-					}
-					if (bIn) { ++Hit; }
-					++Total;
-				}
-				if (Total > 0 && Hit * 2 >= Total) { Kept.Add(Rd); }
-			}
-			Result.Roads = MoveTemp(Kept);
-			RasterizeRoads(Result.Roads, C, RoadMask);
+		TArray<int32> Sizes; MapBlockoutMath::ComponentSizes(Labels, NComp, Sizes);
+		int32 MainLabel = 1, MainSize = Sizes.Num() > 0 ? Sizes[0] : 0;
+		for (int32 L = 0; L < Sizes.Num(); ++L)
+		{
+			if (Sizes[L] > MainSize) { MainSize = Sizes[L]; MainLabel = L + 1; }
 		}
+
+		const int32 BeforeCount = Result.Roads.Num();
+		TArray<FMapBlockoutRoad> Kept;
+		for (const FMapBlockoutRoad& Rd : Result.Roads)
+		{
+			// Match the Python reference: sample every 3rd point with exact
+			// pixel lookup (no tolerance window). Rasterized roads are wide
+			// enough post-dilation that the centerline IS in the main label.
+			int32 Hit = 0, Total = 0;
+			for (int32 I = 0; I < Rd.Points.Num(); I += 3)
+			{
+				const int32 Col = W2Col(Rd.Points[I].X, C);
+				const int32 Row = W2Row(Rd.Points[I].Y, C);
+				if (Col < 0 || Row < 0 || Col >= WORK_W || Row >= WORK_H) { continue; }
+				if (Labels[Row * WORK_W + Col] == MainLabel) { ++Hit; }
+				++Total;
+			}
+			if (Total > 0 && Hit * 2 >= Total) { Kept.Add(Rd); }
+		}
+
+		if (Kept.Num() == BeforeCount) { break; }   // stable: no more orphans drop out
+		Result.Roads = MoveTemp(Kept);
+		RasterizeRoads(Result.Roads, C, RoadMask);
 	}
 
 	// Recompute connectivity AFTER pruning. The check below uses this value.
@@ -589,7 +598,7 @@ namespace
 	void RasterizeBuildings(const TArray<FMapBlockoutBuilding>& Bs, const FStageCtx& C,
 		TArray<uint8>& OutMask)
 	{
-		OutMask.SetNumZeroed(WORK_W * WORK_H);
+		OutMask.Init(0, WORK_W * WORK_H);
 		for (const FMapBlockoutBuilding& B : Bs)
 		{
 			TArray<FIntPoint> Poly = BuildingPoly(B, C);
@@ -601,7 +610,7 @@ namespace
 	void RasterizePOIDiscs(const TArray<FMapBlockoutPOI>& Pois, const FStageCtx& C,
 		float Scale, TArray<uint8>& OutMask)
 	{
-		OutMask.SetNumZeroed(WORK_W * WORK_H);
+		OutMask.Init(0, WORK_W * WORK_H);
 		for (const FMapBlockoutPOI& P : Pois)
 		{
 			MapBlockoutMath::RasterizeDisk(OutMask, WORK_W, WORK_H,
@@ -650,6 +659,16 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePois(
 		for (float V : All) { const int32 K = FMath::RoundToInt(V); if (!MainSet.Contains(K)) { DirtSet.Add(K); } }
 		OutAll = All;
 	};
+	// Match GenerateRoads: drop X positions outside the horizontals' reach.
+	const float HXMin = C.WorldLo + C.Span * 0.021f;
+	const float HXMax = C.WorldHi - C.Span * 0.021f;
+	{
+		TArray<float> MainXClipped, GridXClipped;
+		for (float X : MainX) { if (X > HXMin && X < HXMax) { MainXClipped.Add(X); } }
+		for (float X : GridX) { if (X > HXMin && X < HXMax) { GridXClipped.Add(X); } }
+		MainX = MoveTemp(MainXClipped);
+		GridX = MoveTemp(GridXClipped);
+	}
 	TArray<float> AllX, AllY;
 	BuildAll(MainX, GridX, MainXSnap, DirtXSnap, AllX);
 	{
@@ -758,7 +777,10 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePois(
 				{
 					Drafts[I].Name = TEXT("Observation Post");
 					Drafts[I].TypeTag = TEXT("terikon");
-					Drafts[I].Type = EMapBlockoutPOIType::Industrial;
+					// The OP / terikon (spoil-tip mound) sits on a dirt-dirt crossroads —
+					// not an industrial depot which lives on main-main. Use Crossroads so
+					// the type-road match check doesn't demand a main road.
+					Drafts[I].Type = EMapBlockoutPOIType::Crossroads;
 					Drafts[I].RadiusCm = C.Span * 0.026f;
 					break;
 				}
@@ -967,11 +989,15 @@ FMapBlockoutPOIResult UMapBlockoutService::PlacePois(
 		RunsThrough(Result.Pois[I].Center, Result.Pois[I].RadiusCm, RunsHere);
 		if (RunsHere.Num() == 0) { OffNetwork.Add(Result.Pois[I].Name); }
 
-		// Type-road match
+		// Type-road match. POIs are jittered off the lattice by ±0.005*Span after
+		// type assignment, so we snap back to the nearest grid line before
+		// looking up the road class.
 		const EMapBlockoutPOIType T = Result.Pois[I].Type;
 		const FVector2D CtrXY = Result.Pois[I].Center;
-		const bool bOnMain = MainXSnap.Contains(FMath::RoundToInt(CtrXY.X)) || MainYSnap.Contains(FMath::RoundToInt(CtrXY.Y));
-		const bool bOnDirt = DirtXSnap.Contains(FMath::RoundToInt(CtrXY.X)) || DirtYSnap.Contains(FMath::RoundToInt(CtrXY.Y));
+		const int32 SnapX = FMath::RoundToInt(Nearest(AllX, CtrXY.X));
+		const int32 SnapY = FMath::RoundToInt(Nearest(AllY, CtrXY.Y));
+		const bool bOnMain = MainXSnap.Contains(SnapX) || MainYSnap.Contains(SnapY);
+		const bool bOnDirt = DirtXSnap.Contains(SnapX) || DirtYSnap.Contains(SnapY);
 		if ((T == EMapBlockoutPOIType::Town || T == EMapBlockoutPOIType::Industrial) && !bOnMain) { bTypeOK = false; }
 		if (T == EMapBlockoutPOIType::Farmstead && !bOnDirt) { bTypeOK = false; }
 
@@ -1026,7 +1052,7 @@ namespace
 	void ComputeDividerMask(const FStageCtx& C,
 		const TArray<float>& AllX, const TArray<float>& AllY, TArray<uint8>& OutMask)
 	{
-		OutMask.SetNumZeroed(WORK_W * WORK_H);
+		OutMask.Init(0, WORK_W * WORK_H);
 		const int32 Thick = FMath::Max(1, W2PixLen(C.Span * 0.0012f, C));
 		for (int32 I = 0; I + 1 < AllX.Num(); ++I)
 		{
@@ -1063,7 +1089,13 @@ namespace
 			for (float V : A) { Push(V); } for (float V : B) { Push(V); }
 			Out.Sort(); return Out;
 		};
-		AllX = Merge(GridX, MainXRaw);
+		// Match GenerateRoads: drop X outside horizontals' reach.
+		const float HXMin = C.WorldLo + C.Span * 0.021f;
+		const float HXMax = C.WorldHi - C.Span * 0.021f;
+		TArray<float> MainXClipped, GridXClipped;
+		for (float X : MainXRaw) { if (X > HXMin && X < HXMax) { MainXClipped.Add(X); } }
+		for (float X : GridX)    { if (X > HXMin && X < HXMax) { GridXClipped.Add(X); } }
+		AllX = Merge(GridXClipped, MainXClipped);
 		TArray<float> GYBand; for (float Y : GridY) { if (Y > GYMin && Y < GYMax) { GYBand.Add(Y); } }
 		AllY = Merge(GYBand, MainYRaw);
 	}
@@ -1127,9 +1159,22 @@ FMapBlockoutFieldResult UMapBlockoutService::PlaceFields(
 	Result.CoverageFraction = MapBlockoutMath::Coverage(Field);
 
 	const float FieldPct = Result.CoverageFraction * 100.0f;
-	const float HeadroomPct = 100.0f * (1.0f -
-		(MapBlockoutMath::Coverage(Field) + MapBlockoutMath::Coverage(RoadMask) +
-			MapBlockoutMath::Coverage(BldMask) + MapBlockoutMath::Coverage(C.WaterBuf)));
+
+	// Headroom = cells where NONE of (Field, WaterBuf, Road, Building) are set.
+	// Computing as the union (not a sum of coverages) is the only correct way:
+	// roads + water_buf + buildings can overlap each other, and summing
+	// coverages double-counts the overlap and under-reports headroom.
+	const int32 NN = WORK_W * WORK_H;
+	int32 UsedCount = 0;
+	for (int32 i = 0; i < NN; ++i)
+	{
+		const bool bUsed = (i < Field.Num()        && Field[i])
+		                || (i < RoadMask.Num()     && RoadMask[i])
+		                || (i < BldMask.Num()      && BldMask[i])
+		                || (i < C.WaterBuf.Num()   && C.WaterBuf[i]);
+		if (bUsed) { ++UsedCount; }
+	}
+	const float HeadroomPct = 100.0f * (1.0f - static_cast<float>(UsedCount) / static_cast<float>(NN));
 
 	TArray<uint8> Tmp;
 	MapBlockoutMath::MaskAnd(Field, RoadMask, Tmp);
@@ -1174,7 +1219,7 @@ namespace
 	void OrganicBlob(const FStageCtx& C, float Cx, float Cy, float Rcm,
 		uint32 Seed, float Ragged, float Clear, TArray<uint8>& OutMask)
 	{
-		OutMask.SetNumZeroed(WORK_W * WORK_H);
+		OutMask.Init(0, WORK_W * WORK_H);
 
 		const int32 Cc = W2Col(Cx, C);
 		const int32 Cr = W2Row(Cy, C);
@@ -1206,7 +1251,7 @@ namespace
 
 	void DiscMask(const FStageCtx& C, float Cx, float Cy, float Rcm, TArray<uint8>& Out)
 	{
-		Out.SetNumZeroed(WORK_W * WORK_H);
+		Out.Init(0, WORK_W * WORK_H);
 		MapBlockoutMath::RasterizeDisk(Out, WORK_W, WORK_H,
 			W2Col(Cx, C), W2Row(Cy, C), W2PixLen(Rcm, C), 1);
 	}
@@ -1321,8 +1366,17 @@ FMapBlockoutFoliageResult UMapBlockoutService::PlaceFoliage(
 		BinW = MoveTemp(Keep);
 	}
 
+	// STRAT (strategic forest, including strongpoint ring) wins over FIELD.
+	// Python: `FIELD = FIELD & (~STRAT)` — strategic forest claims its cells.
+	// Without this, the strongpoint ring loses its annulus to field cells and
+	// the Forest-Surrounded POI check fails.
+	TArray<uint8> Field = Fields.FieldMask.Cells;
+	if (Field.Num() == N)
+	{
+		for (int32 i = 0; i < N; ++i) { if (Strat[i]) { Field[i] = 0; } }
+	}
+
 	// FOREST = (STRAT | WOODS) AND NOT (FIELD | WATER | ROAD | BLD)
-	const TArray<uint8>& Field = Fields.FieldMask.Cells;
 	Result.ForestMask.Width = WORK_W; Result.ForestMask.Height = WORK_H;
 	Result.ForestMask.Cells.SetNumZeroed(N);
 	for (int32 i = 0; i < N; ++i)
@@ -1585,21 +1639,30 @@ FMapBlockoutRailwayResult UMapBlockoutService::PlaceRailway(
 		}
 	}
 
-	// Also collect road bridges (any segment crossing water).
+	// Road bridges: for each road polyline, scan for consecutive runs of water
+	// cells and emit ONE bridge per run at its midpoint. The old per-transition
+	// scan emitted two bridges per water crossing (entry + exit) with the
+	// midpoint of a 2-step segment landing on the water edge — which then read
+	// as "on land" due to pixel rounding, busting the gate.
 	for (const FMapBlockoutRoad& Rd : Roads.Roads)
 	{
-		for (int32 I = 0; I + 1 < Rd.Points.Num(); ++I)
+		const TArray<FVector2D>& Run = Rd.Points;
+		int32 I = 0;
+		while (I < Run.Num())
 		{
-			const bool A = WaterAt(C, Rd.Points[I].X, Rd.Points[I].Y);
-			const bool Bw = WaterAt(C, Rd.Points[I + 1].X, Rd.Points[I + 1].Y);
-			if (A != Bw)
+			if (WaterAt(C, Run[I].X, Run[I].Y))
 			{
+				int32 J = I;
+				while (J < Run.Num() && WaterAt(C, Run[J].X, Run[J].Y)) { ++J; }
 				FMapBlockoutBridge Br;
-				Br.World = (Rd.Points[I] + Rd.Points[I + 1]) * 0.5f;
-				Br.LengthCm = Dist(Rd.Points[I], Rd.Points[I + 1]);
+				const FVector2D& Mid = Run[(I + J) / 2];
+				Br.World = Mid;
+				Br.LengthCm = (J < Run.Num()) ? Dist(Run[I], Run[J]) : 0.0f;
 				Br.Carries = Rd.Type;
 				Result.Bridges.Add(Br);
+				I = J;
 			}
+			else { ++I; }
 		}
 	}
 
@@ -1622,11 +1685,20 @@ FMapBlockoutRailwayResult UMapBlockoutService::PlaceRailway(
 		}
 	}
 
-	// Trees on rail (after Stage 4 cleanup the spec re-validates: must be 0).
+	// Treeline Clearance: Python's Stage 5 mutates
+	//   FOREST = FOREST & ~RAIL_C ; TREELN = TREELN & ~RAIL_C
+	// then verifies no trees remain on the rail corridor. We don't mutate the
+	// Foliage input (const ref); instead we apply the same subtraction to a
+	// local copy and check that. The renderer also subtracts rail from trees
+	// when composing the final snapshots so the deliverable matches the spec.
 	TArray<uint8> Trees = Foliage.ForestMask.Cells;
 	if (Foliage.TreelineMask.Cells.Num() == Trees.Num())
 	{
 		for (int32 i = 0; i < Trees.Num(); ++i) { if (Foliage.TreelineMask.Cells[i]) { Trees[i] = 1; } }
+	}
+	for (int32 i = 0; i < Trees.Num() && i < RailMask.Num(); ++i)
+	{
+		if (RailMask[i]) { Trees[i] = 0; }
 	}
 	MapBlockoutMath::MaskAnd(Trees, RailMask, Tmp);
 	const int32 TreesOnRail = MapBlockoutMath::CountNonZero(Tmp);

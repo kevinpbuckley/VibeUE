@@ -197,6 +197,7 @@ cfg.rivers = rivers
 | Stage 2 `POI Count` | Raise `pois.target_count`; or shrink `road.dirt_spacing_km` to add intersections |
 | Stage 3 `Field coverage < 50%` | Lower `field_crop_threshold`; or paint more cropland |
 | Stage 3 `Field coverage > 60%` | Raise `field_crop_threshold`; raise `forest_*` settings to claim more area |
+| Stage 3 `Foliage Headroom` | Field + roads + water + buildings is using too much of the map. Either widen `tree_coverage_band` (e.g. `(25,40)` for crop-heavy fixtures like Verkhova), lower the field band ceiling, or paint the crop layer less aggressively. The Foliage Headroom floor equals `tree_coverage_band[0]`. |
 | Stage 4 `Tree coverage < 30%` | Raise `forest_fringe_iters` |
 | Stage 4 `Tree coverage > 40%` | Lower `forest_fringe_iters` |
 | Stage 4 `No Forest-Surrounded POI` | Ensure forest layer has signal near map edges |
