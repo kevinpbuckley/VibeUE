@@ -647,14 +647,22 @@ public:
 	 * Sample every paint layer on the source landscape plus its heightmap into an
 	 * NxN normalized grid (drop-in for the contributor's landcover_grid.json).
 	 *
-	 * @param LandscapeLabel - actor label of the source landscape (must exist in the level)
-	 * @param GridN          - grid resolution (default 120, MapDesigner spec default)
+	 * @param LandscapeLabel             - actor label of the source landscape (must exist)
+	 * @param GridN                      - grid resolution (default 120, MapDesigner spec default)
+	 * @param bSynthesizeFloodFromHeight - add an extra layer named "FloodFromHeight"
+	 *        derived from the lowest FloodPercentile% of the heightmap. Useful when
+	 *        the source landscape has no painted water layer — map it as
+	 *        `cfg.layers.flood = "FloodFromHeight"`. Mirrors host-Python's
+	 *        `build_inputs.py --flood-from-height` flag.
+	 * @param FloodPercentile            - lowest %% of terrain treated as flood (default 8).
 	 * @return Bounds + height + per-layer weights, or bSuccess=false + ErrorMessage
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|MapBlockout")
 	static FMapBlockoutLandcoverGrid ExportLandcoverGrid(
 		const FString& LandscapeLabel,
-		int32 GridN = 120);
+		int32 GridN = 120,
+		bool bSynthesizeFloodFromHeight = false,
+		float FloodPercentile = 8.0f);
 
 	/**
 	 * Serialize a landcover grid to disk as JSON (compatible with the host-Python
@@ -677,9 +685,15 @@ public:
 		const FString& FilePath);
 
 	/**
-	 * Extract river centerline polylines from a binary water mask (skeletonize +
-	 * simplify). Use this when the source landscape has hand-painted water but no
-	 * Mapbox-derived river_world.json.
+	 * Extract river centerline polylines from a binary water mask. Picks the largest
+	 * 8-connected water component (drops ponds/lakes), runs a Euclidean distance
+	 * transform to recover the medial axis, finds the geodesic diameter endpoints
+	 * via two BFS passes, threads a Dijkstra path that hugs the high-DT ridge from
+	 * one endpoint to the other, then traces the longest tributary back to the
+	 * spine. Per-point widths come from `2 * dt * meters_per_pixel` so wide rivers
+	 * get wide-river bridges and narrow tributaries get narrow ones.
+	 *
+	 * Mirrors `reference/river_centerline_reference.py` from the host-Python.
 	 *
 	 * @param WaterMask    - binary mask (1 = water)
 	 * @param WorldLo      - landcover grid's WorldLo (sets world-space coords)

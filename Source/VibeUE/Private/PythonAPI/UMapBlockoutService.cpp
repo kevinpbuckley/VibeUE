@@ -11,6 +11,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Dom/JsonObject.h"
+#include "Algo/Reverse.h"
 
 // Stage 0 — landcover grid export, JSON writer, river centerline extraction.
 // Stages 1-5 + renderers + orchestrators in UMapBlockoutService_Stages.cpp.
@@ -54,7 +55,8 @@ namespace
 // =========================================================================
 
 FMapBlockoutLandcoverGrid UMapBlockoutService::ExportLandcoverGrid(
-	const FString& LandscapeLabel, int32 GridN)
+	const FString& LandscapeLabel, int32 GridN,
+	bool bSynthesizeFloodFromHeight, float FloodPercentile)
 {
 	FMapBlockoutLandcoverGrid Result;
 	Result.LandscapeLabel = LandscapeLabel;
@@ -111,6 +113,28 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::ExportLandcoverGrid(
 
 		if (!bOk) { LayerMap.Weights.SetNumZeroed(Result.GridN * Result.GridN); }
 		Result.Layers.Add(MoveTemp(LayerMap));
+	}
+
+	// Optional: synthesize a "FloodFromHeight" layer by thresholding the lowest
+	// FloodPercentile% of the heightmap. Mirrors build_inputs.py --flood-from-height.
+	// Useful when the source landscape has no painted water layer.
+	if (bSynthesizeFloodFromHeight && Result.HeightNormalized.Num() == Result.GridN * Result.GridN)
+	{
+		const float Pct = FMath::Clamp(FloodPercentile, 0.1f, 99.9f);
+		TArray<float> Sorted = Result.HeightNormalized;
+		Sorted.Sort();
+		const int32 K = FMath::Clamp(FMath::RoundToInt(Sorted.Num() * Pct * 0.01f), 1, Sorted.Num() - 1);
+		const float Threshold = Sorted[K];
+
+		FMapBlockoutLayerMap FloodLM;
+		FloodLM.LayerName = TEXT("FloodFromHeight");
+		FloodLM.GridN = Result.GridN;
+		FloodLM.Weights.SetNumUninitialized(Result.HeightNormalized.Num());
+		for (int32 i = 0; i < Result.HeightNormalized.Num(); ++i)
+		{
+			FloodLM.Weights[i] = (Result.HeightNormalized[i] <= Threshold) ? 1.0f : 0.0f;
+		}
+		Result.Layers.Add(MoveTemp(FloodLM));
 	}
 
 	Result.bSuccess = (Result.GridN > 0 && Result.WorldHi > Result.WorldLo);
@@ -239,101 +263,214 @@ FMapBlockoutLandcoverGrid UMapBlockoutService::LoadLandcoverGridJson(const FStri
 // River centerline extraction (skeletonize binary water -> simplified polylines)
 // =========================================================================
 
+// =========================================================================
+// River centerline extraction
+//
+// Algorithm (port of reference/river_centerline_reference.py):
+//   1. Pick the largest 8-connected water component (drops ponds/lakes).
+//   2. Euclidean distance transform: each water cell's distance to the
+//      nearest non-water cell — recovers the medial axis (high DT = center
+//      of the river, low DT = bank).
+//   3. Two BFS passes to find the geodesic diameter endpoints (the two
+//      cells with the longest shortest-path between them in the water
+//      component).
+//   4. Dijkstra from one endpoint to the other, with edge cost
+//      step * (1 + K*(maxDt - dt)) — favours hugging the high-DT ridge.
+//   5. Tributary: farthest cell from any main-spine cell, traced back via
+//      Dijkstra to the nearest main-spine point.
+//   6. Resample to ~26-cell steps, convert to world coords, width per
+//      point = 2 * dt * meters_per_pixel so wide rivers carry wide-river
+//      width and narrow tributaries carry narrow.
+// =========================================================================
+
 namespace
 {
-	struct FCellPt { int32 X, Y; };
-
-	void TracePolylinesFromSkeleton(
-		const TArray<uint8>& Skel, int32 W, int32 H,
-		TArray<TArray<FCellPt>>& OutLines)
+	struct FPQNode
 	{
-		TArray<uint8> Visited; Visited.SetNumZeroed(W * H);
+		float Cost;
+		int32 Idx;
+		// HeapPush/HeapPop default to <, so reverse the comparison for a min-heap.
+		bool operator<(const FPQNode& Other) const { return Cost < Other.Cost; }
+	};
 
-		auto At = [&](int32 X, int32 Y) -> uint8 {
-			if (X < 0 || Y < 0 || X >= W || Y >= H) { return 0; }
-			return Skel[Y * W + X];
-		};
-		auto NeighborCount = [&](int32 X, int32 Y) -> int32 {
-			int32 N = 0;
-			for (int32 Dy = -1; Dy <= 1; ++Dy)
-				for (int32 Dx = -1; Dx <= 1; ++Dx)
-					if (!(Dx == 0 && Dy == 0) && At(X + Dx, Y + Dy)) { ++N; }
-			return N;
-		};
+	/** Keep only the largest 8-connected component of Mask, in place. */
+	void KeepLargestComponent8(TArray<uint8>& Mask, int32 W, int32 H)
+	{
+		if (W <= 0 || H <= 0 || Mask.Num() < W * H) { return; }
+		TArray<int32> Labels; Labels.Init(0, W * H);
 
-		// Endpoints (1 neighbor) first; remaining loops handled by general walk.
-		auto Walk = [&](int32 X0, int32 Y0)
+		TArray<int32> CompSize; CompSize.Add(0);    // label 0 sentinel
+		TArray<int32> Q; Q.Reserve(W * H / 4 + 8);
+
+		for (int32 Start = 0; Start < W * H; ++Start)
 		{
-			TArray<FCellPt> Line;
-			int32 X = X0, Y = Y0;
-			while (At(X, Y) && !Visited[Y * W + X])
+			if (!Mask[Start] || Labels[Start] != 0) { continue; }
+			const int32 NewLabel = CompSize.Num();
+			CompSize.Add(0);
+			Labels[Start] = NewLabel;
+			Q.Reset();
+			Q.Add(Start);
+			int32 Head = 0;
+			while (Head < Q.Num())
 			{
-				Visited[Y * W + X] = 1;
-				Line.Add({X, Y});
-				bool bAdvanced = false;
-				for (int32 Dy = -1; Dy <= 1 && !bAdvanced; ++Dy)
-				for (int32 Dx = -1; Dx <= 1 && !bAdvanced; ++Dx)
+				const int32 U = Q[Head++];
+				++CompSize[NewLabel];
+				const int32 X = U % W, Y = U / W;
+				for (int32 Dy = -1; Dy <= 1; ++Dy)
 				{
-					if (Dx == 0 && Dy == 0) continue;
-					const int32 Nx = X + Dx, Ny = Y + Dy;
-					if (At(Nx, Ny) && !Visited[Ny * W + Nx]) { X = Nx; Y = Ny; bAdvanced = true; }
+					for (int32 Dx = -1; Dx <= 1; ++Dx)
+					{
+						if (!Dx && !Dy) continue;
+						const int32 Nx = X + Dx, Ny = Y + Dy;
+						if (Nx < 0 || Ny < 0 || Nx >= W || Ny >= H) continue;
+						const int32 V = Ny * W + Nx;
+						if (!Mask[V] || Labels[V] != 0) continue;
+						Labels[V] = NewLabel;
+						Q.Add(V);
+					}
 				}
-				if (!bAdvanced) { break; }
-			}
-			if (Line.Num() >= 2) { OutLines.Add(MoveTemp(Line)); }
-		};
-
-		for (int32 Y = 0; Y < H; ++Y)
-		{
-			for (int32 X = 0; X < W; ++X)
-			{
-				if (At(X, Y) && !Visited[Y * W + X] && NeighborCount(X, Y) == 1) { Walk(X, Y); }
 			}
 		}
-		// Then handle interior cycles / unwalked components.
-		for (int32 Y = 0; Y < H; ++Y)
+
+		// Find the biggest.
+		int32 BestLabel = 0, BestSize = 0;
+		for (int32 L = 1; L < CompSize.Num(); ++L)
 		{
-			for (int32 X = 0; X < W; ++X)
-			{
-				if (At(X, Y) && !Visited[Y * W + X]) { Walk(X, Y); }
-			}
+			if (CompSize[L] > BestSize) { BestSize = CompSize[L]; BestLabel = L; }
+		}
+
+		// Erase everything but the biggest.
+		for (int32 i = 0; i < W * H; ++i)
+		{
+			if (Labels[i] != BestLabel) { Mask[i] = 0; }
 		}
 	}
 
-	/** Ramer-Douglas-Peucker simplification in cell coordinates. */
-	void SimplifyRDP(const TArray<FCellPt>& In, float EpsCells, TArray<FCellPt>& Out)
+	/** BFS over an 8-connected mask. Returns the farthest cell index from SrcIdx and (optionally) the distance map. */
+	int32 BFSFarthestCell(const TArray<uint8>& Mask, int32 W, int32 H, int32 SrcIdx, TArray<int32>* OutDist = nullptr)
 	{
-		if (In.Num() < 3) { Out = In; return; }
-
-		TArray<bool> Keep; Keep.Init(false, In.Num());
-		Keep[0] = true; Keep[In.Num() - 1] = true;
-
-		TArray<TPair<int32, int32>> Stack;
-		Stack.Add({0, In.Num() - 1});
-		while (Stack.Num())
+		const int32 N = W * H;
+		TArray<int32> Dist; Dist.Init(-1, N);
+		TArray<int32> Q; Q.Reserve(N / 4 + 8);
+		Q.Add(SrcIdx); Dist[SrcIdx] = 0;
+		int32 Far = SrcIdx, FarDist = 0;
+		int32 Head = 0;
+		while (Head < Q.Num())
 		{
-			const TPair<int32, int32> P = Stack.Pop();
-			const int32 A = P.Key, B = P.Value;
-			float DMax = 0.0f; int32 IdxMax = -1;
-			const float Ax = In[A].X, Ay = In[A].Y, Bx = In[B].X, By = In[B].Y;
-			const float Lx = Bx - Ax, Ly = By - Ay;
-			const float Len2 = Lx * Lx + Ly * Ly;
-			for (int32 K = A + 1; K < B; ++K)
+			const int32 U = Q[Head++];
+			const int32 X = U % W, Y = U / W;
+			for (int32 Dy = -1; Dy <= 1; ++Dy)
 			{
-				const float Px = In[K].X - Ax, Py = In[K].Y - Ay;
-				const float Cross = Px * Ly - Py * Lx;
-				const float Dist = Len2 > 0 ? FMath::Abs(Cross) / FMath::Sqrt(Len2) : 0.0f;
-				if (Dist > DMax) { DMax = Dist; IdxMax = K; }
-			}
-			if (IdxMax >= 0 && DMax > EpsCells)
-			{
-				Keep[IdxMax] = true;
-				Stack.Add({A, IdxMax});
-				Stack.Add({IdxMax, B});
+				for (int32 Dx = -1; Dx <= 1; ++Dx)
+				{
+					if (!Dx && !Dy) continue;
+					const int32 Nx = X + Dx, Ny = Y + Dy;
+					if (Nx < 0 || Ny < 0 || Nx >= W || Ny >= H) continue;
+					const int32 V = Ny * W + Nx;
+					if (!Mask[V] || Dist[V] >= 0) continue;
+					Dist[V] = Dist[U] + 1;
+					Q.Add(V);
+					if (Dist[V] > FarDist) { FarDist = Dist[V]; Far = V; }
+				}
 			}
 		}
+		if (OutDist) { *OutDist = MoveTemp(Dist); }
+		return Far;
+	}
+
+	/**
+	 * Dijkstra from SrcIdx to DstIdx over an 8-connected mask, with edge cost
+	 *   step * (1 + K * (MaxDt - Dt[v]))
+	 * favouring cells with high distance-transform value (medial axis).
+	 * Returns the path (Src→Dst inclusive); empty on failure.
+	 */
+	void DijkstraMedialPath(
+		const TArray<uint8>& Mask, int32 W, int32 H,
+		const TArray<float>& Dt, float MaxDt,
+		int32 SrcIdx, int32 DstIdx,
+		float K, TArray<int32>& OutPath)
+	{
+		OutPath.Reset();
+		const int32 N = W * H;
+		TArray<float> Best; Best.Init(TNumericLimits<float>::Max(), N);
+		TArray<int32> Prev; Prev.Init(-1, N);
+		TArray<FPQNode> PQ; PQ.Reserve(N / 4 + 8);
+		Best[SrcIdx] = 0.0f;
+		PQ.HeapPush(FPQNode{0.0f, SrcIdx});
+		bool bReached = false;
+		while (PQ.Num())
+		{
+			FPQNode Cur; PQ.HeapPop(Cur);
+			if (Cur.Idx == DstIdx) { bReached = true; break; }
+			if (Cur.Cost > Best[Cur.Idx]) { continue; }
+			const int32 X = Cur.Idx % W, Y = Cur.Idx / W;
+			for (int32 Dy = -1; Dy <= 1; ++Dy)
+			{
+				for (int32 Dx = -1; Dx <= 1; ++Dx)
+				{
+					if (!Dx && !Dy) continue;
+					const int32 Nx = X + Dx, Ny = Y + Dy;
+					if (Nx < 0 || Ny < 0 || Nx >= W || Ny >= H) continue;
+					const int32 V = Ny * W + Nx;
+					if (!Mask[V]) continue;
+					const float Step = (Dx == 0 || Dy == 0) ? 1.0f : 1.41421356f;
+					const float Pen = 1.0f + K * (MaxDt - Dt[V]);
+					const float NC = Cur.Cost + Step * Pen;
+					if (NC < Best[V])
+					{
+						Best[V] = NC;
+						Prev[V] = Cur.Idx;
+						PQ.HeapPush(FPQNode{NC, V});
+					}
+				}
+			}
+		}
+		if (!bReached) { return; }
+
+		// Reconstruct Src → Dst.
+		int32 Cursor = DstIdx;
+		while (Cursor != -1)
+		{
+			OutPath.Add(Cursor);
+			if (Cursor == SrcIdx) { break; }
+			Cursor = Prev[Cursor];
+		}
+		Algo::Reverse(OutPath);
+	}
+
+	/** Resample a path keeping samples ~StepPx apart in pixel space. */
+	void ResamplePath(const TArray<int32>& Path, int32 W, int32 StepPx, TArray<int32>& Out)
+	{
 		Out.Reset();
-		for (int32 i = 0; i < In.Num(); ++i) { if (Keep[i]) { Out.Add(In[i]); } }
+		if (Path.Num() == 0) { return; }
+		Out.Add(Path[0]);
+		float Acc = 0.0f;
+		for (int32 I = 1; I < Path.Num(); ++I)
+		{
+			const int32 Y0 = Path[I - 1] / W, X0 = Path[I - 1] % W;
+			const int32 Y1 = Path[I] / W,     X1 = Path[I] % W;
+			const float Dy = float(Y1 - Y0), Dx = float(X1 - X0);
+			Acc += FMath::Sqrt(Dy * Dy + Dx * Dx);
+			if (Acc >= float(StepPx))
+			{
+				Out.Add(Path[I]);
+				Acc = 0.0f;
+			}
+		}
+		if (Out.Last() != Path.Last()) { Out.Add(Path.Last()); }
+	}
+
+	float PathLengthCells(const TArray<int32>& Path, int32 W)
+	{
+		float L = 0.0f;
+		for (int32 I = 1; I < Path.Num(); ++I)
+		{
+			const int32 Y0 = Path[I - 1] / W, X0 = Path[I - 1] % W;
+			const int32 Y1 = Path[I] / W,     X1 = Path[I] % W;
+			const float Dy = float(Y1 - Y0), Dx = float(X1 - X0);
+			L += FMath::Sqrt(Dy * Dy + Dx * Dx);
+		}
+		return L;
 	}
 }
 
@@ -341,55 +478,130 @@ TArray<FMapBlockoutRiver> UMapBlockoutService::ExtractRiverCenterlines(
 	const FMapBlockoutMask& WaterMask, float WorldLo, float WorldHi, float MinLengthCm)
 {
 	TArray<FMapBlockoutRiver> Out;
-	if (WaterMask.Width <= 0 || WaterMask.Height <= 0 || WaterMask.Cells.Num() < WaterMask.Width * WaterMask.Height) { return Out; }
+	if (WaterMask.Width <= 0 || WaterMask.Height <= 0) { return Out; }
+	if (WaterMask.Cells.Num() < WaterMask.Width * WaterMask.Height) { return Out; }
 	if (WorldHi <= WorldLo) { return Out; }
 
 	const int32 W = WaterMask.Width, H = WaterMask.Height;
-	TArray<uint8> Mask = WaterMask.Cells;
-
-	// Skeletonize a buffered mask. Closing first to seal small painted gaps.
-	MapBlockoutMath::BinaryClosing(Mask, W, H, 1);
-	MapBlockoutMath::Skeletonize(Mask, W, H);
-
-	TArray<TArray<FCellPt>> Lines;
-	TracePolylinesFromSkeleton(Mask, W, H, Lines);
-
 	const float Span = WorldHi - WorldLo;
 	const float CellSpanCm = Span / FMath::Max(1, W - 1);
-	const float MinLengthCells = MinLengthCm / FMath::Max(1.0f, CellSpanCm);
+	const float MetersPerPx = CellSpanCm * 0.01f;  // cm → m
 
-	auto CellLen = [](const TArray<FCellPt>& L) -> float {
-		float D = 0.0f;
-		for (int32 i = 0; i + 1 < L.Num(); ++i)
-		{
-			const float Dx = L[i + 1].X - L[i].X, Dy = L[i + 1].Y - L[i].Y;
-			D += FMath::Sqrt(Dx * Dx + Dy * Dy);
-		}
-		return D;
-	};
+	// 1) Largest 8-connected water component (drops disconnected ponds).
+	TArray<uint8> CC = WaterMask.Cells;
+	MapBlockoutMath::BinaryClosing(CC, W, H, 1);
+	KeepLargestComponent8(CC, W, H);
+	if (MapBlockoutMath::CountNonZero(CC) < 16) { return Out; }
 
-	int32 Index = 0;
-	for (const TArray<FCellPt>& L : Lines)
+	// 2) Distance transform: distance from each water cell to nearest non-water.
+	// Our EDT measures distance TO the cells where the mask is non-zero, so to
+	// get "distance to nearest non-water from each water cell" we invert.
+	TArray<float> Dt;
 	{
-		if (CellLen(L) < MinLengthCells) { continue; }
-		TArray<FCellPt> Simplified;
-		SimplifyRDP(L, /*EpsCells=*/1.5f, Simplified);
-		if (Simplified.Num() < 2) { continue; }
+		TArray<uint8> Inverted; Inverted.SetNumUninitialized(W * H);
+		for (int32 i = 0; i < W * H; ++i) { Inverted[i] = CC[i] ? 0 : 1; }
+		MapBlockoutMath::DistanceTransformEDT(Inverted, W, H, Dt);
+		// Zero out non-water cells (their distance to non-water is 0).
+		for (int32 i = 0; i < W * H; ++i) { if (!CC[i]) { Dt[i] = 0.0f; } }
+	}
+	float MaxDt = 0.0f;
+	for (float V : Dt) { MaxDt = FMath::Max(MaxDt, V); }
+	if (MaxDt < 1.0f) { return Out; }
 
-		FMapBlockoutRiver River;
-		River.Name = FString::Printf(TEXT("River_%d"), ++Index);
-		River.Points.Reserve(Simplified.Num());
-		for (const FCellPt& P : Simplified)
+	// Pick any water cell to seed the first BFS.
+	int32 SeedIdx = -1;
+	for (int32 i = 0; i < W * H; ++i) { if (CC[i]) { SeedIdx = i; break; } }
+	if (SeedIdx < 0) { return Out; }
+
+	// 3) Two BFS passes for geodesic diameter endpoints.
+	const int32 A = BFSFarthestCell(CC, W, H, SeedIdx);
+	const int32 B = BFSFarthestCell(CC, W, H, A);
+	if (A == B) { return Out; }
+
+	// 4) Dijkstra A → B with medial-axis cost.
+	constexpr float MedialK = 0.06f;
+	TArray<int32> Main;
+	DijkstraMedialPath(CC, W, H, Dt, MaxDt, A, B, MedialK, Main);
+	if (Main.Num() < 2) { return Out; }
+
+	// 5) Tributary: farthest cell from ANY main-spine cell. BFS from the union
+	// of all main cells outward, find the farthest reached.
+	TArray<int32> Trib;
+	{
+		TArray<int32> DistToMain; DistToMain.Init(-1, W * H);
+		TArray<int32> Q; Q.Reserve(Main.Num() + 64);
+		for (int32 I : Main) { DistToMain[I] = 0; Q.Add(I); }
+		int32 TribTip = -1, TribDist = 0;
+		int32 Head = 0;
+		while (Head < Q.Num())
 		{
+			const int32 U = Q[Head++];
+			const int32 X = U % W, Y = U / W;
+			for (int32 Dy = -1; Dy <= 1; ++Dy)
+			{
+				for (int32 Dx = -1; Dx <= 1; ++Dx)
+				{
+					if (!Dx && !Dy) continue;
+					const int32 Nx = X + Dx, Ny = Y + Dy;
+					if (Nx < 0 || Ny < 0 || Nx >= W || Ny >= H) continue;
+					const int32 V = Ny * W + Nx;
+					if (!CC[V] || DistToMain[V] >= 0) continue;
+					DistToMain[V] = DistToMain[U] + 1;
+					Q.Add(V);
+					if (DistToMain[V] > TribDist) { TribDist = DistToMain[V]; TribTip = V; }
+				}
+			}
+		}
+		// Tributary is only worth emitting if it's substantially off the spine.
+		if (TribTip >= 0 && TribDist > 40)
+		{
+			// Find the nearest main-spine cell to the tributary tip (Euclidean).
+			const int32 TY = TribTip / W, TX = TribTip % W;
+			int32 NearestMain = -1; int64 NearestSq = TNumericLimits<int64>::Max();
+			for (int32 I : Main)
+			{
+				const int32 Y = I / W, X = I % W;
+				const int64 D = int64(X - TX) * (X - TX) + int64(Y - TY) * (Y - TY);
+				if (D < NearestSq) { NearestSq = D; NearestMain = I; }
+			}
+			if (NearestMain >= 0)
+			{
+				DijkstraMedialPath(CC, W, H, Dt, MaxDt, TribTip, NearestMain, MedialK, Trib);
+			}
+		}
+	}
+
+	// 6) Convert paths to world-coord polylines with per-point widths.
+	auto EmitRiver = [&](const FString& Name, const TArray<int32>& Path) -> FMapBlockoutRiver
+	{
+		FMapBlockoutRiver River;
+		River.Name = Name;
+		TArray<int32> Resampled;
+		ResamplePath(Path, W, /*StepPx=*/26, Resampled);
+		River.Points.Reserve(Resampled.Num());
+		for (int32 Idx : Resampled)
+		{
+			const int32 Y = Idx / W, X = Idx % W;
 			FMapBlockoutRiverPoint RP;
-			// Cell (col, row) -> world (X east, Y north). Row 0 = north.
-			const float Wx = WorldLo + (Span * P.X) / FMath::Max(1, W - 1);
-			const float Wy = WorldHi - (Span * P.Y) / FMath::Max(1, H - 1);
+			// Cell (col, row) → world (X east, Y north). Row 0 = north (mask convention).
+			const float Wx = WorldLo + (Span * X) / FMath::Max(1, W - 1);
+			const float Wy = WorldHi - (Span * Y) / FMath::Max(1, H - 1);
 			RP.World = FVector2D(Wx, Wy);
-			RP.WidthM = 30.0f;
+			// Width = full diameter at this point. dt is "distance to bank" in cells.
+			RP.WidthM = FMath::Max(1.0f, 2.0f * Dt[Idx] * MetersPerPx);
 			River.Points.Add(RP);
 		}
-		Out.Add(River);
+		return River;
+	};
+
+	const float MinLengthCells = MinLengthCm / FMath::Max(1.0f, CellSpanCm);
+	if (PathLengthCells(Main, W) >= MinLengthCells)
+	{
+		Out.Add(EmitRiver(TEXT("Main"), Main));
+	}
+	if (Trib.Num() >= 2 && PathLengthCells(Trib, W) >= MinLengthCells * 0.5f)
+	{
+		Out.Add(EmitRiver(TEXT("Tributary"), Trib));
 	}
 	return Out;
 }
