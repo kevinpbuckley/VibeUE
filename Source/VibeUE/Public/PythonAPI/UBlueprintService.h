@@ -35,6 +35,29 @@ struct FBlueprintVariableInfo
 };
 
 /**
+ * Information about a single UEdGraph attached to a Blueprint.
+ * Returned by ListGraphs — one entry per graph tab visible in the
+ * Blueprint editor (ubergraph pages, functions, macros, delegate signatures).
+ */
+USTRUCT(BlueprintType)
+struct FBlueprintGraphInfo
+{
+	GENERATED_BODY()
+
+	/** Tab name as shown in the My Blueprint panel (e.g. "EventGraph", "Graph_PlayerInput", "MyFunction") */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphName;
+
+	/** "Ubergraph" | "Function" | "Macro" | "DelegateSignature" */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	FString GraphKind;
+
+	/** Number of nodes in this graph (cheap to compute, useful as a sanity signal) */
+	UPROPERTY(BlueprintReadWrite, Category = "Blueprint")
+	int32 NodeCount = 0;
+};
+
+/**
  * Detailed information about a blueprint variable (for get_info action)
  */
 USTRUCT(BlueprintType)
@@ -984,6 +1007,26 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static TArray<FBlueprintFunctionInfo> ListFunctions(const FString& BlueprintPath);
+
+	/**
+	 * Enumerate every UEdGraph attached to a Blueprint — ubergraph pages, functions,
+	 * macros, and delegate signature graphs.
+	 *
+	 * Use this when you don't know the exact name of a graph tab. The default
+	 * Blueprint editor only exposes "EventGraph" by name; user-created ubergraph
+	 * pages (e.g. "Graph_PlayerInput") and inherited function graphs are invisible
+	 * without this enumeration.
+	 *
+	 * @param BlueprintPath - Full path to the blueprint (e.g., "/Game/Blueprints/BP_Player_Test")
+	 * @return Array of FBlueprintGraphInfo, one per graph
+	 *
+	 * Example:
+	 *   graphs = unreal.BlueprintService.list_graphs("/Game/Blueprints/BP_Player_Test")
+	 *   for g in graphs:
+	 *       print(f"{g.graph_kind:20}  {g.graph_name:30}  ({g.node_count} nodes)")
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static TArray<FBlueprintGraphInfo> ListGraphs(const FString& BlueprintPath);
 
 	/**
 	 * Open a blueprint and navigate to a specific function graph.

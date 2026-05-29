@@ -548,6 +548,47 @@ TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& B
 	return Functions;
 }
 
+TArray<FBlueprintGraphInfo> UBlueprintService::ListGraphs(const FString& BlueprintPath)
+{
+	TArray<FBlueprintGraphInfo> Graphs;
+
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UBlueprintService::ListGraphs: Failed to load blueprint: %s"), *BlueprintPath);
+		return Graphs;
+	}
+
+	// Emit one FBlueprintGraphInfo per graph in a given collection
+	auto AppendGraphs = [&Graphs](const TArray<UEdGraph*>& Source, const TCHAR* Kind)
+	{
+		for (UEdGraph* Graph : Source)
+		{
+			if (!Graph)
+			{
+				continue;
+			}
+
+			FBlueprintGraphInfo Info;
+			Info.GraphName = Graph->GetName();
+			Info.GraphKind = Kind;
+			Info.NodeCount = Graph->Nodes.Num();
+			Graphs.Add(MoveTemp(Info));
+		}
+	};
+
+	// UbergraphPages = the event-graph tabs (default "EventGraph" + any user-added pages).
+	// FunctionGraphs = user functions, overrides, and auto-generated input event functions.
+	// MacroGraphs   = blueprint macros.
+	// DelegateSignatureGraphs = event dispatcher signature graphs.
+	AppendGraphs(Blueprint->UbergraphPages,          TEXT("Ubergraph"));
+	AppendGraphs(Blueprint->FunctionGraphs,          TEXT("Function"));
+	AppendGraphs(Blueprint->MacroGraphs,             TEXT("Macro"));
+	AppendGraphs(Blueprint->DelegateSignatureGraphs, TEXT("DelegateSignature"));
+
+	return Graphs;
+}
+
 bool UBlueprintService::OpenFunctionGraph(const FString& BlueprintPath, const FString& FunctionName)
 {
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
