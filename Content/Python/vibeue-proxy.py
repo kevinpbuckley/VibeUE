@@ -73,6 +73,7 @@ WIDGETS (load skill: umg-widgets)
                          Returns full hierarchy + slot info + all properties in ONE call.
                          ALWAYS use this for widget inspection.
                          NEVER use get_hierarchy — it returns names only and forces extra round-trips.
+                         Property access: snapshot.properties[i].property_name / .current_value (NOT .property_value)
   get_component_snapshot: unreal.WidgetService.get_component_snapshot(path, widget_name)
 
 BLUEPRINTS (load skill: blueprints or blueprint-graphs)
