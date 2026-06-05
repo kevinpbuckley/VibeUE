@@ -2728,6 +2728,41 @@ public:
 	);
 
 	/**
+	 * Add a macro instance node to a Blueprint graph.
+	 *
+	 * Creates a K2Node_MacroInstance wired to the specified macro graph so it exposes the
+	 * correct exec and data pins at compile time. This is the only reliable path for placing
+	 * macro nodes from Python — create_node_by_key("NODE K2Node_MacroInstance") produces a
+	 * husk with no pins because MacroGraphReference cannot be set through UObject reflection.
+	 *
+	 * @param BlueprintPath - Full path to the target blueprint
+	 * @param GraphName     - Name of the graph to place the node in
+	 * @param MacroPath     - Shorthand name OR full "AssetPath.AssetName:MacroGraphName" string.
+	 *                        Supported shorthands (Standard Macros library):
+	 *                          ForEachLoop, ForEachLoopWithBreak, ReverseForEachLoop,
+	 *                          ForLoop, ForLoopWithBreak, WhileLoop,
+	 *                          IsValid, IsNotValid,
+	 *                          Gate, MultiGate, DoOnce, DoN, FlipFlop
+	 * @param PosX          - X position in the graph
+	 * @param PosY          - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example - Iterate an array:
+	 *   node_id = unreal.BlueprintService.add_macro_instance_node("/Game/BP_Player", "EventGraph", "ForEachLoop", 200, 100)
+	 *
+	 * Example - Full path (custom macro in a user blueprint):
+	 *   node_id = unreal.BlueprintService.add_macro_instance_node("/Game/BP_Player", "EventGraph", "/Game/BP_Macros.BP_Macros:MyMacro", 200, 100)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddMacroInstanceNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& MacroPath,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
 	 * Convenience: call a function off of a Blueprint variable in one shot.
 	 *
 	 * Resolves the variable's type to its owner class, creates a Get node for the
