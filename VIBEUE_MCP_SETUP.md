@@ -1,12 +1,13 @@
 # VibeUE MCP Setup — Instructions for Claude
 
-Read this file when a user asks to use VibeUE and MCP tools are not in your tool list.
-Follow the steps below exactly. Do not attempt to call the proxy or run Python until
-setup is complete and the user has restarted their session.
+> **MANDATORY GATE — Read before doing anything else.**
+> Do NOT start the proxy, create any files, run any commands, or take any action
+> until the user has explicitly chosen option 1 below.
+> Present the choice first. Wait for a response. Then proceed.
 
 ---
 
-## Step 1 — Offer the choice
+## Step 1 — Ask permission (REQUIRED — do not skip)
 
 Say this to the user:
 
