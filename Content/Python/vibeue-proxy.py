@@ -55,6 +55,127 @@ except Exception:
     _UE_BEARER_TOKEN = ""
 
 # ---------------------------------------------------------------------------
+# Tool-description hints
+#
+# Appended to the manifest descriptions before serving tools/list.
+# Keeps guidance close to the tool without requiring C++ or UE restarts.
+# ---------------------------------------------------------------------------
+
+# Maps tool name -> text appended to the existing description.
+TOOL_HINTS: dict[str, str] = {
+
+    "execute_python_code": """
+
+KEY SERVICE QUICK REFERENCE (call these directly — no discover step needed):
+
+WIDGETS (load skill: umg-widgets)
+  get_widget_snapshot  : unreal.WidgetService.get_widget_snapshot(path)
+                         Returns full hierarchy + slot info + all properties in ONE call.
+                         ALWAYS use this for widget inspection.
+                         NEVER use get_hierarchy — it returns names only and forces extra round-trips.
+  get_component_snapshot: unreal.WidgetService.get_component_snapshot(path, widget_name)
+
+BLUEPRINTS (load skill: blueprints or blueprint-graphs)
+  Build a graph        : unreal.BlueprintService.build_graph(bp, graph, json_spec)
+  Add function call    : unreal.BlueprintService.add_function_call_node(bp, graph, lib, fn, x, y)
+  List graphs          : unreal.BlueprintService.list_graphs(bp)
+  Compile              : unreal.BlueprintService.compile_blueprint(bp)
+
+ASSETS — use the manage_asset TOOL instead of Python for search/find/open/save/move/delete.
+  manage_asset(action='search', search_term='BP_Player', asset_type='Blueprint')
+
+LOGS — use the read_logs TOOL instead of file I/O in Python.
+  read_logs(action='errors')  /  read_logs(action='filter', pattern='WidgetService')
+
+LANDSCAPE (load skill: landscape)
+  unreal.LandscapeService  — sculpt, paint, heightmap import/export
+
+STATE TREES (load skill: state-trees)
+  unreal.StateTreeService  — tasks, transitions, considerations, event bindings
+
+NIAGARA (load skill: niagara-systems or niagara-emitters)
+  unreal.NiagaraSystemService / unreal.NiagaraEmitterService / unreal.NiagaraScratchPadService
+
+UV MAPPING (load skill: uv-mapping)
+  unreal.UVMappingService.generate_uv_channel(path, channel, method)
+
+SCREENSHOTS (load skill: screenshots)
+  unreal.ScreenshotService.capture_editor_screenshot(path)
+
+SUBSYSTEMS — access via unreal.get_editor_subsystem(unreal.SubsystemName)
+  NOT the deprecated unreal.EditorLevelLibrary (removed in UE 5.7+)""",
+
+    "manage_skills": """
+
+SKILL INDEX — load BEFORE executing tasks in that domain:
+
+UI / Widgets
+  umg-widgets          → Widget Blueprint creation, widget inspection (get_widget_snapshot)
+
+Blueprints
+  blueprints           → Blueprint assets, variables, functions, components
+  blueprint-graphs     → Complex graph authoring, build_graph patterns, node wiring
+  pie-testing          → Play-In-Editor testing, runtime state checks
+
+Animation
+  animation-blueprint  → AnimBP state machines, states, transitions
+  animation-editing    → Bone rotation edits, constraints, retarget safety
+  animation-montage    → Montage sections, slots, blending
+  animsequence         → Animation sequence editing and baking
+  skeleton             → Bones, sockets, retargeting, blend profiles
+
+Landscape / Terrain
+  landscape            → Sculpt, paint, heightmap import/export, procedural features
+  landscape-materials  → Layer blending, texture setup, layer info objects
+  landscape-auto-material → Master material + RVT + auto-layering biome system
+
+Assets & Content
+  asset-management     → Search, find, move, duplicate, save, import, export
+  data-assets          → Primary Data Assets
+  data-tables          → Data Tables, row management
+  enum-struct          → UserDefinedEnums, UserDefinedStructs
+
+Materials & VFX
+  materials            → Material and material instance creation/editing
+  uv-mapping           → UV channels on StaticMesh (inspect, generate, transform)
+  niagara-systems      → Niagara system lifecycle, emitters, user parameters
+  niagara-emitters     → Niagara emitter internals, modules, renderers, scratch-pad
+  metasounds           → MetaSound Source assets, node graph authoring
+  sound-cues           → SoundCue nodes and connections
+
+AI / Logic
+  state-trees          → StateTree tasks, transitions, considerations, event bindings
+  enhanced-input       → Input Actions, Mapping Contexts, triggers
+
+Environment
+  foliage              → Foliage instances on landscapes
+  level-actors         → Actor manipulation in the current level
+  viewport             → Camera, view mode, FOV, layout, rendering settings
+
+Project Config
+  engine-settings      → Rendering, physics, audio, cvars, scalability
+  project-settings     → Project settings + editor preferences
+  gameplay-tags        → Gameplay Tag create/list/remove/rename
+
+Capture / Research
+  screenshots          → Editor screenshots for AI vision analysis
+  terrain-data         → Real-world heightmaps, water features (rivers, lakes)
+  vibeue               → General VibeUE Python API reference""",
+
+}
+
+
+def apply_hints(tools: list) -> list:
+    """Append proxy-side guidance to tool descriptions before serving tools/list."""
+    for tool in tools:
+        hint = TOOL_HINTS.get(tool.get("name", ""))
+        if hint:
+            tool = dict(tool)  # shallow copy — don't mutate the cached manifest
+            tool["description"] = tool.get("description", "") + hint
+        yield tool
+
+
+# ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
@@ -247,9 +368,9 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # --- tools/list: always serve from manifest ---
+        # --- tools/list: always serve from manifest (with proxy hints applied) ---
         if method == "tools/list":
-            tools = load_manifest()
+            tools = list(apply_hints(load_manifest()))
             log(f"tools/list -> {len(tools)} tools from manifest (UE may or may not be running)")
             self._jsonrpc(req_id, {"tools": tools})
             return
