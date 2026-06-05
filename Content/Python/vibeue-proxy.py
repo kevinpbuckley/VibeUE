@@ -55,10 +55,81 @@ except Exception:
     _UE_BEARER_TOKEN = ""
 
 # ---------------------------------------------------------------------------
+# Synthetic tools — always present in tools/list regardless of manifest state.
+# Handled entirely by the proxy; never forwarded to UE.
+# Keep descriptions SHORT — they are paid as tokens on every Claude request.
+# ---------------------------------------------------------------------------
+
+SYNTHETIC_TOOLS: list[dict] = [
+    {
+        "name": "vibeue_status",
+        "description": (
+            "Check VibeUE setup status and get next steps. "
+            "Call this first if tools are not responding, UE seems unreachable, "
+            "or you are setting up VibeUE for the first time in a project."
+        ),
+        "inputSchema": {"type": "object", "properties": {}, "required": []},
+    }
+]
+
+
+def handle_vibeue_status(req_id) -> dict:
+    """Synthetic tool: check UE reachability, token config, and manifest state."""
+    ue_running = False
+    try:
+        conn = socket.create_connection(("127.0.0.1", UE_PORT), timeout=2)
+        conn.close()
+        ue_running = True
+    except OSError:
+        pass
+
+    token_set = bool(_UE_BEARER_TOKEN)
+    manifest_found = MANIFEST_PATH.exists()
+    manifest_tools = len(load_manifest()) if manifest_found else 0
+
+    if ue_running and token_set and manifest_found:
+        text = (
+            f"VibeUE is ready.\n"
+            f"  UE running:     yes\n"
+            f"  Token set:      yes\n"
+            f"  Manifest:       {manifest_tools} tools loaded\n"
+        )
+    else:
+        steps = []
+        if not ue_running:
+            steps.append("1. Launch Unreal Engine with the VibeUE plugin enabled.")
+        if not token_set:
+            steps.append(
+                "2. Set a bearer token:\n"
+                "     a) Open vibeue-proxy.json (plugin root) and set \"bearer_token\": \"<your-token>\"\n"
+                "     b) In UE: Project Settings -> Plugins -> VibeUE -> API Key — set the same value.\n"
+                "     c) Restart the proxy after editing vibeue-proxy.json."
+            )
+        if not manifest_found:
+            steps.append(
+                f"3. Launch UE once with VibeUE enabled to generate the tool manifest at:\n"
+                f"     {MANIFEST_PATH}"
+            )
+        text = (
+            "VibeUE setup incomplete. Complete the following steps:\n\n"
+            + "\n".join(steps)
+        )
+
+    return {
+        "jsonrpc": "2.0",
+        "id": req_id,
+        "result": {"content": [{"type": "text", "text": text}]},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Tool-description hints
 #
 # Appended to the manifest descriptions before serving tools/list.
 # Keeps guidance close to the tool without requiring C++ or UE restarts.
+#
+# TOKEN COST: every hint is injected into every Claude context window.
+# Keep hints focused — move deep reference material to skills instead.
 # ---------------------------------------------------------------------------
 
 # Maps tool name -> text appended to the existing description.
@@ -66,45 +137,31 @@ TOOL_HINTS: dict[str, str] = {
 
     "execute_python_code": """
 
-KEY SERVICE QUICK REFERENCE (call these directly — no discover step needed):
+IMMEDIATE ACTIONS — go straight to these, no skill or discovery step needed:
 
-WIDGETS (load skill: umg-widgets)
-  get_widget_snapshot  : unreal.WidgetService.get_widget_snapshot(path)
-                         Returns full hierarchy + slot info + all properties in ONE call.
-                         ALWAYS use this for widget inspection.
-                         NEVER use get_hierarchy — it returns names only and forces extra round-trips.
-                         Property access: snapshot.properties[i].property_name / .current_value (NOT .property_value)
-  get_component_snapshot: unreal.WidgetService.get_component_snapshot(path, widget_name)
+  User asks to inspect / list / show / describe a Widget Blueprint (WBP):
+      import unreal
+      snapshot = unreal.WidgetService.get_widget_snapshot("/Game/path/WBP_X")
+      print(snapshot)
+      Returns full hierarchy + slot info + ALL properties in one call.
+      DO NOT call manage_asset, discover_python_class, or manage_skills first.
+      DO NOT use get_hierarchy (names only, forces extra round-trips).
+      Property access: snapshot.properties[i].property_name / .current_value
 
-BLUEPRINTS (load skill: blueprints or blueprint-graphs)
-  Build a graph        : unreal.BlueprintService.build_graph(bp, graph, json_spec)
-  Add function call    : unreal.BlueprintService.add_function_call_node(bp, graph, lib, fn, x, y)
-  List graphs          : unreal.BlueprintService.list_graphs(bp)
-  Compile              : unreal.BlueprintService.compile_blueprint(bp)
+  User asks to compile a Blueprint:
+      import unreal
+      unreal.BlueprintService.compile_blueprint("/Game/path/BP_X")
 
-ASSETS — use the manage_asset TOOL instead of Python for search/find/open/save/move/delete.
-  manage_asset(action='search', search_term='BP_Player', asset_type='Blueprint')
+  User asks to list graphs in a Blueprint:
+      import unreal
+      unreal.BlueprintService.list_graphs("/Game/path/BP_X")
 
-LOGS — use the read_logs TOOL instead of file I/O in Python.
-  read_logs(action='errors')  /  read_logs(action='filter', pattern='WidgetService')
-
-LANDSCAPE (load skill: landscape)
-  unreal.LandscapeService  — sculpt, paint, heightmap import/export
-
-STATE TREES (load skill: state-trees)
-  unreal.StateTreeService  — tasks, transitions, considerations, event bindings
-
-NIAGARA (load skill: niagara-systems or niagara-emitters)
-  unreal.NiagaraService / unreal.NiagaraEmitterService / unreal.NiagaraScratchPadService
-
-UV MAPPING (load skill: uv-mapping)
-  unreal.UVMappingService.AddUVChannel / AutoUnwrapUVs / ListUVChannels / PackUVs
-
-SCREENSHOTS (load skill: screenshots)
-  unreal.ScreenshotService.CaptureEditorWindow(path)
-
-SUBSYSTEMS — access via unreal.get_editor_subsystem(unreal.SubsystemName)
-  NOT the deprecated unreal.EditorLevelLibrary (removed in UE 5.7+)""",
+KEY RULES:
+  - Assets (search/find/open/save/move/delete) → use the manage_asset TOOL, not Python.
+  - Logs → use the read_logs TOOL, not Python file I/O.
+  - Subsystems → unreal.get_editor_subsystem(unreal.SubsystemName)
+    NOT unreal.EditorLevelLibrary (removed in UE 5.7+).
+  - For complex graph authoring or unfamiliar services → load the relevant skill first.""",
 
     "manage_skills": """
 
@@ -360,7 +417,17 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self._jsonrpc(req_id, {
                 "protocolVersion": client_version,
                 "capabilities": {"tools": {}},
-                "serverInfo": {"name": "VibeUE-Proxy", "version": "1.0.0"},
+                "serverInfo": {
+                    "name": "VibeUE-Proxy",
+                    "version": "1.0.0",
+                    "instructions": (
+                        "VibeUE gives Claude direct access to Unreal Engine. "
+                        "Quick-start rules: "
+                        "(1) To inspect a Widget Blueprint, call execute_python_code immediately with unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
+                        "(2) To find/open/move assets, use manage_asset, not Python. "
+                        "(3) If tools are not working or this is a first-time setup, call vibeue_status."
+                    ),
+                },
             })
             return
 
@@ -370,12 +437,20 @@ class ProxyHandler(BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        # --- tools/list: always serve from manifest (with proxy hints applied) ---
+        # --- tools/list: manifest tools + synthetic tools ---
         if method == "tools/list":
-            tools = list(apply_hints(load_manifest()))
-            log(f"tools/list -> {len(tools)} tools from manifest (UE may or may not be running)")
+            tools = list(apply_hints(load_manifest())) + SYNTHETIC_TOOLS
+            log(f"tools/list -> {len(tools)} tools ({len(tools) - len(SYNTHETIC_TOOLS)} manifest + {len(SYNTHETIC_TOOLS)} synthetic)")
             self._jsonrpc(req_id, {"tools": tools})
             return
+
+        # --- synthetic tool calls: handled entirely by the proxy ---
+        if method == "tools/call":
+            tool_name = (rpc.get("params") or {}).get("name", "")
+            if tool_name == "vibeue_status":
+                log("vibeue_status -> handled by proxy")
+                self._raw_json(handle_vibeue_status(req_id))
+                return
 
         # --- everything else: try UE ---
         success, response_bytes = forward_to_ue(raw_body, lower_headers)
