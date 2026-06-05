@@ -47,7 +47,8 @@ Say:
 > between Claude and Unreal Engine. It can be any string you like, for example
 > `myproject2025`. You will set the same value in two places."
 
-Wait for the user to provide a token before continuing.
+**Do not suggest, reuse, or recall a token from memory or from any existing file.
+Always ask the user to provide one fresh. Wait for them to type it before continuing.**
 
 ---
 
