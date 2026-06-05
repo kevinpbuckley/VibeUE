@@ -66,7 +66,7 @@ SYNTHETIC_TOOLS: list[dict] = [
         "description": (
             "Check VibeUE setup status and get next steps. "
             "Call this first if tools are not responding or UE seems unreachable. "
-            "For first-time setup, read Plugins/VibeUE/Content/Python/VIBEUE_MCP_SETUP.md."
+            "For first-time setup, read Plugins/VibeUE/VIBEUE_MCP_SETUP.md."
         ),
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     }
@@ -318,14 +318,15 @@ def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
     if ue_message:
         text = (
             f"Unreal Engine rejected the request: {ue_message}\n"
-            f"Check that the API token in ~/.claude/mcp.json matches "
-            f"Project Settings -> Plugins -> VibeUE -> API Key."
+            f"Check that the bearer token in Plugins/VibeUE/vibeue-proxy.json matches "
+            f"UE Project Settings -> Plugins -> VibeUE -> API Key.\n"
+            f"For full setup instructions read: Plugins/VibeUE/VIBEUE_MCP_SETUP.md"
         )
     else:
         text = (
             f"Unreal Engine is not running.\n"
-            f"Please launch UE with the VibeUE plugin enabled, "
-            f"then retry '{tool_name}'."
+            f"Please launch UE with the VibeUE plugin enabled, then retry '{tool_name}'.\n"
+            f"If this is a first-time setup, read: Plugins/VibeUE/VIBEUE_MCP_SETUP.md"
         )
     return {
         "jsonrpc": "2.0",
