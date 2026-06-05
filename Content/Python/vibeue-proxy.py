@@ -65,8 +65,8 @@ SYNTHETIC_TOOLS: list[dict] = [
         "name": "vibeue_status",
         "description": (
             "Check VibeUE setup status and get next steps. "
-            "Call this first if tools are not responding, UE seems unreachable, "
-            "or you are setting up VibeUE for the first time in a project."
+            "Call this first if tools are not responding or UE seems unreachable. "
+            "For first-time setup, read Plugins/VibeUE/Content/Python/VIBEUE_MCP_SETUP.md."
         ),
         "inputSchema": {"type": "object", "properties": {}, "required": []},
     }
