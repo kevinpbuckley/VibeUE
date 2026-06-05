@@ -94,13 +94,13 @@ STATE TREES (load skill: state-trees)
   unreal.StateTreeService  — tasks, transitions, considerations, event bindings
 
 NIAGARA (load skill: niagara-systems or niagara-emitters)
-  unreal.NiagaraSystemService / unreal.NiagaraEmitterService / unreal.NiagaraScratchPadService
+  unreal.NiagaraService / unreal.NiagaraEmitterService / unreal.NiagaraScratchPadService
 
 UV MAPPING (load skill: uv-mapping)
-  unreal.UVMappingService.generate_uv_channel(path, channel, method)
+  unreal.UVMappingService.AddUVChannel / AutoUnwrapUVs / ListUVChannels / PackUVs
 
 SCREENSHOTS (load skill: screenshots)
-  unreal.ScreenshotService.capture_editor_screenshot(path)
+  unreal.ScreenshotService.CaptureEditorWindow(path)
 
 SUBSYSTEMS — access via unreal.get_editor_subsystem(unreal.SubsystemName)
   NOT the deprecated unreal.EditorLevelLibrary (removed in UE 5.7+)""",
@@ -149,6 +149,7 @@ AI / Logic
 
 Environment
   foliage              → Foliage instances on landscapes
+  pcg                  → Procedural Content Generation graphs
   level-actors         → Actor manipulation in the current level
   viewport             → Camera, view mode, FOV, layout, rendering settings
 
