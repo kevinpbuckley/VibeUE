@@ -217,4 +217,12 @@ public:
      * @return Formatted markdown table of skills with names, descriptions, and services
      */
     static FString GenerateSkillsSection();
+
+    /**
+     * Generate the saved-memory index by scanning Project/Saved/VibeUE/Memory.
+     * Lists each memory file (with a short hint) so the in-editor chat is always
+     * aware of what it has stored and can `view` the relevant file on demand.
+     * @return Formatted markdown index, or empty string if no memories exist
+     */
+    static FString GenerateMemoryIndexSection();
 };
