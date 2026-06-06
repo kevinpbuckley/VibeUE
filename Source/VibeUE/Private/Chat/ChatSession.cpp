@@ -1144,6 +1144,10 @@ void FChatSession::ResetChat()
     // Clear loaded skills (removed from system prompt after reset)
     ClearLoadedSkills();
 
+    // Rebuild the system prompt so dynamic sections (e.g. the saved-memory index)
+    // reflect the current on-disk state rather than what existed at session creation.
+    SystemPrompt = FOpenRouterClient::GetDefaultSystemPrompt();
+
     // Delete history file
     FString HistoryPath = GetHistoryFilePath();
     if (FPaths::FileExists(HistoryPath))

@@ -458,6 +458,18 @@ The built-in chat interface runs directly in Unreal Editor:
 | **Temperature** | 0.2 | Creativity (0.0-1.0) |
 | **Max Tool Iterations** | 100 | Max tool calls per turn |
 
+### 🧠 Memory (Persistent Across Sessions)
+
+The in-editor chat has a **memory** that persists between editor sessions, so the assistant can recall things you've asked it to remember in earlier conversations (project conventions, decisions, recurring preferences, where things live, etc.).
+
+- **Where it's stored**: plain files on disk under `<YourProject>/Saved/VibeUE/Memory`. It's per-project and local to your machine — nothing is committed to source control and nothing is sent to external services beyond the normal chat request. You can browse, back up, or clear these files yourself at any time.
+- **How recall works**: at the start of each chat, an index of your saved memory files is added to the assistant's context, so it always knows what it has stored. When you ask about something a memory covers, it reads that file and answers from it. (The index refreshes when a new chat is started.)
+- **How saving works**: the assistant **only writes to memory when you explicitly ask it to** — e.g. *"remember that our UI color is #1E90FF"* or *"save this to memory"*. It will never store things on its own. It may *offer* to save ("Want me to remember this?"), but it waits for your "yes" before writing anything. To remove something, just ask it to forget.
+- **Interface**: mirrors the standard memory tool — `view`, `create`, `str_replace`, `insert`, `delete`, `rename` — scoped to the memory folder (paths outside it are rejected).
+- **Scope**: this memory is **exclusive to the in-editor chat**. It is **not** exposed through the MCP server, so external clients (VS Code Copilot, Cursor, etc.) cannot read or write it.
+
+> The assistant's memory behavior is defined in `Content/instructions/vibeue.instructions.md` — edit that file to tune how aggressively it recalls or what it's allowed to store.
+
 ---
 
 ## 🧠 Using VibeUE with External AI Agents
