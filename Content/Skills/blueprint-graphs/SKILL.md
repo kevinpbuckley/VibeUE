@@ -1,7 +1,7 @@
 ---
 name: blueprint-graphs
 display_name: Blueprint Graph Editing
-description: Add, connect, and configure nodes in Blueprint event graphs and function graphs
+description: Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph.
 vibeue_classes:
   - BlueprintService
 unreal_classes:
@@ -457,6 +457,11 @@ this is critical for State Tree tasks, animation blueprints, and any actor that 
 ticking during the wait period.
 
 ---
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_event_graph.pyx`** — wire Event BeginPlay → Print String, verify connection, compile.
+- **`scripts/timer_with_custom_event.pyx`** — non-blocking Set Timer by Event + Custom Event callback.
 
 ## Sub-docs Available
 

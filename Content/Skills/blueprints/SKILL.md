@@ -1,7 +1,7 @@
 ---
 name: blueprints
 display_name: Blueprint System
-description: Create and modify Blueprint assets, variables, functions, and components
+description: Create and modify Blueprint assets, variables, functions, components, event dispatchers, and interfaces. Use when the user asks to create a Blueprint/BP, add a variable or component to a Blueprint, make an event dispatcher/delegate, implement a Blueprint interface, or inspect a Blueprint's class/components. For node-level graph wiring, also load blueprint-graphs.
 vibeue_classes:
   - BlueprintService
   - AssetDiscoveryService
@@ -185,131 +185,24 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 ---
 
-## Workflows
+## Task Index
 
-### Create Blueprint with Variables
+| Task | Workflow | Sample script (run via `execute_python_code`) |
+|------|----------|-----------------------------------------------|
+| Create a Blueprint + variables | `workflows.md` → Create a Blueprint | `scripts/create_blueprint.pyx` |
+| Add components + set properties | `workflows.md` → Add components | `scripts/add_component.pyx` |
+| Add an event dispatcher (delegate) | `workflows.md` → Event dispatcher | `scripts/event_dispatcher.pyx` |
+| Implement a Blueprint interface | `workflows.md` → Implement an interface | `scripts/add_interface.pyx` |
+| Inspect a Blueprint (components, parent class) | `introspection.md` | — |
+| Node-level graph editing | load the **`blueprint-graphs`** skill | — |
 
-```python
-import unreal
+## Sub-docs
 
-existing = unreal.AssetDiscoveryService.find_asset_by_path("/Game/BP_Player")
-if not existing:
-    path = unreal.BlueprintService.create_blueprint("Player", "Character", "/Game/")
-    unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
-    unreal.BlueprintService.add_variable(path, "IsAlive", "bool", "true")
-    unreal.BlueprintService.compile_blueprint(path)
-    unreal.EditorAssetLibrary.save_asset(path)
-```
+- **`workflows.md`** — step-by-step create/component/dispatcher/interface workflows with copy-paste Python.
+- **`introspection.md`** — what Blueprint introspection works/doesn't in UE 5.7 (CDO reads, parent class via
+  asset tags, listing BPs by class, getting level actors).
 
-### Add Component with Properties
+## Verification
 
-```python
-import unreal
-
-bp_path = "/Game/BP_Enemy"
-
-unreal.BlueprintService.add_component(bp_path, "StaticMeshComponent", "BodyMesh")
-unreal.BlueprintService.add_component(bp_path, "PointLightComponent", "Glow", "BodyMesh")  # Child
-unreal.BlueprintService.compile_blueprint(bp_path)
-
-unreal.BlueprintService.set_component_property(bp_path, "BodyMesh", "bVisible", "true")
-unreal.BlueprintService.set_component_property(bp_path, "Glow", "Intensity", "5000.0")
-unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
----
-
-## Blueprint Introspection — What Works and What Doesn't (UE 5.7)
-
-### Getting Level Actors
-
-```python
-# CORRECT
-actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-actors = actor_subsys.get_all_level_actors()
-
-# WRONG — deprecated, blocked by VibeUE in UE 5.7
-unreal.EditorLevelLibrary.get_all_level_actors()
-```
-
-### Finding Blueprint Assets
-
-```python
-# CORRECT — use package_name or package_path
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-assets = ar.get_assets_by_path('/Game', recursive=True)
-print(assets[0].package_name)   # /Game/Blueprints/BP_MyActor
-print(assets[0].package_path)   # /Game/Blueprints
-
-# WRONG — object_path does not exist on AssetData in UE 5.7
-assets[0].object_path  # AttributeError
-```
-
-### Inspecting Blueprint Components
-
-Direct Blueprint introspection APIs are largely missing or protected in UE 5.7 Python:
-
-| What you might try | Result |
-|---|---|
-| `bp.get_editor_property('simple_construction_script')` | Blocked — protected property |
-| `bp.simple_construction_script` | AttributeError — not exposed |
-| `scs.get_all_nodes()` | Runtime crash ("^") |
-| `BlueprintEditorLibrary.get_blueprint_component_names()` | Doesn't exist in UE 5.7 |
-| `SubobjectDataSubsystem.k2_gather_subobject_data_for_blueprint(bp)` | Returns handles but `SubobjectData` exposes no properties from Python |
-| `bp.get_editor_property('parent_class')` | RuntimeError — `parent_class` not an editor property on Blueprint |
-| `bp.parent_class` | AttributeError — not exposed |
-
-**Working pattern — CDO (preferred, no spawn needed):**
-
-```python
-import unreal
-
-bp = unreal.EditorAssetLibrary.load_asset("/Game/Blueprints/BP_MyActor")
-# Note: unreal.load_asset() returns None on a fresh session; use EditorAssetLibrary.load_asset()
-
-gc = bp.generated_class()
-cdo = unreal.get_default_object(gc)   # module-level call; read-only is allowed
-
-for comp in cdo.get_components_by_class(unreal.ActorComponent):
-    print(f"{comp.get_class().get_name()}: {comp.get_name()}")
-```
-
-CDO modification is still blocked — `unreal.get_default_object(gc).set_editor_property(...)` raises `PYTHON_UNSAFE_CODE`.
-
-**Getting parent class — use asset registry tag:**
-
-```python
-import unreal
-
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-assets = ar.get_assets_by_path("/Game/Blueprints", False)
-for a in assets:
-    if "BP_MyActor" in str(a.asset_name):
-        print(a.get_tag_value("ParentClass"))        # e.g. "/Script/Engine.Actor"
-        print(a.get_tag_value("NativeParentClass"))  # same, native C++ parent
-        break
-```
-
-**Listing all Blueprints by class — use `get_assets_by_class`:**
-
-```python
-import unreal
-
-# ARFilter properties cannot be set after construction — don't use ARFilter for class filtering.
-# asset_class_names kwarg does not exist. Use get_assets_by_class instead:
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-bp_class = unreal.TopLevelAssetPath("/Script/Engine", "Blueprint")
-assets = ar.get_assets_by_class(bp_class, True)   # True = include derived classes
-for a in assets:
-    print(f"{a.package_path}/{a.asset_name}")
-```
-
-### Material Parameters
-
-```python
-# Works cleanly
-import unreal
-mat = unreal.load_asset('/Game/Materials/M_MyMaterial')
-names = unreal.MaterialEditingLibrary.get_scalar_parameter_names(mat)
-print(names)
-```
+After any edit: `compile_blueprint(path)` and check `.success` / `.num_errors`, then
+`unreal.EditorAssetLibrary.save_asset(path)`. Don't claim success until compile reports zero errors.
