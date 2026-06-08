@@ -1,7 +1,7 @@
 ---
 name: foliage
 display_name: Foliage & Vegetation
-description: Place and manage foliage instances on landscapes using FoliageService
+description: Create foliage types and place/scatter foliage instances on landscapes and meshes (FoliageService). Use when the user asks to add trees/grass/bushes/rocks as foliage, create a foliage type from a mesh, scatter or paint foliage instances, or query/remove foliage on a surface.
 vibeue_classes:
   - FoliageService
 unreal_classes:
@@ -297,3 +297,7 @@ if unreal.FoliageService.foliage_type_exists("/Game/Meshes/SM_Tree_01"):
 if unreal.FoliageService.has_foliage_instances("/Game/Meshes/SM_Tree_01"):
     print("Instances exist in level")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/scatter_foliage.pyx`** — create a foliage type from a mesh and scatter instances onto the surface.

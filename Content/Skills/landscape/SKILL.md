@@ -1,7 +1,7 @@
 ---
 name: landscape
 display_name: Landscape Terrain
-description: Create and edit landscape terrain, heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural terrain features using LandscapeService
+description: Create and edit landscape terrain — heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural features like mountains/valleys/craters (LandscapeService). Use when the user asks to create a landscape, sculpt/raise/lower terrain, import or export a heightmap, paint terrain layers, or add procedural terrain features. For terrain materials load landscape-materials; for real-world heightmaps load terrain-data.
 vibeue_classes:
   - LandscapeService
 unreal_classes:
@@ -291,3 +291,7 @@ manage_skills(action="load", skill_name="landscape-auto-material")
 ```
 
 > **NOTE**: For landscape material, texture, and layer blending operations, use `LandscapeMaterialService` (load the `landscape-materials` or `landscape-auto-material` skill).
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/sculpt_terrain.pyx`** — create a landscape and sculpt procedural mountain/valley features.
