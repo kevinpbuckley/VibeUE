@@ -1,7 +1,7 @@
 ---
 name: animation-blueprint
 display_name: Animation Blueprints
-description: Navigate, inspect AND author Animation Blueprints, state machines, states, transitions and transition rules
+description: Navigate, inspect, and author Animation Blueprints — state machines, states, transitions, and transition rules (AnimGraphService). Use when the user asks to create or edit an Animation Blueprint/AnimBP, add a state machine or states, wire transitions between states, set a state's animation, or inspect AnimGraph structure.
 vibeue_classes:
   - AnimGraphService
   - AssetDiscoveryService
@@ -407,3 +407,7 @@ for machine in machines:
     for state in states:
         print(f"{machine.machine_name}/{state.state_name}")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_state_machine.pyx`** — add a state machine with two states, set state animations, add a transition, compile.

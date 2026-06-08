@@ -1,7 +1,7 @@
 ---
 name: skeleton
 display_name: Skeleton & Skeletal Mesh Management
-description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints
+description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing.
 vibeue_classes:
   - SkeletonService
 unreal_classes:
@@ -439,3 +439,7 @@ unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
 unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
 unreal.SkeletonService.save_asset(path)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/add_socket.pyx`** — add a socket to a skeletal mesh/skeleton and list sockets.

@@ -1,7 +1,7 @@
 ---
 name: animation-montage
 display_name: Animation Montages
-description: Create and manipulate animation montages with sections, slots, segments, branching points, and blend settings
+description: Create and manipulate Animation Montages — sections, slots, segments, branching points, notifies, and blend settings (AnimMontageService). Use when the user asks to create a montage (from an animation or empty), add or link montage sections, set up slots/segments, add branching points, or adjust montage blend timing.
 vibeue_classes:
   - AnimMontageService
 unreal_classes:
@@ -317,3 +317,7 @@ AnimMontageService.add_section(path, "Attack", 0.5)
 AnimMontageService.add_section(path, "Attack", 0.5)
 unreal.EditorAssetLibrary.save_asset(path)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_montage.pyx`** — create a montage from an animation and add named sections.
