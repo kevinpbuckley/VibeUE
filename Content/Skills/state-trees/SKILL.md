@@ -1,7 +1,7 @@
 ---
 name: state-trees
 display_name: StateTree Behavior
-description: Create, inspect, and edit StateTree assets for AI behavior, game logic, and character state machines
+description: Create, inspect, and edit StateTree assets — states, tasks, transitions, conditions, considerations, and property bindings for AI behavior and game logic (StateTreeService). Use when the user asks to build a StateTree, add states/tasks/transitions, bind task properties, set up Utility AI considerations, or wire StateTree delegate transitions.
 vibeue_classes:
   - StateTreeService
 unreal_classes:
@@ -484,3 +484,7 @@ unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveEnterState
 # CORRECT — new Enter State event without return value
 unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentEnterState", 0, 0)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_state_tree.pyx`** — create a StateTree, add states + a transition (see api-reference.md for task struct names).

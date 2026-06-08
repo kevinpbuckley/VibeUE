@@ -1,7 +1,7 @@
 ---
 name: enhanced-input
 display_name: Enhanced Input System
-description: Create and configure Input Actions, Mapping Contexts, triggers, and modifiers
+description: Create and configure Enhanced Input — Input Actions, Mapping Contexts, key mappings, triggers, and modifiers (InputService). Use when the user asks to set up player input, create an Input Action (IA_) or Input Mapping Context (IMC_), bind keys to actions, or configure input triggers/modifiers.
 vibeue_classes:
   - InputService
 unreal_classes:
@@ -121,3 +121,7 @@ print(f"Triggers: {types.trigger_types}")
 
 keys = unreal.InputService.get_available_keys()
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/setup_input.pyx`** — create an Input Action + Mapping Context and bind a key.
