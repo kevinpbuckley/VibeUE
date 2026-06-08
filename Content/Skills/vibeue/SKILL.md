@@ -40,3 +40,27 @@ The loaded skill returns:
 - `available_sections` — sibling sub-docs you can load via `skill_name="<skill>/<section>"` for deeper reference material
 
 Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never guess method names from the skill content alone.
+
+## MCP tools — what each is for
+
+These tools are invoked directly (no skill needed), but each domain skill assumes them:
+
+| Tool | Use it for | Validated by |
+|------|-----------|--------------|
+| `execute_python_code` | Run `unreal.*` Python in the editor (the workhorse for every service) | every skill |
+| `manage_skills` | `list` / `suggest` / `load` skills + sub-docs | this skill |
+| `manage_asset` | Search/find/list/open/save/duplicate/move/delete/import assets (prefer over raw Python) | `asset-management`, `test_prompts/asset_management`, `test_prompts/assets` |
+| `read_logs` | List/read/filter/tail UE logs (main/chat/llm) | `test_prompts/logs` |
+| `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code | every skill |
+| `list_python_subsystems` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` | `level-actors` |
+| `terrain_data` | Real-world heightmaps + water splines | `terrain-data`, `test_prompts/terrain-data` |
+| `deep_research` | Web research / page fetch / geocoding | `test_prompts/deep-research` |
+
+## Tool-level test prompts (no single domain skill — exercised directly)
+
+- `test_prompts/logs` → `read_logs`
+- `test_prompts/transactions` → editor undo/redo via `execute_python_code` (`unreal` transaction APIs)
+- `test_prompts/utilities` → connectivity/help (`vibeue_status`)
+- `test_prompts/deep-research` → `deep_research`
+- `test_prompts/Smoke_Test.md`, `demo_prompts.md`, `markdown_rendering_test.md` → general smoke/UX checks
+
