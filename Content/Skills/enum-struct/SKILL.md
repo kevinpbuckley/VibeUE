@@ -232,3 +232,7 @@ unreal.EnumStructService.add_struct_property(path, "Scores", "int32", "", "Map")
 ### Property Type Not Recognized
 - Use `BlueprintService.search_variable_types()` to find valid type names
 - Ensure enum/struct types exist before referencing them
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_enum_struct.pyx`** — create a UserDefinedEnum (+values) and a UserDefinedStruct.

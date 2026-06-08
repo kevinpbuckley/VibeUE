@@ -1,7 +1,7 @@
 ---
 name: data-assets
 display_name: Data Assets
-description: Create and modify Primary Data Assets with property management
+description: Create and modify Primary Data Assets and set their properties (DataAssetService). Use when the user asks to create a Data Asset / PrimaryDataAsset (DA_), populate its fields, or read/write Data Asset properties.
 vibeue_classes:
   - DataAssetService
 unreal_classes:
@@ -153,3 +153,7 @@ result = unreal.DataAssetService.set_properties(path, json.dumps(properties))
 # result.success_properties - list of properties set
 # result.failed_properties - list that failed
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_data_asset.pyx`** — create a Primary Data Asset and set properties.

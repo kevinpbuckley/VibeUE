@@ -171,3 +171,7 @@ if not result.success:
 | `source` | `str` | Where tag was defined |
 | `is_explicit` | `bool` | Explicitly defined vs implied parent |
 | `child_count` | `int` | Number of direct children |
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/add_tags.pyx`** — register gameplay tags and list them.

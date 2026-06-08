@@ -1,7 +1,7 @@
 ---
 name: asset-management
 display_name: Asset Discovery & Management
-description: Search, find, open, move, duplicate, save, delete, import, and export assets
+description: Search, find, open, move, duplicate, save, delete, import, and export assets (the manage_asset tool / AssetDiscoveryService). Use when the user asks to find/locate an asset, list a folder, open/save/duplicate/move/rename/delete an asset, or import an image from disk. Prefer the manage_asset MCP tool over raw Python for asset ops.
 vibeue_classes:
   - AssetDiscoveryService
 unreal_classes:
@@ -278,3 +278,7 @@ unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_MyGrass")
 - `PrimaryDataAsset` - Primary Data Assets
 - `LandscapeGrassType` - Landscape grass/vegetation scatter types
 - `LandscapeLayerInfoObject` - Landscape paint layer info
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/find_and_save.pyx`** — find an asset and duplicate+save it (prefer the manage_asset tool for these ops).

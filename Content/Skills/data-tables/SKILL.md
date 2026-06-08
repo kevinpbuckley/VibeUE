@@ -1,7 +1,7 @@
 ---
 name: data-tables
 display_name: Data Tables
-description: Create and modify Data Tables with row management
+description: Create and modify Data Tables and manage their rows (DataTableService). Use when the user asks to create a Data Table (DT_) from a row struct, add/edit/remove rows, or read row data. Pair with enum-struct to define the row struct first.
 vibeue_classes:
   - DataTableService
 unreal_classes:
@@ -139,3 +139,7 @@ import unreal
 unreal.DataTableService.remove_row("/Game/DT_Items", "Sword_Iron")
 unreal.EditorAssetLibrary.save_asset("/Game/DT_Items")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_data_table.pyx`** — create a Data Table from a row struct and add rows.
