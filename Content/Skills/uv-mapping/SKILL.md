@@ -1,7 +1,7 @@
 ---
 name: uv-mapping
 display_name: UV Mapping
-description: Inspect, generate, transform, and visualize UV channels on StaticMesh assets via UVMappingService
+description: Inspect, generate, transform, and visualize UV channels on StaticMesh assets (UVMappingService). Use when the user asks to check/add/remove UV channels, auto-unwrap UVs, transform (tile/offset/rotate) UVs, check UV health/islands, or export a UV layout image.
 vibeue_classes:
   - UVMappingService
 unreal_classes:
@@ -405,3 +405,7 @@ assert health.lightmap_coordinate_index == 1
 ```
 
 For unwrap operations, export the layout PNG and visually inspect it via `attach_image` — the cheapest way to confirm the unwrap looks reasonable.
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/inspect_uvs.pyx`** — inspect UV channels/health and export a UV layout image.

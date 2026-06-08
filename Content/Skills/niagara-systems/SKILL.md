@@ -1,7 +1,7 @@
 ---
 name: niagara-systems
 display_name: Niagara Systems
-description: Create and manage Niagara particle systems - system lifecycle, adding/copying emitters, user parameters, system script settings, scratch-pad authoring
+description: Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters.
 vibeue_classes:
   - NiagaraService
   - NiagaraScratchPadService
@@ -150,3 +150,7 @@ summary = unreal.NiagaraService.summarize(path)
 info = unreal.NiagaraService.get_system_info(path)
 exists = unreal.NiagaraService.system_exists(path)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_system.pyx`** — create a Niagara system, add a user parameter, compile.

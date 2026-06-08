@@ -1,7 +1,7 @@
 ---
 name: metasounds
 display_name: MetaSound Editor
-description: Create and modify MetaSound Source assets — add nodes, wire pins, set defaults, play sounds procedurally
+description: Create and modify MetaSound Source assets — add/connect nodes, wire pins, set input defaults, and play procedurally (MetaSoundService). Use when the user asks to create a MetaSound, build or edit a MetaSound graph, add operator/input/output nodes, or generate procedural audio.
 vibeue_classes:
   - MetaSoundService
 unreal_classes:
@@ -422,3 +422,7 @@ in the editor is NOT the vertex name. Always use the vertex names below in `conn
 - **Graph inputs appear as `Input` nodes** in the graph (`class_name == "Input.Float"`, `"Input.Bool"`, etc.). When filtering for the standard interface Input node (the one that carries `On Play`), always match by `class_name == "Input.Trigger"` — not by `node_title == "Input"` alone, which will also match graph input nodes.
 - **AudioMixer pins interleave audio and gain:** `Audio Mixer (Mono, 2)` has pins `["In 0:Audio", "Gain 0:Float", "In 1:Audio", "Gain 1:Float"]`. Never index by position — always filter for `:Audio` typed pins when connecting audio signals: `audio_ins = [p.split(":")[0] for p in mixer_node.inputs if p.endswith(":Audio")]`.
 - **Stereo MetaSound Sources** report `UE.OutputFormat.Mono.Audio:0` as the audio output sink pin (same as Mono). The existing audio-output filter (`any(p.endswith(":Audio") for p in n.inputs)`) works correctly for both formats.
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_metasound.pyx`** — create a MetaSound Source and list available node types.

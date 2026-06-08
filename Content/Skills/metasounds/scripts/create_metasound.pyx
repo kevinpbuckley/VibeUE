@@ -1,0 +1,18 @@
+# create_metasound.pyx — Create a MetaSound Source and inspect its available nodes.
+#
+# Sample script for the metasounds skill. Run via execute_python_code.
+import unreal
+mss = unreal.MetaSoundService
+
+FOLDER = "/Game/Audio"
+NAME = "MS_SkillTest"
+asset_path = f"{FOLDER}/{NAME}"
+if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+    unreal.EditorAssetLibrary.delete_asset(asset_path)
+
+r = mss.create_meta_sound(FOLDER, NAME, "Mono")   # output_format: "Mono" or "Stereo"
+print("create:", r)
+# Discover node types you can add, then add/connect with add_node / connect_nodes
+for n in list(mss.list_available_nodes(asset_path))[:10]:
+    print("node type:", n)
+unreal.EditorAssetLibrary.save_asset(asset_path)
