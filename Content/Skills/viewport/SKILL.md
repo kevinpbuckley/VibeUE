@@ -221,3 +221,7 @@ unreal.ViewportService.set_exposure(True, 4.0)   # Brighter
 # Return to auto exposure (game settings)
 unreal.ViewportService.set_exposure_game_settings()
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/set_camera.pyx`** — position the editor camera and set the view mode.

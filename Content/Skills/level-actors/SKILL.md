@@ -1,7 +1,7 @@
 ---
 name: level-actors
 display_name: Level Actors & Editor Subsystems
-description: Manipulate actors in the current level using editor subsystems
+description: List, find, place, move, rotate, and modify actors in the current level (ActorService + editor subsystems). Use when the user asks to find/list actors in the level, move or rotate an actor, set an actor's properties/folder/transform, or spawn/delete level actors.
 vibeue_classes:
   - ActorService
 unreal_classes:
@@ -391,3 +391,7 @@ unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
 loc, rot, scale = unreal.ActorService.get_absolute_transform("MyCube")
 print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/manipulate_actors.pyx`** — list level actors, find by class, move/rotate by name.
