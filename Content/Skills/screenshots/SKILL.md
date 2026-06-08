@@ -1,7 +1,7 @@
 ---
 name: screenshots
 display_name: Screenshot & Vision
-description: Capture screenshots of the editor window, viewports, and blueprints for AI vision analysis
+description: Capture screenshots of the editor window, viewports, and asset editors for AI vision analysis (ScreenshotService). Use when the user asks you to look at / see / show the editor, verify something visually, capture a material or blueprint editor, or when you need vision to confirm a change. Pair captures with attach_image.
 vibeue_classes:
   - ScreenshotService
 unreal_classes:
@@ -211,3 +211,7 @@ attach_image(file_path="E:/Screenshots/Capture.png")
 - **Satellite images**: `terrain_data get_map_image` → attach → identify terrain features for material/painting
 - **Blueprint graphs**: Capture editor window → attach → review node layout
 - **Verification**: Capture result → attach → confirm changes look correct
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/capture.pyx`** — capture the editor/active window or an asset editor for vision analysis.

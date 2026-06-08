@@ -153,3 +153,7 @@ result = unreal.EngineSettingsService.set_engine_ini_value(
 - **Performance profiling**: GC settings, streaming, scalability
 - **Platform settings**: Windows graphics API, shader formats
 - **Quality presets**: Apply overall or per-group scalability levels
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/set_cvars.pyx`** — read scalability and set a console variable.
