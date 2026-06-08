@@ -2388,7 +2388,20 @@ FPIEWidgetHandle UWidgetService::SpawnWidgetInPIE(
 		return Result;
 	}
 
-	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	// NOTE: LoadWidgetBlueprint() uses UEditorAssetLibrary::LoadAsset, which returns null
+	// during PIE — so resolve the object path directly with LoadObject here, which works
+	// while PIE is running. Accept either a package path (/Game/UI/WBP_X) or a full object
+	// path (/Game/UI/WBP_X.WBP_X).
+	FString ObjectPath = WidgetPath;
+	if (!ObjectPath.Contains(TEXT(".")))
+	{
+		FString AssetName;
+		if (WidgetPath.Split(TEXT("/"), nullptr, &AssetName, ESearchCase::IgnoreCase, ESearchDir::FromEnd))
+		{
+			ObjectPath = FString::Printf(TEXT("%s.%s"), *WidgetPath, *AssetName);
+		}
+	}
+	UWidgetBlueprint* WidgetBP = LoadObject<UWidgetBlueprint>(nullptr, *ObjectPath);
 	if (!WidgetBP)
 	{
 		Result.ErrorMessage = TEXT("Widget Blueprint not found.");

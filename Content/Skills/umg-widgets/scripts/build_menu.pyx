@@ -1,0 +1,25 @@
+# build_menu.pyx — Build a vertical-menu hierarchy inside an existing Widget Blueprint.
+#
+# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Assumes WIDGET_PATH already exists (see create_widget.pyx). Sets root canvas,
+# a VerticalBox, and one Button + child TextBlock per entry, then saves.
+import unreal
+
+WIDGET_PATH = "/Game/Blueprints/TestWidget"
+BUTTONS = [("PlayButton", "PLAY"), ("OptionsButton", "OPTIONS"), ("QuitButton", "QUIT")]
+
+# Root first (set_as_root=True), then container, then children.
+unreal.WidgetService.add_component(WIDGET_PATH, "CanvasPanel", "Root", "", True)
+unreal.WidgetService.add_component(WIDGET_PATH, "VerticalBox", "ButtonList", "Root", False)
+
+for btn_name, label in BUTTONS:
+    unreal.WidgetService.add_component(WIDGET_PATH, "Button", btn_name, "ButtonList", False)
+    text_name = f"{btn_name}Text"
+    unreal.WidgetService.add_component(WIDGET_PATH, "TextBlock", text_name, btn_name, False)
+    unreal.WidgetService.set_property(WIDGET_PATH, text_name, "Text", label)  # value is a string
+
+unreal.EditorAssetLibrary.save_asset(WIDGET_PATH)
+
+# Verify before claiming success.
+for s in unreal.WidgetService.get_widget_snapshot(WIDGET_PATH):
+    print(f"{s.widget_name} ({s.widget_class}) parent={s.parent_widget}")

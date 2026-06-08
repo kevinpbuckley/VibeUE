@@ -1,0 +1,21 @@
+# inspect_hierarchy.pyx — Print a Widget Blueprint's full hierarchy, slots, and properties.
+#
+# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Uses get_widget_snapshot (one call: hierarchy + slot layout + all properties),
+# which is preferred over get_hierarchy + per-widget list_properties.
+import unreal
+
+WIDGET_PATH = "/Game/Blueprints/TestWidget"
+
+snapshots = unreal.WidgetService.get_widget_snapshot(WIDGET_PATH)
+print(f"{len(snapshots)} widget(s) in {WIDGET_PATH}")
+
+for s in snapshots:
+    root = " [root]" if s.is_root_widget else ""
+    print(f"- {s.widget_name} ({s.widget_class}) parent={s.parent_widget or '-'}{root}")
+    slot = s.slot_info
+    if slot.slot_type and slot.slot_type != "None":
+        print(f"    slot={slot.slot_type}")
+    for prop in s.properties:
+        if prop.is_editable:
+            print(f"    {prop.property_name} = {prop.current_value}")
