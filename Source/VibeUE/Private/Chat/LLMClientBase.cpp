@@ -84,6 +84,14 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
                     CombinedInstructions += DirectoryInfo;
                 }
 
+                // Append the saved-memory index so the chat is always aware of what it has stored.
+                FString MemoryIndex = GenerateMemoryIndexSection();
+                if (!MemoryIndex.IsEmpty())
+                {
+                    CombinedInstructions += TEXT("\n\n---\n\n");
+                    CombinedInstructions += MemoryIndex;
+                }
+
                 UE_LOG(LogLLMClientBase, Log, TEXT("Loaded %d instruction file(s) from: %s"), FoundFiles.Num(), *InstructionsFolder);
                 return CombinedInstructions;
             }
@@ -109,8 +117,95 @@ FString FLLMClientBase::LoadSystemPromptFromFile()
         FallbackPrompt += TEXT("\n\n---\n\n");
         FallbackPrompt += DirectoryInfo;
     }
-    
+
+    // Append the saved-memory index to the fallback prompt as well.
+    FString MemoryIndex = GenerateMemoryIndexSection();
+    if (!MemoryIndex.IsEmpty())
+    {
+        FallbackPrompt += TEXT("\n\n---\n\n");
+        FallbackPrompt += MemoryIndex;
+    }
+
     return FallbackPrompt;
+}
+
+FString FLLMClientBase::GenerateMemoryIndexSection()
+{
+    const FString MemoryDir = FVibeUEPaths::GetMemoryDir();
+    if (MemoryDir.IsEmpty() || !FPaths::DirectoryExists(MemoryDir))
+    {
+        return FString();
+    }
+
+    IFileManager& FM = IFileManager::Get();
+    TArray<FString> Files;
+    FM.FindFilesRecursive(Files, *MemoryDir, TEXT("*"), /*Files=*/true, /*Directories=*/false);
+    if (Files.Num() == 0)
+    {
+        return FString();
+    }
+    Files.Sort();
+
+    FString RootFull = FPaths::ConvertRelativePathToFull(MemoryDir);
+    FPaths::NormalizeDirectoryName(RootFull);
+
+    FString Section = TEXT("## 🧠 Saved Memory (this project)\n\n");
+    Section += TEXT("You have previously saved the memory files listed below (stored under the project's Saved folder). ");
+    Section += TEXT("They persist across sessions and ARE part of what you know about this project.\n\n");
+    Section += TEXT("**When the user asks about anything one of these files might cover, FIRST use the `memory` tool with `command=\"view\"` to read the relevant file, then answer from it. ");
+    Section += TEXT("Never tell the user you have nothing in memory about a topic that one of these files clearly covers.**\n\n");
+
+    for (const FString& AbsFile : Files)
+    {
+        FString Rel = FPaths::ConvertRelativePathToFull(AbsFile);
+        Rel.RemoveFromStart(RootFull);
+        Rel.ReplaceInline(TEXT("\\"), TEXT("/"));
+        while (Rel.StartsWith(TEXT("/")))
+        {
+            Rel = Rel.RightChop(1);
+        }
+        const FString DisplayPath = TEXT("/memories/") + Rel;
+
+        // Hint: first markdown heading or first non-empty line of the file.
+        FString Hint;
+        FString Content;
+        if (FFileHelper::LoadFileToString(Content, *AbsFile))
+        {
+            TArray<FString> Lines;
+            Content.ParseIntoArrayLines(Lines, /*CullEmpty=*/true);
+            for (const FString& L : Lines)
+            {
+                FString T = L.TrimStartAndEnd();
+                if (T.IsEmpty())
+                {
+                    continue;
+                }
+                // Strip leading markdown heading hashes
+                while (T.StartsWith(TEXT("#")))
+                {
+                    T = T.RightChop(1);
+                }
+                Hint = T.TrimStartAndEnd();
+                break;
+            }
+        }
+
+        if (Hint.Len() > 100)
+        {
+            Hint = Hint.Left(100) + TEXT("...");
+        }
+
+        if (Hint.IsEmpty())
+        {
+            Section += FString::Printf(TEXT("- `%s`\n"), *DisplayPath);
+        }
+        else
+        {
+            Section += FString::Printf(TEXT("- `%s` — %s\n"), *DisplayPath, *Hint);
+        }
+    }
+
+    return Section;
 }
 
 FString FLLMClientBase::GetProjectDirectoryInfo()
