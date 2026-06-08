@@ -96,22 +96,26 @@ def handle_vibeue_status(req_id) -> dict:
         )
     else:
         steps = []
-        if not ue_running:
-            steps.append("1. Launch Unreal Engine with the VibeUE plugin enabled.")
+        n = 1
         if not token_set:
             steps.append(
-                "2. Set a bearer token:\n"
-                "     a) Open vibeue-proxy.json (plugin root) and set \"bearer_token\": \"<your-token>\"\n"
-                "     b) In UE: Project Settings -> Plugins -> VibeUE -> API Key — set the same value.\n"
-                "     c) Restart the proxy after editing vibeue-proxy.json."
+                f"{n}. Set a bearer token:\n"
+                f"     a) Open Plugins/VibeUE/vibeue-proxy.json and set \"bearer_token\": \"<your-token>\"\n"
+                f"     b) In UE: Project Settings -> Plugins -> VibeUE -> API Key — set the same value.\n"
+                f"     c) Restart the proxy after editing vibeue-proxy.json."
             )
+            n += 1
+        if not ue_running:
+            steps.append(f"{n}. Launch Unreal Engine with the VibeUE plugin enabled.")
+            n += 1
         if not manifest_found:
             steps.append(
-                f"3. Launch UE once with VibeUE enabled to generate the tool manifest at:\n"
+                f"{n}. Launch UE once with VibeUE enabled to generate the tool manifest at:\n"
                 f"     {MANIFEST_PATH}"
             )
         text = (
-            "VibeUE setup incomplete. Complete the following steps:\n\n"
+            "VibeUE setup incomplete. For guided setup follow: Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md\n\n"
+            "Remaining steps:\n"
             + "\n".join(steps)
         )
 
@@ -139,14 +143,25 @@ TOOL_HINTS: dict[str, str] = {
 
 IMMEDIATE ACTIONS — go straight to these, no skill or discovery step needed:
 
-  User asks to inspect / list / show / describe a Widget Blueprint (WBP):
+  User asks to list / show / describe components in a Widget Blueprint (WBP):
+      import unreal
+      components = unreal.WidgetService.list_components("/Game/path/WBP_X")
+      print(components)
+      Returns Array[WidgetInfo]: hierarchy + parent/child relationships, lightweight.
+      USE THIS as the default for "what's in this widget" questions.
+      DO NOT use get_hierarchy (names only) or get_widget_snapshot (full props, token-heavy) for hierarchy queries.
+
+  User needs widget PROPERTIES (bindings, slot anchors, visibility, is_variable etc.):
       import unreal
       snapshot = unreal.WidgetService.get_widget_snapshot("/Game/path/WBP_X")
       print(snapshot)
-      Returns full hierarchy + slot info + ALL properties in one call.
-      DO NOT call manage_asset, discover_python_class, or manage_skills first.
-      DO NOT use get_hierarchy (names only, forces extra round-trips).
-      Property access: snapshot.properties[i].property_name / .current_value
+      Returns full hierarchy + slot info + ALL properties — use only when property data is needed.
+      Snapshot format: flat list of widget dicts. children are NAME STRINGS, not nested objects.
+      Build a lookup dict to traverse:
+          lookup = {w["name"]: w for w in snapshot}
+          def children_of(name): return [lookup[c] for c in lookup[name]["children"] if c in lookup]
+      Property access: snapshot[i]["properties"] → list of {name, value} dicts
+      is_variable=True means the widget is a BindWidget target in C++.
 
   User asks to compile a Blueprint:
       import unreal
@@ -168,7 +183,7 @@ KEY RULES:
 SKILL INDEX — load BEFORE executing tasks in that domain:
 
 UI / Widgets
-  umg-widgets          → Widget Blueprint creation, widget inspection (get_widget_snapshot)
+  umg-widgets          → Widget Blueprint creation and authoring (get_widget_snapshot needs no skill)
 
 Blueprints
   blueprints           → Blueprint assets, variables, functions, components
@@ -320,13 +335,13 @@ def ue_error_response(req_id, tool_name: str, ue_message: str = "") -> dict:
             f"Unreal Engine rejected the request: {ue_message}\n"
             f"Check that the bearer token in Plugins/VibeUE/vibeue-proxy.json matches "
             f"UE Project Settings -> Plugins -> VibeUE -> API Key.\n"
-            f"For full setup instructions read: Plugins/VibeUE/VIBEUE_MCP_SETUP.md"
+            f"For full setup instructions read: Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md"
         )
     else:
         text = (
             f"Unreal Engine is not running.\n"
             f"Please launch UE with the VibeUE plugin enabled, then retry '{tool_name}'.\n"
-            f"If this is a first-time setup, read: Plugins/VibeUE/VIBEUE_MCP_SETUP.md"
+            f"If this is a first-time setup, follow: Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md"
         )
     return {
         "jsonrpc": "2.0",
@@ -426,7 +441,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                         "Quick-start rules: "
                         "(1) To inspect a Widget Blueprint, call execute_python_code immediately with unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
                         "(2) To find/open/move assets, use manage_asset, not Python. "
-                        "(3) If tools are not working or this is a first-time setup, call vibeue_status."
+                        "(3) If this is a first-time setup, read Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md and follow it. "
+                        "If tools are not working after setup, call vibeue_status to diagnose."
                     ),
                 },
             })

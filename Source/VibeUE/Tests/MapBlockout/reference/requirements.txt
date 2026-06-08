@@ -1,0 +1,9 @@
+# Map Maker -- host-side Python deps (for build_inputs.py and map_designer.py).
+# export_terrain_data.py runs inside Unreal and needs NONE of these (it uses unreal.* only).
+#
+# Install:  python -m pip install -r requirements.txt
+# Tested with Python 3.11-3.14.
+
+numpy>=1.24
+scipy>=1.10
+pillow>=10.0

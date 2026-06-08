@@ -17,10 +17,10 @@ https://www.vibeue.com/
 ## ✨ Key Features
 
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
-- **Python API Services** - 31 specialized services with 1049 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara (systems + emitters + **scratch-pad graph authoring**), Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, Project/Engine Settings, and more
+- **Python API Services** - 32 specialized services with 1068 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara (systems + emitters + **scratch-pad graph authoring**), Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, **Procedural FPS Map Blockout**, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
 - **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
-- **Domain Skills** - 34 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, and more
+- **Domain Skills** - 35 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, procedural map blockout, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Code, Cursor, and AntiGravity via MCP
 
@@ -123,9 +123,9 @@ manage_skills(action="load", skill_name="blueprints")
 manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
-Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
+Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `map-blockout`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
 
-**Sub-docs (lazy-loaded deep reference material)** — Several skills are split into a concise `SKILL.md` index plus sibling sub-docs. Load a sub-doc with `skill_name="<skill>/<section>"` (e.g. `state-trees/api-reference`, `blueprint-graphs/build-graph`, `landscape/workflows-editing`). The index response lists every available sub-doc under `available_sections`. This keeps each load small while keeping deep reference material one call away.
+**Sub-docs (lazy-loaded deep reference material)** — Several skills are split into a concise `SKILL.md` index plus sibling sub-docs. Load a sub-doc with `skill_name="<skill>/<section>"` (e.g. `state-trees/api-reference`, `blueprint-graphs/build-graph`, `landscape/workflows-editing`, `map-blockout/workflows`). The index response lists every available sub-doc under `available_sections`. This keeps each load small while keeping deep reference material one call away.
 
 ##### Asset Workflow Tool
 
@@ -334,7 +334,7 @@ read_logs(action="read", file="chat", offset=1000, limit=500)
 read_logs(action="since", file="main", last_line=2500)
 ```
 
-### 2. VibeUE Python API Services (30 services, 1020 methods)
+### 2. VibeUE Python API Services (32 services, 1068 methods)
 High-level services exposed to Python for common game development tasks:
 
 | Service | Methods | Domain |
@@ -343,6 +343,7 @@ High-level services exposed to Python for common game development tasks:
 | `BlueprintService` | 119 | Blueprint lifecycle, variables, functions, components, **interfaces (add/remove)**, nodes, **event dispatchers (multicast delegates) + broadcast nodes + bind-on-variable**, **custom event input pin CRUD**, **timelines (float/vector/color/event tracks, key CRUD)**, comment boxes, batch graph builder, subset auto-layout |
 | `AnimSequenceService` | 89 | Animation sequence creation, keyframes, bone tracks, curves, notifies, preview |
 | `LandscapeService` | 68 | Landscape creation, sculpting, heightmaps, weight layers, holes, splines |
+| `MapBlockoutService` | 19 | **Procedural FPS map blockout** — turn a VibeUE landscape (heightmap + paint layers) into a gated, AAA-style open-world plan (roads, POIs, fields, forests/treelines, railway/bridges), render Stage 1–5 + final heatmap/combined deliverables, then materialize as splines / paint layers / actors / foliage |
 | `AnimMontageService` | 62 | Animation montages: sections, slots, segments, branching points, blend settings |
 | `SkeletonService` | 53 | Skeleton & skeletal mesh manipulation, bones, sockets, retargeting, curves, blend profiles |
 | `MaterialNodeService` | 41 | Material graph expressions and connections, **material diagnostics (compile errors + sampler info)** |
@@ -568,9 +569,9 @@ Each skill includes:
 
 Skills are automatically discovered at runtime from the `Content/Skills/` directory. Each skill folder contains a `SKILL.md` with YAML frontmatter defining its metadata. The system prompt's `{SKILLS}` token is replaced with a dynamically generated table of all available skills.
 
-Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
+Current skills include: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `map-blockout`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
 
-**Skills with sub-docs** — `animsequence`, `blueprint-graphs`, `landscape`, `landscape-auto-material`, and `state-trees` are split into a concise `SKILL.md` index plus sibling reference sub-docs. The index lists every available sub-doc under `available_sections` and you load one with `skill_name="<skill>/<section>"`. Examples: `state-trees/api-reference`, `state-trees/blueprint-tasks`, `state-trees/event-payloads`, `blueprint-graphs/build-graph`, `blueprint-graphs/array-operations`, `landscape/workflows-editing`.
+**Skills with sub-docs** — `animsequence`, `blueprint-graphs`, `landscape`, `landscape-auto-material`, `map-blockout`, and `state-trees` are split into a concise `SKILL.md` index plus sibling reference sub-docs. The index lists every available sub-doc under `available_sections` and you load one with `skill_name="<skill>/<section>"`. Examples: `state-trees/api-reference`, `state-trees/blueprint-tasks`, `state-trees/event-payloads`, `blueprint-graphs/build-graph`, `blueprint-graphs/array-operations`, `landscape/workflows-editing`, `map-blockout/workflows`, `map-blockout/stage-rules`.
 
 ### Using Skills
 
@@ -1141,6 +1142,64 @@ LandscapeMaterialService handles the creation and configuration of landscape-spe
 
 **Existence Checks:**
 - `landscape_material_exists(path)` / `layer_info_exists(path)` - Existence checks
+
+### MapBlockoutService (19 methods)
+
+MapBlockoutService turns a VibeUE-generated landscape (heightmap + paint layers) into a fully validated, **AAA-style open-world FPS map blockout** — roads, points of interest, fields, forests/treelines, railway, and bridges — then materializes that plan into real engine geometry. The quality benchmark is **Arma / Squad**.
+
+The design pipeline is **gated**: every stage runs ordered pass/fail checks, and you may not advance until all checks pass. Phase 1 designs the plan on the CPU (masks + polylines, no engine geometry); Phase 2 materializes it into the level. Load the `map-blockout` skill for the per-stage rules, config reference, and return-type shapes.
+
+**Input (Stage 0):**
+- `export_landcover_grid(landscape_label, grid_n=120)` - Read every paint layer + the heightmap off the source landscape and return a normalized landcover grid (replaces the host-Python `export_terrain_data.py` + `build_inputs.py` round-trip)
+- `write_landcover_grid_json(grid, output_file_path)` / `load_landcover_grid_json(file_path)` - Persist / reload a grid as JSON
+- `extract_river_centerlines(water_mask, world_lo, ...)` - Trace river centerlines from a water mask into world-space polylines
+
+**Design stages (each returns a result struct with a `gate`):**
+- `generate_roads(grid, config)` - Stage 1: main + dirt road network
+- `place_pois(grid, roads, config)` - Stage 2: villages, towns, farmsteads and other POIs along the roads
+- `place_fields(grid, roads, config)` - Stage 3: crop fields
+- `place_foliage(grid, roads, config)` - Stage 4: forests, treelines, and underbrush/scrub
+- `place_railway(grid, roads, config)` - Stage 5: railway line + bridges
+- `run_final_pass(state)` - Final gated validation across all stages before delivery
+
+**Rendering (color-keyed deliverables):**
+- `render_stage_snapshot(stage, state, output_dir)` - Render a cumulative Stage 1–5 PNG snapshot
+- `render_final_deliverables(state, output_dir)` - Render the combined map, foliage heatmap, and map heatmap (with the authoritative color key)
+
+**Orchestrators (one-call pipelines):**
+- `run_full_pipeline(grid, config)` - Run Stages 1–5 + Final Pass + all renders from a prepared grid
+- `run_full_pipeline_for_landscape(landscape_label, config)` - Stage 0 → full pipeline straight from a landscape actor
+
+**Materialization (Phase 2 — plan → level geometry):**
+- `materialize_roads_as_splines(roads, landscape_label)` - Bake the road network into landscape splines
+- `materialize_fields_as_paint(fields, landscape_label, layer)` - Paint field regions onto a weight layer
+- `materialize_pois_as_actors(pois, folder_path, ...)` - Spawn POI marker/boundary actors
+- `materialize_forest_as_foliage(foliage, forest_ft, treeline_ft, scrub_ft)` - Scatter forest, treeline, and scrub foliage types
+- `materialize_railway_and_bridges(railway, landscape_label, ...)` - Lay the railway spline and place bridge meshes
+
+```python
+import unreal
+S = unreal.MapBlockoutService
+
+# Phase 1 — design + validate the plan (no engine geometry yet)
+cfg = unreal.MapBlockoutConfig()
+cfg.level_name = "Verkhova"
+cfg.layers.crop, cfg.layers.forest, cfg.layers.flood = "Crop", "Forest", "Water"
+
+result = S.run_full_pipeline_for_landscape("Landscape1", cfg)
+if not result.success:
+    print(result.error_message)   # inspect result.final_state.<stage>.gate.checks
+else:
+    print("Wrote:", result.output_files)
+
+    # Phase 2 — materialize the validated plan into the level
+    S.materialize_roads_as_splines(result.final_state.stage1_roads, "Landscape1")
+    S.materialize_fields_as_paint(result.final_state.stage3_fields, "Landscape1", "Crop")
+    S.materialize_pois_as_actors(result.final_state.stage2_pois, "/MapBlockout/POIs/")
+    S.materialize_forest_as_foliage(result.final_state.stage4_foliage,
+        "/Game/Foliage/FT_Forest", "/Game/Foliage/FT_Treeline", "/Game/Foliage/FT_Scrub")
+    S.materialize_railway_and_bridges(result.final_state.stage5_railway, "Landscape1")
+```
 
 ### FoliageService (15 methods)
 
