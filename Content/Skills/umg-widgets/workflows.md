@@ -72,10 +72,9 @@ unreal.WidgetService.set_property(path, "Button", "Anchor Min Y", "0.5")
 
 To stretch a widget to fill its canvas, set anchors `Min (0,0)` → `Max (1,1)`.
 
-These canvas aliases are the **only** slot fields `set_property` can write. Z-order
-(`slot_info.z_order`) and box-slot alignment/padding (VerticalBox/HorizontalBox/Overlay children) are
-**read-only** — there is no `set_property` alias for them. Plan layout with Canvas slots when you need
-programmatic positioning.
+`set_property` also writes `ZOrder` on canvas children and `Horizontal Alignment` / `Vertical Alignment`
+/ `Padding` / `Size Rule` / `Size Value` on box/overlay children (alignment accepts friendly values like
+`Fill`, `Top`, `Center`). See SKILL.md → "Slot editing via set_property" for the full alias list.
 
 ## Inspect a Widget
 
@@ -207,8 +206,8 @@ unreal.WidgetService.remove_component(path, "Item3")
 unreal.EditorAssetLibrary.save_asset(path)
 ```
 
-There is **no reparent/move API** — a widget's parent is set at `add_component` time. To move a widget
-to a new parent, `remove_component` it and re-add it (it will get a fresh slot under the new parent).
+Move a widget to a new parent with `reparent_widget(path, widget_name, new_parent_name)` — it preserves
+the widget object/GUID (rejects moving a panel into itself/a descendant; root can't be reparented).
 
 After any structural edit, re-read with `get_widget_snapshot(path)` to confirm before saving.
 

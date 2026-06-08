@@ -105,18 +105,30 @@ circular references are rejected; the parent recompiles automatically.
 
 Full field tables for every return type are in `reference.md`.
 
-### 🚨 Slot editing limits (set_property)
+### Slot editing via `set_property`
 
-`set_property` only edits **Canvas** slot layout, via these aliases:
-`Position X`, `Position Y`, `Size X`, `Size Y`, `Anchor Min X/Y`, `Anchor Max X/Y`.
+`set_property` edits slot layout through these aliases (string values):
 
-Not currently settable via `set_property` (read-only in `slot_info`):
-- **Z-order** (`ZOrder` / `Z Order`) — readable as `slot_info.z_order` but no setter.
-- **Box-slot** alignment / padding / size-rule (VerticalBox/HorizontalBox/Overlay children) — the
-  child exposes the slot only as a whole `Slot` object; individual alignment/padding have no setter.
+- **Canvas children:** `Position X/Y`, `Size X/Y`, `Anchor Min X/Y`, `Anchor Max X/Y`, `ZOrder` (or `Z Order`).
+- **Box/Overlay children** (VerticalBox/HorizontalBox/Overlay): `Horizontal Alignment` / `Vertical Alignment`
+  (values `Fill`/`Left`/`Center`/`Right`/`Top`/`Bottom`), `Padding` (one value or `(Left=..,Top=..,Right=..,Bottom=..)`),
+  `Padding Left/Top/Right/Bottom`, and on box slots `Size Rule` (`Fill`/`Automatic`) + `Size Value`.
 
-There is also **no reparent/move API** — a widget's parent is fixed at `add_component` time. To move a
-widget, `remove_component` it and re-add it under the new parent.
+```python
+unreal.WidgetService.set_property(path, "PlayButton", "ZOrder", "5")
+unreal.WidgetService.set_property(path, "HeaderRow", "Vertical Alignment", "Top")
+unreal.WidgetService.set_property(path, "HeaderRow", "Padding", "8")
+```
+
+### Reparenting — `reparent_widget`
+
+Move an existing widget to a new parent panel (preserves the widget object/GUID):
+
+```python
+unreal.WidgetService.reparent_widget(path, "BackgroundImage", "MainContainer")
+```
+
+Rejects moving a panel into itself/a descendant; the root cannot be reparented.
 
 ### Panel types
 
@@ -145,6 +157,7 @@ Sample scripts under `scripts/` are **runnable examples** — edit the variables
 | Author a widget animation | `workflows.md` → Widget Animation | `scripts/create_animation.pyx` |
 | Bind a widget event to a function | `workflows.md` → Bind Event | — |
 | Rename / remove a widget | `workflows.md` → Edit the Hierarchy | — |
+| Edit slot layout (z-order, alignment, padding) / reparent | SKILL.md → Slot editing | `scripts/edit_slots.pyx` |
 | Capture a preview PNG | `workflows.md` → Capture Preview | `scripts/capture_preview.pyx` |
 | Inspect a widget live in PIE | `workflows.md` → PIE Runtime Check | `scripts/pie_inspect.pyx` |
 | Add MVVM ViewModel + bindings | `mvvm.md` | `scripts/mvvm_hud.pyx` |

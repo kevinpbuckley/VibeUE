@@ -312,7 +312,100 @@ namespace
 			return true;
 		}
 
+		// Canvas Z-order (#424). UCanvasPanelSlot::ZOrder is a direct int32 UPROPERTY.
+		if ((PropertyName.Equals(TEXT("ZOrder"), ESearchCase::IgnoreCase) ||
+			 PropertyName.Equals(TEXT("Z Order"), ESearchCase::IgnoreCase)) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("ZOrder");
+			return true;
+		}
+
+		// Box / Overlay slot alignment + padding + size (#423). These are UPROPERTYs shared by
+		// UVerticalBoxSlot / UHorizontalBoxSlot / UOverlaySlot (alignment/padding) and the box slots
+		// (Size). Routing by property name keeps this slot-type agnostic.
+		if (Widget->Slot)
+		{
+			if (PropertyName.Equals(TEXT("Horizontal Alignment"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("H Align"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("HAlign"), ESearchCase::IgnoreCase))
+			{
+				OutTargetObject = Widget->Slot;
+				OutResolvedPath = TEXT("HorizontalAlignment");
+				return true;
+			}
+			if (PropertyName.Equals(TEXT("Vertical Alignment"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("V Align"), ESearchCase::IgnoreCase) ||
+				PropertyName.Equals(TEXT("VAlign"), ESearchCase::IgnoreCase))
+			{
+				OutTargetObject = Widget->Slot;
+				OutResolvedPath = TEXT("VerticalAlignment");
+				return true;
+			}
+			if (PropertyName.Equals(TEXT("Padding"), ESearchCase::IgnoreCase))
+			{
+				OutTargetObject = Widget->Slot;
+				OutResolvedPath = TEXT("Padding");
+				return true;
+			}
+			if (PropertyName.Equals(TEXT("Padding Left"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Padding.Left"); return true; }
+			if (PropertyName.Equals(TEXT("Padding Top"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Padding.Top"); return true; }
+			if (PropertyName.Equals(TEXT("Padding Right"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Padding.Right"); return true; }
+			if (PropertyName.Equals(TEXT("Padding Bottom"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Padding.Bottom"); return true; }
+			if (PropertyName.Equals(TEXT("Size Rule"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Size.SizeRule"); return true; }
+			if (PropertyName.Equals(TEXT("Size Value"), ESearchCase::IgnoreCase)) { OutTargetObject = Widget->Slot; OutResolvedPath = TEXT("Size.Value"); return true; }
+		}
+
 		return false;
+	}
+
+	// Normalize a friendly slot-alias value into the form ImportText expects.
+	// Alignment aliases accept "Fill"/"Left"/"Center"/"Right"/"Top"/"Bottom" (or the full enum name);
+	// size-rule accepts "Fill"/"Automatic". Returns the value unchanged for non-alias properties.
+	FString NormalizeSlotAliasValue(const FString& PropertyName, const FString& Value)
+	{
+		const bool bIsHAlign = PropertyName.Equals(TEXT("Horizontal Alignment"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("HorizontalAlignment"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("H Align"), ESearchCase::IgnoreCase) || PropertyName.Equals(TEXT("HAlign"), ESearchCase::IgnoreCase);
+		const bool bIsVAlign = PropertyName.Equals(TEXT("Vertical Alignment"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("VerticalAlignment"), ESearchCase::IgnoreCase) ||
+			PropertyName.Equals(TEXT("V Align"), ESearchCase::IgnoreCase) || PropertyName.Equals(TEXT("VAlign"), ESearchCase::IgnoreCase);
+
+		FString V = Value;
+		V.TrimStartAndEndInline();
+
+		// Full "Padding" with a single number -> apply to all four sides (FMargin's ImportText needs
+		// the struct form, so expand "8" to "(Left=8,Top=8,Right=8,Bottom=8)").
+		if (PropertyName.Equals(TEXT("Padding"), ESearchCase::IgnoreCase) &&
+			!V.Contains(TEXT("=")) && !V.Contains(TEXT(",")))
+		{
+			float Pad = 0.0f;
+			if (LexTryParseString(Pad, *V))
+			{
+				return FString::Printf(TEXT("(Left=%f,Top=%f,Right=%f,Bottom=%f)"), Pad, Pad, Pad, Pad);
+			}
+		}
+
+		if (bIsHAlign)
+		{
+			if (V.StartsWith(TEXT("HAlign_"), ESearchCase::IgnoreCase)) return V;
+			if (V.Equals(TEXT("Fill"), ESearchCase::IgnoreCase)) return TEXT("HAlign_Fill");
+			if (V.Equals(TEXT("Left"), ESearchCase::IgnoreCase)) return TEXT("HAlign_Left");
+			if (V.Equals(TEXT("Center"), ESearchCase::IgnoreCase) || V.Equals(TEXT("Centre"), ESearchCase::IgnoreCase)) return TEXT("HAlign_Center");
+			if (V.Equals(TEXT("Right"), ESearchCase::IgnoreCase)) return TEXT("HAlign_Right");
+		}
+		else if (bIsVAlign)
+		{
+			if (V.StartsWith(TEXT("VAlign_"), ESearchCase::IgnoreCase)) return V;
+			if (V.Equals(TEXT("Fill"), ESearchCase::IgnoreCase)) return TEXT("VAlign_Fill");
+			if (V.Equals(TEXT("Top"), ESearchCase::IgnoreCase)) return TEXT("VAlign_Top");
+			if (V.Equals(TEXT("Center"), ESearchCase::IgnoreCase) || V.Equals(TEXT("Centre"), ESearchCase::IgnoreCase)) return TEXT("VAlign_Center");
+			if (V.Equals(TEXT("Bottom"), ESearchCase::IgnoreCase)) return TEXT("VAlign_Bottom");
+		}
+
+		return Value;
 	}
 
 	bool ResolveWidgetProperty(UWidget* Widget, const FString& PropertyName, FResolvedWidgetProperty& OutResolved)
@@ -1676,15 +1769,91 @@ bool UWidgetService::SetProperty(
 		return false;
 	}
 
-	if (Resolved.Property->ImportText_Direct(*PropertyValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
+	// Translate friendly slot-alias values (e.g. alignment "Fill" -> "HAlign_Fill") so box-slot
+	// alignment is settable without knowing the raw enum names.
+	const FString NormalizedValue = NormalizeSlotAliasValue(PropertyName, PropertyValue);
+
+	if (Resolved.Property->ImportText_Direct(*NormalizedValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: Failed to parse value '%s' for property '%s'"), *PropertyValue, *PropertyName);
 		return false;
 	}
 
 	Resolved.TargetObject->Modify();
-	MarkWidgetBlueprintModified(WidgetBP);
+	// If we wrote to the widget's slot (layout/alignment/z-order), the change is structural —
+	// mark it so the editor refreshes the layout.
+	const bool bWroteToSlot = (Resolved.TargetObject == Widget->Slot);
+	MarkWidgetBlueprintModified(WidgetBP, bWroteToSlot);
 
+	return true;
+}
+
+bool UWidgetService::ReparentWidget(
+	const FString& WidgetPath,
+	const FString& WidgetName,
+	const FString& NewParentName)
+{
+	UWidgetBlueprint* WidgetBP = LoadWidgetBlueprint(WidgetPath);
+	if (!WidgetBP || !WidgetBP->WidgetTree)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: Widget Blueprint '%s' not found"), *WidgetPath);
+		return false;
+	}
+
+	UWidget* Widget = FindWidgetByName(WidgetBP, WidgetName);
+	if (!Widget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: Widget '%s' not found"), *WidgetName);
+		return false;
+	}
+
+	if (Widget == WidgetBP->WidgetTree->RootWidget)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: Cannot reparent the root widget"));
+		return false;
+	}
+
+	UWidget* NewParentWidget = FindWidgetByName(WidgetBP, NewParentName);
+	UPanelWidget* NewParent = Cast<UPanelWidget>(NewParentWidget);
+	if (!NewParent)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: New parent '%s' not found or is not a panel widget"), *NewParentName);
+		return false;
+	}
+
+	// Reject moving a panel into itself or one of its own descendants (would create a cycle).
+	for (UWidget* Ancestor = NewParent; Ancestor; Ancestor = Ancestor->GetParent())
+	{
+		if (Ancestor == Widget)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: '%s' cannot be moved into itself or a descendant"), *WidgetName);
+			return false;
+		}
+	}
+
+	if (Widget->GetParent() == NewParent)
+	{
+		// Already parented here — nothing to do, treat as success.
+		return true;
+	}
+
+	WidgetBP->Modify();
+
+	// Detach from the current parent (preserves the widget object), then add under the new parent.
+	if (UPanelWidget* OldParent = Widget->GetParent())
+	{
+		OldParent->RemoveChild(Widget);
+	}
+
+	UPanelSlot* NewSlot = NewParent->AddChild(Widget);
+	if (!NewSlot)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UWidgetService::ReparentWidget: Failed to add '%s' under '%s' (panel may be full)"), *WidgetName, *NewParentName);
+		return false;
+	}
+
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(WidgetBP);
+	UE_LOG(LogTemp, Log, TEXT("UWidgetService::ReparentWidget: Moved '%s' under '%s'"), *WidgetName, *NewParentName);
 	return true;
 }
 

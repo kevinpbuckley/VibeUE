@@ -46,8 +46,9 @@ Returned by `get_widget_snapshot()` and `get_component_snapshot()`. All `WidgetI
 
 ## WidgetSlotInfo
 
-Read-only snapshot of a widget's slot. `set_property` can write **only** Canvas layout (via the aliases
-`Position X/Y`, `Size X/Y`, `Anchor Min/Max X/Y`); `z_order`, box alignment, and padding are read-only.
+Snapshot of a widget's slot. `set_property` can write: Canvas layout (`Position X/Y`, `Size X/Y`,
+`Anchor Min/Max X/Y`, `ZOrder`) and box/overlay layout (`Horizontal Alignment`, `Vertical Alignment`,
+`Padding`[`Left/Top/Right/Bottom`], `Size Rule`, `Size Value`). See SKILL.md → "Slot editing via set_property".
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -165,6 +166,7 @@ Returned by `spawn_widget_in_pie(widget_path, z_order=0)`. Pass the **whole hand
 | `add_component` | `(widget_path, type, name, parent, set_as_root)` → WidgetAddComponentResult |
 | `remove_component` | Remove a widget (and optionally its children) |
 | `rename_widget` | `(widget_path, old_name, new_name)` |
+| `reparent_widget` | `(widget_path, widget_name, new_parent_name)` — move a widget to a new parent panel |
 | `bind_event` | `(widget_path, widget_name, event_name, function_name)` |
 | `get_hierarchy` / `list_components` | All widgets as `WidgetInfo` list |
 | `get_widget_snapshot` | Full hierarchy + slot + properties as `WidgetComponentSnapshot` list |
