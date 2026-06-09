@@ -436,15 +436,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "serverInfo": {
                     "name": "VibeUE-Proxy",
                     "version": "1.0.0",
-                    "instructions": (
-                        "VibeUE gives Claude direct access to Unreal Engine. "
-                        "Quick-start rules: "
-                        "(1) To inspect a Widget Blueprint, call execute_python_code immediately with unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
-                        "(2) To find/open/move assets, use manage_asset, not Python. "
-                        "(3) If this is a first-time setup, read Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md and follow it. "
-                        "If tools are not working after setup, call vibeue_status to diagnose."
-                    ),
                 },
+                # Per the MCP spec, `instructions` is a TOP-LEVEL field of the initialize
+                # result (sibling of serverInfo), not nested inside serverInfo. Clients
+                # surface this as a server hint in the model's context.
+                "instructions": (
+                    "VibeUE gives Claude direct access to Unreal Engine. "
+                    "Skills: before doing domain work (blueprints, materials, UMG, Niagara, "
+                    "landscape, animation, state trees, etc.), discover skills with "
+                    "manage_skills(action='list') and load the relevant one with "
+                    "manage_skills(action='load', skill_name='<name>'); load a deeper sub-doc "
+                    "with skill_name='<name>/<section>'. Skills give workflows + gotchas; call "
+                    "discover_python_class on the classes they name to get exact signatures. "
+                    "Quick-start rules: "
+                    "(1) To inspect a Widget Blueprint, call execute_python_code immediately with "
+                    "unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
+                    "(2) To find/open/move assets, use manage_asset, not Python. "
+                    "(3) If this is a first-time setup, read Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md and follow it. "
+                    "If tools are not working after setup, call vibeue_status to diagnose."
+                ),
             })
             return
 
