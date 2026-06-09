@@ -18,7 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 
 // Forward declarations for helpers used by ListSkills before they are defined further down.
 static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir);
-static TArray<TSharedPtr<FJsonValue>> EnumerateScripts(const FString& SkillDir);
+static TArray<TSharedPtr<FJsonValue>> EnumerateResources(const FString& SkillDir);
 static void ParseSkillSpec(const FString& RawSkillName, FString& OutFolder, FString& OutSubDoc);
 
 /**
@@ -439,7 +439,7 @@ static FString ListSkills()
 		// Enumerate sibling sub-doc files so list callers can see at a glance
 		// what additional sections are loadable for this skill.
 		TArray<TSharedPtr<FJsonValue>> SectionsArray = EnumerateSections(SkillDirPath);
-		TArray<TSharedPtr<FJsonValue>> ScriptsArray = EnumerateScripts(SkillDirPath);
+		TArray<TSharedPtr<FJsonValue>> ResourcesArray = EnumerateResources(SkillDirPath);
 
 		// Build skill info object
 		TSharedPtr<FJsonObject> SkillInfo = MakeShared<FJsonObject>();
@@ -455,8 +455,8 @@ static FString ListSkills()
 		// to load via `manage_skills(action="load", skill_name="<skill>/<section>")`.
 		SkillInfo->SetArrayField(TEXT("sections"), SectionsArray);
 		SkillInfo->SetNumberField(TEXT("section_count"), SectionsArray.Num());
-		SkillInfo->SetArrayField(TEXT("scripts"), ScriptsArray);
-		SkillInfo->SetNumberField(TEXT("script_count"), ScriptsArray.Num());
+		SkillInfo->SetArrayField(TEXT("resources"), ResourcesArray);
+		SkillInfo->SetNumberField(TEXT("resource_count"), ResourcesArray.Num());
 
 		SkillsArray.Add(MakeShared<FJsonValueObject>(SkillInfo));
 
@@ -769,7 +769,7 @@ struct FSkillData
 	TArray<FString> UnrealClassNames;
 	TArray<FString> MarkdownFiles;                           // Files whose contents will be returned (1 element after split refactor)
 	TArray<TSharedPtr<FJsonValue>> AvailableSections;        // {name, description} for sibling .md files (excluding SKILL.md)
-	TArray<TSharedPtr<FJsonValue>> AvailableScripts;         // {name, description} for scripts/*.pyx runnable examples
+	TArray<TSharedPtr<FJsonValue>> AvailableResources;       // {name, type, description} for bundled scripts + reference files
 };
 
 /**
@@ -875,72 +875,104 @@ static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir)
 }
 
 /**
- * Enumerate runnable example scripts inside a skill's `scripts/` subfolder (*.pyx / *.py).
- * Each entry is a JSON object with `name` (the loadable spec suffix, e.g. "scripts/create_widget"
- * — pass it as skill_name="<skill>/scripts/<name>") and `description` (the first comment line of
- * the script, with the leading "# " stripped). These are runnable examples meant to be loaded as
- * templates, then executed via execute_python_code.
+ * Enumerate bundled resources for a skill — every file under the skill folder EXCEPT `SKILL.md`
+ * and the top-level `.md` sub-docs (those are surfaced separately as `sections`). This covers the
+ * three Agent-Skills bundled-content kinds beyond the index: runnable Code (scripts/*.pyx|.py),
+ * additional reference docs (e.g. reference/*.md), and Resources (schemas, templates, data, examples).
+ *
+ * Each entry is `{name, type, description}`:
+ *   - `name`        loadable spec suffix = the file's path relative to the skill folder (forward
+ *                   slashes), WITH extension — pass it as skill_name="<skill>/<name>".
+ *   - `type`        "script" for .py/.pyx (run via execute_python_code) else "reference" (read as
+ *                   reference material).
+ *   - `description` for scripts, the first comment line; for .md, the frontmatter description; else omitted.
  */
-static TArray<TSharedPtr<FJsonValue>> EnumerateScripts(const FString& SkillDir)
+static TArray<TSharedPtr<FJsonValue>> EnumerateResources(const FString& SkillDir)
 {
-	TArray<TSharedPtr<FJsonValue>> Scripts;
+	TArray<TSharedPtr<FJsonValue>> Resources;
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
 
-	const FString ScriptsDir = SkillDir / TEXT("scripts");
-	if (ScriptsDir.IsEmpty() || !PlatformFile.DirectoryExists(*ScriptsDir))
+	if (SkillDir.IsEmpty() || !PlatformFile.DirectoryExists(*SkillDir))
 	{
-		return Scripts;
+		return Resources;
 	}
 
-	PlatformFile.IterateDirectory(*ScriptsDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	FString NormalizedDir = SkillDir;
+	FPaths::NormalizeDirectoryName(NormalizedDir);
+
+	PlatformFile.IterateDirectoryRecursively(*SkillDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
 	{
 		if (bIsDirectory)
 		{
 			return true;
 		}
 
-		const FString FilePath = FString(FilenameOrDirectory);
+		FString FilePath = FString(FilenameOrDirectory);
 		const FString FileName = FPaths::GetCleanFilename(FilePath);
-		if (!FileName.EndsWith(TEXT(".pyx"), ESearchCase::IgnoreCase) &&
-			!FileName.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase))
+
+		// Relative path (forward slashes) used as the loadable spec suffix.
+		FString RelPath = FilePath;
+		FPaths::MakePathRelativeTo(RelPath, *(NormalizedDir / TEXT("")));
+		RelPath.ReplaceInline(TEXT("\\"), TEXT("/"));
+
+		// SKILL.md is the index; top-level .md files are advertised as `sections`.
+		const bool bIsMarkdown = FileName.EndsWith(TEXT(".md"), ESearchCase::IgnoreCase);
+		const bool bTopLevel = !RelPath.Contains(TEXT("/"));
+		if (FileName.Equals(TEXT("SKILL.md"), ESearchCase::IgnoreCase) || (bIsMarkdown && bTopLevel))
 		{
 			return true;
 		}
 
-		TSharedPtr<FJsonObject> ScriptObj = MakeShared<FJsonObject>();
-		// Loadable spec suffix: "scripts/<basename-without-extension>".
-		ScriptObj->SetStringField(TEXT("name"), FString::Printf(TEXT("scripts/%s"), *FPaths::GetBaseFilename(FileName)));
+		const bool bIsScript = FileName.EndsWith(TEXT(".pyx"), ESearchCase::IgnoreCase) ||
+			FileName.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase);
 
-		// Description = first descriptive comment line (the scripts open with "# <file> — <desc>").
+		TSharedPtr<FJsonObject> ResObj = MakeShared<FJsonObject>();
+		ResObj->SetStringField(TEXT("name"), RelPath);
+		ResObj->SetStringField(TEXT("type"), bIsScript ? TEXT("script") : TEXT("reference"));
+
 		FString FileContent;
 		if (FFileHelper::LoadFileToString(FileContent, *FilePath))
 		{
-			TArray<FString> Lines;
-			FileContent.ParseIntoArrayLines(Lines);
-			for (const FString& Line : Lines)
+			if (bIsScript)
 			{
-				FString Trimmed = Line.TrimStartAndEnd();
-				if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT("#!")))
+				// Description = first descriptive comment line ("# <file> — <desc>").
+				TArray<FString> Lines;
+				FileContent.ParseIntoArrayLines(Lines);
+				for (const FString& Line : Lines)
 				{
-					continue;
+					FString Trimmed = Line.TrimStartAndEnd();
+					if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT("#!")))
+					{
+						continue;
+					}
+					if (Trimmed.StartsWith(TEXT("#")))
+					{
+						Trimmed = Trimmed.RightChop(1).TrimStart();
+					}
+					if (!Trimmed.IsEmpty())
+					{
+						ResObj->SetStringField(TEXT("description"), Trimmed);
+					}
+					break;
 				}
-				if (Trimmed.StartsWith(TEXT("#")))
+			}
+			else if (bIsMarkdown)
+			{
+				// Description from the sub-doc's YAML frontmatter, when present.
+				TSharedPtr<FJsonObject> Frontmatter = ParseYAMLFrontmatter(FileContent);
+				FString Desc;
+				if (Frontmatter.IsValid() && Frontmatter->TryGetStringField(TEXT("description"), Desc))
 				{
-					Trimmed = Trimmed.RightChop(1).TrimStart();
+					ResObj->SetStringField(TEXT("description"), Desc);
 				}
-				if (!Trimmed.IsEmpty())
-				{
-					ScriptObj->SetStringField(TEXT("description"), Trimmed);
-				}
-				break;
 			}
 		}
 
-		Scripts.Add(MakeShared<FJsonValueObject>(ScriptObj));
+		Resources.Add(MakeShared<FJsonValueObject>(ResObj));
 		return true;
 	});
 
-	Scripts.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+	Resources.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
 	{
 		FString NameA, NameB;
 		if (A->AsObject().IsValid()) A->AsObject()->TryGetStringField(TEXT("name"), NameA);
@@ -948,7 +980,7 @@ static TArray<TSharedPtr<FJsonValue>> EnumerateScripts(const FString& SkillDir)
 		return NameA < NameB;
 	});
 
-	return Scripts;
+	return Resources;
 }
 
 /**
@@ -1059,10 +1091,10 @@ static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
 		return false;
 	}
 
-	// Always populate the section + script menus so the response can advertise
-	// other sub-docs and runnable example scripts the agent could load next.
+	// Always populate the section + resource menus so the response can advertise
+	// other sub-docs and bundled resources (scripts, schemas, templates) to load next.
 	OutData.AvailableSections = EnumerateSections(OutData.SkillDir);
-	OutData.AvailableScripts = EnumerateScripts(OutData.SkillDir);
+	OutData.AvailableResources = EnumerateResources(OutData.SkillDir);
 
 	return true;
 }
@@ -1188,7 +1220,7 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 		TSharedPtr<FJsonObject> SkillSectionsObj = MakeShared<FJsonObject>();
 		SkillSectionsObj->SetStringField(TEXT("skill"), FolderName);
 		SkillSectionsObj->SetArrayField(TEXT("sections"), Data.AvailableSections);
-		SkillSectionsObj->SetArrayField(TEXT("scripts"), Data.AvailableScripts);
+		SkillSectionsObj->SetArrayField(TEXT("resources"), Data.AvailableResources);
 		PerSkillSections.Add(MakeShared<FJsonValueObject>(SkillSectionsObj));
 	}
 
@@ -1241,9 +1273,10 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	ResultObj->SetArrayField(TEXT("available_sections"), PerSkillSections);
 	ResultObj->SetStringField(TEXT("available_sections_usage"),
 		TEXT("Each entry has a `skill` (folder name), `sections` (loadable .md sub-docs), and "
-			 "`scripts` (runnable example scripts). Load a sub-doc with "
-			 "manage_skills(action='load', skill_name='<skill>/<section>'); load a script template with "
-			 "skill_name='<skill>/scripts/<name>' then run it via execute_python_code."));
+			 "`resources` (bundled scripts + reference files, each with a `type`). Load a sub-doc with "
+			 "manage_skills(action='load', skill_name='<skill>/<section>'); load a resource with "
+			 "skill_name='<skill>/<name>' (type='script' → run via execute_python_code; "
+			 "type='reference' → read-only)."));
 
 	// Prepend instruction to use discovery tools
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
@@ -1401,12 +1434,12 @@ static FString LoadSingleSkill(const FString& SkillName)
 				*ActualSkillName));
 	}
 
-	// Runnable example scripts (scripts/*.pyx) — load one as a template, then run via execute_python_code.
-	ResultObj->SetArrayField(TEXT("available_scripts"), SkillData.AvailableScripts);
-	if (SkillData.AvailableScripts.Num() > 0)
+	// Bundled resources: runnable scripts (type="script") + reference files (type="reference").
+	ResultObj->SetArrayField(TEXT("available_resources"), SkillData.AvailableResources);
+	if (SkillData.AvailableResources.Num() > 0)
 	{
-		ResultObj->SetStringField(TEXT("available_scripts_usage"),
-			FString::Printf(TEXT("Runnable example scripts. Load one with manage_skills(action='load', skill_name='%s/scripts/<name>'), edit the variables at the top, then run it with execute_python_code."),
+		ResultObj->SetStringField(TEXT("available_resources_usage"),
+			FString::Printf(TEXT("Bundled resources for this skill. Load one with manage_skills(action='load', skill_name='%s/<name>'). type='script' = a runnable example: edit the variables at the top, then run via execute_python_code. type='reference' = read-only reference material."),
 				*ActualSkillName));
 	}
 
