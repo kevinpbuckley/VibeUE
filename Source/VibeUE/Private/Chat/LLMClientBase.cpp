@@ -312,24 +312,29 @@ FString FLLMClientBase::GenerateSkillsSection()
                 Frontmatter.ParseIntoArrayLines(Lines);
 
                 bool bInVibeUEClasses = false;
+                bool bInDescription = false;
 
                 for (const FString& Line : Lines)
                 {
                     FString TrimmedLine = Line.TrimStartAndEnd();
+                    const bool bIndented = Line.StartsWith(TEXT(" ")) || Line.StartsWith(TEXT("\t"));
 
                     if (TrimmedLine.StartsWith(TEXT("name:")))
                     {
                         SkillName = TrimmedLine.Mid(5).TrimStartAndEnd();
                         bInVibeUEClasses = false;
+                        bInDescription = false;
                     }
                     else if (TrimmedLine.StartsWith(TEXT("description:")))
                     {
                         Description = TrimmedLine.Mid(12).TrimStartAndEnd();
                         bInVibeUEClasses = false;
+                        bInDescription = true;
                     }
                     else if (TrimmedLine.StartsWith(TEXT("vibeue_classes:")))
                     {
                         bInVibeUEClasses = true;
+                        bInDescription = false;
                     }
                     else if (TrimmedLine.StartsWith(TEXT("-")) && bInVibeUEClasses)
                     {
@@ -339,14 +344,26 @@ FString FLLMClientBase::GenerateSkillsSection()
                             Services.Add(ServiceName);
                         }
                     }
+                    else if (bInDescription && bIndented && !TrimmedLine.IsEmpty())
+                    {
+                        // YAML multi-line (folded/plain) description continuation — fold into one line
+                        // so the full "what + when" text survives in the single-row skills table.
+                        Description += TEXT(" ") + TrimmedLine;
+                    }
                     else if (!TrimmedLine.StartsWith(TEXT("-")) && !TrimmedLine.IsEmpty())
                     {
-                        // New key, no longer in vibeue_classes
+                        // New top-level key — no longer in vibeue_classes or description
                         bInVibeUEClasses = false;
+                        bInDescription = false;
                     }
                 }
             }
         }
+
+        // Keep the description on one table line and don't let a stray pipe/newline break the row.
+        Description.ReplaceInline(TEXT("\r"), TEXT(" "));
+        Description.ReplaceInline(TEXT("\n"), TEXT(" "));
+        Description.ReplaceInline(TEXT("|"), TEXT("\\|"));
 
         // Build table row
         FString ServicesStr = FString::Join(Services, TEXT(", "));

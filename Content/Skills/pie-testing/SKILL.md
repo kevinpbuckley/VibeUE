@@ -1,10 +1,7 @@
 ---
 name: pie-testing
 display_name: Play-In-Editor Testing
-description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing
-  of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the
-  user asks you to "play", "test", "run", "PIE", "start the game", "stop the game",
-  or otherwise needs a live game world to validate changes.
+description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes.
 vibeue_classes:
   - WidgetService
 unreal_classes:
