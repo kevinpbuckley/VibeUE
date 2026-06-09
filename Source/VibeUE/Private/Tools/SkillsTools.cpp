@@ -18,6 +18,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogSkillsTools, Log, All);
 
 // Forward declarations for helpers used by ListSkills before they are defined further down.
 static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir);
+static TArray<TSharedPtr<FJsonValue>> EnumerateScripts(const FString& SkillDir);
 static void ParseSkillSpec(const FString& RawSkillName, FString& OutFolder, FString& OutSubDoc);
 
 /**
@@ -438,6 +439,7 @@ static FString ListSkills()
 		// Enumerate sibling sub-doc files so list callers can see at a glance
 		// what additional sections are loadable for this skill.
 		TArray<TSharedPtr<FJsonValue>> SectionsArray = EnumerateSections(SkillDirPath);
+		TArray<TSharedPtr<FJsonValue>> ScriptsArray = EnumerateScripts(SkillDirPath);
 
 		// Build skill info object
 		TSharedPtr<FJsonObject> SkillInfo = MakeShared<FJsonObject>();
@@ -453,6 +455,8 @@ static FString ListSkills()
 		// to load via `manage_skills(action="load", skill_name="<skill>/<section>")`.
 		SkillInfo->SetArrayField(TEXT("sections"), SectionsArray);
 		SkillInfo->SetNumberField(TEXT("section_count"), SectionsArray.Num());
+		SkillInfo->SetArrayField(TEXT("scripts"), ScriptsArray);
+		SkillInfo->SetNumberField(TEXT("script_count"), ScriptsArray.Num());
 
 		SkillsArray.Add(MakeShared<FJsonValueObject>(SkillInfo));
 
@@ -765,6 +769,7 @@ struct FSkillData
 	TArray<FString> UnrealClassNames;
 	TArray<FString> MarkdownFiles;                           // Files whose contents will be returned (1 element after split refactor)
 	TArray<TSharedPtr<FJsonValue>> AvailableSections;        // {name, description} for sibling .md files (excluding SKILL.md)
+	TArray<TSharedPtr<FJsonValue>> AvailableScripts;         // {name, description} for scripts/*.pyx runnable examples
 };
 
 /**
@@ -870,6 +875,83 @@ static TArray<TSharedPtr<FJsonValue>> EnumerateSections(const FString& SkillDir)
 }
 
 /**
+ * Enumerate runnable example scripts inside a skill's `scripts/` subfolder (*.pyx / *.py).
+ * Each entry is a JSON object with `name` (the loadable spec suffix, e.g. "scripts/create_widget"
+ * — pass it as skill_name="<skill>/scripts/<name>") and `description` (the first comment line of
+ * the script, with the leading "# " stripped). These are runnable examples meant to be loaded as
+ * templates, then executed via execute_python_code.
+ */
+static TArray<TSharedPtr<FJsonValue>> EnumerateScripts(const FString& SkillDir)
+{
+	TArray<TSharedPtr<FJsonValue>> Scripts;
+	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+
+	const FString ScriptsDir = SkillDir / TEXT("scripts");
+	if (ScriptsDir.IsEmpty() || !PlatformFile.DirectoryExists(*ScriptsDir))
+	{
+		return Scripts;
+	}
+
+	PlatformFile.IterateDirectory(*ScriptsDir, [&](const TCHAR* FilenameOrDirectory, bool bIsDirectory) -> bool
+	{
+		if (bIsDirectory)
+		{
+			return true;
+		}
+
+		const FString FilePath = FString(FilenameOrDirectory);
+		const FString FileName = FPaths::GetCleanFilename(FilePath);
+		if (!FileName.EndsWith(TEXT(".pyx"), ESearchCase::IgnoreCase) &&
+			!FileName.EndsWith(TEXT(".py"), ESearchCase::IgnoreCase))
+		{
+			return true;
+		}
+
+		TSharedPtr<FJsonObject> ScriptObj = MakeShared<FJsonObject>();
+		// Loadable spec suffix: "scripts/<basename-without-extension>".
+		ScriptObj->SetStringField(TEXT("name"), FString::Printf(TEXT("scripts/%s"), *FPaths::GetBaseFilename(FileName)));
+
+		// Description = first descriptive comment line (the scripts open with "# <file> — <desc>").
+		FString FileContent;
+		if (FFileHelper::LoadFileToString(FileContent, *FilePath))
+		{
+			TArray<FString> Lines;
+			FileContent.ParseIntoArrayLines(Lines);
+			for (const FString& Line : Lines)
+			{
+				FString Trimmed = Line.TrimStartAndEnd();
+				if (Trimmed.IsEmpty() || Trimmed.StartsWith(TEXT("#!")))
+				{
+					continue;
+				}
+				if (Trimmed.StartsWith(TEXT("#")))
+				{
+					Trimmed = Trimmed.RightChop(1).TrimStart();
+				}
+				if (!Trimmed.IsEmpty())
+				{
+					ScriptObj->SetStringField(TEXT("description"), Trimmed);
+				}
+				break;
+			}
+		}
+
+		Scripts.Add(MakeShared<FJsonValueObject>(ScriptObj));
+		return true;
+	});
+
+	Scripts.Sort([](const TSharedPtr<FJsonValue>& A, const TSharedPtr<FJsonValue>& B)
+	{
+		FString NameA, NameB;
+		if (A->AsObject().IsValid()) A->AsObject()->TryGetStringField(TEXT("name"), NameA);
+		if (B->AsObject().IsValid()) B->AsObject()->TryGetStringField(TEXT("name"), NameB);
+		return NameA < NameB;
+	});
+
+	return Scripts;
+}
+
+/**
  * Load skill data from a directory.
  *
  * `RawSkillName` may be either a bare skill folder name (e.g. "state-trees")
@@ -936,17 +1018,35 @@ static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
 		}
 	}
 
-	// Select which file(s) to return based on whether a sub-doc was requested.
+	// Select which file(s) to return based on whether a sub-doc / script was requested.
 	if (!OutData.SubDocName.IsEmpty())
 	{
-		FString SubDocPath = OutData.SkillDir / (OutData.SubDocName + TEXT(".md"));
-		if (!PlatformFile.FileExists(*SubDocPath))
+		// Resolve in order: <sub>.md (reference sub-doc), <sub>.pyx / <sub>.py (runnable script,
+		// e.g. "scripts/create_widget"), then the path exactly as given (if it already has an ext).
+		const TArray<FString> Candidates = {
+			OutData.SkillDir / (OutData.SubDocName + TEXT(".md")),
+			OutData.SkillDir / (OutData.SubDocName + TEXT(".pyx")),
+			OutData.SkillDir / (OutData.SubDocName + TEXT(".py")),
+			OutData.SkillDir / OutData.SubDocName,
+		};
+
+		FString ResolvedPath;
+		for (const FString& Candidate : Candidates)
 		{
-			UE_LOG(LogSkillsTools, Warning, TEXT("Sub-doc not found: '%s' in skill '%s' (looked at %s)"),
-				*OutData.SubDocName, *OutData.SkillName, *SubDocPath);
+			if (PlatformFile.FileExists(*Candidate))
+			{
+				ResolvedPath = Candidate;
+				break;
+			}
+		}
+
+		if (ResolvedPath.IsEmpty())
+		{
+			UE_LOG(LogSkillsTools, Warning, TEXT("Sub-doc/script not found: '%s' in skill '%s'"),
+				*OutData.SubDocName, *OutData.SkillName);
 			return false;
 		}
-		OutData.MarkdownFiles.Add(SubDocPath);
+		OutData.MarkdownFiles.Add(ResolvedPath);
 	}
 	else if (PlatformFile.FileExists(*SkillMdPath))
 	{
@@ -959,9 +1059,10 @@ static bool LoadSkillData(const FString& RawSkillName, FSkillData& OutData)
 		return false;
 	}
 
-	// Always populate the section menu so the response can advertise
-	// other sub-docs the agent could load next.
+	// Always populate the section + script menus so the response can advertise
+	// other sub-docs and runnable example scripts the agent could load next.
 	OutData.AvailableSections = EnumerateSections(OutData.SkillDir);
+	OutData.AvailableScripts = EnumerateScripts(OutData.SkillDir);
 
 	return true;
 }
@@ -1087,6 +1188,7 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 		TSharedPtr<FJsonObject> SkillSectionsObj = MakeShared<FJsonObject>();
 		SkillSectionsObj->SetStringField(TEXT("skill"), FolderName);
 		SkillSectionsObj->SetArrayField(TEXT("sections"), Data.AvailableSections);
+		SkillSectionsObj->SetArrayField(TEXT("scripts"), Data.AvailableScripts);
 		PerSkillSections.Add(MakeShared<FJsonValueObject>(SkillSectionsObj));
 	}
 
@@ -1138,8 +1240,10 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	// `skill_name="<skill>/<section>"` loads without re-listing the catalogue.
 	ResultObj->SetArrayField(TEXT("available_sections"), PerSkillSections);
 	ResultObj->SetStringField(TEXT("available_sections_usage"),
-		TEXT("Each entry has a `skill` (folder name) and `sections` (loadable sub-docs). "
-			 "Load one with manage_skills(action='load', skill_name='<skill>/<section>')."));
+		TEXT("Each entry has a `skill` (folder name), `sections` (loadable .md sub-docs), and "
+			 "`scripts` (runnable example scripts). Load a sub-doc with "
+			 "manage_skills(action='load', skill_name='<skill>/<section>'); load a script template with "
+			 "skill_name='<skill>/scripts/<name>' then run it via execute_python_code."));
 
 	// Prepend instruction to use discovery tools
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
@@ -1294,6 +1398,15 @@ static FString LoadSingleSkill(const FString& SkillName)
 	{
 		ResultObj->SetStringField(TEXT("available_sections_usage"),
 			FString::Printf(TEXT("Load a sub-doc with manage_skills(action='load', skill_name='%s/<section>'). Available sections listed above."),
+				*ActualSkillName));
+	}
+
+	// Runnable example scripts (scripts/*.pyx) — load one as a template, then run via execute_python_code.
+	ResultObj->SetArrayField(TEXT("available_scripts"), SkillData.AvailableScripts);
+	if (SkillData.AvailableScripts.Num() > 0)
+	{
+		ResultObj->SetStringField(TEXT("available_scripts_usage"),
+			FString::Printf(TEXT("Runnable example scripts. Load one with manage_skills(action='load', skill_name='%s/scripts/<name>'), edit the variables at the top, then run it with execute_python_code."),
 				*ActualSkillName));
 	}
 
