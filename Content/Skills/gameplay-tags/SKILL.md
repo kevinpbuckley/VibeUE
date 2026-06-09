@@ -1,7 +1,7 @@
 ---
 name: gameplay-tags
 display_name: Gameplay Tags
-description: Create, list, remove, and rename Gameplay Tags via the editor module with runtime registration
+description: Create, list, remove, and rename Gameplay Tags with runtime registration (GameplayTagService). Use when the user asks to add or register gameplay tags, list/query existing tags, or rename/remove tags (e.g. Ability.Attack.Melee, State.Stunned).
 vibeue_classes:
   - GameplayTagService
 unreal_classes:

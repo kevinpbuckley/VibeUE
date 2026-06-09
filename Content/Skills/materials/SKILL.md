@@ -1,7 +1,7 @@
 ---
 name: materials
 display_name: Material System
-description: Create and edit materials and material instances using MaterialService and MaterialNodeService
+description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
 vibeue_classes:
   - MaterialService
   - MaterialNodeService

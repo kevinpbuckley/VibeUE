@@ -1,3 +1,8 @@
+---
+name: map-blockout/return-types
+description: Return-type/data-structure reference for MapBlockoutService results (plan, features, validation reports).
+---
+
 # Map Blockout — Return Types
 
 Exact USTRUCT property names returned by each `UMapBlockoutService` method.

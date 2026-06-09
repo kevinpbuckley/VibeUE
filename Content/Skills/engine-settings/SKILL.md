@@ -1,7 +1,7 @@
 ---
 name: engine-settings
 display_name: Engine Settings System
-description: Configure Unreal Engine core settings including rendering, physics, audio, garbage collection, console variables (cvars), and scalability levels
+description: Configure Unreal Engine core settings — rendering, physics, audio, garbage collection, console variables (cvars), and scalability levels (EngineSettingsService). Use when the user asks to change engine/rendering settings, set a console variable (r.*, etc.), adjust scalability/quality levels, or read engine config categories.
 vibeue_classes:
   - EngineSettingsService
 unreal_classes:

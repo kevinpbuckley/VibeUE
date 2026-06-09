@@ -1,7 +1,7 @@
 ---
 name: project-settings
 display_name: Project & Editor Settings
-description: Configure Unreal Engine project settings AND editor preferences including UI appearance, toolbar icons, scale, colors, and all UDeveloperSettings subclasses
+description: Configure Unreal Engine project settings and editor preferences — UI appearance, toolbar icons, scale, colors, and any UDeveloperSettings subclass (ProjectSettingsService). Use when the user asks to change a project setting or editor preference, configure a UDeveloperSettings category, or read/write project config values.
 vibeue_classes:
   - ProjectSettingsService
 unreal_classes:

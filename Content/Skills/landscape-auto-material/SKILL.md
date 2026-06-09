@@ -1,7 +1,7 @@
 ---
 name: landscape-auto-material
 display_name: Landscape Auto-Material System
-description: Create production-quality landscape materials using the master material + material function + material instance paradigm. Covers Runtime Virtual Textures, auto-layering (slope/altitude/distance blending), layer functions, and configuring biomes through material instances.
+description: Create production-quality landscape materials with the master-material + material-function + material-instance paradigm, RVT, and auto-layering. Use when the user asks for an auto/procedural landscape material, slope/altitude/distance-based layer blending, Runtime Virtual Textures, biome configuration via instances, or layer material functions. For basic layer-blend materials load landscape-materials.
 vibeue_classes:
   - MaterialService
   - MaterialNodeService

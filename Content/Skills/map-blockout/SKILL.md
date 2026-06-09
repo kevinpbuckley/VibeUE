@@ -1,7 +1,7 @@
 ---
 name: map-blockout
 display_name: Procedural FPS Map Blockout
-description: Procedurally design an AAA-style open-world FPS map blockout (roads, POIs, fields, forests/treelines, railway/bridges) from a VibeUE-generated landscape, validate it through gated checks, and materialize the plan into real engine geometry (splines, paint layers, foliage, actors).
+description: Procedurally design an AAA-style open-world FPS map blockout (roads, POIs, fields, forests/treelines, railway/bridges) from a landscape, validate it through gated checks, and materialize it into engine geometry. Use when the user asks to block out or lay out an open-world/FPS map, place roads/POIs/forests/railways procedurally, or turn a blockout plan into splines, paint layers, foliage, and actors.
 vibeue_classes:
   - MapBlockoutService
   - LandscapeService

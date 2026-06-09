@@ -1,7 +1,7 @@
 ---
 name: terrain-data
 display_name: Real-World Terrain
-description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps plus landscape splines for water bodies.
+description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines.
 keywords:
   - terrain
   - heightmap

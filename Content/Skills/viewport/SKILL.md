@@ -1,7 +1,7 @@
 ---
 name: viewport
 display_name: Viewport Control
-description: Control the Unreal Editor level viewport - camera type, view mode, FOV, exposure, layout, camera position, and rendering settings
+description: Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot.
 vibeue_classes:
   - ViewportService
 unreal_classes:

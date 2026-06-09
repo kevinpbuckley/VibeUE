@@ -1,7 +1,7 @@
 ---
 name: enum-struct
 display_name: Enums and Structs
-description: Create, modify, and introspect UserDefinedEnums and UserDefinedStructs
+description: Create, modify, and introspect UserDefinedEnums and UserDefinedStructs (EnumStructService). Use when the user asks to create a Blueprint enum or struct, add enum values or struct members, or inspect an enum/struct's fields. Pair with data-tables when defining a row struct.
 vibeue_classes:
   - EnumStructService
   - BlueprintTypeParser
