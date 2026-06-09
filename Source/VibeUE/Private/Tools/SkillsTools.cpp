@@ -1842,6 +1842,51 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 						ConfirmObj->SetArrayField(TEXT("unreal_classes"), *UnrealClassesArray);
 					}
 
+					// Pass through the sub-doc + resource menus so the in-editor chat can discover and
+					// load deeper material (workflows/reference sub-docs, runnable scripts, reference files).
+					for (const TCHAR* MenuField : { TEXT("available_sections"), TEXT("available_resources") })
+					{
+						const TArray<TSharedPtr<FJsonValue>>* MenuArray = nullptr;
+						if (ResultObj->TryGetArrayField(MenuField, MenuArray) && MenuArray)
+						{
+							ConfirmObj->SetArrayField(MenuField, *MenuArray);
+						}
+					}
+					for (const TCHAR* UsageField : { TEXT("available_sections_usage"), TEXT("available_resources_usage") })
+					{
+						FString UsageStr;
+						if (ResultObj->TryGetStringField(UsageField, UsageStr))
+						{
+							ConfirmObj->SetStringField(UsageField, UsageStr);
+						}
+					}
+
+					// For a sub-doc / script / resource load (name contains a '/'), the requested body is
+					// small and specific — return it directly in the tool result so the agent can use it
+					// immediately, instead of only relying on the system-prompt injection.
+					bool bLoadedSubResource = false;
+					for (const FString& Name : ActuallyLoadedNames)
+					{
+						if (Name.Contains(TEXT("/")))
+						{
+							bLoadedSubResource = true;
+							break;
+						}
+					}
+					if (bLoadedSubResource)
+					{
+						FString SubContent;
+						if (ResultObj->TryGetStringField(TEXT("content"), SubContent))
+						{
+							ConfirmObj->SetStringField(TEXT("content"), SubContent);
+						}
+						const TArray<TSharedPtr<FJsonValue>>* FilesLoadedArray = nullptr;
+						if (ResultObj->TryGetArrayField(TEXT("files_loaded"), FilesLoadedArray) && FilesLoadedArray)
+						{
+							ConfirmObj->SetArrayField(TEXT("files_loaded"), *FilesLoadedArray);
+						}
+					}
+
 					// Report all skills now in the system prompt
 					TArray<TSharedPtr<FJsonValue>> AllInPromptArray;
 					for (const FString& Name : Session->GetLoadedSkillNames())
