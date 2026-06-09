@@ -24,6 +24,11 @@ keywords:
 
 # Animation Blueprint Skill
 
+> An AnimBP **is a Blueprint**. For its variables, functions, components, and overridable functions,
+> use `BlueprintService` and load the **`blueprints`** skill. Bool fields on info structs drop the C++
+> `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden` (NOT `b_is_pure`, etc.); call
+> `discover_python_class` to confirm field names rather than guessing.
+
 ## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
 
 `add_transition()` only draws the arrow between two states. The transition's rule graph

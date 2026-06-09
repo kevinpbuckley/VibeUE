@@ -1645,7 +1645,7 @@ public:
 	 * Example:
 	 *   params = unreal.BlueprintService.get_function_parameters("/Game/BP_Player", "ApplyDamage")
 	 *   for param in params:
-	 *       print(f"{param.parameter_name}: {param.parameter_type} (output={param.b_is_output})")
+	 *       print(f"{param.parameter_name}: {param.parameter_type} (output={param.is_output})")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static TArray<FBlueprintFunctionParameterInfo> GetFunctionParameters(
@@ -1680,7 +1680,7 @@ public:
 	 * Example:
 	 *   success, info = unreal.BlueprintService.get_function_info("/Game/BP_Player", "ApplyDamage")
 	 *   if success:
-	 *       print(f"Nodes: {info.node_count}, Pure: {info.b_is_pure}")
+	 *       print(f"Nodes: {info.node_count}, Pure: {info.is_pure}")
 	 *       for param in info.input_parameters:
 	 *           print(f"  Input: {param.parameter_name}: {param.parameter_type}")
 	 */
@@ -3056,7 +3056,7 @@ public:
 	 *
 	 * Example:
 	 *   result = unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
-	 *   print(f"Success: {result.b_success}, Errors: {result.num_errors}")
+	 *   print(f"Success: {result.success}, Errors: {result.num_errors}")
 	 *   for err in result.errors:
 	 *       print(f"  ERROR: {err}")
 	 */
@@ -3531,7 +3531,7 @@ public:
 	 * Example:
 	 *   funcs = unreal.BlueprintService.list_overridable_functions("/Game/StateTree/STT_Rotate")
 	 *   for f in funcs:
-	 *       print(f"{f.function_name} ({f.owner_class}) overridden={f.b_already_overridden}")
+	 *       print(f"{f.function_name} ({f.owner_class}) overridden={f.already_overridden}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Functions")
 	static TArray<FOverridableFunctionInfo> ListOverridableFunctions(const FString& BlueprintPath);

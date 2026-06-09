@@ -78,6 +78,26 @@ for a in assets:
     print(f"{a.package_path}/{a.asset_name}")
 ```
 
+## Function & override introspection field names
+
+Bool fields drop the C++ `b` prefix in Python (`bIsPure` → `is_pure`). Don't guess `b_*`.
+
+`list_functions(bp)` → **BlueprintFunctionInfo**: `function_name`, `is_override`, `is_pure`,
+`parameters`, `return_type`.
+
+`list_overridable_functions(bp)` → **OverridableFunctionInfo**: `function_name`, `owner_class`,
+`already_overridden`, `is_event_style`, `is_native_event`, `parameters`, `return_type`.
+
+Function parameters → **BlueprintFunctionParameterInfo**: `parameter_name`, `parameter_type`,
+`is_output` (NOT `b_is_output`).
+
+```python
+for f in unreal.BlueprintService.list_functions(bp):
+    print(f.function_name, "pure" if f.is_pure else "impure", "override" if f.is_override else "")
+for o in unreal.BlueprintService.list_overridable_functions(bp):
+    print(o.function_name, o.owner_class, "(already overridden)" if o.already_overridden else "")
+```
+
 ## Material parameters
 
 ```python
