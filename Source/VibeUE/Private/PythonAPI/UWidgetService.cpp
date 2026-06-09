@@ -312,6 +312,22 @@ namespace
 			return true;
 		}
 
+		// Canvas pivot alignment. With anchors at a point (e.g. 0.5,0.5), Alignment 0.5,0.5
+		// centers the widget on that point (top-left otherwise).
+		if (PropertyName.Equals(TEXT("Alignment X"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Alignment.X");
+			return true;
+		}
+
+		if (PropertyName.Equals(TEXT("Alignment Y"), ESearchCase::IgnoreCase) && Widget->Slot)
+		{
+			OutTargetObject = Widget->Slot;
+			OutResolvedPath = TEXT("LayoutData.Alignment.Y");
+			return true;
+		}
+
 		// Canvas Z-order (#424). UCanvasPanelSlot::ZOrder is a direct int32 UPROPERTY.
 		if ((PropertyName.Equals(TEXT("ZOrder"), ESearchCase::IgnoreCase) ||
 			 PropertyName.Equals(TEXT("Z Order"), ESearchCase::IgnoreCase)) && Widget->Slot)

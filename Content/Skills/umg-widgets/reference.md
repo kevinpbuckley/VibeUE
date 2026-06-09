@@ -47,8 +47,9 @@ Returned by `get_widget_snapshot()` and `get_component_snapshot()`. All `WidgetI
 ## WidgetSlotInfo
 
 Snapshot of a widget's slot. `set_property` can write: Canvas layout (`Position X/Y`, `Size X/Y`,
-`Anchor Min/Max X/Y`, `ZOrder`) and box/overlay layout (`Horizontal Alignment`, `Vertical Alignment`,
-`Padding`[`Left/Top/Right/Bottom`], `Size Rule`, `Size Value`). See SKILL.md → "Slot editing via set_property".
+`Anchor Min/Max X/Y`, `Alignment X/Y`, `ZOrder`) and box/overlay layout (`Horizontal Alignment`,
+`Vertical Alignment`, `Padding`[`Left/Top/Right/Bottom`], `Size Rule`, `Size Value`). See SKILL.md →
+"Slot editing via set_property". To center on a canvas: anchors `0.5` + `Alignment X/Y` `0.5`.
 
 | Field | Type | Description |
 |-------|------|-------------|

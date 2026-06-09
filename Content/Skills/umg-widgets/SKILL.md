@@ -109,7 +109,8 @@ Full field tables for every return type are in `reference.md`.
 
 `set_property` edits slot layout through these aliases (string values):
 
-- **Canvas children:** `Position X/Y`, `Size X/Y`, `Anchor Min X/Y`, `Anchor Max X/Y`, `ZOrder` (or `Z Order`).
+- **Canvas children:** `Position X/Y`, `Size X/Y`, `Anchor Min X/Y`, `Anchor Max X/Y`, `Alignment X/Y`
+  (pivot — set to `0.5` with anchors at `0.5` to truly center), `ZOrder` (or `Z Order`).
 - **Box/Overlay children** (VerticalBox/HorizontalBox/Overlay): `Horizontal Alignment` / `Vertical Alignment`
   (values `Fill`/`Left`/`Center`/`Right`/`Top`/`Bottom`), `Padding` (one value or `(Left=..,Top=..,Right=..,Bottom=..)`),
   `Padding Left/Top/Right/Bottom`, and on box slots `Size Rule` (`Fill`/`Automatic`) + `Size Value`.

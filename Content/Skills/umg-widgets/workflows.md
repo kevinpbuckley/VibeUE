@@ -70,7 +70,15 @@ unreal.WidgetService.set_property(path, "Button", "Anchor Min X", "0.5")
 unreal.WidgetService.set_property(path, "Button", "Anchor Min Y", "0.5")
 ```
 
-To stretch a widget to fill its canvas, set anchors `Min (0,0)` → `Max (1,1)`.
+To stretch a widget to fill its canvas, set anchors `Min (0,0)` → `Max (1,1)`. To **center** it, set
+anchors to `0.5` and `Alignment X/Y` to `0.5` (the alignment is the pivot — without it the widget's
+top-left sits on the anchor point):
+
+```python
+for k, v in [("Anchor Min X","0.5"),("Anchor Min Y","0.5"),("Anchor Max X","0.5"),("Anchor Max Y","0.5"),
+             ("Alignment X","0.5"),("Alignment Y","0.5")]:
+    unreal.WidgetService.set_property(path, "MenuStack", k, v)
+```
 
 `set_property` also writes `ZOrder` on canvas children and `Horizontal Alignment` / `Vertical Alignment`
 / `Padding` / `Size Rule` / `Size Value` on box/overlay children (alignment accepts friendly values like
