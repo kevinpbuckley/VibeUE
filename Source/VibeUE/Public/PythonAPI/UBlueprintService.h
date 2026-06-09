@@ -1579,6 +1579,31 @@ public:
 	);
 
 	/**
+	 * Add a macro graph to a Blueprint (typically a Macro Library Blueprint).
+	 *
+	 * Macro graphs are referenced by K2Node_MacroInstance nodes via add_macro_instance_node.
+	 * Use this to create the macro graph, then reference it with the full path format:
+	 *   "/Game/MyMacroLib.MyMacroLib:MyMacroName"
+	 *
+	 * To create a Macro Library Blueprint from Python:
+	 *   factory = unreal.BlueprintMacroFactory()
+	 *   factory.set_editor_property("parent_class", unreal.Actor.static_class())
+	 *   tools = unreal.AssetToolsHelpers.get_asset_tools()
+	 *   tools.create_asset("BPMacroLib", "/Game/Macros", unreal.Blueprint, factory)
+	 *
+	 * Note: do NOT use create_function() on a Macro Library — it asserts in the K2 schema.
+	 *
+	 * @param BlueprintPath - Full path to the target Blueprint
+	 * @param MacroName     - Name for the new macro graph
+	 * @return True if successful (idempotent — returns true if the macro already exists)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool CreateMacroGraph(
+		const FString& BlueprintPath,
+		const FString& MacroName
+	);
+
+	/**
 	 * Add a parameter to a function.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -2741,8 +2766,9 @@ public:
 	 *                        Supported shorthands (Standard Macros library):
 	 *                          ForEachLoop, ForEachLoopWithBreak, ReverseForEachLoop,
 	 *                          ForLoop, ForLoopWithBreak, WhileLoop,
-	 *                          IsValid, IsNotValid,
-	 *                          Gate, MultiGate, DoOnce, DoN, FlipFlop
+	 *                          IsValid, Gate, DoOnce, DoN, FlipFlop
+	 *                        Note: IsNotValid is not a separate macro — use IsValid and wire the
+	 *                        "Is Not Valid" exec output. MultiGate is K2Node_MultiGate, not a macro.
 	 * @param PosX          - X position in the graph
 	 * @param PosY          - Y position in the graph
 	 * @return Node ID (GUID) if successful, empty string otherwise

@@ -171,6 +171,14 @@ IMMEDIATE ACTIONS — go straight to these, no skill or discovery step needed:
       import unreal
       unreal.BlueprintService.list_graphs("/Game/path/BP_X")
 
+  ForEachLoop / WhileLoop / any Standard Macro node in a Blueprint graph:
+      import unreal
+      node_id = unreal.BlueprintService.add_macro_instance_node(bp, graph, "ForEachLoop", x, y)
+      Supported shorthands: ForEachLoop, ForEachLoopWithBreak, ReverseForEachLoop,
+        ForLoop, ForLoopWithBreak, WhileLoop, IsValid, Gate, DoOnce, DoN, FlipFlop
+      DO NOT use discover_nodes / create_node_by_key — macro nodes have no spawner key.
+      IsValid exposes both "Is Valid" and "Is Not Valid" exec outputs on the same node.
+
 KEY RULES:
   - Assets (search/find/open/save/move/delete) → use the manage_asset TOOL, not Python.
   - Logs → use the read_logs TOOL, not Python file I/O.

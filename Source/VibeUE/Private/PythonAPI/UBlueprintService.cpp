@@ -2515,6 +2515,46 @@ bool UBlueprintService::CreateFunction(
 	return true;
 }
 
+bool UBlueprintService::CreateMacroGraph(const FString& BlueprintPath, const FString& MacroName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateMacroGraph: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	// Idempotent — return true if the macro graph already exists
+	for (UEdGraph* Graph : Blueprint->MacroGraphs)
+	{
+		if (Graph && Graph->GetName() == MacroName)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CreateMacroGraph: Macro '%s' already exists in %s"), *MacroName, *BlueprintPath);
+			return true;
+		}
+	}
+
+	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint,
+		FName(*MacroName),
+		UEdGraph::StaticClass(),
+		UEdGraphSchema_K2::StaticClass()
+	);
+
+	if (!NewGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateMacroGraph: Failed to create graph '%s' in %s"), *MacroName, *BlueprintPath);
+		return false;
+	}
+
+	NewGraph->bEditable = true;
+	FBlueprintEditorUtils::AddMacroGraph(Blueprint, NewGraph, /*bIsUserCreated=*/true, /*SignatureFromClass=*/nullptr);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("CreateMacroGraph: Created macro '%s' in %s"), *MacroName, *BlueprintPath);
+	return true;
+}
+
 bool UBlueprintService::AddFunctionParameter(
 	const FString& BlueprintPath,
 	const FString& FunctionName,
@@ -5727,11 +5767,9 @@ FString UBlueprintService::AddMacroInstanceNode(
 		{TEXT("ForLoopWithBreak"),     TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForLoopWithBreak")},
 		{TEXT("WhileLoop"),            TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:WhileLoop")},
 		{TEXT("IsValid"),              TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:IsValid")},
-		{TEXT("IsNotValid"),           TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:IsNotValid")},
 		{TEXT("Gate"),                 TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:Gate")},
-		{TEXT("MultiGate"),            TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:MultiGate")},
 		{TEXT("DoOnce"),               TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:DoOnce")},
-		{TEXT("DoN"),                  TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:DoN")},
+		{TEXT("DoN"),                  TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:Do N")},
 		{TEXT("FlipFlop"),             TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:FlipFlop")},
 	};
 
