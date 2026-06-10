@@ -1579,6 +1579,31 @@ public:
 	);
 
 	/**
+	 * Add a macro graph to a Blueprint (typically a Macro Library Blueprint).
+	 *
+	 * Macro graphs are referenced by K2Node_MacroInstance nodes via add_macro_instance_node.
+	 * Use this to create the macro graph, then reference it with the full path format:
+	 *   "/Game/MyMacroLib.MyMacroLib:MyMacroName"
+	 *
+	 * To create a Macro Library Blueprint from Python:
+	 *   factory = unreal.BlueprintMacroFactory()
+	 *   factory.set_editor_property("parent_class", unreal.Actor.static_class())
+	 *   tools = unreal.AssetToolsHelpers.get_asset_tools()
+	 *   tools.create_asset("BPMacroLib", "/Game/Macros", unreal.Blueprint, factory)
+	 *
+	 * Note: do NOT use create_function() on a Macro Library — it asserts in the K2 schema.
+	 *
+	 * @param BlueprintPath - Full path to the target Blueprint
+	 * @param MacroName     - Name for the new macro graph
+	 * @return True if successful (idempotent — returns true if the macro already exists)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static bool CreateMacroGraph(
+		const FString& BlueprintPath,
+		const FString& MacroName
+	);
+
+	/**
 	 * Add a parameter to a function.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -2723,6 +2748,42 @@ public:
 		const FString& GraphName,
 		const FString& FunctionOwnerClass,
 		const FString& FunctionName,
+		float PosX = 0.0f,
+		float PosY = 0.0f
+	);
+
+	/**
+	 * Add a macro instance node to a Blueprint graph.
+	 *
+	 * Creates a K2Node_MacroInstance wired to the specified macro graph so it exposes the
+	 * correct exec and data pins at compile time. This is the only reliable path for placing
+	 * macro nodes from Python — create_node_by_key("NODE K2Node_MacroInstance") produces a
+	 * husk with no pins because MacroGraphReference cannot be set through UObject reflection.
+	 *
+	 * @param BlueprintPath - Full path to the target blueprint
+	 * @param GraphName     - Name of the graph to place the node in
+	 * @param MacroPath     - Shorthand name OR full "AssetPath.AssetName:MacroGraphName" string.
+	 *                        Supported shorthands (Standard Macros library):
+	 *                          ForEachLoop, ForEachLoopWithBreak, ReverseForEachLoop,
+	 *                          ForLoop, ForLoopWithBreak, WhileLoop,
+	 *                          IsValid, Gate, DoOnce, DoN, FlipFlop
+	 *                        Note: IsNotValid is not a separate macro — use IsValid and wire the
+	 *                        "Is Not Valid" exec output. MultiGate is K2Node_MultiGate, not a macro.
+	 * @param PosX          - X position in the graph
+	 * @param PosY          - Y position in the graph
+	 * @return Node ID (GUID) if successful, empty string otherwise
+	 *
+	 * Example - Iterate an array:
+	 *   node_id = unreal.BlueprintService.add_macro_instance_node("/Game/BP_Player", "EventGraph", "ForEachLoop", 200, 100)
+	 *
+	 * Example - Full path (custom macro in a user blueprint):
+	 *   node_id = unreal.BlueprintService.add_macro_instance_node("/Game/BP_Player", "EventGraph", "/Game/BP_Macros.BP_Macros:MyMacro", 200, 100)
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
+	static FString AddMacroInstanceNode(
+		const FString& BlueprintPath,
+		const FString& GraphName,
+		const FString& MacroPath,
 		float PosX = 0.0f,
 		float PosY = 0.0f
 	);

@@ -36,6 +36,7 @@
 #include "Curves/CurveVector.h"          // For UCurveVector (timeline vector tracks)
 #include "Curves/CurveLinearColor.h"     // For UCurveLinearColor (timeline color tracks)
 #include "EdGraphNode_Comment.h"         // For UEdGraphNode_Comment (comment box nodes)
+#include "K2Node_MacroInstance.h"        // For UK2Node_MacroInstance (add_macro_instance_node)
 #include "InputAction.h"                 // For UInputAction
 #include "Kismet/KismetSystemLibrary.h"
 #include "Kismet/KismetMathLibrary.h"
@@ -2511,6 +2512,46 @@ bool UBlueprintService::CreateFunction(
 
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	UE_LOG(LogTemp, Log, TEXT("CreateFunction: Created function '%s' in %s"), *FunctionName, *BlueprintPath);
+	return true;
+}
+
+bool UBlueprintService::CreateMacroGraph(const FString& BlueprintPath, const FString& MacroName)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateMacroGraph: Failed to load blueprint: %s"), *BlueprintPath);
+		return false;
+	}
+
+	// Idempotent — return true if the macro graph already exists
+	for (UEdGraph* Graph : Blueprint->MacroGraphs)
+	{
+		if (Graph && Graph->GetName() == MacroName)
+		{
+			UE_LOG(LogTemp, Warning, TEXT("CreateMacroGraph: Macro '%s' already exists in %s"), *MacroName, *BlueprintPath);
+			return true;
+		}
+	}
+
+	UEdGraph* NewGraph = FBlueprintEditorUtils::CreateNewGraph(
+		Blueprint,
+		FName(*MacroName),
+		UEdGraph::StaticClass(),
+		UEdGraphSchema_K2::StaticClass()
+	);
+
+	if (!NewGraph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("CreateMacroGraph: Failed to create graph '%s' in %s"), *MacroName, *BlueprintPath);
+		return false;
+	}
+
+	NewGraph->bEditable = true;
+	FBlueprintEditorUtils::AddMacroGraph(Blueprint, NewGraph, /*bIsUserCreated=*/true, /*SignatureFromClass=*/nullptr);
+	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("CreateMacroGraph: Created macro '%s' in %s"), *MacroName, *BlueprintPath);
 	return true;
 }
 
@@ -5694,6 +5735,104 @@ FString UBlueprintService::AddFunctionCallNode(
 	UE_LOG(LogTemp, Log, TEXT("AddFunctionCallNode: Added %s::%s to %s"), *FunctionOwnerClass, *FunctionName, *GraphName);
 
 	return CallNode->NodeGuid.ToString();
+}
+
+FString UBlueprintService::AddMacroInstanceNode(
+	const FString& BlueprintPath,
+	const FString& GraphName,
+	const FString& MacroPath,
+	float PosX,
+	float PosY)
+{
+	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
+	if (!Blueprint)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMacroInstanceNode: Failed to load blueprint: %s"), *BlueprintPath);
+		return FString();
+	}
+
+	UEdGraph* Graph = FindGraph(Blueprint, GraphName);
+	if (!Graph)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMacroInstanceNode: Graph '%s' not found in %s"), *GraphName, *BlueprintPath);
+		return FString();
+	}
+
+	// Resolve shorthand names to full asset:graph paths for the Standard Macros library
+	static const TMap<FString, FString> StandardMacroShorthands = {
+		{TEXT("ForEachLoop"),          TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoop")},
+		{TEXT("ForEachLoopWithBreak"), TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForEachLoopWithBreak")},
+		{TEXT("ReverseForEachLoop"),   TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ReverseForEachLoop")},
+		{TEXT("ForLoop"),              TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForLoop")},
+		{TEXT("ForLoopWithBreak"),     TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:ForLoopWithBreak")},
+		{TEXT("WhileLoop"),            TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:WhileLoop")},
+		{TEXT("IsValid"),              TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:IsValid")},
+		{TEXT("Gate"),                 TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:Gate")},
+		{TEXT("DoOnce"),               TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:DoOnce")},
+		{TEXT("DoN"),                  TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:Do N")},
+		{TEXT("FlipFlop"),             TEXT("/Engine/EditorBlueprintResources/StandardMacros.StandardMacros:FlipFlop")},
+	};
+
+	FString FullPath = MacroPath;
+	if (const FString* Resolved = StandardMacroShorthands.Find(MacroPath))
+	{
+		FullPath = *Resolved;
+	}
+
+	// Parse "AssetPath.AssetName:MacroGraphName"
+	FString AssetPath;
+	FString MacroGraphName;
+	if (!FullPath.Split(TEXT(":"), &AssetPath, &MacroGraphName))
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMacroInstanceNode: MacroPath must be a shorthand or 'AssetPath:GraphName'. Got: %s"), *MacroPath);
+		return FString();
+	}
+
+	// Load the blueprint that contains the macro graphs
+	UBlueprint* MacroBP = Cast<UBlueprint>(StaticLoadObject(UBlueprint::StaticClass(), nullptr, *AssetPath));
+	if (!MacroBP)
+	{
+		UE_LOG(LogTemp, Error, TEXT("AddMacroInstanceNode: Failed to load macro blueprint: %s"), *AssetPath);
+		return FString();
+	}
+
+	// Find the named macro graph
+	UEdGraph* MacroGraph = nullptr;
+	for (UEdGraph* Candidate : MacroBP->MacroGraphs)
+	{
+		if (Candidate && Candidate->GetFName() == FName(*MacroGraphName))
+		{
+			MacroGraph = Candidate;
+			break;
+		}
+	}
+
+	if (!MacroGraph)
+	{
+		TArray<FString> Available;
+		for (UEdGraph* Candidate : MacroBP->MacroGraphs)
+		{
+			if (Candidate) Available.Add(Candidate->GetName());
+		}
+		UE_LOG(LogTemp, Error, TEXT("AddMacroInstanceNode: Macro graph '%s' not found in %s. Available: [%s]"),
+			*MacroGraphName, *AssetPath, *FString::Join(Available, TEXT(", ")));
+		return FString();
+	}
+
+	UK2Node_MacroInstance* MacroNode = NewObject<UK2Node_MacroInstance>(Graph);
+	MacroNode->SetMacroGraph(MacroGraph);
+	Graph->AddNode(MacroNode, false, false);
+	MacroNode->CreateNewGuid();
+	MacroNode->PostPlacedNewNode();
+	MacroNode->AllocateDefaultPins();
+	MacroNode->NodePosX = PosX;
+	MacroNode->NodePosY = PosY;
+	FBlueprintEditorUtils::MarkBlueprintAsModified(Blueprint);
+
+	UE_LOG(LogTemp, Log, TEXT("AddMacroInstanceNode: Created '%s' node (id: %s) in %s/%s"),
+		*MacroGraphName, *MacroNode->NodeGuid.ToString(), *BlueprintPath, *GraphName);
+
+	return MacroNode->NodeGuid.ToString();
 }
 
 FString UBlueprintService::AddFunctionCallOnVariable(
