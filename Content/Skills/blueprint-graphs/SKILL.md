@@ -1,7 +1,7 @@
 ---
 name: blueprint-graphs
 display_name: Blueprint Graph Editing
-description: Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph.
+description: Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, Standard Macro nodes (ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/IsValid/FlipFlop via add_macro_instance_node), macro-graph creation, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, add a loop/macro node, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph.
 vibeue_classes:
   - BlueprintService
 unreal_classes:
@@ -262,6 +262,38 @@ assert node_id, actor_get_location.spawner_key
 ```
 
 If a node-create call returns an empty ID, stop immediately. Re-read the graph, inspect the error output, and fix the lookup before creating anything else.
+
+### ⚠️ Standard Macro nodes (ForEachLoop, etc.) — do NOT use `create_node_by_key`
+
+Macro instances (`K2Node_MacroInstance`) have **no spawner key**, so `discover_nodes()` won't find them and `create_node_by_key()` **fails silently** (returns empty, no error). Use the dedicated method instead:
+
+```python
+import unreal
+node_id = unreal.BlueprintService.add_macro_instance_node(bp_path, graph, "ForEachLoop", x, y)
+```
+
+Supported shorthands:
+
+| Shorthand | Engine macro graph |
+|---|---|
+| `ForEachLoop` | StandardMacros:ForEachLoop |
+| `ForEachLoopWithBreak` | StandardMacros:ForEachLoopWithBreak |
+| `ReverseForEachLoop` | StandardMacros:ReverseForEachLoop |
+| `ForLoop` | StandardMacros:ForLoop |
+| `ForLoopWithBreak` | StandardMacros:ForLoopWithBreak |
+| `WhileLoop` | StandardMacros:WhileLoop |
+| `IsValid` | StandardMacros:IsValid |
+| `Gate` | StandardMacros:Gate |
+| `DoOnce` | StandardMacros:DoOnce |
+| `DoN` | StandardMacros:Do N |
+| `FlipFlop` | StandardMacros:FlipFlop |
+
+A full `AssetPath:GraphName` string is also accepted for user-defined macro libraries (e.g. `/Game/Macros/ML_X.ML_X:MyMacro`).
+
+Notes:
+- `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
+- `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
+- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (`create_function` asserts on MacroLibrary BPs).
 
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 
