@@ -157,9 +157,14 @@ designing the widget afterwards (hierarchy, slots, bindings), load the **umg-wid
 ```python
 import unreal
 
-# By name (partial match) - ONLY searches /Game/ content
+# By name (partial match) - searches ALL mounted roots (/Game, /Engine, plugins)
 results = unreal.AssetDiscoveryService.search_assets("Player", "Blueprint")
 for asset in results:
+    print(f"{asset.asset_name}: {asset.package_path}")
+
+# "Show me the first N" — manage_asset has no limit param and can return thousands of rows.
+# Slice in Python instead of dumping the full list:
+for asset in unreal.AssetDiscoveryService.list_assets_in_path("/Engine", "Texture2D")[:10]:
     print(f"{asset.asset_name}: {asset.package_path}")
 
 # By folder

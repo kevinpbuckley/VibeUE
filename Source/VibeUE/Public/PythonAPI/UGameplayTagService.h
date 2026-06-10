@@ -96,7 +96,7 @@ struct FGameplayTagResult
  *   exists = unreal.GameplayTagService.has_tag("Cube.StartChasing")
  *
  *   # Get detailed tag info
- *   success, info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
+ *   info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")  # info struct or None (NOT a tuple)
  *
  *   # Get direct children of a tag
  *   children = unreal.GameplayTagService.get_children("Cube")

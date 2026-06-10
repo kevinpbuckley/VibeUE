@@ -90,6 +90,53 @@ UE Python **strips the lowercase `b` prefix** from boolean properties. Always us
 
 Do **not** use `b_already_overridden`, `b_is_event_style`, etc. — these will raise `AttributeError`.
 
+**Exception:** the string-based CDO accessors `get_property` / `set_property` take the **native C++
+property name**, so booleans KEEP the `b` prefix there (`"bReplicates"`, not `"replicates"`). See the
+next section.
+
+### ⚠️ CDO Properties: `get_property` / `set_property` (replication, lifespan, etc.)
+
+Use these to read/write Class Default Object properties like replication or initial lifespan:
+
+```python
+import unreal
+bp = "/Game/Blueprints/TestActor"
+
+# READ — returns a single value: str, or None if the property wasn't found. NOT a (success, value) tuple!
+value = unreal.BlueprintService.get_property(bp, "bReplicates")   # "True" / "False" (a STRING)
+life  = unreal.BlueprintService.get_property(bp, "InitialLifeSpan")  # "5.000000"
+
+# WRONG — raises ValueError: too many values to unpack
+# success, value = unreal.BlueprintService.get_property(bp, "bReplicates")
+
+# WRITE — values are strings; returns bool
+unreal.BlueprintService.set_property(bp, "bReplicates", "True")
+unreal.BlueprintService.compile_blueprint(bp)
+unreal.EditorAssetLibrary.save_asset(bp)
+```
+
+Rules:
+- Returns **str or None** — UE Python collapses `bool Func(..., Out&)` into one return value. This
+  applies to every `get_*_info` method too (`get_variable_info`, `get_function_info`,
+  `get_component_info`, `get_node_details`): they return the info struct or `None`, never a tuple.
+- Property names are the **native C++ names**: `bReplicates`, `InitialLifeSpan`, `bCanBeDamaged` —
+  the `b` prefix is NOT stripped here (a stripped name returns `None`).
+- Values read back as strings: compare `value == "True"`, not `value is True`.
+
+### ⚠️ Info Struct Fields (don't guess — these are the complete lists)
+
+`get_blueprint_info(path)` → **BlueprintDetailedInfo**: `blueprint_name`, `blueprint_path`,
+`parent_class`, `is_widget_blueprint`, `variables`, `functions`, `components`.
+
+| Struct | Fields |
+|---|---|
+| `BlueprintFunctionInfo` | `function_name`, `return_type`, `parameters`, `is_override`, `is_pure` — there is **no `function_type`** |
+| `BlueprintVariableInfo` | `variable_name`, `variable_type`, `category`, `is_public`, `is_exposed`, `default_value` |
+| `BlueprintComponentInfo` | `component_name`, `component_class`, `attach_parent`, `is_root_component`, `is_scene_component`, `is_inherited`, `children` |
+| `BlueprintGraphInfo` (from `list_graphs`) | `graph_name`, `graph_kind`, `node_count` |
+| `BlueprintNodeInfo` (from `get_nodes_in_graph`) | `node_id`, `node_type`, `node_title`, `pos_x`, `pos_y`, `pin_names`, `pins` |
+| `BlueprintCompileResult` | `success`, `num_errors`, `num_warnings`, `errors`, `warnings` |
+
 ### ⚠️ StateTree Dispatcher Variable Type
 
 To add a StateTree delegate dispatcher variable to a Blueprint task (e.g. `STT_*`):

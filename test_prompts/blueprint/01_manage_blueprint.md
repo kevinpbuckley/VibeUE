@@ -1,6 +1,6 @@
 # Blueprint Lifecycle Tests
 
-Tests for creating, configuring, compiling, and reparenting blueprints. Run sequentially. If you try to create a blueprint and and already exists delete the blueprint silently and try again.
+Tests for creating, configuring, compiling, and reparenting blueprints. Run sequentially. If you try to create a blueprint and one already exists, delete the blueprint silently and try again.
 
 ---
 
@@ -87,6 +87,16 @@ Recompile TestActor.
 ---
 
 Check the state to make sure it compiled cleanly.
+
+---
+
+## Cleanup
+
+Save any unsaved assets without asking me.
+
+---
+
+Delete the test blueprints created above (TestActor and TestCharacter).
 
 ---
 

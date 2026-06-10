@@ -1106,8 +1106,8 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.BlueprintService.get_component_info("StaticMeshComponent")
-	 *   if success:
+	 *   info = unreal.BlueprintService.get_component_info("StaticMeshComponent")  # ComponentDetailedInfo or None
+	 *   if info:
 	 *       print(f"Properties: {info.property_count}, Functions: {info.function_count}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
@@ -1167,7 +1167,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, value = unreal.BlueprintService.get_component_property("/Game/BP_Player", "Mesh", "RelativeLocation")
+	 *   value = unreal.BlueprintService.get_component_property("/Game/BP_Player", "Mesh", "RelativeLocation")  # str or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
 	static bool GetComponentProperty(
@@ -1377,8 +1377,8 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.BlueprintService.get_variable_info("/Game/BP_Player", "Health")
-	 *   if success:
+	 *   info = unreal.BlueprintService.get_variable_info("/Game/BP_Player", "Health")  # BlueprintVariableDetailedInfo or None
+	 *   if info:
 	 *       print(f"Type: {info.variable_type}, Category: {info.category}")
 	 *       print(f"Replication: {info.replication_condition}")
 	 */
@@ -1703,8 +1703,8 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.BlueprintService.get_function_info("/Game/BP_Player", "ApplyDamage")
-	 *   if success:
+	 *   info = unreal.BlueprintService.get_function_info("/Game/BP_Player", "ApplyDamage")  # detailed info struct or None
+	 *   if info:
 	 *       print(f"Nodes: {info.node_count}, Pure: {info.is_pure}")
 	 *       for param in info.input_parameters:
 	 *           print(f"  Input: {param.parameter_name}: {param.parameter_type}")
@@ -3134,8 +3134,10 @@ public:
 	 * @param OutValue - Property value as a string (C++ only, becomes return value in Python)
 	 * @return True if successful
 	 *
-	 * Python Usage (out params become return values):
-	 *   success, value = unreal.BlueprintService.get_property("/Game/BP_Player", "Health")
+	 * Python Usage — bool + out param collapse into ONE return value (str or None, NOT a tuple):
+	 *   value = unreal.BlueprintService.get_property("/Game/BP_Player", "Health")   # e.g. "150.0", or None if not found
+	 * Use the native C++ property name: booleans KEEP the 'b' prefix here ("bReplicates"),
+	 * unlike Python attribute access which strips it. Values come back as strings ("True"/"False").
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static bool GetProperty(
@@ -3238,8 +3240,8 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.BlueprintService.get_node_details("/Game/BP_Player", "EventGraph", node_id)
-	 *   if success:
+	 *   info = unreal.BlueprintService.get_node_details("/Game/BP_Player", "EventGraph", node_id)  # detailed info struct or None
+	 *   if info:
 	 *       for pin in info.input_pins:
 	 *           print(f"  {pin.pin_name}: {pin.pin_category}")
 	 */
@@ -3448,10 +3450,10 @@ public:
 	 * @return True if comparison succeeded (even if no differences)
 	 *
 	 * Example:
-	 *   success, diff = unreal.BlueprintService.compare_components(
+	 *   diff = unreal.BlueprintService.compare_components(
 	 *       "/Game/BP_Player", "Mesh",
 	 *       "/Game/BP_Enemy", "Mesh"
-	 *   )
+	 *   )  # str or None
 	 *   print(diff)  # Shows property differences
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints|Components")
