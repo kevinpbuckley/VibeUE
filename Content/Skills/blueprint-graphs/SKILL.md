@@ -175,6 +175,9 @@ connect_nodes(path, func, branch_id, "else", target_id, "execute")
 |-------|---------|
 | `Greater_FloatFloat` | `Greater_DoubleDouble` |
 | `Add_FloatFloat` | `Add_DoubleDouble` |
+| `MakeLiteralFloat` | `MakeLiteralDouble` |
+
+The editor still *displays* "Make Literal Float", but its spawner is `FUNC KismetSystemLibrary::MakeLiteralDouble`. `add_function_call_node(..., "KismetSystemLibrary", "MakeLiteralFloat", ...)` returns `""` silently — use `MakeLiteralDouble`, or `discover_nodes(bp, "Make Literal Float")` and spawn via the returned `spawner_key`.
 
 ### ⚠️ Compile Before Using Variables in Nodes
 
@@ -183,6 +186,50 @@ unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
 unreal.BlueprintService.compile_blueprint(path)  # REQUIRED before adding nodes
 unreal.BlueprintService.add_get_variable_node(path, func, "Health", x, y)
 ```
+
+### ⚠️ Verify Pins Immediately After Adding Variable Get/Set Nodes
+
+A variable Get/Set node can occasionally be created with **zero pins** (the variable property
+failed to resolve on the skeleton class at spawn time). The create call still returns a GUID, so
+you won't notice until every `connect_nodes` against it returns `False`. After creating a
+variable node, check its pins before wiring anything:
+
+```python
+gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+pins = unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
+if not pins:  # corrupt node — recover
+    unreal.BlueprintService.delete_node(bp_path, graph, gid)
+    unreal.BlueprintService.compile_blueprint(bp_path)
+    gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+    assert unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
+```
+
+Recovery notes:
+- `delete_node` can return `False` here — confirm with a fresh `get_nodes_in_graph()` and don't
+  leave a stray pin-less duplicate behind (two nodes with the same title, one never connected).
+- Compiling between delete and re-add refreshes the skeleton class so the retry resolves.
+- This is another reason to create **one node at a time** instead of batching 4–6 creates in one call.
+
+### ⚠️ The Result Node's `execute` Pin MUST Be Wired — the Warning Is Not Minor
+
+Compile warning **`ReturnNode Exec pin has no connections`** means the execution chain never
+reaches the Return Node, so the function's **output parameters are never set** — callers always
+get default values. The function is broken even though `compile.success` is `True`.
+
+Every non-pure function needs an exec path `Entry.then → ... → Result.execute`. For a
+"compute-only" function (e.g. read a variable, compare, return bool), wire the entry **directly**
+to the result — connecting only the data pin is not enough:
+
+```python
+# CheckDeath: IsDead = (Health <= 0)
+connect_nodes(bp, "CheckDeath", entry_id, "then", result_id, "execute")        # exec — REQUIRED
+connect_nodes(bp, "CheckDeath", lessequal_id, "ReturnValue", result_id, "IsDead")  # data
+```
+
+Do not dismiss this warning in your summary or claim the function "works". Treat any
+`ReturnNode` compile warning as a wiring bug and fix it before reporting success. (If the
+function has no side effects, the cleaner fix is making it **pure**, but wiring the exec chain is
+the minimal correct repair.)
 
 ### ⚠️ Node IDs Are GUID Strings, Not Small Integers
 

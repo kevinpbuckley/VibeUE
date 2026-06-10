@@ -130,7 +130,8 @@ Rules:
 
 | Struct | Fields |
 |---|---|
-| `BlueprintFunctionInfo` | `function_name`, `return_type`, `parameters`, `is_override`, `is_pure` — there is **no `function_type`** |
+| `BlueprintFunctionInfo` (from `list_functions`) | `function_name`, `return_type`, `parameters`, `is_override`, `is_pure` — there is **no `function_type`** and **no `input_parameters`** (that's the Detailed struct) |
+| `BlueprintFunctionDetailedInfo` (from `get_function_info`) | `function_name`, `graph_guid`, `input_parameters`, `output_parameters`, `local_variables`, `is_override`, `is_pure`, `node_count` — there is **no `return_type`**; return values are entries in `output_parameters` (each param: `parameter_name`, `parameter_type`, `is_output`, `is_reference`, `default_value`) |
 | `BlueprintVariableInfo` | `variable_name`, `variable_type`, `category`, `is_public`, `is_exposed`, `default_value` |
 | `BlueprintComponentInfo` | `component_name`, `component_class`, `attach_parent`, `is_root_component`, `is_scene_component`, `is_inherited`, `children` |
 | `BlueprintGraphInfo` (from `list_graphs`) | `graph_name`, `graph_kind`, `node_count` |

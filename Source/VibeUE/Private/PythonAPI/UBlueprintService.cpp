@@ -3476,6 +3476,20 @@ FString UBlueprintService::AddGetVariableNode(
 	GetNode->PostPlacedNewNode();
 	GetNode->AllocateDefaultPins();
 
+	// Pin allocation fails silently when the variable property can't be resolved on the
+	// skeleton class (e.g. stale skeleton after recent variable/function edits). Returning a
+	// GUID for a pin-less node leaves a corrupt node every downstream connect call fails on.
+	if (GetNode->Pins.Num() == 0)
+	{
+		GetNode->ReconstructNode();
+	}
+	if (GetNode->Pins.Num() == 0)
+	{
+		Graph->RemoveNode(GetNode);
+		UE_LOG(LogTemp, Error, TEXT("AddGetVariableNode: Node for '%s' allocated zero pins (variable not resolvable on skeleton class) — node removed. Compile the blueprint and retry."), *VariableName);
+		return FString();
+	}
+
 	// Set position
 	GetNode->NodePosX = PosX;
 	GetNode->NodePosY = PosY;
@@ -3719,6 +3733,19 @@ FString UBlueprintService::AddSetVariableNode(
 	SetNode->CreateNewGuid();
 	SetNode->PostPlacedNewNode();
 	SetNode->AllocateDefaultPins();
+
+	// Set nodes always allocate exec pins, so the failure signature for an unresolvable
+	// variable property is a missing variable input pin rather than zero pins.
+	if (!SetNode->FindPin(FName(*VariableName)))
+	{
+		SetNode->ReconstructNode();
+	}
+	if (!SetNode->FindPin(FName(*VariableName)))
+	{
+		Graph->RemoveNode(SetNode);
+		UE_LOG(LogTemp, Error, TEXT("AddSetVariableNode: Node for '%s' has no variable pin (variable not resolvable on skeleton class) — node removed. Compile the blueprint and retry."), *VariableName);
+		return FString();
+	}
 
 	// Set position
 	SetNode->NodePosX = PosX;
