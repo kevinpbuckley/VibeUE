@@ -452,7 +452,8 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 			"Partial name to match against asset names (case-insensitive). Used with action='search'.",
 			"string", false),
 		TOOL_PARAM("asset_type",
-			"Asset class filter: Blueprint, StaticMesh, Texture2D, Material, AnimSequence, etc. "
+			"Asset class filter: Blueprint, StaticMesh, Texture2D, Material, InputAction, etc. "
+			"Accepts any loaded class short name or a full /Script/Module.Class path. "
 			"Optional for: search, list.",
 			"string", false),
 		TOOL_PARAM("path",

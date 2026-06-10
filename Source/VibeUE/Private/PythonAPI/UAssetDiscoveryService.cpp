@@ -65,6 +65,19 @@ namespace
 			return FTopLevelAssetPath(*FoundPath);
 		}
 
+		// Accept a full "/Script/Module.Class" path directly
+		if (ClassName.StartsWith(TEXT("/Script/")))
+		{
+			return FTopLevelAssetPath(ClassName);
+		}
+
+		// Resolve short names from any loaded module (e.g. InputAction lives in
+		// /Script/EnhancedInput, LandscapeGrassType in /Script/Landscape)
+		if (const UClass* FoundClass = UClass::TryFindTypeSlow<UClass>(ClassName))
+		{
+			return FoundClass->GetClassPathName();
+		}
+
 		// If not in map, try to construct path assuming it's in Engine
 		return FTopLevelAssetPath(FString::Printf(TEXT("/Script/Engine.%s"), *ClassName));
 	}

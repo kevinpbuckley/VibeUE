@@ -3094,6 +3094,7 @@ public:
 	 * @param BlueprintName - Name of the blueprint to create
 	 * @param ParentClass - Parent class name or path (e.g., "Actor", "Character", "StateTreeTaskBlueprintBase", "/Script/Engine.Actor")
 	 *                      Short names like "StateTreeTaskBlueprintBase" are resolved via object search across all loaded modules.
+	 *                      UserWidget-derived parents create a WidgetBlueprint (UMG factory) automatically.
 	 *                      Returns empty string (error) if the class cannot be found.
 	 * @param BlueprintPath - Directory path where blueprint will be created (e.g., "/Game/Blueprints")
 	 * @return Full path to created blueprint, or empty string on failure
@@ -3101,6 +3102,7 @@ public:
 	 * Example:
 	 *   path = unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
 	 *   path = unreal.BlueprintService.create_blueprint("STT_MyTask", "StateTreeTaskBlueprintBase", "/Game/StateTree")
+	 *   path = unreal.BlueprintService.create_blueprint("WBP_MyWidget", "UserWidget", "/Game/UI")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Blueprints")
 	static FString CreateBlueprint(

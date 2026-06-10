@@ -5,13 +5,13 @@
 import unreal
 ad = unreal.AssetDiscoveryService
 
-# Find by exact path (confirm before editing)
+# Find by exact path (returns AssetData or None — no out-param in Python)
 hit = ad.find_asset_by_path("/Game/Blueprints/BP_Player")
-print("found:", hit)
+print("found:", hit.asset_name if hit else None)
 
-# List a folder
-for a in ad.search_assets("BP_", "/Game", "Blueprint")[:10] if hasattr(ad,'search_assets') else []:
-    print(" ", a)
+# Search all mounted roots (/Game, /Engine, plugins) by name pattern + optional type (only 2 params)
+for a in ad.search_assets("BP_", "Blueprint")[:10]:
+    print(" ", a.asset_name, a.package_path)
 
 # Duplicate + save via EditorAssetLibrary (true copy)
 src = "/Game/Blueprints/BP_Player"

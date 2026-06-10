@@ -54,6 +54,8 @@
 #include "UObject/Package.h"
 #include "UObject/UObjectIterator.h"
 #include "Factories/BlueprintFactory.h"
+#include "WidgetBlueprintFactory.h"      // For creating WidgetBlueprints (UBlueprintFactory can't)
+#include "Blueprint/UserWidget.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "SubobjectDataSubsystem.h"
 // For BlueprintActionDatabase - proper node discovery
@@ -6492,18 +6494,37 @@ FString UBlueprintService::CreateBlueprint(
 		return FString();
 	}
 
-	// Create blueprint using BlueprintFactory
-	UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
-	Factory->ParentClass = ParentClassPtr;
+	// Create blueprint using the matching factory. UBlueprintFactory cannot create
+	// WidgetBlueprints — UserWidget-derived parents need UWidgetBlueprintFactory.
+	UBlueprint* NewBlueprint = nullptr;
+	if (ParentClassPtr->IsChildOf(UUserWidget::StaticClass()))
+	{
+		UWidgetBlueprintFactory* WidgetFactory = NewObject<UWidgetBlueprintFactory>();
+		WidgetFactory->ParentClass = ParentClassPtr;
 
-	UBlueprint* NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(
-		UBlueprint::StaticClass(),
-		Package,
-		*BlueprintName,
-		RF_Standalone | RF_Public,
-		nullptr,
-		GWarn
-	));
+		NewBlueprint = Cast<UBlueprint>(WidgetFactory->FactoryCreateNew(
+			UWidgetBlueprint::StaticClass(),
+			Package,
+			*BlueprintName,
+			RF_Standalone | RF_Public,
+			nullptr,
+			GWarn
+		));
+	}
+	else
+	{
+		UBlueprintFactory* Factory = NewObject<UBlueprintFactory>();
+		Factory->ParentClass = ParentClassPtr;
+
+		NewBlueprint = Cast<UBlueprint>(Factory->FactoryCreateNew(
+			UBlueprint::StaticClass(),
+			Package,
+			*BlueprintName,
+			RF_Standalone | RF_Public,
+			nullptr,
+			GWarn
+		));
+	}
 
 	if (!NewBlueprint)
 	{

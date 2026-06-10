@@ -1,7 +1,7 @@
 ---
 name: asset-management
 display_name: Asset Discovery & Management
-description: Search, find, open, move, duplicate, save, delete, import, and export assets (the manage_asset tool / AssetDiscoveryService). Use when the user asks to find/locate an asset, list a folder, open/save/duplicate/move/rename/delete an asset, or import an image from disk. Prefer the manage_asset MCP tool over raw Python for asset ops.
+description: Search, find, open, move, duplicate, save, delete, import, and export assets (the manage_asset tool / AssetDiscoveryService). Use when the user asks to find/locate an asset, list a folder, open/save/duplicate/move/rename/delete an asset, import an image from disk, list assets open in editors, or query/use the Content Browser selection. Prefer the manage_asset MCP tool over raw Python for asset ops.
 vibeue_classes:
   - AssetDiscoveryService
 unreal_classes:
@@ -12,17 +12,46 @@ unreal_classes:
 
 ## Critical Rules
 
-### ⚠️ `search_assets` Does NOT Search Engine Content
+### ⚠️ Out-Params Become Return Values in Python — Never Pass an `AssetData` Argument
 
-`search_assets(term, type)` **only searches `/Game/` content**. There is NO third parameter.
+C++ methods shaped like `bool Func(FAssetData& Out)` are exposed to Python as
+`func(...) -> AssetData or None`. Passing an `AssetData` argument raises `TypeError`.
+
+```python
+# WRONG - TypeError: takes no arguments (1 given)
+asset = unreal.AssetData()
+unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset)
+
+# CORRECT - call with no out-arg, check the return for None
+asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+if asset:
+    print(asset.asset_name)
+```
+
+Affected methods (all return `AssetData or None`):
+
+| Method | Python signature |
+|--------|------------------|
+| `find_asset_by_path` | `(asset_path) -> AssetData or None` |
+| `get_active_asset` | `() -> AssetData or None` |
+| `get_primary_content_browser_selection` | `() -> AssetData or None` |
+
+### ⚠️ `search_assets` Searches ALL Mounted Roots — Game, Engine, and Plugins
+
+`search_assets(term, type)` searches `/Game/`, `/Engine/`, and every mounted plugin in one pass.
+There is NO third parameter.
 
 ```python
 # WRONG - will error (only 2 params exist)
 assets = unreal.AssetDiscoveryService.search_assets("Cube", "", True)
 
-# CORRECT - use list_assets_in_path for engine content
-engine_assets = unreal.AssetDiscoveryService.list_assets_in_path("/Engine")
-cubes = [a for a in engine_assets if "Cube" in str(a.asset_name)]
+# CORRECT - results include /Engine and plugin content; filter by package_path if you
+# only want project content
+hits = unreal.AssetDiscoveryService.search_assets("Cube", "StaticMesh")
+game_only = [a for a in hits if str(a.package_path).startswith("/Game")]
+
+# To scope to one folder, use list_assets_in_path instead
+engine_assets = unreal.AssetDiscoveryService.list_assets_in_path("/Engine", "Texture2D")
 ```
 
 ### ⚠️ UE 5.7 Property Changes
@@ -32,6 +61,11 @@ cubes = [a for a in engine_assets if "Cube" in str(a.asset_name)]
 | `asset.name` | `asset.asset_name` |
 | `asset.path` | `asset.package_path` |
 | `asset.asset_class` | `asset.asset_class_path` |
+| `asset.object_path` | `f"{asset.package_name}.{asset.asset_name}"` |
+
+`AssetData` has **no** `object_path` attribute in 5.7 (`AttributeError`). Build it from
+`package_name` + `asset_name`, or just use `str(asset.package_name)` — every
+AssetDiscoveryService method that takes a path accepts the package name form.
 
 ### ⚠️ Importing Image Files From Disk — Use the Built-in Importer
 
@@ -58,6 +92,15 @@ print(path or err)
 ```
 
 Supported image formats: png, jpg, jpeg, bmp, tga, dds, exr, hdr, tiff, tif, psd, pcx.
+
+Need a source image to import? Editor screenshots live under the **project's**
+`Saved/Screenshots` (and `Saved/VibeUE/Screenshots`) — not the user's AppData. List them with:
+
+```python
+import os, unreal
+shots = os.path.join(unreal.Paths.project_saved_dir(), "Screenshots")
+print(os.listdir(shots) if os.path.isdir(shots) else "no screenshots yet")
+```
 
 ### ⚠️ Asset Paths Must Be Content Browser Paths
 
@@ -93,10 +136,17 @@ unreal.AssetDiscoveryService.move_asset(
 
 | Does NOT Exist | Alternative |
 |----------------|-------------|
-| `asset_exists()` | `find_asset_by_path()` → check for None |
 | `is_asset_in_use()` | `get_asset_referencers()` → check if empty |
 | `rename_asset()` | `move_asset(old_path, new_path)` |
 | `export_asset()` | `export_texture()` for textures only |
+
+(`asset_exists(asset_path)` DOES exist — use it for simple existence checks.)
+
+### Creating Widget Blueprints
+
+`unreal.BlueprintService.create_blueprint(name, "UserWidget", path)` creates a proper
+`WidgetBlueprint` (it detects UserWidget-derived parents and uses the UMG factory). For
+designing the widget afterwards (hierarchy, slots, bindings), load the **umg-widgets** skill.
 
 ---
 
@@ -182,6 +232,10 @@ print(f"Saved {count} assets")
 
 ### Check References Before Delete
 
+⚠️ `get_asset_referencers` / `get_asset_dependencies` return **lists of plain strings**
+(package names like `"/Game/Blueprints/BP_Bird"`), NOT `AssetData` objects — accessing
+`.asset_name` on an entry raises `AttributeError: 'str' object has no attribute 'asset_name'`.
+
 ```python
 import unreal
 
@@ -189,7 +243,24 @@ refs = unreal.AssetDiscoveryService.get_asset_referencers("/Game/SM_Weapon")
 if len(refs) == 0:
     unreal.AssetDiscoveryService.delete_asset("/Game/SM_Weapon")
 else:
-    print(f"In use by {len(refs)} assets")
+    for ref in refs:          # ref is a str, e.g. "/Game/Blueprints/BP_Player"
+        print(f"In use by: {ref}")
+```
+
+### "What references X?" Pattern
+
+When the user names an asset loosely (e.g. "IA_Move"), search first — there may be several
+matches in different folders — then get referencers for each:
+
+```python
+import unreal
+
+for hit in unreal.AssetDiscoveryService.search_assets("IA_Move", "InputAction"):
+    pkg = str(hit.package_name)
+    refs = unreal.AssetDiscoveryService.get_asset_referencers(pkg)
+    print(pkg)
+    for r in refs:            # strings, not AssetData
+        print("  <-", r)
 ```
 
 ### Import/Export Textures
@@ -232,10 +303,30 @@ selected = unreal.AssetDiscoveryService.get_content_browser_selections()
 for asset in selected:
     print(asset.asset_name)
 
-# Get primary selection
-asset = unreal.AssetData()
-if unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset):
+# Get primary selection — NO out-arg, returns AssetData or None
+asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+if asset:
     print(f"Selected: {asset.asset_name}")
+else:
+    print("Nothing selected")
+
+# Open whatever is selected, then confirm it's open
+if asset:
+    unreal.AssetDiscoveryService.open_asset(str(asset.package_name))
+```
+
+### Filter Open Assets by Type
+
+`asset.asset_class_path` is a `TopLevelAssetPath` struct, not a string — compare its `asset_name`:
+
+```python
+import unreal
+
+open_assets = unreal.AssetDiscoveryService.get_open_assets()
+open_bps = [a for a in open_assets
+            if str(a.asset_class_path.asset_name) == "Blueprint"]
+for bp in open_bps:
+    print(f"{bp.asset_name} at {bp.package_path}")
 ```
 
 ### Create Non-Standard Asset Types (Factory Pattern)
@@ -257,13 +348,16 @@ unreal.EditorAssetLibrary.save_asset("/Game/Landscape/LGT_MyGrass")
 
 > **Tip:** Use `discover_python_module("unreal", name_filter="Factory")` to find available factories for other asset types.
 
-### ⚠️ search_assets May Not Find All Asset Types
+### Asset Type Filter Accepts Any Loaded Class
 
-`search_assets(term, type)` searches by name/type but may return empty for niche types like `LandscapeGrassType`. If search returns nothing:
+The `asset_type` filter (in `search_assets`, `get_assets_by_type`, `list_assets_in_path`, and the
+`manage_asset` tool) resolves short class names from **any** loaded module — `InputAction`,
+`LandscapeGrassType`, `NiagaraSystem`, etc. — and also accepts full `/Script/Module.Class` paths.
+If a typed search unexpectedly returns 0:
 
-1. Use `get_assets_by_type("LandscapeGrassType")` for type-specific queries
-2. Use `list_assets_in_path("/Game/SomeFolder")` and filter in Python
-3. Asset class names must match UE class names exactly (e.g., `LandscapeGrassType`, not `GrassType`)
+1. Class names must match UE class names exactly (e.g., `LandscapeGrassType`, not `GrassType`)
+2. Retry without the type filter and check `asset_class` in the results to learn the real class name
+3. Use `list_assets_in_path("/Game/SomeFolder")` and filter in Python
 
 ### Common Asset Types for Filtering
 
