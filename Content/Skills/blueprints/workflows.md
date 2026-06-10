@@ -39,9 +39,14 @@ bs.add_component(bp, "StaticMeshComponent", "BodyMesh")
 bs.add_component(bp, "PointLightComponent", "Glow", "BodyMesh")  # child
 bs.compile_blueprint(bp)
 bs.set_component_property(bp, "Glow", "Intensity", "5000.0")     # values are strings
+bs.set_component_property(bp, "Glow", "LightColor", "(R=255,G=127,B=0,A=255)")  # FColor = bytes 0-255, NOT 0-1 floats
 bs.compile_blueprint(bp)
 unreal.EditorAssetLibrary.save_asset(bp)
 ```
+
+Components added without a parent go to root level: the first scene component replaces
+DefaultSceneRoot as root; later parentless ones become floating siblings. Pass the parent name,
+or use `reparent_component` / `set_root_component`, to build a hierarchy.
 
 Runnable: `scripts/add_component.pyx`.
 

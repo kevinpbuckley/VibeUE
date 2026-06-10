@@ -14,6 +14,8 @@ bs.compile_blueprint(BP_PATH)
 # property values are strings; UE strips the lowercase b prefix (bVisible -> set as "bVisible" key here is fine)
 bs.set_component_property(BP_PATH, "BodyMesh", "bVisible", "true")
 bs.set_component_property(BP_PATH, "Glow", "Intensity", "5000.0")
+# LightColor is FColor: integer bytes 0-255 (LinearColor-style 0-1 floats give a near-black light)
+bs.set_component_property(BP_PATH, "Glow", "LightColor", "(R=255,G=127,B=0,A=255)")
 
 c = bs.compile_blueprint(BP_PATH)
 print("compile:", c.success, "errors:", c.num_errors)

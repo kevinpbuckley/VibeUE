@@ -676,6 +676,22 @@ bool UBlueprintService::OpenFunctionGraph(const FString& BlueprintPath, const FS
 	return true;
 }
 
+// The actual scene root is the first root-level scene component node that is not attached
+// to an inherited/native parent. GetDefaultSceneRootNode() only returns the auto-generated
+// DefaultSceneRoot, which is detached from the tree once a user scene component becomes root.
+static USCS_Node* FindActualSceneRootNode(USimpleConstructionScript* SCS)
+{
+	for (USCS_Node* Node : SCS->GetRootNodes())
+	{
+		if (Node && Node->ComponentClass && Node->ComponentClass->IsChildOf<USceneComponent>()
+			&& Node->ParentComponentOrVariableName == NAME_None)
+		{
+			return Node;
+		}
+	}
+	return nullptr;
+}
+
 TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString& BlueprintPath)
 {
 	TArray<FBlueprintComponentInfo> Components;
@@ -691,6 +707,8 @@ TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString&
 	{
 		return Components;
 	}
+
+	USCS_Node* ActualRootNode = FindActualSceneRootNode(SCS);
 
 	const TArray<USCS_Node*>& AllNodes = SCS->GetAllNodes();
 	for (USCS_Node* Node : AllNodes)
@@ -714,7 +732,7 @@ TArray<FBlueprintComponentInfo> UBlueprintService::ListComponents(const FString&
 			CompInfo.AttachParent = Node->ParentComponentOrVariableName.ToString();
 		}
 
-		CompInfo.bIsRootComponent = (Node == SCS->GetDefaultSceneRootNode());
+		CompInfo.bIsRootComponent = (Node == ActualRootNode);
 
 		// Get children
 		for (USCS_Node* ChildNode : Node->GetChildNodes())
@@ -854,8 +872,13 @@ TArray<FComponentTypeInfo> UBlueprintService::GetAvailableComponents(const FStri
 		Info.bIsPrimitiveComponent = Class->IsChildOf<UPrimitiveComponent>();
 		Info.bIsAbstract = Class->HasAnyClassFlags(CLASS_Abstract);
 		
-		// Get category from metadata
-		if (const FString* CategoryMeta = Class->FindMetaData(TEXT("Category")))
+		// Get category from metadata. Component grouping shown in the editor's Add Component
+		// menu lives in "ClassGroupNames" (e.g. "Lights"), not "Category".
+		if (const FString* GroupMeta = Class->FindMetaData(TEXT("ClassGroupNames")))
+		{
+			Info.Category = *GroupMeta;
+		}
+		else if (const FString* CategoryMeta = Class->FindMetaData(TEXT("Category")))
 		{
 			Info.Category = *CategoryMeta;
 		}
@@ -924,8 +947,12 @@ bool UBlueprintService::GetComponentInfo(const FString& ComponentType, FComponen
 	OutInfo.bIsSceneComponent = ComponentClass->IsChildOf<USceneComponent>();
 	OutInfo.bIsPrimitiveComponent = ComponentClass->IsChildOf<UPrimitiveComponent>();
 	
-	// Get category
-	if (const FString* CategoryMeta = ComponentClass->FindMetaData(TEXT("Category")))
+	// Get category — prefer the editor's component grouping ("ClassGroupNames", e.g. "Lights")
+	if (const FString* GroupMeta = ComponentClass->FindMetaData(TEXT("ClassGroupNames")))
+	{
+		OutInfo.Category = *GroupMeta;
+	}
+	else if (const FString* CategoryMeta = ComponentClass->FindMetaData(TEXT("Category")))
 	{
 		OutInfo.Category = *CategoryMeta;
 	}
@@ -1424,7 +1451,7 @@ bool UBlueprintService::SetRootComponent(
 	
 	// Find the component node to make root
 	USCS_Node* NewRootNode = nullptr;
-	USCS_Node* CurrentRootNode = SCS->GetDefaultSceneRootNode();
+	USCS_Node* CurrentRootNode = FindActualSceneRootNode(SCS);
 	
 	for (USCS_Node* Node : SCS->GetAllNodes())
 	{
@@ -1496,7 +1523,11 @@ bool UBlueprintService::SetRootComponent(
 		// It might be a root node itself, remove it from root nodes
 		SCS->RemoveNode(NewRootNode);
 	}
-	
+
+	// Add new root as a root node FIRST, so scene-root validation never resurrects
+	// the auto-generated DefaultSceneRoot while the old root is being detached below.
+	SCS->AddNode(NewRootNode);
+
 	// If there was a current root, we need to handle it
 	if (CurrentRootNode && CurrentRootNode != NewRootNode)
 	{
@@ -1508,18 +1539,19 @@ bool UBlueprintService::SetRootComponent(
 				CurrentRootNode->RemoveChildNode(Child);
 			}
 		}
-		
-		// Detach the current root from being THE root  
-		// Make the old root a child of the new root
+
 		SCS->RemoveNode(CurrentRootNode);
-		NewRootNode->AddChildNode(CurrentRootNode);
-		// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
-		CurrentRootNode->SetParent(NewRootNode);
+		if (CurrentRootNode != SCS->GetDefaultSceneRootNode())
+		{
+			// Make the old user-created root a child of the new root
+			NewRootNode->AddChildNode(CurrentRootNode);
+			// CRITICAL: Call SetParent to properly set ParentComponentOrVariableName
+			CurrentRootNode->SetParent(NewRootNode);
+		}
+		// The auto-generated DefaultSceneRoot is dropped outright (matching the Blueprint
+		// editor); the SCS recreates it automatically if the blueprint ever needs one again.
 	}
-	
-	// Add new root as a root node
-	SCS->AddNode(NewRootNode);
-	
+
 	// Reparent the old children (except the new root) to the new root
 	for (USCS_Node* Child : ChildrenToReparent)
 	{
@@ -1530,7 +1562,26 @@ bool UBlueprintService::SetRootComponent(
 			Child->SetParent(NewRootNode);
 		}
 	}
-	
+
+	// An actor has exactly one scene root: fold any other floating root-level scene
+	// components (e.g. siblings added at root level before this call) under the new root.
+	TArray<USCS_Node*> OtherSceneRoots;
+	for (USCS_Node* Node : SCS->GetRootNodes())
+	{
+		if (Node && Node != NewRootNode && Node != SCS->GetDefaultSceneRootNode()
+			&& Node->ComponentClass && Node->ComponentClass->IsChildOf<USceneComponent>()
+			&& Node->ParentComponentOrVariableName == NAME_None)
+		{
+			OtherSceneRoots.Add(Node);
+		}
+	}
+	for (USCS_Node* Node : OtherSceneRoots)
+	{
+		SCS->RemoveNode(Node);
+		NewRootNode->AddChildNode(Node);
+		Node->SetParent(NewRootNode);
+	}
+
 	// Mark blueprint as structurally modified
 	FBlueprintEditorUtils::MarkBlueprintAsStructurallyModified(Blueprint);
 	

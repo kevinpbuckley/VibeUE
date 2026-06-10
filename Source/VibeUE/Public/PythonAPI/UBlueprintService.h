@@ -3423,7 +3423,11 @@ public:
 	/**
 	 * Set a component as the root component of the blueprint.
 	 * The component must be a SceneComponent and must exist in the blueprint.
-	 * The previous root's children will be reparented to the new root.
+	 * The previous root's children are reparented to the new root. If the previous root was
+	 * the auto-generated DefaultSceneRoot it is removed entirely (matching the Blueprint
+	 * editor); a previous user-created root becomes a child of the new root. Any other
+	 * root-level scene components are also folded under the new root, since an actor has
+	 * exactly one scene root.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
 	 * @param ComponentName - Name of the component to make root

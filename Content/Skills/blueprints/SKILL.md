@@ -136,6 +136,50 @@ Rules:
 | `BlueprintGraphInfo` (from `list_graphs`) | `graph_name`, `graph_kind`, `node_count` |
 | `BlueprintNodeInfo` (from `get_nodes_in_graph`) | `node_id`, `node_type`, `node_title`, `pos_x`, `pos_y`, `pin_names`, `pins` |
 | `BlueprintCompileResult` | `success`, `num_errors`, `num_warnings`, `errors`, `warnings` |
+| `ComponentDetailedInfo` (from `get_component_info`) | `name`, `display_name`, `class_path`, `category`, `parent_class`, `is_scene_component`, `is_primitive_component`, `property_count`, `function_count` — there is **no `description`** |
+| `ComponentTypeInfo` (from `get_available_components`) | `name`, `display_name`, `class_path`, `category`, `base_class`, `is_scene_component`, `is_primitive_component`, `is_abstract` |
+| `ComponentPropertyInfo` (from `get_all_component_properties`) | `property_name`, `property_type`, `category`, `value`, `is_editable`, `is_inherited` |
+
+### Component API quick reference (all on `unreal.BlueprintService`)
+
+These signatures are complete — no need to `discover_python_class` them again:
+
+| Method | Notes |
+|---|---|
+| `get_available_components(search_filter="", max_results=50)` → `[ComponentTypeInfo]` | Discover addable component types by partial name match |
+| `get_component_info(component_type)` → `ComponentDetailedInfo` or `None` | Takes ONLY the type name — no blueprint path |
+| `list_components(bp)` / `get_component_hierarchy(bp)` → `[BlueprintComponentInfo]` | Both return the same flat list — use `attach_parent` / `children` / `is_root_component` fields to render the tree |
+| `component_exists(bp, name)` → `bool` | Fast idempotency check before adding |
+| `add_component(bp, type, name, parent_name="")` → `bool` | Compiles inline. See root behavior below |
+| `remove_component(bp, name, remove_children=True)` → `bool` | Removes children too by default |
+| `reparent_component(bp, name, new_parent)` → `bool` | |
+| `set_root_component(bp, name)` → `bool` | New root must be a SceneComponent. Old auto-generated DefaultSceneRoot is removed; an old user-created root and any other root-level scene components become children of the new root |
+| `get_component_property(bp, comp, prop)` → `str` or `None` | |
+| `set_component_property(bp, comp, prop, value)` → `bool` | `value` is a STRING — see formats below |
+| `get_all_component_properties(bp, comp, include_inherited=True)` → `[ComponentPropertyInfo]` | `list_component_properties` is an alias |
+| `compare_components(bp_a, comp_a, bp_b, comp_b)` → `str` or `None` | Diff as text; same or different blueprints |
+| `set_collision_settings(bp, comp, collision_enabled, object_type, collision_profile, channel_responses)` → `bool` | Collision lives in `BodyInstance` — `set_component_property` cannot reach it |
+
+**Root component behavior**: components added with no `parent_name` go to root level. The first
+scene component added this way replaces the auto-generated DefaultSceneRoot and becomes the root;
+later parentless scene components become floating siblings, NOT children of the root. To build a
+hierarchy, pass `parent_name` when adding, or use `reparent_component` / `set_root_component`.
+
+### ⚠️ Property Value String Formats (`set_component_property`)
+
+Values are strings in UE export-text syntax. Check `property_type` via
+`get_all_component_properties` before guessing a struct format:
+
+| Property type | Format example |
+|---|---|
+| `float` / `int32` / `bool` | `"5000.0"`, `"25"`, `"true"` |
+| `FVector` / `FRotator` | `"(X=0,Y=0,Z=50)"`, `"(Pitch=0,Yaw=90,Roll=0)"` |
+| **`FColor`** (e.g. light `LightColor`) | `"(R=255,G=127,B=0,A=255)"` — **integer bytes 0–255** |
+| **`FLinearColor`** | `"(R=1.0,G=0.5,B=0.0,A=1.0)"` — floats 0–1 |
+| Enum (e.g. `IntensityUnits`) | `"Candelas"` |
+
+❌ Common mistake: `LightColor` is `FColor`, so passing LinearColor-style floats like
+`"(R=1,G=0.5,B=0)"` silently produces a nearly-black light (R=1 of 255), not orange.
 
 ### ⚠️ StateTree Dispatcher Variable Type
 
