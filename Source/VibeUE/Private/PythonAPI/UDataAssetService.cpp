@@ -20,24 +20,24 @@ DEFINE_LOG_CATEGORY_STATIC(LogDataAssetService, Log, All);
 // Helper Methods
 // =================================================================
 
-UClass* UDataAssetService::FindDataAssetClass(const FString& ClassName)
+UClass* UDataAssetService::FindDataAssetClass(const FString& ClassName, bool bAllowAbstract)
 {
 	if (ClassName.IsEmpty())
 	{
 		return nullptr;
 	}
-	
+
 	// Try with and without U prefix
 	FString SearchNames[3] = {
 		ClassName,
 		ClassName.StartsWith(TEXT("U")) ? ClassName.RightChop(1) : FString::Printf(TEXT("U%s"), *ClassName),
 		ClassName.StartsWith(TEXT("U")) ? ClassName : FString::Printf(TEXT("U%s"), *ClassName)
 	};
-	
+
 	for (TObjectIterator<UClass> It; It; ++It)
 	{
 		UClass* Class = *It;
-		if (Class && Class->IsChildOf(UDataAsset::StaticClass()) && !Class->HasAnyClassFlags(CLASS_Abstract))
+		if (Class && Class->IsChildOf(UDataAsset::StaticClass()) && (bAllowAbstract || !Class->HasAnyClassFlags(CLASS_Abstract)))
 		{
 			for (const FString& SearchName : SearchNames)
 			{
@@ -209,7 +209,7 @@ bool UDataAssetService::SetPropertyFromString(FProperty* Property, void* Contain
 	}
 	
 	void* ValuePtr = Property->ContainerPtrToValuePtr<void>(Container);
-	
+
 	// Try import from text
 	const TCHAR* ImportResult = Property->ImportText_Direct(*Value, ValuePtr, nullptr, PPF_None);
 	if (ImportResult == nullptr)
@@ -217,7 +217,24 @@ bool UDataAssetService::SetPropertyFromString(FProperty* Property, void* Contain
 		OutError = FString::Printf(TEXT("Failed to parse value '%s' for property type %s"), *Value, *GetPropertyTypeString(Property));
 		return false;
 	}
-	
+
+	// ImportText_Direct returns a pointer to the first unconsumed character. A
+	// partial parse (e.g. a struct/array literal with a bad inner value or an
+	// unresolvable object path) returns non-null but leaves text behind — and the
+	// property silently keeps a partial/empty value. Treat that as failure so
+	// callers get an error instead of a phantom success.
+	while (*ImportResult == TEXT(' ') || *ImportResult == TEXT('\t') || *ImportResult == TEXT('\r') || *ImportResult == TEXT('\n'))
+	{
+		++ImportResult;
+	}
+	if (*ImportResult != TEXT('\0'))
+	{
+		OutError = FString::Printf(
+			TEXT("Value for property type %s was only partially parsed; unparsed remainder: '%s'. For object references inside structs/arrays use the full path form /Game/Path/Asset.Asset"),
+			*GetPropertyTypeString(Property), ImportResult);
+		return false;
+	}
+
 	return true;
 }
 
@@ -237,18 +254,25 @@ TArray<FDataAssetTypeInfo> UDataAssetService::SearchTypes(const FString& SearchF
 			continue;
 		}
 		
-		if (Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated))
+		if (Class->HasAnyClassFlags(CLASS_Abstract | CLASS_Deprecated | CLASS_NewerVersionExists))
 		{
 			continue;
 		}
-		
+
 		// Skip the base DataAsset class
 		if (Class == UDataAsset::StaticClass())
 		{
 			continue;
 		}
-		
+
 		FString ClassName = Class->GetName();
+
+		// Skip Blueprint compiler artifacts (skeleton/reinstanced classes) -
+		// they duplicate the real *_C class and are not valid creation targets
+		if (ClassName.StartsWith(TEXT("SKEL_")) || ClassName.StartsWith(TEXT("REINST_")) || ClassName.StartsWith(TEXT("TRASHCLASS_")))
+		{
+			continue;
+		}
 		
 		// Apply filter
 		if (!SearchFilter.IsEmpty() && !ClassName.Contains(SearchFilter, ESearchCase::IgnoreCase))
@@ -341,7 +365,7 @@ FDataAssetClassInfo UDataAssetService::GetClassInfo(const FString& ClassName, bo
 {
 	FDataAssetClassInfo Result;
 	
-	UClass* AssetClass = FindDataAssetClass(ClassName);
+	UClass* AssetClass = FindDataAssetClass(ClassName, /*bAllowAbstract=*/true);
 	if (!AssetClass)
 	{
 		UE_LOG(LogDataAssetService, Warning, TEXT("GetClassInfo: Class not found: %s"), *ClassName);
