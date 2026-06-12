@@ -7,6 +7,8 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "UI/SAIChatWindow.h"
 #include "Core/ToolRegistry.h"
 #include "Core/ToolMetadata.h"
@@ -2337,6 +2339,25 @@ void FChatSession::SetYoloModeEnabled(bool bEnabled)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
+bool FChatSession::IsChatEditorTestingEnabled()
+{
+    // Command-line switch wins so automated editor launches can enable testing without touching config
+    if (FParse::Param(FCommandLine::Get(), TEXT("VibeUEChatTesting")))
+    {
+        return true;
+    }
+
+    bool bTestingEnabled = false;
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("ChatEditorTesting"), bTestingEnabled, GEditorPerProjectIni);
+    return bTestingEnabled;
+}
+
+void FChatSession::SetChatEditorTestingEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("ChatEditorTesting"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 void FChatSession::ApproveToolCall(const FString& ToolCallId)
 {
     if (!PendingApprovalToolCall.IsSet())
@@ -2911,6 +2932,12 @@ TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
     // Convert each internal tool to MCP tool format (for API compatibility)
     for (const FToolMetadata& Tool : Tools)
     {
+        // Editor-testing tools are for external automation only - never offered to the chat AI
+        if (Tool.bEditorTestingOnly)
+        {
+            continue;
+        }
+
         FMCPTool MCPTool;
         MCPTool.Name = Tool.Name;
         MCPTool.Description = Tool.Description;

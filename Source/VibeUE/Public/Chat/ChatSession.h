@@ -333,6 +333,17 @@ public:
     /** Set YOLO mode enabled */
     static void SetYoloModeEnabled(bool bEnabled);
 
+    /**
+     * Check if Chat Editor Testing mode is enabled.
+     * When enabled, the manage_editor_chat tool is exposed via MCP so external
+     * clients can automate the editor chat (send messages, reset, inspect status/logs).
+     * Enabled via config or the -VibeUEChatTesting command-line switch.
+     */
+    static bool IsChatEditorTestingEnabled();
+
+    /** Set Chat Editor Testing mode enabled (persists to config) */
+    static void SetChatEditorTestingEnabled(bool bEnabled);
+
     /** Approve a pending tool call for execution (called from UI when user clicks Approve) */
     void ApproveToolCall(const FString& ToolCallId);
 
@@ -341,6 +352,9 @@ public:
 
     /** Check if a tool call is waiting for user approval */
     bool IsWaitingForToolApproval() const { return PendingApprovalToolCall.IsSet(); }
+
+    /** Get the tool call waiting for user approval (unset if none) */
+    const TOptional<FMCPToolCall>& GetPendingApprovalToolCall() const { return PendingApprovalToolCall; }
 
     // ============ LLM Generation Parameters ============
     

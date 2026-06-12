@@ -99,6 +99,8 @@ void FToolRegistry::RegisterTool(const FToolRegistration& Registration)
 	Metadata.Description = Registration.Description;
 	Metadata.Category = Registration.Category;
 	Metadata.Parameters = Registration.Parameters;
+	Metadata.bInternalOnly = Registration.bInternalOnly;
+	Metadata.bEditorTestingOnly = Registration.bEditorTestingOnly;
 
 	// Add tool
 	int32 Index = Tools.Add(Metadata);
@@ -128,6 +130,7 @@ void FToolRegistry::ProcessPendingRegistrations()
 		Metadata.Category = Registration.Category;
 		Metadata.Parameters = Registration.Parameters;
 		Metadata.bInternalOnly = Registration.bInternalOnly;
+		Metadata.bEditorTestingOnly = Registration.bEditorTestingOnly;
 
 		// Add tool
 		int32 Index = Tools.Add(Metadata);
