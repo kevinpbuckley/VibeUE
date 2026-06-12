@@ -114,6 +114,58 @@ static FString BuildTraceFilePath(const FString& Name)
 	return Dir / Name;
 }
 
+// Read StoreDir from the Unreal Trace Server settings file.
+// UTS saves traces there when -tracehost is used instead of -tracefile.
+static FString GetUTSStoreDir()
+{
+	FString SettingsPath = FPlatformMisc::GetEnvironmentVariable(TEXT("LOCALAPPDATA"))
+		/ TEXT("UnrealEngine/Common/UnrealTrace/Settings.ini");
+
+	FString Content;
+	if (!FFileHelper::LoadFileToString(Content, *SettingsPath))
+	{
+		return FString();
+	}
+
+	for (const FString& Line : TArray<FString>([&]{ TArray<FString> L; Content.ParseIntoArrayLines(L); return L; }()))
+	{
+		if (Line.StartsWith(TEXT("StoreDir=")))
+		{
+			FString Dir = Line.Mid(9).TrimStartAndEnd();
+			// UTS uses backslashes — normalise
+			FPaths::NormalizeFilename(Dir);
+			return Dir;
+		}
+	}
+	return FString();
+}
+
+// Find the most recently modified .utrace file in the UTS store.
+static FString FindLatestUTSTrace()
+{
+	FString StoreDir = GetUTSStoreDir();
+	if (StoreDir.IsEmpty()) return FString();
+
+	FString Latest;
+	FDateTime LatestTime = FDateTime::MinValue();
+
+	IFileManager::Get().IterateDirectory(*StoreDir, [&](const TCHAR* Path, bool bDir) -> bool
+	{
+		if (!bDir && FPaths::GetExtension(Path).Equals(TEXT("utrace"), ESearchCase::IgnoreCase))
+		{
+			FDateTime T = IFileManager::Get().GetTimeStamp(Path);
+			if (T > LatestTime)
+			{
+				LatestTime = T;
+				Latest = Path;
+			}
+		}
+		return true;
+	});
+
+	return Latest;
+}
+
 // ---------------------------------------------------------------------------
 // Trace analysis
 // ---------------------------------------------------------------------------
@@ -418,11 +470,16 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			if (GEditor) GEditor->RequestEndPlayMap();
 			GStandaloneRunning = false;
 
+			// Prefer the UTS store — standalone uses -tracehost so the file lands there
+			FString UTSTrace = FindLatestUTSTrace();
+			if (!UTSTrace.IsEmpty()) GLastTraceFilePath = UTSTrace;
+
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-			R->SetStringField(TEXT("status"), TEXT("standalone stop requested"));
+			R->SetStringField(TEXT("status"),     TEXT("standalone stop requested"));
 			R->SetStringField(TEXT("trace_file"), GLastTraceFilePath);
 			R->SetStringField(TEXT("log_file"),   GLastLogFilePath);
-			R->SetStringField(TEXT("hint"), TEXT("Allow a few seconds for the trace file to finalise, then call analyse."));
+			R->SetStringField(TEXT("uts_store"),  GetUTSStoreDir());
+			R->SetStringField(TEXT("hint"),       TEXT("Allow a few seconds for the trace file to finalise, then call analyse."));
 			return OkJson(R);
 		}
 
@@ -473,17 +530,24 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			}
 			FTraceAuxiliary::Stop();
 
-			int64 FileSizeBytes = 0;
-			if (!GLastTraceFilePath.IsEmpty())
+			// If UTS has a newer file than our stored path, prefer it
+			FString UTSTrace = FindLatestUTSTrace();
+			if (!UTSTrace.IsEmpty())
 			{
-				FileSizeBytes = IFileManager::Get().FileSize(*GLastTraceFilePath);
+				FDateTime StoredTime = GLastTraceFilePath.IsEmpty() ? FDateTime::MinValue()
+					: IFileManager::Get().GetTimeStamp(*GLastTraceFilePath);
+				FDateTime UTSTime = IFileManager::Get().GetTimeStamp(*UTSTrace);
+				if (UTSTime > StoredTime) GLastTraceFilePath = UTSTrace;
 			}
 
+			int64 FileSizeBytes = GLastTraceFilePath.IsEmpty() ? 0
+				: IFileManager::Get().FileSize(*GLastTraceFilePath);
+
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
-			R->SetStringField(TEXT("status"),           TEXT("stopped"));
-			R->SetStringField(TEXT("trace_file"),       GLastTraceFilePath);
-			R->SetNumberField(TEXT("file_size_mb"),     FMath::RoundToFloat((float)FileSizeBytes / (1024.f * 1024.f) * 10.f) / 10.f);
-			R->SetStringField(TEXT("hint"),             TEXT("Call analyse to read the results."));
+			R->SetStringField(TEXT("status"),       TEXT("stopped"));
+			R->SetStringField(TEXT("trace_file"),   GLastTraceFilePath);
+			R->SetNumberField(TEXT("file_size_mb"), FMath::RoundToFloat((float)FileSizeBytes / (1024.f * 1024.f) * 10.f) / 10.f);
+			R->SetStringField(TEXT("hint"),         TEXT("Call analyse to read the results."));
 			return OkJson(R);
 		}
 
