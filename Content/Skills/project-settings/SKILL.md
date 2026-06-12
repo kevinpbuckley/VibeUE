@@ -98,6 +98,8 @@ if result.success:
     print("Editor startup map updated and saved")
 ```
 
+> 💾 **If the level must be saved first** (untitled level, or "save as <name> and set as startup"): the editor world comes from `unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()` (NOT `LevelEditorSubsystem`, NOT deprecated `EditorLevelLibrary`), then `unreal.EditorLoadingAndSavingUtils.save_map(world, "/Game/Maps/MyLevel")`. Full workflow: load the `level-actors` skill → "Save the Current Level".
+
 ### Discover Settings Classes
 
 ```python

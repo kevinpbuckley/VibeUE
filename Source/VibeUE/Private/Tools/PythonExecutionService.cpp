@@ -466,7 +466,17 @@ FPythonExecutionResult FPythonExecutionService::ConvertExecutionResult(
 			}
 			Result.Output += LogOutput;
 		}
-		else if (LogEntry.Type == EPythonLogOutputType::Error || LogEntry.Type == EPythonLogOutputType::Warning)
+		else if (LogEntry.Type == EPythonLogOutputType::Warning)
+		{
+			// Warnings (e.g. DeprecationWarning) must not fail the execution —
+			// the code ran. Surface them in the output so callers still see them.
+			if (!Result.Output.IsEmpty())
+			{
+				Result.Output += TEXT("\n");
+			}
+			Result.Output += FString::Printf(TEXT("[warning] %s"), *LogOutput);
+		}
+		else if (LogEntry.Type == EPythonLogOutputType::Error)
 		{
 			bHasError = true;
 			if (!Result.ErrorMessage.IsEmpty())
