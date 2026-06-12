@@ -370,8 +370,19 @@ TArray<FString> UEnumStructService::GetEnumValues(const FString& EnumPathOrName)
 		return Values;
 	}
 
+	// UserDefinedEnum internal names are opaque (NewEnumerator0..N) and immutable;
+	// every other method on this service (add/rename/remove, FindEnumValueIndex)
+	// speaks display names, so return those for user-defined enums too.
+	const UUserDefinedEnum* UserEnum = Cast<const UUserDefinedEnum>(Enum);
+
 	for (int32 i = 0; i < Enum->NumEnums() - 1; ++i) // -1 to skip _MAX
 	{
+		if (UserEnum)
+		{
+			Values.Add(UserEnum->GetDisplayNameTextByIndex(i).ToString());
+			continue;
+		}
+
 		FString ValueName = Enum->GetNameStringByIndex(i);
 		// Extract short name
 		int32 ColonIndex;
@@ -801,13 +812,22 @@ bool UEnumStructService::GetStructInfo(const FString& StructPathOrName, FStructI
 		PropInfo.bIsMap = Property->IsA<FMapProperty>();
 		PropInfo.bIsSet = Property->IsA<FSetProperty>();
 
-		// For UserDefinedStruct, get the GUID
+		// For UserDefinedStruct, emit the authored name ("Health"), not the mangled
+		// FProperty name ("Health_2_<guid>") — every mutation method on this service
+		// and DataTableService row JSON accept the authored form, so round-trip it.
 		if (UUserDefinedStruct* UDStruct = Cast<UUserDefinedStruct>(Struct))
 		{
-			FGuid PropertyGuid = FindPropertyGuid(UDStruct, Property->GetName());
-			if (PropertyGuid.IsValid())
+			for (const FStructVariableDescription& Desc : FStructureEditorUtils::GetVarDesc(UDStruct))
 			{
-				PropInfo.Guid = PropertyGuid.ToString();
+				if (Desc.VarName == Property->GetFName())
+				{
+					if (!Desc.FriendlyName.IsEmpty())
+					{
+						PropInfo.Name = Desc.FriendlyName;
+					}
+					PropInfo.Guid = Desc.VarGuid.ToString();
+					break;
+				}
 			}
 		}
 
@@ -939,6 +959,22 @@ bool UEnumStructService::AddStructProperty(
 		return false;
 	}
 
+	// The struct factory seeds every new UserDefinedStruct with a placeholder bool
+	// ("MemberVar_0"). Capture it before adding the real property so it can be
+	// dropped afterwards — otherwise every struct created through CreateStruct keeps
+	// a stray bool member (and any data table using the struct gets a junk column).
+	FGuid PlaceholderGuid;
+	{
+		const TArray<FStructVariableDescription>& ExistingVars = FStructureEditorUtils::GetVarDesc(Struct);
+		if (ExistingVars.Num() == 1 &&
+			ExistingVars[0].FriendlyName.StartsWith(TEXT("MemberVar_")) &&
+			ExistingVars[0].Category == FName(TEXT("bool")) && // UEdGraphSchema_K2::PC_Boolean
+			!PropertyName.StartsWith(TEXT("MemberVar_")))
+		{
+			PlaceholderGuid = ExistingVars[0].VarGuid;
+		}
+	}
+
 	// Parse the property type using BlueprintTypeParser
 	FEdGraphPinType PinType;
 	FString ErrorMessage;
@@ -982,6 +1018,14 @@ bool UEnumStructService::AddStructProperty(
 	if (!DefaultValue.IsEmpty())
 	{
 		FStructureEditorUtils::ChangeVariableDefaultValue(Struct, NewVarGuid, DefaultValue);
+	}
+
+	if (PlaceholderGuid.IsValid())
+	{
+		if (FStructureEditorUtils::RemoveVariable(Struct, PlaceholderGuid))
+		{
+			UE_LOG(LogEnumStructService, Log, TEXT("AddStructProperty: Removed factory placeholder bool member from %s"), *StructPath);
+		}
 	}
 
 	Struct->MarkPackageDirty();

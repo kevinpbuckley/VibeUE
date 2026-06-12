@@ -35,16 +35,31 @@ import unreal
 enums = unreal.EnumStructService.search_enums("Weapon", True)  # bUserDefinedOnly=True
 
 # Check if an enum is user-defined before modifying
-success, info = unreal.EnumStructService.get_enum_info("EMyEnum")
-if info.b_is_user_defined:
+# (returns a single EnumInfo or None — NOT a (success, info) tuple)
+info = unreal.EnumStructService.get_enum_info("EMyEnum")
+if info and info.is_user_defined:          # field is is_user_defined, NOT b_is_user_defined
     unreal.EnumStructService.add_enum_value("EMyEnum", "NewValue")
 ```
 
-### Naming Conventions
+### 🚨 Pass the EXACT asset name you want — prefixing is dumb
 
-- Enums should start with `E` prefix (e.g., `EWeaponType`)
-- Structs should start with `F` prefix (e.g., `FWeaponData`)
-- The service auto-adds prefixes if missing
+`create_enum` / `create_struct` only **prepend** `E`/`F` when the name doesn't already start
+with that letter; they never insert underscores or reformat. So:
+
+- want `E_TestState` → pass `"E_TestState"` (passing `"TestState"` creates `ETestState`)
+- want `EWeaponType` → `"WeaponType"` or `"EWeaponType"` both work
+
+Creation **fails with an empty string** if the asset already exists — delete it first
+(`delete_enum` / `delete_struct`), there is no overwrite.
+
+### 🚨 Enum values: you are always working with DISPLAY names
+
+UserDefinedEnum entries have immutable internal names (`NewEnumerator0..N`). Every
+`EnumStructService` method speaks **display names**: the name you pass to
+`add_enum_value` becomes the display name, `get_enum_values` returns display names,
+and `rename_enum_value` / `remove_enum_value` accept display names (rename changes the
+display name only). For internal+display pairs use `get_enum_info(...).values`
+(each entry has `name` = internal, `display_name`, `value`, `index`).
 
 ---
 
@@ -55,9 +70,12 @@ if info.b_is_user_defined:
 ```python
 import unreal
 
-# Create a new enum (E prefix added automatically)
+# Create a new enum — pass the exact final name (here E prefix gets prepended)
 enum_path = unreal.EnumStructService.create_enum("/Game/Data/Enums", "WeaponType")
 print(f"Created: {enum_path}")  # /Game/Data/Enums/EWeaponType.EWeaponType
+if not enum_path:
+    # creation failed — most likely the asset already exists; delete_enum first
+    ...
 
 # Add values
 unreal.EnumStructService.add_enum_value(enum_path, "Sword", "Melee Sword")
@@ -92,8 +110,19 @@ info = unreal.EnumStructService.get_struct_info(struct_path)
 if info:
     print(f"Properties: {info.property_count}")
     for prop in info.properties:
-        print(f"  {prop.name}: {prop.type}")
+        print(f"  {prop.name}: {prop.type} (default: {prop.default_value}, guid: {prop.guid})")
 ```
+
+Notes:
+
+- `prop.name` is the **authored name** ("Damage") and all mutation methods
+  (`rename_struct_property`, `set_struct_property_default`, `remove_struct_property`,
+  `change_struct_property_type`) accept authored names. GUIDs live per property
+  (`StructPropertyInfo.guid`) — `StructInfo` itself has no `guid` field.
+- New structs are seeded with a placeholder bool (`MemberVar_0`); the first
+  `add_struct_property` call removes it automatically. If you ever see a stray
+  `MemberVar_*` bool in an older struct, drop it with
+  `remove_struct_property(path, "MemberVar_0")`.
 
 ### Discover Enums and Structs
 
@@ -103,7 +132,7 @@ import unreal
 # Search all enums containing "Weapon"
 enums = unreal.EnumStructService.search_enums("Weapon")
 for e in enums:
-    print(f"{e.name} ({e.value_count} values) - UserDefined: {e.b_is_user_defined}")
+    print(f"{e.name} ({e.value_count} values) - UserDefined: {e.is_user_defined}")
 
 # Search user-defined structs only
 structs = unreal.EnumStructService.search_structs("Data", True)  # bUserDefinedOnly=True
@@ -147,7 +176,8 @@ struct_path = "/Game/Data/Structs/FWeaponData.FWeaponData"
 # Rename a property
 unreal.EnumStructService.rename_struct_property(struct_path, "Damage", "BaseDamage")
 
-# Change property type
+# Change property type — ⚠️ this RESETS the default value to the new type's zero;
+# re-set the default afterwards if you need one
 unreal.EnumStructService.change_struct_property_type(struct_path, "BaseDamage", "int32")
 
 # Set default value
@@ -228,7 +258,7 @@ unreal.EnumStructService.add_struct_property(path, "Scores", "int32", "", "Map")
 ### "Cannot modify native enum/struct"
 - Only UserDefinedEnum/UserDefinedStruct assets can be modified
 - Native C++ types from engine/plugins are read-only
-- Check `b_is_user_defined` property before modifying
+- Check `is_user_defined` property before modifying
 
 ### Property Type Not Recognized
 - Use `BlueprintService.search_variable_types()` to find valid type names
