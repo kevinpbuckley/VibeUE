@@ -127,11 +127,33 @@ actor = subsys.spawn_actor_from_class(bp_class, location, rotation)
 ```python
 # CORRECT
 location = unreal.Vector(100, 200, 0)
-rotation = unreal.Rotator(0, 90, 0)  # Pitch, Yaw, Roll
+rotation = unreal.Rotator(pitch=-45)  # ALWAYS use keyword args for Rotator (see rule below)
 
 # WRONG - strings don't work
 location = "(X=100,Y=200,Z=0)"
 ```
+
+### 🚨 Constructor Argument Order Traps: `Rotator` is (Roll, Pitch, Yaw), `Color` is BGRA
+
+The Python constructors do NOT use the order you expect. **Always use keyword arguments** — never positional — for `unreal.Rotator` and `unreal.Color`:
+
+```python
+# ❌ WRONG — Rotator positional order is (Roll, Pitch, Yaw), NOT (Pitch, Yaw, Roll)
+unreal.Rotator(-45, 0, 0)        # sets ROLL=-45, not pitch!
+
+# ✅ CORRECT — keyword args, unambiguous
+unreal.Rotator(pitch=-45)                    # angle down 45°
+unreal.Rotator(roll=0, pitch=-90, yaw=45)    # straight down, spun 45°
+
+# ❌ WRONG — Color positional order is (B, G, R, A), NOT (R, G, B, A)
+unreal.Color(255, 180, 100)      # comes out BLUE, not warm orange!
+
+# ✅ CORRECT — keyword args, or use LinearColor (which IS r, g, b, a positional)
+unreal.Color(r=255, g=180, b=100, a=255)
+unreal.LinearColor(1.0, 0.7, 0.4, 1.0)       # LinearColor positional is normal RGBA
+```
+
+**Pitch sign convention:** negative pitch = downward (`pitch=-90` points straight down). For lights/cameras use negative pitch to aim at the ground.
 
 ### ⚠️ Refresh Viewport After Changes
 
@@ -269,17 +291,99 @@ for actor in all_actors[:10]:
 ```python
 import unreal
 
-# Get/Set location
+# Get/Set location — args: (new_location, sweep, teleport)
 loc = actor.get_actor_location()
 actor.set_actor_location(unreal.Vector(100, 200, 300), False, False)
 
-# Get/Set rotation
-rot = actor.get_actor_rotation()
-actor.set_actor_rotation(unreal.Rotator(0, 90, 0), False)
+# Get/Set rotation — ALWAYS keyword args for Rotator (positional is Roll, Pitch, Yaw!)
+rot = actor.get_actor_rotation()   # rot.pitch / rot.yaw / rot.roll
+actor.set_actor_rotation(unreal.Rotator(pitch=-90, yaw=45), False)
+
+# Relative rotation in LOCAL space (returns HitResult — see sweep section)
+actor.add_actor_local_rotation(unreal.Rotator(pitch=30), False, False)
+# World-space equivalent: actor.add_actor_world_rotation(...)
 
 # Get/Set scale
 scale = actor.get_actor_scale3d()
 actor.set_actor_scale3d(unreal.Vector(2, 2, 2))
+
+# Everything at once
+actor.set_actor_transform(
+    unreal.Transform(
+        location=unreal.Vector(500, 500, 200),
+        rotation=unreal.Rotator(pitch=45),
+        scale=unreal.Vector(1.5, 1.5, 1.5)),
+    False, False)
+```
+
+### Sweep Moves & Collision Checks (HitResult)
+
+Three verified gotchas (UE 5.7):
+
+1. **`HitResult` fields cannot be read as attributes** — `hit.blocking_hit` / `hit.bBlockingHit` raise "property is protected". Use `hit.to_tuple()[0]` (the blocking-hit bool) or `hit.export_text()` (full readable dump: Location, ImpactPoint, Normal, Distance, Time).
+2. **`set_actor_location(loc, sweep=True, ...)` does NOT detect collisions in the editor world** — it reports no hit even when moving straight through another actor. Don't rely on it for collision checks.
+3. **The definitive checks:** compare the actor's final position to the target, and/or trace the path explicitly with `SystemLibrary.line_trace_single` (this DOES hit editor actors):
+
+```python
+import unreal
+
+actor.set_actor_location(target, True, False)
+# ⚠️ Vector.equals(b) takes NO tolerance arg — use distance() for tolerant compare
+arrived = unreal.Vector.distance(actor.get_actor_location(), target) < 1.0
+
+# Explicit path check that actually works in the editor:
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+hit = unreal.SystemLibrary.line_trace_single(
+    world, start_loc, target,
+    unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,   # Visibility channel
+    False, [actor],                            # ignore the moving actor itself
+    unreal.DrawDebugTrace.NONE, True)
+if hit and hit.to_tuple()[0]:                  # [0] = blocking hit bool
+    blocker = hit.to_tuple()[9]                # [9] = hit Actor, [10] = hit Component
+    print(f"Blocked by {blocker.get_actor_label()}: {hit.export_text()[:200]}")
+```
+
+### Organize: Rename, Folders, Attach/Detach, Tags
+
+```python
+import unreal
+
+# Rename (the label shown in the outliner)
+actor.set_actor_label("MainLight")
+
+# Outliner folder (creates the folder if needed; "" = root, "A/B" nests)
+actor.set_folder_path("TestLights")
+
+# Attach to another actor, keeping current world position
+actor.attach_to_actor(parent_actor, "",
+    unreal.AttachmentRule.KEEP_WORLD,
+    unreal.AttachmentRule.KEEP_WORLD,
+    unreal.AttachmentRule.KEEP_WORLD, False)
+
+# Detach, keeping world position
+actor.detach_from_actor(
+    unreal.DetachmentRule.KEEP_WORLD,
+    unreal.DetachmentRule.KEEP_WORLD,
+    unreal.DetachmentRule.KEEP_WORLD)
+
+# Actor tags (read/write the whole list; query with `in`)
+actor.tags = ["Test", "Lighting"]
+tagged = [a for a in actor_subsys.get_all_level_actors() if "Lighting" in a.tags]
+```
+
+### Light Actors (PointLight, SpotLight, DirectionalLight)
+
+All `unreal.Light` actors expose their component as `actor.light_component` — no `get_component_by_class` needed:
+
+```python
+import unreal
+
+comp = light_actor.light_component        # PointLightComponent / SpotLightComponent / ...
+comp.set_intensity(10000)
+comp.set_light_color(unreal.LinearColor(1.0, 0.7, 0.4))   # warm; LinearColor IS positional RGBA
+intensity = comp.get_editor_property("intensity")
+# Spot cone angles (SpotLight only):
+# comp.set_inner_cone_angle(20); comp.set_outer_cone_angle(35)
 ```
 
 ### Selection

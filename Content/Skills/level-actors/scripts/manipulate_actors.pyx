@@ -14,4 +14,4 @@ print("point lights:", [str(l) for l in lights][:5])
 
 # Move/rotate by name or label
 # acs.set_location("BP_Player_1", unreal.Vector(0, 0, 200))
-# acs.set_rotation("BP_Player_1", unreal.Rotator(0, 90, 0))
+# acs.set_rotation("BP_Player_1", unreal.Rotator(yaw=90))  # kwargs: positional order is (Roll, Pitch, Yaw)

@@ -189,7 +189,7 @@ unreal.ViewportService.set_view_mode("lit")
 import unreal
 # Move camera to a bird's-eye view
 unreal.ViewportService.set_camera_location(unreal.Vector(0, 0, 5000))
-unreal.ViewportService.set_camera_rotation(unreal.Rotator(-90, 0, 0))
+unreal.ViewportService.set_camera_rotation(unreal.Rotator(pitch=-90))  # ⚠️ Rotator positional order is (Roll, Pitch, Yaw) — always use kwargs
 ```
 
 ### Configure Clipping Planes

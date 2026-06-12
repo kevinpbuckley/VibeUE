@@ -25,7 +25,7 @@ All UE Python struct types use **lowercase** property names — not CamelCase:
 v = unreal.Vector(50, 50, 50)
 print(v.x, v.y, v.z)        # correct — NOT v.X, v.Y, v.Z
 
-r = unreal.Rotator(0, 90, 0)
+r = unreal.Rotator(yaw=90)     # use kwargs — positional order is (Roll, Pitch, Yaw)
 print(r.pitch, r.yaw, r.roll)  # correct — NOT r.Pitch, r.Yaw, r.Roll
 ```
 

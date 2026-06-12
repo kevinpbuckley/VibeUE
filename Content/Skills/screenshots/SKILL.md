@@ -61,7 +61,7 @@ actor_service.set_viewport_camera(view.camera_location, view.camera_rotation)
 # Directly set camera to any position/rotation (avoid this — easy to miss the subject)
 actor_service.set_viewport_camera(
     unreal.Vector(1000, 2000, 500),
-    unreal.Rotator(-45, 0, 0)
+    unreal.Rotator(pitch=-45)   # ⚠️ Rotator positional order is (Roll, Pitch, Yaw) — always use kwargs
 )
 ```
 
@@ -109,7 +109,7 @@ if camera_info:
 
 # Set camera to a new position/rotation
 new_location = unreal.Vector(x, y, z)
-new_rotation = unreal.Rotator(pitch, yaw, roll)
+new_rotation = unreal.Rotator(pitch=pitch, yaw=yaw, roll=roll)  # ⚠️ positional order is (Roll, Pitch, Yaw) — always use kwargs
 editor_subsys.set_level_viewport_camera_info(new_location, new_rotation)
 ```
 
