@@ -302,6 +302,17 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 		return Result;
 	}
 
+	// A timed-out create_landscape call keeps running and usually completes, so a
+	// blind retry would stack a second landscape under the same label.
+	if (!LandscapeLabel.IsEmpty() && FindLandscapeByIdentifier(LandscapeLabel))
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("Landscape '%s' already exists. A timed-out create_landscape may still have completed in the background — check landscape_exists() before retrying, or delete the existing landscape / use a different label."),
+			*LandscapeLabel);
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
 	FScopedTransaction Transaction(NSLOCTEXT("LandscapeService", "CreateLandscape", "Create Landscape"));
 
 	// Calculate total resolution

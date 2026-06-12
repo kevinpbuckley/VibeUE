@@ -237,8 +237,8 @@ public:
 	 * Set a property on an existing foliage type asset.
 	 *
 	 * @param FoliageTypePath - Path to the UFoliageType asset
-	 * @param PropertyName - Property name (e.g. "Scaling", "CullDistance.Max")
-	 * @param Value - Value as string
+	 * @param PropertyName - Property name; nested struct members use dots (e.g. "Scaling", "CullDistance.Max")
+	 * @param Value - Value as string. Whole structs need UE import text (e.g. "(Min=0,Max=30000)"); prefer setting the member directly ("CullDistance.Max" = "30000")
 	 * @return True if property was set
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
@@ -251,7 +251,7 @@ public:
 	 * Get a property from an existing foliage type asset.
 	 *
 	 * @param FoliageTypePath - Path to the UFoliageType asset
-	 * @param PropertyName - Property name
+	 * @param PropertyName - Property name; nested struct members use dots (e.g. "CullDistance.Max")
 	 * @return Property value as string, empty if not found
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")

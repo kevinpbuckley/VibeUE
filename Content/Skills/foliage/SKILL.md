@@ -51,6 +51,11 @@ Use the `seed` parameter to get reproducible scatter patterns. Same seed + same 
 2. A painted layer on that landscape
 3. Layer weight threshold (0.0-1.0) — only places where weight exceeds threshold
 
+If you get `instances_added=0` with `instances_rejected ≈ 4× requested`, every candidate failed the surface trace or the weight check. Before blaming the threshold, check geometry:
+- The scatter circle must overlap the **painted** part of the named landscape. A landscape is corner-anchored — created at (0,0) it spans (0,0)→(+50400,+50400) for 505 res @ scale 100, so a scatter "around (0,0)" is 3/4 off-landscape.
+- Verify weights at a few candidate points first: `unreal.LandscapeService.get_layer_weights_at_location(label, x, y)`.
+- If another landscape/mesh overlaps the area at a higher Z, the surface trace hits *that* surface instead — instances land on the wrong surface or get rejected. Paint a larger area or center the scatter where only the target landscape exists.
+
 ### ⚠️ Common Mistakes to Avoid
 
 | WRONG | CORRECT |
@@ -63,6 +68,11 @@ Use the `seed` parameter to get reproducible scatter patterns. Same seed + same 
 | `clear_all_foliage()` to clear one landscape | `clear_all_foliage()` removes ALL foliage from the ENTIRE level — use `remove_foliage_in_radius()` for targeted removal |
 | Manually scattering foliage on a cloned landscape | If source uses LandscapeGrassType (procedural), just copy paint layers — foliage auto-generates. Check `list_foliage_types()`: if 0, foliage is procedural. |
 | Forgetting to check `instances_rejected` | Always check — tells you how many failed surface trace or layer filter |
+| Expecting `get_instance_count()` == -1 after removing all instances | -1 means the type was **never** in the level. Once registered, the count is 0 after removal — the foliage type entry persists |
+| Expecting `list_foliage_types()` to shrink after `clear_all_foliage()` | Clearing removes **instances**, not type registrations — 0-instance entries remain listed. Filter on `ft.instance_count > 0` |
+| `set_foliage_type_property(path, "CullDistance", "30000")` | Whole structs need UE import text: `"(Min=0,Max=30000)"`. Simpler: set the member via a dotted path — `set_foliage_type_property(path, "CullDistance.Max", "30000")` |
+| Scattering "around the landscape at (0,0)" centered on (0,0) | Landscapes are corner-anchored: created at (0,0) the terrain spans +X/+Y only. Center the scatter on the landscape's actual center (`location + (resolution-1)*scale/2`) or most candidates miss the surface |
+| `AssetDiscoveryService.list_assets(path)` for cleanup | `AssetDiscoveryService.list_assets_in_path(path, asset_type)` — or the `manage_asset` tool with `action='list'` |
 
 ---
 
