@@ -10,6 +10,10 @@
 #include "ProfilingDebugging/MiscTrace.h"
 #include "PlayInEditorDataTypes.h"
 #include "Editor.h"
+#include "HAL/PlatformProcess.h"
+#include "Windows/AllowWindowsPlatformTypes.h"
+#include <TlHelp32.h>
+#include "Windows/HideWindowsPlatformTypes.h"
 #include "TraceServices/ITraceServicesModule.h"
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/Model/AnalysisSession.h"
@@ -24,6 +28,7 @@ DEFINE_LOG_CATEGORY_STATIC(LogEditorControl, Log, All);
 static FString GLastTraceFilePath;
 static FString GLastLogFilePath;
 static bool    GStandaloneRunning = false;
+static uint32  GStandaloneProcessId = 0;
 
 // ---------------------------------------------------------------------------
 // Param helpers
@@ -349,17 +354,25 @@ static FString AnalyseBoth(const FString& TraceFile, const FString& LogFile)
 	FString TraceResult = AnalyseTrace(TraceFile);
 	FString LogResult   = AnalyseLogs(LogFile);
 
-	TSharedPtr<FJsonObject> TraceData, LogData;
-	TSharedRef<TJsonReader<>> TR = TJsonReaderFactory<>::Create(TraceResult);
-	TSharedRef<TJsonReader<>> LR = TJsonReaderFactory<>::Create(LogResult);
-	FJsonSerializer::Deserialize(TR, TraceData);
-	FJsonSerializer::Deserialize(LR, LogData);
+	auto ParseOrError = [](const FString& Json, const FString& Label) -> TSharedPtr<FJsonObject>
+	{
+		TSharedPtr<FJsonObject> Obj;
+		TSharedRef<TJsonReader<>> R = TJsonReaderFactory<>::Create(Json);
+		if (!FJsonSerializer::Deserialize(R, Obj) || !Obj.IsValid())
+		{
+			Obj = MakeShared<FJsonObject>();
+			Obj->SetBoolField(TEXT("success"), false);
+			Obj->SetStringField(TEXT("error"), FString::Printf(TEXT("%s result was not valid JSON"), *Label));
+			Obj->SetStringField(TEXT("raw"), Json.Left(200));
+		}
+		return Obj;
+	};
 
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetBoolField(TEXT("success"), true);
 	Root->SetStringField(TEXT("source"), TEXT("both"));
-	if (TraceData.IsValid()) Root->SetObjectField(TEXT("trace"), TraceData);
-	if (LogData.IsValid())   Root->SetObjectField(TEXT("logs"),  LogData);
+	Root->SetObjectField(TEXT("trace"), ParseOrError(TraceResult, TEXT("trace")));
+	Root->SetObjectField(TEXT("logs"),  ParseOrError(LogResult,   TEXT("logs")));
 
 	FString Out;
 	TSharedRef<TJsonWriter<>> W = TJsonWriterFactory<>::Create(&Out);
@@ -468,7 +481,38 @@ REGISTER_VIBEUE_TOOL(editor_control,
 		{
 			if (!GStandaloneRunning) return ErrJson(TEXT("NOT_RUNNING"), TEXT("No standalone session tracked. Did you call start_standalone?"));
 			if (GEditor) GEditor->RequestEndPlayMap();
+
+			// RequestEndPlayMap does not terminate a standalone (NewProcess) game.
+			// Scan for UnrealEditor.exe processes, exclude our own PID, kill any others.
+			{
+				uint32 OurPID = FPlatformProcess::GetCurrentProcessId();
+				HANDLE hSnap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+				if (hSnap != INVALID_HANDLE_VALUE)
+				{
+					PROCESSENTRY32W Entry;
+					Entry.dwSize = sizeof(Entry);
+					if (::Process32FirstW(hSnap, &Entry))
+					{
+						do
+						{
+							if (FCString::Stricmp(Entry.szExeFile, TEXT("UnrealEditor.exe")) == 0
+								&& Entry.th32ProcessID != OurPID)
+							{
+								HANDLE hProc = ::OpenProcess(PROCESS_TERMINATE, false, Entry.th32ProcessID);
+								if (hProc)
+								{
+									::TerminateProcess(hProc, 0);
+									::CloseHandle(hProc);
+								}
+							}
+						}
+						while (::Process32NextW(hSnap, &Entry));
+					}
+					::CloseHandle(hSnap);
+				}
+			}
 			GStandaloneRunning = false;
+			GStandaloneProcessId = 0;
 
 			// Prefer the UTS store — standalone uses -tracehost so the file lands there
 			FString UTSTrace = FindLatestUTSTrace();
