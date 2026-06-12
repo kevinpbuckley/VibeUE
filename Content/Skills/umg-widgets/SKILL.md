@@ -26,6 +26,8 @@ related_skills:
   - blueprint-graphs
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "umg-and-slate"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # UMG Widget Blueprints Skill
 
 This skill covers authoring **Widget Blueprints (WBP)** with `WidgetService`. Read the Critical Rules
@@ -66,6 +68,19 @@ unreal.WidgetService.add_component(path, "Button", "PlayButton", "RootCanvas", F
 unreal.WidgetService.set_property(path, "PlayText", "Font.Size", "24")  # "24", not 24
 ```
 
+### 🚨 Color properties: FSlateColor vs FLinearColor — verify with a readback
+
+`ColorAndOpacity` on text/image widgets is **FSlateColor**, whose export text is
+`"(SpecifiedColor=(R=1.0,G=0.5,B=0.0,A=1.0))"` — a bare LinearColor string is auto-wrapped
+into that form by `set_property`. `ShadowColorAndOpacity` is a plain **FLinearColor**:
+`"(R=0.0,G=0.0,B=0.0,A=1.0)"`. Named color strings ("red", "orange") are NOT supported on
+either — pass numeric RGBA.
+
+**Always `get_property` after `set_property` and compare.** A struct set can return `True`
+while writing nothing (UE struct import ignores unrecognized member names). If the readback
+still shows the old value, your value string didn't match the struct's member layout — check
+`list_properties` for the property's real type and use its export-text form.
+
 ### 🚨 Use dedicated style APIs for full font/brush edits
 
 Use `set_font` / `set_brush` (with `WidgetFontInfo` / `WidgetBrushInfo`) when changing a complete font
@@ -102,8 +117,41 @@ circular references are rejected; the parent recompiles automatically.
 | `p.type` | `p.property_type` |
 | `p.property_value` | `p.current_value` |
 | `w.component_name` / `w.name` | `w.widget_name` |
+| `w.widget_type` | `w.widget_class` |
+
+`WidgetInfo` complete fields: `widget_name`, `widget_class`, `parent_widget`, `is_root_widget`, `is_variable`, `children`.
+
+**`children` is an `Array[str]` of widget NAMES, not nested objects.** Iterating it and reading
+`.widget_name`/`.is_variable` raises `AttributeError: 'str' object has no attribute ...`. To walk
+the tree, build a name→info map first:
+
+```python
+infos = {w.widget_name: w for w in unreal.WidgetService.get_hierarchy(path)}
+for child_name in infos["RootCanvas"].children:
+    child = infos[child_name]          # look the child up by name
+    print(child.widget_name, child.widget_class, child.is_variable)
+```
+
+`get_widget_snapshot(path)` returns full data (hierarchy + slot + all properties) for a valid
+path — if it comes back **empty, the path is wrong**; do not conclude the widget is empty.
 
 Full field tables for every return type are in `reference.md`.
+
+### 🚨 Auditing widgets (best-practices review) — use these exact APIs
+
+For "do our widgets follow best practices?" style audits:
+
+- **Property bindings** (the #1 anti-pattern): in a snapshot's `properties`, any `*Delegate`
+  entry (e.g. `VisibilityDelegate`, `TextDelegate`) with `current_value` of `(null).None` is
+  **unbound** — a function name there means a polling property binding exists.
+- **Tick/graph checks** go through `BlueprintService` (a WBP is a Blueprint):
+  `list_graphs(path)` → `get_nodes_in_graph(path, "EventGraph")` → find `Event Tick` →
+  `get_node_pins(path, graph, node_id)` and check each pin's `connected` flag. A Tick node with
+  no connected pins is just the default stub, not live logic.
+- These methods do **NOT** exist — do not guess them: `BlueprintService.get_graphs`,
+  `get_functions`, `get_connected_nodes`, `unreal.find_class`. Use `list_graphs`,
+  `list_functions`, `get_nodes_in_graph`, `get_node_details` (includes pin connections), and
+  `unreal.load_class(None, path)` instead.
 
 ### Slot editing via `set_property`
 
@@ -166,7 +214,7 @@ Sample scripts under `scripts/` are **runnable examples** — edit the variables
 ## Sub-docs
 
 Load these only when the task needs them (read the file under
-`Plugins/VibeUE/Content/Skills/umg-widgets/`, or `manage_skills(action='load', skill_name='umg-widgets/<name>')`):
+`Plugins/VibeUE/Content/Skills/umg-widgets/`, or `vibeue-skills-manager(action='load', skill_name='umg-widgets/<name>')`):
 
 - **`workflows.md`** — step-by-step task workflows with copy-paste Python for every task above.
 - **`reference.md`** — field-name tables for every return type (`FWidgetInfo`, `FWidgetComponentSnapshot`,

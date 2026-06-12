@@ -26,6 +26,8 @@ related_skills:
   - blueprints
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "blueprint-fundamentals"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Blueprint Graph Editing Skill
 
 > **Also load `blueprints` skill** when creating new blueprints, adding variables/components, or overriding functions.
@@ -41,6 +43,10 @@ related_skills:
 | `add_node()` | `add_function_call_node()` or `add_event_node()` etc. |
 | `disconnect_nodes()` | `disconnect_pin()` |
 | `get_node_connections()` | `get_connections()` |
+| `get_graphs()` | `list_graphs()` |
+| `get_functions()` | `list_functions()` |
+| `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
+| `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
 
 ### ⚠️ `disconnect_pin()` Signature — 4 Args Only
 
@@ -63,7 +69,7 @@ To remove a specific edge, disconnect the output pin on the source node (e.g. `"
 | `node.node_name` | `node.node_title` |
 | `node.node_position_x` | `node.pos_x` |
 | `node.node_position_y` | `node.pos_y` |
-| `pin.direction` | use the pin input/output boolean from `get_node_pins()` (`bIsInput` / Python bool field), not a `direction` enum |
+| `pin.direction` / `pin.is_output` | `pin.is_input` (bool) — the only direction field on `BlueprintPinInfo`; for outputs use `not pin.is_input` |
 | `pin.is_linked` | `pin.is_connected` |
 | `pin.current_value` | `pin.default_value` |
 | `pin.sub_pins` | *(does not exist)* |

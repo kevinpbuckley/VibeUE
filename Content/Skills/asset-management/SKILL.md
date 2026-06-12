@@ -8,6 +8,8 @@ unreal_classes:
   - EditorAssetLibrary
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "asset-management"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Asset Discovery & Management Skill
 
 ## Critical Rules
@@ -36,6 +38,16 @@ Affected methods (all return `AssetData or None`):
 | `get_active_asset` | `() -> AssetData or None` |
 | `get_primary_content_browser_selection` | `() -> AssetData or None` |
 
+### 🚨 Never list broad paths — a `/Game` listing can return 30,000+ assets
+
+`manage_asset action='list' path='/Game'` (and `list_assets_in_path("/Game", "")`) returns
+**every asset under the path** — tens of thousands of entries in a real project, flooding the
+conversation. Always narrow first:
+
+- Filter by type AND term: `manage_asset action='search' search_term='WBP_' asset_type='WidgetBlueprint'`
+- Or list a **specific subfolder**: `list_assets_in_path("/Game/Blueprints/HUD", "WidgetBlueprint")`
+- If you only need a count or sample, slice in Python before printing — never print the full array.
+
 ### ⚠️ `search_assets` Searches ALL Mounted Roots — Game, Engine, and Plugins
 
 `search_assets(term, type)` searches `/Game/`, `/Engine/`, and every mounted plugin in one pass.
@@ -53,6 +65,20 @@ game_only = [a for a in hits if str(a.package_path).startswith("/Game")]
 # To scope to one folder, use list_assets_in_path instead
 engine_assets = unreal.AssetDiscoveryService.list_assets_in_path("/Engine", "Texture2D")
 ```
+
+### ⚠️ `EditorAssetLibrary` Save Methods
+
+There is **no `save_dirty_assets`** (`AttributeError`). The real options:
+`EditorAssetLibrary.save_asset(path)`, `save_directory(dir)`, `save_loaded_asset(obj)`,
+`save_loaded_assets([objs])` — or simplest, the `manage_asset` tool with `action='save_all'`
+(saves every dirty asset).
+
+### ⚠️ `EditorAssetLibrary.list_assets` Has No Class Filter
+
+`unreal.EditorAssetLibrary.list_assets(directory_path, recursive=True, include_folder=False)`
+returns **path strings only** — there is no `asset_class_names` or any other class-filter kwarg
+(`TypeError: invalid keyword argument`). To list assets of one type in a folder, use
+`AssetDiscoveryService.list_assets_in_path("/Game/Input", "InputAction")` instead.
 
 ### ⚠️ UE 5.7 Property Changes
 

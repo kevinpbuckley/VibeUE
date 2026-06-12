@@ -87,11 +87,12 @@ unreal.EnumStructService.add_struct_property(struct_path, "WeaponType", "EWeapon
 # Add array property
 unreal.EnumStructService.add_struct_property(struct_path, "SpecialEffects", "FName", "", "Array")
 
-# Verify
-success, info = unreal.EnumStructService.get_struct_info(struct_path)
-print(f"Properties: {info.property_count}")
-for prop in info.properties:
-    print(f"  {prop.name}: {prop.type}")
+# Verify — get_struct_info returns a single StructInfo (or None), NOT a (success, info) tuple
+info = unreal.EnumStructService.get_struct_info(struct_path)
+if info:
+    print(f"Properties: {info.property_count}")
+    for prop in info.properties:
+        print(f"  {prop.name}: {prop.type}")
 ```
 
 ### Discover Enums and Structs
@@ -109,9 +110,9 @@ structs = unreal.EnumStructService.search_structs("Data", True)  # bUserDefinedO
 for s in structs:
     print(f"{s.name} ({s.property_count} properties)")
 
-# Get detailed enum info
-success, enum_info = unreal.EnumStructService.get_enum_info("EWeaponType")
-if success:
+# Get detailed enum info — returns a single EnumInfo (or None), NOT a (success, info) tuple
+enum_info = unreal.EnumStructService.get_enum_info("EWeaponType")
+if enum_info:
     for v in enum_info.values:
         print(f"  {v.name} = {v.value} ({v.display_name})")
 ```
