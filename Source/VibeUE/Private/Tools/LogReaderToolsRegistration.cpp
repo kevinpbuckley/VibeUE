@@ -148,6 +148,17 @@ static FString GetLogReaderHelp()
 	return JsonString;
 }
 
+// Defined outside REGISTER_VIBEUE_TOOL because comma-separated initializer
+// lists inside a function-like macro invocation split into extra macro arguments
+static bool IsKnownLogAction(const FString& Action)
+{
+	static const TSet<FString> KnownActions = {
+		TEXT("list"), TEXT("info"), TEXT("read"), TEXT("tail"), TEXT("head"),
+		TEXT("filter"), TEXT("errors"), TEXT("warnings"), TEXT("since"), TEXT("help")
+	};
+	return KnownActions.Contains(Action);
+}
+
 // Register the read_logs tool
 REGISTER_VIBEUE_TOOL(read_logs,
 	"Read and filter Unreal Engine log files. Actions: list (browse logs), info (file details), read (paginated content), tail (last N lines), head (first N lines), filter (regex search), errors (find errors), warnings (find warnings), since (new content since line), help (documentation). File aliases: main/system (project log), chat/vibeue (chat log), llm (raw API log).",
@@ -171,6 +182,14 @@ REGISTER_VIBEUE_TOOL(read_logs,
 		if (Action.IsEmpty())
 		{
 			return BuildLogErrorResponse(TEXT("MISSING_ACTION"), TEXT("The 'action' parameter is required. Use action=help for documentation."));
+		}
+
+		// Validate the action up front so an unknown action is reported as such
+		// instead of falling into the missing-file check below
+		if (!IsKnownLogAction(Action))
+		{
+			return BuildLogErrorResponse(TEXT("UNKNOWN_ACTION"),
+				FString::Printf(TEXT("Unknown action: '%s'. Valid actions: list, info, read, tail, head, filter, errors, warnings, since, help."), *Action));
 		}
 
 		// Create service with context (required by FServiceBase)

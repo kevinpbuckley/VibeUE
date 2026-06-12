@@ -32,6 +32,9 @@ struct VIBEUE_API FLogReadResult
 	int32 EndLine = 0;
 	int32 TotalLines = 0;
 	int32 MatchCount = 0;  // For filter operations
+	bool bIsFilterResult = false;  // Filter results have no meaningful line range
+	bool bTruncated = false;       // Filter stopped at max_matches
+	FString ErrorCode;
 	FString ErrorMessage;
 };
 
@@ -205,9 +208,9 @@ public:
 
 private:
 	/**
-	 * Load file into lines array
+	 * Load file into lines array. On failure, sets ErrorCode and ErrorMessage on OutResult.
 	 */
-	bool LoadFileLines(const FString& FilePath, TArray<FString>& OutLines, FString& OutError);
+	bool LoadFileLines(const FString& FilePath, TArray<FString>& OutLines, FLogReadResult& OutResult);
 
 	/**
 	 * Determine category from file name/path
