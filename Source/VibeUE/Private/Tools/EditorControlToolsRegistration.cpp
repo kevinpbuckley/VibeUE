@@ -227,7 +227,10 @@ static FString AnalyseTrace(const FString& TraceFile)
 				Frames->EnumerateFrames(ETraceFrameType::TraceFrameType_Game, 0, FrameCount,
 					[&](const TraceServices::FFrame& F)
 					{
+						// Skip frames with no valid end time (trace cut mid-frame)
+						if (F.EndTime <= F.StartTime) return;
 						double DurationMs = (F.EndTime - F.StartTime) * 1000.0;
+						if (!FMath::IsFinite(DurationMs) || DurationMs > 120000.0) return;
 						AllMs.Add(DurationMs);
 						TotalMs += DurationMs;
 						if (DurationMs > MaxMs)
@@ -259,7 +262,10 @@ static FString AnalyseTrace(const FString& TraceFile)
 				Frames->EnumerateFrames(ETraceFrameType::TraceFrameType_Game, 0, FrameCount,
 					[&](const TraceServices::FFrame& F)
 					{
-						Entries.Add({ (F.EndTime - F.StartTime) * 1000.0, F.Index, F.StartTime });
+						if (F.EndTime <= F.StartTime) return;
+						double Ms = (F.EndTime - F.StartTime) * 1000.0;
+						if (!FMath::IsFinite(Ms) || Ms > 120000.0) return;
+						Entries.Add({ Ms, F.Index, F.StartTime });
 					});
 				Entries.Sort([](const FFrameEntry& A, const FFrameEntry& B) { return A.Ms > B.Ms; });
 				int32 WorstCount = FMath::Min(10, Entries.Num());
@@ -517,6 +523,27 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			// Prefer the UTS store — standalone uses -tracehost so the file lands there
 			FString UTSTrace = FindLatestUTSTrace();
 			if (!UTSTrace.IsEmpty()) GLastTraceFilePath = UTSTrace;
+
+			// Standalone writes its own log (e.g. PROTEUS_2.log) — find the newest one
+			{
+				FString LogDir = ProjectSavedDirAbs() / TEXT("Logs");
+				FString NewestLog;
+				FDateTime NewestTime = FDateTime::MinValue();
+				IFileManager::Get().IterateDirectory(*LogDir, [&](const TCHAR* Path, bool bDir) -> bool
+				{
+					if (!bDir && FPaths::GetExtension(Path).Equals(TEXT("log"), ESearchCase::IgnoreCase))
+					{
+						FString Fname = FPaths::GetCleanFilename(Path);
+						if (!Fname.Contains(TEXT("backup")) && !Fname.Contains(TEXT("cef")))
+						{
+							FDateTime T = IFileManager::Get().GetTimeStamp(Path);
+							if (T > NewestTime) { NewestTime = T; NewestLog = Path; }
+						}
+					}
+					return true;
+				});
+				if (!NewestLog.IsEmpty()) GLastLogFilePath = NewestLog;
+			}
 
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 			R->SetStringField(TEXT("status"),     TEXT("standalone stop requested"));
