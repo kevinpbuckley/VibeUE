@@ -28,6 +28,8 @@ related_skills:
   - blueprint-graphs
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "blueprint-fundamentals"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Blueprint System Skill
 
 > **For node-level graph editing** (adding nodes, connecting pins, wiring logic, timers, layout), load the `blueprint-graphs` skill.
@@ -62,6 +64,10 @@ unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "/Game/Bluepr
 ```
 
 The type system resolves Blueprint names automatically via asset search.
+
+Engine structs need the `F` prefix: color variables are `"FLinearColor"` / `"FColor"` —
+plain `"LinearColor"` / `"Color"` returns `False`. Unsure of a type string? Use
+`search_variable_types("Linear")` to look it up.
 
 ### ⚠️ Method Name Gotchas
 
@@ -133,6 +139,10 @@ Rules:
 | `BlueprintFunctionInfo` (from `list_functions`) | `function_name`, `return_type`, `parameters`, `is_override`, `is_pure` — there is **no `function_type`** and **no `input_parameters`** (that's the Detailed struct) |
 | `BlueprintFunctionDetailedInfo` (from `get_function_info`) | `function_name`, `graph_guid`, `input_parameters`, `output_parameters`, `local_variables`, `is_override`, `is_pure`, `node_count` — there is **no `return_type`**; return values are entries in `output_parameters` (each param: `parameter_name`, `parameter_type`, `is_output`, `is_reference`, `default_value`) |
 | `BlueprintVariableInfo` | `variable_name`, `variable_type`, `category`, `is_public`, `is_exposed`, `default_value` |
+| `BlueprintVariableDetailedInfo` (from `get_variable_info`) | `variable_name`, `variable_type`, `type_path`, `category`, `default_value`, `tooltip`, `is_array`, `is_set`, `is_map`, `is_instance_editable`, `is_blueprint_read_only`, `is_expose_on_spawn`, `is_expose_to_cinematics`, `is_private`, `replication_condition` — booleans use the `is_` prefix (**`instance_editable` alone raises AttributeError**) |
+| `BlueprintLocalVariableInfo` (in `BlueprintFunctionDetailedInfo.local_variables`) | `variable_name`, `friendly_name`, `variable_type`, `display_type`, `default_value`, `category`, `guid`, `is_const`, `is_reference`, `is_array`, `is_set`, `is_map` — local variables are NOT parameters: there is **no `parameter_name`** |
+| `BlueprintPinInfo` (from `get_node_pins` / `node.pins`) | `pin_name`, `pin_type`, `is_input`, `is_connected`, `default_value` — direction is the single `is_input` bool; there is **no `is_output`** (use `not pin.is_input`) |
+| `BlueprintNodeTypeInfo` (from `discover_nodes`) | `display_name`, `category`, `spawner_key`, `node_class`, `tooltip`, `is_pure`, `is_latent`, `keywords` — the description text is `tooltip`, **not `description`** |
 | `BlueprintComponentInfo` | `component_name`, `component_class`, `attach_parent`, `is_root_component`, `is_scene_component`, `is_inherited`, `children` |
 | `BlueprintGraphInfo` (from `list_graphs`) | `graph_name`, `graph_kind`, `node_count` |
 | `BlueprintNodeInfo` (from `get_nodes_in_graph`) | `node_id`, `node_type`, `node_title`, `pos_x`, `pos_y`, `pin_names`, `pins` |

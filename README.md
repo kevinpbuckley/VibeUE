@@ -40,7 +40,7 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `discover_python_function` | Get function signatures and docstrings |
 | `execute_python_code` | Run Python code in Unreal Editor context |
 | `list_python_subsystems` | List available UE editor subsystems |
-| `manage_skills` | Load domain-specific knowledge on demand |
+| `vibeue-skills-manager` | Load domain-specific knowledge on demand |
 | `manage_asset` | Search, open, save, move, duplicate, delete, and import (image files from disk) assets safely |
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
 | `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
@@ -108,19 +108,19 @@ execute_python_code(
 
 ##### Skills System Tool
 
-**`manage_skills`**
+**`vibeue-skills-manager`**
 ```python
 # List all available skills
-manage_skills(action="list")
+vibeue-skills-manager(action="list")
 
 # Suggest skills based on query
-manage_skills(action="suggest", query="create widget button")
+vibeue-skills-manager(action="suggest", query="create widget button")
 
 # Load single skill
-manage_skills(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="blueprints")
 
 # Load multiple skills together (more efficient - deduplicated discovery)
-manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
+vibeue-skills-manager(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
 Skill names: `animation-blueprint`, `animation-editing`, `animation-montage`, `animsequence`, `asset-management`, `blueprint-graphs`, `blueprints`, `data-assets`, `data-tables`, `engine-settings`, `enhanced-input`, `enum-struct`, `foliage`, `gameplay-tags`, `landscape`, `landscape-auto-material`, `landscape-materials`, `level-actors`, `map-blockout`, `materials`, `metasounds`, `niagara-emitters`, `niagara-systems`, `pcg`, `pie-testing`, `project-settings`, `screenshots`, `skeleton`, `sound-cues`, `state-trees`, `terrain-data`, `umg-widgets`, `uv-mapping`, `vibeue`, `viewport`
@@ -537,7 +537,7 @@ The AI **must know**:
 - ✅ Compile blueprints before adding variable nodes
 - ✅ Use full asset paths (`/Game/Path/Asset`, not `Asset`)
 - ✅ Property values are strings, not Python types
-- ✅ Load skills with `manage_skills` for domain-specific knowledge
+- ✅ Load skills with `vibeue-skills-manager` for domain-specific knowledge
 - ❌ Never guess method names - discover first
 - ❌ Never use modal dialogs or blocking operations
 - ❌ Never assume service counts or method availability
@@ -553,7 +553,7 @@ VibeUE uses a **Skills System** to dramatically reduce AI context overhead while
 Instead of loading all documentation at once, skills are lazy-loaded on demand:
 
 1. **AI detects the task** (e.g., "Create a blueprint with variables")
-2. **Skill is automatically or manually loaded** via `manage_skills` tool
+2. **Skill is automatically or manually loaded** via `vibeue-skills-manager` tool
 3. **Skill contains**: Critical rules, workflows, common mistakes, property formats
 4. **AI uses skill knowledge** combined with live discovery via `discover_python_class`
 
@@ -577,17 +577,17 @@ Current skills include: `animation-blueprint`, `animation-editing`, `animation-m
 
 **In-Editor Chat** - Skills auto-load based on keywords
 
-**External AI** - Manually load with `manage_skills` tool:
+**External AI** - Manually load with `vibeue-skills-manager` tool:
 
 ```python
 # List all available skills
-manage_skills(action="list")
+vibeue-skills-manager(action="list")
 
 # Load a specific skill
-manage_skills(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="blueprints")
 
 # Load multiple skills together (deduplicated discovery)
-manage_skills(action="load", skill_names=["blueprints", "enhanced-input"])
+vibeue-skills-manager(action="load", skill_names=["blueprints", "enhanced-input"])
 ```
 
 Skill response includes:
@@ -606,7 +606,7 @@ The recommended pattern:
 import unreal
 
 # 1. Load relevant skill for domain knowledge
-manage_skills(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="blueprints")
 # ↓ Skill response tells you about BlueprintService methods and critical rules
 
 # 2. Discover exact method signatures BEFORE calling
@@ -2064,7 +2064,7 @@ The system prompt supports dynamic token replacement. When the instructions are 
 ```markdown
 ## Available Skills
 
-Load skills using `manage_skills(action="load", skill_name="<name>")`:
+Load skills using `vibeue-skills-manager(action="load", skill_name="<name>")`:
 
 {SKILLS}
 ```
@@ -2096,11 +2096,16 @@ vibeue_classes:
 
 ## 🔌 External MCP Servers
 
-Connect additional MCP servers via `Config/vibeue.mcp.json`:
+The in-editor chat can connect to additional MCP servers via `Config/vibeue.mcp.json`.
+Both `stdio` and `http` transports are supported:
 
 ```json
 {
   "servers": {
+    "unreal-engine-skills": {
+      "type": "http",
+      "url": "https://www.unrealengineskills.com/api/mcp"
+    },
     "my-tool": {
       "type": "stdio",
       "command": "python",
@@ -2109,6 +2114,23 @@ Connect additional MCP servers via `Config/vibeue.mcp.json`:
   }
 }
 ```
+
+### 🧠 Brains vs 🤚 Hands
+
+VibeUE ships preconfigured with the **[Unreal Engine Skills](https://www.unrealengineskills.com)**
+MCP server (`unreal-engine-skills-manager` tool) — a UE 5.7 domain-knowledge library: correct
+engine APIs, architecture patterns, best practices, and engine-source citations.
+
+The two skill systems complement each other:
+
+| | **Brains** — `unreal-engine-skills-manager` | **Hands** — `vibeue-skills-manager` |
+|---|---|---|
+| Answers | WHAT to build and WHY (engine knowledge, best practices) | HOW to execute it in the editor (service workflows, formats) |
+| Touches the editor? | No — knowledge only | Yes — via VibeUE services |
+
+The system prompt instructs the AI to consult the Brains library before design, review, or
+"best practices" questions, then use VibeUE skills to do the editor work. If the external
+server is unreachable, the chat falls back to VibeUE skills alone.
 
 ---
 

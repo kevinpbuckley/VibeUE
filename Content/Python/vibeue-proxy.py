@@ -186,7 +186,7 @@ KEY RULES:
     NOT unreal.EditorLevelLibrary (removed in UE 5.7+).
   - For complex graph authoring or unfamiliar services → load the relevant skill first.""",
 
-    "manage_skills": """
+    "vibeue-skills-manager": """
 
 SKILL INDEX — load BEFORE executing tasks in that domain:
 
@@ -452,8 +452,8 @@ class ProxyHandler(BaseHTTPRequestHandler):
                     "VibeUE gives Claude direct access to Unreal Engine. "
                     "Skills: before doing domain work (blueprints, materials, UMG, Niagara, "
                     "landscape, animation, state trees, etc.), discover skills with "
-                    "manage_skills(action='list') and load the relevant one with "
-                    "manage_skills(action='load', skill_name='<name>'); load a deeper sub-doc "
+                    "vibeue-skills-manager(action='list') and load the relevant one with "
+                    "vibeue-skills-manager(action='load', skill_name='<name>'); load a deeper sub-doc "
                     "with skill_name='<name>/<section>'. Skills give workflows + gotchas; call "
                     "discover_python_class on the classes they name to get exact signatures. "
                     "Quick-start rules: "

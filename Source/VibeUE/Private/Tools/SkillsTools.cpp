@@ -1,4 +1,4 @@
-// Copyright Buckley Builds LLC 2026 All Rights Reserved.
+﻿// Copyright Buckley Builds LLC 2026 All Rights Reserved.
 
 #include "Core/ToolRegistry.h"
 #include "Chat/ChatSession.h"
@@ -452,7 +452,7 @@ static FString ListSkills()
 
 		// Always include `sections` (empty array when no sub-docs exist) so the
 		// agent can rely on the field being present and decide which sub-doc
-		// to load via `manage_skills(action="load", skill_name="<skill>/<section>")`.
+		// to load via `vibeue-skills-manager(action="load", skill_name="<skill>/<section>")`.
 		SkillInfo->SetArrayField(TEXT("sections"), SectionsArray);
 		SkillInfo->SetNumberField(TEXT("section_count"), SectionsArray.Num());
 		SkillInfo->SetArrayField(TEXT("resources"), ResourcesArray);
@@ -471,7 +471,7 @@ static FString ListSkills()
 	ResultObj->SetArrayField(TEXT("skills"), SkillsArray);
 	ResultObj->SetStringField(TEXT("usage"),
 		TEXT("Each skill entry has a `sections` array. Load the index with "
-			 "`manage_skills(action='load', skill_name='<skill>')` to get workflows and gotchas. "
+			 "`vibeue-skills-manager(action='load', skill_name='<skill>')` to get workflows and gotchas. "
 			 "Load a specific sub-doc with `skill_name='<skill>/<section>'` to pull deeper reference material on demand."));
 
 	FString ResultJson;
@@ -661,11 +661,11 @@ static FString SuggestSkills(const FString& Query)
 
 	if (SuggestedArray.Num() > 0)
 	{
-		ResultObj->SetStringField(TEXT("hint"), TEXT("Use manage_skills(action='load', skill_name='<name>') to load a skill"));
+		ResultObj->SetStringField(TEXT("hint"), TEXT("Use vibeue-skills-manager(action='load', skill_name='<name>') to load a skill"));
 	}
 	else
 	{
-		ResultObj->SetStringField(TEXT("hint"), TEXT("No matching skills found. Use manage_skills(action='list') to see all available skills"));
+		ResultObj->SetStringField(TEXT("hint"), TEXT("No matching skills found. Use vibeue-skills-manager(action='list') to see all available skills"));
 	}
 
 	FString ResultJson;
@@ -1216,7 +1216,7 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 		}
 
 		// Per-skill section menu so the agent can decide to follow up with
-		// `manage_skills(action='load', skill_name='<folder>/<section>')`.
+		// `vibeue-skills-manager(action='load', skill_name='<folder>/<section>')`.
 		TSharedPtr<FJsonObject> SkillSectionsObj = MakeShared<FJsonObject>();
 		SkillSectionsObj->SetStringField(TEXT("skill"), FolderName);
 		SkillSectionsObj->SetArrayField(TEXT("sections"), Data.AvailableSections);
@@ -1239,10 +1239,12 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	ResultObj->SetArrayField(TEXT("skills_loaded"), SkillsArray);
 
 	// Instructions for AI to discover methods
-	ResultObj->SetStringField(TEXT("IMPORTANT"), 
+	ResultObj->SetStringField(TEXT("IMPORTANT"),
 		TEXT("BEFORE writing code, call discover_python_class to get method signatures. "
-		     "Example: discover_python_class('unreal.BlueprintService', method_filter='variable') "
-		     "to find all variable-related methods. The 'content' below has workflows and gotchas."));
+		     "Batch keywords with '|' to cover several topics in ONE call: "
+		     "discover_python_class('unreal.BlueprintService', method_filter='variable|component|compile'). "
+		     "Multiple classes per call: class_name='unreal.A, unreal.B'. "
+		     "The 'content' below has workflows and gotchas."));
 
 	// Extract COMMON_MISTAKES from skill markdown content (skill-specific, not hardcoded)
 	FString ExtractedMistakes = ExtractCommonMistakes(ConcatenatedContent);
@@ -1258,8 +1260,8 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 		VibeUEClassesArray.Add(MakeShared<FJsonValueString>(ClassName));
 	}
 	ResultObj->SetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray);
-	ResultObj->SetStringField(TEXT("vibeue_classes_usage"), 
-		TEXT("Call discover_python_class('unreal.ClassName', method_filter='keyword') to get methods"));
+	ResultObj->SetStringField(TEXT("vibeue_classes_usage"),
+		TEXT("Call discover_python_class('unreal.ClassName', method_filter='keyword1|keyword2') to get methods — '|' ORs keywords, comma-separated class_name fetches several classes in one call"));
 
 	TArray<TSharedPtr<FJsonValue>> UnrealClassesArray;
 	for (const FString& ClassName : MergedUnrealClasses)
@@ -1274,13 +1276,13 @@ static FString LoadMultipleSkills(const TArray<FString>& SkillNames)
 	ResultObj->SetStringField(TEXT("available_sections_usage"),
 		TEXT("Each entry has a `skill` (folder name), `sections` (loadable .md sub-docs), and "
 			 "`resources` (bundled scripts + reference files, each with a `type`). Load a sub-doc with "
-			 "manage_skills(action='load', skill_name='<skill>/<section>'); load a resource with "
+			 "vibeue-skills-manager(action='load', skill_name='<skill>/<section>'); load a resource with "
 			 "skill_name='<skill>/<name>' (type='script' → run via execute_python_code; "
 			 "type='reference' → read-only)."));
 
 	// Prepend instruction to use discovery tools
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
-		TEXT("1. Call `discover_python_class('unreal.ClassName', method_filter='keyword')` to find methods\n")
+		TEXT("1. Call `discover_python_class('unreal.A, unreal.B', method_filter='kw1|kw2')` to find methods — batch classes (comma) and keywords ('|') into ONE call\n")
 		TEXT("2. Read the COMMON_MISTAKES section above to avoid wrong method names\n")
 		TEXT("3. The workflows below show patterns but USE DISCOVERED SIGNATURES for exact syntax\n")
 		TEXT("4. Load sub-docs from `available_sections` only when you need deeper reference material\n\n")
@@ -1397,8 +1399,10 @@ static FString LoadSingleSkill(const FString& SkillName)
 	// Instructions for AI to discover methods
 	ResultObj->SetStringField(TEXT("IMPORTANT"),
 		TEXT("BEFORE writing code, call discover_python_class to get method signatures. ")
-		TEXT("Example: discover_python_class('unreal.BlueprintService', method_filter='variable') ")
-		TEXT("to find all variable-related methods. The 'content' below has workflows and gotchas."));
+		TEXT("Batch keywords with '|' to cover several topics in ONE call: ")
+		TEXT("discover_python_class('unreal.BlueprintService', method_filter='variable|component|compile'). ")
+		TEXT("Multiple classes per call: class_name='unreal.A, unreal.B'. ")
+		TEXT("The 'content' below has workflows and gotchas."));
 
 	// Extract COMMON_MISTAKES from skill markdown content (skill-specific, not hardcoded)
 	FString ExtractedMistakesSingle = ExtractCommonMistakes(ConcatenatedContent);
@@ -1415,7 +1419,7 @@ static FString LoadSingleSkill(const FString& SkillName)
 	}
 	ResultObj->SetArrayField(TEXT("vibeue_classes"), VibeUEClassesArray);
 	ResultObj->SetStringField(TEXT("vibeue_classes_usage"),
-		TEXT("Call discover_python_class('unreal.ClassName', method_filter='keyword') to get methods"));
+		TEXT("Call discover_python_class('unreal.ClassName', method_filter='keyword1|keyword2') to get methods — '|' ORs keywords, comma-separated class_name fetches several classes in one call"));
 
 	TArray<TSharedPtr<FJsonValue>> UnrealClassesArray;
 	for (const FString& ClassName : SkillData.UnrealClassNames)
@@ -1430,7 +1434,7 @@ static FString LoadSingleSkill(const FString& SkillName)
 	if (SkillData.AvailableSections.Num() > 0)
 	{
 		ResultObj->SetStringField(TEXT("available_sections_usage"),
-			FString::Printf(TEXT("Load a sub-doc with manage_skills(action='load', skill_name='%s/<section>'). Available sections listed above."),
+			FString::Printf(TEXT("Load a sub-doc with vibeue-skills-manager(action='load', skill_name='%s/<section>'). Available sections listed above."),
 				*ActualSkillName));
 	}
 
@@ -1439,14 +1443,14 @@ static FString LoadSingleSkill(const FString& SkillName)
 	if (SkillData.AvailableResources.Num() > 0)
 	{
 		ResultObj->SetStringField(TEXT("available_resources_usage"),
-			FString::Printf(TEXT("Bundled resources for this skill. Load one with manage_skills(action='load', skill_name='%s/<name>'). type='script' = a runnable example: edit the variables at the top, then run via execute_python_code. type='reference' = read-only reference material."),
+			FString::Printf(TEXT("Bundled resources for this skill. Load one with vibeue-skills-manager(action='load', skill_name='%s/<name>'). type='script' = a runnable example: edit the variables at the top, then run via execute_python_code. type='reference' = read-only reference material."),
 				*ActualSkillName));
 	}
 
 	// Content LAST - workflows and gotchas only, not method signatures
 	// Prepend critical instruction to content so AI CANNOT miss it
 	FString ContentWithWarning = TEXT("## How to Use This Skill\n\n")
-		TEXT("1. Call discover_python_class('unreal.ClassName', method_filter='keyword') to find methods\n")
+		TEXT("1. Call discover_python_class('unreal.A, unreal.B', method_filter='kw1|kw2') to find methods — batch classes (comma) and keywords ('|') into ONE call\n")
 		TEXT("2. Read COMMON_MISTAKES above to avoid common errors\n")
 		TEXT("3. Use the workflows below for common patterns\n")
 		TEXT("4. Load a sub-doc (if listed in available_sections) when you need deeper reference material\n\n")
@@ -1626,22 +1630,28 @@ static FSanitizedAction SanitizeManageSkillsAction(const FString& RawAction)
 	return Result;
 }
 
-// Register manage_skills tool
-REGISTER_VIBEUE_TOOL(manage_skills,
-	"Discover and load domain-specific knowledge skills (workflows, gotchas, property formats). "
-	"Skills are organized as an INDEX (SKILL.md — concise workflows + gotchas) plus optional SUB-DOCS (siblings — deeper reference material loaded on demand). "
-	"Actions: "
-	"'list' — return every skill with its description, classes, and a `sections` array naming each loadable sub-doc. Call this once to discover what's available without loading content. "
-	"'suggest' — keyword search across skill names/descriptions/keywords. Use when you know the domain but not the skill name. "
-	"'load' — load a skill's index (just `SKILL.md`) OR a specific sub-doc. Use `skill_name='<skill>'` for the index, `skill_name='<skill>/<section>'` for a sub-doc (e.g. 'state-trees/transitions'). The response includes `available_sections` so you can decide whether you need to load any sub-doc. "
-	"Use `skill_names` (array) to batch-load multiple in one call with deduplicated class lists.",
-	"Skills",
-	TOOL_PARAMS(
-		TOOL_PARAM("action", "Action to perform: 'list', 'suggest', or 'load'", "string", true),
-		TOOL_PARAM("query", "Query string to match against skill keywords (for 'suggest' action)", "string", false),
-		TOOL_PARAM("skill_name", "Skill to load (for 'load' action). Accepts: directory name (e.g. 'state-trees'), `name`/`display_name` field from frontmatter, or a sub-doc path like 'state-trees/transitions' to load only that sibling .md file. Index loads (no slash) return just SKILL.md; sub-doc loads return only the requested file. Class metadata (vibeue_classes/unreal_classes) always comes from the index.", "string", false),
-		TOOL_PARAM("skill_names", "Array of skills to load together (for 'load' action). Each entry follows the same syntax as `skill_name`. Use this when you need several related skills in one call.", "array", false)
-	),
+// Register the vibeue-skills-manager tool (formerly manage_skills).
+// Registered directly instead of via REGISTER_VIBEUE_TOOL because the hyphenated
+// name (chosen for parity with the external unreal-engine-skills-manager tool)
+// cannot be expressed as a C++ identifier token in that macro.
+static FToolAutoRegistrar AutoRegister_vibeue_skills_manager(
+	FToolRegistration{
+		TEXT("vibeue-skills-manager"),
+		TEXT("Discover and load VibeUE editor-automation skills (workflows, gotchas, property formats for VibeUE's editor-control tools). "
+		"Skills are organized as an INDEX (SKILL.md — concise workflows + gotchas) plus optional SUB-DOCS (siblings — deeper reference material loaded on demand). "
+		"Actions: "
+		"'list' — return every skill with its description, classes, and a `sections` array naming each loadable sub-doc. Call this once to discover what's available without loading content. "
+		"'suggest' — keyword search across skill names/descriptions/keywords. Use when you know the domain but not the skill name. "
+		"'load' — load a skill's index (just `SKILL.md`) OR a specific sub-doc. Use `skill_name='<skill>'` for the index, `skill_name='<skill>/<section>'` for a sub-doc (e.g. 'state-trees/transitions'). The response includes `available_sections` so you can decide whether you need to load any sub-doc. "
+		"Use `skill_names` (array) to batch-load multiple in one call with deduplicated class lists."),
+		TEXT("Skills"),
+		TOOL_PARAMS(
+			TOOL_PARAM("action", "Action to perform: 'list', 'suggest', or 'load'", "string", true),
+			TOOL_PARAM("query", "Query string to match against skill keywords (for 'suggest' action)", "string", false),
+			TOOL_PARAM("skill_name", "Skill to load (for 'load' action). Accepts: directory name (e.g. 'state-trees'), `name`/`display_name` field from frontmatter, or a sub-doc path like 'state-trees/transitions' to load only that sibling .md file. Index loads (no slash) return just SKILL.md; sub-doc loads return only the requested file. Class metadata (vibeue_classes/unreal_classes) always comes from the index.", "string", false),
+			TOOL_PARAM("skill_names", "Array of skills to load together (for 'load' action). Each entry follows the same syntax as `skill_name`. Use this when you need several related skills in one call.", "array", false)
+		),
+		[](const TMap<FString, FString>& Params) -> FString
 	{
 		FString RawAction = ExtractParamFromJson(Params, TEXT("action"));
 		FSanitizedAction Sanitized = SanitizeManageSkillsAction(RawAction);
@@ -1710,7 +1720,7 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 				else if (Sanitized.bWasMalformed)
 				{
 					ErrorObj->SetStringField(TEXT("error"),
-						TEXT("MALFORMED JSON: manage_skills arguments were malformed — parameters were embedded in the action value. "
+						TEXT("MALFORMED JSON: vibeue-skills-manager arguments were malformed — parameters were embedded in the action value. "
 							 "Retry with properly formatted JSON: {\"action\": \"load\", \"skill_name\": \"<name>\"}"));
 				}
 				else
@@ -1815,7 +1825,8 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 					ConfirmObj->SetStringField(TEXT("message"),
 						TEXT("Skill documentation has been injected into the system prompt. "
 							 "It will persist for this conversation and survive editor restarts. "
-							 "Use discover_python_class to get exact method signatures before writing code."));
+							 "Use discover_python_class to get exact method signatures before writing code "
+							 "(batch it: class_name='unreal.A, unreal.B' and method_filter='kw1|kw2' cover several classes/topics in ONE call)."));
 					ConfirmObj->SetStringField(TEXT("IMPORTANT"), ResultObj->GetStringField(TEXT("IMPORTANT")));
 
 					// Keep COMMON_MISTAKES and class lists for immediate AI reference
@@ -1929,5 +1940,6 @@ REGISTER_VIBEUE_TOOL(manage_skills,
 			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
 			return ErrorJson;
 		}
+	}
 	}
 );

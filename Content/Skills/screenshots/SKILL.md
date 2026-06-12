@@ -194,7 +194,7 @@ else:
 
 ## Attaching Images for Vision Analysis
 
-After capturing, use the `attach_image` **tool call** (NOT a Python function — call it directly like `terrain_data` or `manage_skills`):
+After capturing, use the `attach_image` **tool call** (NOT a Python function — call it directly like `terrain_data` or `vibeue-skills-manager`):
 
 ```
 attach_image(file_path="E:/Screenshots/Capture.png")

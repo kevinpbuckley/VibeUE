@@ -9,7 +9,7 @@ VibeUE exposes its own skills system via MCP. Use it instead of this file for al
 ## Discover available skills
 
 ```
-manage_skills(action="list")
+vibeue-skills-manager(action="list")
 ```
 
 ## Load a skill before working in a domain
@@ -25,18 +25,29 @@ Always load the relevant skill **before writing any code**. The skill contains e
 | Play / test / run / PIE | `pie-testing` |
 
 ```
-manage_skills(action="load", skill_name="pcg")
-manage_skills(action="load", skill_name="blueprints")
-manage_skills(action="load", skill_name="materials")
+vibeue-skills-manager(action="load", skill_name="pcg")
+vibeue-skills-manager(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="materials")
 ```
 
 The loaded skill returns:
 - `content` — workflows, gotchas, and property formats for the domain
-- `vibeue_classes` / `unreal_classes` — class names to feed into `discover_python_class('unreal.<ClassName>', method_filter='<keyword>')` to get live method signatures
+- `vibeue_classes` / `unreal_classes` — class names to feed into `discover_python_class` to get live method signatures
 - `COMMON_MISTAKES` — extracted "common mistakes" section (when the skill has one)
 - `available_sections` — sibling sub-docs you can load via `skill_name="<skill>/<section>"` for deeper reference material
 
-Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never guess method names from the skill content alone.
+Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never guess method names from the skill content alone. **Batch the discovery into ONE call** instead of one call per class or per keyword:
+
+```
+# ONE call covers all classes and all topics:
+discover_python_class(
+    class_name="unreal.MaterialService, unreal.WidgetService, unreal.MaterialNodeService",
+    method_filter="create|delete|compile|property|color")
+
+# WRONG — three separate calls for three classes wastes round-trips and repeats boilerplate
+```
+
+`class_name` accepts a comma-separated list (response gains a `classes` array, one entry per class); `method_filter` ORs keywords with `|`.
 
 ## MCP tools — what each is for
 
@@ -45,7 +56,7 @@ These tools are invoked directly (no skill needed), but each domain skill assume
 | Tool | Use it for | Validated by |
 |------|-----------|--------------|
 | `execute_python_code` | Run `unreal.*` Python in the editor (the workhorse for every service) | every skill |
-| `manage_skills` | `list` / `suggest` / `load` skills + sub-docs | this skill |
+| `vibeue-skills-manager` | `list` / `suggest` / `load` skills + sub-docs | this skill |
 | `manage_asset` | Search/find/list/open/save/duplicate/move/delete/import assets (prefer over raw Python) | `asset-management`, `test_prompts/asset_management`, `test_prompts/assets` |
 | `read_logs` | List/read/filter/tail UE logs (main/chat/llm) | `test_prompts/logs` |
 | `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code | every skill |

@@ -915,7 +915,14 @@ void FChatSession::ExecuteNextToolInQueue()
             ToolResultMsg.Content = TruncatedContent;
             Messages.Add(ToolResultMsg);
             OnMessageAdded.ExecuteIfBound(ToolResultMsg);
-			
+
+            // External MCP tools must decrement the pending counter like every other
+            // completion path (internal, malformed-args, not-found) — without this the
+            // queue-empty check sees PendingToolCallCount > 0 and never sends the
+            // follow-up request, stalling the conversation after the tool result.
+            PendingToolCallCount--;
+            UE_LOG(LogChatSession, Verbose, TEXT("External MCP tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
+
             ExecuteNextToolInQueue();
         }));
 }
@@ -1525,7 +1532,7 @@ FString FChatSession::SmartTruncateToolResult(const FString& Content, const FStr
     }
     
     // Skills system needs to load comprehensive documentation
-    if (ToolName.Contains(TEXT("manage_skills")))
+    if (ToolName.Contains(TEXT("vibeue-skills-manager")) || ToolName.Contains(TEXT("manage_skills")))
     {
         MaxTokensForTool = 20000;  // ~80000 chars for full skill content
     }

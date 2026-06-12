@@ -414,7 +414,7 @@ public:
 
     /**
      * Inject skill content into the system prompt (in-editor chat only).
-     * Called by the manage_skills tool when running in the editor context.
+     * Called by the vibeue-skills-manager tool when running in the editor context.
      * Deduplicates by SkillNames — content is only appended for newly loaded skills.
      */
     void InjectSkillIntoSystemPrompt(const TArray<FString>& SkillNames, const FString& SkillContent);

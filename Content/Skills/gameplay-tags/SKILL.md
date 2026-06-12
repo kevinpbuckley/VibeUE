@@ -17,6 +17,8 @@ keywords:
   - tag hierarchy
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "gameplay-tags"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Gameplay Tags Skill
 
 Manage Unreal Engine Gameplay Tags programmatically via `unreal.GameplayTagService`.

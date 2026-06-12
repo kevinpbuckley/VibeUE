@@ -32,6 +32,8 @@ keywords:
   - override
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "ai-and-navigation"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # StateTree Skill
 
 StateTree is Unreal Engine's hierarchical state machine system for AI behavior and game logic.
@@ -56,14 +58,14 @@ StateTreeService  → edits the StateTree ASSET (states, tasks list, transitions
 BlueprintService  → edits the STT Blueprint CONTENT (variables, function graphs, node wiring)
 ```
 
-Use `manage_skills(action='load', skill_name='blueprints')` before writing any code that
+Use `vibeue-skills-manager(action='load', skill_name='blueprints')` before writing any code that
 touches an `STT_*` Blueprint's internals.
 
 If the request mentions timers, delayed completion, event callbacks, or screenshots of Blueprint graphs,
 also load:
 
 ```python
-manage_skills(action='load', skill_name='blueprint-graphs')
+vibeue-skills-manager(action='load', skill_name='blueprint-graphs')
 ```
 
 ## ⚠️ STT Graph Editing Rules
@@ -173,7 +175,7 @@ unreal.StateTreeService.select_state("/Game/AI/MyBehavior", "Root/Walking")  # s
 ## Sub-docs available
 
 This skill's larger reference material has been split into sibling files. Load them with
-`manage_skills(action='load', skill_name='<name>')` when you need the detail:
+`vibeue-skills-manager(action='load', skill_name='<name>')` when you need the detail:
 
 - **`api-reference`** — `StateTreeService` API for asset/state discovery, asset creation, state management (add, type, move, remove, enable, select), and per-state tasks (add, inspect, set property — including the deterministic property pattern and `FStateTreeDebugTextTask` notes).
 - **`api-bindings`** — Evaluators & global tasks (add, inspect, bind), transitions (all triggers/types/priorities plus the full `OnDelegate` workflow), compile & save, setting the context actor class, property bindings (task → context / root parameter / global task / evaluator), assigning a StateTree to a `StateTreeComponent` (use `StateTreeRef` not `StateTree`), theme colors, expand/collapse, and the "service first vs `execute_python_code`" guidance.

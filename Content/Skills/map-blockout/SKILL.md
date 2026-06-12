@@ -43,6 +43,8 @@ keywords:
   - validation gate
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "levels-and-world-partition"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Procedural FPS Map Blockout Skill
 
 Take a VibeUE-generated landscape (heightmap + paint layers) and turn it into a
@@ -57,7 +59,7 @@ and re-run the stage.
 
 ## Sub-docs available
 
-Load with `manage_skills(action="load", skill_name="map-blockout/<section>")`:
+Load with `vibeue-skills-manager(action="load", skill_name="map-blockout/<section>")`:
 
 | Sub-doc | When to load |
 |---------|--------------|

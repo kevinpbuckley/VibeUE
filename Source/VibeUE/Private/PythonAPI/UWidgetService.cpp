@@ -1787,7 +1787,28 @@ bool UWidgetService::SetProperty(
 
 	// Translate friendly slot-alias values (e.g. alignment "Fill" -> "HAlign_Fill") so box-slot
 	// alignment is settable without knowing the raw enum names.
-	const FString NormalizedValue = NormalizeSlotAliasValue(PropertyName, PropertyValue);
+	FString NormalizedValue = NormalizeSlotAliasValue(PropertyName, PropertyValue);
+
+	// FSlateColor expects (SpecifiedColor=(R=..,G=..,B=..,A=..)) — callers routinely pass the
+	// bare LinearColor form, which struct import treats as a lenient no-op: no member name
+	// matches, nothing is written, and the call still reports success. Wrap it so the intent
+	// actually applies (e.g. ColorAndOpacity on text widgets).
+	if (const FStructProperty* StructProp = CastField<FStructProperty>(Resolved.Property))
+	{
+		if (StructProp->Struct && StructProp->Struct->GetFName() == FName(TEXT("SlateColor")) &&
+			!NormalizedValue.Contains(TEXT("SpecifiedColor")))
+		{
+			const FString Trimmed = NormalizedValue.TrimStartAndEnd();
+			// Reject non-tuple values (named colors, hex) — wrapping them would survive the
+			// lenient struct import as another silent no-op "success".
+			if (!Trimmed.StartsWith(TEXT("(")))
+			{
+				UE_LOG(LogTemp, Warning, TEXT("UWidgetService::SetProperty: FSlateColor value '%s' for '%s' is not a color tuple — pass \"(R=..,G=..,B=..,A=..)\" or \"(SpecifiedColor=(R=..,G=..,B=..,A=..))\"; named colors and hex are not supported"), *PropertyValue, *PropertyName);
+				return false;
+			}
+			NormalizedValue = FString::Printf(TEXT("(SpecifiedColor=%s,ColorUseRule=UseColor_Specified)"), *Trimmed);
+		}
+	}
 
 	if (Resolved.Property->ImportText_Direct(*NormalizedValue, Resolved.ValuePtr, Resolved.TargetObject, PPF_None) == nullptr)
 	{

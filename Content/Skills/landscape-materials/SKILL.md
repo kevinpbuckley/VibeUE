@@ -25,6 +25,8 @@ keywords:
   - slope mask
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "materials-and-shaders"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Landscape Material System Skill
 
 ## When to Use This Skill vs. landscape-auto-material
@@ -34,7 +36,7 @@ keywords:
 
 If you need material functions, Runtime Virtual Textures, or the master-material + instance pattern:
 ```python
-manage_skills(action="load", skill_name="landscape-auto-material")
+vibeue-skills-manager(action="load", skill_name="landscape-auto-material")
 ```
 
 ## Critical Rules

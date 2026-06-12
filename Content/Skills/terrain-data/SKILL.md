@@ -36,6 +36,8 @@ keywords:
   - lake spline
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "landscape-and-foliage"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Real-World Terrain Skill
 
 Generates heightmaps and water feature splines from real geographic coordinates via the VibeUE terrain API. Requires an active VibeUE API key configured in chat settings.
@@ -156,7 +158,7 @@ Response:
 attach_image(file_path="E:/Project/Saved/Terrain/map_satellite_v9_35.3606_138.7274.png")
 ```
 
-`attach_image` is a **tool call** (like `terrain_data` or `manage_skills`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool.
+`attach_image` is a **tool call** (like `terrain_data` or `vibeue-skills-manager`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool.
 
 After attaching, you will see the satellite image in your next response. Use it to:
 - Identify terrain features (rock, grassland, water, sand, forest, urban)

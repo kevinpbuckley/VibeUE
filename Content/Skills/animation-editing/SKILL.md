@@ -36,6 +36,8 @@ related_skills:
   - animation-blueprint
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "animation-system"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Animation Editing Skill
 
 Covers the **profile → preview → validate → bake** workflow for safe bone edits with correct
@@ -43,7 +45,7 @@ bone-space handling and constraint validation.
 
 > **Load companion skills:** `animsequence` (basic keyframe creation), `skeleton` (structure, sockets,
 > retargeting), `animation-blueprint` (state machines / AnimGraph). Common combo:
-> `manage_skills(action="load", skill_names=["animation-editing", "animsequence"])`.
+> `vibeue-skills-manager(action="load", skill_names=["animation-editing", "animsequence"])`.
 
 > **🛡️ Safe discovery — never `unreal.load_asset()` in loops (memory crash 0xC0000005).**
 > Use `SkeletonService.list_skeletons(path)`, `AnimSequenceService.find_animations_for_skeleton(skeleton)`,

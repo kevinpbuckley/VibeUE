@@ -148,10 +148,34 @@ TResult<FPythonClassInfo> FPythonDiscoveryService::DiscoverClass(
 		NormalizedName = ClassName.RightChop(7); // Remove "unreal."
 	}
 
-	// Build method filtering condition
-	FString MethodFilterCondition = MethodFilter.IsEmpty() ?
-		TEXT("True") :
-		FString::Printf(TEXT("'%s'.lower() in name.lower()"), *MethodFilter);
+	// Build method filtering condition. Models batch alternatives as 'a|b' or 'a,b' —
+	// treat '|' and ',' as OR separators so one call covers several keywords instead of
+	// silently matching nothing as a literal substring.
+	FString MethodFilterCondition = TEXT("True");
+	if (!MethodFilter.IsEmpty())
+	{
+		const FString NormalizedFilter = MethodFilter.Replace(TEXT(","), TEXT("|"));
+		TArray<FString> Patterns;
+		NormalizedFilter.ParseIntoArray(Patterns, TEXT("|"), true);
+
+		TArray<FString> QuotedPatterns;
+		for (FString& Pattern : Patterns)
+		{
+			Pattern.TrimStartAndEndInline();
+			// Strip characters that would break out of the generated Python string literal
+			Pattern.ReplaceInline(TEXT("\\"), TEXT(""));
+			Pattern.ReplaceInline(TEXT("'"), TEXT(""));
+			if (!Pattern.IsEmpty())
+			{
+				QuotedPatterns.Add(FString::Printf(TEXT("'%s'"), *Pattern.ToLower()));
+			}
+		}
+		if (QuotedPatterns.Num() > 0)
+		{
+			MethodFilterCondition = FString::Printf(TEXT("any(p in name.lower() for p in [%s])"),
+				*FString::Join(QuotedPatterns, TEXT(", ")));
+		}
+	}
 
 	// Build privacy filter
 	FString PrivacyFilter = IncludePrivate ?

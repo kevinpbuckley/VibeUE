@@ -52,7 +52,7 @@ Use this skill when you need **production-quality** landscape materials with:
 
 For **simple prototyping** with 2-5 painted layers, use `landscape-materials` instead:
 ```python
-manage_skills(action="load", skill_name="landscape-materials")
+vibeue-skills-manager(action="load", skill_name="landscape-materials")
 ```
 
 ## Architecture Overview
@@ -152,7 +152,7 @@ unreal.MaterialNodeService.add_function_input(func_path, "Roughness", "Scalar", 
 
 ## Sub-docs available
 
-Load these via `manage_skills(action="load", skill_name="landscape-auto-material")` reads the index; for the deeper docs, open the sibling files directly:
+Load these via `vibeue-skills-manager(action="load", skill_name="landscape-auto-material")` reads the index; for the deeper docs, open the sibling files directly:
 
 | Sub-doc | What's inside |
 |---------|---------------|

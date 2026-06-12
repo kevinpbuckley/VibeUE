@@ -40,12 +40,14 @@ keywords:
   - procedural terrain
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "landscape-and-foliage"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Landscape Terrain Skill
 
 ## Sub-docs available
 
 This skill is split into the lean index (you are reading it) plus sibling sub-docs. Load
-a sub-doc with `manage_skills(action="load", skill_name="landscape/<section>")`:
+a sub-doc with `vibeue-skills-manager(action="load", skill_name="landscape/<section>")`:
 
 | Sub-doc | When to load |
 |---------|--------------|
@@ -285,9 +287,9 @@ Do this in separate steps:
 When you need to create or modify the material applied to a landscape, load the appropriate material skill:
 ```python
 # For simple materials:
-manage_skills(action="load", skill_name="landscape-materials")
+vibeue-skills-manager(action="load", skill_name="landscape-materials")
 # For production auto-materials:
-manage_skills(action="load", skill_name="landscape-auto-material")
+vibeue-skills-manager(action="load", skill_name="landscape-auto-material")
 ```
 
 > **NOTE**: For landscape material, texture, and layer blending operations, use `LandscapeMaterialService` (load the `landscape-materials` or `landscape-auto-material` skill).

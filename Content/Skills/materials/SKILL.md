@@ -16,6 +16,8 @@ keywords:
   - texture
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "materials-and-shaders"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Material System Skill
 
 ## Critical Rules
@@ -210,9 +212,16 @@ if add_node:
 
 ### ⚠️ Property Names
 
-Use `discover_python_class()` first:
+Use `discover_python_class()` first (batch: `class_name='unreal.A, unreal.B'`):
 - `MaterialExpressionTypeInfo` uses `display_name`, NOT `name`
 - `MaterialOutputConnectionInfo` uses `connected_expression_id`, NOT `expression_id`
+
+Complete field lists (don't guess):
+
+| Struct | Fields |
+|---|---|
+| `MaterialExpressionInfo` (from `list_expressions` / `get_expression_info`) | `id`, `class_name`, `display_name`, `category`, `description`, `pos_x`, `pos_y`, `is_parameter`, `parameter_name`, `input_names`, `output_names` — the class is `class_name`, **not `expression_class`** |
+| `MaterialNodePropertyInfo` (from expression property lists) | `name`, `value`, `property_type`, `is_editable` — it's `name` here, **not `property_name`** |
 
 ---
 

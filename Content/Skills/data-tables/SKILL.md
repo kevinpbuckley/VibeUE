@@ -76,6 +76,14 @@ and `get_row` returns the name string back:
 An invalid enum name leaves the column at its default — the row is still created
 (see "Writes are lenient" above), so verify with `get_row`.
 
+### ⚠️ `list_data_tables` has NO name filter
+
+`list_data_tables(row_struct_filter, path_filter)` — the first argument filters by **row
+struct name** (e.g. `"GameplayTagTableRow"`), not by table name. Passing a table-name
+pattern like `"DT_Test"` returns 0 results even when the tables exist. To find tables by
+name, list with `("", "/Game/YourPath")` and match `info.name` yourself, or use
+`EditorAssetLibrary.does_asset_exist(table_path)`.
+
 ### ⚠️ Return Type Property Names
 
 | Type | WRONG | CORRECT |

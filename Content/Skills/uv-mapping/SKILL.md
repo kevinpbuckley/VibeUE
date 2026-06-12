@@ -26,6 +26,8 @@ keywords:
   - uv pack
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "meshes-static-and-skeletal"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # UV Mapping Skill
 
 `UVMappingService` provides automation-grade UV channel manipulation for StaticMesh assets in UE 5.7+. The service is built around mesh-description editing and post-build commits — every mutation marks the package dirty and rebuilds render data, but **does not save**. Follow with `manage_asset(action="save", ...)` once you finish a batch.

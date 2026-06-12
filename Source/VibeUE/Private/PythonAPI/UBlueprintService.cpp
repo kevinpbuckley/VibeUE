@@ -5650,13 +5650,19 @@ FBlueprintCompileResult UBlueprintService::CompileBlueprint(const FString& Bluep
 
 	for (const TSharedRef<FTokenizedMessage>& Msg : CompileResults.Messages)
 	{
-		const FString MsgText = Msg->ToText().ToString();
+		FString MsgText = Msg->ToText().ToString();
 		if (Msg->GetSeverity() == EMessageSeverity::Error)
 		{
 			Result.Errors.Add(MsgText);
 		}
 		else if (Msg->GetSeverity() == EMessageSeverity::Warning || Msg->GetSeverity() == EMessageSeverity::PerformanceWarning)
 		{
+			// Agents repeatedly dismiss this warning as cosmetic; spell out the consequence
+			// inline because a function whose Return Node is never reached returns defaults.
+			if (MsgText.Contains(TEXT("Exec pin has no connections")))
+			{
+				MsgText += TEXT(" [MUST FIX: the execution chain never reaches this Return Node, so the function's outputs are NEVER set — wire Entry.then -> ... -> Result.execute before claiming success]");
+			}
 			Result.Warnings.Add(MsgText);
 		}
 	}
