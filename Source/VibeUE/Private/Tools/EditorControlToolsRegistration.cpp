@@ -31,10 +31,24 @@ static bool    GStandaloneRunning = false;
 
 static FString GetParam(const TMap<FString, FString>& Params, const FString& Key, const FString& Default = TEXT(""))
 {
+	// Direct key
 	if (const FString* V = Params.Find(Key)) return *V;
+	// Capitalized variant (MCPServer capitalizes "action" → "Action")
 	FString Cap = Key;
 	if (Cap.Len() > 0) Cap[0] = FChar::ToUpper(Cap[0]);
 	if (const FString* V = Params.Find(Cap)) return *V;
+	// Remaining params are packed into ParamsJson by MCPServer when an action key is present
+	const FString* JsonStr = Params.Find(TEXT("ParamsJson"));
+	if (JsonStr)
+	{
+		TSharedPtr<FJsonObject> Obj;
+		TSharedRef<TJsonReader<>> R = TJsonReaderFactory<>::Create(*JsonStr);
+		if (FJsonSerializer::Deserialize(R, Obj) && Obj.IsValid())
+		{
+			FString Val;
+			if (Obj->TryGetStringField(Key, Val)) return Val;
+		}
+	}
 	return Default;
 }
 
@@ -88,9 +102,14 @@ static const TCHAR* DefaultTraceChannels()
 	return TEXT("frame,cpu,gpu,log,loadtime,object,stats,bookmark,region");
 }
 
+static FString ProjectSavedDirAbs()
+{
+	return FPaths::ConvertRelativePathToFull(FPaths::ProjectSavedDir());
+}
+
 static FString BuildTraceFilePath(const FString& Name)
 {
-	FString Dir = FPaths::ProjectSavedDir() / TEXT("Profiling");
+	FString Dir = ProjectSavedDirAbs() / TEXT("Profiling");
 	IPlatformFile::GetPlatformPhysical().CreateDirectoryTree(*Dir);
 	return Dir / Name;
 }
@@ -331,7 +350,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			GEditor->RequestPlaySession(P);
 
 			// Record the log file path for this session
-			GLastLogFilePath = FPaths::ProjectSavedDir() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
+			GLastLogFilePath = ProjectSavedDirAbs() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
 
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 			R->SetStringField(TEXT("status"), TEXT("PIE start requested"));
@@ -369,7 +388,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			FString Channels  = GetParam(Params, TEXT("channels"), DefaultTraceChannels());
 			FString TracePath = BuildTraceFilePath(TraceName);
 			GLastTraceFilePath = TracePath + TEXT(".utrace");
-			GLastLogFilePath   = FPaths::ProjectSavedDir() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
+			GLastLogFilePath   = ProjectSavedDirAbs() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
 
 			// Standalone receives trace channels via -trace= and connects back to the
 			// editor's Unreal Trace Server on localhost:1985
@@ -425,7 +444,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			FString Channels  = GetParam(Params, TEXT("channels"), DefaultTraceChannels());
 			FString TracePath = BuildTraceFilePath(TraceName);
 			GLastTraceFilePath = TracePath + TEXT(".utrace");
-			GLastLogFilePath   = FPaths::ProjectSavedDir() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
+			GLastLogFilePath   = ProjectSavedDirAbs() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
 
 			if (FTraceAuxiliary::IsConnected())
 			{
@@ -532,7 +551,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 
 			if (LogFile.IsEmpty())
 			{
-				LogFile = FPaths::ProjectSavedDir() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
+				LogFile = ProjectSavedDirAbs() / TEXT("Logs") / (FApp::GetProjectName() + FString(TEXT(".log")));
 			}
 
 			if (Source == TEXT("trace"))
