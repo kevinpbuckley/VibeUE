@@ -121,6 +121,7 @@ public class VibeUE : ModuleRules
 					"ContentBrowser",      // For content browser selection queries
 					"MetasoundEditor",     // For UMetaSoundEditorSubsystem (FindOrBeginBuilding, BuildToAsset)
 				"GameplayTagsEditor",  // For IGameplayTagsEditorModule (add/remove/rename tags at editor time)
+				"TraceServices",       // For ITraceServicesModule / IAnalysisService (editor_control analyse action)
 				}
 			);
 		}
