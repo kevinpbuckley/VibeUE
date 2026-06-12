@@ -132,13 +132,29 @@ Root/Walking        → child of Root named Walking
 Root/Walking/Idle   → child of Walking named Idle
 ```
 
+## ⚠️ Common Mistakes
+
+| WRONG | CORRECT |
+|-------|---------|
+| `create_state_tree(...)` returns False and you retry other paths/folders | The path is rarely the problem — the **schema** is. Default `StateTreeComponentSchema` requires the GameplayStateTree plugin. Call `list_state_tree_schemas()` and pass an available schema explicitly |
+| Creating StateTrees via `AssetTools` + `unreal.StateTreeFactory` | Fails from Python (`Cannot nativize 'StateTreeFactory'…` / returns None) — use `StateTreeService.create_state_tree()` |
+| `info.name` on StateTreeInfo | `info.asset_name` (also: `asset_path`, `schema_class`, `all_states`, `is_compiled`) |
+| `transition.event_tag` | `transition.required_event_tag` (StateTreeTransitionInfo) |
+| `transition.target_state` | `transition.target_state_name` (display) or `target_state_path` (GotoState only) |
+
 ## Workflow
 
 ```python
 import unreal
 
 # 1. Create the asset
-unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+created = unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+if not created:
+    # Most common cause: the schema doesn't exist in this project. The default
+    # "StateTreeComponentSchema" comes from the GameplayStateTree plugin — projects
+    # without it must pass one of the schemas actually available:
+    print(unreal.StateTreeService.list_state_tree_schemas())
+    # then: create_state_tree("/Game/AI/MyBehavior", schema_class_name="<one of those>")
 
 # 2. Build hierarchy (empty parent_path = new top-level subtree)
 unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "", "Root")

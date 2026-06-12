@@ -2224,6 +2224,20 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 	return Results;
 }
 
+TArray<FString> UStateTreeService::ListStateTreeSchemas()
+{
+	TArray<FString> Results;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		if (It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
+		{
+			Results.Add(It->GetName());
+		}
+	}
+	Results.Sort();
+	return Results;
+}
+
 bool UStateTreeService::CreateStateTree(const FString& AssetPath, const FString& SchemaClassName)
 {
 	if (AssetPath.IsEmpty())

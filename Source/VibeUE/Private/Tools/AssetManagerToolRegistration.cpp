@@ -127,6 +127,32 @@ static FString SerializeJson(const TSharedPtr<FJsonObject>& Obj)
 // Action handlers
 // ---------------------------------------------------------------------------
 
+// Unfiltered list/search over /Game can hit tens of thousands of assets, all of
+// which would be serialized into the LLM context. Cap the serialized array and
+// report the full count so callers know to narrow the query.
+static constexpr int32 DefaultMaxAssetResults = 200;
+
+static void AddCappedAssetArray(const TSharedPtr<FJsonObject>& Response, TArray<FAssetData>& Results, const TMap<FString, FString>& Params)
+{
+	const FString MaxStr = ExtractParam(Params, TEXT("max_results"));
+	int32 MaxResults = MaxStr.IsEmpty() ? DefaultMaxAssetResults : FCString::Atoi(*MaxStr);
+	if (MaxResults <= 0)
+	{
+		MaxResults = DefaultMaxAssetResults;
+	}
+
+	Response->SetNumberField(TEXT("count"), Results.Num());
+	if (Results.Num() > MaxResults)
+	{
+		Response->SetNumberField(TEXT("returned"), MaxResults);
+		Response->SetStringField(TEXT("truncated"), FString::Printf(
+			TEXT("Showing first %d of %d results. Narrow with 'asset_type' or a deeper 'path', or raise 'max_results'."),
+			MaxResults, Results.Num()));
+		Results.SetNum(MaxResults);
+	}
+	Response->SetArrayField(TEXT("assets"), AssetArrayToJson(Results));
+}
+
 static FString Action_Search(const TMap<FString, FString>& Params)
 {
 	FString SearchTerm = ExtractParam(Params, TEXT("search_term"));
@@ -136,10 +162,9 @@ static FString Action_Search(const TMap<FString, FString>& Params)
 
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
-	Response->SetNumberField(TEXT("count"), Results.Num());
 	Response->SetStringField(TEXT("search_term"), SearchTerm);
 	Response->SetStringField(TEXT("asset_type"),  AssetType);
-	Response->SetArrayField(TEXT("assets"), AssetArrayToJson(Results));
+	AddCappedAssetArray(Response, Results, Params);
 	return SerializeJson(Response);
 }
 
@@ -189,10 +214,9 @@ static FString Action_List(const TMap<FString, FString>& Params)
 
 	TSharedPtr<FJsonObject> Response = MakeShared<FJsonObject>();
 	Response->SetBoolField(TEXT("success"), true);
-	Response->SetNumberField(TEXT("count"), Results.Num());
 	Response->SetStringField(TEXT("path"),       Path);
 	Response->SetStringField(TEXT("asset_type"), AssetType);
-	Response->SetArrayField(TEXT("assets"), AssetArrayToJson(Results));
+	AddCappedAssetArray(Response, Results, Params);
 	return SerializeJson(Response);
 }
 
@@ -459,6 +483,10 @@ REGISTER_VIBEUE_TOOL(manage_asset,
 		TOOL_PARAM("path",
 			"Content Browser folder path to list recursively (e.g. /Game/AI). Used with action='list'.",
 			"string", false),
+		TOOL_PARAM("max_results",
+			"Maximum number of assets to return for 'search' and 'list' (default 200). "
+			"'count' always reports the true total; a 'truncated' note appears when capped.",
+			"number", false),
 		TOOL_PARAM("source_path",
 			"Source asset path for action='duplicate' or action='move'.",
 			"string", false),

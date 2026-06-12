@@ -57,6 +57,29 @@ if not result.success:
     print(f"Failed: {result.error_message}")
 ```
 
+### ⚠️ Renames Register a Redirect — has_tag(old_name) Stays True
+
+`rename_tag` updates the INI **and registers a tag redirect** so existing assets keep
+resolving the old name. Consequences:
+
+- `has_tag(old_name)` returns **True** after a rename — that is the redirect, not a failed rename.
+- `get_tag_info(old_name)` describes the redirect **target**; check its `redirected_to` field
+  (non-empty = the requested name is a redirect, the value is the new canonical name).
+- Verify a rename with `list_tags(prefix)` or `get_children(parent)` — the old name will be
+  gone from those listings — or check `get_tag_info(old_name).redirected_to`.
+
+### ⚠️ get_tag_info Returns a Struct or None — NOT a Tuple
+
+```python
+# ❌ WRONG — raises "cannot unpack non-iterable GameplayTagInfo"
+found, info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
+
+# ✅ CORRECT
+info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
+if info is not None:
+    print(info.tag_name, info.comment)
+```
+
 ---
 
 ## Workflows
@@ -137,6 +160,10 @@ import unreal
 result = unreal.GameplayTagService.rename_tag("Cube.StartChasing", "Cube.BeginChase")
 if result.success:
     print(f"Renamed: {result.tags_modified}")
+
+# Verify via redirect info — NOT via has_tag (the old name still resolves through a redirect)
+info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
+print(f"Old name now redirects to: {info.redirected_to}")  # 'Cube.BeginChase'
 ```
 
 ### Remove a Tag
@@ -156,8 +183,8 @@ if not result.success:
 | Method | Returns | Description |
 |--------|---------|-------------|
 | `list_tags(filter="")` | `[FGameplayTagInfo]` | List tags, optionally filtered by prefix |
-| `has_tag(tag_name)` | `bool` | Check if tag exists |
-| `get_tag_info(tag_name)` | `bool, FGameplayTagInfo` | Get detailed tag info |
+| `has_tag(tag_name)` | `bool` | Check if tag exists (also True for redirected old names of renamed tags) |
+| `get_tag_info(tag_name)` | `FGameplayTagInfo` or `None` | Get detailed tag info (struct or None — NOT a tuple) |
 | `get_children(parent_tag)` | `[FGameplayTagInfo]` | Get direct children of a tag |
 | `add_tag(tag_name, comment, source)` | `FGameplayTagResult` | Add a single tag |
 | `add_tags(tag_names, comment, source)` | `FGameplayTagResult` | Add multiple tags |
@@ -168,7 +195,8 @@ if not result.success:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `tag_name` | `str` | Full tag name |
+| `tag_name` | `str` | Full tag name (as requested) |
+| `redirected_to` | `str` | If the requested name was renamed, the new canonical tag it redirects to (empty if none). Other fields describe the redirect target. |
 | `comment` | `str` | Developer comment |
 | `source` | `str` | Where tag was defined |
 | `is_explicit` | `bool` | Explicitly defined vs implied parent |

@@ -16,6 +16,8 @@
  * - source (str): Where the tag was defined (e.g., "DefaultGameplayTags.ini", "Native")
  * - is_explicit (bool): Whether this tag was explicitly defined (vs. implied parent)
  * - child_count (int): Number of direct child tags
+ * - redirected_to (str): If the requested name was renamed, the tag it now redirects to
+ *   (empty if no redirect). All other fields describe the redirect target in that case.
  */
 USTRUCT(BlueprintType)
 struct FGameplayTagInfo
@@ -24,6 +26,9 @@ struct FGameplayTagInfo
 
 	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
 	FString TagName;
+
+	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
+	FString RedirectedTo;
 
 	UPROPERTY(BlueprintReadWrite, Category = "GameplayTags")
 	FString Comment;
@@ -132,7 +137,9 @@ public:
 	 * Check if a gameplay tag exists.
 	 *
 	 * @param TagName - Full tag name (e.g., "Cube.StartChasing")
-	 * @return True if the tag is registered
+	 * @return True if the tag is registered. NOTE: also true for the OLD name of a renamed
+	 *         tag (renames register a redirect) — use get_tag_info(name).redirected_to to
+	 *         tell a real tag from a redirected one.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
 	static bool HasTag(const FString& TagName);
@@ -197,7 +204,10 @@ public:
 	static FGameplayTagResult RemoveTag(const FString& TagName);
 
 	/**
-	 * Rename a gameplay tag. Updates all references in the config.
+	 * Rename a gameplay tag. Updates all references in the config and registers a redirect
+	 * from the old name, so has_tag(old_name) stays True and assets keep resolving. Verify a
+	 * rename with list_tags()/get_children() or get_tag_info(old_name).redirected_to — NOT
+	 * with has_tag(old_name).
 	 *
 	 * @param OldTagName - Current tag name
 	 * @param NewTagName - New tag name
