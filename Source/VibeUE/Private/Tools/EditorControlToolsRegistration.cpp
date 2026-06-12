@@ -146,11 +146,11 @@ static FString AnalyseTrace(const FString& TraceFile)
 
 	TSharedPtr<FJsonObject> Root = MakeShared<FJsonObject>();
 	Root->SetStringField(TEXT("trace_file"), TraceFile);
-	Root->SetNumberField(TEXT("duration_seconds"), Session->GetDurationSeconds());
 
-	// --- Frame analysis ---
+	// --- Frame analysis (all session reads must be inside the ReadScope) ---
 	{
 		TraceServices::FAnalysisSessionReadScope Scope(*Session);
+		Root->SetNumberField(TEXT("duration_seconds"), Session->GetDurationSeconds());
 		const TraceServices::IFrameProvider* Frames = Session->ReadProvider<TraceServices::IFrameProvider>(TraceServices::GetFrameProviderName());
 
 		if (Frames)
