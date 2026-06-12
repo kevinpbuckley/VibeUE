@@ -489,9 +489,13 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			if (GEditor) GEditor->RequestEndPlayMap();
 
 			// RequestEndPlayMap does not terminate a standalone (NewProcess) game.
-			// Scan for UnrealEditor.exe processes, exclude our own PID, kill any others.
+			// Find all UnrealEditor.exe instances that aren't us, send WM_CLOSE to their
+			// main window for a clean shutdown. Terminate as a fallback after 5 seconds.
 			{
 				uint32 OurPID = FPlatformProcess::GetCurrentProcessId();
+
+				// Collect target PIDs
+				TArray<DWORD> TargetPIDs;
 				HANDLE hSnap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 				if (hSnap != INVALID_HANDLE_VALUE)
 				{
@@ -504,17 +508,56 @@ REGISTER_VIBEUE_TOOL(editor_control,
 							if (FCString::Stricmp(Entry.szExeFile, TEXT("UnrealEditor.exe")) == 0
 								&& Entry.th32ProcessID != OurPID)
 							{
-								HANDLE hProc = ::OpenProcess(PROCESS_TERMINATE, false, Entry.th32ProcessID);
-								if (hProc)
-								{
-									::TerminateProcess(hProc, 0);
-									::CloseHandle(hProc);
-								}
+								TargetPIDs.Add(Entry.th32ProcessID);
 							}
 						}
 						while (::Process32NextW(hSnap, &Entry));
 					}
 					::CloseHandle(hSnap);
+				}
+
+				// Send WM_CLOSE to each target's main window
+				struct FEnumData { TArray<DWORD>* PIDs; };
+				FEnumData EnumData{ &TargetPIDs };
+				::EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL
+				{
+					FEnumData* Data = reinterpret_cast<FEnumData*>(lParam);
+					DWORD WndPID = 0;
+					::GetWindowThreadProcessId(hWnd, &WndPID);
+					if (Data->PIDs->Contains(WndPID) && ::IsWindowVisible(hWnd))
+					{
+						::PostMessageW(hWnd, WM_CLOSE, 0, 0);
+					}
+					return 1; // TRUE
+				}, (LPARAM)&EnumData);
+
+				// Give it 5 seconds to exit cleanly, then force-terminate
+				double StartTime = FPlatformTime::Seconds();
+				bool bDone = false;
+				while (!bDone && (FPlatformTime::Seconds() - StartTime) < 5.0)
+				{
+					FPlatformProcess::Sleep(0.2f);
+					bDone = true;
+					for (DWORD PID : TargetPIDs)
+					{
+						HANDLE hProc = ::OpenProcess(SYNCHRONIZE, false, PID);
+						if (hProc)
+						{
+							bDone = (::WaitForSingleObject(hProc, 0) == WAIT_OBJECT_0);
+							::CloseHandle(hProc);
+							if (!bDone) break;
+						}
+					}
+				}
+
+				// Force-terminate anything still running
+				if (!bDone)
+				{
+					for (DWORD PID : TargetPIDs)
+					{
+						HANDLE hProc = ::OpenProcess(PROCESS_TERMINATE, false, PID);
+						if (hProc) { ::TerminateProcess(hProc, 0); ::CloseHandle(hProc); }
+					}
 				}
 			}
 			GStandaloneRunning = false;
