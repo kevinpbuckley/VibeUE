@@ -533,37 +533,45 @@ TResult<void> FPythonExecutionService::ValidateCode(const FString& Code)
 
 FString FPythonExecutionService::ParsePythonException(const FString& Traceback)
 {
-	// Simple traceback parsing - extract the most relevant error info
+	// Keep the traceback intact: the line number and source context are what the
+	// caller needs to fix the code. Reducing it to the last non-empty line used to
+	// produce useless messages like "^" (the caret marker of a SyntaxError).
 	TArray<FString> Lines;
 	Traceback.ParseIntoArrayLines(Lines);
 
-	FString ParsedError;
-
-	// Look for the actual error line (usually the last non-empty line)
-	for (int32 i = Lines.Num() - 1; i >= 0; --i)
+	// Drop leading/trailing blank lines, cap very deep tracebacks to the tail
+	// (the exception line and innermost frames are at the end).
+	int32 FirstLine = 0;
+	while (FirstLine < Lines.Num() && Lines[FirstLine].TrimStartAndEnd().IsEmpty())
 	{
-		FString Line = Lines[i].TrimStartAndEnd();
-		if (!Line.IsEmpty())
-		{
-			ParsedError = Line;
-			break;
-		}
+		++FirstLine;
+	}
+	int32 LastLine = Lines.Num() - 1;
+	while (LastLine >= FirstLine && Lines[LastLine].TrimStartAndEnd().IsEmpty())
+	{
+		--LastLine;
 	}
 
-	// If we couldn't parse it, return the full traceback
-	if (ParsedError.IsEmpty())
+	if (FirstLine > LastLine)
 	{
 		return Traceback;
 	}
 
-	// Add context if we found an error
-	if (Lines.Num() > 2)
+	constexpr int32 MaxLines = 40;
+	FString ParsedError;
+	if (LastLine - FirstLine + 1 > MaxLines)
 	{
-		FString LastLine = Lines.Last().TrimStartAndEnd();
-		if (!LastLine.IsEmpty() && LastLine != ParsedError)
+		ParsedError = TEXT("[traceback truncated]");
+		FirstLine = LastLine - MaxLines + 1;
+	}
+
+	for (int32 i = FirstLine; i <= LastLine; ++i)
+	{
+		if (!ParsedError.IsEmpty())
 		{
-			ParsedError = FString::Printf(TEXT("%s\n%s"), *ParsedError, *LastLine);
+			ParsedError += TEXT("\n");
 		}
+		ParsedError += Lines[i].TrimEnd();
 	}
 
 	return ParsedError;

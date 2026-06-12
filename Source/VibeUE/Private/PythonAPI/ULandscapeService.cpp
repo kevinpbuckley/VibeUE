@@ -126,6 +126,20 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 		return;
 	}
 
+	// Process any queued edit-layer content update synchronously. RequestLayersContentUpdate
+	// only queues a merge for the next editor tick, so without this, height reads in the same
+	// Python call (FLandscapeEditDataInterface reads the merged heightmap) return stale
+	// pre-edit values, and collision below would be rebuilt from stale data too.
+	// Note: ForceUpdateLayersContent only processes already-requested updates — unlike
+	// ForceLayersFullUpdate, it does NOT force a full weightmap resolve.
+	if (ALandscape* LandscapeActor = Landscape->GetLandscapeActor())
+	{
+		if (LandscapeActor->HasLayersContent())
+		{
+			LandscapeActor->ForceUpdateLayersContent();
+		}
+	}
+
 	// Update every proxy that belongs to this landscape GUID. In partitioned levels,
 	// components can be distributed across proxies, so updating only one actor can leave
 	// terrain in a partially refreshed state.

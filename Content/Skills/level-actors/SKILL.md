@@ -188,6 +188,39 @@ print(f"Created from template: {result}")
 
 ---
 
+### Save the Current Level (Save / Save As)
+
+**Getting the editor world** — it lives on `UnrealEditorSubsystem`, NOT `LevelEditorSubsystem`, NOT the deprecated `EditorLevelLibrary`:
+
+```python
+import unreal
+
+# ❌ WRONG — AttributeError: 'LevelEditorSubsystem' object has no attribute 'get_editor_world'
+unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).get_editor_world()
+
+# ❌ DEPRECATED — Editor Scripting Utilities plugin
+unreal.EditorLevelLibrary.get_editor_world()
+
+# ✅ CORRECT
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+```
+
+**Which save call to use:**
+- Level already saved at a path → `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()`
+- Untitled/never-saved level, or "save as <new name>" → `EditorLoadingAndSavingUtils.save_map(world, asset_path)` (**both args required**, in that order):
+
+```python
+import unreal
+
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+ok = unreal.EditorLoadingAndSavingUtils.save_map(world, "/Game/Maps/MyLevel")
+print(f"Saved: {ok}")
+```
+
+To also make the saved level the editor startup map, load the `project-settings` skill and set `maps` / `EditorStartupMap` with the full asset path (`/Game/Maps/MyLevel.MyLevel`).
+
+---
+
 ### Spawn Built-in Actor
 
 ```python

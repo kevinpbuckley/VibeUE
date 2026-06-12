@@ -276,6 +276,9 @@ Do this in separate steps:
 | Assuming a landscape is centered on its location | It spans **+X/+Y from its location** (corner-anchored): bounds = `location` to `location + (resolution-1)*scale`. A landscape created at (0,0) with 505 res @ scale 100 covers (0,0)–(50400,50400); its center is (25200,25200) |
 | `create_layer_info_object("Grass", "/Game/X", "LI_Grass")` | Third param is a **bool**: `create_layer_info_object(layer_name, destination_path, is_weight_blended=True)` — passing a string asset name causes `TypeError: Cannot nativize 'str' as 'bool'` |
 | Retrying `create_landscape` after `PYTHON_EXECUTION_TIMEOUT` | The first call usually still completes in the background — check `landscape_exists(label)` before retrying (duplicate labels now return an error) |
+| `result.location` on LandscapeCreateResult | Result has ONLY `success`, `actor_label`, `error_message` — get location via `get_landscape_info(label).location` |
+| `info.component_count_x` / `info.component_count_y` | `info.num_components` is the TOTAL count (e.g. 64 for 8×8) — there are no per-axis fields |
+| `info.rotation.x` (Rotator) | Rotator fields are `.roll` / `.pitch` / `.yaw` — there is no `.x/.y/.z` on Rotator (only Vector has those) |
 
 ---
 
