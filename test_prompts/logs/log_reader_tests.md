@@ -1,6 +1,52 @@
-# Log Reader Tool Tests - Comprehensive Test Suite
+# Log Reader Tool Tests
 
 These tests validate the `read_logs` tool functionality. Run sequentially through the VibeUE chat interface or via MCP. Tests cover listing, reading, filtering, tailing, and change detection for Unreal Engine log files.
+
+Start with the **Quick Smoke Test** for fast validation; run the remaining parts for full coverage.
+
+---
+
+## Part 0: Quick Smoke Test
+
+Fast validation of core log reading functionality.
+
+Show me help for the log reading tool.
+
+---
+
+List all available log files.
+
+---
+
+Read the last 20 lines from the main log.
+
+---
+
+Find any errors in the main log (max 10).
+
+---
+
+Find any warnings in the main log (max 10).
+
+---
+
+Search for "Blueprint" in the main log.
+
+---
+
+Get detailed info about the main log file.
+
+---
+
+Read lines 0-50 from the main log, then read lines 50-100.
+
+---
+
+Read the last 10 lines from the VibeUE chat log.
+
+---
+
+Summarize what worked and what didn't.
 
 ---
 

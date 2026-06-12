@@ -9,6 +9,28 @@
 
 DEFINE_LOG_CATEGORY(LogLogReaderService);
 
+// LogPython introspection dumps put entire class docstrings on a single log
+// line (tens of KB each); cap per-line output so one line can't flood the
+// caller's LLM context.
+static constexpr int32 MaxOutputCharsPerLine = 2000;
+
+static FString ClampLogLine(const FString& Line)
+{
+	if (Line.Len() <= MaxOutputCharsPerLine)
+	{
+		return Line;
+	}
+	return Line.Left(MaxOutputCharsPerLine) + FString::Printf(TEXT(" ...[line truncated; %d chars total]"), Line.Len());
+}
+
+// File stat times are UTC; the chat log and the user's clock are local.
+// Report both so timestamps aren't misread as local time.
+static FString FormatLocalTime(const FDateTime& UtcTime)
+{
+	const FTimespan UtcToLocal = FDateTime::Now() - FDateTime::UtcNow();
+	return (UtcTime + UtcToLocal).ToString();
+}
+
 FLogReaderService::FLogReaderService(TSharedPtr<FServiceContext> InContext)
 	: FServiceBase(InContext)
 {
@@ -370,7 +392,7 @@ FLogReadResult FLogReaderService::ReadFile(const FString& FilePath, int32 MaxLin
 	TArray<FString> SelectedLines;
 	for (int32 i = 0; i < LinesToRead; ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -401,7 +423,7 @@ FLogReadResult FLogReaderService::ReadLines(const FString& FilePath, int32 Offse
 	TArray<FString> SelectedLines;
 	for (int32 i = StartLine; i < EndLine; ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -429,7 +451,7 @@ FLogReadResult FLogReaderService::TailFile(const FString& FilePath, int32 LineCo
 	TArray<FString> SelectedLines;
 	for (int32 i = StartLine; i < Lines.Num(); ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -504,7 +526,7 @@ FLogReadResult FLogReaderService::FilterByPattern(
 		{
 			MatchedContent.Add(TEXT("---"));
 		}
-		MatchedContent.Add(FString::Printf(TEXT("%d: %s"), LineNum + 1, *Lines[LineNum]));
+		MatchedContent.Add(FString::Printf(TEXT("%d: %s"), LineNum + 1, *ClampLogLine(Lines[LineNum])));
 		LastLine = LineNum;
 	}
 
@@ -587,7 +609,7 @@ FLogReadResult FLogReaderService::GetNewContent(const FString& FilePath, int32 L
 	TArray<FString> NewLines;
 	for (int32 i = LastKnownLine; i < Lines.Num(); ++i)
 	{
-		NewLines.Add(Lines[i]);
+		NewLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(NewLines, TEXT("\n"));
@@ -632,7 +654,8 @@ FString FLogReaderService::LogFileInfoArrayToJson(const TArray<FLogFileInfo>& Fi
 			File.SizeBytes < 1024 ? FString::Printf(TEXT("%lld B"), File.SizeBytes) :
 			File.SizeBytes < 1024 * 1024 ? FString::Printf(TEXT("%.1f KB"), File.SizeBytes / 1024.0) :
 			FString::Printf(TEXT("%.1f MB"), File.SizeBytes / (1024.0 * 1024.0)));
-		FileObj->SetStringField(TEXT("modified"), File.ModifiedTime.ToString());
+		FileObj->SetStringField(TEXT("modified"), FormatLocalTime(File.ModifiedTime) + TEXT(" (local)"));
+		FileObj->SetStringField(TEXT("modified_utc"), File.ModifiedTime.ToString());
 		FileObj->SetNumberField(TEXT("line_count"), File.LineCount);
 		FilesArray.Add(MakeShared<FJsonValueObject>(FileObj));
 	}
@@ -714,7 +737,8 @@ FString FLogReaderService::LogFileInfoToJson(const FLogFileInfo& Info)
 		Info.SizeBytes < 1024 ? FString::Printf(TEXT("%lld B"), Info.SizeBytes) :
 		Info.SizeBytes < 1024 * 1024 ? FString::Printf(TEXT("%.1f KB"), Info.SizeBytes / 1024.0) :
 		FString::Printf(TEXT("%.1f MB"), Info.SizeBytes / (1024.0 * 1024.0)));
-	RootObj->SetStringField(TEXT("modified"), Info.ModifiedTime.ToString());
+	RootObj->SetStringField(TEXT("modified"), FormatLocalTime(Info.ModifiedTime) + TEXT(" (local)"));
+	RootObj->SetStringField(TEXT("modified_utc"), Info.ModifiedTime.ToString());
 	RootObj->SetNumberField(TEXT("line_count"), Info.LineCount);
 
 	FString JsonString;

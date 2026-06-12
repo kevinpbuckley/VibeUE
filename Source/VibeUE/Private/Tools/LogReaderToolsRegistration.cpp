@@ -142,6 +142,12 @@ static FString GetLogReaderHelp()
 
 	HelpObj->SetArrayField(TEXT("examples"), ExamplesArray);
 
+	// Behavior notes
+	TArray<TSharedPtr<FJsonValue>> NotesArray;
+	NotesArray.Add(MakeShared<FJsonValueString>(TEXT("Lines longer than 2000 chars are truncated with a '...[line truncated; N chars total]' marker (e.g. LogPython introspection dumps).")));
+	NotesArray.Add(MakeShared<FJsonValueString>(TEXT("'modified' timestamps from list/info are local time; 'modified_utc' is also provided. Timestamps INSIDE UE log lines ([2026.06.12-22.21.26:415]) are UTC; VibeUE_Chat.log line timestamps are local.")));
+	HelpObj->SetArrayField(TEXT("notes"), NotesArray);
+
 	FString JsonString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 	FJsonSerializer::Serialize(HelpObj.ToSharedRef(), Writer);

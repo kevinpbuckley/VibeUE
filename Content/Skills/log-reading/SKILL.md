@@ -70,6 +70,8 @@ Plain filenames (`FPS57.log`) and paths relative to `Saved/Logs/` also resolve. 
 ## Gotchas
 
 - **Bare keywords are noisy on `main`.** Python introspection dumps (`LogPython`) contain entire class docstrings, so `pattern: "Blueprint"` matches thousands of irrelevant JSON lines. Anchor patterns to log categories or levels: `LogBlueprint.*Error`, `: Warning:.*Widget`.
+- **Lines longer than 2000 chars are truncated** with a `...[line truncated; N chars total]` marker (all actions). This bounds LogPython docstring dumps; if you genuinely need a full long line, run the Python that produced it again rather than re-reading the log.
+- **Timezones differ between logs.** Timestamps inside `main` log lines (`[2026.06.12-22.21.26:415]`) are **UTC**; `VibeUE_Chat.log` line timestamps are **local time**. `list`/`info` report `modified` in local time (labeled) plus `modified_utc` — don't mix them up when correlating chat activity with engine events.
 - **`limit: 0` reads the ENTIRE file.** On a 15k-line main log that's ~1.5 MB into context. Prefer `tail`, paginated `read`, or `filter`; only use `limit: 0` on files you've confirmed small via `info`.
 - **Filter results are not paginated by line offset.** Each content line is prefixed `<1-based line number>: `, gaps are marked `---`, and `has_more: true` means the `max_matches` cap was hit — raise `max_matches` or narrow the pattern; there is no `next_offset` for filters.
 - **`errors` also matches the word "Error" inside messages** (e.g. callstack lines of a single ensure), and `warnings` can surface `Error:`-level lines that contain the word "Warning". Read the matched lines, don't just count them.
