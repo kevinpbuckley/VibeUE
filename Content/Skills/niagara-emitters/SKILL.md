@@ -71,6 +71,33 @@ Niagara modules exist in different **script stages**:
 - `ParticleSpawn` - Runs once when each particle spawns  
 - `ParticleUpdate` - Runs every frame for each particle
 
+### ⚠️ `add_module` stage string must be EXACT — and matters which stage
+
+`add_module` takes exactly **4 args** — `add_module(system_path, emitter_name, module_script_path, stage)`. There is **no 5th "name" argument** (passing one raises `TypeError: takes at most 4 arguments`).
+
+The `stage` must be **one of the four strings above, spelled exactly** (case-insensitive): `ParticleSpawn`, `ParticleUpdate`, `EmitterSpawn`, `EmitterUpdate`. Anything else — `"Spawn"`, `"Update"`, `"Emitter Update"`, `""` — is rejected and `add_module` returns **`False`** without adding anything. (Older builds silently dumped the module into `ParticleUpdate` instead; check the return value.)
+
+**Put each module in its correct stage** — this is the #1 cause of a system that "compiles" but is invalid:
+
+| Module | Correct stage |
+|--------|---------------|
+| `InitializeParticle` | `ParticleSpawn` |
+| `SpawnRate`, `SpawnBurstInstantaneous`, `EmitterState` | `EmitterUpdate` |
+| `ParticleState`, `SolveForcesAndVelocity`, `ScaleColor`, color/size/velocity update modules | `ParticleUpdate` |
+
+`SpawnRate` is an **emitter** module — putting it in `ParticleUpdate` makes the system invalid, and `compile_with_results` reports only the generic `"System is invalid after compilation"` with no pointer to the culprit. If a compile is "invalid" after you added modules, **first suspect a mis-staged module** (run `list_modules` and check each `module_type`).
+
+```python
+# ✅ Minimal emitter built from scratch — note each stage:
+unreal.NiagaraService.add_emitter(S, "minimal", "Sparks")
+unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle", "ParticleSpawn")
+unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Emitter/SpawnRate.SpawnRate", "EmitterUpdate")   # NOT ParticleUpdate
+unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState", "ParticleUpdate")
+unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity", "ParticleUpdate")
+unreal.NiagaraEmitterService.add_renderer(S, "Sparks", "SpriteRenderer", "Sprite", {})
+unreal.NiagaraService.compile_with_results(S)   # expect errors=0
+```
+
 ### ⚠️ IMPORTANT: Parameters Exist in MULTIPLE Stages
 
 **Color.Scale Color**, **Velocity**, **Size**, and other parameters often exist in BOTH ParticleSpawn AND ParticleUpdate stages!

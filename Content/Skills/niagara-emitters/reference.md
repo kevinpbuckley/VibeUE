@@ -13,21 +13,26 @@ system_path = "/Game/Path/To/NS_YourSystem"
 emitter_name = "YourEmitter"
 
 # === MODULES ===
-# List available module scripts
-scripts = unreal.NiagaraEmitterService.list_available_scripts("Sprite", "")
+# Find module scripts by keyword (NOT "list_available_scripts" — that does not exist)
+scripts = unreal.NiagaraEmitterService.search_module_scripts("Color")
+# ...or list the common built-ins:
+builtins = unreal.NiagaraEmitterService.list_builtin_modules()
 
-# Add module to emitter
-unreal.NiagaraEmitterService.add_module(
+# Add module to emitter — exactly 4 args; the 4th is the stage and must be one of
+# ParticleSpawn / ParticleUpdate / EmitterSpawn / EmitterUpdate (anything else returns False).
+# See SKILL.md "add_module stage string must be EXACT" for which module goes in which stage.
+ok = unreal.NiagaraEmitterService.add_module(
     system_path, emitter_name,
     "/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity",
-    "ParticleUpdate",
-    "Velocity"
+    "ParticleUpdate"
 )
+assert ok, "add_module returned False — check the stage string and module path"
 
-# List modules in emitter
+# List modules in emitter. Struct fields: module_name, module_type (the stage),
+# module_index, is_enabled, script_asset_path.
 modules = unreal.NiagaraEmitterService.list_modules(system_path, emitter_name)
 for m in modules:
-    print(f"{m.script_type}: {m.module_name}")
+    print(f"[{m.module_type}] {m.module_name}")
 
 # === RENDERERS ===
 # Add sprite renderer

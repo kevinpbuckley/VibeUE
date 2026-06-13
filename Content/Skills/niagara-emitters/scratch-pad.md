@@ -20,11 +20,13 @@ system_path = "/Game/Path/To/NS_YourSystem"  # Your Niagara system
 # Create empty emitter
 unreal.NiagaraService.add_emitter(system_path, "minimal", "MySparks")
 
-# Add spawn
+# Add spawn. add_module takes EXACTLY 4 args (no trailing name); the 4th is the stage.
+# SpawnRate is an EMITTER module — "EmitterUpdate", NOT "ParticleUpdate" (a mis-staged
+# SpawnRate compiles to an INVALID system). add_module returns False on a bad stage string.
 unreal.NiagaraEmitterService.add_module(
     system_path, "MySparks",
     "/Niagara/Modules/Emitter/SpawnRate.SpawnRate",
-    "EmitterUpdate", "SpawnRate"
+    "EmitterUpdate"
 )
 
 # Add renderer
@@ -33,10 +35,11 @@ unreal.NiagaraEmitterService.add_renderer(
     "SpriteRenderer", "Sprite", {}
 )
 
-# Configure spawn rate
-unreal.NiagaraEmitterService.set_rapid_iteration_param(
+# Configure spawn rate. Use the FULL rapid-iteration param name (from
+# list_rapid_iteration_params), not a bare "SpawnRate" — the bare name won't match.
+unreal.NiagaraService.set_rapid_iteration_param(
     system_path, "MySparks",
-    "SpawnRate", "25"
+    "Constants.MySparks.SpawnRate.SpawnRate", "25"
 )
 
 # Compile to apply
