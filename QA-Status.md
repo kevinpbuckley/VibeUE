@@ -10,7 +10,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 |---|-----------|--------|-------|
 | 1 | niagara/scratchpad_trackpainter.md | ✅ | Completed in prior session (branch fix verified). |
 | 2 | animation-editing.md | ⚠️ | 27/27 prompts passed. Added 3 gotchas to animation-editing/common-mistakes.md. |
-| 3 | demo_prompts.md | ⏳ | |
+| 3 | demo_prompts.md | ⚠️ | 7/9 done (2 referenced non-existent assets; graceful fallback). Added AttributeError-trap table to level-actors. |
 | 4 | pcg/pcg_tests.md | ⏳ | |
 | 5 | skeleton/skeleton_tests.md | ⏳ | |
 | 6 | Smoke_Test.md | ⏳ | |
@@ -45,3 +45,18 @@ Skeleton used: `SK_UEFN_Mannequin` (101 bones); 131 skeletons in project.
 
 **Not bugs (expected behavior):** clamping on previews when learned constraints are tight (only
 10 anims sampled), `copy_pose` informational track-overwrite warnings.
+
+### 3. demo_prompts.md — ⚠️ pass with fixes
+Open-ended creative grab-bag (event graph, build Mario castle from basic shapes, sky text, lights,
+niagara theming). 7/9 fully succeeded; 2 referenced assets that don't exist in this project
+(no "Weapon" AnimBP → failed; `NS_Fire_Big_2` missing → fell back to `NS_Fire`, partial). The agent
+handled missing assets gracefully (no crash). Castle = 48 actors + 6 MI materials at floor height.
+
+**Friction points (wasted discovery iterations):** `StaticMeshComponent.get_static_mesh()`,
+`actor.get_components()`, `DirectionalLight.directional_light_component`, light `cast_shadow`
+(should be `cast_shadows`), and `unreal.HorizontalTextAligment` (should be `HorizTextAligment`) all
+raised AttributeError.
+
+**Fix applied:** Added a "Verified AttributeError traps (UE 5.7 Python)" table to
+`Content/Skills/level-actors/SKILL.md` covering all five, plus a "discover the class once instead of
+guessing" note.

@@ -60,6 +60,19 @@ landscapes = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, un
 lights = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal.PointLight)]
 ```
 
+### 🚨 Verified `AttributeError` traps (UE 5.7 Python) — don't burn iterations rediscovering these
+
+| You might write | ❌ Why it fails | ✅ Use instead |
+|---|---|---|
+| `comp.get_static_mesh()` | `StaticMeshComponent` has no `get_static_mesh` | `comp.get_editor_property("static_mesh")` (read) / `comp.set_static_mesh(mesh)` (write) |
+| `actor.get_components()` | Actors have no `get_components()` | `actor.get_components_by_class(unreal.StaticMeshComponent)` → array |
+| `dir_light.directional_light_component` | no such attribute | `dir_light.light_component` (ALL `unreal.Light` actors use `light_component`) |
+| `comp.set_editor_property("cast_shadow", …)` | property is plural | `comp.set_editor_property("cast_shadows", False)` |
+| `unreal.HorizontalTextAligment` | UE misspells it | `unreal.HorizTextAligment` / `unreal.VerticalTextAligment` (for `TextRenderActor`) |
+
+When unsure of a property/method name, call `discover_python_class(class_name="unreal.X")` ONCE up front
+rather than guessing repeatedly — its `doc_string` lists the real editor-property names.
+
 **Migration guide:**
 | Deprecated (`EditorLevelLibrary`) | Replacement (`EditorActorSubsystem`) |
 |---|---|
