@@ -463,9 +463,15 @@ TArray<FMaterialExpressionTypeInfo> UMaterialNodeService::DiscoverTypes(
 		TypeInfo.ClassName = Class->GetName();
 		TypeInfo.DisplayName = Class->GetName().Replace(TEXT("MaterialExpression"), TEXT(""));
 		
-		const FString* CategoryMeta = Class->FindMetaData(TEXT("Category"));
-		TypeInfo.Category = CategoryMeta ? *CategoryMeta : TEXT("Misc");
-		
+		// Category comes from the CDO's MenuCategories (palette grouping), not class metadata.
+		TypeInfo.Category = TEXT("Misc");
+#if WITH_EDITORONLY_DATA
+		if (CDO->MenuCategories.Num() > 0 && !CDO->MenuCategories[0].IsEmpty())
+		{
+			TypeInfo.Category = CDO->MenuCategories[0].ToString();
+		}
+#endif
+
 		const FString* TooltipMeta = Class->FindMetaData(TEXT("ToolTip"));
 		TypeInfo.Description = TooltipMeta ? *TooltipMeta : TEXT("");
 		
@@ -511,7 +517,7 @@ TArray<FMaterialExpressionTypeInfo> UMaterialNodeService::DiscoverTypes(
 TArray<FString> UMaterialNodeService::GetCategories()
 {
 	TSet<FString> Categories;
-	
+
 	for (TObjectIterator<UClass> It; It; ++It)
 	{
 		UClass* Class = *It;
@@ -519,14 +525,27 @@ TArray<FString> UMaterialNodeService::GetCategories()
 		{
 			continue;
 		}
-		
-		const FString* CategoryMeta = Class->FindMetaData(TEXT("Category"));
-		if (CategoryMeta && !CategoryMeta->IsEmpty())
+
+		// Material expressions carry their palette grouping in the CDO's MenuCategories array,
+		// NOT in class "Category" metadata (which expression classes don't set).
+		const UMaterialExpression* CDO = Class->GetDefaultObject<UMaterialExpression>();
+		if (!CDO)
 		{
-			Categories.Add(*CategoryMeta);
+			continue;
 		}
+
+#if WITH_EDITORONLY_DATA
+		for (const FText& Cat : CDO->MenuCategories)
+		{
+			const FString CatStr = Cat.ToString();
+			if (!CatStr.IsEmpty())
+			{
+				Categories.Add(CatStr);
+			}
+		}
+#endif
 	}
-	
+
 	TArray<FString> Result = Categories.Array();
 	Result.Sort();
 	return Result;

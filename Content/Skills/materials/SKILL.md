@@ -198,6 +198,25 @@ unreal.EditorAssetLibrary.save_asset(path)
 - `EmissiveColor`, `Normal`, `Opacity`, `OpacityMask`
 - `WorldPositionOffset`, `AmbientOcclusion`
 
+### ⚠️ Discovering Node Types & Categories
+
+To answer "what nodes / categories are available", use the MaterialNodeService discovery
+calls — do **not** hunt through `discover_python_module` or a material-editor palette API
+(there isn't a Python one):
+
+```python
+# All material-expression categories (Math, Color, Constants, Coordinates, Parameters, ...)
+cats = unreal.MaterialNodeService.get_categories()
+
+# Search node types by name/category (returns MaterialExpressionTypeInfo:
+#   class_name, display_name, category, description, is_parameter)
+types = unreal.MaterialNodeService.discover_types(category="", search_term="Add", max_results=100)
+```
+
+To create a node, pass the bare class name minus the `MaterialExpression` prefix
+(`"Add"`, `"Multiply"`, `"Constant3Vector"`, `"OneMinus"`, `"LinearInterpolate"`/`"Lerp"`) to
+`create_expression` / `batch_create_expressions`.
+
 ### ⚠️ Check Node Existence
 
 ```python
@@ -222,6 +241,44 @@ Complete field lists (don't guess):
 |---|---|
 | `MaterialExpressionInfo` (from `list_expressions` / `get_expression_info`) | `id`, `class_name`, `display_name`, `category`, `description`, `pos_x`, `pos_y`, `is_parameter`, `parameter_name`, `input_names`, `output_names` — the class is `class_name`, **not `expression_class`** |
 | `MaterialNodePropertyInfo` (from expression property lists) | `name`, `value`, `property_type`, `is_editable` — it's `name` here, **not `property_name`** |
+| `MaterialSummary` (from `MaterialService.summarize`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `parameter_count`, `parameter_names`, `key_properties`, `editable_properties` — it's `material_name`/`material_path`/`parameter_count`, **not `name`/`path`/`num_parameters`** |
+| `MaterialDetailedInfo` (from `MaterialService.get_material_info`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `texture_sample_count`, `is_material_instance`, `parent_material`, `parameters` — it's `two_sided`, **not `is_two_sided`** |
+| `MaterialPropertyInfo_Custom` (from `MaterialService.list_properties` / `get_property_info`) | `property_name`, `display_name`, `property_type`, `current_value`, `allowed_values`, `category`, `is_editable`, `is_advanced` — it's `property_name`/`current_value`, **not `name`/`value`** (differs from `MaterialNodePropertyInfo` above) |
+
+### 🚨 Setting Material Properties: `set_property` Takes Display OR Internal Name
+
+`MaterialService.set_property(path, name, value)` / `get_property` accept **either** the editor
+display name (`"Two Sided"`, `"Blend Mode"`, `"Opacity Mask Clip Value"`) **or** the internal
+property name (`"TwoSided"`, `"BlendMode"`, `"OpacityMaskClipValue"`) — matching is
+case-insensitive and ignores spaces. Both of these work:
+
+```python
+unreal.MaterialService.set_property(path, "Two Sided", "true")   # display name
+unreal.MaterialService.set_property(path, "BlendMode", "BLEND_Masked")  # internal name
+unreal.MaterialService.set_property(path, "OpacityMaskClipValue", "0.33")
+unreal.MaterialService.compile_material(path)   # enum/blend changes need a recompile
+unreal.MaterialService.save_material(path)
+```
+
+> ⚠️ `set_property` returns a **bool** (`True`/`False`), it does **not** raise on an unknown
+> property — a `False` means the name didn't resolve or the value didn't parse. Don't assume
+> success: check the return, or verify with `get_property` / `summarize` afterward. Enum values
+> are the `BLEND_*` / `MSM_*` / `MD_*` identifiers (see below), not the friendly labels.
+
+**Discover legal enum values, don't guess:** `list_properties` / `get_property_info` populate
+`allowed_values` for enum properties — including the classic `TEnumAsByte` ones
+(`BlendMode`, `ShadingModel`, `MaterialDomain`). Read them instead of probing `unreal` for the
+enum class:
+
+```python
+for p in unreal.MaterialService.list_properties(path):
+    if p.property_name == "BlendMode":
+        print(p.allowed_values)
+        # ['BLEND_Opaque','BLEND_Masked','BLEND_Translucent','BLEND_Additive', ...]
+```
+
+Common material property internal names: `TwoSided`, `BlendMode`, `ShadingModel`,
+`MaterialDomain`, `OpacityMaskClipValue`, `bUsedWithStaticLighting`, `DitheredLODTransition`.
 
 ---
 
