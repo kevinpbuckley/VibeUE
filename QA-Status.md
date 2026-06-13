@@ -12,7 +12,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 2 | animation-editing.md | ⚠️ | 27/27 prompts passed. Added 3 gotchas to animation-editing/common-mistakes.md. |
 | 3 | demo_prompts.md | ⚠️ | 7/9 done (2 referenced non-existent assets; graceful fallback). Added AttributeError-trap table to level-actors. |
 | 4 | pcg/pcg_tests.md | ⚠️ | 30/32 pass (2 blocked: delete file-handle + edge-enum, both engine/OS limits). Added edge-enumeration doc; fixed test search-by-name bug. |
-| 5 | skeleton/skeleton_tests.md | ⏳ | |
+| 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename passed; editor crashed in section I via modal save dialog (issue #433). Root-caused + hot-patched auto-save guard; re-verifying section I. |
 | 6 | Smoke_Test.md | ⏳ | |
 | 7 | sound-cues/sound_cues_tests.md | ⏳ | |
 | 8 | state-trees/state_trees_tests.md | ⏳ | |
@@ -75,3 +75,23 @@ them). Test-file bug: it told the agent to name-search "PCGTest", which never ma
 **Fixes applied:** Added an "Enumerating Edges / verifying the whole graph" section to
 `Content/Skills/pcg/workflows.md`; changed the three search-by-name steps in `pcg_tests.md` to
 list the `/Game/PCGTest` folder and noted the delete file-handle caveat.
+
+### 5. skeleton/skeleton_tests.md — ⚠️ partial; crash root-caused + patched (issue #433)
+Sections A–H (discovery, bone hierarchy, sockets, retargeting, curves, blend profiles, editor nav,
+properties) ran; section I (Bone Modification) created `SKM_BoneTest`, duplicated the skeleton, added
++ committed twist bones, and renamed `test_twist_01_l`→`renamed_twist_l` (data confirmed) — then the
+**editor crashed** and the chat request hung.
+
+**Root cause:** `PythonTools.cpp` auto-save-before-Python (`AutoSaveBeforePythonExecution=True`,
+default) calls `FEditorFileUtils::SaveDirtyPackages` on the game thread before every python exec.
+After the bone-mod section dirtied/created assets, that path surfaced a modal `PackagesDialog` with
+no human to dismiss it (MCP-driven) → request hung >10 min, then the editor crashed in the Slate
+modal tick (callstack: `PackagesDialog.dll → MainFrame → Slate`). Confirmed from
+`Slash-backup-2026.06.13-16.10.23.log`.
+
+**Filed:** GitHub issue [#433](https://github.com/kevinpbuckley/VibeUE/issues/433) (full headless-save
+fix for all MCP paths, incl. external Claude Code/Codex clients, still pending).
+
+**Hot-patch applied + Live-Coding-compiled:** `PythonTools.cpp` now skips the modal-capable
+auto-save when `IsChatEditorTestingEnabled()` (tests manage their own saves). This unblocks the rest
+of the QA sweep. Section I being re-verified post-patch.

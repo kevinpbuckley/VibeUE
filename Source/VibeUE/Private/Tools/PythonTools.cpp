@@ -185,7 +185,16 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	// Auto-save all dirty packages before executing Python code if enabled
 	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
 	{
-		if (bLastPythonExecutionCrashed)
+		if (FChatSession::IsChatEditorTestingEnabled())
+		{
+			// Chat Editor Testing / MCP-driven runs have no interactive user. SaveDirtyPackages
+			// can surface a modal PackagesDialog (e.g. on a save warning for a freshly-created
+			// asset), which then blocks the request indefinitely and can crash the editor while
+			// pumping the modal. Tests manage their own saves, so skip the auto-save here.
+			// See issue #433 (full headless-save fix for all MCP paths still pending).
+			UE_LOG(LogPythonTools, Verbose, TEXT("Skipping auto-save: Chat Editor Testing mode is enabled (avoids modal save dialog hang)"));
+		}
+		else if (bLastPythonExecutionCrashed)
 		{
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
 		}
