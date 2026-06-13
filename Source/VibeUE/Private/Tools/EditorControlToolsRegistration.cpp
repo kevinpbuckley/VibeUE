@@ -11,9 +11,6 @@
 #include "PlayInEditorDataTypes.h"
 #include "Editor.h"
 #include "HAL/PlatformProcess.h"
-#include "Windows/AllowWindowsPlatformTypes.h"
-#include <TlHelp32.h>
-#include "Windows/HideWindowsPlatformTypes.h"
 #include "TraceServices/ITraceServicesModule.h"
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/Model/AnalysisSession.h"
@@ -27,8 +24,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogEditorControl, Log, All);
 
 static FString GLastTraceFilePath;
 static FString GLastLogFilePath;
-static bool    GStandaloneRunning = false;
-static uint32  GStandaloneProcessId = 0;
+static bool           GStandaloneRunning = false;
+static FProcHandle    GStandaloneProcess;
+static FDelegateHandle GStandalonePlayDelegateHandle;
 
 // ---------------------------------------------------------------------------
 // Param helpers
@@ -241,7 +239,13 @@ static FString AnalyseTrace(const FString& TraceFile)
 						}
 					});
 
-				double AvgMs = TotalMs / (double)FrameCount;
+				if (AllMs.IsEmpty())
+				{
+					Root->SetStringField(TEXT("warning"), TEXT("All frames were filtered (invalid timestamps) — no frame stats available."));
+				}
+				else
+				{
+				double AvgMs = TotalMs / (double)AllMs.Num();
 				Root->SetNumberField(TEXT("avg_frame_ms"), FMath::RoundToFloat(AvgMs * 100.0f) / 100.0f);
 				Root->SetNumberField(TEXT("avg_fps"), FMath::RoundToFloat(1000.0f / (float)AvgMs * 10.0f) / 10.0f);
 				Root->SetNumberField(TEXT("max_frame_ms"), FMath::RoundToFloat(MaxMs * 100.0f) / 100.0f);
@@ -252,6 +256,7 @@ static FString AnalyseTrace(const FString& TraceFile)
 				AllMs.Sort();
 				int32 P95Idx = FMath::Clamp((int32)(AllMs.Num() * 0.95), 0, AllMs.Num() - 1);
 				Root->SetNumberField(TEXT("p95_frame_ms"), FMath::RoundToFloat(AllMs[P95Idx] * 100.0f) / 100.0f);
+				} // end AllMs non-empty
 
 				// Worst 10 frames
 				TArray<TSharedPtr<FJsonValue>> WorstArr;
@@ -474,6 +479,15 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			GEditor->RequestPlaySession(P);
 			GStandaloneRunning = true;
 
+			// Capture the child PID when the process starts so stop_standalone can
+			// terminate it without enumerating all system processes.
+			GStandalonePlayDelegateHandle = FEditorDelegates::BeginStandaloneLocalPlay.AddLambda([](uint32 PID)
+			{
+				GStandaloneProcess = FPlatformProcess::OpenProcess(PID);
+				FEditorDelegates::BeginStandaloneLocalPlay.Remove(GStandalonePlayDelegateHandle);
+				GStandalonePlayDelegateHandle.Reset();
+			});
+
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 			R->SetStringField(TEXT("status"), TEXT("standalone start requested"));
 			R->SetStringField(TEXT("trace_file"), GLastTraceFilePath);
@@ -488,80 +502,32 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			if (!GStandaloneRunning) return ErrJson(TEXT("NOT_RUNNING"), TEXT("No standalone session tracked. Did you call start_standalone?"));
 			if (GEditor) GEditor->RequestEndPlayMap();
 
-			// RequestEndPlayMap does not terminate a standalone (NewProcess) game.
-			// Find all UnrealEditor.exe instances that aren't us, send WM_CLOSE to their
-			// main window for a clean shutdown. Terminate as a fallback after 5 seconds.
+			// Remove the PID-capture delegate if the process never finished launching.
+			if (GStandalonePlayDelegateHandle.IsValid())
 			{
-				uint32 OurPID = FPlatformProcess::GetCurrentProcessId();
+				FEditorDelegates::BeginStandaloneLocalPlay.Remove(GStandalonePlayDelegateHandle);
+				GStandalonePlayDelegateHandle.Reset();
+			}
 
-				// Collect target PIDs
-				TArray<DWORD> TargetPIDs;
-				HANDLE hSnap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-				if (hSnap != INVALID_HANDLE_VALUE)
-				{
-					PROCESSENTRY32W Entry;
-					Entry.dwSize = sizeof(Entry);
-					if (::Process32FirstW(hSnap, &Entry))
-					{
-						do
-						{
-							if (FCString::Stricmp(Entry.szExeFile, TEXT("UnrealEditor.exe")) == 0
-								&& Entry.th32ProcessID != OurPID)
-							{
-								TargetPIDs.Add(Entry.th32ProcessID);
-							}
-						}
-						while (::Process32NextW(hSnap, &Entry));
-					}
-					::CloseHandle(hSnap);
-				}
-
-				// Send WM_CLOSE to each target's main window
-				struct FEnumData { TArray<DWORD>* PIDs; };
-				FEnumData EnumData{ &TargetPIDs };
-				::EnumWindows([](HWND hWnd, LPARAM lParam) -> BOOL
-				{
-					FEnumData* Data = reinterpret_cast<FEnumData*>(lParam);
-					DWORD WndPID = 0;
-					::GetWindowThreadProcessId(hWnd, &WndPID);
-					if (Data->PIDs->Contains(WndPID) && ::IsWindowVisible(hWnd))
-					{
-						::PostMessageW(hWnd, WM_CLOSE, 0, 0);
-					}
-					return 1; // TRUE
-				}, (LPARAM)&EnumData);
-
-				// Give it 5 seconds to exit cleanly, then force-terminate
+			// RequestEndPlayMap does not terminate a standalone (NewProcess) game.
+			// Use the handle captured from BeginStandaloneLocalPlay to wait for a clean
+			// exit (up to 5 s) then force-terminate if needed.
+			if (GStandaloneProcess.IsValid())
+			{
 				double StartTime = FPlatformTime::Seconds();
-				bool bDone = false;
-				while (!bDone && (FPlatformTime::Seconds() - StartTime) < 5.0)
+				while (FPlatformProcess::IsProcRunning(GStandaloneProcess)
+					   && (FPlatformTime::Seconds() - StartTime) < 5.0)
 				{
 					FPlatformProcess::Sleep(0.2f);
-					bDone = true;
-					for (DWORD PID : TargetPIDs)
-					{
-						HANDLE hProc = ::OpenProcess(SYNCHRONIZE, false, PID);
-						if (hProc)
-						{
-							bDone = (::WaitForSingleObject(hProc, 0) == WAIT_OBJECT_0);
-							::CloseHandle(hProc);
-							if (!bDone) break;
-						}
-					}
 				}
-
-				// Force-terminate anything still running
-				if (!bDone)
+				if (FPlatformProcess::IsProcRunning(GStandaloneProcess))
 				{
-					for (DWORD PID : TargetPIDs)
-					{
-						HANDLE hProc = ::OpenProcess(PROCESS_TERMINATE, false, PID);
-						if (hProc) { ::TerminateProcess(hProc, 0); ::CloseHandle(hProc); }
-					}
+					FPlatformProcess::TerminateProc(GStandaloneProcess);
 				}
+				FPlatformProcess::CloseProc(GStandaloneProcess);
 			}
+
 			GStandaloneRunning = false;
-			GStandaloneProcessId = 0;
 
 			// Prefer the UTS store — standalone uses -tracehost so the file lands there
 			FString UTSTrace = FindLatestUTSTrace();
