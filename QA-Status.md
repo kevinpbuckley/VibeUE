@@ -12,7 +12,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 2 | animation-editing.md | ⚠️ | 27/27 prompts passed. Added 3 gotchas to animation-editing/common-mistakes.md. |
 | 3 | demo_prompts.md | ⚠️ | 7/9 done (2 referenced non-existent assets; graceful fallback). Added AttributeError-trap table to level-actors. |
 | 4 | pcg/pcg_tests.md | ⚠️ | 30/32 pass (2 blocked: delete file-handle + edge-enum, both engine/OS limits). Added edge-enumeration doc; fixed test search-by-name bug. |
-| 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename passed; editor crashed in section I via modal save dialog (issue #433). Root-caused + hot-patched auto-save guard; re-verifying section I. |
+| 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename verified. Crash in section I root-caused→fixed (#433, auto-save modal). Re-run confirmed fix; reparent (known-broken) stalls chat → skill gotcha added. |
 | 6 | Smoke_Test.md | ⏳ | |
 | 7 | sound-cues/sound_cues_tests.md | ⏳ | |
 | 8 | state-trees/state_trees_tests.md | ⏳ | |
@@ -94,4 +94,13 @@ fix for all MCP paths, incl. external Claude Code/Codex clients, still pending).
 
 **Hot-patch applied + Live-Coding-compiled:** `PythonTools.cpp` now skips the modal-capable
 auto-save when `IsChatEditorTestingEnabled()` (tests manage their own saves). This unblocks the rest
-of the QA sweep. Section I being re-verified post-patch.
+of the QA sweep.
+
+**Re-verification (post-patch):** Re-ran section I — `SKM_BoneTest` create, skeleton duplicate, twist
+bone add+commit, and **rename+commit on the dirtied asset all passed with NO crash** (editor stayed
+responsive). ✅ Fix confirmed. The re-run then stalled on the **reparent** step — which the test file
+itself flags as a known-broken SkeletonModifier operation ("skip in automated testing"). Reparent
+commit fails on a hierarchy-mismatch and stalls the chat request. Added a skill gotcha to
+`Content/Skills/skeleton/SKILL.md` telling users not to reparent via SkeletonModifier (add-new +
+remove-old instead). Sections J/K/L (more sockets, retargeting modes, blend profiles) not separately
+re-run; their APIs mirror C/D/F which passed.

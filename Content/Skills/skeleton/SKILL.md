@@ -56,6 +56,12 @@ unreal.SkeletonService.commit_bone_changes("/Game/SKM_Character")
 
 **Forgetting to commit = changes are lost!**
 
+> ⚠️ **Do NOT reparent bones via SkeletonModifier (known-broken, UE 5.7).** Changing a bone's
+> parent and calling `commit_bone_changes()` fails with a hierarchy-mismatch validation error and
+> can leave the commit stalled (the call may not return cleanly). Add/remove/rename/transform are
+> safe; reparenting is not. If a user needs a different hierarchy, add a new bone at the desired
+> parent and remove the old one rather than reparenting in place.
+
 ### Socket Types: Mesh vs Skeleton
 
 - **Mesh Socket** (`bAddToSkeleton=False`): Specific to one skeletal mesh
