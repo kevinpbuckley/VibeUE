@@ -83,7 +83,7 @@ E   = "CompletelyEmpty"
 
 # 1. Create the empty scratch module on the Particle Update stage
 r = unreal.NiagaraScratchPadService.create_scratch_module(S, E, "ParticleUpdate", "SplatLine")
-assert r.b_success, r.message
+assert r.success, r.message   # result field is `.success` (NOT `.b_success`)
 MOD = r.module_name           # e.g. "SplatLine"
 print("script path:", r.script_path)
 
@@ -133,6 +133,16 @@ unreal.NiagaraScratchPadService.connect_pins(S, E, MOD, HLSL, "Splatted", mapset
 unreal.NiagaraScratchPadService.apply_changes(S)
 ```
 
+### `add_module_input` / `add_module_output` are idempotent — call once per name
+
+Each `add_module_input(name)` adds one `Module.<name>` output pin to the Map Get; each
+`add_module_output(name)` adds one `<name>` input pin (e.g. `Particles.Splatted`) to the Map Set.
+**Calling either twice for the same name is a no-op now** — the existing pin is reused, not
+duplicated. (Older builds appended a duplicate pin every call; two same-named *connected* writes
+on the Map Set produce duplicate attribute writes and the compiler then rejects the system with
+`"System is invalid after compilation"`.) So: declare each input/output exactly once, and if you
+are bisecting a compile failure, do **not** re-add outputs — inspect with `get_node_pins` instead.
+
 ### Supported pin types (TypeName strings)
 
 | String | Niagara type |
@@ -164,6 +174,14 @@ If a bare name doesn't resolve, pass the full `Namespace::Op` string.
 - Array DI calls use the generated function names, e.g. `StartPositions.Get(Index)` returns a `Float3`.
 - Grid 2D writes use `TracksGrid.SetVector4Value(AttributeIndex, X, Y, Value)` style — see the Niagara docs for the exact signatures the translator generates.
 - For pure node-based logic without HLSL, use `add_op_node` + `connect_pins` between Map Get / Map Set.
+
+> ⚠️ **`Grid2DCollection`, `Grid3DCollection`, and `RenderTarget2D` data interfaces are GPU-compute
+> only.** If their inputs/writes appear in an emitter whose Sim Target is **CPU** (the default for a
+> `minimal` emitter), `compile_with_results` returns `success=False` with the generic message
+> `"System is invalid after compilation"` — this is a Niagara constraint, not a service failure. Set
+> the emitter to **GPUComputeSim** before wiring grid/render-target logic. A Custom HLSL bool output
+> wired to a plain `Particles.*` attribute compiles fine on CPU; it's the grid/RT data interfaces that
+> force GPU. When you hit "System is invalid", first check the emitter's Sim Target.
 
 ### One pattern that fixes most "input not found" errors
 
