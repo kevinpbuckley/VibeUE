@@ -11,7 +11,7 @@ Check whether the PCG and PCGPythonInterop plugins are loaded by verifying that 
 
 ---
 
-Search for any existing PCG graph assets with "PCGTest" in the name (use manage_asset action="search") and delete them if found.
+List any existing assets under the "/Game/PCGTest" folder (use manage_asset action="list", path="/Game/PCGTest") and delete them if found. NOTE: a name search for "PCGTest" will NOT match the assets created below — they are named `PCG_TestGraph` / `PCG_SubgraphTest`, which contain no contiguous "PCGTest" substring. Verify by folder, not by name search.
 
 ---
 
@@ -315,7 +315,7 @@ Save both PCG_TestGraph and PCG_SubgraphTest.
 
 ---
 
-Verify both assets exist at /Game/PCGTest by searching for PCG assets with "PCGTest" in the name.
+Verify both assets exist by listing the "/Game/PCGTest" folder (manage_asset action="list"). Do NOT name-search "PCGTest" — it won't match `PCG_TestGraph` / `PCG_SubgraphTest`.
 
 ---
 
@@ -325,4 +325,4 @@ Delete all assets under /Game/PCGTest.
 
 ---
 
-Search for PCG assets with "PCGTest" in the name. Should return nothing.
+List the "/Game/PCGTest" folder (manage_asset action="list"). Should return nothing. NOTE: deletion may be blocked by Windows file handles on `.uasset` files loaded this session — if so, the assets remain until the editor restarts; this is a known engine/OS limitation, not an API failure.

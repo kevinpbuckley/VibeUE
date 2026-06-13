@@ -11,7 +11,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 1 | niagara/scratchpad_trackpainter.md | ✅ | Completed in prior session (branch fix verified). |
 | 2 | animation-editing.md | ⚠️ | 27/27 prompts passed. Added 3 gotchas to animation-editing/common-mistakes.md. |
 | 3 | demo_prompts.md | ⚠️ | 7/9 done (2 referenced non-existent assets; graceful fallback). Added AttributeError-trap table to level-actors. |
-| 4 | pcg/pcg_tests.md | ⏳ | |
+| 4 | pcg/pcg_tests.md | ⚠️ | 30/32 pass (2 blocked: delete file-handle + edge-enum, both engine/OS limits). Added edge-enumeration doc; fixed test search-by-name bug. |
 | 5 | skeleton/skeleton_tests.md | ⏳ | |
 | 6 | Smoke_Test.md | ⏳ | |
 | 7 | sound-cues/sound_cues_tests.md | ⏳ | |
@@ -60,3 +60,18 @@ raised AttributeError.
 **Fix applied:** Added a "Verified AttributeError traps (UE 5.7 Python)" table to
 `Content/Skills/level-actors/SKILL.md` covering all five, plus a "discover the class once instead of
 guessing" note.
+
+### 4. pcg/pcg_tests.md — ⚠️ pass with fixes
+30/32 steps pass. The 2 non-passes are both known engine/OS limits already documented in the pcg
+skill: asset delete blocked by Windows `.uasset` file handles, and no graph-wide edge enumeration.
+
+**Verified gaps:** `PCGGraph.edges` doesn't exist; `PCGEdge` endpoint pins
+(`input_pin`/`output_pin`) are not exposed to Python (confirmed via execute_python_code), so wiring
+can only be verified per-pin (`pin.is_connected()` / `pin.get_editor_property('edges')` count).
+`notify_graph_changed` and the delete-handle limit were already documented (weak model rediscovered
+them). Test-file bug: it told the agent to name-search "PCGTest", which never matches
+`PCG_TestGraph`/`PCG_SubgraphTest`.
+
+**Fixes applied:** Added an "Enumerating Edges / verifying the whole graph" section to
+`Content/Skills/pcg/workflows.md`; changed the three search-by-name steps in `pcg_tests.md` to
+list the `/Game/PCGTest` folder and noted the delete file-handle caveat.

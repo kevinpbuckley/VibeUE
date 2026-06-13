@@ -38,6 +38,29 @@ print(pin.is_connected())          # correct
 # print(pin.get_editor_property('is_connected'))  # WRONG — raises AttributeError
 ```
 
+## Enumerating Edges / verifying the whole graph
+
+There is **no `graph.edges` property** — `graph.get_editor_property('edges')` raises
+`AttributeError`. Edges live on each **pin**: `pin.get_editor_property('edges')` returns the list of
+`PCGEdge` for that pin. But `PCGEdge` does **not** expose its endpoint pins to Python
+(`input_pin`/`output_pin` and every variant are protected), so you cannot traverse an edge to its
+other end. To verify wiring, walk the pins instead:
+
+```python
+def dump_connections(graph):
+    nodes = [graph.get_input_node()] + list(graph.get_editor_property('nodes')) + [graph.get_output_node()]
+    for n in nodes:
+        name = type(n.get_settings()).__name__ if n.get_settings() else 'Input/Output'
+        for pin in n.get_editor_property('output_pins'):
+            cnt = len(pin.get_editor_property('edges'))
+            if cnt:
+                lbl = pin.get_editor_property('properties').get_editor_property('label')
+                print(f"{name}.{lbl} -> {cnt} edge(s)")
+```
+
+`pin.node` (back-reference to the owning node) and `pin.is_output_pin()` are available; the edge
+*count* per pin plus `is_connected()` is the most you can read back. Don't try `PCGEdge.input_pin`.
+
 ## Connecting Nodes (Edges)
 
 Use `graph.add_edge()` or `node.add_edge_to()` — both work, prefer `add_edge` for clarity.
