@@ -22,7 +22,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 12 | umg/viewmodel_binding.md | ⚠️ | Crash (#435) on first run → restarted editor (baked in #433 fix). Re-run: 11/11 phases + 7/7 error cases pass, no crash. Fixed mvvm doc (enabled vs b_enabled, dangling bindings). |
 | 13 | umg/widget_hierarchy.md | ✅ | Regression PASS: 13 widgets read, 20/20 loop on deepest (110 widgets, depth 9), no 0xC0000005 crash, interpreter alive. Empty/nonexistent → [] gracefully. |
 | 14 | utilities/check_unreal_connection.md | ✅ | 9/9 pass (connection, plugin status 31/32 services, MCP info, troubleshooting, help/capabilities). No bugs. |
-| 15 | uv-mapping/uv_mapping_tests.md | ⏳ | |
+| 15 | uv-mapping/uv_mapping_tests.md | ✅ | Sections A–F pass (inspection, channel lifecycle w/ protected ch0 + max-8, generation, transforms, islands, lightmap+export). Minor: count_vertices_by_normal arg-count mismatch. |
 | 16 | viewport/viewport_tests.md | ⏳ | |
 
 ---
