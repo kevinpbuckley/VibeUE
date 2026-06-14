@@ -34,7 +34,11 @@ namespace
 		{
 			return false;
 		}
-		return Struct->IsChildOf(FTableRowBase::StaticStruct()) || Struct->IsA<UUserDefinedStruct>();
+		// IsA<UUserDefinedStruct>() requires the type to be fully declared, which breaks on
+		// older UE versions where the header guard differs. Class-name check is equivalent
+		// and works across all UE versions.
+		return Struct->IsChildOf(FTableRowBase::StaticStruct()) ||
+		       Struct->GetClass()->GetFName() == FName(TEXT("UserDefinedStruct"));
 	}
 
 	// Resolve a JSON key to a struct property. UserDefinedStruct properties have
