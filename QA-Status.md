@@ -6,6 +6,27 @@ skills / services to reduce token usage and time-to-complete for common tasks.
 
 Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue filed) · ⏳ pending · 🚫 skipped
 
+## Summary (sweep complete)
+
+All 16 listed test files run (niagara scratchpad was already done in a prior session). **No test left
+the editor in a broken state at the end.** Skill/doc/test fixes were committed per-file to the plugin
+`skills` branch.
+
+**Bugs found & filed:**
+- [#433](https://github.com/kevinpbuckley/VibeUE/issues/433) — auto-save-before-Python shows a modal
+  PackagesDialog during MCP/automated chat → hang + crash. **Fixed** (skip auto-save in Chat Editor
+  Testing mode; verified). Full headless-save fix for all MCP paths still open in the issue.
+- [#434](https://github.com/kevinpbuckley/VibeUE/issues/434) — `StateTreeService.get_available_evaluator_types()`
+  times out (~98s).
+- [#435](https://github.com/kevinpbuckley/VibeUE/issues/435) — `add_component(is_root=True)` on a
+  `create_blueprint("UserWidget")` widget stack-overflows the Python VM.
+
+**Skill/doc improvements:** animation-editing (Transform/.translation, anim-duplicate, create_from_pose),
+level-actors (AttributeError-trap table), pcg (edge enumeration), skeleton (no reparent),
+state-trees (info-struct fields), landscape (HeightmapImportResult/get_height/delete-proxy),
+umg-widgets (typeface set_property, mvvm `enabled`/dangling bindings), viewport (multi-pane realtime).
+**Test-file fix:** pcg_tests search-by-name → folder-list.
+
 | # | Test file | Status | Notes |
 |---|-----------|--------|-------|
 | 1 | niagara/scratchpad_trackpainter.md | ✅ | Completed in prior session (branch fix verified). |
@@ -23,7 +44,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 13 | umg/widget_hierarchy.md | ✅ | Regression PASS: 13 widgets read, 20/20 loop on deepest (110 widgets, depth 9), no 0xC0000005 crash, interpreter alive. Empty/nonexistent → [] gracefully. |
 | 14 | utilities/check_unreal_connection.md | ✅ | 9/9 pass (connection, plugin status 31/32 services, MCP info, troubleshooting, help/capabilities). No bugs. |
 | 15 | uv-mapping/uv_mapping_tests.md | ✅ | Sections A–F pass (inspection, channel lifecycle w/ protected ch0 + max-8, generation, transforms, islands, lightmap+export). Minor: count_vertices_by_normal arg-count mismatch. |
-| 16 | viewport/viewport_tests.md | ⏳ | |
+| 16 | viewport/viewport_tests.md | ✅ | 17/17 pass (view types, FOV, clip planes, exposure, game view, cinematic, realtime, camera pos/rot/speed, all layouts, reset). Added multi-pane realtime read-back caveat to skill. |
 
 ---
 

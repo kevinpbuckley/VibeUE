@@ -121,6 +121,12 @@ unreal.ViewportService.set_fov(75.0)
 
 When `set_realtime(False)`, the viewport only repaints on interaction. All ViewportService methods force a redraw after changes, so this is transparent to Python callers — but be aware users won't see continuous animation/particles until realtime is re-enabled.
 
+> ⚠️ **Multi-pane read-back caveat:** `get_viewport_info().is_realtime` reflects the *active* pane.
+> In a multi-pane layout (e.g. `FourPanes2x2`) where the active pane isn't the primary, `set_realtime(True)`
+> can succeed yet `is_realtime` reads back `False`. Verify realtime in `OnePane` layout, or don't rely on
+> the read-back to gate logic when in a split layout. (Other fields like view type / FOV / camera read back
+> correctly across layouts.)
+
 ---
 
 ## Workflows
