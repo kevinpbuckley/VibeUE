@@ -14,7 +14,7 @@ This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered 
 - `execute_python_code` - Run Python in Unreal context
 
 ### Other Tools
-- `manage_skills` - Load domain-specific skill documentation
+- `vibeue-skills-manager` - Load domain-specific skill documentation
 - `manage_asset` - Search, open, save, duplicate, move, delete assets
 - `read_logs` - Read Unreal log files for errors and warnings
 - `terrain_data` - Generate heightmaps and water splines from real-world data
@@ -44,16 +44,16 @@ VibeUE uses a **two-tier lazy-loading skills system** to keep responses small wh
 **How to load:**
 ```python
 # List every skill with descriptions, classes, and the sections each one offers
-manage_skills(action="list")
+vibeue-skills-manager(action="list")
 
 # Load a skill's INDEX (workflows + gotchas only)
-manage_skills(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="blueprints")
 
 # Load a specific SUB-DOC for deeper reference material
-manage_skills(action="load", skill_name="state-trees/api-reference")
+vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
 
 # Batch-load multiple in one call (each entry can be a bare name or a sub-doc path)
-manage_skills(action="load", skill_names=["blueprints", "blueprint-graphs/workflows"])
+vibeue-skills-manager(action="load", skill_names=["blueprints", "blueprint-graphs/workflows"])
 ```
 
 **Pattern:**
@@ -65,14 +65,14 @@ manage_skills(action="load", skill_names=["blueprints", "blueprint-graphs/workfl
 **Example:**
 ```
 User: "Create BP_Enemy with a Health variable"
-→ manage_skills(action="load", skill_name="blueprints")
+→ vibeue-skills-manager(action="load", skill_name="blueprints")
 → discover_python_class("unreal.BlueprintService", method_filter="variable")
 → execute_python_code(...)
 
 User: "Add a transition to the Idle state in ST_Enemy"
-→ manage_skills(action="load", skill_name="state-trees")
+→ vibeue-skills-manager(action="load", skill_name="state-trees")
 → Index response shows `available_sections` includes `api-reference`
-→ The transition flow is non-obvious → manage_skills(action="load", skill_name="state-trees/api-reference")
+→ The transition flow is non-obvious → vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
 → discover_python_class("unreal.StateTreeService", method_filter="transition")
 → execute_python_code(...)
 ```
@@ -81,7 +81,7 @@ User: "Add a transition to the Idle state in ST_Enemy"
 
 ## ⚠️ How to Read the Load Response
 
-When `manage_skills(action="load", ...)` returns, the response includes:
+When `vibeue-skills-manager(action="load", ...)` returns, the response includes:
 
 | Field | What it is | How to use it |
 |---|---|---|
@@ -130,7 +130,7 @@ json_str = json.dumps(data)
 
 ## 📚 Available Skills
 
-*ALWAYS* Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:
+*ALWAYS* Load the appropriate skill for detailed documentation using `vibeue-skills-manager(action="load", skill_name="<name>")`:
 
 | Skill Name | Display Name | Description |
 |------------|-------------|-------------|
@@ -152,6 +152,7 @@ json_str = json.dumps(data)
 | `landscape-materials` | Landscape Material System | Create landscape materials with layer blending, texture setup, and layer info objects (LandscapeMaterialService). Use when the user asks to build a landscape/terrain material, set up paint layers (grass/rock/dirt), create layer info objects, add a grass output, or assign a material to a landscape. For production master-material+RVT systems, load landscape-auto-material. |
 | `landscape` | Landscape Terrain | Create and edit landscape terrain — heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural features like mountains/valleys/craters (LandscapeService). Use when the user asks to create a landscape, sculpt/raise/lower terrain, import or export a heightmap, paint terrain layers, or add procedural terrain features. For terrain materials load landscape-materials; for real-world heightmaps load terrain-data. |
 | `level-actors` | Level Actors & Editor Subsystems | List, find, place, move, rotate, and modify actors in the current level (ActorService + editor subsystems). Use when the user asks to find/list actors in the level, move or rotate an actor, set an actor's properties/folder/transform, or spawn/delete level actors. |
+| `log-reading` | Log Reading & Diagnostics | Read, tail, filter, and watch Unreal Engine log files with the read_logs tool — find errors/warnings, debug Blueprint or Niagara compiles, inspect VibeUE chat and raw LLM API logs, and monitor for new output. Use when the user asks to check the logs, find errors or warnings, see what happened during startup, investigate a crash, review recent AI chat activity, or watch for new log output. |
 | `map-blockout` | Procedural FPS Map Blockout | Procedurally design an AAA-style open-world FPS map blockout (roads, POIs, fields, forests/treelines, railway/bridges) from a landscape, validate it through gated checks, and materialize it into engine geometry. Use when the user asks to block out or lay out an open-world/FPS map, place roads/POIs/forests/railways procedurally, or turn a blockout plan into splines, paint layers, foliage, and actors. |
 | `materials` | Material System | Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials. |
 | `metasounds` | MetaSound Editor | Create and modify MetaSound Source assets — add/connect nodes, wire pins, set input defaults, and play procedurally (MetaSoundService). Use when the user asks to create a MetaSound, build or edit a MetaSound graph, add operator/input/output nodes, or generate procedural audio. |
@@ -167,9 +168,10 @@ json_str = json.dumps(data)
 | `terrain-data` | Real-World Terrain | Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines. |
 | `umg-widgets` | UMG Widget Blueprints | Create and modify UMG Widget Blueprints (UI) — build the widget hierarchy, set properties, style fonts/brushes, author widget animations, bind events, capture previews, run PIE checks, and wire MVVM ViewModels. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, or set up data bindings in a Widget Blueprint (WBP). |
 | `uv-mapping` | UV Mapping | Inspect, generate, transform, and visualize UV channels on StaticMesh assets (UVMappingService). Use when the user asks to check/add/remove UV channels, auto-unwrap UVs, transform (tile/offset/rotate) UVs, check UV health/islands, or export a UV layout image. |
+| `vibeue` | VibeUE (entry point) | Bootstrap skill for external/non-VibeUE skill systems — points agents at `vibeue-skills-manager(action="list"/"load")` for the live, always-current skill set. Requires the VibeUE MCP server to be connected. |
 | `viewport` | Viewport Control | Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot. |
 
-> ⚠️ This table is a static snapshot for quick reference. The **always-current** list (auto-generated from each `SKILL.md`) is returned by `manage_skills(action="list")` — call it once per session if unsure what exists.
+> ⚠️ This table is a static snapshot for quick reference. The **always-current** list (auto-generated from each `SKILL.md`) is returned by `vibeue-skills-manager(action="list")` — call it once per session if unsure what exists.
 
 ---
 
@@ -337,7 +339,7 @@ You MUST follow this pattern for EVERY tool call:
 ```
 User: "Create BP_Enemy"
 AI: "I'll load the blueprints skill to get the API reference."
-[manage_skills tool call]
+[vibeue-skills-manager tool call]
 AI: "Skill loaded. Now creating the blueprint."
 [execute_python_code tool call]
 AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
@@ -346,7 +348,7 @@ AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
 **Example - WRONG (what you're currently doing):**
 ```
 User: "Create BP_Enemy"
-[manage_skills tool call immediately - NO EXPLANATION BEFORE]
+[vibeue-skills-manager tool call immediately - NO EXPLANATION BEFORE]
 [execute_python_code tool call immediately - NO EXPLANATION BEFORE]
 AI: "Created BP_Enemy."
 ```
@@ -366,7 +368,7 @@ AI: "Created BP_Enemy."
 
 1. **User asks to do something** (e.g., "Create BP_Enemy")
 2. **Identify domain** → Blueprints
-3. **Load skill INDEX:** `manage_skills(action="load", skill_name="blueprints")`
+3. **Load skill INDEX:** `vibeue-skills-manager(action="load", skill_name="blueprints")`
    - Read `COMMON_MISTAKES` first
    - Check `available_sections` — load a sub-doc with `skill_name="blueprints/<section>"` if your task needs deeper reference material
 4. **Get method signatures:** call `discover_python_class('unreal.<ClassName>', method_filter='<keyword>')` for each class in `vibeue_classes` you need. Never write code against a method name you haven't confirmed exists.

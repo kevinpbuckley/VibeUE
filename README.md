@@ -30,7 +30,7 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Tools (10 tools)
+### 1. MCP Tools (10 tools, +1 optional)
 Lightweight MCP tools for AI interaction with Unreal:
 
 | Tool | Purpose |
@@ -45,6 +45,7 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
 | `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
 | `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
+| `manage_editor_chat` _(optional)_ | Drive the in-editor AI chat for automated end-to-end testing. **Hidden unless Chat Editor Testing mode is enabled** — see [In-Editor AI Chat → Chat Editor Testing](#-chat-editor-testing-optional). |
 
 **Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
 
@@ -458,6 +459,26 @@ The built-in chat interface runs directly in Unreal Editor:
 | **LLM Provider** | VibeUE | Select VibeUE or OpenRouter |
 | **Temperature** | 0.2 | Creativity (0.0-1.0) |
 | **Max Tool Iterations** | 100 | Max tool calls per turn |
+| **Chat Editor Testing** | Off | Exposes the optional `manage_editor_chat` MCP tool (see below) |
+
+### 🧪 Chat Editor Testing (optional)
+
+A testing mode that lets an **external** agent drive the **in-editor** AI chat end-to-end — useful for
+automated regression runs of skills/services against a live editor. When enabled, the MCP server exposes
+one extra tool, **`manage_editor_chat`**; it is **hidden by default** so normal users and the in-editor
+chat AI never see it.
+
+**Enable it any of these ways:**
+- Settings checkbox: *Project Settings → Plugins → VibeUE → General → Chat Editor Testing*
+- Config: `[VibeUE] ChatEditorTesting=True` in `EditorPerProjectUserSettings.ini`
+- Launch flag: start the editor with `-VibeUEChatTesting`
+
+**`manage_editor_chat` actions:** `open_chat`, `send_message`, `check_chat_status`, `get_messages`,
+`get_last_response`, `stop_chat`, `reset_chat` (with optional `archive_log`), `approve_tool` /
+`reject_tool`, `set_yolo_mode`, `set_model`, `archive_chat_log`, `get_chat_log_path`, `help`.
+
+> `send_message` is asynchronous: poll `check_chat_status` until `is_idle=true`, then call
+> `get_last_response`. Enable `set_yolo_mode` for unattended runs so Python execution auto-approves.
 
 ### 🧠 Memory (Persistent Across Sessions)
 
