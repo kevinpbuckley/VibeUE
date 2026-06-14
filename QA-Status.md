@@ -14,7 +14,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 4 | pcg/pcg_tests.md | ⚠️ | 30/32 pass (2 blocked: delete file-handle + edge-enum, both engine/OS limits). Added edge-enumeration doc; fixed test search-by-name bug. |
 | 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename verified. Crash in section I root-caused→fixed (#433, auto-save modal). Re-run confirmed fix; reparent (known-broken) stalls chat → skill gotcha added. |
 | 6 | Smoke_Test.md | ✅ | 19/19 pass after gateway recovered. No crashes/modals (confirms #433 fix). Minor enhancement notes only. |
-| 7 | sound-cues/sound_cues_tests.md | ⏳ | |
+| 7 | sound-cues/sound_cues_tests.md | ✅ | 28/28 pass (lifecycle, all 14 node types, connections, properties, 6 e2e scenarios, cleanup). No gaps; no fix needed. |
 | 8 | state-trees/state_trees_tests.md | ⏳ | |
 | 9 | terrain-data/terrain_data_tests.md | ⏳ | |
 | 10 | transactions/transactions.md | ⏳ | |
