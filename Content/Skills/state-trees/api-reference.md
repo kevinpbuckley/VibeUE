@@ -21,6 +21,12 @@ info = unreal.StateTreeService.get_state_tree_info("/Game/AI/MyBehavior")
 # info.evaluators       → list of FStateTreeNodeInfo
 # info.global_tasks     → list of FStateTreeNodeInfo
 # info.all_states       → list of FStateTreeStateInfo (flattened)
+# info.root_parameters  → list of FStateTreeParameterInfo  (NOT .root_parameter_names)
+# info.last_compile_status, info.asset_path
+#
+# Each FStateTreeParameterInfo: .name, .type, .default_value  (NOT .current_value)
+# Each FStateTreeThemeColorInfo: .display_name, .color, .used_by_states
+#   (NOT .referencing_state_paths)
 
 # Each FStateTreeStateInfo has:
 #   .name, .path, .state_type, .selection_behavior, .enabled

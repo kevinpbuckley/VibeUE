@@ -15,7 +15,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename verified. Crash in section I root-caused→fixed (#433, auto-save modal). Re-run confirmed fix; reparent (known-broken) stalls chat → skill gotcha added. |
 | 6 | Smoke_Test.md | ✅ | 19/19 pass after gateway recovered. No crashes/modals (confirms #433 fix). Minor enhancement notes only. |
 | 7 | sound-cues/sound_cues_tests.md | ✅ | 28/28 pass (lifecycle, all 14 node types, connections, properties, 6 e2e scenarios, cleanup). No gaps; no fix needed. |
-| 8 | state-trees/state_trees_tests.md | ⏳ | |
+| 8 | state-trees/state_trees_tests.md | ⚠️ | Broad pass (A–L). Real bug: get_available_evaluator_types times out → issue #434. Added info-struct field notes. Section J "unsupported" was agent error (set_state_type exists). |
 | 9 | terrain-data/terrain_data_tests.md | ⏳ | |
 | 10 | transactions/transactions.md | ⏳ | |
 | 11 | umg/manage_umg_widget.md | ⏳ | |
@@ -118,3 +118,24 @@ reference in the blueprints skill would save a round-trip; (b) `manage_asset del
 folder/bulk delete would simplify cleanup; (c) `FSlateColor` ColorAndOpacity needs
 `(SpecifiedColor=(R=...))` and `set_property` returns True even on a silently-wrong struct (already
 flagged in umg-widgets skill).
+
+### 8. state-trees/state_trees_tests.md — ⚠️ broad pass with one real bug
+Exercised the full StateTreeService surface (A–L: basics, state props, parameters, transitions,
+tasks, conditions, evaluators, presentation, considerations, linked states, component overrides, e2e).
+Most sections passed.
+
+**Real service bug:** `get_available_evaluator_types()` times out (~98s → PYTHON_EXECUTION_TIMEOUT)
+while the sibling condition/consideration enumerators return instantly → GitHub issue
+[#434](https://github.com/kevinpbuckley/VibeUE/issues/434).
+
+**Not real bugs (clarified):** Section J "state-type conversion unsupported" was an **agent error** —
+`set_state_type` / `set_linked_subtree` / `set_linked_asset` all exist and are documented in the
+state-trees api-reference (the weak chat model just didn't use them; `link_subtree` is the only
+non-existent name, the real one is `set_linked_subtree`). `set_context_actor_class` and Actor-context
+binding "failed" only because the BasicMovement test tree uses `StateTreeTestSchema`, which has no
+actor context — schema limitation, not a service defect.
+
+**Fix applied:** Added correct info-struct field names to `state-trees/api-reference.md`
+(`StateTreeInfo.root_parameters`, `StateTreeParameterInfo.{name,type,default_value}`,
+`StateTreeThemeColorInfo.{display_name,color,used_by_states}`) — the agent had guessed
+`.root_parameter_names` / `.current_value` / `.referencing_state_paths` and hit AttributeErrors.
