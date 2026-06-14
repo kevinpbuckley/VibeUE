@@ -91,6 +91,11 @@ examples in `scripts/apply_font.pyx` and `scripts/apply_brush.pyx`.
 `set_brush` requires a **`slot_name`**: `set_brush(widget_path, component_name, slot_name, brush_info)`
 (for an Image the slot is `"Brush"`). `set_font` takes an optional `property_name` that defaults to `"Font"`.
 
+> ⚠️ **`set_property("Font.Typeface", ...)` silently returns False** (size and color leaf-sets work,
+> but typeface/family do not go through the struct sub-property path). Always change typeface/family
+> via `set_font` with a `WidgetFontInfo`. Don't trust the `True/False` return of `set_property` on
+> nested struct sub-fields — read it back to confirm.
+
 ### 🚨 Animations require real property paths
 
 `add_animation_track` / `add_keyframe` target actual widget properties or slot aliases

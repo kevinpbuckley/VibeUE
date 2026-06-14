@@ -18,7 +18,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 8 | state-trees/state_trees_tests.md | ⚠️ | Broad pass (A–L). Real bug: get_available_evaluator_types times out → issue #434. Added info-struct field notes. Section J "unsupported" was agent error (set_state_type exists). |
 | 9 | terrain-data/terrain_data_tests.md | ✅ | 20/20 (tool surface + Fuji build). Added 3 landscape gotchas. Triple full-paint builds scoped out (heavy, overlap landscape/material). |
 | 10 | transactions/transactions.md | ✅ | 23/23 pass (undo/redo, grouping, cancel, history, reset). No bugs. Notes: add_actor zero-vector → camera-relative; cancel pushes group to redo stack (by design). |
-| 11 | umg/manage_umg_widget.md | ⏳ | |
+| 11 | umg/manage_umg_widget.md | ⚠️ | 28/29 pass (1 partial). Font/brush/animation/preview/PIE APIs all work. Added typeface set_property gotcha to umg-widgets skill. |
 | 12 | umg/viewmodel_binding.md | ⏳ | |
 | 13 | umg/widget_hierarchy.md | ⏳ | |
 | 14 | utilities/check_unreal_connection.md | ⏳ | |
