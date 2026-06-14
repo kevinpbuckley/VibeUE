@@ -17,7 +17,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 7 | sound-cues/sound_cues_tests.md | ✅ | 28/28 pass (lifecycle, all 14 node types, connections, properties, 6 e2e scenarios, cleanup). No gaps; no fix needed. |
 | 8 | state-trees/state_trees_tests.md | ⚠️ | Broad pass (A–L). Real bug: get_available_evaluator_types times out → issue #434. Added info-struct field notes. Section J "unsupported" was agent error (set_state_type exists). |
 | 9 | terrain-data/terrain_data_tests.md | ✅ | 20/20 (tool surface + Fuji build). Added 3 landscape gotchas. Triple full-paint builds scoped out (heavy, overlap landscape/material). |
-| 10 | transactions/transactions.md | ⏳ | |
+| 10 | transactions/transactions.md | ✅ | 23/23 pass (undo/redo, grouping, cancel, history, reset). No bugs. Notes: add_actor zero-vector → camera-relative; cancel pushes group to redo stack (by design). |
 | 11 | umg/manage_umg_widget.md | ⏳ | |
 | 12 | umg/viewmodel_binding.md | ⏳ | |
 | 13 | umg/widget_hierarchy.md | ⏳ | |
