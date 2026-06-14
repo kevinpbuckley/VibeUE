@@ -126,6 +126,20 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 		return;
 	}
 
+	// Process any queued edit-layer content update synchronously. RequestLayersContentUpdate
+	// only queues a merge for the next editor tick, so without this, height reads in the same
+	// Python call (FLandscapeEditDataInterface reads the merged heightmap) return stale
+	// pre-edit values, and collision below would be rebuilt from stale data too.
+	// Note: ForceUpdateLayersContent only processes already-requested updates — unlike
+	// ForceLayersFullUpdate, it does NOT force a full weightmap resolve.
+	if (ALandscape* LandscapeActor = Landscape->GetLandscapeActor())
+	{
+		if (LandscapeActor->HasLayersContent())
+		{
+			LandscapeActor->ForceUpdateLayersContent();
+		}
+	}
+
 	// Update every proxy that belongs to this landscape GUID. In partitioned levels,
 	// components can be distributed across proxies, so updating only one actor can leave
 	// terrain in a partially refreshed state.
@@ -298,6 +312,17 @@ FLandscapeCreateResult ULandscapeService::CreateLandscape(
 	if (ComponentCountX < 1 || ComponentCountY < 1)
 	{
 		Result.ErrorMessage = TEXT("ComponentCountX and ComponentCountY must be >= 1");
+		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
+		return Result;
+	}
+
+	// A timed-out create_landscape call keeps running and usually completes, so a
+	// blind retry would stack a second landscape under the same label.
+	if (!LandscapeLabel.IsEmpty() && FindLandscapeByIdentifier(LandscapeLabel))
+	{
+		Result.ErrorMessage = FString::Printf(
+			TEXT("Landscape '%s' already exists. A timed-out create_landscape may still have completed in the background — check landscape_exists() before retrying, or delete the existing landscape / use a different label."),
+			*LandscapeLabel);
 		UE_LOG(LogTemp, Error, TEXT("ULandscapeService::CreateLandscape: %s"), *Result.ErrorMessage);
 		return Result;
 	}

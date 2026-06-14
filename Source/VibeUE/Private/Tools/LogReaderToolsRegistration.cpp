@@ -142,10 +142,27 @@ static FString GetLogReaderHelp()
 
 	HelpObj->SetArrayField(TEXT("examples"), ExamplesArray);
 
+	// Behavior notes
+	TArray<TSharedPtr<FJsonValue>> NotesArray;
+	NotesArray.Add(MakeShared<FJsonValueString>(TEXT("Lines longer than 2000 chars are truncated with a '...[line truncated; N chars total]' marker (e.g. LogPython introspection dumps).")));
+	NotesArray.Add(MakeShared<FJsonValueString>(TEXT("'modified' timestamps from list/info are local time; 'modified_utc' is also provided. Timestamps INSIDE UE log lines ([2026.06.12-22.21.26:415]) are UTC; VibeUE_Chat.log line timestamps are local.")));
+	HelpObj->SetArrayField(TEXT("notes"), NotesArray);
+
 	FString JsonString;
 	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
 	FJsonSerializer::Serialize(HelpObj.ToSharedRef(), Writer);
 	return JsonString;
+}
+
+// Defined outside REGISTER_VIBEUE_TOOL because comma-separated initializer
+// lists inside a function-like macro invocation split into extra macro arguments
+static bool IsKnownLogAction(const FString& Action)
+{
+	static const TSet<FString> KnownActions = {
+		TEXT("list"), TEXT("info"), TEXT("read"), TEXT("tail"), TEXT("head"),
+		TEXT("filter"), TEXT("errors"), TEXT("warnings"), TEXT("since"), TEXT("help")
+	};
+	return KnownActions.Contains(Action);
 }
 
 // Register the read_logs tool
@@ -171,6 +188,14 @@ REGISTER_VIBEUE_TOOL(read_logs,
 		if (Action.IsEmpty())
 		{
 			return BuildLogErrorResponse(TEXT("MISSING_ACTION"), TEXT("The 'action' parameter is required. Use action=help for documentation."));
+		}
+
+		// Validate the action up front so an unknown action is reported as such
+		// instead of falling into the missing-file check below
+		if (!IsKnownLogAction(Action))
+		{
+			return BuildLogErrorResponse(TEXT("UNKNOWN_ACTION"),
+				FString::Printf(TEXT("Unknown action: '%s'. Valid actions: list, info, read, tail, head, filter, errors, warnings, since, help."), *Action));
 		}
 
 		// Create service with context (required by FServiceBase)

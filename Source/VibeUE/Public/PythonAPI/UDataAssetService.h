@@ -360,8 +360,9 @@ public:
 	static bool DataAssetExists(const FString& AssetPath);
 
 private:
-	// Helper to find DataAsset class by name
-	static UClass* FindDataAssetClass(const FString& ClassName);
+	// Helper to find DataAsset class by name. Abstract classes are excluded by
+	// default so creation paths can't instantiate them; info queries pass true.
+	static UClass* FindDataAssetClass(const FString& ClassName, bool bAllowAbstract = false);
 	
 	// Helper to load DataAsset by path
 	static UDataAsset* LoadDataAsset(const FString& AssetPath);

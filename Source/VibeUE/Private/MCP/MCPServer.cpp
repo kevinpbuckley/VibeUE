@@ -10,6 +10,7 @@
 #include "Serialization/JsonSerializer.h"
 #include "Serialization/JsonWriter.h"
 #include "Core/ToolRegistry.h"
+#include "Chat/ChatSession.h"
 #include "Chat/MCPTypes.h"
 #include "Async/Async.h"
 #include "Framework/Notifications/NotificationManager.h"
@@ -1372,6 +1373,8 @@ TArray<FMCPTool> FMCPServer::GetInternalTools() const
     TArray<FToolMetadata> EnabledTools = Registry.GetEnabledTools();
     Result.Reserve(EnabledTools.Num());
     
+    const bool bChatTestingEnabled = FChatSession::IsChatEditorTestingEnabled();
+
     for (const FToolMetadata& Tool : EnabledTools)
     {
         // Skip internal-only tools - they are not exposed via MCP to external clients
@@ -1380,7 +1383,14 @@ TArray<FMCPTool> FMCPServer::GetInternalTools() const
             UE_LOG(LogMCPServer, Verbose, TEXT("Skipping internal-only tool for MCP: %s"), *Tool.Name);
             continue;
         }
-        
+
+        // Editor-testing tools are only exposed when Chat Editor Testing mode is enabled
+        if (Tool.bEditorTestingOnly && !bChatTestingEnabled)
+        {
+            UE_LOG(LogMCPServer, Verbose, TEXT("Skipping editor-testing tool for MCP (testing mode off): %s"), *Tool.Name);
+            continue;
+        }
+
         FMCPTool MCPTool;
         MCPTool.Name = Tool.Name;
         MCPTool.Description = Tool.Description;

@@ -2,6 +2,7 @@
 
 #include "PythonAPI/UDataTableService.h"
 #include "Engine/DataTable.h"
+#include "Engine/UserDefinedStruct.h"
 #include "EditorAssetLibrary.h"
 #include "AssetRegistry/AssetRegistryModule.h"
 #include "AssetRegistry/IAssetRegistry.h"
@@ -19,6 +20,49 @@ DEFINE_LOG_CATEGORY_STATIC(LogDataTableService, Log, All);
 // ============================================
 // Helper Functions
 // ============================================
+
+namespace
+{
+	// A struct can back a DataTable if it derives from FTableRowBase OR is a
+	// UserDefinedStruct (the editor's own Data Table factory accepts both —
+	// UserDefinedStructs can never derive from FTableRowBase).
+	// Transient STRUCT_REINST_* duplicates left behind by struct recompiles
+	// are never valid candidates.
+	bool IsUsableRowStruct(const UScriptStruct* Struct)
+	{
+		if (!Struct || Struct->GetName().StartsWith(TEXT("STRUCT_REINST_")))
+		{
+			return false;
+		}
+		return Struct->IsChildOf(FTableRowBase::StaticStruct()) || Struct->IsA<UUserDefinedStruct>();
+	}
+
+	// Resolve a JSON key to a struct property. UserDefinedStruct properties have
+	// mangled internal names (Damage_2_<guid>) — fall back to the authored
+	// (editor-facing) name so callers can use the names they typed in the editor.
+	FProperty* ResolveStructProperty(const UStruct* Struct, const FString& Key)
+	{
+		if (!Struct)
+		{
+			return nullptr;
+		}
+
+		if (FProperty* Direct = Struct->FindPropertyByName(*Key))
+		{
+			return Direct;
+		}
+
+		for (TFieldIterator<FProperty> It(Struct); It; ++It)
+		{
+			if (It->GetAuthoredName().Equals(Key, ESearchCase::IgnoreCase))
+			{
+				return *It;
+			}
+		}
+
+		return nullptr;
+	}
+}
 
 UDataTable* UDataTableService::LoadDataTable(const FString& TablePath)
 {
@@ -42,7 +86,6 @@ UScriptStruct* UDataTableService::FindRowStruct(const FString& StructNameOrPath)
 		return nullptr;
 	}
 
-	UScriptStruct* TableRowBase = FTableRowBase::StaticStruct();
 	UScriptStruct* FoundStruct = nullptr;
 
 	// Try direct find by path
@@ -61,7 +104,7 @@ UScriptStruct* UDataTableService::FindRowStruct(const FString& StructNameOrPath)
 		{
 			UScriptStruct* Struct = *It;
 
-			if (!Struct->IsChildOf(TableRowBase))
+			if (!IsUsableRowStruct(Struct))
 			{
 				continue;
 			}
@@ -83,7 +126,7 @@ UScriptStruct* UDataTableService::FindRowStruct(const FString& StructNameOrPath)
 	}
 
 	// Verify it's a valid row struct
-	if (FoundStruct && !FoundStruct->IsChildOf(TableRowBase))
+	if (FoundStruct && !IsUsableRowStruct(FoundStruct))
 	{
 		UE_LOG(LogDataTableService, Warning, TEXT("%s is not a valid row struct"), *StructNameOrPath);
 		return nullptr;
@@ -196,8 +239,8 @@ TArray<FRowStructTypeInfo> UDataTableService::SearchRowTypes(const FString& Sear
 	{
 		UScriptStruct* Struct = *It;
 
-		// Must be a subclass of FTableRowBase
-		if (!Struct->IsChildOf(TableRowBase))
+		// FTableRowBase subclasses and UserDefinedStructs are both usable
+		if (!IsUsableRowStruct(Struct))
 		{
 			continue;
 		}
@@ -248,7 +291,7 @@ TArray<FRowStructTypeInfo> UDataTableService::SearchRowTypes(const FString& Sear
 			FProperty* Property = *PropIt;
 			if (ShouldExposeProperty(Property))
 			{
-				Info.PropertyNames.Add(Property->GetName());
+				Info.PropertyNames.Add(Property->GetAuthoredName());
 			}
 		}
 
@@ -454,7 +497,7 @@ bool UDataTableService::GetInfo(const FString& TablePath, FDataTableDetailedInfo
 			}
 
 			TSharedPtr<FJsonObject> ColObj = MakeShared<FJsonObject>();
-			ColObj->SetStringField(TEXT("name"), Property->GetName());
+			ColObj->SetStringField(TEXT("name"), Property->GetAuthoredName());
 			ColObj->SetStringField(TEXT("type"), GetPropertyTypeString(Property));
 			ColObj->SetStringField(TEXT("cpp_type"), Property->GetCPPType());
 
@@ -516,7 +559,7 @@ TArray<FRowStructColumnInfo> UDataTableService::GetRowStruct(const FString& Tabl
 		}
 
 		FRowStructColumnInfo Column;
-		Column.Name = Property->GetName();
+		Column.Name = Property->GetAuthoredName();
 		Column.Type = GetPropertyTypeString(Property);
 		Column.CppType = Property->GetCPPType();
 
@@ -736,7 +779,7 @@ bool UDataTableService::UpdateRow(const FString& TablePath, const FString& RowNa
 	// Apply updates (partial update)
 	for (auto& Pair : JsonObj->Values)
 	{
-		FProperty* Property = RowStruct->FindPropertyByName(*Pair.Key);
+		FProperty* Property = ResolveStructProperty(RowStruct, Pair.Key);
 		if (!Property)
 		{
 			UE_LOG(LogDataTableService, Warning, TEXT("UpdateRow: Property '%s' not found"), *Pair.Key);
@@ -910,7 +953,9 @@ TSharedPtr<FJsonObject> UDataTableService::RowToJson(const UScriptStruct* RowStr
 	{
 		FProperty* Property = *PropIt;
 		TSharedPtr<FJsonValue> Value = PropertyToJson(Property, RowData);
-		JsonObj->SetField(Property->GetName(), Value);
+		// Authored name so UserDefinedStruct columns round-trip with the
+		// names the user typed in the editor (not Damage_2_<guid>)
+		JsonObj->SetField(Property->GetAuthoredName(), Value);
 	}
 
 	return JsonObj;
@@ -932,9 +977,15 @@ bool UDataTableService::JsonToRow(
 
 	for (const auto& Pair : JsonObj->Values)
 	{
-		FProperty* Property = RowStruct->FindPropertyByName(*Pair.Key);
+		FProperty* Property = ResolveStructProperty(RowStruct, Pair.Key);
 		if (!Property)
 		{
+			UE_LOG(LogDataTableService, Warning, TEXT("JsonToRow: Property '%s' not found on %s"), *Pair.Key, *RowStruct->GetName());
+			if (bAllSuccess)
+			{
+				OutError = FString::Printf(TEXT("Property '%s' not found"), *Pair.Key);
+				bAllSuccess = false;
+			}
 			continue;
 		}
 
@@ -969,6 +1020,17 @@ TSharedPtr<FJsonValue> UDataTableService::ValuePtrToJson(FProperty* Property, vo
 	if (!Property || !ValuePtr)
 	{
 		return MakeShared<FJsonValueNull>();
+	}
+
+	// TEnumAsByte enums — must come before the generic numeric branch, because
+	// FByteProperty is an FNumericProperty and would export the raw integer.
+	if (FByteProperty* ByteEnumProp = CastField<FByteProperty>(Property))
+	{
+		if (UEnum* Enum = ByteEnumProp->Enum)
+		{
+			const uint8 Value = ByteEnumProp->GetPropertyValue(ValuePtr);
+			return MakeShared<FJsonValueString>(Enum->GetNameStringByValue(Value));
+		}
 	}
 
 	// Numeric types
@@ -1077,7 +1139,7 @@ TSharedPtr<FJsonValue> UDataTableService::ValuePtrToJson(FProperty* Property, vo
 			FProperty* InnerProp = *It;
 			// ValuePtr is the struct base, so use PropertyToJson which computes offset
 			TSharedPtr<FJsonValue> InnerValue = PropertyToJson(InnerProp, ValuePtr);
-			StructObj->SetField(InnerProp->GetName(), InnerValue);
+			StructObj->SetField(InnerProp->GetAuthoredName(), InnerValue);
 		}
 
 		return MakeShared<FJsonValueObject>(StructObj);
@@ -1139,6 +1201,28 @@ bool UDataTableService::JsonToValuePtr(
 	{
 		OutError = TEXT("Invalid parameters");
 		return false;
+	}
+
+	// TEnumAsByte enums — must come before the generic numeric branch, because
+	// FByteProperty is an FNumericProperty and would reject enum name strings.
+	if (FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+	{
+		if (UEnum* Enum = ByteProp->Enum)
+		{
+			FString EnumStr;
+			if (Value->TryGetString(EnumStr))
+			{
+				const int64 EnumValue = Enum->GetValueByNameString(EnumStr);
+				if (EnumValue == INDEX_NONE)
+				{
+					OutError = FString::Printf(TEXT("Invalid enum value: %s"), *EnumStr);
+					return false;
+				}
+				ByteProp->SetPropertyValue(ValuePtr, static_cast<uint8>(EnumValue));
+				return true;
+			}
+			// Not a string — fall through to the numeric branch below.
+		}
 	}
 
 	// Numeric types
@@ -1320,7 +1404,7 @@ bool UDataTableService::JsonToValuePtr(
 
 			for (auto& Pair : (*JsonObj)->Values)
 			{
-				FProperty* InnerProp = Struct->FindPropertyByName(*Pair.Key);
+				FProperty* InnerProp = ResolveStructProperty(Struct, Pair.Key);
 				if (InnerProp)
 				{
 					FString InnerError;

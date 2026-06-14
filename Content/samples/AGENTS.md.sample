@@ -14,7 +14,7 @@ This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered 
 - `execute_python_code` - Run Python in Unreal context
 
 ### Other Tools
-- `manage_skills` - Load domain-specific skill documentation
+- `vibeue-skills-manager` - Load domain-specific skill documentation
 - `manage_asset` - Search, open, save, duplicate, move, delete assets
 - `read_logs` - Read Unreal log files for errors and warnings
 - `terrain_data` - Generate heightmaps and water splines from real-world data
@@ -44,16 +44,16 @@ VibeUE uses a **two-tier lazy-loading skills system** to keep responses small wh
 **How to load:**
 ```python
 # List every skill with descriptions, classes, and the sections each one offers
-manage_skills(action="list")
+vibeue-skills-manager(action="list")
 
 # Load a skill's INDEX (workflows + gotchas only)
-manage_skills(action="load", skill_name="blueprints")
+vibeue-skills-manager(action="load", skill_name="blueprints")
 
 # Load a specific SUB-DOC for deeper reference material
-manage_skills(action="load", skill_name="state-trees/api-reference")
+vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
 
 # Batch-load multiple in one call (each entry can be a bare name or a sub-doc path)
-manage_skills(action="load", skill_names=["blueprints", "blueprint-graphs/workflows"])
+vibeue-skills-manager(action="load", skill_names=["blueprints", "blueprint-graphs/workflows"])
 ```
 
 **Pattern:**
@@ -65,14 +65,14 @@ manage_skills(action="load", skill_names=["blueprints", "blueprint-graphs/workfl
 **Example:**
 ```
 User: "Create BP_Enemy with a Health variable"
-→ manage_skills(action="load", skill_name="blueprints")
+→ vibeue-skills-manager(action="load", skill_name="blueprints")
 → discover_python_class("unreal.BlueprintService", method_filter="variable")
 → execute_python_code(...)
 
 User: "Add a transition to the Idle state in ST_Enemy"
-→ manage_skills(action="load", skill_name="state-trees")
+→ vibeue-skills-manager(action="load", skill_name="state-trees")
 → Index response shows `available_sections` includes `api-reference`
-→ The transition flow is non-obvious → manage_skills(action="load", skill_name="state-trees/api-reference")
+→ The transition flow is non-obvious → vibeue-skills-manager(action="load", skill_name="state-trees/api-reference")
 → discover_python_class("unreal.StateTreeService", method_filter="transition")
 → execute_python_code(...)
 ```
@@ -81,7 +81,7 @@ User: "Add a transition to the Idle state in ST_Enemy"
 
 ## ⚠️ How to Read the Load Response
 
-When `manage_skills(action="load", ...)` returns, the response includes:
+When `vibeue-skills-manager(action="load", ...)` returns, the response includes:
 
 | Field | What it is | How to use it |
 |---|---|---|
@@ -130,40 +130,48 @@ json_str = json.dumps(data)
 
 ## 📚 Available Skills
 
-*ALWAYS* Load the appropriate skill for detailed documentation using `manage_skills(action="load", skill_name="<name>")`:
+*ALWAYS* Load the appropriate skill for detailed documentation using `vibeue-skills-manager(action="load", skill_name="<name>")`:
 
 | Skill Name | Display Name | Description |
 |------------|-------------|-------------|
-| `animation-blueprint` | Animation Blueprints | Navigate and inspect Animation Blueprints, state machines, states, and transitions |
-| `animation-editing` | Animation Editing & Bone Space Correctness | Preview, validate, and bake bone rotation edits with constraint awareness and retarget safety |
-| `animation-montage` | Animation Montages | Create and manipulate animation montages with sections, slots, segments, branching points, and blend settings |
-| `animsequence` | Animation Sequences & Editing | Preview, validate, bake, and manipulate animation sequences with constraint-aware bone editing |
-| `asset-management` | Asset Discovery & Management | Search, find, open, move, duplicate, save, delete, import, and export assets |
-| `blueprint-graphs` | Blueprint Graph Editing | Add, connect, and configure nodes in Blueprint event graphs and function graphs |
-| `blueprints` | Blueprint System | Create and modify Blueprint assets, variables, functions, and components |
-| `data-assets` | Data Assets | Create and modify Primary Data Assets with property management |
-| `data-tables` | Data Tables | Create and modify Data Tables with row management |
-| `engine-settings` | Engine Settings System | Configure Unreal Engine core settings including rendering, physics, audio, garbage collection, and console variables |
-| `enhanced-input` | Enhanced Input System | Create and configure Input Actions, Mapping Contexts, triggers, and modifiers |
-| `enum-struct` | Enums and Structs | Create, modify, and introspect UserDefinedEnums and UserDefinedStructs |
-| `foliage` | Foliage & Vegetation | Place and manage foliage instances on landscapes using FoliageService |
-| `gameplay-tags` | Gameplay Tags | Create, list, remove, and rename Gameplay Tags via the editor module with runtime registration |
-| `landscape` | Landscape Terrain | Create and edit landscape terrain, heightmaps, sculpting, paint layers, terrain analysis, and procedural generation |
-| `landscape-auto-material` | Landscape Auto-Material System | Create production-quality landscape materials using the master material + material function + material instance pattern |
-| `landscape-materials` | Landscape Material System | Create landscape materials with layer blending, texture setup, and layer info objects |
-| `level-actors` | Level Actors & Editor Subsystems | Manipulate actors in the current level using editor subsystems |
-| `materials` | Material System | Create and edit materials and material instances using MaterialService and MaterialNodeService |
-| `metasounds` | MetaSound Editor | Create and modify MetaSound Source assets — add nodes, wire pins, set defaults, play sounds procedurally |
-| `niagara-emitters` | Niagara Emitters | Configure Niagara emitter internals — modules, renderers, rapid iteration parameters, graph positioning |
-| `niagara-systems` | Niagara Systems | Create and manage Niagara particle systems — system lifecycle, adding/copying emitters, user parameters |
-| `pcg` | Procedural Content Generation (PCG) | Create, inspect, and edit PCG Graph assets — add nodes, configure settings, connect pins, and wire up procedural generation graphs |
-| `project-settings` | Project & Editor Settings | Configure Unreal Engine project settings and editor preferences including UI appearance and toolbar |
-| `screenshots` | Screenshot & Vision | Capture screenshots of the editor window, viewports, and blueprints for AI vision analysis |
-| `skeleton` | Skeleton & Skeletal Mesh | Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints |
-| `sound-cues` | Sound Cue Editor | Create and modify SoundCue assets — add nodes, connect them, set audio properties |
-| `state-trees` | StateTree Behavior | Create, inspect, and edit StateTree assets for AI behavior, game logic, and character state machines |
-| `terrain-data` | Real-World Terrain | Generate heightmaps, map reference images, and water feature splines from real-world geographic data |
-| `umg-widgets` | UMG Widget Blueprints | Create and modify Widget Blueprints for user interface elements, including MVVM ViewModel support |
+| `animation-blueprint` | Animation Blueprints | Navigate, inspect, and author Animation Blueprints — state machines, states, transitions, and transition rules (AnimGraphService). Use when the user asks to create or edit an Animation Blueprint/AnimBP, add a state machine or states, wire transitions between states, set a state's animation, or inspect AnimGraph structure. |
+| `animation-editing` | Animation Editing & Bone Space Correctness | Preview, validate, and bake bone-rotation edits on AnimSequences with constraint awareness and retarget safety. Use when the user asks to edit/pose/adjust an animation's bones, raise an arm, create a swing/wave/dance/pose, mirror or copy a pose, set joint limits, or learn bone constraints. Load together with animsequence (keyframes) and skeleton (structure). |
+| `animation-montage` | Animation Montages | Create and manipulate Animation Montages — sections, slots, segments, branching points, notifies, and blend settings (AnimMontageService). Use when the user asks to create a montage (from an animation or empty), add or link montage sections, set up slots/segments, add branching points, or adjust montage blend timing. |
+| `animsequence` | Animation Sequences & Editing | Create and edit AnimSequence keyframes and tracks — add/remove keyframes, set bone tracks, query sequence info, and bake edits (AnimSequenceService). Use when the user asks to create a new animation sequence, add keyframes/tracks, or edit raw animation data. For constraint-aware bone posing, also load animation-editing. |
+| `asset-management` | Asset Discovery & Management | Search, find, open, move, duplicate, save, delete, import, and export assets (the manage_asset tool / AssetDiscoveryService). Use when the user asks to find/locate an asset, list a folder, open/save/duplicate/move/rename/delete an asset, or import an image from disk. Prefer the manage_asset MCP tool over raw Python for asset ops. |
+| `blueprint-graphs` | Blueprint Graph Editing | Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph. |
+| `blueprints` | Blueprint System | Create and modify Blueprint assets, variables, functions, components, event dispatchers, and interfaces. Use when the user asks to create a Blueprint/BP, add a variable or component to a Blueprint, make an event dispatcher/delegate, implement a Blueprint interface, or inspect a Blueprint's class/components. For node-level graph wiring, also load blueprint-graphs. |
+| `data-assets` | Data Assets | Create and modify Primary Data Assets and set their properties (DataAssetService). Use when the user asks to create a Data Asset / PrimaryDataAsset (DA_), populate its fields, or read/write Data Asset properties. |
+| `data-tables` | Data Tables | Create and modify Data Tables and manage their rows (DataTableService). Use when the user asks to create a Data Table (DT_) from a row struct, add/edit/remove rows, or read row data. Pair with enum-struct to define the row struct first. |
+| `engine-settings` | Engine Settings System | Configure Unreal Engine core settings — rendering, physics, audio, garbage collection, console variables (cvars), and scalability levels (EngineSettingsService). Use when the user asks to change engine/rendering settings, set a console variable (r.*, etc.), adjust scalability/quality levels, or read engine config categories. |
+| `enhanced-input` | Enhanced Input System | Create and configure Enhanced Input — Input Actions, Mapping Contexts, key mappings, triggers, and modifiers (InputService). Use when the user asks to set up player input, create an Input Action (IA_) or Input Mapping Context (IMC_), bind keys to actions, or configure input triggers/modifiers. |
+| `enum-struct` | Enums and Structs | Create, modify, and introspect UserDefinedEnums and UserDefinedStructs (EnumStructService). Use when the user asks to create a Blueprint enum or struct, add enum values or struct members, or inspect an enum/struct's fields. Pair with data-tables when defining a row struct. |
+| `foliage` | Foliage & Vegetation | Create foliage types and place/scatter foliage instances on landscapes and meshes (FoliageService). Use when the user asks to add trees/grass/bushes/rocks as foliage, create a foliage type from a mesh, scatter or paint foliage instances, or query/remove foliage on a surface. |
+| `gameplay-tags` | Gameplay Tags | Create, list, remove, and rename Gameplay Tags with runtime registration (GameplayTagService). Use when the user asks to add or register gameplay tags, list/query existing tags, or rename/remove tags (e.g. Ability.Attack.Melee, State.Stunned). |
+| `landscape-auto-material` | Landscape Auto-Material System | Create production-quality landscape materials with the master-material + material-function + material-instance paradigm, RVT, and auto-layering. Use when the user asks for an auto/procedural landscape material, slope/altitude/distance-based layer blending, Runtime Virtual Textures, biome configuration via instances, or layer material functions. For basic layer-blend materials load landscape-materials. |
+| `landscape-materials` | Landscape Material System | Create landscape materials with layer blending, texture setup, and layer info objects (LandscapeMaterialService). Use when the user asks to build a landscape/terrain material, set up paint layers (grass/rock/dirt), create layer info objects, add a grass output, or assign a material to a landscape. For production master-material+RVT systems, load landscape-auto-material. |
+| `landscape` | Landscape Terrain | Create and edit landscape terrain — heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural features like mountains/valleys/craters (LandscapeService). Use when the user asks to create a landscape, sculpt/raise/lower terrain, import or export a heightmap, paint terrain layers, or add procedural terrain features. For terrain materials load landscape-materials; for real-world heightmaps load terrain-data. |
+| `level-actors` | Level Actors & Editor Subsystems | List, find, place, move, rotate, and modify actors in the current level (ActorService + editor subsystems). Use when the user asks to find/list actors in the level, move or rotate an actor, set an actor's properties/folder/transform, or spawn/delete level actors. |
+| `log-reading` | Log Reading & Diagnostics | Read, tail, filter, and watch Unreal Engine log files with the read_logs tool — find errors/warnings, debug Blueprint or Niagara compiles, inspect VibeUE chat and raw LLM API logs, and monitor for new output. Use when the user asks to check the logs, find errors or warnings, see what happened during startup, investigate a crash, review recent AI chat activity, or watch for new log output. |
+| `map-blockout` | Procedural FPS Map Blockout | Procedurally design an AAA-style open-world FPS map blockout (roads, POIs, fields, forests/treelines, railway/bridges) from a landscape, validate it through gated checks, and materialize it into engine geometry. Use when the user asks to block out or lay out an open-world/FPS map, place roads/POIs/forests/railways procedurally, or turn a blockout plan into splines, paint layers, foliage, and actors. |
+| `materials` | Material System | Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials. |
+| `metasounds` | MetaSound Editor | Create and modify MetaSound Source assets — add/connect nodes, wire pins, set input defaults, and play procedurally (MetaSoundService). Use when the user asks to create a MetaSound, build or edit a MetaSound graph, add operator/input/output nodes, or generate procedural audio. |
+| `niagara-emitters` | Niagara Emitters | Configure Niagara emitter internals — modules, renderers, rapid-iteration parameters, color/curve editing, graph positioning, and Custom-HLSL scratch-pad authoring. Use when the user asks to add modules/renderers to a Niagara emitter, recolor or hue-shift particles, set emitter parameters, build an emitter from scratch, or author a scratch-pad/Custom HLSL module. For system-level lifecycle, load niagara-systems. |
+| `niagara-systems` | Niagara Systems | Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters. |
+| `pcg` | Procedural Content Generation (PCG) | Create, inspect, and edit PCG Graph assets — add nodes, configure settings, connect pins, and wire procedural generation graphs (native PCG Python API). Use when the user asks to build a PCG graph, add PCG nodes (Surface Sampler, Static Mesh Spawner, filters), wire PCG pins, place a PCGVolume and generate, or set up procedural scattering. |
+| `pie-testing` | Play-In-Editor Testing | Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes. |
+| `project-settings` | Project & Editor Settings | Configure Unreal Engine project settings and editor preferences — UI appearance, toolbar icons, scale, colors, and any UDeveloperSettings subclass (ProjectSettingsService). Use when the user asks to change a project setting or editor preference, configure a UDeveloperSettings category, or read/write project config values. |
+| `screenshots` | Screenshot & Vision | Capture screenshots of the editor window, viewports, and asset editors for AI vision analysis (ScreenshotService). Use when the user asks you to look at / see / show the editor, verify something visually, capture a material or blueprint editor, or when you need vision to confirm a change. Pair captures with attach_image. |
+| `skeleton` | Skeleton & Skeletal Mesh Management | Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing. |
+| `sound-cues` | Sound Cue Editor | Create and modify SoundCue assets — add/connect nodes (mixer, random, delay, attenuation, modulator, etc.) and set audio properties (SoundCueService). Use when the user asks to create a Sound Cue, build a SoundCue node graph, or wire audio playback logic. |
+| `state-trees` | StateTree Behavior | Create, inspect, and edit StateTree assets — states, tasks, transitions, conditions, considerations, and property bindings for AI behavior and game logic (StateTreeService). Use when the user asks to build a StateTree, add states/tasks/transitions, bind task properties, set up Utility AI considerations, or wire StateTree delegate transitions. |
+| `terrain-data` | Real-World Terrain | Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines. |
+| `umg-widgets` | UMG Widget Blueprints | Create and modify UMG Widget Blueprints (UI) — build the widget hierarchy, set properties, style fonts/brushes, author widget animations, bind events, capture previews, run PIE checks, and wire MVVM ViewModels. Use when the user asks to create a UI/HUD/menu, add or arrange widgets (Button, TextBlock, Image, panels), style or animate a widget, or set up data bindings in a Widget Blueprint (WBP). |
+| `uv-mapping` | UV Mapping | Inspect, generate, transform, and visualize UV channels on StaticMesh assets (UVMappingService). Use when the user asks to check/add/remove UV channels, auto-unwrap UVs, transform (tile/offset/rotate) UVs, check UV health/islands, or export a UV layout image. |
+| `vibeue` | VibeUE (entry point) | Bootstrap skill for external/non-VibeUE skill systems — points agents at `vibeue-skills-manager(action="list"/"load")` for the live, always-current skill set. Requires the VibeUE MCP server to be connected. |
+| `viewport` | Viewport Control | Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot. |
+
+> ⚠️ This table is a static snapshot for quick reference. The **always-current** list (auto-generated from each `SKILL.md`) is returned by `vibeue-skills-manager(action="list")` — call it once per session if unsure what exists.
 
 ---
 
@@ -331,7 +339,7 @@ You MUST follow this pattern for EVERY tool call:
 ```
 User: "Create BP_Enemy"
 AI: "I'll load the blueprints skill to get the API reference."
-[manage_skills tool call]
+[vibeue-skills-manager tool call]
 AI: "Skill loaded. Now creating the blueprint."
 [execute_python_code tool call]
 AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
@@ -340,7 +348,7 @@ AI: "Created BP_Enemy at /Game/Blueprints/BP_Enemy."
 **Example - WRONG (what you're currently doing):**
 ```
 User: "Create BP_Enemy"
-[manage_skills tool call immediately - NO EXPLANATION BEFORE]
+[vibeue-skills-manager tool call immediately - NO EXPLANATION BEFORE]
 [execute_python_code tool call immediately - NO EXPLANATION BEFORE]
 AI: "Created BP_Enemy."
 ```
@@ -360,7 +368,7 @@ AI: "Created BP_Enemy."
 
 1. **User asks to do something** (e.g., "Create BP_Enemy")
 2. **Identify domain** → Blueprints
-3. **Load skill INDEX:** `manage_skills(action="load", skill_name="blueprints")`
+3. **Load skill INDEX:** `vibeue-skills-manager(action="load", skill_name="blueprints")`
    - Read `COMMON_MISTAKES` first
    - Check `available_sections` — load a sub-doc with `skill_name="blueprints/<section>"` if your task needs deeper reference material
 4. **Get method signatures:** call `discover_python_class('unreal.<ClassName>', method_filter='<keyword>')` for each class in `vibeue_classes` you need. Never write code against a method name you haven't confirmed exists.

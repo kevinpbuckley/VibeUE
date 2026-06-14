@@ -2193,33 +2193,51 @@ TArray<FString> UStateTreeService::GetAvailableEvaluatorTypes()
 			}
 		}
 
-		FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
-		FARFilter Filter;
-		Filter.ClassPaths.Add(UBlueprint::StaticClass()->GetClassPathName());
-		Filter.PackagePaths.Add(FName(TEXT("/Game")));
-		Filter.bRecursivePaths = true;
-
-		TArray<FAssetData> BlueprintAssets;
-		AssetRegistry.Get().GetAssets(Filter, BlueprintAssets);
-
-		for (const FAssetData& AssetData : BlueprintAssets)
+		// Unloaded blueprint evaluators: query the Asset Registry's class-inheritance graph instead
+		// of LoadObject on every Blueprint under /Game. The old per-asset LoadObject loaded the entire
+		// project's blueprints synchronously and could take ~90s+ — it timed out (issue #434). The
+		// registry already tracks blueprint parent classes without loading anything.
+		if (BlueprintEvalBaseClass)
 		{
-			const FAssetTagValueRef GeneratedClassTag = AssetData.TagsAndValues.FindTag(TEXT("GeneratedClass"));
-			if (!GeneratedClassTag.IsSet()) { continue; }
-			const FString GeneratedClassObjectPath = FPackageName::ExportTextPathToObjectPath(GeneratedClassTag.GetValue());
-			if (GeneratedClassObjectPath.IsEmpty()) { continue; }
-			if (UClass* GeneratedClass = LoadObject<UClass>(nullptr, *GeneratedClassObjectPath))
+			FAssetRegistryModule& AssetRegistry = FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+			TArray<FTopLevelAssetPath> BaseClassPaths;
+			BaseClassPaths.Add(BlueprintEvalBaseClass->GetClassPathName());
+			const TSet<FTopLevelAssetPath> ExcludedClassPaths;
+			TSet<FTopLevelAssetPath> DerivedClassPaths;
+			AssetRegistry.Get().GetDerivedClassNames(BaseClassPaths, ExcludedClassPaths, DerivedClassPaths);
+
+			const FString BaseClassName = BlueprintEvalBaseClass->GetName();
+			for (const FTopLevelAssetPath& ClassPath : DerivedClassPaths)
 			{
-				if (IsValidBlueprintEvaluatorClass(GeneratedClass))
+				FString ClassName = ClassPath.GetAssetName().ToString();
+				// Skip the base itself and transient skeleton / reinstanced classes.
+				if (ClassName == BaseClassName ||
+					ClassName.StartsWith(TEXT("SKEL_")) ||
+					ClassName.StartsWith(TEXT("REINST_")))
 				{
-					UniqueTypes.Add(GeneratedClass->GetName());
+					continue;
 				}
+				UniqueTypes.Add(ClassName);
 			}
 		}
 
 		Results = UniqueTypes.Array();
 	}
 
+	Results.Sort();
+	return Results;
+}
+
+TArray<FString> UStateTreeService::ListStateTreeSchemas()
+{
+	TArray<FString> Results;
+	for (TObjectIterator<UClass> It; It; ++It)
+	{
+		if (It->IsChildOf(UStateTreeSchema::StaticClass()) && !It->HasAnyClassFlags(CLASS_Abstract))
+		{
+			Results.Add(It->GetName());
+		}
+	}
 	Results.Sort();
 	return Results;
 }

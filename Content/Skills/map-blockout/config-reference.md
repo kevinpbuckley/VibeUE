@@ -1,3 +1,8 @@
+---
+name: map-blockout/config-reference
+description: Map blockout configuration reference — tunable parameters for roads, POIs, fields, forests, railways, and generation seeds.
+---
+
 # Map Blockout — Config Reference
 
 Every field on `FMapBlockoutConfig` and its nested structs, with what each

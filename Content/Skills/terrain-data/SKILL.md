@@ -1,7 +1,7 @@
 ---
 name: terrain-data
 display_name: Real-World Terrain
-description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps plus landscape splines for water bodies.
+description: Generate heightmaps, map reference images, and water feature splines (rivers, lakes, oceans) from real-world geographic data (terrain_data tool). Use when the user asks to build terrain from a real location/coordinates, download a real-world heightmap, or add rivers/lakes/oceans from map data. Downloads Mapbox tiles server-side and produces UE5-compatible heightmaps + landscape splines.
 keywords:
   - terrain
   - heightmap
@@ -35,6 +35,8 @@ keywords:
   - river spline
   - lake spline
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "landscape-and-foliage"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Real-World Terrain Skill
 
@@ -156,7 +158,7 @@ Response:
 attach_image(file_path="E:/Project/Saved/Terrain/map_satellite_v9_35.3606_138.7274.png")
 ```
 
-`attach_image` is a **tool call** (like `terrain_data` or `manage_skills`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool.
+`attach_image` is a **tool call** (like `terrain_data` or `vibeue-skills-manager`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool.
 
 After attaching, you will see the satellite image in your next response. Use it to:
 - Identify terrain features (rock, grassland, water, sand, forest, urban)

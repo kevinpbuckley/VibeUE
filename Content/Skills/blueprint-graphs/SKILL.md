@@ -1,7 +1,7 @@
 ---
 name: blueprint-graphs
 display_name: Blueprint Graph Editing
-description: Add, connect, and configure nodes in Blueprint event graphs and function graphs
+description: Add, connect, and configure nodes in Blueprint event graphs and function graphs — function-call/event/branch/timer/custom-event/delegate nodes, Standard Macro nodes (ForEachLoop/ForLoop/WhileLoop/DoOnce/Gate/IsValid/FlipFlop via add_macro_instance_node), macro-graph creation, pin wiring, node layout, arrays, comment boxes, and the batch build_graph API. Use when the user asks to wire up Blueprint logic, add or connect nodes, add a loop/macro node, build an event graph, set up a timer/delay, broadcast a delegate, or lay out an existing graph.
 vibeue_classes:
   - BlueprintService
 unreal_classes:
@@ -26,6 +26,8 @@ related_skills:
   - blueprints
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "blueprint-fundamentals"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Blueprint Graph Editing Skill
 
 > **Also load `blueprints` skill** when creating new blueprints, adding variables/components, or overriding functions.
@@ -41,6 +43,10 @@ related_skills:
 | `add_node()` | `add_function_call_node()` or `add_event_node()` etc. |
 | `disconnect_nodes()` | `disconnect_pin()` |
 | `get_node_connections()` | `get_connections()` |
+| `get_graphs()` | `list_graphs()` |
+| `get_functions()` | `list_functions()` |
+| `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
+| `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
 
 ### ⚠️ `disconnect_pin()` Signature — 4 Args Only
 
@@ -63,7 +69,7 @@ To remove a specific edge, disconnect the output pin on the source node (e.g. `"
 | `node.node_name` | `node.node_title` |
 | `node.node_position_x` | `node.pos_x` |
 | `node.node_position_y` | `node.pos_y` |
-| `pin.direction` | use the pin input/output boolean from `get_node_pins()` (`bIsInput` / Python bool field), not a `direction` enum |
+| `pin.direction` / `pin.is_output` | `pin.is_input` (bool) — the only direction field on `BlueprintPinInfo`; for outputs use `not pin.is_input` |
 | `pin.is_linked` | `pin.is_connected` |
 | `pin.current_value` | `pin.default_value` |
 | `pin.sub_pins` | *(does not exist)* |
@@ -175,6 +181,9 @@ connect_nodes(path, func, branch_id, "else", target_id, "execute")
 |-------|---------|
 | `Greater_FloatFloat` | `Greater_DoubleDouble` |
 | `Add_FloatFloat` | `Add_DoubleDouble` |
+| `MakeLiteralFloat` | `MakeLiteralDouble` |
+
+The editor still *displays* "Make Literal Float", but its spawner is `FUNC KismetSystemLibrary::MakeLiteralDouble`. `add_function_call_node(..., "KismetSystemLibrary", "MakeLiteralFloat", ...)` returns `""` silently — use `MakeLiteralDouble`, or `discover_nodes(bp, "Make Literal Float")` and spawn via the returned `spawner_key`.
 
 ### ⚠️ Compile Before Using Variables in Nodes
 
@@ -183,6 +192,50 @@ unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
 unreal.BlueprintService.compile_blueprint(path)  # REQUIRED before adding nodes
 unreal.BlueprintService.add_get_variable_node(path, func, "Health", x, y)
 ```
+
+### ⚠️ Verify Pins Immediately After Adding Variable Get/Set Nodes
+
+A variable Get/Set node can occasionally be created with **zero pins** (the variable property
+failed to resolve on the skeleton class at spawn time). The create call still returns a GUID, so
+you won't notice until every `connect_nodes` against it returns `False`. After creating a
+variable node, check its pins before wiring anything:
+
+```python
+gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+pins = unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
+if not pins:  # corrupt node — recover
+    unreal.BlueprintService.delete_node(bp_path, graph, gid)
+    unreal.BlueprintService.compile_blueprint(bp_path)
+    gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+    assert unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
+```
+
+Recovery notes:
+- `delete_node` can return `False` here — confirm with a fresh `get_nodes_in_graph()` and don't
+  leave a stray pin-less duplicate behind (two nodes with the same title, one never connected).
+- Compiling between delete and re-add refreshes the skeleton class so the retry resolves.
+- This is another reason to create **one node at a time** instead of batching 4–6 creates in one call.
+
+### ⚠️ The Result Node's `execute` Pin MUST Be Wired — the Warning Is Not Minor
+
+Compile warning **`ReturnNode Exec pin has no connections`** means the execution chain never
+reaches the Return Node, so the function's **output parameters are never set** — callers always
+get default values. The function is broken even though `compile.success` is `True`.
+
+Every non-pure function needs an exec path `Entry.then → ... → Result.execute`. For a
+"compute-only" function (e.g. read a variable, compare, return bool), wire the entry **directly**
+to the result — connecting only the data pin is not enough:
+
+```python
+# CheckDeath: IsDead = (Health <= 0)
+connect_nodes(bp, "CheckDeath", entry_id, "then", result_id, "execute")        # exec — REQUIRED
+connect_nodes(bp, "CheckDeath", lessequal_id, "ReturnValue", result_id, "IsDead")  # data
+```
+
+Do not dismiss this warning in your summary or claim the function "works". Treat any
+`ReturnNode` compile warning as a wiring bug and fix it before reporting success. (If the
+function has no side effects, the cleaner fix is making it **pure**, but wiring the exec chain is
+the minimal correct repair.)
 
 ### ⚠️ Node IDs Are GUID Strings, Not Small Integers
 
@@ -262,6 +315,38 @@ assert node_id, actor_get_location.spawner_key
 ```
 
 If a node-create call returns an empty ID, stop immediately. Re-read the graph, inspect the error output, and fix the lookup before creating anything else.
+
+### ⚠️ Standard Macro nodes (ForEachLoop, etc.) — do NOT use `create_node_by_key`
+
+Macro instances (`K2Node_MacroInstance`) have **no spawner key**, so `discover_nodes()` won't find them and `create_node_by_key()` **fails silently** (returns empty, no error). Use the dedicated method instead:
+
+```python
+import unreal
+node_id = unreal.BlueprintService.add_macro_instance_node(bp_path, graph, "ForEachLoop", x, y)
+```
+
+Supported shorthands:
+
+| Shorthand | Engine macro graph |
+|---|---|
+| `ForEachLoop` | StandardMacros:ForEachLoop |
+| `ForEachLoopWithBreak` | StandardMacros:ForEachLoopWithBreak |
+| `ReverseForEachLoop` | StandardMacros:ReverseForEachLoop |
+| `ForLoop` | StandardMacros:ForLoop |
+| `ForLoopWithBreak` | StandardMacros:ForLoopWithBreak |
+| `WhileLoop` | StandardMacros:WhileLoop |
+| `IsValid` | StandardMacros:IsValid |
+| `Gate` | StandardMacros:Gate |
+| `DoOnce` | StandardMacros:DoOnce |
+| `DoN` | StandardMacros:Do N |
+| `FlipFlop` | StandardMacros:FlipFlop |
+
+A full `AssetPath:GraphName` string is also accepted for user-defined macro libraries (e.g. `/Game/Macros/ML_X.ML_X:MyMacro`).
+
+Notes:
+- `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
+- `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
+- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (`create_function` asserts on MacroLibrary BPs).
 
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 
@@ -457,6 +542,11 @@ this is critical for State Tree tasks, animation blueprints, and any actor that 
 ticking during the wait period.
 
 ---
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_event_graph.pyx`** — wire Event BeginPlay → Print String, verify connection, compile.
+- **`scripts/timer_with_custom_event.pyx`** — non-blocking Set Timer by Event + Custom Event callback.
 
 ## Sub-docs Available
 

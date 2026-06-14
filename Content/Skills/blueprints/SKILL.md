@@ -1,7 +1,7 @@
 ---
 name: blueprints
 display_name: Blueprint System
-description: Create and modify Blueprint assets, variables, functions, and components
+description: Create and modify Blueprint assets, variables, functions, components, event dispatchers, and interfaces. Use when the user asks to create a Blueprint/BP, add a variable or component to a Blueprint, make an event dispatcher/delegate, implement a Blueprint interface, or inspect a Blueprint's class/components. For node-level graph wiring, also load blueprint-graphs.
 vibeue_classes:
   - BlueprintService
   - AssetDiscoveryService
@@ -27,6 +27,8 @@ keywords:
 related_skills:
   - blueprint-graphs
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "blueprint-fundamentals"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Blueprint System Skill
 
@@ -63,6 +65,10 @@ unreal.BlueprintService.add_variable("/Game/BP_MyActor", "Target", "/Game/Bluepr
 
 The type system resolves Blueprint names automatically via asset search.
 
+Engine structs need the `F` prefix: color variables are `"FLinearColor"` / `"FColor"` —
+plain `"LinearColor"` / `"Color"` returns `False`. Unsure of a type string? Use
+`search_variable_types("Linear")` to look it up.
+
 ### ⚠️ Method Name Gotchas
 
 | WRONG | CORRECT |
@@ -89,6 +95,102 @@ UE Python **strips the lowercase `b` prefix** from boolean properties. Always us
 | `bEnabled` | `enabled` |
 
 Do **not** use `b_already_overridden`, `b_is_event_style`, etc. — these will raise `AttributeError`.
+
+**Exception:** the string-based CDO accessors `get_property` / `set_property` take the **native C++
+property name**, so booleans KEEP the `b` prefix there (`"bReplicates"`, not `"replicates"`). See the
+next section.
+
+### ⚠️ CDO Properties: `get_property` / `set_property` (replication, lifespan, etc.)
+
+Use these to read/write Class Default Object properties like replication or initial lifespan:
+
+```python
+import unreal
+bp = "/Game/Blueprints/TestActor"
+
+# READ — returns a single value: str, or None if the property wasn't found. NOT a (success, value) tuple!
+value = unreal.BlueprintService.get_property(bp, "bReplicates")   # "True" / "False" (a STRING)
+life  = unreal.BlueprintService.get_property(bp, "InitialLifeSpan")  # "5.000000"
+
+# WRONG — raises ValueError: too many values to unpack
+# success, value = unreal.BlueprintService.get_property(bp, "bReplicates")
+
+# WRITE — values are strings; returns bool
+unreal.BlueprintService.set_property(bp, "bReplicates", "True")
+unreal.BlueprintService.compile_blueprint(bp)
+unreal.EditorAssetLibrary.save_asset(bp)
+```
+
+Rules:
+- Returns **str or None** — UE Python collapses `bool Func(..., Out&)` into one return value. This
+  applies to every `get_*_info` method too (`get_variable_info`, `get_function_info`,
+  `get_component_info`, `get_node_details`): they return the info struct or `None`, never a tuple.
+- Property names are the **native C++ names**: `bReplicates`, `InitialLifeSpan`, `bCanBeDamaged` —
+  the `b` prefix is NOT stripped here (a stripped name returns `None`).
+- Values read back as strings: compare `value == "True"`, not `value is True`.
+
+### ⚠️ Info Struct Fields (don't guess — these are the complete lists)
+
+`get_blueprint_info(path)` → **BlueprintDetailedInfo**: `blueprint_name`, `blueprint_path`,
+`parent_class`, `is_widget_blueprint`, `variables`, `functions`, `components`.
+
+| Struct | Fields |
+|---|---|
+| `BlueprintFunctionInfo` (from `list_functions`) | `function_name`, `return_type`, `parameters`, `is_override`, `is_pure` — there is **no `function_type`** and **no `input_parameters`** (that's the Detailed struct) |
+| `BlueprintFunctionDetailedInfo` (from `get_function_info`) | `function_name`, `graph_guid`, `input_parameters`, `output_parameters`, `local_variables`, `is_override`, `is_pure`, `node_count` — there is **no `return_type`**; return values are entries in `output_parameters` (each param: `parameter_name`, `parameter_type`, `is_output`, `is_reference`, `default_value`) |
+| `BlueprintVariableInfo` | `variable_name`, `variable_type`, `category`, `is_public`, `is_exposed`, `default_value` |
+| `BlueprintVariableDetailedInfo` (from `get_variable_info`) | `variable_name`, `variable_type`, `type_path`, `category`, `default_value`, `tooltip`, `is_array`, `is_set`, `is_map`, `is_instance_editable`, `is_blueprint_read_only`, `is_expose_on_spawn`, `is_expose_to_cinematics`, `is_private`, `replication_condition` — booleans use the `is_` prefix (**`instance_editable` alone raises AttributeError**) |
+| `BlueprintLocalVariableInfo` (in `BlueprintFunctionDetailedInfo.local_variables`) | `variable_name`, `friendly_name`, `variable_type`, `display_type`, `default_value`, `category`, `guid`, `is_const`, `is_reference`, `is_array`, `is_set`, `is_map` — local variables are NOT parameters: there is **no `parameter_name`** |
+| `BlueprintPinInfo` (from `get_node_pins` / `node.pins`) | `pin_name`, `pin_type`, `is_input`, `is_connected`, `default_value` — direction is the single `is_input` bool; there is **no `is_output`** (use `not pin.is_input`) |
+| `BlueprintNodeTypeInfo` (from `discover_nodes`) | `display_name`, `category`, `spawner_key`, `node_class`, `tooltip`, `is_pure`, `is_latent`, `keywords` — the description text is `tooltip`, **not `description`** |
+| `BlueprintComponentInfo` | `component_name`, `component_class`, `attach_parent`, `is_root_component`, `is_scene_component`, `is_inherited`, `children` |
+| `BlueprintGraphInfo` (from `list_graphs`) | `graph_name`, `graph_kind`, `node_count` |
+| `BlueprintNodeInfo` (from `get_nodes_in_graph`) | `node_id`, `node_type`, `node_title`, `pos_x`, `pos_y`, `pin_names`, `pins` |
+| `BlueprintCompileResult` | `success`, `num_errors`, `num_warnings`, `errors`, `warnings` |
+| `ComponentDetailedInfo` (from `get_component_info`) | `name`, `display_name`, `class_path`, `category`, `parent_class`, `is_scene_component`, `is_primitive_component`, `property_count`, `function_count` — there is **no `description`** |
+| `ComponentTypeInfo` (from `get_available_components`) | `name`, `display_name`, `class_path`, `category`, `base_class`, `is_scene_component`, `is_primitive_component`, `is_abstract` |
+| `ComponentPropertyInfo` (from `get_all_component_properties`) | `property_name`, `property_type`, `category`, `value`, `is_editable`, `is_inherited` |
+
+### Component API quick reference (all on `unreal.BlueprintService`)
+
+These signatures are complete — no need to `discover_python_class` them again:
+
+| Method | Notes |
+|---|---|
+| `get_available_components(search_filter="", max_results=50)` → `[ComponentTypeInfo]` | Discover addable component types by partial name match |
+| `get_component_info(component_type)` → `ComponentDetailedInfo` or `None` | Takes ONLY the type name — no blueprint path |
+| `list_components(bp)` / `get_component_hierarchy(bp)` → `[BlueprintComponentInfo]` | Both return the same flat list — use `attach_parent` / `children` / `is_root_component` fields to render the tree |
+| `component_exists(bp, name)` → `bool` | Fast idempotency check before adding |
+| `add_component(bp, type, name, parent_name="")` → `bool` | Compiles inline. See root behavior below |
+| `remove_component(bp, name, remove_children=True)` → `bool` | Removes children too by default |
+| `reparent_component(bp, name, new_parent)` → `bool` | |
+| `set_root_component(bp, name)` → `bool` | New root must be a SceneComponent. Old auto-generated DefaultSceneRoot is removed; an old user-created root and any other root-level scene components become children of the new root |
+| `get_component_property(bp, comp, prop)` → `str` or `None` | |
+| `set_component_property(bp, comp, prop, value)` → `bool` | `value` is a STRING — see formats below |
+| `get_all_component_properties(bp, comp, include_inherited=True)` → `[ComponentPropertyInfo]` | `list_component_properties` is an alias |
+| `compare_components(bp_a, comp_a, bp_b, comp_b)` → `str` or `None` | Diff as text; same or different blueprints |
+| `set_collision_settings(bp, comp, collision_enabled, object_type, collision_profile, channel_responses)` → `bool` | Collision lives in `BodyInstance` — `set_component_property` cannot reach it |
+
+**Root component behavior**: components added with no `parent_name` go to root level. The first
+scene component added this way replaces the auto-generated DefaultSceneRoot and becomes the root;
+later parentless scene components become floating siblings, NOT children of the root. To build a
+hierarchy, pass `parent_name` when adding, or use `reparent_component` / `set_root_component`.
+
+### ⚠️ Property Value String Formats (`set_component_property`)
+
+Values are strings in UE export-text syntax. Check `property_type` via
+`get_all_component_properties` before guessing a struct format:
+
+| Property type | Format example |
+|---|---|
+| `float` / `int32` / `bool` | `"5000.0"`, `"25"`, `"true"` |
+| `FVector` / `FRotator` | `"(X=0,Y=0,Z=50)"`, `"(Pitch=0,Yaw=90,Roll=0)"` |
+| **`FColor`** (e.g. light `LightColor`) | `"(R=255,G=127,B=0,A=255)"` — **integer bytes 0–255** |
+| **`FLinearColor`** | `"(R=1.0,G=0.5,B=0.0,A=1.0)"` — floats 0–1 |
+| Enum (e.g. `IntensityUnits`) | `"Candelas"` |
+
+❌ Common mistake: `LightColor` is `FColor`, so passing LinearColor-style floats like
+`"(R=1,G=0.5,B=0)"` silently produces a nearly-black light (R=1 of 255), not orange.
 
 ### ⚠️ StateTree Dispatcher Variable Type
 
@@ -185,131 +287,24 @@ unreal.EditorAssetLibrary.save_asset(bp)
 
 ---
 
-## Workflows
+## Task Index
 
-### Create Blueprint with Variables
+| Task | Workflow | Sample script (run via `execute_python_code`) |
+|------|----------|-----------------------------------------------|
+| Create a Blueprint + variables | `workflows.md` → Create a Blueprint | `scripts/create_blueprint.pyx` |
+| Add components + set properties | `workflows.md` → Add components | `scripts/add_component.pyx` |
+| Add an event dispatcher (delegate) | `workflows.md` → Event dispatcher | `scripts/event_dispatcher.pyx` |
+| Implement a Blueprint interface | `workflows.md` → Implement an interface | `scripts/add_interface.pyx` |
+| Inspect a Blueprint (components, parent class) | `introspection.md` | — |
+| Node-level graph editing | load the **`blueprint-graphs`** skill | — |
 
-```python
-import unreal
+## Sub-docs
 
-existing = unreal.AssetDiscoveryService.find_asset_by_path("/Game/BP_Player")
-if not existing:
-    path = unreal.BlueprintService.create_blueprint("Player", "Character", "/Game/")
-    unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
-    unreal.BlueprintService.add_variable(path, "IsAlive", "bool", "true")
-    unreal.BlueprintService.compile_blueprint(path)
-    unreal.EditorAssetLibrary.save_asset(path)
-```
+- **`workflows.md`** — step-by-step create/component/dispatcher/interface workflows with copy-paste Python.
+- **`introspection.md`** — what Blueprint introspection works/doesn't in UE 5.7 (CDO reads, parent class via
+  asset tags, listing BPs by class, getting level actors).
 
-### Add Component with Properties
+## Verification
 
-```python
-import unreal
-
-bp_path = "/Game/BP_Enemy"
-
-unreal.BlueprintService.add_component(bp_path, "StaticMeshComponent", "BodyMesh")
-unreal.BlueprintService.add_component(bp_path, "PointLightComponent", "Glow", "BodyMesh")  # Child
-unreal.BlueprintService.compile_blueprint(bp_path)
-
-unreal.BlueprintService.set_component_property(bp_path, "BodyMesh", "bVisible", "true")
-unreal.BlueprintService.set_component_property(bp_path, "Glow", "Intensity", "5000.0")
-unreal.EditorAssetLibrary.save_asset(bp_path)
-```
-
----
-
-## Blueprint Introspection — What Works and What Doesn't (UE 5.7)
-
-### Getting Level Actors
-
-```python
-# CORRECT
-actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
-actors = actor_subsys.get_all_level_actors()
-
-# WRONG — deprecated, blocked by VibeUE in UE 5.7
-unreal.EditorLevelLibrary.get_all_level_actors()
-```
-
-### Finding Blueprint Assets
-
-```python
-# CORRECT — use package_name or package_path
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-assets = ar.get_assets_by_path('/Game', recursive=True)
-print(assets[0].package_name)   # /Game/Blueprints/BP_MyActor
-print(assets[0].package_path)   # /Game/Blueprints
-
-# WRONG — object_path does not exist on AssetData in UE 5.7
-assets[0].object_path  # AttributeError
-```
-
-### Inspecting Blueprint Components
-
-Direct Blueprint introspection APIs are largely missing or protected in UE 5.7 Python:
-
-| What you might try | Result |
-|---|---|
-| `bp.get_editor_property('simple_construction_script')` | Blocked — protected property |
-| `bp.simple_construction_script` | AttributeError — not exposed |
-| `scs.get_all_nodes()` | Runtime crash ("^") |
-| `BlueprintEditorLibrary.get_blueprint_component_names()` | Doesn't exist in UE 5.7 |
-| `SubobjectDataSubsystem.k2_gather_subobject_data_for_blueprint(bp)` | Returns handles but `SubobjectData` exposes no properties from Python |
-| `bp.get_editor_property('parent_class')` | RuntimeError — `parent_class` not an editor property on Blueprint |
-| `bp.parent_class` | AttributeError — not exposed |
-
-**Working pattern — CDO (preferred, no spawn needed):**
-
-```python
-import unreal
-
-bp = unreal.EditorAssetLibrary.load_asset("/Game/Blueprints/BP_MyActor")
-# Note: unreal.load_asset() returns None on a fresh session; use EditorAssetLibrary.load_asset()
-
-gc = bp.generated_class()
-cdo = unreal.get_default_object(gc)   # module-level call; read-only is allowed
-
-for comp in cdo.get_components_by_class(unreal.ActorComponent):
-    print(f"{comp.get_class().get_name()}: {comp.get_name()}")
-```
-
-CDO modification is still blocked — `unreal.get_default_object(gc).set_editor_property(...)` raises `PYTHON_UNSAFE_CODE`.
-
-**Getting parent class — use asset registry tag:**
-
-```python
-import unreal
-
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-assets = ar.get_assets_by_path("/Game/Blueprints", False)
-for a in assets:
-    if "BP_MyActor" in str(a.asset_name):
-        print(a.get_tag_value("ParentClass"))        # e.g. "/Script/Engine.Actor"
-        print(a.get_tag_value("NativeParentClass"))  # same, native C++ parent
-        break
-```
-
-**Listing all Blueprints by class — use `get_assets_by_class`:**
-
-```python
-import unreal
-
-# ARFilter properties cannot be set after construction — don't use ARFilter for class filtering.
-# asset_class_names kwarg does not exist. Use get_assets_by_class instead:
-ar = unreal.AssetRegistryHelpers.get_asset_registry()
-bp_class = unreal.TopLevelAssetPath("/Script/Engine", "Blueprint")
-assets = ar.get_assets_by_class(bp_class, True)   # True = include derived classes
-for a in assets:
-    print(f"{a.package_path}/{a.asset_name}")
-```
-
-### Material Parameters
-
-```python
-# Works cleanly
-import unreal
-mat = unreal.load_asset('/Game/Materials/M_MyMaterial')
-names = unreal.MaterialEditingLibrary.get_scalar_parameter_names(mat)
-print(names)
-```
+After any edit: `compile_blueprint(path)` and check `.success` / `.num_errors`, then
+`unreal.EditorAssetLibrary.save_asset(path)`. Don't claim success until compile reports zero errors.

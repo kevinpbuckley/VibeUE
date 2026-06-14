@@ -114,6 +114,14 @@ struct VIBEUE_API FToolMetadata
 	UPROPERTY()
 	bool bInternalOnly = false;
 
+	/**
+	 * If true, tool exists for editor-testing automation only:
+	 * never shown to the in-editor chat AI, and only exposed via MCP
+	 * when Chat Editor Testing mode is enabled.
+	 */
+	UPROPERTY()
+	bool bEditorTestingOnly = false;
+
 	/** Reflection function pointer (not serialized) */
 	UFunction* Function = nullptr;
 

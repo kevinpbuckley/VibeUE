@@ -1,0 +1,15 @@
+# mirror_pose.pyx — Mirror a pose left/right, and copy a pose between animations.
+#
+# Sample script for the animation-editing skill. Run via execute_python_code.
+import unreal
+ass = unreal.AnimSequenceService
+
+# Mirror frame 15 of a right-handed wave across the X axis (hand_r <-> hand_l, etc.)
+r = ass.mirror_pose("/Game/Anims/AS_Wave_Right", 15, "X")
+print("mirror:", r.success, "bones:", list(r.modified_bones))
+if r.success:
+    unreal.EditorAssetLibrary.save_asset("/Game/Anims/AS_Wave_Right")
+
+# Copy a pose from one animation/frame to another ([] filter = all bones)
+c = ass.copy_pose("/Game/Anims/AS_Idle", 0, "/Game/Anims/AS_Custom", 30, [])
+print("copy:", c.success, "bones:", len(c.modified_bones))

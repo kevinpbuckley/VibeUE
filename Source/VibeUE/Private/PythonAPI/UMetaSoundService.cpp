@@ -320,25 +320,55 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 		return Fail(TEXT("CreateMetaSound: factory failed to create UMetaSoundSource"));
 	}
 
-	// Set the requested output format. The factory initialises with the class default
-	// (Mono); if a different format is requested, update it and re-register so the
-	// audio output interface nodes reflect the correct channel count.
+	// Apply the requested output format and remove orphan binding nodes in a single
+	// builder session. NOTE: simply assigning UMetaSoundSource::OutputFormat does NOT swap
+	// the audio output interface — the graph keeps its Mono "UE.OutputFormat.Mono.Audio:0"
+	// sink even when the property reads "Stereo", producing a mislabelled mono asset. The
+	// format interface (Mono/Stereo/Quad) must be changed through the source builder's
+	// SetFormat(), which is exactly what the MetaSound editor's Output Format dropdown does
+	// (see UMetaSoundSource::PostEditChangeOutputFormat -> UMetaSoundSourceBuilder::SetFormat).
 	const EMetaSoundOutputAudioFormat DesiredFormat = StringToFormatEnum(OutputFormat);
-	if (NewSource->OutputFormat != DesiredFormat)
-	{
-		NewSource->OutputFormat = DesiredFormat;
-		UMetaSoundEditorSubsystem::GetChecked().RegisterGraphWithFrontend(*NewSource);
-		UEditorAssetLibrary::SaveAsset(PackagePath / AssetName, false);
-	}
-
-	// Auto-remove Template/Invalid nodes that FindOrBeginBuilding injects on first open.
-	// These orphan binding nodes are never useful to callers and confuse AI models.
 	{
 		const FString FullPath = PackagePath / AssetName;
 		FString LoadError;
 		UMetaSoundBuilderBase* Builder = BeginEditing(FullPath, &NewSource, LoadError);
 		if (Builder)
 		{
+			bool bModified = false;
+
+			// 1) Swap the output audio format interface (e.g. Mono -> Stereo) if a
+			//    non-default format was requested. This adds the correct channel output
+			//    vertices (Left/Right for Stereo) and removes the Mono interface.
+			if (NewSource->OutputFormat != DesiredFormat)
+			{
+				if (UMetaSoundSourceBuilder* SourceBuilder = Cast<UMetaSoundSourceBuilder>(Builder))
+				{
+					EMetaSoundBuilderResult FormatResult = EMetaSoundBuilderResult::Failed;
+					SourceBuilder->SetFormat(DesiredFormat, FormatResult);
+					if (FormatResult == EMetaSoundBuilderResult::Succeeded)
+					{
+						// Keep the asset property in sync with the interface so
+						// get_meta_sound_info() and the editor details panel agree.
+						NewSource->OutputFormat = DesiredFormat;
+						bModified = true;
+					}
+					else
+					{
+						UE_LOG(LogMetaSoundService, Warning,
+						       TEXT("CreateMetaSound: SetFormat('%s') failed for '%s' — asset left as Mono"),
+						       *OutputFormat, *FullPath);
+					}
+				}
+				else
+				{
+					UE_LOG(LogMetaSoundService, Warning,
+					       TEXT("CreateMetaSound: builder for '%s' is not a UMetaSoundSourceBuilder; cannot set format"),
+					       *FullPath);
+				}
+			}
+
+			// 2) Auto-remove Template/Invalid nodes that FindOrBeginBuilding injects on first
+			//    open. These orphan binding nodes are never useful to callers and confuse AI models.
 			TArray<FGuid> ToRemove;
 			Builder->GetConstBuilder().IterateNodes(
 				[&](const FMetasoundFrontendClass& Class, const FMetasoundFrontendNode& Node)
@@ -361,7 +391,13 @@ FMetaSoundResult UMetaSoundService::CreateMetaSound(const FString& PackagePath,
 					       TEXT("CreateMetaSound: removed orphan Template node '%s'"),
 					       *NodeId.ToString(EGuidFormats::DigitsWithHyphens));
 				}
+				bModified = true;
+			}
+
+			if (bModified)
+			{
 				CommitEditing(FullPath, NewSource);
+				UEditorAssetLibrary::SaveAsset(FullPath, false);
 			}
 		}
 	}

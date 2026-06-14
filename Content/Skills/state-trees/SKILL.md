@@ -1,7 +1,7 @@
 ---
 name: state-trees
 display_name: StateTree Behavior
-description: Create, inspect, and edit StateTree assets for AI behavior, game logic, and character state machines
+description: Create, inspect, and edit StateTree assets — states, tasks, transitions, conditions, considerations, and property bindings for AI behavior and game logic (StateTreeService). Use when the user asks to build a StateTree, add states/tasks/transitions, bind task properties, set up Utility AI considerations, or wire StateTree delegate transitions.
 vibeue_classes:
   - StateTreeService
 unreal_classes:
@@ -32,6 +32,8 @@ keywords:
   - override
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "ai-and-navigation"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # StateTree Skill
 
 StateTree is Unreal Engine's hierarchical state machine system for AI behavior and game logic.
@@ -56,14 +58,14 @@ StateTreeService  → edits the StateTree ASSET (states, tasks list, transitions
 BlueprintService  → edits the STT Blueprint CONTENT (variables, function graphs, node wiring)
 ```
 
-Use `manage_skills(action='load', skill_name='blueprints')` before writing any code that
+Use `vibeue-skills-manager(action='load', skill_name='blueprints')` before writing any code that
 touches an `STT_*` Blueprint's internals.
 
 If the request mentions timers, delayed completion, event callbacks, or screenshots of Blueprint graphs,
 also load:
 
 ```python
-manage_skills(action='load', skill_name='blueprint-graphs')
+vibeue-skills-manager(action='load', skill_name='blueprint-graphs')
 ```
 
 ## ⚠️ STT Graph Editing Rules
@@ -130,13 +132,29 @@ Root/Walking        → child of Root named Walking
 Root/Walking/Idle   → child of Walking named Idle
 ```
 
+## ⚠️ Common Mistakes
+
+| WRONG | CORRECT |
+|-------|---------|
+| `create_state_tree(...)` returns False and you retry other paths/folders | The path is rarely the problem — the **schema** is. Default `StateTreeComponentSchema` requires the GameplayStateTree plugin. Call `list_state_tree_schemas()` and pass an available schema explicitly |
+| Creating StateTrees via `AssetTools` + `unreal.StateTreeFactory` | Fails from Python (`Cannot nativize 'StateTreeFactory'…` / returns None) — use `StateTreeService.create_state_tree()` |
+| `info.name` on StateTreeInfo | `info.asset_name` (also: `asset_path`, `schema_class`, `all_states`, `is_compiled`) |
+| `transition.event_tag` | `transition.required_event_tag` (StateTreeTransitionInfo) |
+| `transition.target_state` | `transition.target_state_name` (display) or `target_state_path` (GotoState only) |
+
 ## Workflow
 
 ```python
 import unreal
 
 # 1. Create the asset
-unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+created = unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+if not created:
+    # Most common cause: the schema doesn't exist in this project. The default
+    # "StateTreeComponentSchema" comes from the GameplayStateTree plugin — projects
+    # without it must pass one of the schemas actually available:
+    print(unreal.StateTreeService.list_state_tree_schemas())
+    # then: create_state_tree("/Game/AI/MyBehavior", schema_class_name="<one of those>")
 
 # 2. Build hierarchy (empty parent_path = new top-level subtree)
 unreal.StateTreeService.add_state("/Game/AI/MyBehavior", "", "Root")
@@ -173,7 +191,7 @@ unreal.StateTreeService.select_state("/Game/AI/MyBehavior", "Root/Walking")  # s
 ## Sub-docs available
 
 This skill's larger reference material has been split into sibling files. Load them with
-`manage_skills(action='load', skill_name='<name>')` when you need the detail:
+`vibeue-skills-manager(action='load', skill_name='<name>')` when you need the detail:
 
 - **`api-reference`** — `StateTreeService` API for asset/state discovery, asset creation, state management (add, type, move, remove, enable, select), and per-state tasks (add, inspect, set property — including the deterministic property pattern and `FStateTreeDebugTextTask` notes).
 - **`api-bindings`** — Evaluators & global tasks (add, inspect, bind), transitions (all triggers/types/priorities plus the full `OnDelegate` workflow), compile & save, setting the context actor class, property bindings (task → context / root parameter / global task / evaluator), assigning a StateTree to a `StateTreeComponent` (use `StateTreeRef` not `StateTree`), theme colors, expand/collapse, and the "service first vs `execute_python_code`" guidance.
@@ -484,3 +502,7 @@ unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveEnterState
 # CORRECT — new Enter State event without return value
 unreal.BlueprintService.add_event_node(bp_path, "EventGraph", "ReceiveLatentEnterState", 0, 0)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_state_tree.pyx`** — create a StateTree, add states + a transition (see api-reference.md for task struct names).

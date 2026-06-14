@@ -1,0 +1,29 @@
+# build_pcg_graph.pyx — Create a PCG graph and wire Surface Sampler -> Static Mesh Spawner.
+#
+# Sample script for the pcg skill. Run via execute_python_code.
+# Uses the NATIVE PCG Python API (PCGPythonInterop) — no VibeUE service needed.
+import unreal
+
+FOLDER = "/Game/PCG"
+NAME = "PCG_SkillTest"
+asset_path = f"{FOLDER}/{NAME}"
+if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+    unreal.EditorAssetLibrary.delete_asset(asset_path)
+
+factory = unreal.PCGGraphFactory()
+graph = unreal.AssetToolsHelpers.get_asset_tools().create_asset(NAME, FOLDER, unreal.PCGGraph, factory)
+
+# add_node_of_type returns (PCGNode, PCGSettings)
+sampler_node, sampler = graph.add_node_of_type(unreal.PCGSurfaceSamplerSettings)
+sampler.set_editor_property("points_per_squared_meter", 5.0)
+sampler_node.set_node_position(200, 0)
+
+spawner_node, spawner = graph.add_node_of_type(unreal.PCGStaticMeshSpawnerSettings)
+spawner_node.set_node_position(500, 0)
+
+# Identify nodes by their settings class (node_title is None by default)
+for n in graph.nodes:
+    print(type(n.get_settings()).__name__)
+
+unreal.EditorAssetLibrary.save_asset(asset_path)
+print("created:", asset_path)

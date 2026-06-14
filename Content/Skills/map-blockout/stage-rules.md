@@ -1,3 +1,8 @@
+---
+name: map-blockout/stage-rules
+description: Gated stage rules for map blockout — the validation checks each stage must pass before proceeding to materialization.
+---
+
 # Map Blockout — Stage Rules
 
 Authoritative per-stage rules. Mirrors [docs/design/map-designer-spec.md](../../../docs/design/map-designer-spec.md) (the spec is the source of truth — if these two disagree, the spec wins).

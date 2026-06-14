@@ -7,7 +7,7 @@
 #include "JsonUtilities.h"
 #include "Chat/ChatSession.h"
 #include "Core/ErrorCodes.h"
-#include "FileHelpers.h"
+#include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
 // Include service headers after PythonTypes
 #include "Tools/PythonExecutionService.h"
@@ -185,7 +185,14 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 	// Auto-save all dirty packages before executing Python code if enabled
 	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
 	{
-		if (bLastPythonExecutionCrashed)
+		if (FChatSession::IsChatEditorTestingEnabled())
+		{
+			// Chat Editor Testing runs drive many rapid tool calls and manage their own saves;
+			// skip the per-call auto-save entirely to keep them fast. (The non-testing path below
+			// now uses a fully headless save — see issue #433 — so this is purely an optimization.)
+			UE_LOG(LogPythonTools, Verbose, TEXT("Skipping auto-save: Chat Editor Testing mode is enabled"));
+		}
+		else if (bLastPythonExecutionCrashed)
 		{
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
 		}
@@ -201,29 +208,31 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		{
 			UE_LOG(LogPythonTools, Verbose, TEXT("Auto-saving dirty packages before Python execution..."));
 
-			const bool bPromptUserToSave = false;
-			const bool bSaveMapPackages = true;
-			const bool bSaveContentPackages = true;
-			const bool bFastSave = false;
-			const bool bNotifyNoPackagesSaved = false;
-			const bool bCanBeDeclined = false;
+			// IMPORTANT (issue #433): every call through this path is MCP / tool driven — there is no
+			// interactive user. FEditorFileUtils::SaveDirtyPackages can surface a modal PackagesDialog
+			// (e.g. on a save warning for a freshly-created asset) which hangs the request, and it can
+			// run a Slate thumbnail prepass that stack-overflows on a not-yet-compiled Widget Blueprint
+			// (the crash behind issue #435). Use a fully headless package save instead: collect the
+			// dirty packages and save them directly, with no dialog and no thumbnail/Slate prepass.
+			TArray<UPackage*> DirtyPackages;
+			FEditorFileUtils::GetDirtyContentPackages(DirtyPackages);
+			FEditorFileUtils::GetDirtyWorldPackages(DirtyPackages);
 
-			bool bSaveSuccess = FEditorFileUtils::SaveDirtyPackages(
-				bPromptUserToSave,
-				bSaveMapPackages,
-				bSaveContentPackages,
-				bFastSave,
-				bNotifyNoPackagesSaved,
-				bCanBeDeclined
-			);
-
-			if (bSaveSuccess)
+			if (DirtyPackages.Num() == 0)
 			{
-				UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save completed successfully"));
+				UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save: no dirty packages"));
 			}
 			else
 			{
-				UE_LOG(LogPythonTools, Warning, TEXT("Auto-save completed with warnings or errors"));
+				const bool bSaveSuccess = UEditorLoadingAndSavingUtils::SavePackages(DirtyPackages, /*bOnlyDirty=*/true);
+				if (bSaveSuccess)
+				{
+					UE_LOG(LogPythonTools, Verbose, TEXT("Auto-save completed (headless): %d package(s)"), DirtyPackages.Num());
+				}
+				else
+				{
+					UE_LOG(LogPythonTools, Warning, TEXT("Auto-save (headless) completed with warnings or errors"));
+				}
 			}
 		}
 	}

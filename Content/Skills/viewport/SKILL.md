@@ -1,7 +1,7 @@
 ---
 name: viewport
 display_name: Viewport Control
-description: Control the Unreal Editor level viewport - camera type, view mode, FOV, exposure, layout, camera position, and rendering settings
+description: Control the Unreal Editor level viewport — camera type/position, view mode, FOV, exposure, layout, and rendering settings (ViewportService). Use when the user asks to move the editor camera, change the view mode (Lit/Unlit/Wireframe), set FOV/exposure, switch viewport layout, or frame the level for a screenshot.
 vibeue_classes:
   - ViewportService
 unreal_classes:
@@ -121,6 +121,12 @@ unreal.ViewportService.set_fov(75.0)
 
 When `set_realtime(False)`, the viewport only repaints on interaction. All ViewportService methods force a redraw after changes, so this is transparent to Python callers — but be aware users won't see continuous animation/particles until realtime is re-enabled.
 
+> ⚠️ **Multi-pane read-back caveat:** `get_viewport_info().is_realtime` reflects the *active* pane.
+> In a multi-pane layout (e.g. `FourPanes2x2`) where the active pane isn't the primary, `set_realtime(True)`
+> can succeed yet `is_realtime` reads back `False`. Verify realtime in `OnePane` layout, or don't rely on
+> the read-back to gate logic when in a split layout. (Other fields like view type / FOV / camera read back
+> correctly across layouts.)
+
 ---
 
 ## Workflows
@@ -189,7 +195,7 @@ unreal.ViewportService.set_view_mode("lit")
 import unreal
 # Move camera to a bird's-eye view
 unreal.ViewportService.set_camera_location(unreal.Vector(0, 0, 5000))
-unreal.ViewportService.set_camera_rotation(unreal.Rotator(-90, 0, 0))
+unreal.ViewportService.set_camera_rotation(unreal.Rotator(pitch=-90))  # ⚠️ Rotator positional order is (Roll, Pitch, Yaw) — always use kwargs
 ```
 
 ### Configure Clipping Planes
@@ -221,3 +227,7 @@ unreal.ViewportService.set_exposure(True, 4.0)   # Brighter
 # Return to auto exposure (game settings)
 unreal.ViewportService.set_exposure_game_settings()
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/set_camera.pyx`** — position the editor camera and set the view mode.

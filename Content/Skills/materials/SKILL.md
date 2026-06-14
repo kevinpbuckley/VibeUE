@@ -1,7 +1,7 @@
 ---
 name: materials
 display_name: Material System
-description: Create and edit materials and material instances using MaterialService and MaterialNodeService
+description: Create and edit materials and material instances — graph nodes, parameters, functions, custom HLSL, and instance overrides (MaterialService + MaterialNodeService). Use when the user asks to create or edit a material/material instance, wire material nodes, add material parameters, set blend/shading modes, or recreate a material graph. For landscape materials load landscape-materials.
 vibeue_classes:
   - MaterialService
   - MaterialNodeService
@@ -15,6 +15,8 @@ keywords:
   - parameter
   - texture
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "materials-and-shaders"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Material System Skill
 
@@ -196,6 +198,25 @@ unreal.EditorAssetLibrary.save_asset(path)
 - `EmissiveColor`, `Normal`, `Opacity`, `OpacityMask`
 - `WorldPositionOffset`, `AmbientOcclusion`
 
+### ⚠️ Discovering Node Types & Categories
+
+To answer "what nodes / categories are available", use the MaterialNodeService discovery
+calls — do **not** hunt through `discover_python_module` or a material-editor palette API
+(there isn't a Python one):
+
+```python
+# All material-expression categories (Math, Color, Constants, Coordinates, Parameters, ...)
+cats = unreal.MaterialNodeService.get_categories()
+
+# Search node types by name/category (returns MaterialExpressionTypeInfo:
+#   class_name, display_name, category, description, is_parameter)
+types = unreal.MaterialNodeService.discover_types(category="", search_term="Add", max_results=100)
+```
+
+To create a node, pass the bare class name minus the `MaterialExpression` prefix
+(`"Add"`, `"Multiply"`, `"Constant3Vector"`, `"OneMinus"`, `"LinearInterpolate"`/`"Lerp"`) to
+`create_expression` / `batch_create_expressions`.
+
 ### ⚠️ Check Node Existence
 
 ```python
@@ -210,406 +231,82 @@ if add_node:
 
 ### ⚠️ Property Names
 
-Use `discover_python_class()` first:
+Use `discover_python_class()` first (batch: `class_name='unreal.A, unreal.B'`):
 - `MaterialExpressionTypeInfo` uses `display_name`, NOT `name`
 - `MaterialOutputConnectionInfo` uses `connected_expression_id`, NOT `expression_id`
 
----
+Complete field lists (don't guess):
 
-## Workflows
+| Struct | Fields |
+|---|---|
+| `MaterialExpressionInfo` (from `list_expressions` / `get_expression_info`) | `id`, `class_name`, `display_name`, `category`, `description`, `pos_x`, `pos_y`, `is_parameter`, `parameter_name`, `input_names`, `output_names` — the class is `class_name`, **not `expression_class`** |
+| `MaterialNodePropertyInfo` (from expression property lists) | `name`, `value`, `property_type`, `is_editable` — it's `name` here, **not `property_name`** |
+| `MaterialSummary` (from `MaterialService.summarize`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `parameter_count`, `parameter_names`, `key_properties`, `editable_properties` — it's `material_name`/`material_path`/`parameter_count`, **not `name`/`path`/`num_parameters`** |
+| `MaterialDetailedInfo` (from `MaterialService.get_material_info`) | `material_name`, `material_path`, `blend_mode`, `shading_model`, `material_domain`, `two_sided`, `expression_count`, `texture_sample_count`, `is_material_instance`, `parent_material`, `parameters` — it's `two_sided`, **not `is_two_sided`** |
+| `MaterialPropertyInfo_Custom` (from `MaterialService.list_properties` / `get_property_info`) | `property_name`, `display_name`, `property_type`, `current_value`, `allowed_values`, `category`, `is_editable`, `is_advanced` — it's `property_name`/`current_value`, **not `name`/`value`** (differs from `MaterialNodePropertyInfo` above) |
 
-### Create Basic Material
+### 🚨 Setting Material Properties: `set_property` Takes Display OR Internal Name
 
-```python
-import unreal
-
-# create_material returns MaterialCreateResult — extract .asset_path
-result = unreal.MaterialService.create_material("M_Character", "/Game/Materials/")
-if not result.success:
-    print(f"FAILED: {result.error_message}")
-path = result.asset_path
-
-# create_parameter returns MaterialExpressionInfo — extract .id
-# default_value formats: "R,G,B" or "R,G,B,A" or "(R=1.0,G=0.0,B=0.0,A=1.0)"
-color_expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "0.8,0.2,0.2,1.0", -500, 0)
-unreal.MaterialNodeService.connect_to_output(path, color_expr.id, "", "BaseColor")
-
-# Add roughness
-rough_expr = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Roughness", "Surface", "0.5", -500, 100)
-unreal.MaterialNodeService.connect_to_output(path, rough_expr.id, "", "Roughness")
-
-unreal.MaterialService.compile_material(path)
-unreal.EditorAssetLibrary.save_asset(path)
-
-# Auto-layout: arrange nodes in clean left-to-right columns
-unreal.MaterialNodeService.layout_expressions(path)
-```
-
-### Create Material Instance
+`MaterialService.set_property(path, name, value)` / `get_property` accept **either** the editor
+display name (`"Two Sided"`, `"Blend Mode"`, `"Opacity Mask Clip Value"`) **or** the internal
+property name (`"TwoSided"`, `"BlendMode"`, `"OpacityMaskClipValue"`) — matching is
+case-insensitive and ignores spaces. Both of these work:
 
 ```python
-import unreal
-
-# create_instance returns MaterialCreateResult — extract .asset_path
-result = unreal.MaterialService.create_instance("/Game/Materials/M_Character", "MI_PlayerRed", "/Game/Materials/")
-if not result.success:
-    print(f"FAILED: {result.error_message}")
-instance_path = result.asset_path
-
-unreal.MaterialService.set_instance_vector_parameter(instance_path, "BaseColor", 1.0, 0.0, 0.0, 1.0)
-unreal.MaterialService.set_instance_scalar_parameter(instance_path, "Roughness", 0.3)
-unreal.EditorAssetLibrary.save_asset(instance_path)
+unreal.MaterialService.set_property(path, "Two Sided", "true")   # display name
+unreal.MaterialService.set_property(path, "BlendMode", "BLEND_Masked")  # internal name
+unreal.MaterialService.set_property(path, "OpacityMaskClipValue", "0.33")
+unreal.MaterialService.compile_material(path)   # enum/blend changes need a recompile
+unreal.MaterialService.save_material(path)
 ```
 
-### Add Texture Parameter
+> ⚠️ `set_property` returns a **bool** (`True`/`False`), it does **not** raise on an unknown
+> property — a `False` means the name didn't resolve or the value didn't parse. Don't assume
+> success: check the return, or verify with `get_property` / `summarize` afterward. Enum values
+> are the `BLEND_*` / `MSM_*` / `MD_*` identifiers (see below), not the friendly labels.
+
+**Discover legal enum values, don't guess:** `list_properties` / `get_property_info` populate
+`allowed_values` for enum properties — including the classic `TEnumAsByte` ones
+(`BlendMode`, `ShadingModel`, `MaterialDomain`). Read them instead of probing `unreal` for the
+enum class:
 
 ```python
-import unreal
-
-tex_expr = unreal.MaterialNodeService.create_parameter(path, "Texture", "DiffuseMap", "Textures", "", -500, 0)
-unreal.MaterialNodeService.connect_to_output(path, tex_expr.id, "", "BaseColor")
-unreal.MaterialService.compile_material(path)
+for p in unreal.MaterialService.list_properties(path):
+    if p.property_name == "BlendMode":
+        print(p.allowed_values)
+        # ['BLEND_Opaque','BLEND_Masked','BLEND_Translucent','BLEND_Additive', ...]
 ```
 
-### Create Math Expression
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Tint"
-
-# All create_* calls return expression info objects — use .id
-color_expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "TintColor", "Surface", "", -600, 0)
-mult_expr = unreal.MaterialNodeService.create_expression(path, "Multiply", -300, 0)
-intensity_expr = unreal.MaterialNodeService.create_parameter(path, "Scalar", "Intensity", "Surface", "1.0", -600, 100)
-
-unreal.MaterialNodeService.connect_expressions(path, color_expr.id, "", mult_expr.id, "A")
-unreal.MaterialNodeService.connect_expressions(path, intensity_expr.id, "", mult_expr.id, "B")
-unreal.MaterialNodeService.connect_to_output(path, mult_expr.id, "", "BaseColor")
-unreal.MaterialService.compile_material(path)
-```
-
-### Set Material Properties
-
-```python
-import unreal
-
-unreal.MaterialService.set_blend_mode(path, "Translucent")  # For transparency
-unreal.MaterialService.set_shading_model(path, "DefaultLit")
-unreal.MaterialService.set_two_sided(path, True)
-unreal.MaterialService.compile_material(path)
-```
-
-### Get Material Info
-
-```python
-import unreal
-
-info = unreal.MaterialService.get_material_info("/Game/Materials/M_Character")
-if info:
-    print(f"Material: {info.name}, Blend Mode: {info.blend_mode}")
-```
-
-### Create Function Call Node
-
-Use for MaterialFunction references (e.g., `/Engine/Functions/...`):
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Complex"
-
-# create_function_call returns MaterialExpressionInfo — use .id
-func_expr = unreal.MaterialNodeService.create_function_call(
-    path,
-    "/Engine/Functions/Engine_MaterialFunctions02/Utility/BlendAngleCorrectedNormals",
-    -600, 0
-)
-
-# Connect like any other node
-unreal.MaterialNodeService.connect_to_output(path, func_expr.id, "", "Normal")
-unreal.MaterialService.compile_material(path)
-```
-
-### Create Custom HLSL Expression
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Custom"
-
-# create_custom_expression returns MaterialExpressionInfo — use .id
-custom_expr = unreal.MaterialNodeService.create_custom_expression(
-    path,
-    "return sin(Time * Speed);",     # HLSL code
-    "SineWave",                       # Description
-    "Float1",                         # OutputType: Float1, Float2, Float3, Float4, MaterialAttributes
-    "Time,Speed",                     # Comma-separated input names
-    -500, 0
-)
-
-# Connect inputs and outputs normally
-unreal.MaterialNodeService.connect_to_output(path, custom_expr.id, "", "EmissiveColor")
-unreal.MaterialService.compile_material(path)
-```
-
-### Create Collection Parameter
-
-Reference a parameter from a MaterialParameterCollection:
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Global"
-
-# create_collection_parameter returns MaterialExpressionInfo — use .id
-coll_expr = unreal.MaterialNodeService.create_collection_parameter(
-    path,
-    "/Game/Materials/MPC_GlobalParams",   # collection asset path
-    "WindStrength",                        # parameter name in collection
-    -500, 0
-)
-
-unreal.MaterialNodeService.connect_expressions(path, coll_expr.id, "", some_mult_id, "B")
-unreal.MaterialService.compile_material(path)
-```
-
-### Add Static Switch Parameter
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Switchable"
-
-# Create a static switch (compile-time boolean branch)
-switch_id = unreal.MaterialNodeService.create_parameter(
-    path, "StaticSwitch", "UseDetailTexture", "Features", "true", -600, 0
-)
-
-# StaticSwitch has True/False/Value inputs — connect other nodes to those
-```
-
-### Add Texture Object Parameter
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Objects"
-
-# TextureObject exposes texture without a sampler (for custom sampling)
-tex_obj_id = unreal.MaterialNodeService.create_parameter(
-    path, "TextureObject", "DetailMap", "Textures",
-    "/Game/Textures/T_Detail.T_Detail", -500, 0
-)
-```
-
-### Batch Create Expressions
-
-Create many nodes in a single transaction (much faster than individual calls):
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Complex"
-
-# Arrays must be same length — one entry per node
-types = ["Multiply", "Add", "Lerp", "OneMinus"]
-names = ["Mult1", "Add1", "Lerp1", "Invert1"]  # optional display names (use "" to skip)
-x_positions = [-400, -400, -200, -600]
-y_positions = [0, 200, 100, 0]
-
-result = unreal.MaterialNodeService.batch_create_expressions(
-    path, types, names, x_positions, y_positions
-)
-# result contains all created node IDs
-```
-
-### Batch Connect Expressions
-
-Wire up many connections in a single transaction:
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Complex"
-
-# Each array entry defines one connection
-source_ids = [color_id, rough_id, mult_id]
-output_names = ["", "", ""]           # "" = first output
-target_ids = [mult_id, mult_id, ""]   # "" = material output
-input_names = ["A", "B", "BaseColor"]
-
-result = unreal.MaterialNodeService.batch_connect_expressions(
-    path, source_ids, output_names, target_ids, input_names
-)
-```
-
-### Batch Set Properties
-
-Set many properties across multiple nodes in one call:
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Complex"
-
-node_ids = [tex_id, tex_id, const_id]
-property_names = ["Texture", "SamplerType", "R"]
-property_values = ["/Game/Textures/T_Diffuse", "SAMPLERTYPE_Color", "0.5"]
-
-result = unreal.MaterialNodeService.batch_set_properties(
-    path, node_ids, property_names, property_values
-)
-```
-
-### Export Material Graph (JSON)
-
-Export the entire material graph for analysis or recreation:
-
-```python
-import unreal
-
-path = "/Game/Materials/M_Landscape"
-
-# Get full JSON representation of the material graph
-json_str = unreal.MaterialNodeService.export_material_graph(path)
-
-# Parse and inspect
-import json
-graph = json.loads(json_str)
-
-print(f"Expressions: {len(graph['expressions'])}")
-print(f"Connections: {len(graph['connections'])}")
-
-# Each expression includes: id, class, class_full, pos_x, pos_y,
-# properties (dict), inputs (list), outputs (list)
-# Parameter expressions also have: is_parameter, parameter_name, group
-# Function calls have: function_path
-# Custom expressions have: hlsl_code, output_type, custom_input_names
-for expr in graph['expressions']:
-    print(f"  {expr['class']} at ({expr['pos_x']}, {expr['pos_y']})")
-    if expr.get('is_parameter'):
-        print(f"    Parameter: {expr['parameter_name']} (group: {expr['group']})")
-```
-
-### ⚠️ Export JSON Schema Reference
-
-**Top-level keys:**
-- `material` — `{blend_mode, shading_model, two_sided}`
-- `expressions` — array of expression objects
-- `connections` — array of connection objects
-- `output_connections` — array of material output connection objects
-
-**Expression object keys:**
-- `id` — unique expression identifier (use for connections)
-- `class` — short class name (e.g. `"Add"`, `"Multiply"`, `"ScalarParameter"`)
-- `class_full` — full UE class name (e.g. `"MaterialExpressionAdd"`)
-- `pos_x`, `pos_y` — editor position (NOT `x`/`y`)
-- `properties` — dict of editable property name→value (excludes ParameterName, Group)
-- `inputs` — list of input pin names
-- `outputs` — list of output pin names
-- `is_parameter` — true for parameter expressions
-- `parameter_name` — the parameter's display name (only on parameters)
-- `group` — parameter group name (only on parameters)
-- `function_path` — material function asset path (only on function calls)
-- `hlsl_code` — HLSL code string (only on Custom expressions)
-- `custom_input_names` — comma-separated input names (only on Custom expressions)
-- `landscape_layers` — array of layer configs (only on LandscapeLayerBlend)
-
-**Connection object keys:**
-- `source_id` — expression ID of the source node
-- `source_output_index` — integer index of the source output pin
-- `source_output_name` — name of the source output pin (empty string for default pin)
-- `target_id` — expression ID of the target node
-- `target_input` — name of the target input pin (NOT `target_input_name`)
-
-**Output connection object keys (material property connections):**
-- `property` — material property name (e.g. `"BaseColor"`, `"Normal"`)
-- `expression_id` — expression ID connected to this output
-- `output_index` — which output pin index of the expression
-- `output_name` — the output pin name (empty string for default)
-
-### ⚠️ Enum Value Format
-
-When setting material properties via `set_property`, enum values accept:
-- **Full prefixed names**: `"BLEND_Masked"`, `"MSM_DefaultLit"`, `"MD_Surface"`
-- **Short suffix names**: `"Masked"`, `"DefaultLit"`, `"Surface"`
-- Both are accepted — the API uses fuzzy matching
-
-### Recreate Material from Export
-
-Use `export_material_graph` + batch operations for material recreation:
-
-```python
-import unreal, json
-
-# 1. Export source material
-source_json = unreal.MaterialNodeService.export_material_graph("/Game/Materials/M_Source")
-graph = json.loads(source_json)
-
-# 2. Create new material — extract .asset_path from result
-result = unreal.MaterialService.create_material("M_Source_Copy", "/Game/Materials/")
-new_path = result.asset_path
-
-# 3. Set material properties
-mat = graph['material']
-unreal.MaterialService.set_blend_mode(new_path, mat['blend_mode'])
-unreal.MaterialService.set_shading_model(new_path, mat['shading_model'])
-
-# 4. Batch create all expressions
-# Use class_full or class (both accepted by create APIs)
-types = [e['class'] for e in graph['expressions']]
-x_positions = [e['pos_x'] for e in graph['expressions']]
-y_positions = [e['pos_y'] for e in graph['expressions']]
-
-# For function calls and specialized types, use batch_create_specialized
-# For generic types, use batch_create_expressions
-
-# 5. Set parameter names FIRST (before batch_set_properties)
-# The export's parameter_name field has the correct name
-for expr in graph['expressions']:
-    if expr.get('is_parameter'):
-        unreal.MaterialNodeService.set_expression_property(
-            new_path, new_id_map[expr['id']], "ParameterName", expr['parameter_name'])
-        if expr.get('group'):
-            unreal.MaterialNodeService.set_expression_property(
-                new_path, new_id_map[expr['id']], "Group", expr['group'])
-
-# 6. Batch set all other properties (ParameterName/Group excluded from export)
-
-# 7. Batch connect using connections array
-source_ids = [new_id_map[c['source_id']] for c in graph['connections']]
-output_names = [c['source_output_name'] for c in graph['connections']]
-target_ids = [new_id_map[c['target_id']] for c in graph['connections']]
-input_names = [c['target_input'] for c in graph['connections']]
-
-unreal.MaterialNodeService.batch_connect_expressions(
-    new_path, source_ids, output_names, target_ids, input_names)
-
-# 8. Connect output_connections (material property outputs)
-for oc in graph['output_connections']:
-    unreal.MaterialNodeService.connect_to_output(
-        new_path, new_id_map[oc['expression_id']],
-        oc['output_name'], oc['property'])
-
-# 9. Compile
-unreal.MaterialService.compile_material(new_path)
-```
+Common material property internal names: `TwoSided`, `BlendMode`, `ShadingModel`,
+`MaterialDomain`, `OpacityMaskClipValue`, `bUsedWithStaticLighting`, `DitheredLODTransition`.
 
 ---
 
-## Material Functions
+## Task Index
 
-For creating and editing **Material Functions** (reusable node subgraphs):
+| Task | Workflow | Sample script |
+|------|----------|---------------|
+| Create a material (+ params) | `workflows.md` → Create a basic material | `scripts/create_material.pyx` |
+| Create a material instance | `workflows.md` → Create a material instance | `scripts/create_instance.pyx` |
+| Add texture / math / function / HLSL nodes | `workflows.md` | — |
+| Build a graph with batch ops | `workflows.md` → Batch create/connect/set | `scripts/material_graph_batch.pyx` |
+| Inspect/export an existing graph | `reference.md` → Export JSON schema | `scripts/export_graph.pyx` |
+| Recreate a material from export | `reference.md` → Recreate from export | — |
+| Verify wiring / compile | Critical Rules → `get_material_diagnostics` | — |
 
-- Use `MaterialNodeService.get_function_info(function_path)` to inspect a function's inputs/outputs
-- Use `MaterialNodeService.export_function_graph(function_path)` to export a function's complete node graph as JSON
-- Use `MaterialNodeService.create_material_function(name, dir)` to create new functions
-- Use `MaterialNodeService.add_function_input/output(...)` to add I/O pins
-- Use `MaterialNodeService.create_function_call(mat_path, func_path)` to reference functions in material graphs
-- Load the `landscape-auto-material` skill for landscape-specific material function patterns
+## Sub-docs
 
-## Related Skills
+- **`workflows.md`** — create material/instance, texture/math/function/HLSL/collection/switch nodes,
+  set properties, and batch create/connect/set.
+- **`reference.md`** — parameter types, output names, enum formats, the `export_material_graph` JSON
+  schema, recreate-from-export steps, and Material Function authoring.
 
-- **landscape-materials**: Landscape materials with `LandscapeLayerBlend` nodes
-- **landscape-auto-material**: Production landscape materials using material functions, RVT, and instances
+## Verification
+
+After non-trivial wiring run `MaterialNodeService.get_material_diagnostics(path)` and confirm
+`is_compiled_ok` and the expected `referenced_texture_paths` — do **not** rely on `get_used_textures`
+(unreliable for multi-branch graphs). `compile_material` + `save_asset` to persist.
+
+## Related skills
+- **landscape-materials** — `LandscapeLayerBlend` nodes.
+- **landscape-auto-material** — production landscape materials (functions, RVT, instances).

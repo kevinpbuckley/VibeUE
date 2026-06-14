@@ -1,3 +1,8 @@
+---
+name: map-blockout/materialization
+description: How to materialize a validated map-blockout plan into real engine geometry — splines, landscape paint layers, foliage, and placed actors.
+---
+
 # Map Blockout — Materialization
 
 The MapBlockout pipeline produces a **plan** (masks, polylines, POI lists). The

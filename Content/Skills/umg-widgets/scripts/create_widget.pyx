@@ -1,0 +1,23 @@
+# create_widget.pyx — Create a new UMG Widget Blueprint.
+#
+# Sample script for the umg-widgets skill. Run via execute_python_code.
+# Edit ASSET_NAME / PACKAGE_PATH, then execute. This is the ONLY supported way to
+# create a Widget Blueprint — WidgetService does not create the asset itself.
+import unreal
+
+ASSET_NAME = "TestWidget"          # name of the new Widget Blueprint
+PACKAGE_PATH = "/Game/Blueprints"  # folder it goes in (no trailing slash)
+
+asset_path = f"{PACKAGE_PATH}/{ASSET_NAME}"
+
+# If it already exists, delete it so we get a clean asset.
+if unreal.EditorAssetLibrary.does_asset_exist(asset_path):
+    unreal.EditorAssetLibrary.delete_asset(asset_path)
+
+factory = unreal.WidgetBlueprintFactory()
+factory.set_editor_property("parent_class", unreal.UserWidget)
+asset_tools = unreal.AssetToolsHelpers.get_asset_tools()
+widget_asset = asset_tools.create_asset(ASSET_NAME, PACKAGE_PATH, unreal.WidgetBlueprint, factory)
+
+unreal.EditorAssetLibrary.save_asset(asset_path)
+print("created:", asset_path, "ok:", widget_asset is not None)

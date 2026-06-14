@@ -209,36 +209,40 @@ struct FInputTypeDiscoveryResult
 /**
  * Input service exposed directly to Python (Enhanced Input System).
  *
- * Provides 19 enhanced input management actions:
+ * Python method names (use THESE with discover_python_class method_filter —
+ * the snake_case names below are the real Python API):
  *
  * Reflection:
- * - reflection_discover_types: Discover available input action, modifier, and trigger types
+ * - discover_types: Discover available value types, modifier types, and trigger types
  *
  * Action Management:
- * - action_create: Create a new Input Action asset
- * - action_list: List all Input Action assets
- * - action_get_properties: Get properties of an Input Action
- * - action_configure: Configure Input Action properties
+ * - create_action: Create a new Input Action asset
+ * - list_input_actions: List all Input Action assets
+ * - get_input_action_info: Get properties of an Input Action
+ * - configure_action: Configure Input Action properties (consume input, description, ...)
+ * - input_action_exists: Check whether an Input Action asset exists
  *
  * Mapping Context Management:
- * - mapping_create_context: Create a new Input Mapping Context
- * - mapping_list_contexts: List all Mapping Contexts
- * - mapping_get_mappings: Get all key mappings in a context
- * - mapping_add_key_mapping: Add a key mapping to a context
- * - mapping_remove_mapping: Remove a key mapping from a context
- * - mapping_get_available_keys: Get list of available input keys
+ * - create_mapping_context: Create a new Input Mapping Context
+ * - list_mapping_contexts: List all Mapping Contexts
+ * - get_mapping_context_info: Get properties of a Mapping Context
+ * - get_mappings: Get all key mappings in a context
+ * - add_key_mapping: Add a key mapping to a context
+ * - remove_mapping: Remove a key mapping from a context
+ * - get_available_keys: Get list of available input keys
+ * - mapping_context_exists / key_mapping_exists: Existence checks
  *
  * Modifier Management:
- * - mapping_add_modifier: Add a modifier to a key mapping
- * - mapping_remove_modifier: Remove a modifier from a key mapping
- * - mapping_get_modifiers: Get modifiers on a key mapping
- * - mapping_get_available_modifier_types: Get available modifier types
+ * - add_modifier: Add a modifier to a key mapping
+ * - remove_modifier: Remove a modifier from a key mapping
+ * - get_modifiers: Get modifiers on a key mapping
+ * - get_available_modifier_types: Get available modifier types
  *
  * Trigger Management:
- * - mapping_add_trigger: Add a trigger to a key mapping
- * - mapping_remove_trigger: Remove a trigger from a key mapping
- * - mapping_get_triggers: Get triggers on a key mapping
- * - mapping_get_available_trigger_types: Get available trigger types
+ * - add_trigger: Add a trigger to a key mapping
+ * - remove_trigger: Remove a trigger from a key mapping
+ * - get_triggers: Get triggers on a key mapping
+ * - get_available_trigger_types: Get available trigger types
  *
  * Python Usage:
  *   import unreal
@@ -286,7 +290,7 @@ public:
 	 *
 	 * @param ActionName - Name for the new action
 	 * @param AssetPath - Path where to create the asset (e.g., "/Game/Input")
-	 * @param ValueType - Value type: "Digital", "Axis1D", "Axis2D", "Axis3D"
+	 * @param ValueType - Value type: "Boolean" (alias "Digital"), "Axis1D", "Axis2D", "Axis3D" — same names discover_types returns
 	 * @return Create result with asset path
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Input")

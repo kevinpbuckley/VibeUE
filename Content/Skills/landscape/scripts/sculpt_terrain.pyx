@@ -1,0 +1,14 @@
+# sculpt_terrain.pyx — Create a landscape and sculpt procedural features (mountain, valley).
+#
+# Sample script for the landscape skill. Run via execute_python_code.
+import unreal
+ls = unreal.LandscapeService
+
+r = ls.create_landscape(unreal.Vector(0,0,0), unreal.Rotator(0,0,0), unreal.Vector(100,100,100),
+                        component_count_x=8, component_count_y=8, landscape_label="SkillTest_Landscape")
+print("create_landscape:", r)
+label = "SkillTest_Landscape"
+
+# Procedural features (center_x, center_y in landscape space)
+print("mountain:", ls.create_mountain(label, 4000, 4000, 2000, 800, sharpness=1.0, add_noise=True, seed=7))
+print("valley:", ls.create_valley(label, 8000, 8000, 1500, 400) if hasattr(ls, "create_valley") else "n/a")

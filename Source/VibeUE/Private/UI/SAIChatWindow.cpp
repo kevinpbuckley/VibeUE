@@ -101,6 +101,7 @@ FString FChatWindowLogger::GetLogFilePath()
 
 TWeakPtr<SWindow> SAIChatWindow::WindowInstance;
 TSharedPtr<SAIChatWindow> SAIChatWindow::WidgetInstance;
+TArray<TWeakPtr<SAIChatWindow>> SAIChatWindow::ActiveInstances;
 
 // VibeUE Brand Colors
 namespace VibeUEColors
@@ -148,10 +149,14 @@ namespace VibeUEColors
 
 void SAIChatWindow::Construct(const FArguments& InArgs)
 {
+    // Track every live chat widget so GetChatSession() works for docked tabs too,
+    // not just the floating window
+    ActiveInstances.Add(SharedThis(this));
+
     // Create chat session
     ChatSession = MakeShared<FChatSession>();
     ChatSession->Initialize();
-    
+
     // Bind callbacks
     ChatSession->OnMessageAdded.BindSP(this, &SAIChatWindow::HandleMessageAdded);
     ChatSession->OnMessageUpdated.BindSP(this, &SAIChatWindow::HandleMessageUpdated);
@@ -690,6 +695,29 @@ void SAIChatWindow::ClearImageAttachment()
     {
         WidgetInstance->ClearAttachedImage();
     }
+}
+
+TSharedPtr<FChatSession> SAIChatWindow::GetChatSession()
+{
+    // Prune dead widgets, then return the session of the oldest live one.
+    // The docked tab / panel drawer chat is normally created before any
+    // floating window, so this prefers the user's "main chat".
+    ActiveInstances.RemoveAll([](const TWeakPtr<SAIChatWindow>& Instance)
+    {
+        return !Instance.IsValid();
+    });
+
+    for (const TWeakPtr<SAIChatWindow>& Instance : ActiveInstances)
+    {
+        TSharedPtr<SAIChatWindow> Widget = Instance.Pin();
+        if (Widget.IsValid() && Widget->ChatSession.IsValid())
+        {
+            return Widget->ChatSession;
+        }
+    }
+
+    // Fallback for the floating window (also covers widgets created before a hot reload)
+    return WidgetInstance.IsValid() ? WidgetInstance->ChatSession : nullptr;
 }
 
 void SAIChatWindow::RebuildMessageList()
@@ -1949,6 +1977,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     TSharedPtr<SCheckBox>        AutoSaveBeforePythonCheckBox;
     TSharedPtr<SCheckBox>        YoloModeCheckBox;
     TSharedPtr<SCheckBox>        ParallelToolCallsCheckBox;
+    TSharedPtr<SCheckBox>        ChatEditorTestingCheckBox;
     TSharedPtr<SSpinBox<float>>  TemperatureSpinBox;
     TSharedPtr<SSpinBox<float>>  TopPSpinBox;
     TSharedPtr<SSpinBox<int32>>  MaxTokensSpinBox;
@@ -1967,6 +1996,7 @@ FReply SAIChatWindow::OnSettingsClicked()
     bool    bCfgDebug           = FChatSession::IsDebugModeEnabled();
     bool    bCfgAutoSave        = FChatSession::IsAutoSaveBeforePythonExecutionEnabled();
     bool    bCfgYolo            = FChatSession::IsYoloModeEnabled();
+    bool    bCfgChatTesting     = FChatSession::IsChatEditorTestingEnabled();
     bool    bMCPEnabled         = FMCPServer::GetEnabledFromConfig();
     int32   MCPPort             = FMCPServer::GetPortFromConfig();
     FString MCPApiKey           = FMCPServer::GetApiKeyFromConfig();
@@ -2302,6 +2332,21 @@ FReply SAIChatWindow::OnSettingsClicked()
                     .ToolTipText(FText::FromString(TEXT("When enabled, Python code executes automatically without requiring approval.")))
                 ]
             ]
+            + SVerticalBox::Slot().AutoHeight().Padding(0, 4)
+            [
+                SNew(SHorizontalBox)
+                + SHorizontalBox::Slot().AutoWidth()
+                [
+                    SAssignNew(ChatEditorTestingCheckBox, SCheckBox)
+                    .IsChecked(bCfgChatTesting ? ECheckBoxState::Checked : ECheckBoxState::Unchecked)
+                ]
+                + SHorizontalBox::Slot().Padding(4, 0, 0, 0).VAlign(VAlign_Center)
+                [
+                    SNew(STextBlock)
+                    .Text(FText::FromString(TEXT("Chat Editor Testing")))
+                    .ToolTipText(FText::FromString(TEXT("Expose the manage_editor_chat MCP tool so external clients can automate the editor chat for testing (send messages, reset, read transcript/logs).\nCan also be enabled with the -VibeUEChatTesting command-line switch.")))
+                ]
+            ]
         ];
 
     // ============================================================
@@ -2563,6 +2608,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         SettingsSelectedModelPtr,
         SelectedProviderPtr, AvailableProvidersList,
         DebugModeCheckBox, AutoSaveBeforePythonCheckBox, YoloModeCheckBox, ParallelToolCallsCheckBox,
+        ChatEditorTestingCheckBox,
         TemperatureSpinBox, TopPSpinBox, MaxTokensSpinBox, MaxToolIterationsSpinBox,
         MCPServerEnabledCheckBox, MCPServerPortSpinBox, MCPServerApiKeyInput,
         SettingsWindow]() mutable -> FReply
@@ -2607,6 +2653,7 @@ FReply SAIChatWindow::OnSettingsClicked()
         FChatSession::SetFileLoggingEnabled(DebugModeCheckBox->IsChecked());
         FChatSession::SetAutoSaveBeforePythonExecutionEnabled(AutoSaveBeforePythonCheckBox->IsChecked());
         FChatSession::SetYoloModeEnabled(YoloModeCheckBox->IsChecked());
+        FChatSession::SetChatEditorTestingEnabled(ChatEditorTestingCheckBox->IsChecked());
         FChatSession::SaveTemperatureToConfig(TemperatureSpinBox->GetValue());
         FChatSession::SaveTopPToConfig(TopPSpinBox->GetValue());
         FChatSession::SaveMaxTokensToConfig(MaxTokensSpinBox->GetValue());

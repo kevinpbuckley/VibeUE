@@ -1,3 +1,8 @@
+---
+name: map-blockout/workflows
+description: Step-by-step map-blockout workflows — generate a plan from a landscape, validate through gated checks, and materialize into geometry.
+---
+
 # Map Blockout — Workflows
 
 End-to-end recipes for taking a landscape from "heightmap painted" to "fully blocked-out playable map."

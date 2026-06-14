@@ -205,7 +205,7 @@ public:
 	 *
 	 * Example:
 	 *   result = unreal.SoundCueService.create_sound_cue("/Game/Audio/SC_Footstep", "/Game/Audio/SW_Step")
-	 *   if result.b_success:
+	 *   if result.success:
 	 *       print(f"Created: {result.asset_path}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Lifecycle")
@@ -286,7 +286,7 @@ public:
 	 * Example:
 	 *   nodes = unreal.SoundCueService.list_nodes("/Game/Audio/SC_Footstep")
 	 *   for n in nodes:
-	 *       root_flag = " [ROOT]" if n.b_is_root_node else ""
+	 *       root_flag = " [ROOT]" if n.is_root_node else ""
 	 *       print(f"[{n.node_index}] {n.node_class}{root_flag} children={n.child_indices}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Audio|Inspection")

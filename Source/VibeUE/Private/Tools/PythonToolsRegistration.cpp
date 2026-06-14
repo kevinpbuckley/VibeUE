@@ -79,6 +79,92 @@ static int32 ExtractIntParam(const TMap<FString, FString>& Params, const FString
 	return FCString::Atoi(*Value);
 }
 
+// Helper to extract a parameter that may hold one value or several. Accepts a plain
+// string, a comma-separated list, a JSON-array-encoded string ('["a","b"]'), or a real
+// JSON array inside ParamsJson (string extraction fails on those, so it is checked here).
+static TArray<FString> ExtractStringListParam(const TMap<FString, FString>& Params, const FString& FieldName)
+{
+	TArray<FString> Values;
+
+	auto AddValue = [&Values](FString Value)
+	{
+		Value.TrimStartAndEndInline();
+		if (!Value.IsEmpty())
+		{
+			Values.Add(MoveTemp(Value));
+		}
+	};
+
+	FString Raw = ExtractParamFromJson(Params, FieldName).TrimStartAndEnd();
+	if (!Raw.IsEmpty())
+	{
+		if (Raw.StartsWith(TEXT("[")))
+		{
+			TArray<TSharedPtr<FJsonValue>> JsonValues;
+			TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(Raw);
+			if (FJsonSerializer::Deserialize(Reader, JsonValues))
+			{
+				for (const TSharedPtr<FJsonValue>& Value : JsonValues)
+				{
+					FString Str;
+					if (Value.IsValid() && Value->TryGetString(Str))
+					{
+						AddValue(Str);
+					}
+				}
+				return Values;
+			}
+		}
+		TArray<FString> Parts;
+		Raw.ParseIntoArray(Parts, TEXT(","), true);
+		for (FString& Part : Parts)
+		{
+			AddValue(Part);
+		}
+		return Values;
+	}
+
+	const FString* ParamsJsonStr = Params.Find(TEXT("ParamsJson"));
+	if (ParamsJsonStr)
+	{
+		TSharedPtr<FJsonObject> JsonObj;
+		TSharedRef<TJsonReader<>> Reader = TJsonReaderFactory<>::Create(*ParamsJsonStr);
+		if (FJsonSerializer::Deserialize(Reader, JsonObj) && JsonObj.IsValid())
+		{
+			const TArray<TSharedPtr<FJsonValue>>* Arr = nullptr;
+			if (JsonObj->TryGetArrayField(FieldName, Arr) && Arr)
+			{
+				for (const TSharedPtr<FJsonValue>& Value : *Arr)
+				{
+					FString Str;
+					if (Value.IsValid() && Value->TryGetString(Str))
+					{
+						AddValue(Str);
+					}
+				}
+			}
+		}
+	}
+	return Values;
+}
+
+// Helper to build a serialized JSON error object
+static FString MakeErrorJson(const FString& ErrorCode, const FString& ErrorMessage, const FString& ClassName = FString())
+{
+	TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
+	ErrorObj->SetBoolField(TEXT("success"), false);
+	if (!ClassName.IsEmpty())
+	{
+		ErrorObj->SetStringField(TEXT("class_name"), ClassName);
+	}
+	ErrorObj->SetStringField(TEXT("error_code"), ErrorCode);
+	ErrorObj->SetStringField(TEXT("error_message"), ErrorMessage);
+	FString JsonString;
+	TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
+	FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
+	return JsonString;
+}
+
 // Register execute_python_code tool
 REGISTER_VIBEUE_TOOL(execute_python_code,
 	"Execute Python code in Unreal Engine. IMPORTANT: Use 'import unreal' (lowercase). For subsystems use: unreal.get_editor_subsystem(unreal.LevelEditorSubsystem). Returns stdout, stderr, and execution status.",
@@ -144,49 +230,64 @@ REGISTER_VIBEUE_TOOL(discover_python_module,
 
 // Register discover_python_class tool
 REGISTER_VIBEUE_TOOL(discover_python_class,
-	"Discover methods and attributes of a Python class with optional filtering.",
+	"Discover methods and attributes of one or MORE Python classes in a single call. PREFER batching: class_name accepts a comma-separated list ('unreal.MaterialService, unreal.WidgetService') and method_filter ORs keywords with '|' ('create|delete|compile'). One batched call replaces several single-class calls.",
 	"Python",
 	TOOL_PARAMS(
-		TOOL_PARAM("class_name", "Fully qualified class name (e.g. 'unreal.BlueprintService')", "string", true),
-		TOOL_PARAM("method_filter", "Filter methods by name substring (case-insensitive). E.g. 'variable' to find variable-related methods", "string", false),
+		TOOL_PARAM("class_name", "Fully qualified class name (e.g. 'unreal.BlueprintService'). Pass several at once as a comma-separated list or JSON array (e.g. 'unreal.ComponentTypeInfo, unreal.ComponentPropertyInfo') — the response then contains a 'classes' array with one entry per class", "string", true),
+		TOOL_PARAM("method_filter", "Filter methods by name substring (case-insensitive). OR several keywords in one call with '|' or ',' (e.g. 'variable|component|compile' matches any of the three)", "string", false),
 		TOOL_PARAM("max_methods", "Maximum methods to return (default 0 = unlimited). Use to limit large class results", "number", false),
 		TOOL_PARAM("include_inherited", "Include inherited methods (default false). Set true for all methods including base class", "boolean", false),
 		TOOL_PARAM("include_private", "Include private methods starting with _ (default false)", "boolean", false)
 	),
 	{
-		FString ClassName = ExtractParamFromJson(Params, TEXT("class_name"));
+		TArray<FString> ClassNames = ExtractStringListParam(Params, TEXT("class_name"));
+		if (ClassNames.Num() == 0)
+		{
+			ClassNames = ExtractStringListParam(Params, TEXT("class_names"));
+		}
 		FString MethodFilter = ExtractParamWithDefault(Params, TEXT("method_filter"), TEXT(""));
 		int32 MaxMethods = ExtractIntParam(Params, TEXT("max_methods"), 0);
 		bool IncludeInherited = ExtractBoolParam(Params, TEXT("include_inherited"), false);
 		bool IncludePrivate = ExtractBoolParam(Params, TEXT("include_private"), false);
-		
+
+		if (ClassNames.Num() == 0)
+		{
+			return MakeErrorJson(TEXT("PYTHON_INVALID_PARAMS"), TEXT("Parameter 'class_name' is required (string, comma-separated list, or JSON array)"));
+		}
+
 		auto Service = UPythonTools::GetDiscoveryService();
 		if (!Service.IsValid())
 		{
-			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-			ErrorObj->SetBoolField(TEXT("success"), false);
-			ErrorObj->SetStringField(TEXT("error_code"), TEXT("PYTHON_SERVICE_UNAVAILABLE"));
-			ErrorObj->SetStringField(TEXT("error_message"), TEXT("Python discovery service is not available"));
-			FString JsonString;
-			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-			return JsonString;
+			return MakeErrorJson(TEXT("PYTHON_SERVICE_UNAVAILABLE"), TEXT("Python discovery service is not available"));
 		}
-		
-		auto Result = Service->DiscoverClass(ClassName, MethodFilter, MaxMethods, IncludeInherited, IncludePrivate);
-		if (Result.IsError())
+
+		// Single class — preserve the original flat response shape
+		if (ClassNames.Num() == 1)
 		{
-			TSharedPtr<FJsonObject> ErrorObj = MakeShared<FJsonObject>();
-			ErrorObj->SetBoolField(TEXT("success"), false);
-			ErrorObj->SetStringField(TEXT("error_code"), Result.GetErrorCode());
-			ErrorObj->SetStringField(TEXT("error_message"), Result.GetErrorMessage());
-			FString JsonString;
-			TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&JsonString);
-			FJsonSerializer::Serialize(ErrorObj.ToSharedRef(), Writer);
-			return JsonString;
+			auto Result = Service->DiscoverClass(ClassNames[0], MethodFilter, MaxMethods, IncludeInherited, IncludePrivate);
+			if (Result.IsError())
+			{
+				return MakeErrorJson(Result.GetErrorCode(), Result.GetErrorMessage());
+			}
+			return UPythonTools::ConvertClassInfoToJson(Result.GetValue());
 		}
-		
-		return UPythonTools::ConvertClassInfoToJson(Result.GetValue());
+
+		// Multiple classes — one entry per class; per-class failures don't fail the batch
+		TArray<FString> ClassJsonBlobs;
+		for (const FString& ClassName : ClassNames)
+		{
+			auto Result = Service->DiscoverClass(ClassName, MethodFilter, MaxMethods, IncludeInherited, IncludePrivate);
+			if (Result.IsError())
+			{
+				ClassJsonBlobs.Add(MakeErrorJson(Result.GetErrorCode(), Result.GetErrorMessage(), ClassName));
+			}
+			else
+			{
+				ClassJsonBlobs.Add(UPythonTools::ConvertClassInfoToJson(Result.GetValue()));
+			}
+		}
+		return FString::Printf(TEXT("{\"success\":true,\"count\":%d,\"classes\":[%s]}"),
+			ClassJsonBlobs.Num(), *FString::Join(ClassJsonBlobs, TEXT(",")));
 	}
 );
 

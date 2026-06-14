@@ -1,7 +1,7 @@
 ---
 name: animation-montage
 display_name: Animation Montages
-description: Create and manipulate animation montages with sections, slots, segments, branching points, and blend settings
+description: Create and manipulate Animation Montages — sections, slots, segments, branching points, notifies, and blend settings (AnimMontageService). Use when the user asks to create a montage (from an animation or empty), add or link montage sections, set up slots/segments, add branching points, or adjust montage blend timing.
 vibeue_classes:
   - AnimMontageService
 unreal_classes:
@@ -21,6 +21,8 @@ keywords:
   - root motion
   - notify
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "animation-system"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Animation Montage Skill
 
@@ -164,7 +166,7 @@ AnimMontageService.set_enable_root_motion_rotation(montage_path, enable) -> bool
 # Open montage in Animation Editor
 AnimMontageService.open_montage_editor(montage_path) -> bool
 
-# Refresh editor UI after modifications (IMPORTANT!)
+# Refresh editor UI: call this ONCE, AFTER all edits are done (see crash warning below)
 AnimMontageService.refresh_montage_editor(montage_path) -> bool
 
 # Jump to section in preview
@@ -173,6 +175,15 @@ AnimMontageService.jump_to_section(montage_path, section_name) -> bool
 # Play preview
 AnimMontageService.play_preview(montage_path, start_section) -> bool
 ```
+
+> ⚠️ **CRASH WARNING — never structurally edit a montage while its editor is open.**
+> Adding/removing **sections, slot tracks, segments, notifies, or branching points** reallocates
+> the montage's internal arrays. If the montage editor (Persona) is open, its live preview holds
+> pointers into those arrays and the next tick will dereference freed memory → **the editor hard-crashes**.
+> Rule: do ALL structural edits FIRST, then `refresh_montage_editor()` / `open_montage_editor()` **exactly once at the very end**.
+> Do NOT call `refresh_montage_editor()` between edits. (The service now also auto-closes the editor before
+> each structural edit as a safety net, but you should still batch edits and open last so the editor isn't
+> opening and closing repeatedly.)
 
 ## IMPORTANT: Asset Path Format
 
@@ -185,6 +196,37 @@ montage_path = "/Game/Montages/AM_Attack"
 # WRONG: Folder path
 montage_path = "/Game/Montages"  # This is a folder, not an asset!
 ```
+
+## IMPORTANT: Return Struct Field Names (read before printing results)
+
+These methods return UStruct objects. Access fields with the **exact snake_case names below** —
+guessing (`skeleton_display_name`, segment `end_time`, `name`, `path`) raises `AttributeError`.
+Each struct field is read-only data already populated; just read it.
+
+**`MontageInfo`** (from `get_montage_info` / `list_montages` / `find_montages_for_skeleton`):
+`montage_path`, `montage_name`, `skeleton_path`, `duration`, `section_count`, `slot_track_count`,
+`notify_count`, `branching_point_count`, `blend_in_time`, `blend_out_time`, `blend_out_trigger_time`,
+`enable_root_motion_translation`, `enable_root_motion_rotation`, `slot_names` (Array[str]).
+*(No `skeleton_display_name` — use `skeleton_path`. No `skeleton` object — it's a path string.)*
+
+**`MontageSectionInfo`** (from `list_sections`):
+`section_name`, `section_index`, `start_time`, `end_time`, `duration`, `next_section_name`,
+`b_loops`, `segment_count`.
+
+**`AnimSegmentInfo`** (from `list_anim_segments` / `get_anim_segment_info`):
+`segment_index`, `anim_sequence_path`, `anim_name`, `start_time`, `duration`, `play_rate`,
+`anim_start_pos`, `anim_end_pos`, `loop_count`, `b_loops`.
+*(Segments have NO `end_time` — that field exists only on sections. Compute segment end as
+`start_time + duration`. Source-clip range is `anim_start_pos` → `anim_end_pos`.)*
+
+**`SlotTrackInfo`** (from `list_slot_tracks`): `track_index`, `slot_name`, `segment_count`, `total_duration`.
+
+**`SectionLink`** (from `get_all_section_links`): `from_section`, `to_section`, `b_is_loop`.
+
+**`BranchingPointInfo`** (from `list_branching_points`): `index`, `notify_name`, `trigger_time`, `section_name`.
+
+> Tip: when unsure, call `discover_python_class('unreal.MontageInfo, unreal.AnimSegmentInfo, unreal.MontageSectionInfo')`
+> — the `Editor Properties` block lists every valid field name. Cheaper than a crash-and-retry loop.
 
 ## Key Workflows
 
@@ -223,11 +265,12 @@ unreal.AnimMontageService.add_branching_point(path, "Combo2Window", 1.7)
 unreal.AnimMontageService.set_blend_in(path, 0.15, "Cubic")
 unreal.AnimMontageService.set_blend_out(path, 0.2, "Linear")
 
-# 7. IMPORTANT: Refresh editor to see changes
-unreal.AnimMontageService.refresh_montage_editor(path)
-
-# 8. Save
+# 7. Save FIRST, while no editor is open
 unreal.EditorAssetLibrary.save_asset(path)
+
+# 8. THEN refresh/open the editor exactly once — never between the edits above
+#    (refreshing mid-edit can crash the editor; see CRASH WARNING)
+unreal.AnimMontageService.refresh_montage_editor(path)
 ```
 
 ### Create Layered Upper Body Montage
@@ -286,15 +329,19 @@ montages = AnimMontageService.list_sections("/Game/Montages")
 sections = AnimMontageService.list_sections("/Game/Montages/AM_Attack")
 ```
 
-### Wrong: Not refreshing editor after modifications
+### Wrong: Refreshing the editor between structural edits (can CRASH the editor)
 ```python
-# WRONG - Changes may not be visible
+# WRONG - opening/refreshing the editor mid-edit, then editing more, can hard-crash
+# the editor (live preview holds dangling pointers into reallocated montage arrays)
 AnimMontageService.add_section(path, "Attack", 0.5)
-# Editor shows stale data
+AnimMontageService.refresh_montage_editor(path)   # editor now open
+AnimMontageService.add_anim_segment(path, 0, anim, 1.0)  # mutates arrays under live preview -> CRASH risk
 
-# CORRECT - Always refresh after modifications
+# CORRECT - do ALL structural edits first, save, THEN refresh/open exactly once at the end
 AnimMontageService.add_section(path, "Attack", 0.5)
-AnimMontageService.refresh_montage_editor(path)  # Now UI is updated
+AnimMontageService.add_anim_segment(path, 0, anim, 1.0)
+unreal.EditorAssetLibrary.save_asset(path)
+AnimMontageService.refresh_montage_editor(path)   # single refresh at the very end
 ```
 
 ### Wrong: Adding sections beyond montage duration
@@ -317,3 +364,7 @@ AnimMontageService.add_section(path, "Attack", 0.5)
 AnimMontageService.add_section(path, "Attack", 0.5)
 unreal.EditorAssetLibrary.save_asset(path)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_montage.pyx`** — create a montage from an animation and add named sections.

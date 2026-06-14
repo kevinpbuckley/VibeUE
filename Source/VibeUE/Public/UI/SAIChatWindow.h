@@ -65,6 +65,13 @@ public:
     /** Static method to check if an image is currently attached */
     static bool HasImageAttached();
 
+    /**
+     * Get the active chat session (null if no chat UI is open).
+     * Finds the session of any live chat widget - the docked tab / panel drawer
+     * (the usual "main chat") or the floating window - whichever was created first.
+     */
+    static TSharedPtr<FChatSession> GetChatSession();
+
     /** Static method to clear any attached image */
     static void ClearImageAttachment();
 
@@ -489,7 +496,10 @@ private:
 
     /** Static window instance */
     static TWeakPtr<SWindow> WindowInstance;
-    
+
     /** Static widget instance */
     static TSharedPtr<SAIChatWindow> WidgetInstance;
+
+    /** All live chat widgets regardless of host (docked tab, panel drawer, or floating window) */
+    static TArray<TWeakPtr<SAIChatWindow>> ActiveInstances;
 };

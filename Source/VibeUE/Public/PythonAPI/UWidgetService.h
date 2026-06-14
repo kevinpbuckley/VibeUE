@@ -626,6 +626,21 @@ public:
 		const FString& OldName,
 		const FString& NewName);
 
+	/**
+	 * Move an existing widget to a new parent panel (re-parent), preserving the widget object.
+	 * Maps to action="reparent_widget".
+	 *
+	 * @param WidgetPath - Full path to the Widget Blueprint
+	 * @param WidgetName - Name of the widget to move
+	 * @param NewParentName - Name of the destination panel widget (must be a UPanelWidget)
+	 * @return True if the widget was re-slotted under the new parent
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Widgets")
+	static bool ReparentWidget(
+		const FString& WidgetPath,
+		const FString& WidgetName,
+		const FString& NewParentName);
+
 	// =================================================================
 	// Validation (validate)
 	// =================================================================

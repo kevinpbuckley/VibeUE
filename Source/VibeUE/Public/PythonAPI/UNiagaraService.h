@@ -635,7 +635,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraService.get_system_info("/Game/VFX/NS_Fire")
+	 *   info = unreal.NiagaraService.get_system_info("/Game/VFX/NS_Fire")  # info struct or None (NOT a tuple)
 	 *   print(f"Emitter count: {info.emitter_count}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Get Niagara System Info"))
@@ -649,7 +649,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, summary = unreal.NiagaraService.summarize("/Game/VFX/NS_Fire")
+	 *   summary = unreal.NiagaraService.summarize("/Game/VFX/NS_Fire")  # summary struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Summarize Niagara System"))
 	static bool Summarize(const FString& SystemPath, FNiagaraSystemSummary& OutSummary);
@@ -902,7 +902,7 @@ public:
 	 * @return True if found
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraService.get_parameter("/Game/VFX/NS_Fire", "User.SpawnRate")
+	 *   info = unreal.NiagaraService.get_parameter("/Game/VFX/NS_Fire", "User.SpawnRate")  # info struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Get Parameter"))
 	static bool GetParameter(
@@ -1056,7 +1056,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, props = unreal.NiagaraService.get_system_properties("/Game/VFX/NS_Fire")
+	 *   props = unreal.NiagaraService.get_system_properties("/Game/VFX/NS_Fire")  # props struct or None
 	 *   print(f"Effect Type: {props.effect_type_name}")
 	 *   print(f"Determinism: {props.determinism}")
 	 *   print(f"Warmup: {props.warmup_time}s")
@@ -1170,7 +1170,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraService.get_emitter_lifecycle("/Game/VFX/NS_Fire", "Flames")
+	 *   info = unreal.NiagaraService.get_emitter_lifecycle("/Game/VFX/NS_Fire", "Flames")  # info struct or None
 	 *   print(f"Loop Behavior: {info.loop_behavior}")
 	 *   print(f"Life Cycle Mode: {info.life_cycle_mode}")
 	 */
@@ -1205,7 +1205,7 @@ public:
 	 * @return True if successful
 	 *
 	 * Example:
-	 *   success, settings = unreal.NiagaraService.get_all_editable_settings("/Game/VFX/NS_TeslaCoil")
+	 *   settings = unreal.NiagaraService.get_all_editable_settings("/Game/VFX/NS_TeslaCoil")  # settings struct or None
 	 *   print(f"Found {settings.total_settings_count} editable settings")
 	 *   
 	 *   # List user parameters

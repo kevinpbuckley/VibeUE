@@ -1073,6 +1073,21 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleInput(
 	if (!MapGet) { R.Message = TEXT("Could not find/create Map Get"); return R; }
 
 	const FString Namespaced = NormalizeNamespacedName(InputName, TEXT("Module"));
+
+	// Idempotent: a Module.<name> output pin may already exist (a repeated call, or a re-run of
+	// the same setup). Reuse it instead of creating a second pin with the same name - duplicate
+	// Map Get outputs corrupt the module signature and break compilation.
+	for (UEdGraphPin* P : MapGet->Pins)
+	{
+		if (P && P->Direction == EGPD_Output && P->PinName == FName(*Namespaced))
+		{
+			R.bSuccess = true;
+			R.Message  = P->PinName.ToString();
+			R.NodeId   = MapGet->NodeGuid.ToString();
+			return R;
+		}
+	}
+
 	MapGet->Modify();
 	const FEdGraphPinType PinType = MakeNiagaraPinType(Type);
 	UEdGraphPin* NewPin = MapGet->CreatePin(EGPD_Output, PinType, FName(*Namespaced));
@@ -1110,6 +1125,23 @@ FNiagaraScratchResult UNiagaraScratchPadService::AddModuleOutput(
 	if (!MapSet) { R.Message = TEXT("Could not find/create Map Set"); return R; }
 
 	const FString Namespaced = NormalizeNamespacedName(OutputName, TEXT("Output"));
+
+	// Idempotent: a Particles.<name> (or Output.<name>) write pin may already exist. Reuse it
+	// instead of adding a duplicate. Two input pins of the same name on the Map Set both wired
+	// to a source produce duplicate writes to one attribute, which makes the compiled system
+	// invalid ("System is invalid after compilation"). This is the single most common way a
+	// caller corrupts the stack: calling add_module_output more than once for the same output.
+	for (UEdGraphPin* P : MapSet->Pins)
+	{
+		if (P && P->Direction == EGPD_Input && P->PinName == FName(*Namespaced))
+		{
+			R.bSuccess = true;
+			R.Message  = P->PinName.ToString();
+			R.NodeId   = MapSet->NodeGuid.ToString();
+			return R;
+		}
+	}
+
 	MapSet->Modify();
 	const FEdGraphPinType PinType = MakeNiagaraPinType(Type);
 	UEdGraphPin* NewPin = MapSet->CreatePin(EGPD_Input, PinType, FName(*Namespaced));

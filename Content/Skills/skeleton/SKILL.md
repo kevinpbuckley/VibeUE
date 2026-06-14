@@ -1,7 +1,7 @@
 ---
 name: skeleton
 display_name: Skeleton & Skeletal Mesh Management
-description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints
+description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing.
 vibeue_classes:
   - SkeletonService
 unreal_classes:
@@ -25,6 +25,8 @@ keywords:
   - joint limit
   - learned constraints
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "animation-system"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Skeleton & Skeletal Mesh Skill
 
@@ -53,6 +55,12 @@ unreal.SkeletonService.commit_bone_changes("/Game/SKM_Character")
 ```
 
 **Forgetting to commit = changes are lost!**
+
+> ⚠️ **Do NOT reparent bones via SkeletonModifier (known-broken, UE 5.7).** Changing a bone's
+> parent and calling `commit_bone_changes()` fails with a hierarchy-mismatch validation error and
+> can leave the commit stalled (the call may not return cleanly). Add/remove/rename/transform are
+> safe; reparenting is not. If a user needs a different hierarchy, add a new bone at the desired
+> parent and remove the old one rather than reparenting in place.
 
 ### Socket Types: Mesh vs Skeleton
 
@@ -439,3 +447,7 @@ unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
 unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
 unreal.SkeletonService.save_asset(path)
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/add_socket.pyx`** — add a socket to a skeletal mesh/skeleton and list sockets.

@@ -9,6 +9,28 @@
 
 DEFINE_LOG_CATEGORY(LogLogReaderService);
 
+// LogPython introspection dumps put entire class docstrings on a single log
+// line (tens of KB each); cap per-line output so one line can't flood the
+// caller's LLM context.
+static constexpr int32 MaxOutputCharsPerLine = 2000;
+
+static FString ClampLogLine(const FString& Line)
+{
+	if (Line.Len() <= MaxOutputCharsPerLine)
+	{
+		return Line;
+	}
+	return Line.Left(MaxOutputCharsPerLine) + FString::Printf(TEXT(" ...[line truncated; %d chars total]"), Line.Len());
+}
+
+// File stat times are UTC; the chat log and the user's clock are local.
+// Report both so timestamps aren't misread as local time.
+static FString FormatLocalTime(const FDateTime& UtcTime)
+{
+	const FTimespan UtcToLocal = FDateTime::Now() - FDateTime::UtcNow();
+	return (UtcTime + UtcToLocal).ToString();
+}
+
 FLogReaderService::FLogReaderService(TSharedPtr<FServiceContext> InContext)
 	: FServiceBase(InContext)
 {
@@ -23,9 +45,26 @@ void FLogReaderService::Initialize()
 // Path Helpers
 //-----------------------------------------------------------------------------
 
+// Collapse a path to absolute form and strip ".." segments stranded at the
+// drive root ("E:/../../foo" -> "E:/foo") which ConvertRelativePathToFull can
+// leave behind when a relative path has more ".." components than the base
+// directory has segments.
+static FString NormalizeLogPath(const FString& InPath)
+{
+	FString Path = FPaths::ConvertRelativePathToFull(InPath);
+	if (Path.Len() > 2 && Path[1] == TEXT(':') && Path[2] == TEXT('/'))
+	{
+		while (Path.Mid(3, 3) == TEXT("../"))
+		{
+			Path.RemoveAt(3, 3);
+		}
+	}
+	return Path;
+}
+
 FString FLogReaderService::GetLogsDirectory() const
 {
-	return FPaths::ProjectSavedDir() / TEXT("Logs");
+	return NormalizeLogPath(FPaths::ProjectSavedDir() / TEXT("Logs"));
 }
 
 FString FLogReaderService::GetMainLogPath() const
@@ -83,33 +122,26 @@ FString FLogReaderService::ResolveFilePath(const FString& FilePath) const
 	if (bIsAbsolutePath)
 	{
 		// Normalize the absolute path to resolve any .. or . components
-		FString NormalizedPath = FPaths::ConvertRelativePathToFull(FilePath);
-		if (FPaths::FileExists(NormalizedPath))
-		{
-			return NormalizedPath;
-		}
 		// Return normalized path even if file doesn't exist yet (for write operations)
-		return NormalizedPath;
+		return NormalizeLogPath(FilePath);
 	}
 
 	// Try as relative to logs directory
-	FString ResolvedPath = GetLogsDirectory() / FilePath;
-	ResolvedPath = FPaths::ConvertRelativePathToFull(ResolvedPath);
+	FString ResolvedPath = NormalizeLogPath(GetLogsDirectory() / FilePath);
 	if (FPaths::FileExists(ResolvedPath))
 	{
 		return ResolvedPath;
 	}
 
 	// Try as relative to project directory
-	ResolvedPath = FPaths::ProjectDir() / FilePath;
-	ResolvedPath = FPaths::ConvertRelativePathToFull(ResolvedPath);
+	ResolvedPath = NormalizeLogPath(FPaths::ProjectDir() / FilePath);
 	if (FPaths::FileExists(ResolvedPath))
 	{
 		return ResolvedPath;
 	}
 
 	// Return normalized path based on logs directory (will fail later with appropriate error)
-	return FPaths::ConvertRelativePathToFull(GetLogsDirectory() / FilePath);
+	return NormalizeLogPath(GetLogsDirectory() / FilePath);
 }
 
 FString FLogReaderService::DetermineLogCategory(const FString& FilePath) const
@@ -192,17 +224,17 @@ FLogFileInfo FLogReaderService::GetFileInfo(const FString& FilePath)
 	// First resolve any aliases (main, chat, llm, etc.)
 	// This must happen BEFORE converting to absolute path
 	FString ResolvedPath = ResolveFilePath(FilePath);
-	
+
 	// Then convert to absolute path to handle any relative paths
-	ResolvedPath = FPaths::ConvertRelativePathToFull(ResolvedPath);
-	
+	ResolvedPath = NormalizeLogPath(ResolvedPath);
+
 	FLogFileInfo Info;
 	Info.FullPath = ResolvedPath;
 	Info.Name = FPaths::GetCleanFilename(ResolvedPath);
 	Info.RelativePath = Info.Name; // Default to just the filename
 
 	// Make relative path from logs directory
-	FString LogsDir = FPaths::ConvertRelativePathToFull(GetLogsDirectory());
+	FString LogsDir = GetLogsDirectory();
 	if (ResolvedPath.StartsWith(LogsDir))
 	{
 		Info.RelativePath = ResolvedPath.RightChop(LogsDir.Len() + 1);
@@ -249,6 +281,7 @@ int32 FLogReaderService::CountLines(const FString& FilePath)
 	const int32 BufferSize = 65536;
 	TArray<uint8> Buffer;
 	Buffer.SetNumUninitialized(BufferSize);
+	uint8 LastByte = '\n';
 
 	while (!Reader->AtEnd())
 	{
@@ -262,10 +295,15 @@ int32 FLogReaderService::CountLines(const FString& FilePath)
 				LineCount++;
 			}
 		}
+		if (BytesToRead > 0)
+		{
+			LastByte = Buffer[BytesToRead - 1];
+		}
 	}
 
-	// Account for files that don't end with newline
-	if (Reader->TotalSize() > 0)
+	// A trailing newline terminates the last line rather than starting a new
+	// one; only count a final unterminated line.
+	if (Reader->TotalSize() > 0 && LastByte != '\n')
 	{
 		LineCount++;
 	}
@@ -277,13 +315,14 @@ int32 FLogReaderService::CountLines(const FString& FilePath)
 // File Reading
 //-----------------------------------------------------------------------------
 
-bool FLogReaderService::LoadFileLines(const FString& FilePath, TArray<FString>& OutLines, FString& OutError)
+bool FLogReaderService::LoadFileLines(const FString& FilePath, TArray<FString>& OutLines, FLogReadResult& OutResult)
 {
 	FString ResolvedPath = ResolveFilePath(FilePath);
 
 	if (!FPaths::FileExists(ResolvedPath))
 	{
-		OutError = FString::Printf(TEXT("File not found: %s"), *ResolvedPath);
+		OutResult.ErrorCode = TEXT("FILE_NOT_FOUND");
+		OutResult.ErrorMessage = FString::Printf(TEXT("File not found: %s. Use action=list to see available log files."), *ResolvedPath);
 		return false;
 	}
 
@@ -292,7 +331,8 @@ bool FLogReaderService::LoadFileLines(const FString& FilePath, TArray<FString>& 
 	TUniquePtr<FArchive> Reader(IFileManager::Get().CreateFileReader(*ResolvedPath, FILEREAD_AllowWrite));
 	if (!Reader)
 	{
-		OutError = FString::Printf(TEXT("Failed to open file: %s"), *ResolvedPath);
+		OutResult.ErrorCode = TEXT("FILE_OPEN_FAILED");
+		OutResult.ErrorMessage = FString::Printf(TEXT("Failed to open file: %s"), *ResolvedPath);
 		return false;
 	}
 
@@ -323,6 +363,13 @@ bool FLogReaderService::LoadFileLines(const FString& FilePath, TArray<FString>& 
 		}
 	}
 
+	// A trailing newline produces a phantom empty element; drop it so tail/read
+	// return the last real line and counts match CountLines()
+	if (OutLines.Num() > 0 && OutLines.Last().IsEmpty())
+	{
+		OutLines.RemoveAt(OutLines.Num() - 1);
+	}
+
 	return true;
 }
 
@@ -331,7 +378,7 @@ FLogReadResult FLogReaderService::ReadFile(const FString& FilePath, int32 MaxLin
 	FLogReadResult Result;
 
 	TArray<FString> Lines;
-	if (!LoadFileLines(FilePath, Lines, Result.ErrorMessage))
+	if (!LoadFileLines(FilePath, Lines, Result))
 	{
 		return Result;
 	}
@@ -345,7 +392,7 @@ FLogReadResult FLogReaderService::ReadFile(const FString& FilePath, int32 MaxLin
 	TArray<FString> SelectedLines;
 	for (int32 i = 0; i < LinesToRead; ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -359,7 +406,7 @@ FLogReadResult FLogReaderService::ReadLines(const FString& FilePath, int32 Offse
 	FLogReadResult Result;
 
 	TArray<FString> Lines;
-	if (!LoadFileLines(FilePath, Lines, Result.ErrorMessage))
+	if (!LoadFileLines(FilePath, Lines, Result))
 	{
 		return Result;
 	}
@@ -376,7 +423,7 @@ FLogReadResult FLogReaderService::ReadLines(const FString& FilePath, int32 Offse
 	TArray<FString> SelectedLines;
 	for (int32 i = StartLine; i < EndLine; ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -390,7 +437,7 @@ FLogReadResult FLogReaderService::TailFile(const FString& FilePath, int32 LineCo
 	FLogReadResult Result;
 
 	TArray<FString> Lines;
-	if (!LoadFileLines(FilePath, Lines, Result.ErrorMessage))
+	if (!LoadFileLines(FilePath, Lines, Result))
 	{
 		return Result;
 	}
@@ -404,7 +451,7 @@ FLogReadResult FLogReaderService::TailFile(const FString& FilePath, int32 LineCo
 	TArray<FString> SelectedLines;
 	for (int32 i = StartLine; i < Lines.Num(); ++i)
 	{
-		SelectedLines.Add(Lines[i]);
+		SelectedLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(SelectedLines, TEXT("\n"));
@@ -432,7 +479,7 @@ FLogReadResult FLogReaderService::FilterByPattern(
 	FLogReadResult Result;
 
 	TArray<FString> Lines;
-	if (!LoadFileLines(FilePath, Lines, Result.ErrorMessage))
+	if (!LoadFileLines(FilePath, Lines, Result))
 	{
 		return Result;
 	}
@@ -479,12 +526,14 @@ FLogReadResult FLogReaderService::FilterByPattern(
 		{
 			MatchedContent.Add(TEXT("---"));
 		}
-		MatchedContent.Add(FString::Printf(TEXT("%d: %s"), LineNum + 1, *Lines[LineNum]));
+		MatchedContent.Add(FString::Printf(TEXT("%d: %s"), LineNum + 1, *ClampLogLine(Lines[LineNum])));
 		LastLine = LineNum;
 	}
 
 	Result.Content = FString::Join(MatchedContent, TEXT("\n"));
 	Result.MatchCount = MatchCount;
+	Result.bIsFilterResult = true;
+	Result.bTruncated = (MaxMatches > 0 && MatchCount >= MaxMatches);
 	Result.bSuccess = true;
 
 	return Result;
@@ -537,7 +586,7 @@ FLogReadResult FLogReaderService::GetNewContent(const FString& FilePath, int32 L
 	FLogReadResult Result;
 
 	TArray<FString> Lines;
-	if (!LoadFileLines(FilePath, Lines, Result.ErrorMessage))
+	if (!LoadFileLines(FilePath, Lines, Result))
 	{
 		return Result;
 	}
@@ -560,7 +609,7 @@ FLogReadResult FLogReaderService::GetNewContent(const FString& FilePath, int32 L
 	TArray<FString> NewLines;
 	for (int32 i = LastKnownLine; i < Lines.Num(); ++i)
 	{
-		NewLines.Add(Lines[i]);
+		NewLines.Add(ClampLogLine(Lines[i]));
 	}
 
 	Result.Content = FString::Join(NewLines, TEXT("\n"));
@@ -605,7 +654,8 @@ FString FLogReaderService::LogFileInfoArrayToJson(const TArray<FLogFileInfo>& Fi
 			File.SizeBytes < 1024 ? FString::Printf(TEXT("%lld B"), File.SizeBytes) :
 			File.SizeBytes < 1024 * 1024 ? FString::Printf(TEXT("%.1f KB"), File.SizeBytes / 1024.0) :
 			FString::Printf(TEXT("%.1f MB"), File.SizeBytes / (1024.0 * 1024.0)));
-		FileObj->SetStringField(TEXT("modified"), File.ModifiedTime.ToString());
+		FileObj->SetStringField(TEXT("modified"), FormatLocalTime(File.ModifiedTime) + TEXT(" (local)"));
+		FileObj->SetStringField(TEXT("modified_utc"), File.ModifiedTime.ToString());
 		FileObj->SetNumberField(TEXT("line_count"), File.LineCount);
 		FilesArray.Add(MakeShared<FJsonValueObject>(FileObj));
 	}
@@ -625,7 +675,28 @@ FString FLogReaderService::LogReadResultToJson(const FLogReadResult& Result)
 
 	if (!Result.bSuccess)
 	{
+		if (!Result.ErrorCode.IsEmpty())
+		{
+			RootObj->SetStringField(TEXT("error_code"), Result.ErrorCode);
+		}
 		RootObj->SetStringField(TEXT("error"), Result.ErrorMessage);
+	}
+	else if (Result.bIsFilterResult)
+	{
+		// Filter results are matched lines (each prefixed with its 1-based line
+		// number), not a contiguous range — line-offset pagination doesn't apply.
+		RootObj->SetStringField(TEXT("content"), Result.Content);
+		RootObj->SetNumberField(TEXT("match_count"), Result.MatchCount);
+		RootObj->SetNumberField(TEXT("total_lines"), Result.TotalLines);
+		RootObj->SetBoolField(TEXT("has_more"), Result.bTruncated);
+		if (Result.bTruncated)
+		{
+			RootObj->SetStringField(TEXT("note"), TEXT("Match limit reached; raise max_matches or narrow the pattern to see more."));
+		}
+		if (Result.MatchCount == 0)
+		{
+			RootObj->SetStringField(TEXT("note"), TEXT("No matches found."));
+		}
 	}
 	else
 	{
@@ -633,12 +704,7 @@ FString FLogReaderService::LogReadResultToJson(const FLogReadResult& Result)
 		RootObj->SetNumberField(TEXT("start_line"), Result.StartLine);
 		RootObj->SetNumberField(TEXT("end_line"), Result.EndLine);
 		RootObj->SetNumberField(TEXT("total_lines"), Result.TotalLines);
-		RootObj->SetNumberField(TEXT("lines_returned"), Result.EndLine - Result.StartLine + 1);
-
-		if (Result.MatchCount > 0)
-		{
-			RootObj->SetNumberField(TEXT("match_count"), Result.MatchCount);
-		}
+		RootObj->SetNumberField(TEXT("lines_returned"), FMath::Max(0, Result.EndLine - Result.StartLine + 1));
 
 		// Pagination hints
 		if (Result.EndLine < Result.TotalLines - 1)
@@ -671,7 +737,8 @@ FString FLogReaderService::LogFileInfoToJson(const FLogFileInfo& Info)
 		Info.SizeBytes < 1024 ? FString::Printf(TEXT("%lld B"), Info.SizeBytes) :
 		Info.SizeBytes < 1024 * 1024 ? FString::Printf(TEXT("%.1f KB"), Info.SizeBytes / 1024.0) :
 		FString::Printf(TEXT("%.1f MB"), Info.SizeBytes / (1024.0 * 1024.0)));
-	RootObj->SetStringField(TEXT("modified"), Info.ModifiedTime.ToString());
+	RootObj->SetStringField(TEXT("modified"), FormatLocalTime(Info.ModifiedTime) + TEXT(" (local)"));
+	RootObj->SetStringField(TEXT("modified_utc"), Info.ModifiedTime.ToString());
 	RootObj->SetNumberField(TEXT("line_count"), Info.LineCount);
 
 	FString JsonString;

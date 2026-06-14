@@ -289,6 +289,9 @@ public:
 
 	/**
 	 * Get all values from an enum as a simple string array.
+	 * For UserDefinedEnums this returns DISPLAY names (the same names
+	 * add_enum_value/rename_enum_value/remove_enum_value accept); for native
+	 * enums it returns the short C++ entry names.
 	 *
 	 * @param EnumPathOrName - Full path or enum name
 	 * @return Array of enum value names (empty if enum not found)

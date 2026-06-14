@@ -1,7 +1,7 @@
 ---
 name: project-settings
 display_name: Project & Editor Settings
-description: Configure Unreal Engine project settings AND editor preferences including UI appearance, toolbar icons, scale, colors, and all UDeveloperSettings subclasses
+description: Configure Unreal Engine project settings and editor preferences — UI appearance, toolbar icons, scale, colors, and any UDeveloperSettings subclass (ProjectSettingsService). Use when the user asks to change a project setting or editor preference, configure a UDeveloperSettings category, or read/write project config values.
 vibeue_classes:
   - ProjectSettingsService
 unreal_classes:
@@ -98,6 +98,8 @@ if result.success:
     print("Editor startup map updated and saved")
 ```
 
+> 💾 **If the level must be saved first** (untitled level, or "save as <name> and set as startup"): the editor world comes from `unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()` (NOT `LevelEditorSubsystem`, NOT deprecated `EditorLevelLibrary`), then `unreal.EditorLoadingAndSavingUtils.save_map(world, "/Game/Maps/MyLevel")`. Full workflow: load the `level-actors` skill → "Save the Current Level".
+
 ### Discover Settings Classes
 
 ```python
@@ -172,3 +174,7 @@ result = unreal.ProjectSettingsService.set_ini_value(
 - `success`, `error_message`
 - `modified_settings`, `failed_settings`
 - `requires_restart`
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/configure_setting.pyx`** — discover settings classes and read/write a project setting.

@@ -115,6 +115,14 @@ for r in results:
     print(f"Frame {r.captured_frame}: {r.image_path}")
 ```
 
+> **⚠️ Captures come back all-black when there is no skeletal mesh to render.**
+> These methods render the animation onto the skeleton's **preview mesh**. A sequence that
+> animates bones but has no associated/previewable skeletal mesh (e.g. a freshly created
+> `create_anim_sequence` asset, `bones=0`) produces black PNGs. Before relying on visual
+> capture, confirm the animation's skeleton has a preview mesh, or capture an existing
+> production animation instead. If images are black, fall back to numeric verification with
+> `get_pose_at_time()` / `get_bone_transform_at_time()`.
+
 ---
 
 ## Secondary Skill Manifest (preserved from original skill.md)

@@ -319,7 +319,7 @@ public:
 	 * @return True if found
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraEmitterService.get_module_info("/Game/VFX/NS_Fire", "Sparks", "Initialize Particle")
+	 *   info = unreal.NiagaraEmitterService.get_module_info("/Game/VFX/NS_Fire", "Sparks", "Initialize Particle")  # info struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (DisplayName = "Get Module Info"))
 	static bool GetModuleInfo(
@@ -664,7 +664,7 @@ public:
 	 * @return True if found
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraEmitterService.get_script_info("/Niagara/Modules/Update/Size/ScaleSpriteSize")
+	 *   info = unreal.NiagaraEmitterService.get_script_info("/Niagara/Modules/Update/Size/ScaleSpriteSize")  # info struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (DisplayName = "Get Script Info"))
 	static bool GetScriptInfo(
@@ -697,7 +697,7 @@ public:
 	 * @return True if found
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraEmitterService.get_renderer_details("/Game/VFX/NS_Fire", "Sparks", 0)
+	 *   info = unreal.NiagaraEmitterService.get_renderer_details("/Game/VFX/NS_Fire", "Sparks", 0)  # info struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (DisplayName = "Get Renderer Details"))
 	static bool GetRendererDetails(
@@ -715,7 +715,7 @@ public:
 	 * @return True if found
 	 *
 	 * Example:
-	 *   success, info = unreal.NiagaraEmitterService.get_emitter_properties("/Game/VFX/NS_Fire", "Sparks")
+	 *   info = unreal.NiagaraEmitterService.get_emitter_properties("/Game/VFX/NS_Fire", "Sparks")  # info struct or None
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraEmitter", meta = (DisplayName = "Get Emitter Properties"))
 	static bool GetEmitterProperties(
