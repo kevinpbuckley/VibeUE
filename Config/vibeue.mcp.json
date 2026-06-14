@@ -1,4 +1,8 @@
 {
   "servers": {
+    "unreal-engine-skills": {
+      "type": "http",
+      "url": "https://www.unrealengineskills.com/api/mcp"
+    }
   }
 }

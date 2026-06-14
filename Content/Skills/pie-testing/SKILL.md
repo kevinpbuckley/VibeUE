@@ -1,10 +1,7 @@
 ---
 name: pie-testing
 display_name: Play-In-Editor Testing
-description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing
-  of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the
-  user asks you to "play", "test", "run", "PIE", "start the game", "stop the game",
-  or otherwise needs a live game world to validate changes.
+description: Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes.
 vibeue_classes:
   - WidgetService
 unreal_classes:
@@ -24,6 +21,8 @@ keywords:
   - stop game
   - end play
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "automation-and-testing"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Play-In-Editor (PIE) Testing Skill
 

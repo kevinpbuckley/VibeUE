@@ -1,7 +1,7 @@
 ---
 name: landscape-auto-material
 display_name: Landscape Auto-Material System
-description: Create production-quality landscape materials using the master material + material function + material instance paradigm. Covers Runtime Virtual Textures, auto-layering (slope/altitude/distance blending), layer functions, and configuring biomes through material instances.
+description: Create production-quality landscape materials with the master-material + material-function + material-instance paradigm, RVT, and auto-layering. Use when the user asks for an auto/procedural landscape material, slope/altitude/distance-based layer blending, Runtime Virtual Textures, biome configuration via instances, or layer material functions. For basic layer-blend materials load landscape-materials.
 vibeue_classes:
   - MaterialService
   - MaterialNodeService
@@ -52,7 +52,7 @@ Use this skill when you need **production-quality** landscape materials with:
 
 For **simple prototyping** with 2-5 painted layers, use `landscape-materials` instead:
 ```python
-manage_skills(action="load", skill_name="landscape-materials")
+vibeue-skills-manager(action="load", skill_name="landscape-materials")
 ```
 
 ## Architecture Overview
@@ -152,7 +152,7 @@ unreal.MaterialNodeService.add_function_input(func_path, "Roughness", "Scalar", 
 
 ## Sub-docs available
 
-Load these via `manage_skills(action="load", skill_name="landscape-auto-material")` reads the index; for the deeper docs, open the sibling files directly:
+Load these via `vibeue-skills-manager(action="load", skill_name="landscape-auto-material")` reads the index; for the deeper docs, open the sibling files directly:
 
 | Sub-doc | What's inside |
 |---------|---------------|

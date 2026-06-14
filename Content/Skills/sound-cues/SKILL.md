@@ -1,7 +1,7 @@
 ---
 name: sound-cues
 display_name: Sound Cue Editor
-description: Create and modify SoundCue assets — add nodes, connect them, set audio properties
+description: Create and modify SoundCue assets — add/connect nodes (mixer, random, delay, attenuation, modulator, etc.) and set audio properties (SoundCueService). Use when the user asks to create a Sound Cue, build a SoundCue node graph, or wire audio playback logic.
 vibeue_classes:
   - SoundCueService
 unreal_classes:
@@ -33,8 +33,10 @@ related_skills:
   - asset-management
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "audio-and-metasounds"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 > **Wrong skill for MetaSound assets?** If the user asked about `MetaSound`, `MS_` assets, or `UMetaSoundSource`, unload this skill and load the `metasounds` skill instead:
-> `manage_skills(action="load", skill_name="metasounds")`
+> `vibeue-skills-manager(action="load", skill_name="metasounds")`
 > SoundCue and MetaSound are completely separate systems — do not use `SoundCueService` for MetaSound tasks.
 
 # Sound Cue Editor Skill
@@ -282,3 +284,7 @@ r.success      # bool
 r.asset_path   # str
 r.message      # str — human-readable status or error
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_sound_cue.pyx`** — create a SoundCue (optionally from a wave) and add nodes.

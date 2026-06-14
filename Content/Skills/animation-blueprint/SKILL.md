@@ -1,7 +1,7 @@
 ---
 name: animation-blueprint
 display_name: Animation Blueprints
-description: Navigate, inspect AND author Animation Blueprints, state machines, states, transitions and transition rules
+description: Navigate, inspect, and author Animation Blueprints — state machines, states, transitions, and transition rules (AnimGraphService). Use when the user asks to create or edit an Animation Blueprint/AnimBP, add a state machine or states, wire transitions between states, set a state's animation, or inspect AnimGraph structure.
 vibeue_classes:
   - AnimGraphService
   - AssetDiscoveryService
@@ -22,7 +22,14 @@ keywords:
   - authoring
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "animation-system"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Animation Blueprint Skill
+
+> An AnimBP **is a Blueprint**. For its variables, functions, components, and overridable functions,
+> use `BlueprintService` and load the **`blueprints`** skill. Bool fields on info structs drop the C++
+> `b` prefix in Python — use `is_pure`, `is_output`, `already_overridden` (NOT `b_is_pure`, etc.); call
+> `discover_python_class` to confirm field names rather than guessing.
 
 ## ⚠️ #1 GOTCHA — Transitions need a RULE or they NEVER fire
 
@@ -407,3 +414,7 @@ for machine in machines:
     for state in states:
         print(f"{machine.machine_name}/{state.state_name}")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/build_state_machine.pyx`** — add a state machine with two states, set state animations, add a transition, compile.

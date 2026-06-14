@@ -1,7 +1,7 @@
 ---
 name: metasounds
 display_name: MetaSound Editor
-description: Create and modify MetaSound Source assets — add nodes, wire pins, set defaults, play sounds procedurally
+description: Create and modify MetaSound Source assets — add/connect nodes, wire pins, set input defaults, and play procedurally (MetaSoundService). Use when the user asks to create a MetaSound, build or edit a MetaSound graph, add operator/input/output nodes, or generate procedural audio.
 vibeue_classes:
   - MetaSoundService
 unreal_classes:
@@ -21,6 +21,8 @@ keywords:
   - oscillator
   - WavePlayer
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "audio-and-metasounds"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # MetaSound Service Skill
 
@@ -407,7 +409,47 @@ in the editor is NOT the vertex name. Always use the vertex names below in `conn
 |-----------|---------------------------------------------|------|-----------|
 | `Input` | `UE.Source.OnPlay` | Trigger | Output |
 | `Output` (Trigger) | `UE.Source.OneShot.OnFinished` | Trigger | Input |
-| `Output` (Audio/Mono) | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
+| `Output` (Audio, **Mono**) | `UE.OutputFormat.Mono.Audio:0` | Audio | Input |
+| `Output` (Audio, **Stereo** Left) | `UE.OutputFormat.Stereo.Audio:0` | Audio | Input |
+| `Output` (Audio, **Stereo** Right) | `UE.OutputFormat.Stereo.Audio:1` | Audio | Input |
+| `Output` (Audio, **Quad** 0–3) | `UE.OutputFormat.Quad.Audio:0` … `:3` | Audio | Input |
+
+The audio output format depends on the `output_format` passed to `create_meta_sound`
+(`"Mono"` / `"Stereo"` / `"Quad"`). A Stereo source has **two** `Output.Audio` nodes
+(Left `:0`, Right `:1`); a Quad source has four. Mono has one.
+
+---
+
+## Connecting to a Stereo (or Quad) output
+
+A Mono asset has a single audio sink, so `next(...)` is fine. **Stereo/Quad assets have one
+audio output node per channel** — grab them all and feed each one, or channels will be silent.
+
+```python
+# Collect every audio sink node (works for Mono, Stereo, and Quad)
+nodes = ms.list_nodes(ap)
+audio_out_nodes = [
+    n for n in nodes
+    if n.node_title == "Output" and any(p.endswith(":Audio") for p in n.inputs)
+]
+# Sort by channel index so [0]=Left, [1]=Right (the vertex name ends with ":<index>:Audio")
+audio_out_nodes.sort(key=lambda n: n.inputs[0])
+
+# Mono: one node. Stereo: two (Left, Right). Quad: four.
+# Example — send a mono signal (e.g. a Mixer "Out") to BOTH stereo channels:
+for out_node in audio_out_nodes:
+    sink_pin = out_node.inputs[0]                 # e.g. "UE.OutputFormat.Stereo.Audio:0:Audio"
+    r = ms.connect_nodes(ap, source_id, "Out", out_node.node_id, sink_pin)
+    if not r.success: raise RuntimeError(r.message)
+```
+
+For a true stereo image, drive Left and Right from different signals (e.g. two oscillators,
+or a stereo `Audio Mixer (Stereo, N)` whose `Out L` / `Out R` feed the two sinks). To get a
+stereo mixer, search `list_available_nodes("Mixer")` for a `(Stereo, …)` variant — the
+`(Mono, N)` mixer has a single `Out` pin and only fills one channel on its own.
+
+> `connect_nodes` accepts the full `"VertexName:TypeName"` pin string (it strips the trailing
+> `:TypeName`), so you can pass `n.inputs[0]` directly without manual splitting.
 
 ---
 
@@ -421,4 +463,8 @@ in the editor is NOT the vertex name. Always use the vertex names below in `conn
 - MetaSound Sources do **not** support SoundCue-style `SoundNodeWavePlayer` — use the `WavePlayer` MetaSound node instead (discover via `list_available_nodes("Wave Player")`).
 - **Graph inputs appear as `Input` nodes** in the graph (`class_name == "Input.Float"`, `"Input.Bool"`, etc.). When filtering for the standard interface Input node (the one that carries `On Play`), always match by `class_name == "Input.Trigger"` — not by `node_title == "Input"` alone, which will also match graph input nodes.
 - **AudioMixer pins interleave audio and gain:** `Audio Mixer (Mono, 2)` has pins `["In 0:Audio", "Gain 0:Float", "In 1:Audio", "Gain 1:Float"]`. Never index by position — always filter for `:Audio` typed pins when connecting audio signals: `audio_ins = [p.split(":")[0] for p in mixer_node.inputs if p.endswith(":Audio")]`.
-- **Stereo MetaSound Sources** report `UE.OutputFormat.Mono.Audio:0` as the audio output sink pin (same as Mono). The existing audio-output filter (`any(p.endswith(":Audio") for p in n.inputs)`) works correctly for both formats.
+- **Stereo MetaSound Sources have TWO audio output sinks, one per channel.** A Stereo source's audio output pins are `UE.OutputFormat.Stereo.Audio:0` (Left) and `UE.OutputFormat.Stereo.Audio:1` (Right) — exposed as **two separate `Output.Audio` nodes**, not one. (Quad has four: `:0`–`:3`.) You must feed **both** channels or one side will be silent. The single-`next()` audio-sink finder used for Mono only grabs one channel — for Stereo, collect every audio output node. See **Connecting to a Stereo/Quad output** below.
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_metasound.pyx`** — create a MetaSound Source and list available node types.

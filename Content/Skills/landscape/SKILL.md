@@ -1,7 +1,7 @@
 ---
 name: landscape
 display_name: Landscape Terrain
-description: Create and edit landscape terrain, heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural terrain features using LandscapeService
+description: Create and edit landscape terrain — heightmaps, sculpting, paint layers, terrain analysis, mesh projection, and procedural features like mountains/valleys/craters (LandscapeService). Use when the user asks to create a landscape, sculpt/raise/lower terrain, import or export a heightmap, paint terrain layers, or add procedural terrain features. For terrain materials load landscape-materials; for real-world heightmaps load terrain-data.
 vibeue_classes:
   - LandscapeService
 unreal_classes:
@@ -40,12 +40,14 @@ keywords:
   - procedural terrain
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "landscape-and-foliage"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Landscape Terrain Skill
 
 ## Sub-docs available
 
 This skill is split into the lean index (you are reading it) plus sibling sub-docs. Load
-a sub-doc with `manage_skills(action="load", skill_name="landscape/<section>")`:
+a sub-doc with `vibeue-skills-manager(action="load", skill_name="landscape/<section>")`:
 
 | Sub-doc | When to load |
 |---------|--------------|
@@ -68,12 +70,15 @@ Common setup: `QuadsPerSection=63, SectionsPerComponent=1, ComponentCount=8x8`
 Creating landscapes with many components is SLOW. Python execution has a 30-second timeout.
 
 **Safe configurations (under 30s):**
-- `ComponentCount=8x8` (505x505 resolution) — FAST
-- `ComponentCount=16x16` with `QuadsPerSection=63` — OK
+- `ComponentCount=4x4` (253x253 resolution) — safe for throwaway/test terrains
+- `ComponentCount=8x8` (505x505 resolution) — **can exceed 30s** in a populated level (measured 67s in a level that already had another landscape); safe only in near-empty levels
 
 **Will TIMEOUT (avoid):**
+- `ComponentCount=16x16` or larger in a populated level
 - `ComponentCount=36x36` or larger — too many components, takes minutes
 - `ComponentCount=72x72` — definitely exceeds timeout
+
+**⚠️ A timeout does NOT cancel the operation.** `PYTHON_EXECUTION_TIMEOUT` means the tool stopped waiting — the create keeps running on the game thread and usually completes. **Never blindly retry**: you'd stack a second landscape with the same label (then `delete_landscape` removes only the first match and `landscape_exists` stays true, which looks like a delete failure). After a timeout, check `landscape_exists(label)` first. `create_landscape` also refuses to create a landscape whose label already exists.
 
 ### ⚠️ Heightmap Import: Resolution MUST Exactly Match
 
@@ -267,6 +272,16 @@ Do this in separate steps:
 | Assuming 1081×1081 heightmap will fit any landscape | 1081 requires 36×36 components which WILL timeout. Use `resolution=1009` (8×8, 63q, 2s) instead |
 | Importing a heightmap without checking dimensions | Always call `get_heightmap_dimensions()` first, then `resize_heightmap()` if sizes don't match |
 | Creating landscape then downloading heightmap (wrong order) | Decide config → calculate resolution → download at that resolution → create landscape → import |
+| `info.scale_x` on LandscapeInfo_Custom | `info.scale.x` — `scale`, `location`, `rotation` are Vector/Rotator structs, not flattened floats |
+| Assuming a landscape is centered on its location | It spans **+X/+Y from its location** (corner-anchored): bounds = `location` to `location + (resolution-1)*scale`. A landscape created at (0,0) with 505 res @ scale 100 covers (0,0)–(50400,50400); its center is (25200,25200) |
+| `create_layer_info_object("Grass", "/Game/X", "LI_Grass")` | Third param is a **bool**: `create_layer_info_object(layer_name, destination_path, is_weight_blended=True)` — passing a string asset name causes `TypeError: Cannot nativize 'str' as 'bool'` |
+| Retrying `create_landscape` after `PYTHON_EXECUTION_TIMEOUT` | The first call usually still completes in the background — check `landscape_exists(label)` before retrying (duplicate labels now return an error) |
+| `result.location` on LandscapeCreateResult | Result has ONLY `success`, `actor_label`, `error_message` — get location via `get_landscape_info(label).location` |
+| `result.resolution_x` / `.resolution_y` on HeightmapImportResult | The field is `result.resolution` — a **string** like `"1009x1009"`, not separate ints. Split it if you need numbers. |
+| Treating `get_height_at_location()` as a float | It returns a `LandscapeHeightSample` struct — use `.height` (float) and `.valid` (bool); `float(sample)` / `f"{sample}"` raise TypeError |
+| `delete_landscape(label)` to clear a World-Partition landscape | It returns `False` for `LandscapeStreamingProxy` actors. To wipe a level clean, also destroy proxies: `[s.destroy_actor(a) for a in EditorActorSubsystem.get_all_level_actors() if isinstance(a, unreal.LandscapeStreamingProxy)]` (a `delete_all_landscapes()` batch would be cleaner — not yet available) |
+| `info.component_count_x` / `info.component_count_y` | `info.num_components` is the TOTAL count (e.g. 64 for 8×8) — there are no per-axis fields |
+| `info.rotation.x` (Rotator) | Rotator fields are `.roll` / `.pitch` / `.yaw` — there is no `.x/.y/.z` on Rotator (only Vector has those) |
 
 ---
 
@@ -285,9 +300,13 @@ Do this in separate steps:
 When you need to create or modify the material applied to a landscape, load the appropriate material skill:
 ```python
 # For simple materials:
-manage_skills(action="load", skill_name="landscape-materials")
+vibeue-skills-manager(action="load", skill_name="landscape-materials")
 # For production auto-materials:
-manage_skills(action="load", skill_name="landscape-auto-material")
+vibeue-skills-manager(action="load", skill_name="landscape-auto-material")
 ```
 
 > **NOTE**: For landscape material, texture, and layer blending operations, use `LandscapeMaterialService` (load the `landscape-materials` or `landscape-auto-material` skill).
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/sculpt_terrain.pyx`** — create a landscape and sculpt procedural mountain/valley features.

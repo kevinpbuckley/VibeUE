@@ -393,11 +393,22 @@ public:
 	// ---- Asset Creation ----
 
 	/**
+	 * List the StateTree schema class names available in this project (non-abstract
+	 * subclasses of UStateTreeSchema). Call this when create_state_tree returns False:
+	 * the default "StateTreeComponentSchema" comes from the GameplayStateTree plugin and
+	 * does not exist in projects that haven't enabled it.
+	 */
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	static TArray<FString> ListStateTreeSchemas();
+
+	/**
 	 * Create a new StateTree asset at the given content path.
 	 * The path must include the asset name, e.g. "/Game/AI/MyStateTree"
 	 * @param AssetPath       Content path including asset name
 	 * @param SchemaClassName Schema class name (default: "StateTreeComponentSchema").
 	 *                        Accepts full names or shorthand like "Component", "AIComponent".
+	 *                        If creation returns False, the schema likely doesn't exist in
+	 *                        this project — call list_state_tree_schemas() to see valid names.
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
 	static bool CreateStateTree(const FString& AssetPath, const FString& SchemaClassName = TEXT("StateTreeComponentSchema"));

@@ -1,0 +1,20 @@
+# create_landscape_material.pyx — Create a landscape material with a layer blend, compile, assign.
+#
+# Sample script for the landscape-materials skill. Run via execute_python_code.
+# compile_material is slow — keep it in its own block. Always create LayerInfo objects for layers.
+import unreal
+lms = unreal.LandscapeMaterialService
+ms = unreal.MaterialService
+
+r = lms.create_landscape_material("M_Landscape", "/Game/Landscape/")   # LandscapeMaterialCreateResult
+print("create:", r)
+path = r.asset_path if hasattr(r, "asset_path") else None
+
+# Build a LayerBlend node with named layers (Grass, Rock), wire to BaseColor, etc.
+# blend = lms.create_layer_blend_node_with_layers(path, ["Grass", "Rock"], -400, 0)
+# ... connect textures per layer (see workflows.md) ...
+
+if path:
+    ms.compile_material(path)
+    unreal.EditorAssetLibrary.save_asset(path)
+print("done")

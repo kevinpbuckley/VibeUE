@@ -25,6 +25,14 @@ FGameplayTagInfo UGameplayTagService::BuildTagInfo(const FString& TagName)
 
 	if (Tag.IsValid())
 	{
+		// RequestGameplayTag applies tag redirects (registered by renames). If the resolved
+		// tag differs from the requested name, surface that instead of silently describing
+		// the redirect target under the old name.
+		if (!Tag.GetTagName().IsEqual(FName(*TagName)))
+		{
+			Info.RedirectedTo = Tag.GetTagName().ToString();
+		}
+
 		TSharedPtr<FGameplayTagNode> Node = Manager.FindTagNode(Tag);
 		if (Node.IsValid())
 		{

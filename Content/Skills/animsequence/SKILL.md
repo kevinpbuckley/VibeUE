@@ -1,7 +1,7 @@
 ---
 name: animsequence
 display_name: Animation Sequences & Editing
-description: Preview, validate, bake, and manipulate animation sequences with constraint-aware bone editing
+description: Create and edit AnimSequence keyframes and tracks — add/remove keyframes, set bone tracks, query sequence info, and bake edits (AnimSequenceService). Use when the user asks to create a new animation sequence, add keyframes/tracks, or edit raw animation data. For constraint-aware bone posing, also load animation-editing.
 vibeue_classes:
   - AnimSequenceService
   - SkeletonService
@@ -46,13 +46,15 @@ keywords:
   - arm raise
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "animation-system"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Animation Sequence & Editing Skill
 
 This skill covers the **inspect → profile → preview → validate → bake** workflow for safe animation bone edits with correct bone-space handling and constraint validation.
 
 > **Required:**
 > ```python
-> manage_skills(action="load", skill_name="animsequence")
+> vibeue-skills-manager(action="load", skill_name="animsequence")
 > ```
 >
 > **Related Skills:**
@@ -317,3 +319,7 @@ Load these sibling docs for deeper coverage of specific topics:
 - **patterns.md** - Common patterns (listing animations, getting pose at time, adding curves, managing/configuring notifies) and the CRITICAL RULES checklist for creation/notify operations and asset paths.
 - **method-categories.md** - Categorised table of every AnimSequenceService method by domain (Discovery, Creation, Helpers, Properties, Bone Tracks, Poses, Curves, Notifies, Notify Tracks, Sync Markers, Root Motion, Additive, Compression, Export, Editor).
 - **bone-rotation.md** - Bone Rotation Axis Discovery: why bone local coordinate systems are non-intuitive and the required discovery workflow (reference pose values → analyze existing animations → incremental axis testing) before writing rotation animation code.
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/inspect_sequence.pyx`** — safely inspect AnimSequences for a skeleton (metadata, no asset loading).

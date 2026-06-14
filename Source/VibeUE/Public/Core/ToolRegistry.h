@@ -28,6 +28,12 @@ struct VIBEUE_API FToolRegistration
 	FToolExecuteFunc ExecuteFunc;
 	/** If true, tool is only available to VibeUE chat, not exposed via MCP */
 	bool bInternalOnly = false;
+	/**
+	 * If true, tool exists for editor-testing automation only:
+	 * never shown to the in-editor chat AI, and only exposed via MCP
+	 * when Chat Editor Testing mode is enabled.
+	 */
+	bool bEditorTestingOnly = false;
 };
 
 /**

@@ -1,13 +1,15 @@
 ---
 name: level-actors
 display_name: Level Actors & Editor Subsystems
-description: Manipulate actors in the current level using editor subsystems
+description: List, find, place, move, rotate, and modify actors in the current level (ActorService + editor subsystems). Use when the user asks to find/list actors in the level, move or rotate an actor, set an actor's properties/folder/transform, or spawn/delete level actors.
 vibeue_classes:
   - ActorService
 unreal_classes:
   - EditorActorSubsystem
   - LevelEditorSubsystem
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "actors-and-components"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 # Level Actors Skill
 
@@ -57,6 +59,19 @@ actor_subsys.get_all_level_actors_of_class(unreal.Landscape)
 landscapes = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal.Landscape)]
 lights = [a for a in actor_subsys.get_all_level_actors() if isinstance(a, unreal.PointLight)]
 ```
+
+### 🚨 Verified `AttributeError` traps (UE 5.7 Python) — don't burn iterations rediscovering these
+
+| You might write | ❌ Why it fails | ✅ Use instead |
+|---|---|---|
+| `comp.get_static_mesh()` | `StaticMeshComponent` has no `get_static_mesh` | `comp.get_editor_property("static_mesh")` (read) / `comp.set_static_mesh(mesh)` (write) |
+| `actor.get_components()` | Actors have no `get_components()` | `actor.get_components_by_class(unreal.StaticMeshComponent)` → array |
+| `dir_light.directional_light_component` | no such attribute | `dir_light.light_component` (ALL `unreal.Light` actors use `light_component`) |
+| `comp.set_editor_property("cast_shadow", …)` | property is plural | `comp.set_editor_property("cast_shadows", False)` |
+| `unreal.HorizontalTextAligment` | UE misspells it | `unreal.HorizTextAligment` / `unreal.VerticalTextAligment` (for `TextRenderActor`) |
+
+When unsure of a property/method name, call `discover_python_class(class_name="unreal.X")` ONCE up front
+rather than guessing repeatedly — its `doc_string` lists the real editor-property names.
 
 **Migration guide:**
 | Deprecated (`EditorLevelLibrary`) | Replacement (`EditorActorSubsystem`) |
@@ -125,11 +140,33 @@ actor = subsys.spawn_actor_from_class(bp_class, location, rotation)
 ```python
 # CORRECT
 location = unreal.Vector(100, 200, 0)
-rotation = unreal.Rotator(0, 90, 0)  # Pitch, Yaw, Roll
+rotation = unreal.Rotator(pitch=-45)  # ALWAYS use keyword args for Rotator (see rule below)
 
 # WRONG - strings don't work
 location = "(X=100,Y=200,Z=0)"
 ```
+
+### 🚨 Constructor Argument Order Traps: `Rotator` is (Roll, Pitch, Yaw), `Color` is BGRA
+
+The Python constructors do NOT use the order you expect. **Always use keyword arguments** — never positional — for `unreal.Rotator` and `unreal.Color`:
+
+```python
+# ❌ WRONG — Rotator positional order is (Roll, Pitch, Yaw), NOT (Pitch, Yaw, Roll)
+unreal.Rotator(-45, 0, 0)        # sets ROLL=-45, not pitch!
+
+# ✅ CORRECT — keyword args, unambiguous
+unreal.Rotator(pitch=-45)                    # angle down 45°
+unreal.Rotator(roll=0, pitch=-90, yaw=45)    # straight down, spun 45°
+
+# ❌ WRONG — Color positional order is (B, G, R, A), NOT (R, G, B, A)
+unreal.Color(255, 180, 100)      # comes out BLUE, not warm orange!
+
+# ✅ CORRECT — keyword args, or use LinearColor (which IS r, g, b, a positional)
+unreal.Color(r=255, g=180, b=100, a=255)
+unreal.LinearColor(1.0, 0.7, 0.4, 1.0)       # LinearColor positional is normal RGBA
+```
+
+**Pitch sign convention:** negative pitch = downward (`pitch=-90` points straight down). For lights/cameras use negative pitch to aim at the ground.
 
 ### ⚠️ Refresh Viewport After Changes
 
@@ -186,6 +223,39 @@ print(f"Created from template: {result}")
 
 ---
 
+### Save the Current Level (Save / Save As)
+
+**Getting the editor world** — it lives on `UnrealEditorSubsystem`, NOT `LevelEditorSubsystem`, NOT the deprecated `EditorLevelLibrary`:
+
+```python
+import unreal
+
+# ❌ WRONG — AttributeError: 'LevelEditorSubsystem' object has no attribute 'get_editor_world'
+unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).get_editor_world()
+
+# ❌ DEPRECATED — Editor Scripting Utilities plugin
+unreal.EditorLevelLibrary.get_editor_world()
+
+# ✅ CORRECT
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+```
+
+**Which save call to use:**
+- Level already saved at a path → `unreal.get_editor_subsystem(unreal.LevelEditorSubsystem).save_current_level()`
+- Untitled/never-saved level, or "save as <new name>" → `EditorLoadingAndSavingUtils.save_map(world, asset_path)` (**both args required**, in that order):
+
+```python
+import unreal
+
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+ok = unreal.EditorLoadingAndSavingUtils.save_map(world, "/Game/Maps/MyLevel")
+print(f"Saved: {ok}")
+```
+
+To also make the saved level the editor startup map, load the `project-settings` skill and set `maps` / `EditorStartupMap` with the full asset path (`/Game/Maps/MyLevel.MyLevel`).
+
+---
+
 ### Spawn Built-in Actor
 
 ```python
@@ -234,17 +304,99 @@ for actor in all_actors[:10]:
 ```python
 import unreal
 
-# Get/Set location
+# Get/Set location — args: (new_location, sweep, teleport)
 loc = actor.get_actor_location()
 actor.set_actor_location(unreal.Vector(100, 200, 300), False, False)
 
-# Get/Set rotation
-rot = actor.get_actor_rotation()
-actor.set_actor_rotation(unreal.Rotator(0, 90, 0), False)
+# Get/Set rotation — ALWAYS keyword args for Rotator (positional is Roll, Pitch, Yaw!)
+rot = actor.get_actor_rotation()   # rot.pitch / rot.yaw / rot.roll
+actor.set_actor_rotation(unreal.Rotator(pitch=-90, yaw=45), False)
+
+# Relative rotation in LOCAL space (returns HitResult — see sweep section)
+actor.add_actor_local_rotation(unreal.Rotator(pitch=30), False, False)
+# World-space equivalent: actor.add_actor_world_rotation(...)
 
 # Get/Set scale
 scale = actor.get_actor_scale3d()
 actor.set_actor_scale3d(unreal.Vector(2, 2, 2))
+
+# Everything at once
+actor.set_actor_transform(
+    unreal.Transform(
+        location=unreal.Vector(500, 500, 200),
+        rotation=unreal.Rotator(pitch=45),
+        scale=unreal.Vector(1.5, 1.5, 1.5)),
+    False, False)
+```
+
+### Sweep Moves & Collision Checks (HitResult)
+
+Three verified gotchas (UE 5.7):
+
+1. **`HitResult` fields cannot be read as attributes** — `hit.blocking_hit` / `hit.bBlockingHit` raise "property is protected". Use `hit.to_tuple()[0]` (the blocking-hit bool) or `hit.export_text()` (full readable dump: Location, ImpactPoint, Normal, Distance, Time).
+2. **`set_actor_location(loc, sweep=True, ...)` does NOT detect collisions in the editor world** — it reports no hit even when moving straight through another actor. Don't rely on it for collision checks.
+3. **The definitive checks:** compare the actor's final position to the target, and/or trace the path explicitly with `SystemLibrary.line_trace_single` (this DOES hit editor actors):
+
+```python
+import unreal
+
+actor.set_actor_location(target, True, False)
+# ⚠️ Vector.equals(b) takes NO tolerance arg — use distance() for tolerant compare
+arrived = unreal.Vector.distance(actor.get_actor_location(), target) < 1.0
+
+# Explicit path check that actually works in the editor:
+world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
+hit = unreal.SystemLibrary.line_trace_single(
+    world, start_loc, target,
+    unreal.TraceTypeQuery.TRACE_TYPE_QUERY1,   # Visibility channel
+    False, [actor],                            # ignore the moving actor itself
+    unreal.DrawDebugTrace.NONE, True)
+if hit and hit.to_tuple()[0]:                  # [0] = blocking hit bool
+    blocker = hit.to_tuple()[9]                # [9] = hit Actor, [10] = hit Component
+    print(f"Blocked by {blocker.get_actor_label()}: {hit.export_text()[:200]}")
+```
+
+### Organize: Rename, Folders, Attach/Detach, Tags
+
+```python
+import unreal
+
+# Rename (the label shown in the outliner)
+actor.set_actor_label("MainLight")
+
+# Outliner folder (creates the folder if needed; "" = root, "A/B" nests)
+actor.set_folder_path("TestLights")
+
+# Attach to another actor, keeping current world position
+actor.attach_to_actor(parent_actor, "",
+    unreal.AttachmentRule.KEEP_WORLD,
+    unreal.AttachmentRule.KEEP_WORLD,
+    unreal.AttachmentRule.KEEP_WORLD, False)
+
+# Detach, keeping world position
+actor.detach_from_actor(
+    unreal.DetachmentRule.KEEP_WORLD,
+    unreal.DetachmentRule.KEEP_WORLD,
+    unreal.DetachmentRule.KEEP_WORLD)
+
+# Actor tags (read/write the whole list; query with `in`)
+actor.tags = ["Test", "Lighting"]
+tagged = [a for a in actor_subsys.get_all_level_actors() if "Lighting" in a.tags]
+```
+
+### Light Actors (PointLight, SpotLight, DirectionalLight)
+
+All `unreal.Light` actors expose their component as `actor.light_component` — no `get_component_by_class` needed:
+
+```python
+import unreal
+
+comp = light_actor.light_component        # PointLightComponent / SpotLightComponent / ...
+comp.set_intensity(10000)
+comp.set_light_color(unreal.LinearColor(1.0, 0.7, 0.4))   # warm; LinearColor IS positional RGBA
+intensity = comp.get_editor_property("intensity")
+# Spot cone angles (SpotLight only):
+# comp.set_inner_cone_angle(20); comp.set_outer_cone_angle(35)
 ```
 
 ### Selection
@@ -391,3 +543,7 @@ unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
 loc, rot, scale = unreal.ActorService.get_absolute_transform("MyCube")
 print(f"Absolute: loc={loc}, rot={rot}, scale={scale}")
 ```
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/manipulate_actors.pyx`** — list level actors, find by class, move/rotate by name.

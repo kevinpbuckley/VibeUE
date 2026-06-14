@@ -41,6 +41,8 @@ Use the individual `add_*_node` + `connect_nodes` methods when:
 | `make_struct` | `struct` | Make Struct node (`K2Node_MakeStruct`) for any struct type (engine or user-defined) |
 | `instanced_struct` | `struct` | Make Instanced Struct node — wraps a struct into `FInstancedStruct` |
 
+> **Standard Macro nodes (ForEachLoop, ForLoop, WhileLoop, DoOnce, Gate, IsValid, FlipFlop, …) are NOT placeable here.** They are `K2Node_MacroInstance` with no spawner key, so neither `spawner_key` nor `function_call` will create them. Place them separately with `add_macro_instance_node(bp, graph, "ForEachLoop", x, y)`, then wire them via the normal connection format. See the macro section in [SKILL.md](SKILL.md).
+
 ### Connection Format
 
 Connections use `"RefOrGUID.PinName"` format: `{"from_": "A.then", "to": "B.execute"}`

@@ -1,7 +1,7 @@
 ---
 name: landscape-materials
 display_name: Landscape Material System
-description: Create landscape materials with layer blending, texture setup, and layer info objects using LandscapeMaterialService
+description: Create landscape materials with layer blending, texture setup, and layer info objects (LandscapeMaterialService). Use when the user asks to build a landscape/terrain material, set up paint layers (grass/rock/dirt), create layer info objects, add a grass output, or assign a material to a landscape. For production master-material+RVT systems, load landscape-auto-material.
 vibeue_classes:
   - LandscapeMaterialService
   - MaterialService
@@ -25,6 +25,8 @@ keywords:
   - slope mask
 ---
 
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "materials-and-shaders"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
+
 # Landscape Material System Skill
 
 ## When to Use This Skill vs. landscape-auto-material
@@ -34,7 +36,7 @@ keywords:
 
 If you need material functions, Runtime Virtual Textures, or the master-material + instance pattern:
 ```python
-manage_skills(action="load", skill_name="landscape-auto-material")
+vibeue-skills-manager(action="load", skill_name="landscape-auto-material")
 ```
 
 ## Critical Rules
@@ -115,333 +117,26 @@ Split into separate steps:
 
 ---
 
-## Workflows
 
-### Create Complete Landscape Material
+## Task Index
 
-**IMPORTANT: Split into multiple code blocks to avoid timeout!**
+| Task | Sub-doc | Sample script |
+|------|---------|---------------|
+| Create a landscape material (+ layers) | `workflows.md` → Create Complete Landscape Material | `scripts/create_landscape_material.pyx` |
+| Set up a layer with textures | `workflows.md` → Setup Layer with Textures | — |
+| Create layer info objects | `workflows.md` → Create Layer Info Objects | — |
+| Assign material to a landscape | `workflows.md` → Assign Material to Landscape | — |
+| Grass output node | `workflows.md` → Create Grass Output Node | — |
+| Satellite-guided material + painting | `satellite.md` | — |
 
-**Block 1 — Create and connect (fast):**
-```python
-import unreal
+## Sub-docs
+- **`workflows.md`** — step-by-step landscape-material build workflows (layers, textures, layer info, grass).
+- **`satellite.md`** — satellite-image-guided material creation and slope/height painting.
 
-# 1. Create material
-mat = unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
-mat_path = mat.asset_path
+## Verification
+`compile_material` (slow — keep it in its own code block) then save. Inspect the graph with
+`MaterialNodeService.export_material_graph` before modifying an existing landscape material.
 
-# 2. Create layer blend node
-blend = unreal.LandscapeMaterialService.create_layer_blend_node(mat_path, -400, 0)
+## Sample scripts (run via `execute_python_code`)
 
-# 3. Add layers
-unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Grass", "LB_WeightBlend")
-unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Rock", "LB_WeightBlend")
-unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Sand", "LB_WeightBlend")
-
-# 4. Connect blend to BaseColor output
-unreal.MaterialNodeService.connect_to_output(mat_path, blend.node_id, "", "BaseColor")
-
-# 5. Save (but do NOT compile here — compile is slow!)
-unreal.EditorAssetLibrary.save_asset(mat_path)
-print(f"Created: {mat_path}")
-```
-
-**Block 2 — Compile (slow, run separately):**
-```python
-import unreal
-unreal.MaterialService.compile_material("/Game/Materials/M_Terrain")
-print("Compiled")
-```
-
-**Block 3 — Layer info objects and assignment:**
-```python
-import unreal
-
-# Create layer info objects — ALWAYS use .asset_path, naming is LI_<Name>
-grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
-rock_info = unreal.LandscapeMaterialService.create_layer_info_object("Rock", "/Game/Landscape")
-sand_info = unreal.LandscapeMaterialService.create_layer_info_object("Sand", "/Game/Landscape")
-# grass_info.asset_path = "/Game/Landscape/LI_Grass" (NOT "Grass_LayerInfo")
-
-# Assign material with EXACT paths from create results
-unreal.LandscapeMaterialService.assign_material_to_landscape(
-    "MyTerrain", "/Game/Materials/M_Terrain",
-    {
-        "Grass": grass_info.asset_path,
-        "Rock": rock_info.asset_path,
-        "Sand": sand_info.asset_path
-    }
-)
-
-# VERIFY layers were added (assign can silently skip bad paths)
-info = unreal.LandscapeService.get_landscape_info("MyTerrain")
-print(f"Layers: {[l.layer_name for l in info.layers]}")
-```
-
-### Setup Layer with Textures
-
-```python
-import unreal
-
-mat_path = "/Game/Materials/M_Terrain"
-blend_node_id = "..."  # from create_layer_blend_node
-
-# Setup all textures for a layer in one call
-unreal.LandscapeMaterialService.setup_layer_textures(
-    mat_path,
-    blend_node_id,
-    "Grass",
-    "/Game/Textures/T_Grass_D",      # Diffuse
-    "/Game/Textures/T_Grass_N",      # Normal (optional)
-    "",                               # Roughness (optional)
-    0.01                              # Tiling scale
-)
-
-unreal.MaterialService.compile_material(mat_path)
-```
-
-### Create Layer Info Objects
-
-```python
-import unreal
-
-# Create layer info objects for each layer
-grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape", True)
-rock_info = unreal.LandscapeMaterialService.create_layer_info_object("Rock", "/Game/Landscape", True)
-sand_info = unreal.LandscapeMaterialService.create_layer_info_object("Sand", "/Game/Landscape", True)
-
-print(f"Grass: {grass_info.asset_path}")
-print(f"Rock: {rock_info.asset_path}")
-print(f"Sand: {sand_info.asset_path}")
-```
-
-### Assign Material to Landscape
-
-```python
-import unreal
-
-# IMPORTANT: Use EXACT paths from create_layer_info_object().asset_path
-# The naming convention is LI_<LayerName>, NOT <LayerName>_LayerInfo
-# If paths are wrong, assign returns True but layers will be EMPTY!
-unreal.LandscapeMaterialService.assign_material_to_landscape(
-    "MyTerrain",
-    "/Game/Materials/M_Terrain",
-    {
-        "Grass": "/Game/Landscape/LI_Grass",
-        "Rock": "/Game/Landscape/LI_Rock.LI_Rock",
-        "Sand": "/Game/Landscape/LI_Sand.LI_Sand"
-    }
-)
-
-# Always verify after assignment
-info = unreal.LandscapeService.get_landscape_info("MyTerrain")
-if not info.layers:
-    print("WARNING: No layers found - check layer_info_paths!")
-```
-
-### Manual Texture Connection with Layer Coords
-
-```python
-import unreal
-
-mat_path = "/Game/Materials/M_Terrain"
-
-# Create UV coords node
-coords_id = unreal.LandscapeMaterialService.create_layer_coords_node(mat_path, 0.01, -800, 0)
-
-# Create texture sample manually
-tex_id = unreal.MaterialNodeService.create_expression(mat_path, "TextureSample", -600, 0)
-unreal.MaterialNodeService.set_expression_property(mat_path, tex_id.id, "Texture", "/Game/Textures/T_Grass_D")
-
-# Connect UV to texture
-unreal.MaterialNodeService.connect_expressions(mat_path, coords_id, "", tex_id.id, "UVs")
-
-# Connect texture to blend node layer input
-unreal.LandscapeMaterialService.connect_to_layer_input(mat_path, tex_id.id, "", blend_node_id, "Grass", "Layer")
-```
-
-### Using Layer Weight Nodes (Alternative)
-
-```python
-import unreal
-
-mat_path = "/Game/Materials/M_Terrain"
-
-# LandscapeLayerWeight is an alternative to LandscapeLayerBlend
-# Use when you need more control over blending logic
-grass_weight = unreal.LandscapeMaterialService.create_layer_weight_node(mat_path, "Grass", 1.0, -400, 0)
-rock_weight = unreal.LandscapeMaterialService.create_layer_weight_node(mat_path, "Rock", 0.0, -400, 200)
-
-# Connect layer weight inputs and chain them together
-# (more manual but more flexible than LayerBlend)
-```
-
-### Check Existence
-
-```python
-import unreal
-
-if not unreal.LandscapeMaterialService.landscape_material_exists("/Game/Materials/M_Terrain"):
-    unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
-
-if not unreal.LandscapeMaterialService.layer_info_exists("/Game/Landscape/LI_Grass"):
-    unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
-```
-
-### Create Layer Sample Node
-
-Use `LandscapeLayerSample` to sample a single layer's weight (alternative to LayerBlend/LayerWeight):
-
-```python
-import unreal
-
-mat_path = "/Game/Materials/M_Terrain"
-
-# Creates a LandscapeLayerSample node for a specific layer
-# Returns the scalar weight of that layer (0-1)
-grass_sample = unreal.LandscapeMaterialService.create_layer_sample_node(
-    mat_path, "Grass", -600, 0
-)
-
-# Use the sample weight to drive blending or masking
-mult_id = unreal.MaterialNodeService.create_expression(mat_path, "Multiply", -400, 0)
-unreal.MaterialNodeService.connect_expressions(mat_path, grass_sample, "", mult_id, "A")
-```
-
-### Create Grass Output Node
-
-Create a `LandscapeGrassOutput` node for procedural foliage placement:
-
-```python
-import unreal
-
-mat_path = "/Game/Materials/M_Terrain"
-
-# Create grass output with grass type mappings
-# Keys are display names, values are ULandscapeGrassType asset paths
-grass_id = unreal.LandscapeMaterialService.create_grass_output(
-    mat_path,
-    {
-        "Grass": "/Game/Foliage/GT_Grass",
-        "Flowers": "/Game/Foliage/GT_Flowers"
-    },
-    -200, 400
-)
-
-# Connect layer weights to the grass output inputs
-# Each grass type gets an input pin matching its name
-unreal.MaterialNodeService.connect_expressions(mat_path, grass_weight_id, "", grass_id, "Grass")
-unreal.MaterialNodeService.connect_expressions(mat_path, flower_weight_id, "", grass_id, "Flowers")
-
-unreal.MaterialService.compile_material(mat_path)
-```
-
-### Complete End-to-End Workflow
-
-```python
-import unreal
-
-# 1. Create landscape material
-mat = unreal.LandscapeMaterialService.create_landscape_material("M_Terrain", "/Game/Materials")
-mat_path = mat.asset_path
-
-# 2. Create blend node and add layers
-blend = unreal.LandscapeMaterialService.create_layer_blend_node(mat_path)
-unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Grass")
-unreal.LandscapeMaterialService.add_layer_to_blend_node(mat_path, blend.node_id, "Rock")
-
-# 3. Setup textures for each layer
-unreal.LandscapeMaterialService.setup_layer_textures(
-    mat_path, blend.node_id, "Grass", "/Game/Textures/T_Grass_D", "/Game/Textures/T_Grass_N")
-unreal.LandscapeMaterialService.setup_layer_textures(
-    mat_path, blend.node_id, "Rock", "/Game/Textures/T_Rock_D", "/Game/Textures/T_Rock_N")
-
-# 4. Connect blend to material output
-unreal.MaterialNodeService.connect_to_output(mat_path, blend.node_id, "", "BaseColor")
-
-# 5. Compile and save
-unreal.MaterialService.compile_material(mat_path)
-unreal.EditorAssetLibrary.save_asset(mat_path)
-
-# 6. Create layer info objects — ALWAYS use .asset_path result
-grass_info = unreal.LandscapeMaterialService.create_layer_info_object("Grass", "/Game/Landscape")
-rock_info = unreal.LandscapeMaterialService.create_layer_info_object("Rock", "/Game/Landscape")
-# grass_info.asset_path = "/Game/Landscape/LI_Grass"
-
-# 7. Create landscape
-ls = unreal.LandscapeService.create_landscape(
-    unreal.Vector(0, 0, 0), unreal.Rotator(0, 0, 0), unreal.Vector(100, 100, 100),
-    1, 63, 8, 8, "MyTerrain")
-
-# 8. Assign material with layer info
-unreal.LandscapeMaterialService.assign_material_to_landscape(
-    ls.actor_label, mat_path,
-    {"Grass": grass_info.asset_path, "Rock": rock_info.asset_path})
-
-print("Landscape setup complete!")
-```
-
----
-
-## Satellite-Guided Material & Painting Workflow
-
-When creating landscape materials for **real-world terrain** (from `terrain_data`), use this workflow to analyze satellite imagery and paint layers that match the real terrain.
-
-### Step 1 — Get satellite image and attach for vision
-
-```
-terrain_data(action="get_map_image", lng=..., lat=..., style="satellite-v9")
-```
-
-Then **immediately** attach it so you can see the terrain:
-
-```
-attach_image(file_path="<path from get_map_image result>")
-```
-
-**`attach_image` is a tool call**, not Python. Call it directly like `terrain_data`.
-
-### Step 2 — Analyze the satellite image
-
-After attaching, you will **see** the satellite image in your next response. Analyze it to identify:
-- **Terrain features**: rock outcrops, grassland, forest, water, sand, urban areas
-- **Color distribution**: what percentage of the terrain is each type
-- **Elevation patterns**: where features transition (e.g., rock at peaks, grass in valleys)
-
-Use your visual analysis to choose:
-- Layer names (e.g., Rock, Grass, Sand, Forest, Water)
-- Base colors that match the satellite colors
-- Height/slope thresholds for procedural painting rules
-
-### Step 3 — Create material with satellite-informed layers
-
-Use the standard material creation workflow (see above), but choose layer names and colors based on what you saw in the satellite image.
-
-### Step 4 — Paint using slope/height analysis
-
-Since Unreal Python does NOT have PIL/Pillow, you **cannot** read satellite pixel colors directly. Instead, use your visual understanding of the satellite image combined with terrain analysis:
-
-```python
-import unreal
-
-# Get slope map for the landscape
-slope_data = unreal.LandscapeService.get_slope_map("MyTerrain")
-
-# Get height data for regions
-height_data = unreal.LandscapeService.get_height_in_region("MyTerrain", ...)
-
-# Use slope + height + your satellite visual analysis to set weights:
-# - Steep slopes (>40°) → Rock (you saw exposed rock at steep areas)
-# - High altitude + moderate slope → Alpine grass (lighter green in satellite)
-# - Low altitude + gentle slope → Valley grass (darker green in satellite)
-# - Very flat low areas → Sand/dirt (brown/tan in satellite)
-unreal.LandscapeService.set_weights_in_region("MyTerrain", "Rock", ...)
-unreal.LandscapeService.set_weights_in_region("MyTerrain", "Grass", ...)
-```
-
-### ⚠️ Key Rules for Satellite-Guided Painting
-
-1. **Always attach the satellite image** — without seeing it, you're guessing
-2. **PIL/Pillow is NOT available** in Unreal Python — don't try to read pixels programmatically
-3. **Use visual analysis + slope/height data** — combine what you see with terrain metrics
-4. **`import_weight_map`** can import 8-bit grayscale PNGs as per-layer weight masks if available
-5. **Describe what you see** in the satellite image before creating painting rules — this validates your analysis
+- **`scripts/create_landscape_material.pyx`** — create a landscape material with a layer blend, compile, assign.

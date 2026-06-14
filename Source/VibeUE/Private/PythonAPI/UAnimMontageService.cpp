@@ -22,6 +22,30 @@
 // PRIVATE HELPERS
 // ============================================================================
 
+// Close any open asset editor (Persona / montage editor) for this montage before a
+// STRUCTURAL edit. Persona's preview scene keeps a live FAnimMontageInstance that holds
+// raw pointers/indices into SlotAnimTracks / AnimSegments / CompositeSections. Mutating
+// those arrays (an Add can grow-reallocate, a RemoveAt always shifts/reallocates) leaves
+// the running preview instance dangling, and the next editor tick dereferences freed
+// memory -> EXCEPTION_ACCESS_VIOLATION (observed crashing the editor during batch montage
+// edits while the editor happened to be open from an earlier refresh_montage_editor call).
+// Closing the editor first tears the preview down so the structural edit is safe. Callers
+// should re-open / refresh ONCE with refresh_montage_editor() AFTER all edits are done.
+// In-place property setters (blend times, play rate, etc.) do NOT reallocate and are left
+// untouched so an open editor survives non-structural tweaks.
+static void CloseMontageEditorForSafeEdit(UAnimMontage* Montage)
+{
+#if WITH_EDITOR
+	if (Montage && GEditor)
+	{
+		if (UAssetEditorSubsystem* AssetEditorSubsystem = GEditor->GetEditorSubsystem<UAssetEditorSubsystem>())
+		{
+			AssetEditorSubsystem->CloseAllEditorsForAsset(Montage);
+		}
+	}
+#endif
+}
+
 UAnimMontage* UAnimMontageService::LoadMontage(const FString& MontagePath)
 {
 	if (MontagePath.IsEmpty())
@@ -495,6 +519,7 @@ bool UAnimMontageService::AddSection(
 		return false;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 	int32 NewIndex = Montage->AddAnimCompositeSection(FName(*SectionName), StartTime);
 
@@ -520,6 +545,7 @@ bool UAnimMontageService::RemoveSection(const FString& MontagePath, const FStrin
 		return false;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	const FName SectionFName(*SectionName);
@@ -779,6 +805,7 @@ int32 UAnimMontageService::AddSlotTrack(const FString& MontagePath, const FStrin
 	UAnimMontage* Montage = LoadMontage(MontagePath);
 	if (!Montage) return -1;
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	FSlotAnimationTrack& NewTrack = Montage->SlotAnimTracks.AddDefaulted_GetRef();
@@ -806,6 +833,7 @@ bool UAnimMontageService::RemoveSlotTrack(const FString& MontagePath, int32 Trac
 		return false;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 	Montage->SlotAnimTracks.RemoveAt(TrackIndex);
 	MarkMontageModified(Montage);
@@ -949,6 +977,7 @@ int32 UAnimMontageService::AddAnimSegment(
 		return -1;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	FAnimSegment NewSegment;
@@ -989,6 +1018,7 @@ bool UAnimMontageService::RemoveAnimSegment(
 		return false;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 	Montage->SlotAnimTracks[TrackIndex].AnimTrack.AnimSegments.RemoveAt(SegmentIndex);
 	
@@ -1166,6 +1196,7 @@ int32 UAnimMontageService::AddNotify(
 		return -1;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	// Create new notify
@@ -1215,6 +1246,7 @@ int32 UAnimMontageService::AddNotifyState(
 		return -1;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	// Create new notify
@@ -1246,6 +1278,8 @@ bool UAnimMontageService::RemoveNotify(const FString& MontagePath, int32 NotifyI
 		UE_LOG(LogTemp, Error, TEXT("UAnimMontageService::RemoveNotify: Invalid notify index %d"), NotifyIndex);
 		return false;
 	}
+
+	CloseMontageEditorForSafeEdit(Montage);
 
 	Montage->Modify();
 	Montage->Notifies.RemoveAt(NotifyIndex);
@@ -1358,6 +1392,7 @@ int32 UAnimMontageService::AddBranchingPoint(
 		return -1;
 	}
 
+	CloseMontageEditorForSafeEdit(Montage);
 	Montage->Modify();
 
 	FAnimNotifyEvent& NewNotify = Montage->Notifies.AddDefaulted_GetRef();
@@ -1394,6 +1429,7 @@ bool UAnimMontageService::RemoveBranchingPoint(const FString& MontagePath, int32
 		{
 			if (BPCount == Index)
 			{
+				CloseMontageEditorForSafeEdit(Montage);
 				Montage->Modify();
 				Montage->Notifies.RemoveAt(i);
 				MarkMontageModified(Montage);

@@ -7,6 +7,8 @@
 #include "Misc/Paths.h"
 #include "HAL/PlatformFileManager.h"
 #include "Misc/ConfigCacheIni.h"
+#include "Misc/CommandLine.h"
+#include "Misc/Parse.h"
 #include "UI/SAIChatWindow.h"
 #include "Core/ToolRegistry.h"
 #include "Core/ToolMetadata.h"
@@ -915,7 +917,14 @@ void FChatSession::ExecuteNextToolInQueue()
             ToolResultMsg.Content = TruncatedContent;
             Messages.Add(ToolResultMsg);
             OnMessageAdded.ExecuteIfBound(ToolResultMsg);
-			
+
+            // External MCP tools must decrement the pending counter like every other
+            // completion path (internal, malformed-args, not-found) — without this the
+            // queue-empty check sees PendingToolCallCount > 0 and never sends the
+            // follow-up request, stalling the conversation after the tool result.
+            PendingToolCallCount--;
+            UE_LOG(LogChatSession, Verbose, TEXT("External MCP tool completed. Pending tool calls remaining: %d, queue: %d"), PendingToolCallCount, ToolCallQueue.Num());
+
             ExecuteNextToolInQueue();
         }));
 }
@@ -1525,7 +1534,7 @@ FString FChatSession::SmartTruncateToolResult(const FString& Content, const FStr
     }
     
     // Skills system needs to load comprehensive documentation
-    if (ToolName.Contains(TEXT("manage_skills")))
+    if (ToolName.Contains(TEXT("vibeue-skills-manager")) || ToolName.Contains(TEXT("manage_skills")))
     {
         MaxTokensForTool = 20000;  // ~80000 chars for full skill content
     }
@@ -2330,6 +2339,25 @@ void FChatSession::SetYoloModeEnabled(bool bEnabled)
     GConfig->Flush(false, GEditorPerProjectIni);
 }
 
+bool FChatSession::IsChatEditorTestingEnabled()
+{
+    // Command-line switch wins so automated editor launches can enable testing without touching config
+    if (FParse::Param(FCommandLine::Get(), TEXT("VibeUEChatTesting")))
+    {
+        return true;
+    }
+
+    bool bTestingEnabled = false;
+    GConfig->GetBool(TEXT("VibeUE"), TEXT("ChatEditorTesting"), bTestingEnabled, GEditorPerProjectIni);
+    return bTestingEnabled;
+}
+
+void FChatSession::SetChatEditorTestingEnabled(bool bEnabled)
+{
+    GConfig->SetBool(TEXT("VibeUE"), TEXT("ChatEditorTesting"), bEnabled, GEditorPerProjectIni);
+    GConfig->Flush(false, GEditorPerProjectIni);
+}
+
 void FChatSession::ApproveToolCall(const FString& ToolCallId)
 {
     if (!PendingApprovalToolCall.IsSet())
@@ -2904,6 +2932,12 @@ TArray<FMCPTool> FChatSession::GetInternalToolsAsMCP() const
     // Convert each internal tool to MCP tool format (for API compatibility)
     for (const FToolMetadata& Tool : Tools)
     {
+        // Editor-testing tools are for external automation only - never offered to the chat AI
+        if (Tool.bEditorTestingOnly)
+        {
+            continue;
+        }
+
         FMCPTool MCPTool;
         MCPTool.Name = Tool.Name;
         MCPTool.Description = Tool.Description;

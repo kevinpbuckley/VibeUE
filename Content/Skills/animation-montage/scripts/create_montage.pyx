@@ -1,0 +1,19 @@
+# create_montage.pyx — Create a montage from an animation and add a named section.
+#
+# Sample script for the animation-montage skill. Run via execute_python_code.
+import unreal
+ms = unreal.AnimMontageService
+
+ANIM = "/Game/Anims/AS_Attack"
+DEST = "/Game/Anims/Montages"
+NAME = "AM_Attack"
+
+montage_path = ms.create_montage_from_animation(ANIM, DEST, NAME)   # returns full path
+print("montage:", montage_path)
+
+# Sections are time-based markers; add one at 0.0 and one partway in
+print("add Start:", ms.add_section(montage_path, "Start", 0.0))
+print("add Combo:", ms.add_section(montage_path, "Combo", ms.get_montage_length(montage_path) * 0.5))
+
+print("info:", ms.get_montage_info(montage_path))
+unreal.EditorAssetLibrary.save_asset(montage_path)

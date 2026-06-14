@@ -24,10 +24,9 @@
  *   # Get assets by type
  *   textures = unreal.AssetDiscoveryService.get_assets_by_type("Texture2D")
  *
- *   # Find specific asset
- *   asset_data = unreal.AssetData()
- *   found = unreal.AssetDiscoveryService.find_asset_by_path("/Game/MyAsset", asset_data)
- *   if found:
+ *   # Find specific asset (in Python the out-param becomes the return value: AssetData or None)
+ *   asset_data = unreal.AssetDiscoveryService.find_asset_by_path("/Game/MyAsset")
+ *   if asset_data:
  *       print(f"Found: {asset_data.asset_name}")
  *
  * @note All methods are static and thread-safe
@@ -41,9 +40,11 @@ class VIBEUE_API UAssetDiscoveryService : public UObject
 public:
 	/**
 	 * Search for assets by name pattern and optional type filter.
+	 * Searches ALL mounted content roots (/Game, /Engine, and every plugin) in one pass.
 	 *
 	 * @param SearchTerm - Pattern to match against asset names (case-insensitive)
-	 * @param AssetType - Optional type filter (e.g., "Blueprint", "Texture2D", "StaticMesh")
+	 * @param AssetType - Optional type filter. Accepts short class names from any loaded module
+	 *                    (e.g., "Blueprint", "Texture2D", "InputAction") or full "/Script/Module.Class" paths.
 	 * @return Array of matching assets
 	 *
 	 * Example:
@@ -73,9 +74,12 @@ public:
 	 * @param OutAsset - The found asset data (only valid if function returns true)
 	 * @return True if asset was found, false otherwise
 	 *
+	 * Python signature: find_asset_by_path(asset_path) -> AssetData or None
+	 * (the out-param becomes the return value; do NOT pass an AssetData argument)
+	 *
 	 * Example:
-	 *   asset = unreal.AssetData()
-	 *   if unreal.AssetDiscoveryService.find_asset_by_path("/Game/BP_Player_Test", asset):
+	 *   asset = unreal.AssetDiscoveryService.find_asset_by_path("/Game/BP_Player_Test")
+	 *   if asset:
 	 *       print(f"Found: {asset.asset_name}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
@@ -85,7 +89,7 @@ public:
 	 * Get asset dependencies (hard references).
 	 *
 	 * @param AssetPath - Path to the asset
-	 * @return Array of dependency asset paths
+	 * @return Array of dependency package names as plain strings (NOT AssetData objects)
 	 *
 	 * Example:
 	 *   deps = unreal.AssetDiscoveryService.get_asset_dependencies("/Game/BP_Player_Test")
@@ -97,7 +101,7 @@ public:
 	 * Get assets that reference this asset (hard references).
 	 *
 	 * @param AssetPath - Path to the asset
-	 * @return Array of referencing asset paths
+	 * @return Array of referencing package names as plain strings (NOT AssetData objects)
 	 *
 	 * Example:
 	 *   refs = unreal.AssetDiscoveryService.get_asset_referencers("/Game/BP_Player_Test")
@@ -274,9 +278,12 @@ public:
 	 * @param OutAsset - The active asset (only valid if function returns true)
 	 * @return True if an asset editor has focus, false otherwise
 	 *
+	 * Python signature: get_active_asset() -> AssetData or None
+	 * (the out-param becomes the return value; do NOT pass an AssetData argument)
+	 *
 	 * Example:
-	 *   asset = unreal.AssetData()
-	 *   if unreal.AssetDiscoveryService.get_active_asset(asset):
+	 *   asset = unreal.AssetDiscoveryService.get_active_asset()
+	 *   if asset:
 	 *       print(f"Currently editing: {asset.asset_name}")
 	 */
 	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
@@ -316,9 +323,12 @@ public:
 	 * @param OutAsset - The primary selected asset (only valid if function returns true)
 	 * @return True if an asset is selected, false if no selection
 	 *
+	 * Python signature: get_primary_content_browser_selection() -> AssetData or None
+	 * (the out-param becomes the return value; do NOT pass an AssetData argument)
+	 *
 	 * Example:
-	 *   asset = unreal.AssetData()
-	 *   if unreal.AssetDiscoveryService.get_primary_content_browser_selection(asset):
+	 *   asset = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+	 *   if asset:
 	 *       print(f"Primary selection: {asset.asset_name}")
 	 *   else:
 	 *       print("No asset selected")

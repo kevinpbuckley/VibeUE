@@ -7,6 +7,7 @@
 #include "NiagaraComponent.h"
 #include "NiagaraTypes.h"
 #include "NiagaraParameterStore.h"
+#include "NiagaraDataInterface.h"
 #include "NiagaraScriptSourceBase.h"
 #include "NiagaraEffectType.h"
 #include "NiagaraScript.h"
@@ -1743,6 +1744,73 @@ bool UNiagaraService::SetParameter(
 	return false;
 }
 
+// Resolve a friendly type-name string to a concrete UNiagaraDataInterface subclass.
+// Accepts the exact UClass name (with or without the "NiagaraDataInterface" prefix) and a
+// set of friendly aliases for the data interfaces that show up most in user parameters
+// (typed arrays the game writes each frame, grids, and render targets). Returns nullptr if
+// the name is not a concrete, non-abstract data interface class.
+static UClass* ResolveNiagaraDataInterfaceClass(const FString& InTypeName)
+{
+	const FString Name = InTypeName.TrimStartAndEnd();
+	if (Name.IsEmpty())
+	{
+		return nullptr;
+	}
+
+	static const TMap<FString, FString> Aliases = {
+		// Float3 / Vector arrays (BP writes positions/directions here)
+		{TEXT("arrayvector"),           TEXT("NiagaraDataInterfaceArrayFloat3")},
+		{TEXT("vectorarray"),           TEXT("NiagaraDataInterfaceArrayFloat3")},
+		{TEXT("arrayfloat3"),           TEXT("NiagaraDataInterfaceArrayFloat3")},
+		{TEXT("float3array"),           TEXT("NiagaraDataInterfaceArrayFloat3")},
+		{TEXT("arrayposition"),         TEXT("NiagaraDataInterfaceArrayPosition")},
+		{TEXT("positionarray"),         TEXT("NiagaraDataInterfaceArrayPosition")},
+		// Scalar / other arrays
+		{TEXT("arrayfloat"),            TEXT("NiagaraDataInterfaceArrayFloat")},
+		{TEXT("floatarray"),            TEXT("NiagaraDataInterfaceArrayFloat")},
+		{TEXT("arrayfloat2"),           TEXT("NiagaraDataInterfaceArrayFloat2")},
+		{TEXT("arrayfloat4"),           TEXT("NiagaraDataInterfaceArrayFloat4")},
+		{TEXT("arrayint"),              TEXT("NiagaraDataInterfaceArrayInt32")},
+		{TEXT("arrayint32"),            TEXT("NiagaraDataInterfaceArrayInt32")},
+		{TEXT("arraybool"),             TEXT("NiagaraDataInterfaceArrayBool")},
+		{TEXT("arraycolor"),            TEXT("NiagaraDataInterfaceArrayColor")},
+		{TEXT("arrayquat"),             TEXT("NiagaraDataInterfaceArrayQuat")},
+		// Grids
+		{TEXT("grid2d"),                TEXT("NiagaraDataInterfaceGrid2DCollection")},
+		{TEXT("grid2dcollection"),      TEXT("NiagaraDataInterfaceGrid2DCollection")},
+		{TEXT("grid3d"),                TEXT("NiagaraDataInterfaceGrid3DCollection")},
+		{TEXT("grid3dcollection"),      TEXT("NiagaraDataInterfaceGrid3DCollection")},
+		// Render targets (exposed via the Render Target 2D data interface)
+		{TEXT("rendertarget"),          TEXT("NiagaraDataInterfaceRenderTarget2D")},
+		{TEXT("rendertarget2d"),        TEXT("NiagaraDataInterfaceRenderTarget2D")},
+		{TEXT("texturerendertarget"),   TEXT("NiagaraDataInterfaceRenderTarget2D")},
+		{TEXT("texturerendertarget2d"), TEXT("NiagaraDataInterfaceRenderTarget2D")},
+	};
+
+	TArray<FString> Candidates;
+	if (const FString* Alias = Aliases.Find(Name.ToLower()))
+	{
+		Candidates.Add(*Alias);
+	}
+	Candidates.Add(Name);                                                       // exact class name
+	if (!Name.StartsWith(TEXT("NiagaraDataInterface"), ESearchCase::IgnoreCase))
+	{
+		Candidates.Add(FString::Printf(TEXT("NiagaraDataInterface%s"), *Name));  // prefixed
+	}
+
+	for (const FString& Candidate : Candidates)
+	{
+		UClass* Found = UClass::TryFindTypeSlow<UClass>(Candidate);
+		if (Found
+			&& Found->IsChildOf(UNiagaraDataInterface::StaticClass())
+			&& !Found->HasAnyClassFlags(CLASS_Abstract))
+		{
+			return Found;
+		}
+	}
+	return nullptr;
+}
+
 bool UNiagaraService::AddUserParameter(
 	const FString& SystemPath,
 	const FString& ParameterName,
@@ -1785,9 +1853,19 @@ bool UNiagaraService::AddUserParameter(
 	{
 		TypeDef = FNiagaraTypeDefinition::GetColorDef();
 	}
+	else if (UClass* DIClass = ResolveNiagaraDataInterfaceClass(ParameterType))
+	{
+		// Data interface user parameter (typed array, grid, render target, ...).
+		// AddParameter(bInitialize=true) below allocates a default DI instance.
+		TypeDef = FNiagaraTypeDefinition(DIClass);
+	}
 	else
 	{
-		UE_LOG(LogTemp, Warning, TEXT("UNiagaraService: Unknown parameter type: %s"), *ParameterType);
+		UE_LOG(LogTemp, Warning, TEXT("UNiagaraService: Unknown parameter type '%s'. ")
+			TEXT("Supported scalars: Float, Int, Bool, Vector, Vector2, Vector4, Color. ")
+			TEXT("Data interfaces by class name or alias, e.g. ArrayFloat3 (a.k.a. ArrayVector), ")
+			TEXT("ArrayFloat, ArrayInt, ArrayPosition, Grid2D, RenderTarget2D."),
+			*ParameterType);
 		return false;
 	}
 
@@ -1826,6 +1904,25 @@ bool UNiagaraService::AddUserParameter(
 			FLinearColor Val;
 			Val.InitFromString(DefaultValue);
 			NewVariable.SetValue(Val);
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec3Def())
+		{
+			// Niagara Vector is FVector3f; parse via FVector which understands "(X=..,Y=..,Z=..)".
+			FVector Val = FVector::ZeroVector;
+			Val.InitFromString(DefaultValue);
+			NewVariable.SetValue(FVector3f((float)Val.X, (float)Val.Y, (float)Val.Z));
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec2Def())
+		{
+			FVector2D Val = FVector2D::ZeroVector;
+			Val.InitFromString(DefaultValue);
+			NewVariable.SetValue(FVector2f((float)Val.X, (float)Val.Y));
+		}
+		else if (TypeDef == FNiagaraTypeDefinition::GetVec4Def())
+		{
+			FVector4 Val(0, 0, 0, 0);
+			Val.InitFromString(DefaultValue);
+			NewVariable.SetValue(FVector4f((float)Val.X, (float)Val.Y, (float)Val.Z, (float)Val.W));
 		}
 	}
 

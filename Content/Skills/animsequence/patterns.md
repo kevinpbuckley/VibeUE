@@ -83,8 +83,28 @@ unreal.AnimSequenceService.add_curve_key(
 - ✅ Use concrete subclasses like `/Script/Engine.AnimNotify_PlaySound` for functional notifies
 - ✅ Use concrete subclasses like `/Script/Engine.AnimNotifyState_Trail` for state notifies
 
+> ### 🛑 Notify indices are NOT stable — never cache them across mutations
+>
+> Notifies are stored **sorted by `trigger_time`**. The index returned by `add_notify`/`add_notify_state`,
+> and any index you read from `list_notifies`, is only valid until the next mutation. The moment you add
+> another notify or change a `trigger_time`, **every index can shift**, so a cached `idx` now points at a
+> *different* notify (or none).
+>
+> - ❌ `idx = add_notify(...)` then later `set_notify_trigger_time(path, idx, ...)` / `remove_notify(path, idx)` — `idx` may be stale.
+> - ✅ Re-fetch `list_notifies(path)` and **look the notify up by name** (or by name+time) immediately before each operation.
+>
+> This single gotcha is the most common source of "I edited the wrong notify" bugs. Helper below.
+
 ```python
 import unreal
+
+def find_notify_index(anim_path, name):
+    """Resolve a notify's CURRENT index by name. Call this right before every
+    index-based operation — indices shift whenever notifies are added or retimed."""
+    for n in unreal.AnimSequenceService.list_notifies(anim_path):
+        if n.notify_name == name:
+            return n.notify_index
+    return -1
 
 # Step 1: Find an animation and get the FULL asset path
 results = unreal.AssetDiscoveryService.search_assets("Run", "AnimSequence")
@@ -109,7 +129,7 @@ else:
         "LeftFoot"                     # Custom name - displayed in editor
     )
     if idx >= 0:
-        print(f"Created instant notify at index {idx}")
+        print(f"Created instant notify (returned index {idx} — may shift after edits)")
     
     # NOTE: State notifies require a CONCRETE subclass, NOT the abstract base class
     # Example using AnimNotifyState_Trail (if available in your project)
@@ -121,22 +141,23 @@ else:
     #     "SwordTrail"                               # Optional name
     # )
     
-    # Modify notify timing
-    unreal.AnimSequenceService.set_notify_trigger_time(anim_path, idx, 0.5)
+    # ⚠️ Re-resolve the index by name before EACH operation — it may have moved.
+    # Modify notify timing (this re-sorts notifies, invalidating other indices)
+    unreal.AnimSequenceService.set_notify_trigger_time(anim_path, find_notify_index(anim_path, "LeftFoot"), 0.5)
     
     # Modify notify track (visual row in editor)
-    unreal.AnimSequenceService.set_notify_track(anim_path, idx, 1)
+    unreal.AnimSequenceService.set_notify_track(anim_path, find_notify_index(anim_path, "LeftFoot"), 1)
     
     # Rename a notify (for base AnimNotify, this also converts to skeleton notify for proper display)
-    unreal.AnimSequenceService.set_notify_name(anim_path, idx, "RightFoot")
+    unreal.AnimSequenceService.set_notify_name(anim_path, find_notify_index(anim_path, "LeftFoot"), "RightFoot")
     
-    # Get notify info
-    info = unreal.AnimSequenceService.get_notify_info(anim_path, idx)
+    # Get notify info (look up by the NEW name now)
+    info = unreal.AnimSequenceService.get_notify_info(anim_path, find_notify_index(anim_path, "RightFoot"))
     if info:
         print(f"Notify: {info.notify_name} @ {info.trigger_time}s, track {info.track_index}")
     
     # Remove a notify
-    unreal.AnimSequenceService.remove_notify(anim_path, idx)
+    unreal.AnimSequenceService.remove_notify(anim_path, find_notify_index(anim_path, "RightFoot"))
 ```
 
 ### Configuring Notify Behavior
@@ -198,3 +219,8 @@ if info:
    - Sound notify: `/Script/Engine.AnimNotify_PlaySound`
    - Custom: `/Script/YourModule.YourNotifyClass`
 11. **Bone Rotation Axes Are Non-Intuitive**: Roll/Pitch/Yaw do NOT map predictably to world-space movement. Each bone's local coordinate system is different. **Always discover axis mappings** using `get_reference_pose()` and `get_pose_at_time()` before creating rotation animations!
+12. **Notify indices are unstable**: Notifies are sorted by `trigger_time`; any add/retime shifts indices. Re-fetch `list_notifies` and resolve by name before each index-based call. (See the notify gotcha box above.)
+13. **`list_anim_sequences` does NOT report root motion**: it returns `root_motion=False` for every entry. For accurate root-motion status (and `raw_size`/`compressed_size`/`bone_track_count`), use `search_animations` / `get_anim_sequence_info`, whose results expose `enable_root_motion`.
+14. **Search-result objects use `anim_path`/`anim_name`, NOT `package_name`**: `search_animations`, `find_animations_for_skeleton`, and `list_anim_sequences` return `AnimSequenceInfo` objects (fields: `anim_path`, `anim_name`, `enable_root_motion`, `frame_rate`, `frame_count`, `bone_track_count`, `curve_count`, `notify_count`, `rate_scale`, `additive_anim_type`, `skeleton_path`, `raw_size`, `compressed_size`). `package_name`/`package_path` only exist on `AssetDiscoveryService.search_assets` results. Also **filter out `None`** entries before reading fields.
+15. **Scope searches to a folder**: a project-wide wildcard (e.g. `*Run*` over all of `/Game`) can exceed the 30 s Python timeout. Pass a `search_path` folder to keep `search_animations`/`list_anim_sequences` fast.
+16. **Verify frame rate after creation**: `create_anim_sequence(frame_rate=...)` has been observed to come back at 30 FPS for a 60 FPS request — always read back `get_animation_frame_rate(anim_path)` and don't assume a non-30 rate stuck.

@@ -171,6 +171,14 @@ IMMEDIATE ACTIONS — go straight to these, no skill or discovery step needed:
       import unreal
       unreal.BlueprintService.list_graphs("/Game/path/BP_X")
 
+  ForEachLoop / WhileLoop / any Standard Macro node in a Blueprint graph:
+      import unreal
+      node_id = unreal.BlueprintService.add_macro_instance_node(bp, graph, "ForEachLoop", x, y)
+      Supported shorthands: ForEachLoop, ForEachLoopWithBreak, ReverseForEachLoop,
+        ForLoop, ForLoopWithBreak, WhileLoop, IsValid, Gate, DoOnce, DoN, FlipFlop
+      DO NOT use discover_nodes / create_node_by_key — macro nodes have no spawner key.
+      IsValid exposes both "Is Valid" and "Is Not Valid" exec outputs on the same node.
+
 KEY RULES:
   - Assets (search/find/open/save/move/delete) → use the manage_asset TOOL, not Python.
   - Logs → use the read_logs TOOL, not Python file I/O.
@@ -178,7 +186,7 @@ KEY RULES:
     NOT unreal.EditorLevelLibrary (removed in UE 5.7+).
   - For complex graph authoring or unfamiliar services → load the relevant skill first.""",
 
-    "manage_skills": """
+    "vibeue-skills-manager": """
 
 SKILL INDEX — load BEFORE executing tasks in that domain:
 
@@ -436,15 +444,25 @@ class ProxyHandler(BaseHTTPRequestHandler):
                 "serverInfo": {
                     "name": "VibeUE-Proxy",
                     "version": "1.0.0",
-                    "instructions": (
-                        "VibeUE gives Claude direct access to Unreal Engine. "
-                        "Quick-start rules: "
-                        "(1) To inspect a Widget Blueprint, call execute_python_code immediately with unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
-                        "(2) To find/open/move assets, use manage_asset, not Python. "
-                        "(3) If this is a first-time setup, read Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md and follow it. "
-                        "If tools are not working after setup, call vibeue_status to diagnose."
-                    ),
                 },
+                # Per the MCP spec, `instructions` is a TOP-LEVEL field of the initialize
+                # result (sibling of serverInfo), not nested inside serverInfo. Clients
+                # surface this as a server hint in the model's context.
+                "instructions": (
+                    "VibeUE gives Claude direct access to Unreal Engine. "
+                    "Skills: before doing domain work (blueprints, materials, UMG, Niagara, "
+                    "landscape, animation, state trees, etc.), discover skills with "
+                    "vibeue-skills-manager(action='list') and load the relevant one with "
+                    "vibeue-skills-manager(action='load', skill_name='<name>'); load a deeper sub-doc "
+                    "with skill_name='<name>/<section>'. Skills give workflows + gotchas; call "
+                    "discover_python_class on the classes they name to get exact signatures. "
+                    "Quick-start rules: "
+                    "(1) To inspect a Widget Blueprint, call execute_python_code immediately with "
+                    "unreal.WidgetService.get_widget_snapshot(path) — no skill or discovery step needed. "
+                    "(2) To find/open/move assets, use manage_asset, not Python. "
+                    "(3) If this is a first-time setup, read Plugins/VibeUE/Content/Setup/Claude_MCP_Setup.md and follow it. "
+                    "If tools are not working after setup, call vibeue_status to diagnose."
+                ),
             })
             return
 

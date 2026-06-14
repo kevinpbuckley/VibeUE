@@ -504,10 +504,16 @@ bool UNiagaraEmitterService::AddModule(
 
 	UNiagaraGraph* Graph = ScriptSource->NodeGraph;
 
-	// Determine the target script usage from ModuleType
+	// Determine the target script usage from ModuleType.
+	// NOTE: ModuleType must EXACTLY name one of the four stages. We deliberately do NOT
+	// default an unrecognized value to ParticleUpdate: that silent fallback used to put
+	// emitter-stage modules (e.g. SpawnRate) into ParticleUpdate, which compiles to an
+	// invalid system whose only diagnostic was the generic "System is invalid after
+	// compilation" surfaced many steps later. Failing fast here points the caller at the
+	// real mistake (the stage string) at the exact call site.
 	ENiagaraScriptUsage TargetUsage = ENiagaraScriptUsage::ParticleUpdateScript;
-	UNiagaraScript* TargetScript = EmitterData->UpdateScriptProps.Script;
-	
+	UNiagaraScript* TargetScript = nullptr;
+
 	if (ModuleType.Equals(TEXT("ParticleSpawn"), ESearchCase::IgnoreCase))
 	{
 		TargetUsage = ENiagaraScriptUsage::ParticleSpawnScript;
@@ -531,6 +537,13 @@ bool UNiagaraEmitterService::AddModule(
 #if WITH_EDITORONLY_DATA
 		TargetScript = EmitterData->EmitterUpdateScriptProps.Script;
 #endif
+	}
+	else
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UNiagaraEmitterService::AddModule - Unrecognized stage '%s'. ")
+			TEXT("Use exactly one of: ParticleSpawn, ParticleUpdate, EmitterSpawn, EmitterUpdate ")
+			TEXT("(case-insensitive). Did not add module '%s'."), *ModuleType, *ModuleScriptPath);
+		return false;
 	}
 
 	if (!TargetScript)

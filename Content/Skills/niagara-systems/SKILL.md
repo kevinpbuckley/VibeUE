@@ -1,7 +1,7 @@
 ---
 name: niagara-systems
 display_name: Niagara Systems
-description: Create and manage Niagara particle systems - system lifecycle, adding/copying emitters, user parameters, system script settings, scratch-pad authoring
+description: Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters.
 vibeue_classes:
   - NiagaraService
   - NiagaraScratchPadService
@@ -25,6 +25,8 @@ keywords:
   - System.Color
   - get_all_editable_settings
 ---
+
+> 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "niagara-vfx"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 ## Niagara Systems Skill
 
@@ -150,3 +152,63 @@ summary = unreal.NiagaraService.summarize(path)
 info = unreal.NiagaraService.get_system_info(path)
 exists = unreal.NiagaraService.system_exists(path)
 ```
+
+---
+
+## ⚠️ User Parameter Types (`add_user_parameter`)
+
+`add_user_parameter(path, name, type, default)` returns `True`/`False`. **The `type` string must
+be one of the names below** — anything else returns `False` and logs a warning (check
+`read_logs` if a call returns `False`). Do **not** guess type strings like `"array(float3)"`,
+`"PositionArray"`, or `"NiagaraDataInterfaceArray"` — use the exact names/aliases here.
+
+**Scalar / struct types** (default value is parsed from the string):
+
+| `type`                         | Niagara type | Example default            |
+|--------------------------------|--------------|----------------------------|
+| `Float`                        | float        | `"0.997"`                  |
+| `Int` (or `Int32`)             | int          | `"200"`                    |
+| `Bool`                         | bool         | `"true"`                   |
+| `Vector` (or `Vector3`)        | Vector       | `"(X=-5000,Y=-5000,Z=-500)"` |
+| `Vector2`                      | Vector2D     | `"(X=0,Y=0)"`              |
+| `Vector4`                      | Vector4      | `"(X=0,Y=0,Z=0,W=1)"`      |
+| `Color` (or `LinearColor`)     | LinearColor  | `"(R=1,G=0,B=0,A=1)"`      |
+
+**Data interface types** — the values the game/Blueprint writes each frame (typed arrays,
+grids, render targets). Pass the alias or the full `NiagaraDataInterface…` class name; the
+`default` argument is ignored (a default DI instance is allocated automatically):
+
+| Alias (case-insensitive)                 | Data interface class                     |
+|------------------------------------------|------------------------------------------|
+| `ArrayFloat3` / `ArrayVector` / `VectorArray` | `NiagaraDataInterfaceArrayFloat3`   |
+| `ArrayPosition` / `PositionArray`        | `NiagaraDataInterfaceArrayPosition`      |
+| `ArrayFloat` / `FloatArray`              | `NiagaraDataInterfaceArrayFloat`         |
+| `ArrayFloat2`, `ArrayFloat4`             | `NiagaraDataInterfaceArrayFloat2/4`      |
+| `ArrayInt` / `ArrayInt32`                | `NiagaraDataInterfaceArrayInt32`         |
+| `ArrayBool`, `ArrayColor`, `ArrayQuat`   | matching `NiagaraDataInterfaceArray…`    |
+| `Grid2D` / `Grid2DCollection`            | `NiagaraDataInterfaceGrid2DCollection`   |
+| `Grid3D` / `Grid3DCollection`            | `NiagaraDataInterfaceGrid3DCollection`   |
+| `RenderTarget2D` / `TextureRenderTarget` | `NiagaraDataInterfaceRenderTarget2D`     |
+
+Any other concrete `UNiagaraDataInterface` subclass also works if you pass its exact class name
+(with or without the `NiagaraDataInterface` prefix).
+
+```python
+import unreal
+path = "/Game/VFX/NS_TrackPainter"
+
+# Scalars
+unreal.NiagaraService.add_user_parameter(path, "DecayRate", "Float", "0.997")
+unreal.NiagaraService.add_user_parameter(path, "VolumeMin", "Vector", "(X=-5000,Y=-5000,Z=-500)")
+
+# Data interfaces (default arg ignored)
+unreal.NiagaraService.add_user_parameter(path, "StartPositions", "ArrayFloat3", "")
+unreal.NiagaraService.add_user_parameter(path, "TracksGrid",     "Grid2D",      "")
+unreal.NiagaraService.add_user_parameter(path, "DynamicRT",      "RenderTarget2D", "")
+```
+
+---
+
+## Sample scripts (run via `execute_python_code`)
+
+- **`scripts/create_system.pyx`** — create a Niagara system, add a user parameter, compile.

@@ -24,6 +24,73 @@
 // Helper Methods
 // =================================================================
 
+// Resolve a material property by internal name first, then fall back to a forgiving
+// match against internal + display names (case-insensitive, ignoring spaces). This lets
+// callers pass either the internal name ("TwoSided", "BlendMode", "OpacityMaskClipValue")
+// or the editor display name ("Two Sided", "Blend Mode", "Opacity Mask Clip Value").
+static FProperty* ResolveMaterialProperty(UObject* Object, const FString& PropertyName)
+{
+	if (!Object)
+	{
+		return nullptr;
+	}
+
+	UClass* Class = Object->GetClass();
+
+	// 1. Exact internal-name match (fast path).
+	if (FProperty* Exact = Class->FindPropertyByName(FName(*PropertyName)))
+	{
+		return Exact;
+	}
+
+	// 2. Forgiving match against internal + display names, ignoring case and spaces
+	//    ("Two Sided" -> "TwoSided").
+	const FString Wanted = PropertyName.Replace(TEXT(" "), TEXT("")).ToLower();
+	for (TFieldIterator<FProperty> PropIt(Class, EFieldIteratorFlags::IncludeSuper); PropIt; ++PropIt)
+	{
+		FProperty* Property = *PropIt;
+		if (Property->GetName().Replace(TEXT(" "), TEXT("")).ToLower() == Wanted)
+		{
+			return Property;
+		}
+		if (Property->GetDisplayNameText().ToString().Replace(TEXT(" "), TEXT("")).ToLower() == Wanted)
+		{
+			return Property;
+		}
+	}
+
+	return nullptr;
+}
+
+// Return the allowed enum value names for a property, handling both FEnumProperty and the
+// classic TEnumAsByte<EFoo> (FByteProperty backed by a UEnum). Material enums like BlendMode,
+// ShadingModel, and MaterialDomain are TEnumAsByte, which an FEnumProperty-only path misses —
+// leaving allowed_values empty and forcing callers to guess the legal values.
+static TArray<FString> GetPropertyAllowedValues(const FProperty* Property)
+{
+	TArray<FString> Values;
+
+	const UEnum* Enum = nullptr;
+	if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
+	{
+		Enum = EnumProp->GetEnum();
+	}
+	else if (const FByteProperty* ByteProp = CastField<FByteProperty>(Property))
+	{
+		Enum = ByteProp->Enum;
+	}
+
+	if (Enum)
+	{
+		for (int32 i = 0; i < Enum->NumEnums() - 1; ++i) // -1 to skip _MAX
+		{
+			Values.Add(Enum->GetNameStringByIndex(i));
+		}
+	}
+
+	return Values;
+}
+
 UMaterial* UMaterialService::LoadMaterialAsset(const FString& MaterialPath)
 {
 	UObject* LoadedObject = UEditorAssetLibrary::LoadAsset(MaterialPath);
@@ -594,11 +661,8 @@ TArray<FMaterialPropertyInfo_Custom> UMaterialService::ListProperties(
 		Info.bIsAdvanced = bIsAdvanced;
 		Info.CurrentValue = PropertyValueToString(Property, LoadedObject);
 
-		// Get enum values if applicable
-		if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
-		{
-			Info.AllowedValues = GetEnumPropertyValues(EnumProp);
-		}
+		// Get enum values if applicable (handles both FEnumProperty and TEnumAsByte)
+		Info.AllowedValues = GetPropertyAllowedValues(Property);
 
 		Properties.Add(Info);
 	}
@@ -614,7 +678,7 @@ FString UMaterialService::GetProperty(const FString& MaterialPath, const FString
 		return FString();
 	}
 
-	FProperty* Property = LoadedObject->GetClass()->FindPropertyByName(FName(*PropertyName));
+	FProperty* Property = ResolveMaterialProperty(LoadedObject, PropertyName);
 	if (!Property)
 	{
 		return FString();
@@ -634,7 +698,7 @@ bool UMaterialService::GetPropertyInfo(
 		return false;
 	}
 
-	FProperty* Property = LoadedObject->GetClass()->FindPropertyByName(FName(*PropertyName));
+	FProperty* Property = ResolveMaterialProperty(LoadedObject, PropertyName);
 	if (!Property)
 	{
 		return false;
@@ -648,10 +712,7 @@ bool UMaterialService::GetPropertyInfo(
 	OutInfo.bIsAdvanced = Property->HasAnyPropertyFlags(CPF_AdvancedDisplay);
 	OutInfo.CurrentValue = PropertyValueToString(Property, LoadedObject);
 
-	if (const FEnumProperty* EnumProp = CastField<FEnumProperty>(Property))
-	{
-		OutInfo.AllowedValues = GetEnumPropertyValues(EnumProp);
-	}
+	OutInfo.AllowedValues = GetPropertyAllowedValues(Property);
 
 	return true;
 }
@@ -671,7 +732,7 @@ bool UMaterialService::SetProperty(
 		return false;
 	}
 
-	FProperty* Property = LoadedObject->GetClass()->FindPropertyByName(FName(*PropertyName));
+	FProperty* Property = ResolveMaterialProperty(LoadedObject, PropertyName);
 	if (!Property)
 	{
 		UE_LOG(LogTemp, Warning, TEXT("UMaterialService::SetProperty: Property not found: %s"), *PropertyName);
@@ -906,6 +967,7 @@ bool UMaterialService::GetInstanceInfo(const FString& InstancePath, FVibeUEMater
 		if (Instance->GetScalarParameterValue(HashedParam, Value))
 		{
 			CustomInfo.CurrentValue = FString::Printf(TEXT("%.3f"), Value);
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
 		}
 
 		OutInfo.ScalarParameters.Add(CustomInfo);
@@ -927,6 +989,7 @@ bool UMaterialService::GetInstanceInfo(const FString& InstancePath, FVibeUEMater
 		if (Instance->GetVectorParameterValue(HashedParam, Value))
 		{
 			CustomInfo.CurrentValue = FString::Printf(TEXT("(R=%.3f,G=%.3f,B=%.3f,A=%.3f)"), Value.R, Value.G, Value.B, Value.A);
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
 		}
 
 		OutInfo.VectorParameters.Add(CustomInfo);
@@ -948,6 +1011,7 @@ bool UMaterialService::GetInstanceInfo(const FString& InstancePath, FVibeUEMater
 		if (Instance->GetTextureParameterValue(HashedParam, Texture) && Texture)
 		{
 			CustomInfo.CurrentValue = Texture->GetPathName();
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
 		}
 
 		OutInfo.TextureParameters.Add(CustomInfo);
@@ -990,41 +1054,95 @@ TArray<FMaterialParameterInfo_Custom> UMaterialService::ListInstanceParameters(c
 		return Parameters;
 	}
 
-	// Get scalar parameters with override status
-	for (const FScalarParameterValue& ScalarParam : Instance->ScalarParameterValues)
+	// Enumerate ALL parameters the instance exposes — inherited from the parent material AND
+	// locally overridden — not just the override arrays (which are empty on a fresh instance).
+	// bIsOverridden reflects whether THIS instance overrides the inherited default.
+	auto IsScalarOverridden = [Instance](const FName& Name)
 	{
-		FMaterialParameterInfo_Custom CustomInfo;
-		CustomInfo.ParameterName = ScalarParam.ParameterInfo.Name.ToString();
-		CustomInfo.ParameterType = TEXT("Scalar");
-		CustomInfo.CurrentValue = FString::Printf(TEXT("%.3f"), ScalarParam.ParameterValue);
-		CustomInfo.bIsOverridden = true;
-		Parameters.Add(CustomInfo);
-	}
-
-	// Get vector parameters with override status
-	for (const FVectorParameterValue& VectorParam : Instance->VectorParameterValues)
-	{
-		FMaterialParameterInfo_Custom CustomInfo;
-		CustomInfo.ParameterName = VectorParam.ParameterInfo.Name.ToString();
-		CustomInfo.ParameterType = TEXT("Vector");
-		CustomInfo.CurrentValue = FString::Printf(TEXT("(R=%.3f,G=%.3f,B=%.3f,A=%.3f)"), 
-			VectorParam.ParameterValue.R, VectorParam.ParameterValue.G, 
-			VectorParam.ParameterValue.B, VectorParam.ParameterValue.A);
-		CustomInfo.bIsOverridden = true;
-		Parameters.Add(CustomInfo);
-	}
-
-	// Get texture parameters with override status
-	for (const FTextureParameterValue& TextureParam : Instance->TextureParameterValues)
-	{
-		FMaterialParameterInfo_Custom CustomInfo;
-		CustomInfo.ParameterName = TextureParam.ParameterInfo.Name.ToString();
-		CustomInfo.ParameterType = TEXT("Texture");
-		if (TextureParam.ParameterValue)
+		for (const FScalarParameterValue& Ov : Instance->ScalarParameterValues)
 		{
-			CustomInfo.CurrentValue = TextureParam.ParameterValue->GetPathName();
+			if (Ov.ParameterInfo.Name == Name) { return true; }
 		}
-		CustomInfo.bIsOverridden = true;
+		return false;
+	};
+	auto IsVectorOverridden = [Instance](const FName& Name)
+	{
+		for (const FVectorParameterValue& Ov : Instance->VectorParameterValues)
+		{
+			if (Ov.ParameterInfo.Name == Name) { return true; }
+		}
+		return false;
+	};
+	auto IsTextureOverridden = [Instance](const FName& Name)
+	{
+		for (const FTextureParameterValue& Ov : Instance->TextureParameterValues)
+		{
+			if (Ov.ParameterInfo.Name == Name) { return true; }
+		}
+		return false;
+	};
+
+	// Scalar parameters
+	TArray<FMaterialParameterInfo> ScalarParams;
+	TArray<FGuid> ScalarGuids;
+	Instance->GetAllScalarParameterInfo(ScalarParams, ScalarGuids);
+	for (const FMaterialParameterInfo& Param : ScalarParams)
+	{
+		FMaterialParameterInfo_Custom CustomInfo;
+		CustomInfo.ParameterName = Param.Name.ToString();
+		CustomInfo.ParameterType = TEXT("Scalar");
+
+		float Value = 0.0f;
+		FHashedMaterialParameterInfo HashedParam(Param);
+		if (Instance->GetScalarParameterValue(HashedParam, Value))
+		{
+			CustomInfo.CurrentValue = FString::Printf(TEXT("%.3f"), Value);
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		CustomInfo.bIsOverridden = IsScalarOverridden(Param.Name);
+		Parameters.Add(CustomInfo);
+	}
+
+	// Vector parameters
+	TArray<FMaterialParameterInfo> VectorParams;
+	TArray<FGuid> VectorGuids;
+	Instance->GetAllVectorParameterInfo(VectorParams, VectorGuids);
+	for (const FMaterialParameterInfo& Param : VectorParams)
+	{
+		FMaterialParameterInfo_Custom CustomInfo;
+		CustomInfo.ParameterName = Param.Name.ToString();
+		CustomInfo.ParameterType = TEXT("Vector");
+
+		FLinearColor Value = FLinearColor::Black;
+		FHashedMaterialParameterInfo HashedParam(Param);
+		if (Instance->GetVectorParameterValue(HashedParam, Value))
+		{
+			CustomInfo.CurrentValue = FString::Printf(TEXT("(R=%.3f,G=%.3f,B=%.3f,A=%.3f)"),
+				Value.R, Value.G, Value.B, Value.A);
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		CustomInfo.bIsOverridden = IsVectorOverridden(Param.Name);
+		Parameters.Add(CustomInfo);
+	}
+
+	// Texture parameters
+	TArray<FMaterialParameterInfo> TextureParams;
+	TArray<FGuid> TextureGuids;
+	Instance->GetAllTextureParameterInfo(TextureParams, TextureGuids);
+	for (const FMaterialParameterInfo& Param : TextureParams)
+	{
+		FMaterialParameterInfo_Custom CustomInfo;
+		CustomInfo.ParameterName = Param.Name.ToString();
+		CustomInfo.ParameterType = TEXT("Texture");
+
+		UTexture* Value = nullptr;
+		FHashedMaterialParameterInfo HashedParam(Param);
+		if (Instance->GetTextureParameterValue(HashedParam, Value) && Value)
+		{
+			CustomInfo.CurrentValue = Value->GetPathName();
+			CustomInfo.DefaultValue = CustomInfo.CurrentValue;
+		}
+		CustomInfo.bIsOverridden = IsTextureOverridden(Param.Name);
 		Parameters.Add(CustomInfo);
 	}
 
