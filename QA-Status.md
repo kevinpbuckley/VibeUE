@@ -13,7 +13,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 3 | demo_prompts.md | ⚠️ | 7/9 done (2 referenced non-existent assets; graceful fallback). Added AttributeError-trap table to level-actors. |
 | 4 | pcg/pcg_tests.md | ⚠️ | 30/32 pass (2 blocked: delete file-handle + edge-enum, both engine/OS limits). Added edge-enumeration doc; fixed test search-by-name bug. |
 | 5 | skeleton/skeleton_tests.md | ⚠️ | A–H + bone add/commit/rename verified. Crash in section I root-caused→fixed (#433, auto-save modal). Re-run confirmed fix; reparent (known-broken) stalls chat → skill gotcha added. |
-| 6 | Smoke_Test.md | ⏳ | BLOCKED: VibeUE LLM gateway unresponsive (deepseek-v4-flash & grok-4.1-fast both stall, 0 tokens). Retrying. |
+| 6 | Smoke_Test.md | ✅ | 19/19 pass after gateway recovered. No crashes/modals (confirms #433 fix). Minor enhancement notes only. |
 | 7 | sound-cues/sound_cues_tests.md | ⏳ | |
 | 8 | state-trees/state_trees_tests.md | ⏳ | |
 | 9 | terrain-data/terrain_data_tests.md | ⏳ | |
@@ -104,3 +104,17 @@ commit fails on a hierarchy-mismatch and stalls the chat request. Added a skill 
 `Content/Skills/skeleton/SKILL.md` telling users not to reparent via SkeletonModifier (add-new +
 remove-old instead). Sections J/K/L (more sockets, retargeting modes, blend profiles) not separately
 re-run; their APIs mirror C/D/F which passed.
+
+### 6. Smoke_Test.md — ✅ pass
+19/19 steps passed (actor BP + variable + functions + spotlight + damage calc + compile; character BP
++ health vars + spotlight@5000 + TakeDamage + compile; menu widget + bg image + vertical box + Play/Quit
+buttons; list; force-delete all). Editor stayed responsive — **no modal save dialogs**, confirming the
+#433 fix end-to-end on an asset-heavy create/compile/delete workload. (First two sends hit the gateway
+outage, not the editor.)
+
+**Enhancement notes (not failures):** (a) blueprint function-graph wiring still needs `discover_nodes`
+to find KismetMathLibrary spawner keys (RandomFloat, Multiply_DoubleDouble) — a common-math-node
+reference in the blueprints skill would save a round-trip; (b) `manage_asset delete` is per-asset — a
+folder/bulk delete would simplify cleanup; (c) `FSlateColor` ColorAndOpacity needs
+`(SpecifiedColor=(R=...))` and `set_property` returns True even on a silently-wrong struct (already
+flagged in umg-widgets skill).
