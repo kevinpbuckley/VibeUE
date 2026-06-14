@@ -12,14 +12,19 @@ All 16 listed test files run (niagara scratchpad was already done in a prior ses
 the editor in a broken state at the end.** Skill/doc/test fixes were committed per-file to the plugin
 `skills` branch.
 
-**Bugs found & filed:**
-- [#433](https://github.com/kevinpbuckley/VibeUE/issues/433) — auto-save-before-Python shows a modal
-  PackagesDialog during MCP/automated chat → hang + crash. **Fixed** (skip auto-save in Chat Editor
-  Testing mode; verified). Full headless-save fix for all MCP paths still open in the issue.
-- [#434](https://github.com/kevinpbuckley/VibeUE/issues/434) — `StateTreeService.get_available_evaluator_types()`
-  times out (~98s).
-- [#435](https://github.com/kevinpbuckley/VibeUE/issues/435) — `add_component(is_root=True)` on a
-  `create_blueprint("UserWidget")` widget stack-overflows the Python VM.
+**Bugs found, filed & FIXED (all verified, compiled via Live Coding):**
+- [#433](https://github.com/kevinpbuckley/VibeUE/issues/433) — auto-save-before-Python showed a modal
+  PackagesDialog / ran a Slate thumbnail prepass during MCP/automated chat → hang + crash.
+  **Fixed:** `PythonTools.cpp` now does a fully headless save (`GetDirty*Packages` +
+  `UEditorLoadingAndSavingUtils::SavePackages`, no dialog, no prepass) for all MCP paths, plus the
+  testing-mode skip.
+- [#434](https://github.com/kevinpbuckley/VibeUE/issues/434) — `get_available_evaluator_types()` timed
+  out (~98s, LoadObject on every project blueprint). **Fixed:** `UStateTreeService.cpp` now uses the
+  Asset Registry inheritance graph (`GetDerivedClassNames`) — **verified 0.00s, 3 types**.
+- [#435](https://github.com/kevinpbuckley/VibeUE/issues/435) — `add_component` on a freshly-created
+  `create_blueprint("UserWidget")` widget stack-overflowed the Python VM (uncompiled-WBP save/prepass).
+  **Fixed:** `UBlueprintService::CreateBlueprint` now compiles the blueprint on creation (never left
+  uncompiled) + the #433 headless save. **Verified:** create+add root+add child, VM stays alive.
 
 **Skill/doc improvements:** animation-editing (Transform/.translation, anim-duplicate, create_from_pose),
 level-actors (AttributeError-trap table), pcg (edge enumeration), skeleton (no reparent),

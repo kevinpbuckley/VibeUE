@@ -6616,6 +6616,11 @@ FString UBlueprintService::CreateBlueprint(
 		return FString();
 	}
 
+	// Compile immediately so the asset is never left in an uncompiled state. A freshly-created
+	// but uncompiled Widget Blueprint can stack-overflow a later save / thumbnail Slate prepass
+	// (the crash behind issue #435). Cheap for an empty blueprint and makes follow-up edits safe.
+	FKismetEditorUtilities::CompileBlueprint(NewBlueprint);
+
 	// Notify the asset registry
 	FAssetRegistryModule::AssetCreated(NewBlueprint);
 
