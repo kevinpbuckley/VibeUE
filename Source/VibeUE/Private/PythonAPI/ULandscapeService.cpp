@@ -134,10 +134,7 @@ void ULandscapeService::UpdateLandscapeAfterHeightEdit(ALandscapeProxy* Landscap
 	// ForceLayersFullUpdate, it does NOT force a full weightmap resolve.
 	if (ALandscape* LandscapeActor = Landscape->GetLandscapeActor())
 	{
-		if (LandscapeActor->HasLayersContent())
-		{
-			LandscapeActor->ForceUpdateLayersContent();
-		}
+		LandscapeActor->ForceUpdateLayersContent();
 	}
 
 	// Update every proxy that belongs to this landscape GUID. In partitioned levels,
