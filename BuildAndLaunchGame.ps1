@@ -5,7 +5,14 @@
 param(
     [string]$Mode = "Development",
     [switch]$Clean,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # Force a full recompile of the VibeUE plugin under strict settings.
+    # Strict compilation (warnings-as-errors / deprecation-as-error) is enforced
+    # module-wide via VibeUE.Build.cs (bWarningsAsErrors = true), so every build is
+    # strict. Incremental builds, however, only recompile changed files — so a stale
+    # object file can hide a freshly-deprecated engine API. -StrictRebuild wipes the
+    # plugin's Binaries/Intermediate so ALL plugin files are recompiled and rechecked.
+    [switch]$StrictRebuild
 )
 
 # ============================================================================
@@ -177,9 +184,19 @@ if ($Clean) {
     }
 }
 
+# Strict rebuild: wipe the VibeUE plugin's build artifacts so every plugin file is
+# recompiled under the module's warnings-as-errors setting (catches newly-deprecated APIs).
+if ($StrictRebuild -and -not $Clean) {
+    Write-Host "Strict rebuild: cleaning VibeUE plugin Binaries/Intermediate..." -ForegroundColor Yellow
+    foreach ($sub in @("Binaries","Intermediate")) {
+        $subPath = Join-Path $PSScriptRoot $sub
+        if (Test-Path $subPath) { Remove-Item $subPath -Recurse -Force }
+    }
+}
+
 # Build the project
 if (-not $SkipBuild) {
-    Write-Host "Building $projectName in $Mode mode..." -ForegroundColor Yellow
+    Write-Host "Building $projectName in $Mode mode (strict: warnings-as-errors via VibeUE.Build.cs)..." -ForegroundColor Yellow
     
     & $buildBat "${projectName}Editor" Win64 $Mode $projectPath -waitmutex
     
