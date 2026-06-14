@@ -19,7 +19,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 9 | terrain-data/terrain_data_tests.md | ✅ | 20/20 (tool surface + Fuji build). Added 3 landscape gotchas. Triple full-paint builds scoped out (heavy, overlap landscape/material). |
 | 10 | transactions/transactions.md | ✅ | 23/23 pass (undo/redo, grouping, cancel, history, reset). No bugs. Notes: add_actor zero-vector → camera-relative; cancel pushes group to redo stack (by design). |
 | 11 | umg/manage_umg_widget.md | ⚠️ | 28/29 pass (1 partial). Font/brush/animation/preview/PIE APIs all work. Added typeface set_property gotcha to umg-widgets skill. |
-| 12 | umg/viewmodel_binding.md | ❌ | Crash: add_component(is_root) on a create_blueprint(UserWidget) WBP → stack overflow (0xC00000FD), corrupted Python VM → issue #435. Editor restarted; re-running. |
+| 12 | umg/viewmodel_binding.md | ⚠️ | Crash (#435) on first run → restarted editor (baked in #433 fix). Re-run: 11/11 phases + 7/7 error cases pass, no crash. Fixed mvvm doc (enabled vs b_enabled, dangling bindings). |
 | 13 | umg/widget_hierarchy.md | ⏳ | |
 | 14 | utilities/check_unreal_connection.md | ⏳ | |
 | 15 | uv-mapping/uv_mapping_tests.md | ⏳ | |
@@ -118,6 +118,18 @@ reference in the blueprints skill would save a round-trip; (b) `manage_asset del
 folder/bulk delete would simplify cleanup; (c) `FSlateColor` ColorAndOpacity needs
 `(SpecifiedColor=(R=...))` and `set_property` returns True even on a silently-wrong struct (already
 flagged in umg-widgets skill).
+
+### 12. umg/viewmodel_binding.md — ⚠️ crash on first run (#435), passes after restart
+**First run crashed the Python VM** (stack overflow 0xC00000FD) on
+`add_component(is_root=True)` against a `create_blueprint("UserWidget")` WBP → editor restart required
+(GitHub issue [#435](https://github.com/kevinpbuckley/VibeUE/issues/435)). The restart rebuilt the
+plugin (baking in the #433 auto-save fix) and recovered after a "Restore Packages" startup modal was
+dismissed. **Re-run (steering widget creation away from the crash path): 11/11 MVVM phases +
+7/7 error cases passed, no crash** — add/list/bind(OneWay+TwoWay)/remove view models + bindings all
+work and every invalid input returns False without throwing.
+
+**Doc fixes:** `umg-widgets/mvvm.md` — `WidgetViewModelBindingInfo` field is `enabled` (was documented
+as `b_enabled`); noted that `remove_view_model` invalidates-but-keeps dangling bindings.
 
 ### 8. state-trees/state_trees_tests.md — ⚠️ broad pass with one real bug
 Exercised the full StateTreeService surface (A–L: basics, state props, parameters, transitions,

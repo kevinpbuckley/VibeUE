@@ -60,8 +60,12 @@ description: MVVM ViewModel support in WidgetService — rules, creation types, 
 | `source_path` | ViewModel property path |
 | `destination_path` | Widget property path |
 | `binding_mode` | Binding direction |
-| `b_enabled` | Whether binding is active |
+| `enabled` | Whether binding is active (the Python property is `enabled`, NOT `b_enabled`) |
 | `binding_id` | GUID identifier |
+
+> ⚠️ `remove_view_model(name)` **invalidates but does not delete** that ViewModel's bindings — they
+> still appear in `list_view_model_bindings()` as dangling entries. Call `remove_view_model_binding`
+> for each binding BEFORE `remove_view_model` if you need a clean list.
 
 ## Workflows
 
