@@ -277,6 +277,9 @@ Do this in separate steps:
 | `create_layer_info_object("Grass", "/Game/X", "LI_Grass")` | Third param is a **bool**: `create_layer_info_object(layer_name, destination_path, is_weight_blended=True)` — passing a string asset name causes `TypeError: Cannot nativize 'str' as 'bool'` |
 | Retrying `create_landscape` after `PYTHON_EXECUTION_TIMEOUT` | The first call usually still completes in the background — check `landscape_exists(label)` before retrying (duplicate labels now return an error) |
 | `result.location` on LandscapeCreateResult | Result has ONLY `success`, `actor_label`, `error_message` — get location via `get_landscape_info(label).location` |
+| `result.resolution_x` / `.resolution_y` on HeightmapImportResult | The field is `result.resolution` — a **string** like `"1009x1009"`, not separate ints. Split it if you need numbers. |
+| Treating `get_height_at_location()` as a float | It returns a `LandscapeHeightSample` struct — use `.height` (float) and `.valid` (bool); `float(sample)` / `f"{sample}"` raise TypeError |
+| `delete_landscape(label)` to clear a World-Partition landscape | It returns `False` for `LandscapeStreamingProxy` actors. To wipe a level clean, also destroy proxies: `[s.destroy_actor(a) for a in EditorActorSubsystem.get_all_level_actors() if isinstance(a, unreal.LandscapeStreamingProxy)]` (a `delete_all_landscapes()` batch would be cleaner — not yet available) |
 | `info.component_count_x` / `info.component_count_y` | `info.num_components` is the TOTAL count (e.g. 64 for 8×8) — there are no per-axis fields |
 | `info.rotation.x` (Rotator) | Rotator fields are `.roll` / `.pitch` / `.yaw` — there is no `.x/.y/.z` on Rotator (only Vector has those) |
 
