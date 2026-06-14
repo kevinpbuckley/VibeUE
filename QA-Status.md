@@ -19,7 +19,7 @@ Legend: ✅ pass · ⚠️ pass with fixes applied · ❌ blocked (git issue fil
 | 9 | terrain-data/terrain_data_tests.md | ✅ | 20/20 (tool surface + Fuji build). Added 3 landscape gotchas. Triple full-paint builds scoped out (heavy, overlap landscape/material). |
 | 10 | transactions/transactions.md | ✅ | 23/23 pass (undo/redo, grouping, cancel, history, reset). No bugs. Notes: add_actor zero-vector → camera-relative; cancel pushes group to redo stack (by design). |
 | 11 | umg/manage_umg_widget.md | ⚠️ | 28/29 pass (1 partial). Font/brush/animation/preview/PIE APIs all work. Added typeface set_property gotcha to umg-widgets skill. |
-| 12 | umg/viewmodel_binding.md | ⏳ | |
+| 12 | umg/viewmodel_binding.md | ❌ | Crash: add_component(is_root) on a create_blueprint(UserWidget) WBP → stack overflow (0xC00000FD), corrupted Python VM → issue #435. Editor restarted; re-running. |
 | 13 | umg/widget_hierarchy.md | ⏳ | |
 | 14 | utilities/check_unreal_connection.md | ⏳ | |
 | 15 | uv-mapping/uv_mapping_tests.md | ⏳ | |
