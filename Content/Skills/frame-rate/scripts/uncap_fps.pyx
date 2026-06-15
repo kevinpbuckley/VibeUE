@@ -1,0 +1,26 @@
+# uncap_fps.pyx — Read all five FPS caps, then uncap to a target (EngineSettingsService).
+#
+# Sample script for the frame-rate skill. Run via execute_python_code.
+import unreal, json
+es = unreal.EngineSettingsService
+
+TARGET_MAX_FPS = "240"   # "0" = fully uncapped
+
+# --- Read current state ---
+for cvar in ["t.MaxFPS", "r.VSync", "r.VSyncEditor"]:
+    print(f"{cvar} = {es.get_console_variable(cvar)}")
+eng = "/Script/Engine.Engine"
+for key in ["bUseFixedFrameRate", "FixedFrameRate", "bSmoothFrameRate", "SmoothedFrameRateRange"]:
+    print(f"{key} = {es.get_engine_ini_value(eng, key, 'DefaultEngine.ini')!r}")
+
+# --- Clear the caps ---
+es.set_console_variables_from_json(json.dumps({
+    "t.MaxFPS": TARGET_MAX_FPS, "r.VSync": "0", "r.VSyncEditor": "0",
+}))
+es.set_engine_ini_value(eng, "bUseFixedFrameRate", "False", "DefaultEngine.ini")
+es.set_engine_ini_value(eng, "bSmoothFrameRate",   "False", "DefaultEngine.ini")
+es.set_engine_ini_value("/Script/UnrealEd.EditorPerformanceSettings",
+                        "bThrottleCPUWhenNotForeground", "False",
+                        "EditorPerProjectUserSettings.ini")
+es.save_all_engine_config()
+print("Done. t.MaxFPS now:", es.get_console_variable("t.MaxFPS"))

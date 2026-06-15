@@ -15,6 +15,9 @@
 #include "TraceServices/AnalysisService.h"
 #include "TraceServices/Model/AnalysisSession.h"
 #include "TraceServices/Model/Frames.h"
+#include "RenderTimer.h"       // GGameThreadTime / GRenderThreadTime / GRHIThreadTime (RenderCore)
+#include "RHIGlobals.h"        // GGPUFrameTime (RHI)
+#include "HAL/PlatformTime.h"  // FPlatformTime::ToMilliseconds
 
 DEFINE_LOG_CATEGORY_STATIC(LogEditorControl, Log, All);
 
@@ -392,6 +395,74 @@ static FString AnalyseBoth(const FString& TraceFile, const FString& LogFile)
 }
 
 // ---------------------------------------------------------------------------
+// Frame timing / bound check
+// ---------------------------------------------------------------------------
+// Reports the Game / Render / GPU / RHI thread times for the most recently
+// rendered frame — the same data the on-screen "stat unit" overlay shows, read
+// from engine globals. The point of this action is to answer the FIRST question
+// of any frame-rate investigation: are we CPU-bound or GPU-bound? Optimising GPU
+// passes (shadows, Lumen, etc.) does nothing if the frame is actually game- or
+// render-thread bound. Call this BEFORE running ProfileGPU.
+//
+// Values reflect the PIE game viewport while PIE runs, otherwise the editor
+// viewport. GPU time is 0 when GPU timing is unavailable for the frame.
+static FString FrameTimingReport()
+{
+	const double GameMs   = FPlatformTime::ToMilliseconds(GGameThreadTime);
+	const double RenderMs = FPlatformTime::ToMilliseconds(GRenderThreadTime);
+	const double RHIMs    = FPlatformTime::ToMilliseconds(GRHIThreadTime);
+	// GGPUFrameTime was deprecated in UE 5.6; RHIGetGPUFrameCycles() returns the
+	// same per-frame GPU cycle count (0 when GPU timing is unavailable).
+	const double GpuMs    = FPlatformTime::ToMilliseconds(RHIGetGPUFrameCycles());
+
+	auto Round2 = [](double V) -> double { return FMath::RoundToDouble(V * 100.0) / 100.0; };
+
+	TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+	R->SetNumberField(TEXT("game_thread_ms"),   Round2(GameMs));
+	R->SetNumberField(TEXT("render_thread_ms"), Round2(RenderMs));
+	R->SetNumberField(TEXT("rhi_thread_ms"),    Round2(RHIMs));
+	R->SetNumberField(TEXT("gpu_ms"),           Round2(GpuMs));
+
+	// The bottleneck is whichever pipeline stage is longest. The RHI thread is
+	// normally subsumed by the render thread, so compare Game vs Render vs GPU.
+	const double FrameMs = FMath::Max3(GameMs, RenderMs, GpuMs);
+	R->SetNumberField(TEXT("frame_ms"), Round2(FrameMs));
+	R->SetNumberField(TEXT("fps"), FrameMs > 0.0 ? Round2(1000.0 / FrameMs) : 0.0);
+
+	FString Bound;
+	FString Hint;
+	if (GpuMs >= GameMs && GpuMs >= RenderMs && GpuMs > 0.0)
+	{
+		Bound = TEXT("GPU");
+		Hint  = TEXT("GPU-bound. NOW it is worth profiling the GPU: profiler_start (channels frame,gpu,cpu), then 'r.ProfileGPU.ShowUI 0' + 'ProfileGPU' and read the pass breakdown from the log. Levers: shadows (Virtual Shadow Maps), Lumen GI/reflections, translucency, post-process, ScreenPercentage. Confirm with the resolution test: 'r.ScreenPercentage 50' should noticeably raise FPS if truly GPU-bound.");
+	}
+	else if (RenderMs >= GameMs)
+	{
+		Bound = TEXT("RenderThread");
+		Hint  = TEXT("CPU render-thread bound. Usual cause: too many draw calls / primitives, or many dynamic shadow-casting lights. Check 'stat scenerendering' (Mesh draw calls, visible primitives). Levers: merge/instance meshes, enable Nanite, cut dynamic lights and per-light shadows, reduce visible primitive count. NOTE: dropping r.ScreenPercentage will NOT help a render-thread-bound frame.");
+	}
+	else
+	{
+		Bound = TEXT("GameThread");
+		Hint  = TEXT("CPU game-thread bound. Usual cause: Tick / Blueprint / AI / animation cost. Run 'stat dumpframe -ms=0.5 -root=gamethread' (execute_console_command on the PIE world) then read_logs the result to see the hottest tick functions. Levers: disable or interval-throttle unnecessary Tick, reduce ticking actors & AI, cut expensive Blueprint tick logic, check animation update cost. NOTE: dropping r.ScreenPercentage will NOT help a game-thread-bound frame.");
+	}
+	R->SetStringField(TEXT("bound"), Bound);
+	R->SetStringField(TEXT("hint"), Hint);
+
+	const bool bPIE = IsPIERunning();
+	R->SetBoolField(TEXT("pie_running"), bPIE);
+	R->SetStringField(TEXT("note"),
+		bPIE
+		? TEXT("Values are for the most recently rendered PIE frame. Park in a representative/worst spot for a clean read.")
+		: TEXT("PIE is NOT running — these values reflect the EDITOR viewport, not your game. Start PIE for a real game-bound reading."));
+	if (GpuMs <= 0.0)
+	{
+		R->SetStringField(TEXT("gpu_note"), TEXT("gpu_ms is 0 (GPU timing unavailable this frame) — rely on the game vs render comparison, and confirm GPU-bound with the r.ScreenPercentage 50 test."));
+	}
+	return OkJson(R);
+}
+
+// ---------------------------------------------------------------------------
 // Tool registration
 // ---------------------------------------------------------------------------
 
@@ -400,6 +471,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 	"start_standalone (launches game as separate process with trace attached), stop_standalone, standalone_status, "
 	"profiler_start (begin Unreal Insights trace to file), profiler_stop, profiler_status, "
 	"profiler_bookmark (drop named point in trace), profiler_region_start, profiler_region_end, "
+	"frame_timing (report Game/Render/GPU thread split + CPU-vs-GPU bound verdict — RUN THIS FIRST), "
 	"analyse (read trace + logs and return perf summary — source: trace|logs|both), help.",
 	"Editor",
 	TOOL_PARAMS(
@@ -714,6 +786,14 @@ REGISTER_VIBEUE_TOOL(editor_control,
 		}
 
 		// -----------------------------------------------------------------------
+		// Frame timing / CPU-vs-GPU bound check (run this FIRST)
+		// -----------------------------------------------------------------------
+		if (Action == TEXT("frame_timing") || Action == TEXT("bound"))
+		{
+			return FrameTimingReport();
+		}
+
+		// -----------------------------------------------------------------------
 		// Help
 		// -----------------------------------------------------------------------
 		if (Action == TEXT("help"))
@@ -743,10 +823,12 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			A(TEXT("profiler_region_start"), TEXT("Begin a named region in the active trace. Params: name (required)"));
 			A(TEXT("profiler_region_end"),   TEXT("End a named region in the active trace. Params: name (required)"));
 			A(TEXT("analyse"),             TEXT("Read and summarise trace + logs. Params: source (trace|logs|both, default both), file (override path)"));
+			A(TEXT("frame_timing"),        TEXT("Report Game/Render/GPU/RHI thread ms + CPU-vs-GPU bound verdict for the last rendered frame (same data as 'stat unit'). RUN THIS FIRST in any frame-rate investigation. Alias: bound."));
 
 			R->SetArrayField(TEXT("actions"), Actions);
 
 			TSharedPtr<FJsonObject> Workflow = MakeShared<FJsonObject>();
+			Workflow->SetStringField(TEXT("diagnose_first"), TEXT("start_pie → [park in worst spot] → frame_timing → if GPU-bound: profiler_start→ProfileGPU; if CPU-bound: stat dumpframe -root=gamethread/renderthread"));
 			Workflow->SetStringField(TEXT("in_editor"),  TEXT("profiler_start → [hit PIE] → profiler_stop → analyse"));
 			Workflow->SetStringField(TEXT("standalone"), TEXT("start_standalone → [game loads] → stop_standalone → analyse"));
 			Workflow->SetStringField(TEXT("pie_only"),   TEXT("start_pie → profiler_start → [play] → profiler_stop → stop_pie → analyse"));
