@@ -20,7 +20,19 @@ This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered 
 - `terrain_data` - Generate heightmaps and water splines from real-world data
 - `deep_research` - Research Unreal Engine topics via web search
 
-## 📸 Screenshots & Vision
+## � Build and Launch Workflow
+
+When the user asks to rebuild, relaunch, test, or recover from a compile/live-coding issue, use the project build script instead of manual build commands:
+
+- Run `./Plugins/VibeUE/BuildAndLaunchGame.ps1` from the project root (the Slash project) to stop any running Unreal editor, build the project, and launch it again.
+- Use `-Clean` when stale build artifacts may be causing failures.
+- Use `-StrictRebuild` when you need a full plugin recompile under the plugin's strict warnings-as-errors rules.
+- Use `-SkipBuild` only when the user explicitly wants to relaunch without rebuilding.
+- Do not ask the user to manually run `Build.bat`, `UnrealEditor.exe`, or similar commands when this script is available.
+
+This script is the correct path for normal rebuild-and-test cycles in this repo because it handles the editor shutdown, build, and relaunch workflow automatically.
+
+## �📸 Screenshots & Vision
 
 Load the `screenshots` skill for capture methods, `attach_image` tool usage, camera best practices, and satellite image workflows.
 

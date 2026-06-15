@@ -47,6 +47,46 @@ one sets your FPS. Cutting GPU cost (shadows, Lumen, post-process) does **nothin
 frame is actually game-thread or render-thread bound, and vice-versa. Getting this wrong
 wastes the whole session.
 
+## ⏱️ Frame-time budgets — what a target FPS actually costs
+
+FPS is just `1000 / frame_ms`. Because the threads run in parallel, **every** thread
+(GameThread, RenderThread, GPU) must *individually* finish inside the budget below — the
+slowest one alone sets your FPS. A 12 ms GPU is wasted if the game thread takes 25 ms: you
+still get ~40 FPS.
+
+| Target FPS | Per-frame budget | Meaning |
+|---|---|---|
+| **30 FPS**  | **33.33 ms** | Maximum allowable time per frame |
+| **60 FPS**  | **16.66 ms** | Maximum allowable time per frame |
+| **120 FPS** | **8.33 ms**  | Maximum allowable time per frame |
+| **240 FPS** | **4.16 ms**  | Maximum allowable time per frame |
+| **360 FPS** | **2.77 ms**  | Maximum allowable time per frame |
+
+Read `frame_timing` against this table: if `game_thread_ms = 25`, you are hard-capped at
+~40 FPS **no matter what you do to the GPU**. To hit 60 FPS the game thread must drop under
+16.66 ms; to hit 120 FPS, under 8.33 ms. Always state the bottleneck thread's ms next to the
+target budget so the gap is explicit (e.g. "game thread 25 ms vs 16.66 ms for 60 FPS → must
+cut 8.3 ms on the game thread").
+
+## 🛠️ CVars tune the renderer — they do NOT fix the game thread
+
+`r.*` console variables almost exclusively move **GPU** and **RenderThread** cost (Lumen,
+shadows, reflections, resolution, draw setup). There is **no CVar that makes your Tick,
+AI, or animation logic cheaper.** When `bound == GameThread`, the fix lives in **code and
+Blueprints**, driven by what the profiler shows:
+
+| Profiler symptom (`stat dumpframe -root=gamethread`) | Fix lives in | Typical change |
+|---|---|---|
+| High `FTickFunctionTask` / many ticking actors | C++ / Blueprint | Throttle `PrimaryActorTick.TickInterval`, disable tick when idle/far, event-drive instead of polling every frame |
+| High `AnimGameThreadTime` / many skeletal meshes | C++ / mesh setup | Enable URO (`bEnableUpdateRateOptimizations`), `VisibilityBasedAnimTickOption = OnlyTickPoseWhenRendered` |
+| Expensive Blueprint `ReceiveTick` | Blueprint graph | Move per-frame logic to timers/events, cache results, early-out |
+| `CharacterMovement` / physics / AI heavy | C++ / config | Significance-based LOD, fewer simulated bodies, coarser AI update rate |
+| Per-frame `SetTimer`, allocations, logging in hot paths | C++ / Blueprint | Remove redundant work; gate `UE_LOG` behind a debug flag |
+
+So the workflow for a game-thread bottleneck is: **profile → read the offending scope →
+edit the code/Blueprint that owns it → rebuild → re-profile to confirm.** Reaching for CVars
+here is a category error; they will not move the number.
+
 ### Fastest check — one tool call
 ```
 editor_control(action="frame_timing")   # alias: action="bound"
@@ -62,7 +102,7 @@ screenshots, no trace parsing.
 ### Decision tree
 | `bound` | Meaning | Where to look next |
 |---|---|---|
-| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` → read_logs. Reduce ticking actors, throttle BP logic, cut AI/anim cost. |
+| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` → read_logs. **Fix is code/Blueprint, not CVars** (see "CVars do NOT fix the game thread" above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
 | **RenderThread** | CPU, render thread | Draw calls & primitives, **dynamic shadow-casting lights**. Check `stat scenerendering`. Instance/merge meshes, enable Nanite, cut dynamic lights. |
 | **GPU** | GPU | *Now* run ProfileGPU (below). Shadows (VSM), Lumen, translucency, resolution. |
 
