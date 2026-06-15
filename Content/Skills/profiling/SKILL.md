@@ -1,7 +1,7 @@
 ---
 name: profiling
 display_name: Profiling & Performance
-description: Control Unreal Insights traces, sample live frame times, and annotate performance captures — all from Python with no C++ required
+description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), control Unreal Insights traces, sample live frame times, and annotate performance captures. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
 unreal_classes:
   - TraceUtilLibrary
 keywords:
@@ -11,8 +11,16 @@ keywords:
   - unreal insights
   - frame time
   - fps
+  - low fps
+  - bad fps
   - cpu
   - gpu
+  - cpu bound
+  - gpu bound
+  - game thread
+  - render thread
+  - draw calls
+  - stat unit
   - memory
   - frame rate
   - bottleneck
@@ -31,7 +39,105 @@ Full Unreal Insights integration and live frame time sampling are available from
 with no C++ required. `TraceUtilLibrary` gives complete trace control;
 `register_ticker_callback` delivers real frame deltas every engine tick.
 
+## 🚦 STEP 0 — Is it CPU-bound or GPU-bound? (DO THIS FIRST, ALWAYS)
+
+**Never optimise before you know which processor is the bottleneck.** The frame time is
+roughly `max(GameThread, RenderThread, GPU)` — these run in parallel, so only the *longest*
+one sets your FPS. Cutting GPU cost (shadows, Lumen, post-process) does **nothing** if the
+frame is actually game-thread or render-thread bound, and vice-versa. Getting this wrong
+wastes the whole session.
+
+## ⏱️ Frame-time budgets — what a target FPS actually costs
+
+FPS is just `1000 / frame_ms`. Because the threads run in parallel, **every** thread
+(GameThread, RenderThread, GPU) must *individually* finish inside the budget below — the
+slowest one alone sets your FPS. A 12 ms GPU is wasted if the game thread takes 25 ms: you
+still get ~40 FPS.
+
+| Target FPS | Per-frame budget | Meaning |
+|---|---|---|
+| **30 FPS**  | **33.33 ms** | Maximum allowable time per frame |
+| **60 FPS**  | **16.66 ms** | Maximum allowable time per frame |
+| **120 FPS** | **8.33 ms**  | Maximum allowable time per frame |
+| **240 FPS** | **4.16 ms**  | Maximum allowable time per frame |
+| **360 FPS** | **2.77 ms**  | Maximum allowable time per frame |
+
+Read `frame_timing` against this table: if `game_thread_ms = 25`, you are hard-capped at
+~40 FPS **no matter what you do to the GPU**. To hit 60 FPS the game thread must drop under
+16.66 ms; to hit 120 FPS, under 8.33 ms. Always state the bottleneck thread's ms next to the
+target budget so the gap is explicit (e.g. "game thread 25 ms vs 16.66 ms for 60 FPS → must
+cut 8.3 ms on the game thread").
+
+## 🛠️ CVars tune the renderer — they do NOT fix the game thread
+
+`r.*` console variables almost exclusively move **GPU** and **RenderThread** cost (Lumen,
+shadows, reflections, resolution, draw setup). There is **no CVar that makes your Tick,
+AI, or animation logic cheaper.** When `bound == GameThread`, the fix lives in **code and
+Blueprints**, driven by what the profiler shows:
+
+| Profiler symptom (`stat dumpframe -root=gamethread`) | Fix lives in | Typical change |
+|---|---|---|
+| High `FTickFunctionTask` / many ticking actors | C++ / Blueprint | Throttle `PrimaryActorTick.TickInterval`, disable tick when idle/far, event-drive instead of polling every frame |
+| High `AnimGameThreadTime` / many skeletal meshes | C++ / mesh setup | Enable URO (`bEnableUpdateRateOptimizations`), `VisibilityBasedAnimTickOption = OnlyTickPoseWhenRendered` |
+| Expensive Blueprint `ReceiveTick` | Blueprint graph | Move per-frame logic to timers/events, cache results, early-out |
+| `CharacterMovement` / physics / AI heavy | C++ / config | Significance-based LOD, fewer simulated bodies, coarser AI update rate |
+| Per-frame `SetTimer`, allocations, logging in hot paths | C++ / Blueprint | Remove redundant work; gate `UE_LOG` behind a debug flag |
+
+So the workflow for a game-thread bottleneck is: **profile → read the offending scope →
+edit the code/Blueprint that owns it → rebuild → re-profile to confirm.** Reaching for CVars
+here is a category error; they will not move the number.
+
+### Fastest check — one tool call
+```
+editor_control(action="frame_timing")   # alias: action="bound"
+```
+Start PIE first and park in a representative/worst spot, then call it. It returns
+`game_thread_ms`, `render_thread_ms`, `gpu_ms`, `rhi_thread_ms`, the `frame_ms`, a `bound`
+verdict (`GameThread` / `RenderThread` / `GPU`), and a `hint` with what to do next. This is
+the same data the `stat unit` overlay shows, read straight from engine globals — no
+screenshots, no trace parsing.
+
+> If `frame_timing` is unavailable (older plugin build), use the fallbacks below.
+
+### Decision tree
+| `bound` | Meaning | Where to look next |
+|---|---|---|
+| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` → read_logs. **Fix is code/Blueprint, not CVars** (see "CVars do NOT fix the game thread" above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
+| **RenderThread** | CPU, render thread | Draw calls & primitives, **dynamic shadow-casting lights**. Check `stat scenerendering`. Instance/merge meshes, enable Nanite, cut dynamic lights. |
+| **GPU** | GPU | *Now* run ProfileGPU (below). Shadows (VSM), Lumen, translucency, resolution. |
+
+### Confirm / fallback methods (no new tool needed)
+1. **Numeric thread split via log** — reliable, works headless:
+   ```python
+   import unreal
+   w = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_game_world()
+   unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=gamethread")
+   unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=renderthread")
+   ```
+   Then read the dump with `read_logs(action="tail", file="main", lines=150)` — it prints the
+   full thread hierarchy in ms (e.g. `World Tick Time`, `FTickFunctionTask`, individual
+   Blueprint `ReceiveTick` costs). This is the single most useful CPU drill-down.
+2. **Resolution-scaling test** (decisive GPU-bound proof) — sample frame time at full res,
+   then `r.ScreenPercentage 50`, and compare with the live ticker sampler (see Live Frame
+   Time Sampling below). FPS jumps a lot → **GPU-bound**. FPS barely moves → **CPU-bound**.
+3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and
+   PIE often runs in a separate window so screenshots are unreliable. Prefer methods 1–2 or
+   `frame_timing` over trying to OCR `stat unit`.
+
 ## ⚠️ Gotchas — read before writing any code
+
+0. **`ProfileGPU` tells you WHERE GPU time goes, not WHETHER you are GPU-bound.** It always
+   produces a GPU breakdown even on a CPU-bound frame — so reading it first will happily send
+   you optimising shadows on a frame whose real cost is the game thread. Run STEP 0 first;
+   only reach for `ProfileGPU` once `bound == GPU`.
+
+0b. **Never run `ProfileGPU` (or `stat dumpframe`) *during* a frame-time trace you intend to
+   average.** Each `ProfileGPU` stalls the GPU for a full readback (hundreds of ms to
+   seconds), and those stall frames poison `avg_frame_ms`/`p95`. Capture clean frame-time
+   traces separately from GPU/CPU drill-downs.
+
+0c. **`editor_control analyse` reports frame time only** (avg/p95/worst frames), **not** the
+   CPU/GPU split. Use `frame_timing` for the split.
 
 1. **`AutomationPerformaceHelper` crashes** — it requires a FunctionalTest outer world.
    Do NOT instantiate it. Use the patterns in this skill instead.

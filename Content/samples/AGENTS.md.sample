@@ -20,7 +20,19 @@ This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered 
 - `terrain_data` - Generate heightmaps and water splines from real-world data
 - `deep_research` - Research Unreal Engine topics via web search
 
-## 📸 Screenshots & Vision
+## � Build and Launch Workflow
+
+When the user asks to rebuild, relaunch, test, or recover from a compile/live-coding issue, use the project build script instead of manual build commands:
+
+- Run `./Plugins/VibeUE/BuildAndLaunchGame.ps1` from the project root (the Slash project) to stop any running Unreal editor, build the project, and launch it again.
+- Use `-Clean` when stale build artifacts may be causing failures.
+- Use `-StrictRebuild` when you need a full plugin recompile under the plugin's strict warnings-as-errors rules.
+- Use `-SkipBuild` only when the user explicitly wants to relaunch without rebuilding.
+- Do not ask the user to manually run `Build.bat`, `UnrealEditor.exe`, or similar commands when this script is available.
+
+This script is the correct path for normal rebuild-and-test cycles in this repo because it handles the editor shutdown, build, and relaunch workflow automatically.
+
+## �📸 Screenshots & Vision
 
 Load the `screenshots` skill for capture methods, `attach_image` tool usage, camera best practices, and satellite image workflows.
 
@@ -32,6 +44,20 @@ VibeUE uses a **two-tier lazy-loading skills system** to keep responses small wh
 - **Sub-docs (sibling `.md` files)** — deeper reference material (full API tables, edge-case catalogues, long recipes). Loaded on demand with `skill_name="<skill>/<section>"`. Listed in the index's `available_sections` field so you know what exists.
 
 **⚠️ Skills do NOT replace discovery.** Skills tell you WHAT to do and WHY. To get exact method signatures, call `discover_python_class('unreal.ClassName', method_filter='keyword')` on the classes named in the skill's `vibeue_classes` field.
+
+### ⚠️ VibeUE skills vs. UnrealEngineSkills.com skills (don't confuse them)
+
+Two distinct skill libraries may be available in a session — they serve different purposes and **pair together**:
+
+| | **VibeUE skills** (`vibeue-skills-manager`) | **UnrealEngineSkills.com skills** (`unreal-engine-skills-manager`) |
+|---|---|---|
+| What it is | Usage guides for VibeUE's own MCP tools | Read-only Unreal Engine domain knowledge |
+| Acts on | The **live editor** (creates/edits assets, runs PIE/profiling) | **Nothing** — pure documentation, never touches the editor |
+| Contains | Tool workflows, property/value formats, VibeUE gotchas, `vibeue_classes` to discover | Correct UE **C++ APIs & signatures**, engine architecture/concepts, patterns, citations into the UE 5.7 engine source |
+| Load when | You are about to **DO** something in the running editor | You need to **understand or write engine/C++ code**, or want the authoritative "how does UE do X / what's the correct API/class" answer |
+| Availability | Always (this plugin) | Only if the external `unreal-engine-skills` MCP server is connected this session |
+
+**Use them together, in order:** look up the engine knowledge first (UnrealEngineSkills.com — "what's the right API / how does UE do this"), then act on the editor with VibeUE (live tool workflows). Example: adding a C++ ability component → `unreal-engine-skills-manager(action="search"/"load")` for the correct `UActorComponent`/GAS API, then VibeUE tools to wire it into a Blueprint. If the external server is **not** connected, fall back to VibeUE skills + `discover_python_class` for signatures. Never guess C++ signatures from memory when the UnrealEngineSkills.com library is available — load it.
 
 ### When to Load Skills
 
@@ -160,6 +186,7 @@ json_str = json.dumps(data)
 | `niagara-systems` | Niagara Systems | Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters. |
 | `pcg` | Procedural Content Generation (PCG) | Create, inspect, and edit PCG Graph assets — add nodes, configure settings, connect pins, and wire procedural generation graphs (native PCG Python API). Use when the user asks to build a PCG graph, add PCG nodes (Surface Sampler, Static Mesh Spawner, filters), wire PCG pins, place a PCGVolume and generate, or set up procedural scattering. |
 | `pie-testing` | Play-In-Editor Testing | Start, stop, and query Play-In-Editor (PIE) sessions for runtime testing of Blueprints, gameplay logic, widgets, AI, and any in-game behavior. Use when the user asks you to "play", "test", "run", "PIE", "start/stop the game", or otherwise needs a live game world to validate changes. |
+| `profiling` | Profiling & Performance | Diagnose frame-rate bottlenecks and control Unreal Insights traces. Use when FPS is low/bad, the game is slow/stutters, or you need to find what limits the frame rate. **STEP 0 is always determining CPU-bound vs GPU-bound first** via `editor_control(action="frame_timing")` (or `stat dumpframe` / the `r.ScreenPercentage 50` test) — optimizing GPU passes does nothing on a CPU-bound frame. Then drill in: GameThread→tick/BP/AI/anim, RenderThread→draw calls/lights, GPU→ProfileGPU/shadows/Lumen. |
 | `project-settings` | Project & Editor Settings | Configure Unreal Engine project settings and editor preferences — UI appearance, toolbar icons, scale, colors, and any UDeveloperSettings subclass (ProjectSettingsService). Use when the user asks to change a project setting or editor preference, configure a UDeveloperSettings category, or read/write project config values. |
 | `screenshots` | Screenshot & Vision | Capture screenshots of the editor window, viewports, and asset editors for AI vision analysis (ScreenshotService). Use when the user asks you to look at / see / show the editor, verify something visually, capture a material or blueprint editor, or when you need vision to confirm a change. Pair captures with attach_image. |
 | `skeleton` | Skeleton & Skeletal Mesh Management | Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing. |
