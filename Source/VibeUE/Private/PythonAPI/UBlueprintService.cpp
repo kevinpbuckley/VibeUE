@@ -10510,7 +10510,10 @@ namespace VibeUELayout
 			}
 		}
 
-		// Assign positions: X by layer, Y stacked by node size, components in stacked bands.
+		// Assign positions: X by layer; Y straightened by aligning each node to the
+		// median center of its connected neighbors (priority method) so chains and the
+		// exec backbone stay horizontal instead of sloping. Independent components are
+		// placed in stacked, non-overlapping bands.
 		const float ColumnWidth = 420.0f;
 		const float RowGap = 56.0f;
 		const float ComponentGap = 160.0f;
@@ -10524,32 +10527,85 @@ namespace VibeUELayout
 		{
 			TMap<int32, TArray<UEdGraphNode*>>& Layers = Grid[Rank];
 
-			float BandHeight = 0.0f;
-			for (TPair<int32, TArray<UEdGraphNode*>>& LayerPair : Layers)
-			{
-				float ColHeight = 0.0f;
-				for (UEdGraphNode* N : LayerPair.Value) { ColHeight += EstimateNodeHeight(N) + RowGap; }
-				BandHeight = FMath::Max(BandHeight, ColHeight);
-			}
+			TArray<int32> LayerKeys;
+			Layers.GetKeys(LayerKeys);
+			LayerKeys.Sort();
 
-			for (TPair<int32, TArray<UEdGraphNode*>>& LayerPair : Layers)
+			// Band-relative Y, seeded by a simple top-aligned stack per column.
+			TMap<UEdGraphNode*, float> Y;
+			for (int32 LK : LayerKeys)
 			{
-				float ColHeight = 0.0f;
-				for (UEdGraphNode* N : LayerPair.Value) { ColHeight += EstimateNodeHeight(N) + RowGap; }
-				ColHeight = FMath::Max(0.0f, ColHeight - RowGap);
-
-				// Center each column within the band so short columns don't drag long diagonal wires.
-				float Cursor = BandTop + FMath::Max(0.0f, (BandHeight - ColHeight) * 0.5f);
-				for (UEdGraphNode* N : LayerPair.Value)
+				float Cursor = 0.0f;
+				for (UEdGraphNode* N : Layers[LK])
 				{
-					N->Modify();
-					N->NodePosX = (int32)(OriginX + (float)LayerPair.Key * ColumnWidth);
-					N->NodePosY = (int32)Cursor;
+					Y.Add(N, Cursor);
 					Cursor += EstimateNodeHeight(N) + RowGap;
 				}
 			}
 
-			BandTop += BandHeight + ComponentGap;
+			// Alignment sweeps: pull each node toward the median center-Y of its neighbors
+			// on the already-placed side, then resolve overlaps in column order. Alternating
+			// L->R / R->L converges to straight chains without a systematic downward drift.
+			for (int32 Iter = 0; Iter < 6; ++Iter)
+			{
+				const bool bLeftToRight = (Iter % 2) == 0;
+				TArray<int32> Order = LayerKeys;
+				if (!bLeftToRight)
+				{
+					for (int32 a = 0, b = Order.Num() - 1; a < b; ++a, --b) { Order.Swap(a, b); }
+				}
+				for (int32 LK : Order)
+				{
+					TArray<UEdGraphNode*>& LayerNodes = Layers[LK];
+					float Cursor = -FLT_MAX;
+					for (UEdGraphNode* N : LayerNodes)
+					{
+						const float H = EstimateNodeHeight(N);
+						const TArray<UEdGraphNode*>* Adj = bLeftToRight ? Pred.Find(N) : Succ.Find(N);
+						float DesiredTop = Y[N];
+						if (Adj && Adj->Num() > 0)
+						{
+							TArray<float> Centers;
+							for (UEdGraphNode* M : *Adj)
+							{
+								if (const float* MY = Y.Find(M))
+								{
+									Centers.Add(*MY + EstimateNodeHeight(M) * 0.5f);
+								}
+							}
+							if (Centers.Num() > 0)
+							{
+								Centers.Sort();
+								DesiredTop = Centers[Centers.Num() / 2] - H * 0.5f;
+							}
+						}
+						const float Target = FMath::Max(DesiredTop, Cursor);
+						Y[N] = Target;
+						Cursor = Target + H + RowGap;
+					}
+				}
+			}
+
+			// Shift the band so its top sits at BandTop, commit positions, advance.
+			float MinY = FLT_MAX;
+			float MaxY = -FLT_MAX;
+			for (const TPair<UEdGraphNode*, float>& YPair : Y)
+			{
+				MinY = FMath::Min(MinY, YPair.Value);
+				MaxY = FMath::Max(MaxY, YPair.Value + EstimateNodeHeight(YPair.Key));
+			}
+			const float Shift = BandTop - MinY;
+			for (int32 LK : LayerKeys)
+			{
+				for (UEdGraphNode* N : Layers[LK])
+				{
+					N->Modify();
+					N->NodePosX = (int32)(OriginX + (float)LK * ColumnWidth);
+					N->NodePosY = (int32)(Y[N] + Shift);
+				}
+			}
+
+			BandTop += (MaxY - MinY) + ComponentGap;
 		}
 
 		return NumComp;
