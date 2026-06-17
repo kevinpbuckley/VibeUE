@@ -10302,7 +10302,73 @@ namespace VibeUELayout
 			}
 		}
 
-		// Layer = longest path over the combined DAG (Kahn topological order; cycle-safe).
+		// Break cycles for layering: classify edges with an iterative DFS and drop
+		// back-edges (edges pointing at a node still on the DFS stack). The remaining
+		// edges form a DAG, so longest-path layering is well-defined and a cycle (a loop
+		// body wired back to its loop, recursion, etc.) can never inflate columns. The
+		// back-edge is still drawn as a wire; it just doesn't drive column assignment.
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> LayerSucc;
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> LayerPred;
+		{
+			TSet<UEdGraphNode*> Visited;
+			TSet<UEdGraphNode*> OnStack;
+			// Seed DFS from exec entry points (events) first, then other roots (no
+			// predecessors), then everything else — so the dropped edge is the genuine
+			// loop-back rather than an arbitrary forward edge, and loop bodies still flow L->R.
+			TArray<UEdGraphNode*> SeedOrder;
+			for (UEdGraphNode* SN : Nodes)
+			{
+				if (SN->IsA<UK2Node_Event>() || SN->IsA<UK2Node_CustomEvent>()) { SeedOrder.AddUnique(SN); }
+			}
+			for (UEdGraphNode* SN : Nodes)
+			{
+				const TArray<UEdGraphNode*>* PP = Pred.Find(SN);
+				if (!PP || PP->Num() == 0) { SeedOrder.AddUnique(SN); }
+			}
+			for (UEdGraphNode* SN : Nodes) { SeedOrder.AddUnique(SN); }
+
+			for (UEdGraphNode* Seed : SeedOrder)
+			{
+				if (Visited.Contains(Seed))
+				{
+					continue;
+				}
+				TArray<TPair<UEdGraphNode*, int32>> Stack;
+				Stack.Push(TPair<UEdGraphNode*, int32>(Seed, 0));
+				OnStack.Add(Seed);
+				while (Stack.Num() > 0)
+				{
+					const int32 TopIdx = Stack.Num() - 1;
+					UEdGraphNode* U = Stack[TopIdx].Key;
+					const int32 ChildI = Stack[TopIdx].Value;
+					const TArray<UEdGraphNode*>* Children = Succ.Find(U);
+					if (Children && ChildI < Children->Num())
+					{
+						Stack[TopIdx].Value = ChildI + 1;
+						UEdGraphNode* V = (*Children)[ChildI];
+						if (OnStack.Contains(V))
+						{
+							continue; // back-edge: skip for layering
+						}
+						LayerSucc.FindOrAdd(U).AddUnique(V);
+						LayerPred.FindOrAdd(V).AddUnique(U);
+						if (!Visited.Contains(V))
+						{
+							OnStack.Add(V);
+							Stack.Push(TPair<UEdGraphNode*, int32>(V, 0));
+						}
+					}
+					else
+					{
+						OnStack.Remove(U);
+						Visited.Add(U);
+						Stack.Pop();
+					}
+				}
+			}
+		}
+
+		// Layer = longest path over the acyclic edge set (Kahn topological order).
 		TMap<UEdGraphNode*, int32> Layer;
 		TMap<UEdGraphNode*, int32> Deg;
 		for (UEdGraphNode* N : Nodes)
@@ -10310,7 +10376,7 @@ namespace VibeUELayout
 			Layer.Add(N, 0);
 			Deg.Add(N, 0);
 		}
-		for (const TPair<UEdGraphNode*, TArray<UEdGraphNode*>>& Pair : Pred)
+		for (const TPair<UEdGraphNode*, TArray<UEdGraphNode*>>& Pair : LayerPred)
 		{
 			Deg[Pair.Key] = Pair.Value.Num();
 		}
@@ -10323,13 +10389,11 @@ namespace VibeUELayout
 				Q.Enqueue(N);
 			}
 		}
-		int32 Processed = 0;
 		while (!Q.IsEmpty())
 		{
 			UEdGraphNode* C = nullptr;
 			Q.Dequeue(C);
-			++Processed;
-			if (const TArray<UEdGraphNode*>* S = Succ.Find(C))
+			if (const TArray<UEdGraphNode*>* S = LayerSucc.Find(C))
 			{
 				for (UEdGraphNode* T : *S)
 				{
@@ -10338,32 +10402,6 @@ namespace VibeUELayout
 					{
 						Q.Enqueue(T);
 					}
-				}
-			}
-		}
-		// Cycle fallback: bounded relaxation for any nodes trapped in a cycle.
-		if (Processed < Nodes.Num())
-		{
-			for (int32 Iter = 0; Iter < Nodes.Num(); ++Iter)
-			{
-				bool bChanged = false;
-				for (UEdGraphNode* N : Nodes)
-				{
-					if (const TArray<UEdGraphNode*>* S = Succ.Find(N))
-					{
-						for (UEdGraphNode* T : *S)
-						{
-							if (Layer[T] < Layer[N] + 1)
-							{
-								Layer[T] = Layer[N] + 1;
-								bChanged = true;
-							}
-						}
-					}
-				}
-				if (!bChanged)
-				{
-					break;
 				}
 			}
 		}
