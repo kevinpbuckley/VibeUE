@@ -18,6 +18,7 @@
 #include "RenderTimer.h"       // GGameThreadTime / GRenderThreadTime / GRHIThreadTime (RenderCore)
 #include "RHIGlobals.h"        // GGPUFrameTime (RHI)
 #include "HAL/PlatformTime.h"  // FPlatformTime::ToMilliseconds
+#include "PythonAPI/UScreenshotService.h" // synchronous editor/active-window capture for the screenshot action
 
 DEFINE_LOG_CATEGORY_STATIC(LogEditorControl, Log, All);
 
@@ -467,7 +468,8 @@ static FString FrameTimingReport()
 // ---------------------------------------------------------------------------
 
 REGISTER_VIBEUE_TOOL(editor_control,
-	"Control the Unreal Editor and profiler. Actions: start_pie, stop_pie, pie_status, "
+	"Control the Unreal Editor, capture viewport screenshots, and profile. Actions: start_pie, stop_pie, pie_status, "
+	"screenshot (synchronous PNG of the editor/active window so you can SEE what was built and self-review — params: mode=editor_window|active_window, name), "
 	"start_standalone (launches game as separate process with trace attached), stop_standalone, standalone_status, "
 	"profiler_start (begin Unreal Insights trace to file), profiler_stop, profiler_status, "
 	"profiler_bookmark (drop named point in trace), profiler_region_start, profiler_region_end, "
@@ -476,10 +478,11 @@ REGISTER_VIBEUE_TOOL(editor_control,
 	"Editor",
 	TOOL_PARAMS(
 		TOOL_PARAM("action",   "Action to perform — see tool description for full list", "string", true),
-		TOOL_PARAM("name",     "[profiler_start|bookmark|region_*] Trace file name (profiler_start) or label (bookmark/region)", "string", false),
+		TOOL_PARAM("name",     "[profiler_start|bookmark|region_*|screenshot] Trace file name (profiler_start), label (bookmark/region), or output PNG name (screenshot)", "string", false),
 		TOOL_PARAM("channels", "[profiler_start|start_standalone] Comma-separated trace channels. Default: frame,cpu,gpu,log,loadtime,object,stats", "string", false),
 		TOOL_PARAM("source",   "[analyse] What to read: trace, logs, or both (default: both)", "string", false),
-		TOOL_PARAM("file",     "[analyse] Override trace or log file path", "string", false)
+		TOOL_PARAM("file",     "[analyse] Override trace or log file path", "string", false),
+		TOOL_PARAM("mode",     "[screenshot] editor_window (default, whole editor incl. focused tab) or active_window (foreground window, e.g. a separate PIE window)", "string", false)
 	),
 	{
 		FString Action = GetParam(Params, TEXT("action")).ToLower();
@@ -796,7 +799,48 @@ REGISTER_VIBEUE_TOOL(editor_control,
 		// -----------------------------------------------------------------------
 		// Help
 		// -----------------------------------------------------------------------
-		if (Action == TEXT("help"))
+		if (Action == TEXT("screenshot") || Action == TEXT("capture"))
+			{
+				// Synchronous capture for the "build -> look -> fix" self-review loop.
+				// This action is for EXTERNAL MCP clients (Claude Code, Cursor, ...), which
+				// cannot call the internal-only attach_image tool. The VibeUE in-editor chat
+				// must instead capture via execute_python_code -> ScreenshotService +
+				// attach_image, so a returned file path actually enters its vision. Redirect
+				// internal-chat callers (CurrentSession is non-null only for the in-editor chat).
+				if (FToolRegistry::Get().GetCurrentSession() != nullptr)
+				{
+					return ErrJson(TEXT("USE_PYTHON_API"),
+						TEXT("The editor_control 'screenshot' action is for external MCP clients only. From the VibeUE chat, capture with execute_python_code -> unreal.ScreenshotService.capture_editor_window(\"name\"), then call the attach_image tool with the returned file_path so the image enters your vision. Load the 'screenshots' skill for the full workflow."));
+				}
+
+				const FString Mode = GetParam(Params, TEXT("mode"), TEXT("editor_window")).ToLower();
+				const FString Name = GetParam(Params, TEXT("name"), TEXT("editor_control_capture"));
+
+				const FScreenshotResult Shot = (Mode == TEXT("active_window"))
+					? UScreenshotService::CaptureActiveWindow(Name)
+					: UScreenshotService::CaptureEditorWindow(Name);
+
+				if (!Shot.bSuccess)
+				{
+					return ErrJson(TEXT("CAPTURE_FAILED"), Shot.Message);
+				}
+
+				TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
+				R->SetStringField(TEXT("file_path"),       Shot.FilePath);
+				R->SetNumberField(TEXT("width"),           Shot.Width);
+				R->SetNumberField(TEXT("height"),          Shot.Height);
+				R->SetStringField(TEXT("captured_window"), Shot.CapturedWindowTitle);
+				R->SetStringField(TEXT("mode"),            Mode);
+				R->SetStringField(TEXT("hint"),
+					TEXT("Synchronous capture saved to disk - read/open the PNG at file_path to review what was built, then fix and re-capture. ")
+					TEXT("To see the running game, start_pie first; if PIE opens its own window use mode=active_window."));
+				return OkJson(R);
+			}
+
+			// -----------------------------------------------------------------------
+			// Help
+			// -----------------------------------------------------------------------
+			if (Action == TEXT("help"))
 		{
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();
 			R->SetStringField(TEXT("tool"), TEXT("editor_control"));
@@ -824,6 +868,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			A(TEXT("profiler_region_end"),   TEXT("End a named region in the active trace. Params: name (required)"));
 			A(TEXT("analyse"),             TEXT("Read and summarise trace + logs. Params: source (trace|logs|both, default both), file (override path)"));
 			A(TEXT("frame_timing"),        TEXT("Report Game/Render/GPU/RHI thread ms + CPU-vs-GPU bound verdict for the last rendered frame (same data as 'stat unit'). RUN THIS FIRST in any frame-rate investigation. Alias: bound."));
+				A(TEXT("screenshot"),          TEXT("Synchronous PNG capture of the editor (or active window) for visual self-review — build, then SEE it. Params: mode (editor_window|active_window), name. Alias: capture. External MCP clients only; the in-editor VibeUE chat captures via ScreenshotService + attach_image instead."));
 
 			R->SetArrayField(TEXT("actions"), Actions);
 
@@ -832,7 +877,8 @@ REGISTER_VIBEUE_TOOL(editor_control,
 			Workflow->SetStringField(TEXT("in_editor"),  TEXT("profiler_start → [hit PIE] → profiler_stop → analyse"));
 			Workflow->SetStringField(TEXT("standalone"), TEXT("start_standalone → [game loads] → stop_standalone → analyse"));
 			Workflow->SetStringField(TEXT("pie_only"),   TEXT("start_pie → profiler_start → [play] → profiler_stop → stop_pie → analyse"));
-			R->SetObjectField(TEXT("common_workflows"), Workflow);
+			Workflow->SetStringField(TEXT("self_review"), TEXT("start_pie -> screenshot (mode=active_window) -> read the PNG -> fix -> screenshot again. For editor/asset views use screenshot (mode=editor_window)."));
+				R->SetObjectField(TEXT("common_workflows"), Workflow);
 
 			return OkJson(R);
 		}
