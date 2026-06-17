@@ -10281,6 +10281,8 @@ namespace VibeUELayout
 		// Precedence edges (source -> target) for every link (exec AND data) within the set.
 		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> Succ;
 		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> Pred;
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> ExecSucc;
+		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> ExecPred;
 		for (UEdGraphNode* N : Nodes)
 		{
 			for (UEdGraphPin* P : N->Pins)
@@ -10298,6 +10300,11 @@ namespace VibeUELayout
 					}
 					Succ.FindOrAdd(N).AddUnique(T);
 					Pred.FindOrAdd(T).AddUnique(N);
+					if (P->PinType.PinCategory == UEdGraphSchema_K2::PC_Exec)
+					{
+						ExecSucc.FindOrAdd(N).AddUnique(T);
+						ExecPred.FindOrAdd(T).AddUnique(N);
+					}
 				}
 			}
 		}
@@ -10599,25 +10606,31 @@ namespace VibeUELayout
 					for (UEdGraphNode* N : LayerNodes)
 					{
 						const float H = EstimateNodeHeight(N);
-						const TArray<UEdGraphNode*>* Adj = bLeftToRight ? Pred.Find(N) : Succ.Find(N);
-						float DesiredTop = Y[N];
-						if (Adj && Adj->Num() > 0)
-						{
+						// Align to the median center-Y of ALL neighbors (both sides) so leaf nodes
+							// (e.g. a loop's Completed output) snap next to their single neighbor.
 							TArray<float> Centers;
-							for (UEdGraphNode* M : *Adj)
+							// Prefer EXEC neighbors so the execution backbone stays straight; fall back
+							// to data neighbors only for pure (exec-less) nodes like math/getters.
+							auto Gather = [&](const TMap<UEdGraphNode*, TArray<UEdGraphNode*>>& AdjMap)
 							{
-								if (const float* MY = Y.Find(M))
+								if (const TArray<UEdGraphNode*>* A = AdjMap.Find(N))
 								{
-									Centers.Add(*MY + EstimateNodeHeight(M) * 0.5f);
+									for (UEdGraphNode* M : *A)
+									{
+										if (const float* MY = Y.Find(M)) { Centers.Add(*MY + EstimateNodeHeight(M) * 0.5f); }
+									}
 								}
-							}
+							};
+							Gather(ExecPred);
+							Gather(ExecSucc);
+							if (Centers.Num() == 0) { Gather(Pred); Gather(Succ); }
+							float DesiredTop = Y[N];
 							if (Centers.Num() > 0)
 							{
 								Centers.Sort();
 								DesiredTop = Centers[Centers.Num() / 2] - H * 0.5f;
 							}
-						}
-						const float Target = FMath::Max(DesiredTop, Cursor);
+							const float Target = FMath::Max(DesiredTop, Cursor);
 						Y[N] = Target;
 						Cursor = Target + H + RowGap;
 					}
