@@ -19,7 +19,8 @@ https://www.vibeue.com/
 - **In-Editor AI Chat** - Chat with AI directly inside Unreal Editor
 - **Python API Services** - 32 specialized services with 1068 methods for Blueprints, Materials, Widgets, Landscape Terrain, Splines, Foliage, Animation Sequences, Animation Blueprints, Animation Montages, Niagara (systems + emitters + **scratch-pad graph authoring**), Skeletons, Sound Cues, MetaSounds, Gameplay Tags, Screenshots, Viewport Control, Runtime Virtual Textures, StateTree Behavior, UV Mapping, Editor Transactions, **Procedural FPS Map Blockout**, Project/Engine Settings, and more
 - **Full Unreal Python Access** - Execute any Unreal Engine Python API through MCP
-- **MCP Tools** - 10 tools for discovery, execution, asset workflows, debugging, terrain generation, and web research
+- **MCP Tools** - 11 tools for discovery, execution, asset workflows, debugging, terrain generation, web research, and editor/profiler control
+- **Eyes & hands in the viewport, built in** - spawn/move/edit level actors, control the editor camera, run the game (PIE), and **capture viewport screenshots for visual self-review** (`editor_control(action="screenshot")`) — the full build → look → fix loop without a second plugin
 - **Domain Skills** - 35 lazy-loaded skill packs covering Blueprints, graph editing, materials, terrain, animation, audio, AI, gameplay tags, widgets, viewport, data, PCG (procedural content generation), UV mapping, procedural map blockout, and more
 - **Custom Instructions** - Add project-specific context via markdown files
 - **External IDE Integration** - Connect VS Code, Claude Code, Cursor, and AntiGravity via MCP
@@ -30,7 +31,7 @@ https://www.vibeue.com/
 
 VibeUE uses a **Python-first architecture** that gives AI assistants access to:
 
-### 1. MCP Tools (10 tools, +1 optional)
+### 1. MCP Tools (11 tools, +1 optional)
 Lightweight MCP tools for AI interaction with Unreal:
 
 | Tool | Purpose |
@@ -45,6 +46,7 @@ Lightweight MCP tools for AI interaction with Unreal:
 | `read_logs` | Read and filter Unreal Engine log files with regex support |
 | `terrain_data` | Generate real-world heightmaps, map images, and water feature data from geographic coordinates |
 | `deep_research` | Web search, page fetching, and GPS geocoding — no API key required |
+| `editor_control` | Control PIE/standalone play, **capture viewport screenshots** for visual self-review, run Unreal Insights profiling, and report frame timing with a CPU-vs-GPU bound verdict |
 | `manage_editor_chat` _(optional)_ | Drive the in-editor AI chat for automated end-to-end testing. **Hidden unless Chat Editor Testing mode is enabled** — see [In-Editor AI Chat → Chat Editor Testing](#-chat-editor-testing-optional). |
 
 **Note:** The `read_logs` MCP tool provides access to Unreal Engine's log files for debugging, error analysis, and workflow understanding.
@@ -288,6 +290,58 @@ deep_research(action="reverse_geocode", lat=35.3606, lng=138.7274)
 **Typical workflows:**
 - Research: `search` → `fetch_page` on best URL → synthesize
 - Terrain: `geocode "Mount Fuji"` → pass lat/lng to `terrain_data`
+
+##### Editor & Profiler Control Tool
+
+**`editor_control`**
+```python
+# --- Play-in-Editor (PIE) ---
+editor_control(action="start_pie")
+editor_control(action="pie_status")
+editor_control(action="stop_pie")
+
+# --- Screenshot (synchronous) — SEE what you built, then self-review ---
+editor_control(action="screenshot")                       # whole editor window
+editor_control(action="screenshot", mode="active_window") # foreground window (e.g. a separate PIE game window)
+# Returns { file_path, width, height, ... } — open the PNG to review, then fix and re-capture.
+# External MCP clients only; the in-editor VibeUE chat captures via ScreenshotService + attach_image.
+
+# --- Standalone (separate game process with trace attached) ---
+editor_control(action="start_standalone")           # optional: name=, channels=
+editor_control(action="standalone_status")
+editor_control(action="stop_standalone")
+
+# --- Frame timing — RUN THIS FIRST ---
+# Reports Game/Render/GPU thread split + a CPU-vs-GPU bound verdict and hint
+editor_control(action="frame_timing")
+
+# --- Unreal Insights profiling ---
+editor_control(action="profiler_start", name="my_capture")  # begin trace to file
+editor_control(action="profiler_bookmark", name="boss_fight")
+editor_control(action="profiler_region_start", name="wave_1")
+editor_control(action="profiler_region_end", name="wave_1")
+editor_control(action="profiler_status")
+editor_control(action="profiler_stop")
+
+# --- Read back a trace/logs and summarize perf ---
+editor_control(action="analyse", source="both")      # source: trace | logs | both
+
+# --- Help ---
+editor_control(action="help")
+```
+
+**Parameters:**
+
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `action` | string | Yes | `start_pie`, `stop_pie`, `pie_status`, `start_standalone`, `stop_standalone`, `standalone_status`, `screenshot` (alias `capture`), `profiler_start`, `profiler_stop`, `profiler_status`, `profiler_bookmark`, `profiler_region_start`, `profiler_region_end`, `frame_timing`, `analyse`, `help` |
+| `name` | string | No | Trace file name (`profiler_start`/`start_standalone`), label (`profiler_bookmark`/`profiler_region_*`), or output PNG name (`screenshot`) |
+| `mode` | string | No | `screenshot` — `editor_window` (default) or `active_window` |
+| `channels` | string | No | Comma-separated trace channels (`profiler_start`/`start_standalone`). Default: `frame,cpu,gpu,log,loadtime,object,stats` |
+| `source` | string | No | `analyse` — what to read: `trace`, `logs`, or `both` (default: `both`) |
+| `file` | string | No | `analyse` — override the trace or log file path |
+
+**Typical workflow:** `frame_timing` to find whether you're CPU- or GPU-bound → `profiler_start` → play through a representative scene (drop `profiler_bookmark`/`region` markers) → `profiler_stop` → `analyse` to read the trace + logs back. Run inside PIE or a standalone session for a real game-bound reading; the editor viewport alone is not representative.
 
 ### 2. VibeUE Python API Services (32 services, 1068 methods)
 High-level services exposed to Python for common game development tasks:
@@ -1319,10 +1373,10 @@ See the [`niagara-emitters` skill](Content/Skills/niagara-emitters/SKILL.md) for
 
 ### ScreenshotService (5 methods)
 
-ScreenshotService enables AI vision by capturing editor content:
-- `capture_editor_window(path)` - Capture entire editor window (works for blueprints, materials, etc.)
-- `capture_viewport(path, width, height)` - Capture level viewport
-- `capture_active_window(path)` - Capture foreground window
+ScreenshotService enables AI vision by capturing editor content (the Python path; **external MCP clients should use `editor_control(action="screenshot")` instead**):
+- `capture_editor_window(path)` - **Use this for everything.** Synchronous capture of the entire editor window incl. the focused tab (level viewport, blueprints, materials, etc.)
+- `capture_active_window(path)` - Capture the foreground window (e.g. a separate PIE game window)
+- `capture_viewport(path, width, height)` - ⚠️ **Does NOT work from Python** (asynchronous — the file never lands during a Python call). Use `capture_editor_window` instead.
 - `get_open_editor_tabs()` - List open editor tabs with asset info
 - `get_active_window_title()` - Get focused window title
 - `is_editor_window_active()` - Check if editor is in focus

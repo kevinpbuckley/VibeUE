@@ -15,6 +15,13 @@ keywords:
 
 # Screenshot & Vision Skill
 
+## Which capture path — external MCP client vs. VibeUE internal chat
+
+- **External MCP clients (Claude Code, Cursor, …):** prefer the one-call MCP action `editor_control(action="screenshot")` (params: `mode=editor_window|active_window`, `name`). It captures synchronously and returns a `file_path` you can open/read — no Python, no skill load. Use `mode="active_window"` for a separate PIE/game window.
+- **VibeUE internal chat:** the `editor_control` screenshot action is **NOT for you** — it returns a path that never enters your vision and will refuse internal-chat calls. Capture with the **Python API** below (`unreal.ScreenshotService.capture_editor_window(...)` via `execute_python_code`), then call the `attach_image` tool so the image enters your next turn.
+
+Both paths use the same synchronous Windows capture underneath. The methods below are the Python API for the internal-chat path.
+
 ## Methods
 
 | Method | Use Case |

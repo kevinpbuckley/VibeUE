@@ -16,9 +16,12 @@ This is an Unreal Engine 5.7+ project with the **VibeUE** plugin for AI-powered 
 ### Other Tools
 - `vibeue-skills-manager` - Load domain-specific skill documentation
 - `manage_asset` - Search, open, save, duplicate, move, delete assets
+- `editor_control` - Play-In-Editor (`start_pie`/`stop_pie`/`pie_status`), launch standalone, profile (`frame_timing`/`profiler_*`/`analyse`), **and `screenshot`** — a synchronous PNG of the editor/active window so you can SEE what you built and review it (no skill load, no Python). See Screenshots & Vision below.
 - `read_logs` - Read Unreal log files for errors and warnings
 - `terrain_data` - Generate heightmaps and water splines from real-world data
 - `deep_research` - Research Unreal Engine topics via web search
+
+> VibeUE already covers the **whole loop** — it is not just "Blueprints and Python." Editing/spawning/moving actors (`level-actors` skill), level-viewport camera control (`viewport` skill), running the game (`editor_control` PIE), and seeing the result (`editor_control` `screenshot`) are all here. You do not need a second plugin for "eyes and hands in the viewport."
 
 ## � Build and Launch Workflow
 
@@ -32,9 +35,16 @@ When the user asks to rebuild, relaunch, test, or recover from a compile/live-co
 
 This script is the correct path for normal rebuild-and-test cycles in this repo because it handles the editor shutdown, build, and relaunch workflow automatically.
 
-## �📸 Screenshots & Vision
+## 📸 Screenshots & Vision — Build → Screenshot → Review Yourself → Fix
 
-Load the `screenshots` skill for capture methods, `attach_image` tool usage, camera best practices, and satellite image workflows.
+**Capturing what you built and actually looking at it is the single highest-value habit in this setup.** After any *visible* change (spawned/moved actors, a blocked-out level, a UI, a material), don't just claim success — see it:
+
+1. *(Testing gameplay?)* `editor_control(action="start_pie")`.
+2. `editor_control(action="screenshot")` → returns a `file_path` to a synchronous PNG of the editor window. Use `mode="active_window"` if PIE opened a separate game window.
+3. **Open / read the `file_path`** and judge the image against what the user asked for.
+4. Wrong? Fix it and screenshot again. Loop until it looks right, then report with the evidence.
+
+This needs no skill load and no Python. For framing a specific actor, moving the editor camera, or capturing a specific asset editor, load the `screenshots` and `viewport` skills.
 
 ## 🎯 Skills System (Index + On-Demand Sub-Docs)
 
@@ -390,6 +400,16 @@ AI: "Created BP_Enemy."
 
 **Skill Loading:**
 - Mention when loading a new skill: "Loading blueprints skill for API reference..."
+
+## 🧭 Working Effectively on This Project
+
+- **Screenshot self-review (see above):** after any visible change, capture and look before you say "done."
+- **Git milestones:** ensure the project is a git repo before large changes, and commit at every working milestone (`git add -A && git commit -m "..."`) so a bad experiment reverts cleanly. Prefer many small commits over one big one.
+- **Manage context:** long Unreal sessions fill the context window fast. As you approach the limit, summarize what's done and what's left so work can continue cleanly; prefer a fresh, tightly-scoped task over dragging stale context forward.
+- **Division of labor:** you handle logic, node wiring, Python, and asset organization; the human prepares 3D meshes/audio and the high-level architecture. If a needed asset doesn't exist, say so — don't fake it with a placeholder unless asked.
+- **Detailed prompts win:** the more precise the requested logic/architecture, the better the result. If a request is vague, ask one clarifying question or state the assumption you're making, then build.
+- **Supervise the graph:** auto-generated Blueprint graphs are functional, not tidy — verify behavior (see "Success Claims Require Verification Evidence") rather than over-investing in auto-cleaning node layout.
+- **Living gotchas:** when you hit a real problem, work out a fix, and confirm it works, append a one-line gotcha + fix to this file (or the project's `CLAUDE.md`) so the next session doesn't relearn it.
 
 ## 🚀 Getting Started Workflow
 
