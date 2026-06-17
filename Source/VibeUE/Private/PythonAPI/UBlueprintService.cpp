@@ -10314,6 +10314,7 @@ namespace VibeUELayout
 		// edges form a DAG, so longest-path layering is well-defined and a cycle (a loop
 		// body wired back to its loop, recursion, etc.) can never inflate columns. The
 		// back-edge is still drawn as a wire; it just doesn't drive column assignment.
+		TMap<UEdGraphNode*, int32> VisitRank; // DFS pre-order rank (pin-ordered) for stable within-layer seeding
 		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> LayerSucc;
 		TMap<UEdGraphNode*, TArray<UEdGraphNode*>> LayerPred;
 		{
@@ -10343,6 +10344,7 @@ namespace VibeUELayout
 				TArray<TPair<UEdGraphNode*, int32>> Stack;
 				Stack.Push(TPair<UEdGraphNode*, int32>(Seed, 0));
 				OnStack.Add(Seed);
+					VisitRank.Add(Seed, VisitRank.Num());
 				while (Stack.Num() > 0)
 				{
 					const int32 TopIdx = Stack.Num() - 1;
@@ -10362,6 +10364,7 @@ namespace VibeUELayout
 						if (!Visited.Contains(V))
 						{
 							OnStack.Add(V);
+								VisitRank.Add(V, VisitRank.Num());
 							Stack.Push(TPair<UEdGraphNode*, int32>(V, 0));
 						}
 					}
@@ -10484,10 +10487,14 @@ namespace VibeUELayout
 		{
 			for (TPair<int32, TArray<UEdGraphNode*>>& LayerPair : RankPair.Value)
 			{
-				LayerPair.Value.Sort([](const UEdGraphNode& A, const UEdGraphNode& B)
+				LayerPair.Value.Sort([&VisitRank](const UEdGraphNode& A, const UEdGraphNode& B)
 				{
-					if (A.NodePosY != B.NodePosY) return A.NodePosY < B.NodePosY;
-					return A.NodePosX < B.NodePosX;
+					const int32* RA = VisitRank.Find(const_cast<UEdGraphNode*>(&A));
+					const int32* RB = VisitRank.Find(const_cast<UEdGraphNode*>(&B));
+					const int32 VA = RA ? *RA : MAX_int32;
+					const int32 VB = RB ? *RB : MAX_int32;
+					if (VA != VB) return VA < VB;
+					return A.NodePosY < B.NodePosY;
 				});
 			}
 		}
