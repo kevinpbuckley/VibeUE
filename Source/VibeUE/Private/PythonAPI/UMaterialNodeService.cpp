@@ -24,6 +24,8 @@
 #include "Materials/MaterialExpressionLandscapeGrassOutput.h"
 #include "Materials/MaterialExpressionFunctionInput.h"
 #include "Materials/MaterialExpressionFunctionOutput.h"
+#include "Materials/MaterialExpressionCustomOutput.h"
+#include "Materials/MaterialExpressionNamedReroute.h"
 #include "Materials/MaterialFunction.h"
 #include "Materials/MaterialParameterCollection.h"
 #include "LandscapeGrassType.h"
@@ -3695,4 +3697,206 @@ bool UMaterialNodeService::SetFunctionExpressionProperty(
 		*ExpressionId, *PropertyName, *PropertyValue);
 
 	return true;
+}
+
+// =================================================================
+// Cleanup / Deletion (function-graph delete + graph reachability)
+// =================================================================
+
+// Null out any input on any expression in the list that still points at ToRemove, so the
+// node can be deleted without leaving dangling FExpressionInput pointers behind. Walks each
+// expression's inputs via GetInput(i) (the same index-based iteration the rest of this file
+// uses) since UMaterialExpression has no single "incoming references" accessor.
+static void ClearReferencesToExpression(
+	TConstArrayView<TObjectPtr<UMaterialExpression>> AllExpressions,
+	UMaterialExpression* ToRemove)
+{
+	for (UMaterialExpression* Expr : AllExpressions)
+	{
+		if (!Expr || Expr == ToRemove)
+		{
+			continue;
+		}
+		for (int32 i = 0; ; ++i)
+		{
+			FExpressionInput* Input = Expr->GetInput(i);
+			if (!Input)
+			{
+				break;
+			}
+			if (Input->Expression == ToRemove)
+			{
+				Expr->Modify();
+				Input->Expression = nullptr;
+			}
+		}
+	}
+}
+
+bool UMaterialNodeService::DeleteFunctionExpression(
+	const FString& FunctionPath,
+	const FString& ExpressionId)
+{
+	UMaterialFunction* Function = LoadMaterialFunctionAsset(FunctionPath);
+	if (!Function)
+	{
+		return false;
+	}
+
+	UMaterialExpression* Expression = FindExpressionInFunctionById(Function, ExpressionId);
+	if (!Expression)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::DeleteFunctionExpression: Expression not found: %s"), *ExpressionId);
+		return false;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Delete Function Expression", "Delete Function Expression"));
+	Function->Modify();
+	Expression->Modify();
+
+	// Clear any inputs that still reference this node so nothing dangles after removal.
+	ClearReferencesToExpression(Function->GetExpressions(), Expression);
+
+	Function->GetExpressionCollection().RemoveExpression(Expression);
+	// Make sure the removed expression is caught by GC (mirrors the editor's delete path).
+	Expression->MarkAsGarbage();
+
+	Function->PostEditChange();
+	UEditorAssetLibrary::SaveAsset(FunctionPath, false);
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::DeleteFunctionExpression: Removed %s from %s"),
+		*ExpressionId, *FunctionPath);
+
+	return true;
+}
+
+int32 UMaterialNodeService::CleanupUnusedExpressions(const FString& AssetPath)
+{
+	// Resolve the asset as either a material or a material function.
+	UMaterial* Material = LoadMaterialAsset(AssetPath);
+	UMaterialFunction* Function = Material ? nullptr : LoadMaterialFunctionAsset(AssetPath);
+	if (!Material && !Function)
+	{
+		UE_LOG(LogTemp, Warning, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Not a material or material function: %s"), *AssetPath);
+		return 0;
+	}
+
+	TConstArrayView<TObjectPtr<UMaterialExpression>> AllExpressions =
+		Material ? Material->GetExpressions() : Function->GetExpressions();
+
+	// --- Gather reachability roots (mirrors UMaterialGraph::GetUnusedExpressions) ---
+	TArray<UMaterialExpression*> Roots;
+	if (Function)
+	{
+		// Function roots = every FunctionOutput node.
+		for (UMaterialExpression* Expr : AllExpressions)
+		{
+			if (Cast<UMaterialExpressionFunctionOutput>(Expr))
+			{
+				Roots.Add(Expr);
+			}
+		}
+	}
+	else
+	{
+		// Material roots = whatever is wired to a material property input...
+		for (int32 PropIndex = 0; PropIndex < MP_MAX; ++PropIndex)
+		{
+			FExpressionInput* PropInput = Material->GetExpressionInputForProperty((EMaterialProperty)PropIndex);
+			if (PropInput && PropInput->Expression)
+			{
+				Roots.Add(PropInput->Expression);
+			}
+		}
+		// ...plus all CustomOutput nodes, which are used even without a property connection.
+		for (UMaterialExpression* Expr : AllExpressions)
+		{
+			if (Cast<UMaterialExpressionCustomOutput>(Expr))
+			{
+				Roots.Add(Expr);
+			}
+		}
+	}
+
+	// --- Depth-first walk back through every connected input ---
+	TSet<UMaterialExpression*> Reachable;
+	TArray<UMaterialExpression*> Stack = Roots;
+	while (Stack.Num() > 0)
+	{
+		UMaterialExpression* Expr = Stack.Pop();
+		if (!Expr || Reachable.Contains(Expr))
+		{
+			continue;
+		}
+		Reachable.Add(Expr);
+
+		for (int32 i = 0; ; ++i)
+		{
+			FExpressionInput* Input = Expr->GetInput(i);
+			if (!Input)
+			{
+				break;
+			}
+			if (Input->Expression)
+			{
+				Stack.Push(Input->Expression);
+			}
+		}
+
+		// Named reroute usage nodes have no input pins — follow their declaration manually.
+		if (UMaterialExpressionNamedRerouteUsage* RerouteUsage = Cast<UMaterialExpressionNamedRerouteUsage>(Expr))
+		{
+			if (RerouteUsage->Declaration)
+			{
+				Stack.Push(RerouteUsage->Declaration);
+			}
+		}
+	}
+
+	// --- Everything not reached is unused. Unreachable nodes only reference each other,
+	//     so deleting the whole set leaves no reachable node dangling. ---
+	TArray<UMaterialExpression*> Unused;
+	for (UMaterialExpression* Expr : AllExpressions)
+	{
+		if (Expr && !Reachable.Contains(Expr))
+		{
+			Unused.Add(Expr);
+		}
+	}
+
+	if (Unused.Num() == 0)
+	{
+		return 0;
+	}
+
+	FScopedTransaction Transaction(NSLOCTEXT("MaterialNodeService", "Cleanup Unused Expressions", "Cleanup Unused Expressions"));
+	if (Material)
+	{
+		Material->Modify();
+		for (UMaterialExpression* Expr : Unused)
+		{
+			Expr->Modify();
+			Material->GetExpressionCollection().RemoveExpression(Expr);
+			Material->RemoveExpressionParameter(Expr);
+			Expr->MarkAsGarbage();
+		}
+		RefreshMaterialGraph(Material);
+	}
+	else
+	{
+		Function->Modify();
+		for (UMaterialExpression* Expr : Unused)
+		{
+			Expr->Modify();
+			Function->GetExpressionCollection().RemoveExpression(Expr);
+			Expr->MarkAsGarbage();
+		}
+		Function->PostEditChange();
+		UEditorAssetLibrary::SaveAsset(AssetPath, false);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("UMaterialNodeService::CleanupUnusedExpressions: Removed %d unused expression(s) from %s"),
+		Unused.Num(), *AssetPath);
+
+	return Unused.Num();
 }
