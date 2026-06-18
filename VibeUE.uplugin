@@ -42,10 +42,6 @@
 			"Enabled": true
 		},
 		{
-			"Name": "AudioCapture",
-			"Enabled": true
-		},
-		{
 			"Name": "Niagara",
 			"Enabled": true
 		},
@@ -75,6 +71,10 @@
 		},
 		{
 			"Name": "ToolsetRegistry",
+			"Enabled": true
+		},
+		{
+			"Name": "ModelContextProtocol",
 			"Enabled": true
 		}
 	]

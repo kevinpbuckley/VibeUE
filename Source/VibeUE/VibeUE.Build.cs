@@ -45,14 +45,11 @@ public class VibeUE : ModuleRules
 				"CoreUObject",
 				"Engine",
 				"InputCore",
-				"Networking",
-				"Sockets",
-				"HTTP",
+				"HTTP",                 // For DeepResearch / web tools
 				"Json",
 				"JsonUtilities",
 				"DeveloperSettings",
-				"ApplicationCore",      // For FPlatformApplicationMisc (clipboard, etc.)
-				"WebSockets"            // For ElevenLabs WebSocket connection
+				"ApplicationCore"       // For FPlatformApplicationMisc (clipboard, etc.)
 			}
 		);
 
@@ -81,8 +78,6 @@ public class VibeUE : ModuleRules
 				"PropertyEditor",         // For property reflection
 				"EnhancedInput",          // For Enhanced Input System support
 				"InputCore",              // For input types
-				"AudioCapture",           // For microphone input
-				"AudioCaptureCore",       // For FAudioCaptureSynth
 				"ImageWrapper",           // For image encoding/decoding
 				"DesktopPlatform",        // For file dialogs
 				"Niagara",                // For Niagara VFX runtime classes
@@ -110,6 +105,7 @@ public class VibeUE : ModuleRules
 				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
 				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
+				"ModelContextProtocol",   // UE 5.8 native MCP server — VibeUE's dynamic tools are bridged onto Epic's endpoint
 			}
 		);
 

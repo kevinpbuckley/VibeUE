@@ -5,7 +5,6 @@
 #include "Core/ServiceContext.h"
 #include "Json.h"
 #include "JsonUtilities.h"
-#include "Chat/ChatSession.h"
 #include "Core/ErrorCodes.h"
 #include "FileHelpers.h" // FEditorFileUtils + UEditorLoadingAndSavingUtils (headless SavePackages)
 
@@ -182,17 +181,10 @@ FString UPythonTools::ExecutePythonCode(const FString& Code)
 		}
 	}
 
-	// Auto-save all dirty packages before executing Python code if enabled
-	if (FChatSession::IsAutoSaveBeforePythonExecutionEnabled())
+	// Auto-save all dirty packages (headless) before executing Python code, unless the previous
+	// run crashed (dirty assets may be corrupt), GEditor is missing, or we're in PIE.
 	{
-		if (FChatSession::IsChatEditorTestingEnabled())
-		{
-			// Chat Editor Testing runs drive many rapid tool calls and manage their own saves;
-			// skip the per-call auto-save entirely to keep them fast. (The non-testing path below
-			// now uses a fully headless save — see issue #433 — so this is purely an optimization.)
-			UE_LOG(LogPythonTools, Verbose, TEXT("Skipping auto-save: Chat Editor Testing mode is enabled"));
-		}
-		else if (bLastPythonExecutionCrashed)
+		if (bLastPythonExecutionCrashed)
 		{
 			UE_LOG(LogPythonTools, Warning, TEXT("Skipping auto-save: previous Python execution crashed — dirty assets may be corrupt"));
 		}

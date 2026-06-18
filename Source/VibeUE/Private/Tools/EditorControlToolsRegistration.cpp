@@ -802,17 +802,6 @@ REGISTER_VIBEUE_TOOL(editor_control,
 		if (Action == TEXT("screenshot") || Action == TEXT("capture"))
 			{
 				// Synchronous capture for the "build -> look -> fix" self-review loop.
-				// This action is for EXTERNAL MCP clients (Claude Code, Cursor, ...), which
-				// cannot call the internal-only attach_image tool. The VibeUE in-editor chat
-				// must instead capture via execute_python_code -> ScreenshotService +
-				// attach_image, so a returned file path actually enters its vision. Redirect
-				// internal-chat callers (CurrentSession is non-null only for the in-editor chat).
-				if (FToolRegistry::Get().GetCurrentSession() != nullptr)
-				{
-					return ErrJson(TEXT("USE_PYTHON_API"),
-						TEXT("The editor_control 'screenshot' action is for external MCP clients only. From the VibeUE chat, capture with execute_python_code -> unreal.ScreenshotService.capture_editor_window(\"name\"), then call the attach_image tool with the returned file_path so the image enters your vision. Load the 'screenshots' skill for the full workflow."));
-				}
-
 				const FString Mode = GetParam(Params, TEXT("mode"), TEXT("editor_window")).ToLower();
 				const FString Name = GetParam(Params, TEXT("name"), TEXT("editor_control_capture"));
 

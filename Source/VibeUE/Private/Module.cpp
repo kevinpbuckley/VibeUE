@@ -4,18 +4,16 @@
 #include "Modules/ModuleManager.h"
 #include "EditorSubsystem.h"
 #include "Editor.h"
-#include "Chat/AIChatCommands.h"
 #include "Core/ToolRegistry.h"
-#include "MCP/MCPServer.h"
 #include "HAL/IConsoleManager.h"
 #include "HAL/PlatformFileManager.h"
 #include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
 #include "ToolsetRegistry/UToolsetRegistry.h"
 #include "ToolsetRegistry/ToolsetDefinition.h"
+#include "Core/VibeUEMCPToolBridge.h"
 #include "UObject/UObjectHash.h"
 #include "UObject/UObjectIterator.h"
-#include "UI/ChatRichTextStyles.h"
 #include "Utils/VibeUEPaths.h"
 #include "Misc/Paths.h"
 #include "Misc/FileHelper.h"
@@ -132,17 +130,8 @@ void FModule::StartupModule()
 	// Clear screenshots directory from previous sessions to save disk space
 	FVibeUEPaths::ClearScreenshotsDir();
 
-	// Initialize Chat Rich Text Styles (for markdown rendering)
-	FChatRichTextStyles::Initialize();
-
 	// Initialize Tool Registry (reflection-based tools)
 	FToolRegistry::Get().Initialize();
-
-	// Initialize AI Chat commands
-	FAIChatCommands::Initialize();
-
-	// Initialize MCP Server (auto-starts if enabled in config)
-	FMCPServer::Get().Initialize();
 
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
@@ -194,34 +183,38 @@ static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
 
 void FModule::RegisterToolsets()
 {
-	if (!UToolsetRegistry::IsAvailable())
+	// Service layer -> Epic's ToolsetRegistry (AICallable tools).
+	if (UToolsetRegistry::IsAvailable())
+	{
+		TArray<UClass*> ToolsetClasses;
+		GatherVibeUEToolsetClasses(ToolsetClasses);
+		for (UClass* Class : ToolsetClasses)
+		{
+			UToolsetRegistry::RegisterToolsetClass(Class);
+		}
+		UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry."), ToolsetClasses.Num());
+	}
+	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("VibeUE: ToolsetRegistry not available; service toolsets not registered."));
-		return;
 	}
 
-	TArray<UClass*> ToolsetClasses;
-	GatherVibeUEToolsetClasses(ToolsetClasses);
-	for (UClass* Class : ToolsetClasses)
-	{
-		UToolsetRegistry::RegisterToolsetClass(Class);
-	}
-
-	UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry."), ToolsetClasses.Num());
+	// Dynamic FToolRegistry tools -> Epic's MCP endpoint (independent of ToolsetRegistry).
+	VibeUEMCPToolBridge::RegisterAll();
 }
 
 void FModule::UnregisterToolsets()
 {
-	if (!UToolsetRegistry::IsAvailable())
-	{
-		return;
-	}
+	VibeUEMCPToolBridge::UnregisterAll();
 
-	TArray<UClass*> ToolsetClasses;
-	GatherVibeUEToolsetClasses(ToolsetClasses);
-	for (UClass* Class : ToolsetClasses)
+	if (UToolsetRegistry::IsAvailable())
 	{
-		UToolsetRegistry::UnregisterToolsetClass(Class);
+		TArray<UClass*> ToolsetClasses;
+		GatherVibeUEToolsetClasses(ToolsetClasses);
+		for (UClass* Class : ToolsetClasses)
+		{
+			UToolsetRegistry::UnregisterToolsetClass(Class);
+		}
 	}
 }
 
@@ -237,20 +230,11 @@ void FModule::ShutdownModule()
 	FCoreDelegates::OnPreExit.RemoveAll(this);
 	FCoreDelegates::GetOnPostEngineInit().RemoveAll(this);
 
-	// Unregister service toolsets from ToolsetRegistry
+	// Unregister service toolsets + MCP tools
 	UnregisterToolsets();
-
-	// Shutdown MCP Server
-	FMCPServer::Get().Shutdown();
-
-	// Shutdown AI Chat commands
-	FAIChatCommands::Shutdown();
 
 	// Shutdown Tool Registry
 	FToolRegistry::Get().Shutdown();
-
-	// Shutdown Chat Rich Text Styles
-	FChatRichTextStyles::Shutdown();
 
 	UE_LOG(LogTemp, Display, TEXT("VibeUE Module has shut down"));
 }
