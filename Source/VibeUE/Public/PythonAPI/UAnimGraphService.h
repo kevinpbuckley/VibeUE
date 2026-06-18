@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UAnimGraphService.generated.h"
 
 /**
@@ -228,7 +228,7 @@ struct FAnimSequenceUsageInfo
  * - **File**: UAnimGraphService.h
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UAnimGraphService : public UObject
+class VIBEUE_API UAnimGraphService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -248,7 +248,7 @@ public:
 	 *   unreal.AnimGraphService.open_anim_graph("/Game/ABP_Character", "AnimGraph")
 	 *   unreal.AnimGraphService.open_anim_graph("/Game/ABP_Character", "Locomotion")  # state machine
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Navigation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Navigation")
 	static bool OpenAnimGraph(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName = TEXT("AnimGraph"));
@@ -265,7 +265,7 @@ public:
 	 * Example:
 	 *   unreal.AnimGraphService.open_anim_state("/Game/ABP_Character", "Locomotion", "IdleLoop")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Navigation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Navigation")
 	static bool OpenAnimState(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -283,7 +283,7 @@ public:
 	 * Example:
 	 *   unreal.AnimGraphService.open_transition("/Game/ABP_Character", "Locomotion", "Idle", "Walk")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Navigation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Navigation")
 	static bool OpenTransition(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -300,7 +300,7 @@ public:
 	 * Example:
 	 *   unreal.AnimGraphService.focus_node("/Game/ABP_Character", "ABC123...")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Navigation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Navigation")
 	static bool FocusNode(
 		const FString& AnimBlueprintPath,
 		const FString& NodeId);
@@ -320,7 +320,7 @@ public:
 	 *   for g in graphs:
 	 *       print(f"{g.graph_name} ({g.graph_type}): {g.node_count} nodes")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static TArray<FAnimGraphInfo> ListGraphs(const FString& AnimBlueprintPath);
 
 	/**
@@ -334,7 +334,7 @@ public:
 	 *   for m in machines:
 	 *       print(f"Machine: {m.machine_name}, States: {m.state_count}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static TArray<FAnimStateMachineInfo> ListStateMachines(const FString& AnimBlueprintPath);
 
 	/**
@@ -349,7 +349,7 @@ public:
 	 *   for s in states:
 	 *       print(f"State: {s.state_name} ({s.state_type})")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static TArray<FAnimStateInfo> ListStatesInMachine(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName);
@@ -367,7 +367,7 @@ public:
 	 *   for t in transitions:
 	 *       print(f"{t.source_state} -> {t.dest_state}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static TArray<FAnimTransitionInfo> GetStateTransitions(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -384,7 +384,7 @@ public:
 	 * Example:
 	 *   info = unreal.AnimGraphService.get_state_machine_info("/Game/ABP_Character", "Locomotion")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static bool GetStateMachineInfo(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -402,7 +402,7 @@ public:
 	 * Example:
 	 *   info = unreal.AnimGraphService.get_state_info("/Game/ABP_Character", "Locomotion", "Idle")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Introspection")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Introspection")
 	static bool GetStateInfo(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -424,7 +424,7 @@ public:
 	 *   for seq in sequences:
 	 *       print(f"{seq.sequence_name} used in {seq.used_in_graph}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static TArray<FAnimSequenceUsageInfo> GetUsedAnimSequences(const FString& AnimBlueprintPath);
 
 	/**
@@ -436,7 +436,7 @@ public:
 	 * Example:
 	 *   skeleton_path = unreal.AnimGraphService.get_skeleton("/Game/ABP_Character")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static FString GetSkeleton(const FString& AnimBlueprintPath);
 
 	/**
@@ -448,7 +448,7 @@ public:
 	 * Example:
 	 *   mesh_path = unreal.AnimGraphService.get_preview_mesh("/Game/ABP_Character")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static FString GetPreviewMesh(const FString& AnimBlueprintPath);
 
 	// ============================================================================
@@ -465,7 +465,7 @@ public:
 	 *   if unreal.AnimGraphService.is_anim_blueprint("/Game/ABP_Character"):
 	 *       print("It's an AnimBP!")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Utility")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Utility")
 	static bool IsAnimBlueprint(const FString& AssetPath);
 
 	/**
@@ -477,7 +477,7 @@ public:
 	 * Example:
 	 *   parent = unreal.AnimGraphService.get_parent_class("/Game/ABP_Character")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Utility")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Utility")
 	static FString GetParentClass(const FString& AnimBlueprintPath);
 
 	// ============================================================================
@@ -496,7 +496,7 @@ public:
 	 * Example:
 	 *   node_id = unreal.AnimGraphService.add_state_machine("/Game/ABP_Character", "Locomotion")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddStateMachine(
 		const FString& AnimBlueprintPath,
 		const FString& MachineName,
@@ -520,7 +520,7 @@ public:
 	 *       "/Game/Animations/Idle_Loop"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddSequencePlayer(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -545,7 +545,7 @@ public:
 	 *       "/Game/Animations/BS_Locomotion"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddBlendSpacePlayer(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -562,7 +562,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddBlendByBool(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -579,7 +579,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddBlendByInt(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -596,7 +596,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddLayeredBlend(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -613,7 +613,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddSlotNode(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -631,7 +631,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddSaveCachedPose(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -649,7 +649,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddUseCachedPose(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -678,7 +678,7 @@ public:
 	 *       "Idle"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static FString AddState(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -697,7 +697,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static FString AddConduit(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -724,7 +724,7 @@ public:
 	 *       0.25
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static FString AddTransition(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -741,7 +741,7 @@ public:
 	 * @param bRemoveTransitions - Whether to also remove connected transitions (default true)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static bool RemoveState(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -757,7 +757,7 @@ public:
 	 * @param DestStateName - Destination state
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static bool RemoveTransition(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -776,7 +776,7 @@ public:
 	 * Example:
 	 *   unreal.AnimGraphService.set_entry_state("/Game/ABP_Character", "Locomotion", "Idle")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static bool SetEntryState(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -792,7 +792,7 @@ public:
 	 * @param Priority - Priority order (default 1; smaller wins)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static bool SetTransitionPriority(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -812,7 +812,7 @@ public:
 	 *                    "QuadraticInOut", "CubicInOut", "ExpInOut" (default "Linear")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateMachine")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateMachine")
 	static bool SetTransitionBlend(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -842,7 +842,7 @@ public:
 	 *   unreal.AnimGraphService.set_transition_rule_from_bool(
 	 *       "/Game/ABP_Character", "Locomotion", "Idle", "Dead", "bIsDead")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|TransitionRules")
 	static bool SetTransitionRuleFromBool(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -868,7 +868,7 @@ public:
 	 *   unreal.AnimGraphService.set_transition_rule_comparison(
 	 *       "/Game/ABP_Character", "Locomotion", "Idle", "Walk", "Speed", "greater", 10.0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|TransitionRules")
 	static bool SetTransitionRuleComparison(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -894,7 +894,7 @@ public:
 	 *   unreal.AnimGraphService.set_transition_rule_automatic(
 	 *       "/Game/ABP_Character", "Combat", "Attack", "Idle")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|TransitionRules")
 	static bool SetTransitionRuleAutomatic(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -913,7 +913,7 @@ public:
 	 * @param DestStateName - Destination state
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|TransitionRules")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|TransitionRules")
 	static bool ClearTransitionRule(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -941,7 +941,7 @@ public:
 	 *   unreal.AnimGraphService.set_state_animation(
 	 *       "/Game/ABP_Character", "Locomotion", "Idle", "/Game/Anims/Idle_Loop", True)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateAuthoring")
 	static FString SetStateAnimation(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -982,7 +982,7 @@ public:
 	 * @param PosY - Y position of the state machine node in the AnimGraph if it must be created
 	 * @return JSON report string: {"success", "machine", "states_created", "transitions_created", "errors": [...]}
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateAuthoring")
 	static FString BuildStateMachine(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName,
@@ -1004,7 +1004,7 @@ public:
 	 *   if not result.is_valid:
 	 *       for err in result.errors: print(err)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|StateAuthoring")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|StateAuthoring")
 	static FAnimStateMachineValidationResult ValidateStateMachine(
 		const FString& AnimBlueprintPath,
 		const FString& StateMachineName);
@@ -1036,7 +1036,7 @@ public:
 	 *       "Result"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Connections")
 	static bool ConnectAnimNodes(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1055,7 +1055,7 @@ public:
 	 * @param SourcePinName - Name of the output pin on source node
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Connections")
 	static bool ConnectToOutputPose(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1071,7 +1071,7 @@ public:
 	 * @param PinName - Name of the pin to disconnect
 	 * @return True if any connections were broken
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Connections")
 	static bool DisconnectAnimNode(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1086,7 +1086,7 @@ public:
 	 * @param GraphName - Name of the graph
 	 * @return Node GUID of the output pose node, or empty string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Connections")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Connections")
 	static FString GetOutputPoseNodeId(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName);
@@ -1112,7 +1112,7 @@ public:
 	 *       "/Game/Animations/Idle_Loop"
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static bool SetSequencePlayerAsset(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1128,7 +1128,7 @@ public:
 	 * @param BlendSpacePath - Path to the blend space asset
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static bool SetBlendSpaceAsset(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1143,7 +1143,7 @@ public:
 	 * @param NodeId - GUID of the player node
 	 * @return Asset path, or empty string if not set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Assets")
 	static FString GetNodeAnimationAsset(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1162,7 +1162,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddTwoBoneIKNode(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,
@@ -1179,7 +1179,7 @@ public:
 	 * @param PosY - Y position
 	 * @return Node GUID if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Animation|Creation")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Animation|Creation")
 	static FString AddModifyBoneNode(
 		const FString& AnimBlueprintPath,
 		const FString& GraphName,

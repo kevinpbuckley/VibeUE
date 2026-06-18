@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UGameplayTagService.generated.h"
 
 /**
@@ -115,7 +115,7 @@ struct FGameplayTagResult
  * @note Tags are written to DefaultGameplayTags.ini by default and registered at runtime.
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UGameplayTagService : public UObject
+class VIBEUE_API UGameplayTagService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -130,7 +130,7 @@ public:
 	 * @param Filter - Optional prefix filter (e.g., "Cube" returns "Cube.StartChasing", "Cube.StopChasing")
 	 * @return Array of tag information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static TArray<FGameplayTagInfo> ListTags(const FString& Filter = TEXT(""));
 
 	/**
@@ -141,7 +141,7 @@ public:
 	 *         tag (renames register a redirect) — use get_tag_info(name).redirected_to to
 	 *         tell a real tag from a redirected one.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static bool HasTag(const FString& TagName);
 
 	/**
@@ -151,7 +151,7 @@ public:
 	 * @param OutInfo - Output structure with tag details
 	 * @return True if tag was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static bool GetTagInfo(const FString& TagName, FGameplayTagInfo& OutInfo);
 
 	/**
@@ -160,7 +160,7 @@ public:
 	 * @param ParentTag - Parent tag name (e.g., "Cube" returns "Cube.StartChasing", "Cube.StopChasing")
 	 * @return Array of child tag information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static TArray<FGameplayTagInfo> GetChildren(const FString& ParentTag);
 
 #if WITH_EDITOR
@@ -176,7 +176,7 @@ public:
 	 * @param TagSource - Config file source (default: "DefaultGameplayTags.ini")
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult AddTag(const FString& TagName, const FString& Comment = TEXT(""), const FString& TagSource = TEXT("DefaultGameplayTags.ini"));
 
 	/**
@@ -187,7 +187,7 @@ public:
 	 * @param TagSource - Config file source (default: "DefaultGameplayTags.ini")
 	 * @return Operation result with list of tags modified
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult AddTags(const TArray<FString>& TagNames, const FString& Comment = TEXT(""), const FString& TagSource = TEXT("DefaultGameplayTags.ini"));
 
 	// =================================================================
@@ -200,7 +200,7 @@ public:
 	 * @param TagName - Full tag name to remove
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult RemoveTag(const FString& TagName);
 
 	/**
@@ -213,7 +213,7 @@ public:
 	 * @param NewTagName - New tag name
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|GameplayTags")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult RenameTag(const FString& OldTagName, const FString& NewTagName);
 #endif // WITH_EDITOR
 

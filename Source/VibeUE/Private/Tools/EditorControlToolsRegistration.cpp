@@ -710,7 +710,7 @@ REGISTER_VIBEUE_TOOL(editor_control,
 		{
 			bool bConnected = FTraceAuxiliary::IsConnected();
 			FString Dest    = FTraceAuxiliary::GetTraceDestinationString();
-			FStringBuilderBase ChannelSB;
+			TStringBuilder<512> ChannelSB;
 			FTraceAuxiliary::GetActiveChannelsString(ChannelSB);
 
 			TSharedPtr<FJsonObject> R = MakeShared<FJsonObject>();

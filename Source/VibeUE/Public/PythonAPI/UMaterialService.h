@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UMaterialService.generated.h"
 
 /**
@@ -256,7 +256,7 @@ struct FMaterialSummary
  * @note This replaces the JSON-based manage_material MCP tool
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UMaterialService : public UObject
+class VIBEUE_API UMaterialService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -273,7 +273,7 @@ public:
 	 * @param DestinationPath - Path where to create the asset (e.g., "/Game/Materials")
 	 * @return Create result with asset path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Create Material"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Create Material"))
 	static FMaterialCreateResult CreateMaterial(
 		const FString& MaterialName,
 		const FString& DestinationPath);
@@ -287,7 +287,7 @@ public:
 	 * @param DestinationPath - Path where to create the instance
 	 * @return Create result with asset path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Create Material Instance"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Create Material Instance"))
 	static FMaterialCreateResult CreateInstance(
 		const FString& ParentMaterialPath,
 		const FString& InstanceName,
@@ -300,7 +300,7 @@ public:
 	 * @param MaterialPath - Full path to the material
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Save Material"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Save Material"))
 	static bool SaveMaterial(const FString& MaterialPath);
 
 	/**
@@ -310,7 +310,7 @@ public:
 	 * @param MaterialPath - Full path to the material
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Compile Material"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Compile Material"))
 	static bool CompileMaterial(const FString& MaterialPath);
 
 	/**
@@ -320,7 +320,7 @@ public:
 	 * @param MaterialPath - Full path to the material
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Refresh Material Editor"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Refresh Material Editor"))
 	static bool RefreshEditor(const FString& MaterialPath);
 
 	/**
@@ -330,7 +330,7 @@ public:
 	 * @param MaterialPath - Full path to the material or instance
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Open Material In Editor"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Open Material In Editor"))
 	static bool OpenInEditor(const FString& MaterialPath);
 
 	// =================================================================
@@ -345,7 +345,7 @@ public:
 	 * @param OutInfo - Structure containing all material details
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Material Info"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Info"))
 	static bool GetMaterialInfo(const FString& MaterialPath, FMaterialDetailedInfo& OutInfo);
 
 	/**
@@ -356,7 +356,7 @@ public:
 	 * @param OutSummary - AI-friendly material summary
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Summarize Material"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Summarize Material"))
 	static bool Summarize(const FString& MaterialPath, FMaterialSummary& OutSummary);
 
 	/**
@@ -367,7 +367,7 @@ public:
 	 * @param bIncludeAdvanced - Whether to include advanced/hidden properties
 	 * @return Array of property information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "List Material Properties"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "List Material Properties"))
 	static TArray<FMaterialPropertyInfo_Custom> ListProperties(
 		const FString& MaterialPath,
 		bool bIncludeAdvanced = false);
@@ -380,7 +380,7 @@ public:
 	 * @param PropertyName - Name of the property
 	 * @return Property value as string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Material Property"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Property"))
 	static FString GetProperty(const FString& MaterialPath, const FString& PropertyName);
 
 	/**
@@ -392,7 +392,7 @@ public:
 	 * @param OutInfo - Detailed property information
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Material Property Info"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Property Info"))
 	static bool GetPropertyInfo(
 		const FString& MaterialPath,
 		const FString& PropertyName,
@@ -411,7 +411,7 @@ public:
 	 * @param PropertyValue - New value as string
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Material Property"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Material Property"))
 	static bool SetProperty(
 		const FString& MaterialPath,
 		const FString& PropertyName,
@@ -425,7 +425,7 @@ public:
 	 * @param Properties - Map of property names to values
 	 * @return Number of properties successfully set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Material Properties"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Material Properties"))
 	static int32 SetProperties(
 		const FString& MaterialPath,
 		const TMap<FString, FString>& Properties);
@@ -441,7 +441,7 @@ public:
 	 * @param MaterialPath - Full path to the material
 	 * @return Array of parameter information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "List Material Parameters"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "List Material Parameters"))
 	static TArray<FMaterialParameterInfo_Custom> ListParameters(const FString& MaterialPath);
 
 	/**
@@ -453,7 +453,7 @@ public:
 	 * @param OutInfo - Parameter information
 	 * @return True if found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Material Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Material Parameter"))
 	static bool GetParameter(
 		const FString& MaterialPath,
 		const FString& ParameterName,
@@ -468,7 +468,7 @@ public:
 	 * @param DefaultValue - New default value as string
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Parameter Default"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Parameter Default"))
 	static bool SetParameterDefault(
 		const FString& MaterialPath,
 		const FString& ParameterName,
@@ -486,7 +486,7 @@ public:
 	 * @param OutInfo - Instance information
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Instance Info"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Instance Info"))
 	static bool GetInstanceInfo(const FString& InstancePath, FVibeUEMaterialInstanceInfo& OutInfo);
 
 	/**
@@ -497,7 +497,7 @@ public:
 	 * @param bIncludeAdvanced - Whether to include advanced properties
 	 * @return Array of property information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "List Instance Properties"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "List Instance Properties"))
 	static TArray<FMaterialPropertyInfo_Custom> ListInstanceProperties(
 		const FString& InstancePath,
 		bool bIncludeAdvanced = false);
@@ -510,7 +510,7 @@ public:
 	 * @param PropertyName - Name of the property
 	 * @return Property value as string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Get Instance Property"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Get Instance Property"))
 	static FString GetInstanceProperty(const FString& InstancePath, const FString& PropertyName);
 
 	/**
@@ -522,7 +522,7 @@ public:
 	 * @param PropertyValue - New value as string
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Property"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Instance Property"))
 	static bool SetInstanceProperty(
 		const FString& InstancePath,
 		const FString& PropertyName,
@@ -539,7 +539,7 @@ public:
 	 * @param InstancePath - Full path to the material instance
 	 * @return Array of parameter information with override status
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "List Instance Parameters"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "List Instance Parameters"))
 	static TArray<FMaterialParameterInfo_Custom> ListInstanceParameters(const FString& InstancePath);
 
 	/**
@@ -551,7 +551,7 @@ public:
 	 * @param Value - New scalar value
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Scalar Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Instance Scalar Parameter"))
 	static bool SetInstanceScalarParameter(
 		const FString& InstancePath,
 		const FString& ParameterName,
@@ -569,7 +569,7 @@ public:
 	 * @param A - Alpha component (0.0-1.0)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Vector Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Instance Vector Parameter"))
 	static bool SetInstanceVectorParameter(
 		const FString& InstancePath,
 		const FString& ParameterName,
@@ -584,7 +584,7 @@ public:
 	 * @param TexturePath - Path to the texture asset (empty to clear)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Texture Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Instance Texture Parameter"))
 	static bool SetInstanceTextureParameter(
 		const FString& InstancePath,
 		const FString& ParameterName,
@@ -598,7 +598,7 @@ public:
 	 * @param ParameterName - Name of the parameter to clear
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Clear Instance Parameter Override"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Clear Instance Parameter Override"))
 	static bool ClearInstanceParameterOverride(
 		const FString& InstancePath,
 		const FString& ParameterName);
@@ -610,7 +610,7 @@ public:
 	 * @param InstancePath - Full path to the material instance
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Save Material Instance"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Save Material Instance"))
 	static bool SaveInstance(const FString& InstancePath);
 
 	/**
@@ -636,7 +636,7 @@ public:
 	 *       ["0.01", "(R=0.2,G=0.5,B=0.1,A=1)", "/Game/T_Grass_BC", "true"]
 	 *   )
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (DisplayName = "Set Instance Parameters Bulk"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials", meta = (AICallable, DisplayName = "Set Instance Parameters Bulk"))
 	static int32 SetInstanceParametersBulk(
 		const FString& InstancePath,
 		const TArray<FString>& Names,
@@ -657,7 +657,7 @@ public:
 	 *   if not unreal.MaterialService.material_exists("/Game/Materials/M_Base"):
 	 *       unreal.MaterialService.create_material("M_Base", "/Game/Materials")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Materials|Exists")
 	static bool MaterialExists(const FString& MaterialPath);
 
 	/**
@@ -670,7 +670,7 @@ public:
 	 *   if not unreal.MaterialService.material_instance_exists("/Game/Materials/MI_Red"):
 	 *       unreal.MaterialService.create_instance("/Game/Materials/M_Base", "MI_Red", "/Game/Materials")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Materials|Exists")
 	static bool MaterialInstanceExists(const FString& InstancePath);
 
 	/**
@@ -684,7 +684,7 @@ public:
 	 *   if not unreal.MaterialService.parameter_exists("/Game/Materials/M_Base", "BaseColor"):
 	 *       # Add the parameter node
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Materials|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Materials|Exists")
 	static bool ParameterExists(const FString& MaterialPath, const FString& ParameterName);
 
 private:

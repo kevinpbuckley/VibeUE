@@ -271,7 +271,10 @@ FNiagaraCreateResult UNiagaraService::CreateSystem(
 			return nullptr;
 		}
 
-		UNiagaraSystem* NewSystem = Cast<UNiagaraSystem>(Factory->FactoryCreateNew(
+		// UNiagaraSystemFactoryNew redeclares its FactoryCreateNew override as private in UE 5.8;
+		// call through the base UFactory pointer (public method, virtual dispatch still runs the override).
+		UFactory* BaseFactory = Factory;
+		UNiagaraSystem* NewSystem = Cast<UNiagaraSystem>(BaseFactory->FactoryCreateNew(
 			UNiagaraSystem::StaticClass(),
 			Package,
 			*SystemName,

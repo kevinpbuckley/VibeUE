@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UViewportService.generated.h"
 
 /**
@@ -123,7 +123,7 @@ struct FViewportInfo
  * @note All 19 viewport operations available via Python
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UViewportService : public UObject
+class VIBEUE_API UViewportService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -137,7 +137,7 @@ public:
 	 *
 	 * @return Viewport state including type, camera transform, FOV, exposure, layout
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FViewportInfo GetViewportInfo();
 
 	// =================================================================
@@ -150,7 +150,7 @@ public:
 	 * @param ViewType - One of: "perspective", "top", "bottom", "left", "right", "front", "back"
 	 * @return True if the view type was changed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetViewportType(const FString& ViewType);
 
 	/**
@@ -158,7 +158,7 @@ public:
 	 *
 	 * @return One of: "perspective", "top", "bottom", "left", "right", "front", "back", "ortho_freelook"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FString GetViewportType();
 
 	// =================================================================
@@ -173,7 +173,7 @@ public:
 	 *                   "lightcomplexity", "shadercomplexity", "pathtracing", "clay"
 	 * @return True if the view mode was changed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetViewMode(const FString& ViewMode);
 
 	/**
@@ -181,7 +181,7 @@ public:
 	 *
 	 * @return Current view mode as string (e.g., "lit", "wireframe", "unlit")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FString GetViewMode();
 
 	// =================================================================
@@ -194,7 +194,7 @@ public:
 	 * @param FOVDegrees - Field of view in degrees (typically 60-120, default 90)
 	 * @return True if FOV was set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetFOV(float FOVDegrees);
 
 	/**
@@ -202,7 +202,7 @@ public:
 	 *
 	 * @return FOV in degrees
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static float GetFOV();
 
 	// =================================================================
@@ -215,7 +215,7 @@ public:
 	 * @param Distance - Near clip distance in Unreal units. Use -1 to reset to engine default (GNearClippingPlane).
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetNearClipPlane(float Distance);
 
 	/**
@@ -224,7 +224,7 @@ public:
 	 * @param Distance - Far clip distance in Unreal units. Use 0 for infinity (default).
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetFarClipPlane(float Distance);
 
 	// =================================================================
@@ -238,7 +238,7 @@ public:
 	 * @param EV100 - EV100 exposure compensation value (default 1.0)
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetExposure(bool bFixed, float EV100 = 1.0f);
 
 	/**
@@ -247,7 +247,7 @@ public:
 	 *
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetExposureGameSettings();
 
 	// =================================================================
@@ -262,7 +262,7 @@ public:
 	 * @param bEnable - True to enable Game View, false to disable
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetGameView(bool bEnable);
 
 	/**
@@ -272,7 +272,7 @@ public:
 	 * @param bAllow - True to allow cinematic control
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetAllowCinematicControl(bool bAllow);
 
 	// =================================================================
@@ -285,7 +285,7 @@ public:
 	 * @param bRealtime - True for realtime rendering, false for on-demand
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetRealtime(bool bRealtime);
 
 	// =================================================================
@@ -298,7 +298,7 @@ public:
 	 * @param NewLocation - World space location
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetCameraLocation(FVector NewLocation);
 
 	/**
@@ -307,7 +307,7 @@ public:
 	 * @param NewRotation - World space rotation
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetCameraRotation(FRotator NewRotation);
 
 	/**
@@ -316,7 +316,7 @@ public:
 	 * @param SpeedSetting - Speed index from 1 (slowest) to 8 (fastest)
 	 * @return True if set successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetCameraSpeed(int32 SpeedSetting);
 
 	// =================================================================
@@ -343,7 +343,7 @@ public:
 	 * @param LayoutName - Layout configuration name
 	 * @return True if layout was changed successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static bool SetViewportLayout(const FString& LayoutName);
 
 	/**
@@ -351,7 +351,7 @@ public:
 	 *
 	 * @return Layout name (e.g., "OnePane", "FourPanes2x2")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Viewport")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
 	static FString GetViewportLayout();
 
 private:

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UFoliageService.generated.h"
 
 /**
@@ -177,7 +177,7 @@ struct FFoliageQueryResult
  *   unreal.FoliageService.remove_foliage_in_radius("/Game/Meshes/SM_Tree", 0.0, 0.0, 1000.0)
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UFoliageService : public UObject
+class VIBEUE_API UFoliageService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -191,7 +191,7 @@ public:
 	 *
 	 * @return Array of foliage type information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static TArray<FVibeUEFoliageTypeInfo> ListFoliageTypes();
 
 	/**
@@ -200,7 +200,7 @@ public:
 	 * @param MeshOrFoliageTypePath - Path to UStaticMesh or UFoliageType asset
 	 * @return Number of instances, or -1 if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static int32 GetInstanceCount(const FString& MeshOrFoliageTypePath);
 
 	// =================================================================
@@ -221,7 +221,7 @@ public:
 	 * @param CullDistanceMax - Max cull distance in world units (default 20000)
 	 * @return Create result with asset path
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageTypeCreateResult CreateFoliageType(
 		const FString& MeshPath,
 		const FString& SavePath,
@@ -241,7 +241,7 @@ public:
 	 * @param Value - Value as string. Whole structs need UE import text (e.g. "(Min=0,Max=30000)"); prefer setting the member directly ("CullDistance.Max" = "30000")
 	 * @return True if property was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static bool SetFoliageTypeProperty(
 		const FString& FoliageTypePath,
 		const FString& PropertyName,
@@ -254,7 +254,7 @@ public:
 	 * @param PropertyName - Property name; nested struct members use dots (e.g. "CullDistance.Max")
 	 * @return Property value as string, empty if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FString GetFoliageTypeProperty(
 		const FString& FoliageTypePath,
 		const FString& PropertyName);
@@ -280,7 +280,7 @@ public:
 	 * @param LandscapeNameOrLabel - Optional landscape to constrain placement to
 	 * @return Scatter result with instance counts
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageScatterResult ScatterFoliage(
 		const FString& MeshOrFoliageTypePath,
 		float WorldCenterX,
@@ -311,7 +311,7 @@ public:
 	 * @param LandscapeNameOrLabel - Optional landscape to constrain placement to
 	 * @return Scatter result with instance counts
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageScatterResult ScatterFoliageRect(
 		const FString& MeshOrFoliageTypePath,
 		float WorldMinX,
@@ -338,7 +338,7 @@ public:
 	 * @param bTraceToSurface - Trace downward to find ground (default true)
 	 * @return Scatter result with instance counts
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageScatterResult AddFoliageInstances(
 		const FString& MeshOrFoliageTypePath,
 		const TArray<FVector>& Locations,
@@ -369,7 +369,7 @@ public:
 	 * @param Seed - Random seed for reproducibility (0 = random)
 	 * @return Scatter result with instance counts
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageScatterResult ScatterFoliageOnLayer(
 		const FString& MeshOrFoliageTypePath,
 		const FString& LandscapeNameOrLabel,
@@ -395,7 +395,7 @@ public:
 	 * @param Radius - Radius of removal region in world units
 	 * @return Remove result with instance count
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageRemoveResult RemoveFoliageInRadius(
 		const FString& MeshOrFoliageTypePath,
 		float WorldCenterX,
@@ -408,7 +408,7 @@ public:
 	 * @param MeshOrFoliageTypePath - Path to UStaticMesh or UFoliageType asset
 	 * @return Remove result with instance count
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageRemoveResult RemoveAllFoliageOfType(
 		const FString& MeshOrFoliageTypePath);
 
@@ -417,7 +417,7 @@ public:
 	 *
 	 * @return Remove result with total instance count
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageRemoveResult ClearAllFoliage();
 
 	// =================================================================
@@ -434,7 +434,7 @@ public:
 	 * @param MaxResults - Maximum number of instances to return (default 100)
 	 * @return Query result with instance data
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage")
 	static FFoliageQueryResult GetFoliageInRadius(
 		const FString& MeshOrFoliageTypePath,
 		float WorldCenterX,
@@ -452,7 +452,7 @@ public:
 	 * @param AssetPath - Path to check (UStaticMesh or UFoliageType)
 	 * @return True if the asset exists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage|Exists")
 	static bool FoliageTypeExists(const FString& AssetPath);
 
 	/**
@@ -461,7 +461,7 @@ public:
 	 * @param MeshOrFoliageTypePath - Path to UStaticMesh or UFoliageType asset
 	 * @return True if instances exist
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Foliage|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Foliage|Exists")
 	static bool HasFoliageInstances(const FString& MeshOrFoliageTypePath);
 
 private:

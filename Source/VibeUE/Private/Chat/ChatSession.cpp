@@ -694,7 +694,7 @@ void FChatSession::ExecuteNextToolInQueue()
                     TSharedRef<TJsonWriter<>> Writer = TJsonWriterFactory<>::Create(&ValueStr);
                     FJsonSerializer::Serialize(TempObj.ToSharedRef(), Writer);
                 }
-                Parameters.Add(Pair.Key, ValueStr);
+                Parameters.Add(*Pair.Key, ValueStr);
             }
         }
         

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UDataAssetService.generated.h"
 
 /**
@@ -199,7 +199,7 @@ struct FDataAssetSetPropertiesResult
  * @note This replaces the JSON-based manage_data_asset MCP tool
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UDataAssetService : public UObject
+class VIBEUE_API UDataAssetService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -215,7 +215,7 @@ public:
 	 * @param SearchFilter - Optional search term for class names
 	 * @return Array of DataAsset type information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static TArray<FDataAssetTypeInfo> SearchTypes(const FString& SearchFilter = TEXT(""));
 
 	/**
@@ -226,7 +226,7 @@ public:
 	 * @param SearchPath - Path to search in (default: /Game)
 	 * @return Array of DataAsset paths
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static TArray<FString> ListDataAssets(const FString& ClassName = TEXT(""), const FString& SearchPath = TEXT("/Game"));
 
 	/**
@@ -237,7 +237,7 @@ public:
 	 * @param bIncludeAll - Include non-editable properties
 	 * @return Class information with properties
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FDataAssetClassInfo GetClassInfo(const FString& ClassName, bool bIncludeAll = false);
 
 	// =================================================================
@@ -254,7 +254,7 @@ public:
 	 * @param PropertiesJson - Optional initial properties as JSON object string
 	 * @return Full path to created asset (empty on failure)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FString CreateDataAsset(
 		const FString& ClassName,
 		const FString& AssetPath,
@@ -272,7 +272,7 @@ public:
 	 * @param AssetPath - Full path to the DataAsset
 	 * @return Asset info with class and properties
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FDataAssetInstanceInfo GetInfo(const FString& AssetPath);
 
 	/**
@@ -284,7 +284,7 @@ public:
 	 * @param bIncludeAll - Include non-editable properties
 	 * @return Array of property information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static TArray<FDataAssetPropertyInfo> ListProperties(
 		const FString& AssetPath = TEXT(""),
 		const FString& ClassName = TEXT(""),
@@ -302,7 +302,7 @@ public:
 	 * @param PropertyName - Name of the property to get
 	 * @return Property value as string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FString GetProperty(const FString& AssetPath, const FString& PropertyName);
 
 	/**
@@ -314,7 +314,7 @@ public:
 	 * @param PropertyValue - Value to set (as string, will be parsed)
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static bool SetProperty(const FString& AssetPath, const FString& PropertyName, const FString& PropertyValue);
 
 	/**
@@ -325,7 +325,7 @@ public:
 	 * @param PropertiesJson - JSON object string with property name/value pairs
 	 * @return Result with success and failed property lists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FDataAssetSetPropertiesResult SetProperties(const FString& AssetPath, const FString& PropertiesJson);
 
 	// =================================================================
@@ -339,7 +339,7 @@ public:
 	 * @param AssetPath - Full path to the DataAsset
 	 * @return JSON string representation of the DataAsset properties
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets")
 	static FString GetPropertiesAsJson(const FString& AssetPath);
 
 	// =================================================================
@@ -356,7 +356,7 @@ public:
 	 *   if not unreal.DataAssetService.data_asset_exists("/Game/Data/DA_Sword"):
 	 *       unreal.DataAssetService.create_data_asset("ItemDataAsset", "/Game/Data", "DA_Sword")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|DataAssets|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|DataAssets|Exists")
 	static bool DataAssetExists(const FString& AssetPath);
 
 private:

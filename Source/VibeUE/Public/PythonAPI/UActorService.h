@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UActorService.generated.h"
 
 /**
@@ -206,7 +206,7 @@ struct FActorPropertyData
  * @note All 27 level actor operations available via Python
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UActorService : public UObject
+class VIBEUE_API UActorService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -223,7 +223,7 @@ public:
 	 * @param MaxResults - Maximum number of results to return (default 100)
 	 * @return Array of actor information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static TArray<FLevelActorInfo> ListLevelActors(
 		const FString& ActorClassFilter = TEXT(""),
 		bool bIncludeHidden = false,
@@ -235,7 +235,7 @@ public:
 	 * @param ClassName - Actor class name to search for
 	 * @return Array of matching actors
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static TArray<FLevelActorInfo> FindActorsByClass(const FString& ClassName);
 
 	/**
@@ -245,7 +245,7 @@ public:
 	 * @param OutInfo - Structure containing actor details
 	 * @return True if actor found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetActorInfo(const FString& ActorNameOrLabel, FLevelActorInfo& OutInfo);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -262,7 +262,7 @@ public:
 	 * @param ActorLabel - Optional display label for the actor
 	 * @return Info of spawned actor, or empty struct if failed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static FLevelActorInfo AddActor(
 		const FString& ActorClass,
 		FVector Location,
@@ -276,7 +276,7 @@ public:
 	 * @param ActorNameOrLabel - Name or label of actor to remove
 	 * @return True if actor was removed
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool RemoveActor(const FString& ActorNameOrLabel);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -290,7 +290,7 @@ public:
 	 * @param OutTransform - Transform data including world/relative transforms and bounds
 	 * @return True if actor found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetTransform(const FString& ActorNameOrLabel, FActorTransformData& OutTransform);
 
 	/**
@@ -302,7 +302,7 @@ public:
 	 * @param Scale - New scale
 	 * @return True if transform was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetTransform(
 		const FString& ActorNameOrLabel,
 		FVector Location,
@@ -317,7 +317,7 @@ public:
 	 * @param bSweep - Whether to check for collision during move
 	 * @return True if location was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetLocation(
 		const FString& ActorNameOrLabel,
 		FVector Location,
@@ -330,7 +330,7 @@ public:
 	 * @param Rotation - New world rotation
 	 * @return True if rotation was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetRotation(const FString& ActorNameOrLabel, FRotator Rotation);
 
 	/**
@@ -340,7 +340,7 @@ public:
 	 * @param Scale - New scale
 	 * @return True if scale was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetScale(const FString& ActorNameOrLabel, FVector Scale);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -364,7 +364,7 @@ public:
 	 *   unreal.ActorService.set_actor_lock_location("MyCube", True)   # Lock position
 	 *   unreal.ActorService.set_actor_lock_location("MyCube", False)  # Unlock position
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetActorLockLocation(const FString& ActorNameOrLabel, bool bLocked);
 
 	/**
@@ -374,7 +374,7 @@ public:
 	 * @param OutLocked - Whether location is locked
 	 * @return True if actor was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetActorLockLocation(const FString& ActorNameOrLabel, bool& OutLocked);
 
 	/**
@@ -393,7 +393,7 @@ public:
 	 *   # Make rotation absolute (world-space) while keeping location relative
 	 *   unreal.ActorService.set_absolute_transform("MyCube", False, True, False)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetAbsoluteTransform(
 		const FString& ActorNameOrLabel,
 		bool bAbsoluteLocation,
@@ -409,7 +409,7 @@ public:
 	 * @param OutAbsoluteScale - Whether scale is absolute
 	 * @return True if actor was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetAbsoluteTransform(
 		const FString& ActorNameOrLabel,
 		bool& OutAbsoluteLocation,
@@ -432,7 +432,7 @@ public:
 	 *   unreal.ActorService.set_preserve_scale_ratio(True)   # Lock scale axes together
 	 *   unreal.ActorService.set_preserve_scale_ratio(False)  # Allow independent axis scaling
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetPreserveScaleRatio(bool bPreserve);
 
 	/**
@@ -440,7 +440,7 @@ public:
 	 *
 	 * @return True if scale axes are locked together (uniform scaling)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetPreserveScaleRatio();
 
 	/**
@@ -450,7 +450,7 @@ public:
 	 * @param bInstant - If true, jump instantly; if false, smooth transition
 	 * @return True if focus succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool FocusActor(const FString& ActorNameOrLabel, bool bInstant = false);
 
 	/**
@@ -459,7 +459,7 @@ public:
 	 * @param ActorNameOrLabel - Name or label of the actor to move
 	 * @return True if move succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool MoveActorToView(const FString& ActorNameOrLabel);
 
 	/**
@@ -468,7 +468,7 @@ public:
 	 *
 	 * @return True if refresh succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool RefreshViewport();
 
 	/**
@@ -483,7 +483,7 @@ public:
 	 *   # Position camera at (1000, 2000, 500) looking down at 45 degrees
 	 *   unreal.ActorService.set_viewport_camera(unreal.Vector(1000, 2000, 500), unreal.Rotator(-45, 0, 0))
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetViewportCamera(FVector Location, FRotator Rotation);
 
 	/**
@@ -502,7 +502,7 @@ public:
 	 *   # Get a front view with extra padding
 	 *   view = unreal.ActorService.get_actor_view_camera("MyBuilding", unreal.EViewDirection.FRONT, 1.5)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static FCameraViewInfo GetActorViewCamera(
 		const FString& ActorNameOrLabel,
 		EViewDirection Direction = EViewDirection::Front,
@@ -518,7 +518,7 @@ public:
 	 * @param PaddingMultiplier - Extra distance multiplier (1.0 = tight fit, 1.5 = 50% padding). Default 1.2
 	 * @return Camera view info with the calculated position (camera NOT moved)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static FCameraViewInfo CalculateActorView(
 		const FString& ActorNameOrLabel,
 		EViewDirection Direction = EViewDirection::Front,
@@ -536,7 +536,7 @@ public:
 	 * @param OutValue - The property value as string
 	 * @return True if property found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool GetProperty(
 		const FString& ActorNameOrLabel,
 		const FString& PropertyPath,
@@ -550,7 +550,7 @@ public:
 	 * @param Value - The value to set (as string, e.g., "5000" or "(R=255,G=0,B=0,A=255)")
 	 * @return True if property was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetProperty(
 		const FString& ActorNameOrLabel,
 		const FString& PropertyPath,
@@ -564,7 +564,7 @@ public:
 	 * @param CategoryFilter - Optional: filter by property category
 	 * @return Array of property information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static TArray<FActorPropertyData> GetAllProperties(
 		const FString& ActorNameOrLabel,
 		const FString& ComponentName = TEXT(""),
@@ -581,7 +581,7 @@ public:
 	 * @param FolderPath - Folder path (e.g., "Level/Props" or "Characters/NPCs")
 	 * @return True if folder was set
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SetFolder(const FString& ActorNameOrLabel, const FString& FolderPath);
 
 	/**
@@ -591,7 +591,7 @@ public:
 	 * @param NewLabel - New display label
 	 * @return True if rename succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool RenameActor(const FString& ActorNameOrLabel, const FString& NewLabel);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -606,7 +606,7 @@ public:
 	 * @param SocketName - Optional socket name to attach to
 	 * @return True if attach succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool AttachActor(
 		const FString& ChildNameOrLabel,
 		const FString& ParentNameOrLabel,
@@ -618,7 +618,7 @@ public:
 	 * @param ActorNameOrLabel - Name or label of the actor to detach
 	 * @return True if detach succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool DetachActor(const FString& ActorNameOrLabel);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -632,7 +632,7 @@ public:
 	 * @param bAddToSelection - If true, add to current selection; if false, replace selection
 	 * @return True if select succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool SelectActor(const FString& ActorNameOrLabel, bool bAddToSelection = false);
 
 	/**
@@ -640,7 +640,7 @@ public:
 	 *
 	 * @return True if deselect succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors")
 	static bool DeselectAll();
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -657,7 +657,7 @@ public:
 	 *   if not unreal.ActorService.actor_exists("TargetDummy_01"):
 	 *       unreal.ActorService.add_actor("StaticMeshActor", (100, 200, 0), (0, 0, 0), (1, 1, 1), "TargetDummy_01")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors|Exists")
 	static bool ActorExists(const FString& ActorLabel);
 
 	/**
@@ -670,7 +670,7 @@ public:
 	 *   if not unreal.ActorService.actor_exists_by_tag("Enemy"):
 	 *       # Spawn enemies
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Actors|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Actors|Exists")
 	static bool ActorExistsByTag(const FString& Tag);
 
 	/** Find an actor in the current level by name or label (case-insensitive, falls back to contains-match). */

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UNiagaraScratchPadService.generated.h"
 
 /**
@@ -149,7 +149,7 @@ struct FNiagaraScratchConnectionInfo
  * and save. Discover method signatures with discover_python_class('unreal.NiagaraScratchPadService').
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UNiagaraScratchPadService : public UObject
+class VIBEUE_API UNiagaraScratchPadService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -173,7 +173,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.create_scratch_module("/Game/VFX/NS_Fx", "Main", "ParticleUpdate", "SplatLine")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Create Scratch Module"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Create Scratch Module"))
 	static FNiagaraScratchResult CreateScratchModule(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -189,7 +189,7 @@ public:
 	 * Example:
 	 *   path = unreal.NiagaraScratchPadService.get_scratch_script_path("/Game/VFX/NS_Fx", "Main", "SplatLine")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Get Scratch Script Path"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Scratch Script Path"))
 	static FString GetScratchScriptPath(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -201,7 +201,7 @@ public:
 	 * Example:
 	 *   mods = unreal.NiagaraScratchPadService.list_scratch_modules("/Game/VFX/NS_Fx", "Main")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "List Scratch Modules"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "List Scratch Modules"))
 	static TArray<FString> ListScratchModules(
 		const FString& SystemPath,
 		const FString& EmitterName);
@@ -217,7 +217,7 @@ public:
 	 *   nodes = unreal.NiagaraScratchPadService.list_nodes("/Game/VFX/NS_Fx", "Main", "SplatLine")
 	 *   for n in nodes: print(n.node_type, n.node_id, n.title)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "List Scratch Nodes"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "List Scratch Nodes"))
 	static TArray<FNiagaraScratchNodeInfo> ListNodes(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -231,7 +231,7 @@ public:
 	 * Example:
 	 *   pins = unreal.NiagaraScratchPadService.get_node_pins("/Game/VFX/NS_Fx", "Main", "SplatLine", node_id)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Get Scratch Node Pins"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Scratch Node Pins"))
 	static TArray<FNiagaraScratchPinInfo> GetNodePins(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -241,7 +241,7 @@ public:
 	/**
 	 * List all wires (pin-to-pin connections) in a scratch module's graph.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "List Scratch Connections"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "List Scratch Connections"))
 	static TArray<FNiagaraScratchConnectionInfo> ListConnections(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -262,7 +262,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.add_node("/Game/VFX/NS_Fx", "Main", "SplatLine", "MapGet", 0, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Scratch Node"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Scratch Node"))
 	static FNiagaraScratchResult AddNode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -282,7 +282,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.add_op_node("/Game/VFX/NS_Fx", "Main", "SplatLine", "Numeric::Multiply", 200, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Scratch Op Node"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Scratch Op Node"))
 	static FNiagaraScratchResult AddOpNode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -304,7 +304,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.add_custom_hlsl_node(S, E, mod, "Result = A * B;", 300, 0)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Custom HLSL Node"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Custom HLSL Node"))
 	static FNiagaraScratchResult AddCustomHlslNode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -318,7 +318,7 @@ public:
 	 *
 	 * @param NodeId Node GUID of a Custom HLSL node
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Set Custom HLSL Code"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Set Custom HLSL Code"))
 	static bool SetCustomHlslCode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -329,7 +329,7 @@ public:
 	/**
 	 * Read the HLSL body of a Custom HLSL node.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Get Custom HLSL Code"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Get Custom HLSL Code"))
 	static FString GetCustomHlslCode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -351,7 +351,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraScratchPadService.add_pin(S, E, mod, hlsl_id, "Input", "Vector", "StartPos")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Scratch Pin"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Scratch Pin"))
 	static FNiagaraScratchResult AddPin(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -364,7 +364,7 @@ public:
 	/**
 	 * Delete a node from the scratch graph.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Delete Scratch Node"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Delete Scratch Node"))
 	static bool DeleteNode(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -374,7 +374,7 @@ public:
 	/**
 	 * Move a node to a new graph position (purely cosmetic).
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Set Scratch Node Position"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Set Scratch Node Position"))
 	static bool SetNodePosition(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -397,7 +397,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraScratchPadService.connect_pins(S, E, mod, mapget_id, "Module.TireRadius", hlsl_id, "TireRadius")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Connect Scratch Pins"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Connect Scratch Pins"))
 	static bool ConnectPins(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -410,7 +410,7 @@ public:
 	/**
 	 * Break all links on a single pin.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Disconnect Scratch Pin"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Disconnect Scratch Pin"))
 	static bool DisconnectPin(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -432,7 +432,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.add_module_input(S, E, mod, "TireRadius", "float")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Module Input"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Module Input"))
 	static FNiagaraScratchResult AddModuleInput(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -451,7 +451,7 @@ public:
 	 * Example:
 	 *   r = unreal.NiagaraScratchPadService.add_module_output(S, E, mod, "Particles.Splatted", "bool")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Add Module Output"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Add Module Output"))
 	static FNiagaraScratchResult AddModuleOutput(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -472,7 +472,7 @@ public:
 	 * Example:
 	 *   ok = unreal.NiagaraScratchPadService.apply_changes("/Game/VFX/NS_Fx")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (DisplayName = "Apply Scratch Changes"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|NiagaraScratch", meta = (AICallable, DisplayName = "Apply Scratch Changes"))
 	static bool ApplyChanges(const FString& SystemPath);
 
 	// (All internal helpers are file-static in UNiagaraScratchPadService.cpp.)

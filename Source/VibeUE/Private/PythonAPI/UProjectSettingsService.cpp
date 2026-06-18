@@ -766,10 +766,10 @@ FProjectSettingResult UProjectSettingsService::SetCategorySettingsFromJson(const
 		FString Value;
 		if (Pair.Value->TryGetString(Value))
 		{
-			FProjectSettingResult SingleResult = SetSetting(CategoryId, Pair.Key, Value);
+			FProjectSettingResult SingleResult = SetSetting(CategoryId, *Pair.Key, Value);
 			if (SingleResult.bSuccess)
 			{
-				Result.ModifiedSettings.Add(Pair.Key);
+				Result.ModifiedSettings.Add(*Pair.Key);
 			}
 			else
 			{

@@ -470,9 +470,9 @@ TArray<FBlueprintVariableInfo> UBlueprintService::ListVariables(const FString& B
 	return Variables;
 }
 
-TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& BlueprintPath)
+TArray<FVibeBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& BlueprintPath)
 {
-	TArray<FBlueprintFunctionInfo> Functions;
+	TArray<FVibeBlueprintFunctionInfo> Functions;
 
 	UBlueprint* Blueprint = LoadBlueprint(BlueprintPath);
 	if (!Blueprint)
@@ -491,7 +491,7 @@ TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& B
 				continue;
 			}
 
-			FBlueprintFunctionInfo FuncInfo;
+			FVibeBlueprintFunctionInfo FuncInfo;
 			FuncInfo.FunctionName = Function->GetName();
 			FuncInfo.bIsPure = Function->HasAnyFunctionFlags(FUNC_BlueprintPure);
 
@@ -532,14 +532,14 @@ TArray<FBlueprintFunctionInfo> UBlueprintService::ListFunctions(const FString& B
 		const FString GraphName = Graph->GetName();
 
 		// Skip if already found in the compiled class
-		const bool bAlreadyFound = Functions.ContainsByPredicate([&GraphName](const FBlueprintFunctionInfo& F)
+		const bool bAlreadyFound = Functions.ContainsByPredicate([&GraphName](const FVibeBlueprintFunctionInfo& F)
 		{
 			return F.FunctionName == GraphName;
 		});
 
 		if (!bAlreadyFound)
 		{
-			FBlueprintFunctionInfo FuncInfo;
+			FVibeBlueprintFunctionInfo FuncInfo;
 			FuncInfo.FunctionName = GraphName;
 			FuncInfo.bIsPure = false;
 			FuncInfo.bIsOverride = false;

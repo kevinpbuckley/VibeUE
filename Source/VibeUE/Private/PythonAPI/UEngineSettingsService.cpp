@@ -934,10 +934,10 @@ FEngineSettingResult UEngineSettingsService::SetCategorySettingsFromJson(const F
 		FString Value;
 		if (Pair.Value->TryGetString(Value))
 		{
-			FEngineSettingResult SingleResult = SetSetting(CategoryId, Pair.Key, Value);
+			FEngineSettingResult SingleResult = SetSetting(CategoryId, *Pair.Key, Value);
 			if (SingleResult.bSuccess)
 			{
-				Result.ModifiedSettings.Add(Pair.Key);
+				Result.ModifiedSettings.Add(*Pair.Key);
 			}
 			else
 			{
@@ -972,10 +972,10 @@ FEngineSettingResult UEngineSettingsService::SetConsoleVariablesFromJson(const F
 		FString Value;
 		if (Pair.Value->TryGetString(Value))
 		{
-			FEngineSettingResult SingleResult = SetConsoleVariable(Pair.Key, Value);
+			FEngineSettingResult SingleResult = SetConsoleVariable(*Pair.Key, Value);
 			if (SingleResult.bSuccess)
 			{
-				Result.ModifiedSettings.Add(Pair.Key);
+				Result.ModifiedSettings.Add(*Pair.Key);
 			}
 			else
 			{

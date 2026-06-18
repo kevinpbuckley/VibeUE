@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UProjectSettingsService.generated.h"
 
 /**
@@ -209,7 +209,7 @@ struct FSettingsClassInfo
  * @note Changes are written to config files and may require editor restart
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UProjectSettingsService : public UObject
+class VIBEUE_API UProjectSettingsService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -224,7 +224,7 @@ public:
 	 *
 	 * @return Array of category information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FProjectSettingCategory> ListCategories();
 
 	// =================================================================
@@ -237,7 +237,7 @@ public:
 	 *
 	 * @return Array of settings class information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FSettingsClassInfo> DiscoverSettingsClasses();
 
 	/**
@@ -246,7 +246,7 @@ public:
 	 * @param CategoryId - Category identifier (e.g., "general", "maps", "rendering")
 	 * @return Array of setting information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FProjectSettingInfo> ListSettings(const FString& CategoryId);
 
 	/**
@@ -257,7 +257,7 @@ public:
 	 * @param OutInfo - Output structure with setting details
 	 * @return True if setting was found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static bool GetSettingInfo(const FString& CategoryId, const FString& Key, FProjectSettingInfo& OutInfo);
 
 	// =================================================================
@@ -271,7 +271,7 @@ public:
 	 * @param Key - Setting key name
 	 * @return Setting value as string (empty if not found)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FString GetSetting(const FString& CategoryId, const FString& Key);
 
 	/**
@@ -282,7 +282,7 @@ public:
 	 * @param Value - New value as string
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FProjectSettingResult SetSetting(const FString& CategoryId, const FString& Key, const FString& Value);
 
 	// =================================================================
@@ -295,7 +295,7 @@ public:
 	 * @param CategoryId - Category identifier
 	 * @return JSON object string with all key-value pairs
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FString GetCategorySettingsAsJson(const FString& CategoryId);
 
 	/**
@@ -305,7 +305,7 @@ public:
 	 * @param SettingsJson - JSON object string with key-value pairs
 	 * @return Operation result with success/failure lists
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FProjectSettingResult SetCategorySettingsFromJson(const FString& CategoryId, const FString& SettingsJson);
 
 	// =================================================================
@@ -318,7 +318,7 @@ public:
 	 * @param ConfigFile - Config file name (e.g., "DefaultEngine.ini", "DefaultGame.ini")
 	 * @return Array of section names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FString> ListIniSections(const FString& ConfigFile);
 
 	/**
@@ -328,7 +328,7 @@ public:
 	 * @param ConfigFile - Config file name
 	 * @return Array of key names
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FString> ListIniKeys(const FString& Section, const FString& ConfigFile);
 
 	/**
@@ -339,7 +339,7 @@ public:
 	 * @param ConfigFile - Config file name (e.g., "DefaultEngine.ini")
 	 * @return Value as string (empty if not found)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FString GetIniValue(const FString& Section, const FString& Key, const FString& ConfigFile);
 
 	/**
@@ -351,7 +351,7 @@ public:
 	 * @param ConfigFile - Config file name
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FProjectSettingResult SetIniValue(const FString& Section, const FString& Key, const FString& Value, const FString& ConfigFile);
 
 	/**
@@ -363,7 +363,7 @@ public:
 	 * @param ConfigFile - Config file name
 	 * @return Array of values
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static TArray<FString> GetIniArray(const FString& Section, const FString& Key, const FString& ConfigFile);
 
 	/**
@@ -375,7 +375,7 @@ public:
 	 * @param ConfigFile - Config file name
 	 * @return Operation result
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static FProjectSettingResult SetIniArray(const FString& Section, const FString& Key, const TArray<FString>& Values, const FString& ConfigFile);
 
 	// =================================================================
@@ -387,7 +387,7 @@ public:
 	 *
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static bool SaveAllConfig();
 
 	/**
@@ -396,7 +396,7 @@ public:
 	 * @param ConfigFile - Config file name (e.g., "DefaultEngine.ini")
 	 * @return True if successful
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|ProjectSettings")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|ProjectSettings")
 	static bool SaveConfig(const FString& ConfigFile);
 
 private:

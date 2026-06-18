@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "AssetRegistry/AssetData.h"
 #include "UAssetDiscoveryService.generated.h"
 
@@ -33,7 +33,7 @@
  * @note This replaces the JSON-based manage_asset MCP tool
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UAssetDiscoveryService : public UObject
+class VIBEUE_API UAssetDiscoveryService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -50,7 +50,7 @@ public:
 	 * Example:
 	 *   assets = unreal.AssetDiscoveryService.search_assets("BP_Player_Test", "Blueprint")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static TArray<FAssetData> SearchAssets(
 		const FString& SearchTerm,
 		const FString& AssetType = TEXT(""));
@@ -64,7 +64,7 @@ public:
 	 * Example:
 	 *   blueprints = unreal.AssetDiscoveryService.get_assets_by_type("Blueprint")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static TArray<FAssetData> GetAssetsByType(const FString& AssetType);
 
 	/**
@@ -82,7 +82,7 @@ public:
 	 *   if asset:
 	 *       print(f"Found: {asset.asset_name}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool FindAssetByPath(const FString& AssetPath, FAssetData& OutAsset);
 
 	/**
@@ -94,7 +94,7 @@ public:
 	 * Example:
 	 *   deps = unreal.AssetDiscoveryService.get_asset_dependencies("/Game/BP_Player_Test")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static TArray<FString> GetAssetDependencies(const FString& AssetPath);
 
 	/**
@@ -106,7 +106,7 @@ public:
 	 * Example:
 	 *   refs = unreal.AssetDiscoveryService.get_asset_referencers("/Game/BP_Player_Test")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static TArray<FString> GetAssetReferencers(const FString& AssetPath);
 
 	/**
@@ -119,7 +119,7 @@ public:
 	 * Example:
 	 *   assets = unreal.AssetDiscoveryService.list_assets_in_path("/Game/Blueprints", "Blueprint")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static TArray<FAssetData> ListAssetsInPath(
 		const FString& Path,
 		const FString& AssetType = TEXT(""));
@@ -135,7 +135,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.open_asset("/Game/Blueprints/BP_Player")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool OpenAsset(const FString& AssetPath);
 
 	/**
@@ -147,7 +147,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.delete_asset("/Game/Blueprints/BP_OldActor")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool DeleteAsset(const FString& AssetPath);
 
 	/**
@@ -160,7 +160,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.duplicate_asset("/Game/BP_Player", "/Game/BP_Player_Copy")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool DuplicateAsset(const FString& SourcePath, const FString& DestinationPath);
 
 	/**
@@ -173,7 +173,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.move_asset("/Game/AI/ST_Patrol", "/Game/AI/Tasks/ST_Patrol")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool MoveAsset(const FString& SourcePath, const FString& DestinationPath);
 
 	/**
@@ -185,7 +185,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.save_asset("/Game/Blueprints/BP_Player")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool SaveAsset(const FString& AssetPath);
 
 	/**
@@ -197,7 +197,7 @@ public:
 	 *   count = unreal.AssetDiscoveryService.save_all_assets()
 	 *   print(f"Saved {count} assets")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static int32 SaveAllAssets();
 
 	// ========== Texture Operations ==========
@@ -212,7 +212,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.import_texture("C:/Images/logo.png", "/Game/Textures/Logo")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool ImportTexture(const FString& SourceFilePath, const FString& DestinationPath);
 
 	/**
@@ -235,7 +235,7 @@ public:
 	 * Example:
 	 *   path, err = unreal.AssetDiscoveryService.import_asset("C:/Images/rocks.jpg", "/Game/UI/Textures", "T_Rocks")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static FString ImportAsset(
 		const FString& SourceFilePath,
 		const FString& DestinationFolder,
@@ -252,7 +252,7 @@ public:
 	 * Example:
 	 *   unreal.AssetDiscoveryService.export_texture("/Game/Textures/MyTexture", "C:/Exports/texture.png")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets")
 	static bool ExportTexture(const FString& AssetPath, const FString& ExportFilePath);
 
 	// ========== Existence Checks ==========
@@ -267,7 +267,7 @@ public:
 	 *   if not unreal.AssetDiscoveryService.asset_exists("/Game/Materials/M_Base"):
 	 *       # Create the material
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Exists")
 	static bool AssetExists(const FString& AssetPath);
 
 	// ========== Open Assets & Content Browser ==========
@@ -286,7 +286,7 @@ public:
 	 *   if asset:
 	 *       print(f"Currently editing: {asset.asset_name}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Editor")
 	static bool GetActiveAsset(FAssetData& OutAsset);
 
 	/**
@@ -299,7 +299,7 @@ public:
 	 *   for asset in open_assets:
 	 *       print(f"Open: {asset.asset_name} at {asset.package_path}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Editor")
 	static TArray<FAssetData> GetOpenAssets();
 
 	/**
@@ -314,7 +314,7 @@ public:
 	 *       for asset in selected:
 	 *           print(f"  - {asset.asset_name}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Editor")
 	static TArray<FAssetData> GetContentBrowserSelections();
 
 	/**
@@ -333,7 +333,7 @@ public:
 	 *   else:
 	 *       print("No asset selected")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Editor")
 	static bool GetPrimaryContentBrowserSelection(FAssetData& OutAsset);
 
 	/**
@@ -346,6 +346,6 @@ public:
 	 *   if unreal.AssetDiscoveryService.is_asset_open("/Game/Blueprints/BP_Player"):
 	 *       print("BP_Player is currently being edited")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Assets|Editor")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Assets|Editor")
 	static bool IsAssetOpen(const FString& AssetPath);
 };

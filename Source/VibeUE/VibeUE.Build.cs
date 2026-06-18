@@ -109,6 +109,7 @@ public class VibeUE : ModuleRules
 				"StructUtils",            // For FInstancedStruct / MakeInstancedStruct support
 				"MeshDescription",        // For FMeshDescription / TVertexInstanceAttributesRef (UV editing)
 				"StaticMeshDescription",  // For FStaticMeshAttributes / FStaticMeshOperations / FUVMapParameters
+				"ToolsetRegistry",        // UE 5.8 native AI toolset registry — exposes services as AICallable tools on Epic's MCP endpoint
 			}
 		);
 

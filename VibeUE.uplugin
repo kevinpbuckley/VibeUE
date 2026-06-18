@@ -2,7 +2,7 @@
 	"FileVersion": 3,
 	"Version": 4,
 	"VersionName": "4.0",
-	"EngineVersion": "5.7.0",
+	"EngineVersion": "5.8.0",
 	"FriendlyName": "VibeUE",
 	"Description": "In Editor AI Chat and Model Context Protocol server for Unreal Engine",
 	"Category": "Editor",
@@ -63,6 +63,18 @@
 		},
 		{
 			"Name": "MetaSound",
+			"Enabled": true
+		},
+		{
+			"Name": "StructUtils",
+			"Enabled": true
+		},
+		{
+			"Name": "GameplayTagsEditor",
+			"Enabled": true
+		},
+		{
+			"Name": "ToolsetRegistry",
 			"Enabled": true
 		}
 	]

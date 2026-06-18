@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UScreenshotService.generated.h"
 
 /**
@@ -70,7 +70,7 @@ struct FEditorTabInfo
  *       print(f"Captured: {result.file_path}")
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UScreenshotService : public UObject
+class VIBEUE_API UScreenshotService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -92,7 +92,7 @@ public:
 	 * @param FilePath - Output file path (PNG format recommended)
 	 * @return Screenshot result with success status and file info
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static FScreenshotResult CaptureEditorWindow(const FString& FilePath);
 
 	/**
@@ -101,7 +101,7 @@ public:
 	 * @param FilePath - Output file path (PNG format recommended)
 	 * @return Screenshot result with success status and file info
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static FScreenshotResult CaptureActiveWindow(const FString& FilePath);
 
 	/**
@@ -116,7 +116,7 @@ public:
 	 *                    when no extension is given.
 	 * @return Screenshot result; success means the asset's editor was focused and the file written.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static FScreenshotResult CaptureAssetEditor(const FString& AssetPath, const FString& FilePath);
 
 	/**
@@ -124,21 +124,21 @@ public:
 	 * Useful for understanding what the user is currently viewing.
 	 * @return Array of editor tab information
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static TArray<FEditorTabInfo> GetOpenEditorTabs();
 
 	/**
 	 * Get the title of the currently focused window.
 	 * @return Window title string
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static FString GetActiveWindowTitle();
 
 	/**
 	 * Check if the Unreal Editor main window is in focus.
 	 * @return True if the editor is the foreground window
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Screenshot")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Screenshot")
 	static bool IsEditorWindowActive();
 
 private:

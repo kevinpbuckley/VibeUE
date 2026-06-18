@@ -2882,7 +2882,7 @@ bool UWidgetService::RenameWidget(
 	TargetWidget->Modify();
 
 	const FName NewFName(*NewName);
-	TargetWidget->Rename(*NewName, TargetWidget->GetOuter(), REN_DontCreateRedirectors | REN_ForceNoResetLoaders);
+	TargetWidget->Rename(*NewName, TargetWidget->GetOuter(), REN_DontCreateRedirectors);
 
 	FBlueprintEditorUtils::MarkBlueprintAsModified(WidgetBP);
 

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UEditorTransactionService.generated.h"
 
 /**
@@ -77,7 +77,7 @@ struct FTransactionResult
  *   history = unreal.EditorTransactionService.get_undo_history(10)
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UEditorTransactionService : public UObject
+class VIBEUE_API UEditorTransactionService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -91,7 +91,7 @@ public:
 	 *
 	 * @return Result with success status and description of what was undone
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FTransactionResult Undo();
 
 	/**
@@ -99,7 +99,7 @@ public:
 	 *
 	 * @return Result with success status and description of what was redone
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FTransactionResult Redo();
 
 	/**
@@ -108,7 +108,7 @@ public:
 	 * @param Count - Number of transactions to undo
 	 * @return Result with success status and count of transactions undone
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FTransactionResult UndoMultiple(int32 Count);
 
 	/**
@@ -117,7 +117,7 @@ public:
 	 * @param Count - Number of transactions to redo
 	 * @return Result with success status and count of transactions redone
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FTransactionResult RedoMultiple(int32 Count);
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -132,7 +132,7 @@ public:
 	 * @param Description - Human-readable name for the transaction (shown in Edit > Undo)
 	 * @return True if transaction was started
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static bool BeginTransaction(const FString& Description);
 
 	/**
@@ -140,7 +140,7 @@ public:
 	 *
 	 * @return True if a transaction was ended
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static bool EndTransaction();
 
 	/**
@@ -150,7 +150,7 @@ public:
 	 *
 	 * @return Result with success status and description of what was reverted
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FTransactionResult CancelTransaction();
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -162,7 +162,7 @@ public:
 	 *
 	 * @return True if undo is available
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static bool CanUndo();
 
 	/**
@@ -170,7 +170,7 @@ public:
 	 *
 	 * @return True if redo is available
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static bool CanRedo();
 
 	/**
@@ -178,7 +178,7 @@ public:
 	 *
 	 * @return Transaction title, or empty string if nothing to undo
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FString GetUndoDescription();
 
 	/**
@@ -186,7 +186,7 @@ public:
 	 *
 	 * @return Transaction title, or empty string if nothing to redo
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static FString GetRedoDescription();
 
 	/**
@@ -195,7 +195,7 @@ public:
 	 * @param MaxEntries - Maximum number of history entries to return (default 20)
 	 * @return Array of transaction info, most recent first
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static TArray<FTransactionInfo> GetUndoHistory(int32 MaxEntries = 20);
 
 	/**
@@ -204,7 +204,7 @@ public:
 	 * @param MaxEntries - Maximum number of history entries to return (default 20)
 	 * @return Array of transaction info, most recent first
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static TArray<FTransactionInfo> GetRedoHistory(int32 MaxEntries = 20);
 
 	/**
@@ -212,7 +212,7 @@ public:
 	 *
 	 * @return Number of undoable transactions
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static int32 GetUndoCount();
 
 	/**
@@ -220,7 +220,7 @@ public:
 	 *
 	 * @return Number of redoable transactions
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static int32 GetRedoCount();
 
 	// ═══════════════════════════════════════════════════════════════════
@@ -233,6 +233,6 @@ public:
 	 * @param Reason - Reason for clearing (logged for diagnostics)
 	 * @return True if buffer was reset
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Transaction")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|Transaction")
 	static bool ResetHistory(const FString& Reason = TEXT("Manual reset"));
 };

@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UUVMappingService.generated.h"
 
 /**
@@ -248,7 +248,7 @@ struct FUVLightmapSettings
  *       "/Game/Meshes/SM_Wall", 0, 1, "D:/uv_wall_lm.png", 1024)
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UUVMappingService : public UObject
+class VIBEUE_API UUVMappingService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -264,14 +264,14 @@ public:
 	 * @param MeshPath - Full path to a StaticMesh or SkeletalMesh asset.
 	 * @return Array of channel info, ordered by LOD then channel.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "List UV Channels"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "List UV Channels"))
 	static TArray<FUVChannelInfo> ListUVChannels(const FString& MeshPath);
 
 	/**
 	 * Get diagnostic stats for a single (LOD, channel) pair.
 	 * Maps to action="get_uv_channel_info".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Get UV Channel Info"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get UV Channel Info"))
 	static bool GetUVChannelInfo(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -282,7 +282,7 @@ public:
 	 * Build an aggregate UV health report. Single call to judge ship-readiness.
 	 * Maps to action="get_uv_health".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Get UV Health"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get UV Health"))
 	static bool GetUVHealth(const FString& MeshPath, FUVHealthReport& OutReport);
 
 	// =================================================================
@@ -297,7 +297,7 @@ public:
 	 * @param LODIndex - LOD to modify.
 	 * @return Result with the new channel index in Message.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Add UV Channel"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Add UV Channel"))
 	static FUVMappingResult AddUVChannel(const FString& MeshPath, int32 LODIndex = 0);
 
 	/**
@@ -307,7 +307,7 @@ public:
 	 * @note Channel 0 cannot be removed. If the lightmap coordinate index points at or
 	 *       above the removed channel, it is adjusted automatically.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Remove UV Channel"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Remove UV Channel"))
 	static FUVMappingResult RemoveUVChannel(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -317,7 +317,7 @@ public:
 	 * Copy UVs from one channel into another (creating the destination if needed).
 	 * Maps to action="copy_uv_channel".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Copy UV Channel"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Copy UV Channel"))
 	static FUVMappingResult CopyUVChannel(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -330,7 +330,7 @@ public:
 	 *
 	 * @param Count - 1..MAX_MESH_TEXTURE_COORDS_MD (typically 8). Must be >= 1.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Set UV Channel Count"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Set UV Channel Count"))
 	static FUVMappingResult SetUVChannelCount(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -354,7 +354,7 @@ public:
 	 *
 	 * @note Also sets LightMapCoordinateIndex = DestUVIndex on the static mesh.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Generate Lightmap UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Generate Lightmap UVs"))
 	static FUVMappingResult GenerateLightmapUVs(
 		const FString& MeshPath,
 		int32 SourceUVIndex = 0,
@@ -370,7 +370,7 @@ public:
 	 *
 	 * @note "Planar" projects along world +Z. "Cylindrical" wraps around world Z axis.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Auto Unwrap UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Auto Unwrap UVs"))
 	static FUVMappingResult AutoUnwrapUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -384,7 +384,7 @@ public:
 	 *
 	 * @param PaddingPercent - Padding between islands as percent of UV space.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Pack UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Pack UVs"))
 	static FUVMappingResult PackUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -400,7 +400,7 @@ public:
 	 * then translate.
 	 * Maps to action="transform_uvs".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Transform UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs"))
 	static FUVMappingResult TransformUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -415,7 +415,7 @@ public:
 	 * Mirror UVs across U=0.5 and/or V=0.5 in a channel.
 	 * Maps to action="flip_uvs".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Flip UVs"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Flip UVs"))
 	static FUVMappingResult FlipUVs(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -446,7 +446,7 @@ public:
 	 * @param ScaleU/V, RotationDegrees, OffsetU/V - Affine transform applied to selected UVs.
 	 * @return Result; Message reports how many vertex instances were transformed.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Transform UVs By Normal"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Normal"))
 	static FUVMappingResult TransformUVsByNormal(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -468,7 +468,7 @@ public:
 	 *
 	 * @return Number of vertex instances whose normal dotted with the axis lands in [MinDot, MaxDot].
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Count Vertices By Normal"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Count Vertices By Normal"))
 	static int32 CountVerticesByNormal(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -487,7 +487,7 @@ public:
 	 * @param PolygonGroupName - Slot name (use ListPolygonGroups to discover).
 	 *                           If empty or not found, returns failure.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Transform UVs By Polygon Group"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UVs By Polygon Group"))
 	static FUVMappingResult TransformUVsByPolygonGroup(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -504,7 +504,7 @@ public:
 	 * input to TransformUVsByPolygonGroup.
 	 * Maps to action="list_polygon_groups".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "List Polygon Groups"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "List Polygon Groups"))
 	static TArray<FString> ListPolygonGroups(const FString& MeshPath, int32 LODIndex);
 
 	/**
@@ -517,7 +517,7 @@ public:
 	 *
 	 * Maps to action="identify_uv_islands".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Identify UV Islands"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Identify UV Islands"))
 	static TArray<FUVIslandInfo> IdentifyUVIslands(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -533,7 +533,7 @@ public:
 	 *
 	 * Maps to action="transform_uv_island".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Transform UV Island"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Transform UV Island"))
 	static FUVMappingResult TransformUVIsland(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -553,7 +553,7 @@ public:
 	 * Read lightmap-related fields from a static mesh.
 	 * Maps to action="get_lightmap_settings".
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Get Lightmap Settings"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Get Lightmap Settings"))
 	static bool GetLightmapSettings(const FString& MeshPath, FUVLightmapSettings& OutSettings);
 
 	/**
@@ -565,7 +565,7 @@ public:
 	 * @param LightMapResolution - Power-of-two preferred (32..512 typical).
 	 * @param bGenerateLightmapUVs - If true, the next build will regenerate the lightmap channel.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Set Lightmap Settings"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Set Lightmap Settings"))
 	static FUVMappingResult SetLightmapSettings(
 		const FString& MeshPath,
 		int32 LightmapCoordinateIndex = 1,
@@ -586,7 +586,7 @@ public:
 	 * @param ImageSize - Output resolution in pixels (square). 256..4096.
 	 * @return Result with the resolved output path in Message.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (DisplayName = "Export UV Layout Image"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping", meta = (AICallable, DisplayName = "Export UV Layout Image"))
 	static FUVMappingResult ExportUVLayoutImage(
 		const FString& MeshPath,
 		int32 LODIndex,
@@ -601,7 +601,7 @@ public:
 	/**
 	 * Cheap check: does this mesh have a UV channel at (LOD, channel)?
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|UVMapping|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|UVMapping|Exists")
 	static bool MeshHasUVChannel(const FString& MeshPath, int32 LODIndex, int32 ChannelIndex);
 
 private:

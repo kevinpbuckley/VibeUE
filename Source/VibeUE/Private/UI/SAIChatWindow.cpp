@@ -3198,7 +3198,7 @@ void SAIChatWindow::HandleModelRatingsFetched(FHttpRequestPtr Request, FHttpResp
         FString RatingValue;
         if (Pair.Value->TryGetString(RatingValue))
         {
-            ModelRatings.Add(Pair.Key, RatingValue);
+            ModelRatings.Add(*Pair.Key, RatingValue);
         }
     }
     

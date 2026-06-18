@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "URuntimeVirtualTextureService.generated.h"
 
 class URuntimeVirtualTexture;
@@ -116,7 +116,7 @@ struct FRVTVolumeResult
  *   )
  */
 UCLASS(BlueprintType)
-class VIBEUE_API URuntimeVirtualTextureService : public UObject
+class VIBEUE_API URuntimeVirtualTextureService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -147,7 +147,7 @@ public:
 	 * @param bSinglePhysicalSpace - If true, use single physical space (default: false)
 	 * @return Result with asset path and any errors
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|RVT")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|RVT")
 	static FRVTCreateResult CreateRuntimeVirtualTexture(
 		const FString& AssetName,
 		const FString& DirectoryPath,
@@ -169,7 +169,7 @@ public:
 	 * @param AssetPath - Full path to the RVT asset
 	 * @return Info struct with configuration details
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|RVT")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|RVT")
 	static FRVTInfo GetRuntimeVirtualTextureInfo(const FString& AssetPath);
 
 	// =================================================================
@@ -188,7 +188,7 @@ public:
 	 * @param VolumeName - Optional name for the volume actor (auto-generated if empty)
 	 * @return Result with volume actor info and any errors
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|RVT")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|RVT")
 	static FRVTVolumeResult CreateRVTVolume(
 		const FString& LandscapeNameOrLabel,
 		const FString& RVTAssetPath,
@@ -206,7 +206,7 @@ public:
 	 * @param SlotIndex - Slot index in the landscape's RVT array (default: 0)
 	 * @return True if assignment succeeded
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|RVT")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|RVT")
 	static bool AssignRVTToLandscape(
 		const FString& LandscapeNameOrLabel,
 		const FString& RVTAssetPath,

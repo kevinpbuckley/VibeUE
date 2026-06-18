@@ -487,7 +487,7 @@ static FString ActionGetWaterFeatures(const TMap<FString, FString>& Params)
 	Result->SetStringField(TEXT("message"), FString::Printf(
 		TEXT("Water features saved to %s. Found %d waterways (%d points) and %d water bodies (%d points). "
 			 "Water bodies use 'ue5_rings', waterways use 'ue5_points'. Both are origin-centered."),
-		*FilePath, NumWaterways, TotalWaterwayPoints, NumBodies, TotalBodyPoints, *FilePath));
+		*FilePath, NumWaterways, TotalWaterwayPoints, NumBodies, TotalBodyPoints));
 
 	Result->SetStringField(TEXT("ue5_coordinate_note"),
 		TEXT("COORDINATE SYSTEM: +X=East +Y=North, map center at world origin (0,0,0). "

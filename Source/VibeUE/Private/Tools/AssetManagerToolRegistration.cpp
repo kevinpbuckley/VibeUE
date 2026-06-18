@@ -54,15 +54,15 @@ static TMap<FString, FString> FlattenParams(const TMap<FString, FString>& Params
 		if (!Pair.Value.IsValid()) { continue; }
 		if (Pair.Value->Type == EJson::String)
 		{
-			Flat.Add(Pair.Key, Pair.Value->AsString());
+			Flat.Add(*Pair.Key, Pair.Value->AsString());
 		}
 		else if (Pair.Value->Type == EJson::Boolean)
 		{
-			Flat.Add(Pair.Key, Pair.Value->AsBool() ? TEXT("true") : TEXT("false"));
+			Flat.Add(*Pair.Key, Pair.Value->AsBool() ? TEXT("true") : TEXT("false"));
 		}
 		else if (Pair.Value->Type == EJson::Number)
 		{
-			Flat.Add(Pair.Key, FString::Printf(TEXT("%.10g"), Pair.Value->AsNumber()));
+			Flat.Add(*Pair.Key, FString::Printf(TEXT("%.10g"), Pair.Value->AsNumber()));
 		}
 		else
 		{
@@ -84,7 +84,7 @@ static TMap<FString, FString> FlattenParams(const TMap<FString, FString>& Params
 				FJsonSerializer::Serialize(Pair.Value->AsArray(), *W);
 			}
 			// Null/None → leave ValStr empty
-			Flat.Add(Pair.Key, ValStr);
+			Flat.Add(*Pair.Key, ValStr);
 		}
 	}
 	return Flat;

@@ -11,6 +11,10 @@
 #include "HAL/PlatformFileManager.h"
 #include "Tools/PythonTools.h"
 #include "IPythonScriptPlugin.h"
+#include "ToolsetRegistry/UToolsetRegistry.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
+#include "UObject/UObjectHash.h"
+#include "UObject/UObjectIterator.h"
 #include "UI/ChatRichTextStyles.h"
 #include "Utils/VibeUEPaths.h"
 #include "Misc/Paths.h"
@@ -142,6 +146,83 @@ void FModule::StartupModule()
 
 	// Register PreExit callback to cleanup Python references before Unreal GC
 	FCoreDelegates::OnPreExit.AddRaw(this, &FModule::OnPreExit);
+
+	// Expose VibeUE service toolsets on UE 5.8's native ToolsetRegistry / MCP endpoint.
+	// The registry needs GEditor; register now if it's already up (late/hot-reload load),
+	// otherwise defer to PostEngineInit. Branch on GEditor directly to avoid the registry's
+	// "Editor is not available" warning during normal startup.
+	if (GEditor)
+	{
+		RegisterToolsets();
+	}
+	else
+	{
+		FCoreDelegates::GetOnPostEngineInit().AddRaw(this, &FModule::RegisterToolsets);
+	}
+}
+
+// Collect every non-abstract UToolsetDefinition subclass defined in this module (/Script/VibeUE)
+// that exposes at least one AICallable tool. Reflection-based so new services are picked up
+// automatically without editing this file.
+static void GatherVibeUEToolsetClasses(TArray<UClass*>& OutClasses)
+{
+	TArray<UClass*> Derived;
+	GetDerivedClasses(UToolsetDefinition::StaticClass(), Derived, /*bRecursive*/ true);
+
+	const UPackage* VibeUEPackage = FindPackage(nullptr, TEXT("/Script/VibeUE"));
+	for (UClass* Class : Derived)
+	{
+		if (!Class || Class->HasAnyClassFlags(CLASS_Abstract) || Class->GetOutermost() != VibeUEPackage)
+		{
+			continue;
+		}
+
+		// Skip toolsets with no AICallable functions (e.g. instance-only services) — they'd
+		// register as an empty toolset.
+		bool bHasAICallable = false;
+		for (TFieldIterator<UFunction> It(Class); It && !bHasAICallable; ++It)
+		{
+			const TValueOrError<bool, FString> Result = UToolsetDefinition::IsFunctionAICallable(*It);
+			bHasAICallable = Result.HasValue() && Result.GetValue();
+		}
+		if (bHasAICallable)
+		{
+			OutClasses.Add(Class);
+		}
+	}
+}
+
+void FModule::RegisterToolsets()
+{
+	if (!UToolsetRegistry::IsAvailable())
+	{
+		UE_LOG(LogTemp, Warning, TEXT("VibeUE: ToolsetRegistry not available; service toolsets not registered."));
+		return;
+	}
+
+	TArray<UClass*> ToolsetClasses;
+	GatherVibeUEToolsetClasses(ToolsetClasses);
+	for (UClass* Class : ToolsetClasses)
+	{
+		UToolsetRegistry::RegisterToolsetClass(Class);
+	}
+
+	UE_LOG(LogTemp, Display, TEXT("VibeUE: registered %d service toolset(s) with ToolsetRegistry."), ToolsetClasses.Num());
+}
+
+void FModule::UnregisterToolsets()
+{
+	if (!UToolsetRegistry::IsAvailable())
+	{
+		return;
+	}
+
+	TArray<UClass*> ToolsetClasses;
+	GatherVibeUEToolsetClasses(ToolsetClasses);
+	for (UClass* Class : ToolsetClasses)
+	{
+		UToolsetRegistry::UnregisterToolsetClass(Class);
+	}
 }
 
 void FModule::ShutdownModule()
@@ -152,8 +233,12 @@ void FModule::ShutdownModule()
 		return;
 	}
 
-	// Unregister PreExit callback
+	// Unregister PreExit / PostEngineInit callbacks
 	FCoreDelegates::OnPreExit.RemoveAll(this);
+	FCoreDelegates::GetOnPostEngineInit().RemoveAll(this);
+
+	// Unregister service toolsets from ToolsetRegistry
+	UnregisterToolsets();
 
 	// Shutdown MCP Server
 	FMCPServer::Get().Shutdown();

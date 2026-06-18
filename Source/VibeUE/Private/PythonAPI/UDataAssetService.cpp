@@ -740,7 +740,7 @@ FDataAssetSetPropertiesResult UDataAssetService::SetProperties(const FString& As
 		FString Error;
 		if (SetPropertyFromString(Property, DataAsset, ValueStr, Error))
 		{
-			Result.SuccessProperties.Add(Pair.Key);
+			Result.SuccessProperties.Add(*Pair.Key);
 		}
 		else
 		{

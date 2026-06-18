@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UNiagaraService.generated.h"
 
 /**
@@ -521,7 +521,7 @@ struct FNiagaraSystemEditableSettings
  *   unreal.NiagaraService.set_parameter(result.asset_path, "User.SpawnRate", "100.0")
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UNiagaraService : public UObject
+class VIBEUE_API UNiagaraService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -546,7 +546,7 @@ public:
 	 *   result = unreal.NiagaraService.create_system(
 	 *       "NS_Fire", "/Game/VFX", "/Niagara/DefaultAssets/Templates/Systems/DirectionalBurst")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Create Niagara System"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Create Niagara System"))
 	static FNiagaraCreateResult CreateSystem(
 		const FString& SystemName,
 		const FString& DestinationPath,
@@ -561,7 +561,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.save_system("/Game/VFX/NS_Fire")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Save Niagara System"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Save Niagara System"))
 	static bool SaveSystem(const FString& SystemPath);
 
 	/**
@@ -574,7 +574,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.compile_system("/Game/VFX/NS_Fire")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Compile Niagara System"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Compile Niagara System"))
 	static bool CompileSystem(const FString& SystemPath, bool bWaitForCompletion = true);
 
 	/**
@@ -591,7 +591,7 @@ public:
 	 *       for error in result.errors:
 	 *           print(f"  - {error}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Compile Niagara System With Results"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Compile Niagara System With Results"))
 	static FNiagaraCompilationResult CompileWithResults(const FString& SystemPath);
 
 	/**
@@ -603,7 +603,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.open_in_editor("/Game/VFX/NS_Fire")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Open In Niagara Editor"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Open In Niagara Editor"))
 	static bool OpenInEditor(const FString& SystemPath);
 
 	/**
@@ -618,7 +618,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.copy_system_properties("/Game/VFX/NS_Fire", "/Game/VFX/Source/NS_Fire_Original")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Copy System Properties"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Copy System Properties"))
 	static bool CopySystemProperties(
 		const FString& TargetSystemPath,
 		const FString& SourceSystemPath);
@@ -638,7 +638,7 @@ public:
 	 *   info = unreal.NiagaraService.get_system_info("/Game/VFX/NS_Fire")  # info struct or None (NOT a tuple)
 	 *   print(f"Emitter count: {info.emitter_count}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Get Niagara System Info"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Get Niagara System Info"))
 	static bool GetSystemInfo(const FString& SystemPath, FNiagaraSystemInfo_Custom& OutInfo);
 
 	/**
@@ -651,7 +651,7 @@ public:
 	 * Example:
 	 *   summary = unreal.NiagaraService.summarize("/Game/VFX/NS_Fire")  # summary struct or None
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Summarize Niagara System"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Summarize Niagara System"))
 	static bool Summarize(const FString& SystemPath, FNiagaraSystemSummary& OutSummary);
 
 	/**
@@ -665,7 +665,7 @@ public:
 	 *   for e in emitters:
 	 *       print(e.emitter_name)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "List Emitters"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "List Emitters"))
 	static TArray<FNiagaraEmitterInfo_Custom> ListEmitters(const FString& SystemPath);
 
 	// =================================================================
@@ -689,7 +689,7 @@ public:
 	 *   name = unreal.NiagaraService.add_emitter("/Game/VFX/NS_Fire", "minimal")
 	 *   name = unreal.NiagaraService.add_emitter("/Game/VFX/NS_Fire", "")  # Also creates minimal
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Add Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Add Emitter"))
 	static FString AddEmitter(
 		const FString& SystemPath,
 		const FString& EmitterAssetPath,
@@ -713,7 +713,7 @@ public:
 	 *   # Filter by name
 	 *   emitters = unreal.NiagaraService.list_emitter_templates("", "Smoke")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "List Emitter Templates"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "List Emitter Templates"))
 	static TArray<FString> ListEmitterTemplates(
 		const FString& SearchPath = TEXT(""),
 		const FString& NameFilter = TEXT(""));
@@ -740,7 +740,7 @@ public:
 	 *       "/Game/VFX/NS_Source", "Flames",
 	 *       "/Game/VFX/NS_Target")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Copy Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Copy Emitter"))
 	static FString CopyEmitter(
 		const FString& SourceSystemPath,
 		const FString& SourceEmitterName,
@@ -757,7 +757,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.remove_emitter("/Game/VFX/NS_Fire", "Sparks")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Remove Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Remove Emitter"))
 	static bool RemoveEmitter(const FString& SystemPath, const FString& EmitterName);
 
 	/**
@@ -771,7 +771,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.enable_emitter("/Game/VFX/NS_Fire", "Sparks", False)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Enable Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Enable Emitter"))
 	static bool EnableEmitter(const FString& SystemPath, const FString& EmitterName, bool bEnabled);
 
 	/**
@@ -785,7 +785,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.duplicate_emitter("/Game/VFX/NS_Fire", "Sparks", "Sparks2")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Duplicate Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Duplicate Emitter"))
 	static bool DuplicateEmitter(
 		const FString& SystemPath,
 		const FString& SourceEmitterName,
@@ -802,7 +802,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.rename_emitter("/Game/VFX/NS_Fire", "Sparks", "FireSparks")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Rename Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Rename Emitter"))
 	static bool RenameEmitter(
 		const FString& SystemPath,
 		const FString& CurrentName,
@@ -824,7 +824,7 @@ public:
 	 *   # Move "Sparks" to position 2
 	 *   unreal.NiagaraService.move_emitter("/Game/VFX/NS_Fire", "Sparks", 2)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Move Emitter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Move Emitter"))
 	static bool MoveEmitter(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -844,7 +844,7 @@ public:
 	 *   pos = unreal.NiagaraService.get_emitter_graph_position("/Game/VFX/NS_Fire", "green_smoke")
 	 *   print(f"Position: ({pos[0]}, {pos[1]})")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Get Emitter Graph Position"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Get Emitter Graph Position"))
 	static bool GetEmitterGraphPosition(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -868,7 +868,7 @@ public:
 	 *   # Move 100 pixels to the right
 	 *   unreal.NiagaraService.set_emitter_graph_position("/Game/VFX/NS_Fire", "green_smoke", x + 100, y)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Set Emitter Graph Position"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Set Emitter Graph Position"))
 	static bool SetEmitterGraphPosition(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -890,7 +890,7 @@ public:
 	 *   for p in params:
 	 *       print(f"{p.parameter_name}: {p.current_value}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "List Parameters"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "List Parameters"))
 	static TArray<FNiagaraParameterInfo_Custom> ListParameters(const FString& SystemPath);
 
 	/**
@@ -904,7 +904,7 @@ public:
 	 * Example:
 	 *   info = unreal.NiagaraService.get_parameter("/Game/VFX/NS_Fire", "User.SpawnRate")  # info struct or None
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Get Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Get Parameter"))
 	static bool GetParameter(
 		const FString& SystemPath,
 		const FString& ParameterName,
@@ -921,7 +921,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.set_parameter("/Game/VFX/NS_Fire", "User.SpawnRate", "100.0")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Set Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Set Parameter"))
 	static bool SetParameter(
 		const FString& SystemPath,
 		const FString& ParameterName,
@@ -939,7 +939,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.add_user_parameter("/Game/VFX/NS_Fire", "SpawnRate", "Float", "50.0")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Add User Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Add User Parameter"))
 	static bool AddUserParameter(
 		const FString& SystemPath,
 		const FString& ParameterName,
@@ -956,7 +956,7 @@ public:
 	 * Example:
 	 *   unreal.NiagaraService.remove_user_parameter("/Game/VFX/NS_Fire", "SpawnRate")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Remove User Parameter"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Remove User Parameter"))
 	static bool RemoveUserParameter(
 		const FString& SystemPath,
 		const FString& ParameterName);
@@ -975,7 +975,7 @@ public:
 	 *   if unreal.NiagaraService.system_exists("/Game/VFX/NS_Fire"):
 	 *       print("System exists!")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Niagara|Exists")
 	static bool SystemExists(const FString& SystemPath);
 
 	/**
@@ -989,7 +989,7 @@ public:
 	 *   if unreal.NiagaraService.emitter_exists("/Game/VFX/NS_Fire", "Sparks"):
 	 *       print("Emitter exists!")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Niagara|Exists")
 	static bool EmitterExists(const FString& SystemPath, const FString& EmitterName);
 
 	/**
@@ -1003,7 +1003,7 @@ public:
 	 *   if unreal.NiagaraService.parameter_exists("/Game/VFX/NS_Fire", "User.SpawnRate"):
 	 *       print("Parameter exists!")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Exists")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Niagara|Exists")
 	static bool ParameterExists(const FString& SystemPath, const FString& ParameterName);
 
 	// =================================================================
@@ -1022,7 +1022,7 @@ public:
 	 *   for s in systems:
 	 *       print(s)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Search Systems"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Search Systems"))
 	static TArray<FString> SearchSystems(
 		const FString& SearchPath = TEXT("/Game"),
 		const FString& NameFilter = TEXT(""));
@@ -1037,7 +1037,7 @@ public:
 	 * Example:
 	 *   emitters = unreal.NiagaraService.search_emitter_assets("/Game/VFX", "Smoke")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (DisplayName = "Search Emitter Assets"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara", meta = (AICallable, DisplayName = "Search Emitter Assets"))
 	static TArray<FString> SearchEmitterAssets(
 		const FString& SearchPath = TEXT("/Game"),
 		const FString& NameFilter = TEXT(""));
@@ -1061,7 +1061,7 @@ public:
 	 *   print(f"Determinism: {props.determinism}")
 	 *   print(f"Warmup: {props.warmup_time}s")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Get System Properties"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Get System Properties"))
 	static bool GetSystemProperties(
 		const FString& SystemPath,
 		FNiagaraSystemPropertiesInfo& OutProperties);
@@ -1084,7 +1084,7 @@ public:
 	 *   for diff in comparison.differences:
 	 *       print(f"  {diff.property_name}: {diff.source_value} vs {diff.target_value}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Compare Systems"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Compare Systems"))
 	static FNiagaraSystemComparison CompareSystems(
 		const FString& SourceSystemPath,
 		const FString& TargetSystemPath);
@@ -1102,7 +1102,7 @@ public:
 	 *   for p in params:
 	 *       print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "List Rapid Iteration Params"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "List Rapid Iteration Params"))
 	static TArray<FNiagaraRIParameterInfo> ListRapidIterationParams(
 		const FString& SystemPath,
 		const FString& EmitterName);
@@ -1127,7 +1127,7 @@ public:
 	 *   unreal.NiagaraService.set_rapid_iteration_param("/Game/VFX/NS_Fire", "Sparks",
 	 *       "Constants.sparks.SpawnRate.SpawnRate", "500.0")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Set Rapid Iteration Param"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Set Rapid Iteration Param"))
 	static bool SetRapidIterationParam(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -1152,7 +1152,7 @@ public:
 	 *       "/Game/VFX/NS_Fire", "fire", "ParticleUpdate",
 	 *       "Constants.fire.Color.Scale Color", "0.0, 2.0, 0.0")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Set Rapid Iteration Param By Stage"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Set Rapid Iteration Param By Stage"))
 	static bool SetRapidIterationParamByStage(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -1174,7 +1174,7 @@ public:
 	 *   print(f"Loop Behavior: {info.loop_behavior}")
 	 *   print(f"Life Cycle Mode: {info.life_cycle_mode}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Get Emitter Lifecycle"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Get Emitter Lifecycle"))
 	static bool GetEmitterLifecycle(
 		const FString& SystemPath,
 		const FString& EmitterName,
@@ -1191,7 +1191,7 @@ public:
 	 *   debug_info = unreal.NiagaraService.debug_activation("/Game/VFX/NS_Fire")
 	 *   print(debug_info)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Debug Activation"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Debug Activation"))
 	static FString DebugActivation(const FString& SystemPath);
 
 	/**
@@ -1217,7 +1217,7 @@ public:
 	 *       if "Color" in p.setting_path:
 	 *           print(f"  [{p.emitter_name}] {p.display_name}: {p.current_value}")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (DisplayName = "Get All Editable Settings"))
+	UFUNCTION(BlueprintCallable, Category = "VibeUE|Niagara|Diagnostics", meta = (AICallable, DisplayName = "Get All Editable Settings"))
 	static bool GetAllEditableSettings(
 		const FString& SystemPath,
 		FNiagaraSystemEditableSettings& OutSettings);

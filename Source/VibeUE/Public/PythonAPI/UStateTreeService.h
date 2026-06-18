@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UStateTreeService.generated.h"
 
 /**
@@ -363,7 +363,7 @@ struct FStateTreeTaskPropertySetResult
  * e.g. "Root", "Root/Walking", "Root/Walking/Idle"
  */
 UCLASS(BlueprintType)
-class VIBEUE_API UStateTreeService : public UObject
+class VIBEUE_API UStateTreeService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 
@@ -372,22 +372,22 @@ public:
 	// ---- Discovery ----
 
 	/** List all StateTree assets under a content directory. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> ListStateTrees(const FString& DirectoryPath = TEXT("/Game"));
 
 	/** Get detailed structural info about a StateTree asset. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool GetStateTreeInfo(const FString& AssetPath, FStateTreeInfo& OutInfo);
 
 	/**
 	 * Get all registered task type names.
 	 * Returns both struct-backed task types (e.g. "FStateTreeDelayTask") and blueprint task classes (e.g. "STT_Rotate_C").
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> GetAvailableTaskTypes();
 
 	/** Get all registered evaluator struct names discoverable from class iteration. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> GetAvailableEvaluatorTypes();
 
 	// ---- Asset Creation ----
@@ -398,7 +398,7 @@ public:
 	 * the default "StateTreeComponentSchema" comes from the GameplayStateTree plugin and
 	 * does not exist in projects that haven't enabled it.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> ListStateTreeSchemas();
 
 	/**
@@ -410,7 +410,7 @@ public:
 	 *                        If creation returns False, the schema likely doesn't exist in
 	 *                        this project — call list_state_tree_schemas() to see valid names.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool CreateStateTree(const FString& AssetPath, const FString& SchemaClassName = TEXT("StateTreeComponentSchema"));
 
 	// ---- State Management ----
@@ -422,12 +422,12 @@ public:
 	 * @param StateName     Name for the new state
 	 * @param StateType     "State" (default), "Group", "Subtree", "Linked", "LinkedAsset"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddState(const FString& AssetPath, const FString& ParentPath,
 	                     const FString& StateName, const FString& StateType = TEXT("State"));
 
 	/** Remove a state and all its children by path. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveState(const FString& AssetPath, const FString& StatePath);
 
 	/**
@@ -438,43 +438,43 @@ public:
 	 * @param NewParentPath Path of the new parent state, or empty string to move to top-level subtree roots
 	 * @param NewIndex      Optional insertion index among destination siblings; -1 appends to the end
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool MoveState(const FString& AssetPath, const FString& StatePath,
 	                     const FString& NewParentPath, int32 NewIndex = -1);
 
 	/** Enable or disable a state. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateEnabled(const FString& AssetPath, const FString& StatePath, bool bEnabled);
 
 	/**
 	 * Change the type of an existing state to "State", "Group", or "Subtree".
 	 * For "Linked" use SetLinkedSubtree; for "LinkedAsset" use SetLinkedAsset.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateType(const FString& AssetPath, const FString& StatePath, const FString& StateType);
 
 	/**
 	 * Set a state's type to Linked and link it to another subtree in the same StateTree.
 	 * @param TargetSubtreePath  Path of the subtree to link to (e.g. "Root" or "Peaceful")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetLinkedSubtree(const FString& AssetPath, const FString& StatePath, const FString& TargetSubtreePath);
 
 	/**
 	 * Set a state's type to LinkedAsset and link it to another StateTree asset.
 	 * @param LinkedAssetPath  Content path to the StateTree asset (e.g. "/Game/AI/OtherTree")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetLinkedAsset(const FString& AssetPath, const FString& StatePath, const FString& LinkedAssetPath);
 
 	/** Set an editor description string for a state. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateDescription(const FString& AssetPath, const FString& StatePath, const FString& Description);
 
 	/**
 	 * Set a state's theme color by display name. Creates or updates the named color entry if needed.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateThemeColor(const FString& AssetPath, const FString& StatePath,
 	                              const FString& ColorName, const FLinearColor& Color);
 
@@ -485,7 +485,7 @@ public:
 	 * @param OldColorName Current display name of the color entry (e.g. "Default Color")
 	 * @param NewColorName New display name to assign (e.g. "Idle")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RenameThemeColor(const FString& AssetPath, const FString& OldColorName, const FString& NewColorName);
 
 	/**
@@ -493,7 +493,7 @@ public:
 	 * Returns each color's display name, color value, and which states reference it.
 	 * @param AssetPath Content path to the StateTree
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreeThemeColorInfo> GetThemeColors(const FString& AssetPath);
 
 	/**
@@ -502,7 +502,7 @@ public:
 	 * @param StatePath Path of the state (e.g. "Root" or "Root/Walking")
 	 * @param bExpanded true to expand, false to collapse
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateExpanded(const FString& AssetPath, const FString& StatePath, bool bExpanded);
 
 	/**
@@ -514,68 +514,68 @@ public:
 	 * @param StatePath Path of the state to select (e.g. "Root/Idle")
 	 * @return true if the selection was applied successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SelectState(const FString& AssetPath, const FString& StatePath);
 
 	/** Notify the open StateTree editor tab to rebuild its tree view. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RefreshEditor(const FString& AssetPath);
 
 	/** Set ContextActorClass on component-style schemas (e.g. StateTreeComponentSchema / StateTreeAIComponentSchema). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetContextActorClass(const FString& AssetPath, const FString& ActorClassPath);
 
 	/** Add or update a root float parameter and set its default value. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddOrUpdateRootFloatParameter(const FString& AssetPath, const FString& ParameterName,
 	                                         float DefaultValue = 0.0f);
 
 	// ---- State Properties ----
 
 	/** Set the selection behavior of a state (how children are selected). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetSelectionBehavior(const FString& AssetPath, const FString& StatePath, const FString& Behavior);
 
 	/** Set task completion mode: "Any" (default) or "All". */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTasksCompletion(const FString& AssetPath, const FString& StatePath, const FString& Completion);
 
 	/** Rename a state. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RenameState(const FString& AssetPath, const FString& StatePath, const FString& NewName);
 
 	/** Set a gameplay tag on a state (pass empty string to clear). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateTag(const FString& AssetPath, const FString& StatePath, const FString& GameplayTag);
 
 	/** Set the utility weight on a state (used when parent uses Utility-based selection). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetStateWeight(const FString& AssetPath, const FString& StatePath, float Weight);
 
 	// ---- Utility AI Considerations ----
 
 	/** Get all registered consideration struct names (Constant, FloatInput, EnumInput, plus any custom). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> GetAvailableConsiderationTypes();
 
 	/**
 	 * Add a utility consideration to a state.
 	 * @param ConsiderationStructName  "Constant", "FloatInput", "EnumInput", or full struct name like "FStateTreeConstantConsideration"
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddConsideration(const FString& AssetPath, const FString& StatePath, const FString& ConsiderationStructName);
 
 	/** Remove a consideration by its 0-based index in the state's Considerations array. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveConsideration(const FString& AssetPath, const FString& StatePath, int32 ConsiderationIndex);
 
 	/** Get all editable properties on a consideration node (node struct + instance data). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetConsiderationPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                                     const FString& ConsiderationStructName, int32 MatchIndex = -1);
 
 	/** Set a property value on a consideration node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetConsiderationPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                          const FString& ConsiderationStructName, const FString& PropertyPath,
 	                                          const FString& Value, int32 MatchIndex = -1);
@@ -585,7 +585,7 @@ public:
 	 * Leave ContextPropertyPath empty to bind the whole context object.
 	 * @param MatchIndex  Which matching consideration to target. -1 means the last matching one.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindConsiderationPropertyToContext(const FString& AssetPath, const FString& StatePath,
 	                                               const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
 	                                               const FString& ContextName = TEXT("Actor"),
@@ -596,27 +596,27 @@ public:
 	 * Bind a consideration property to a root parameter.
 	 * @param MatchIndex  Which matching consideration to target. -1 means the last matching one.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindConsiderationPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
 	                                                     const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
 	                                                     const FString& ParameterPath,
 	                                                     int32 MatchIndex = -1);
 
 	/** Remove the property binding on a consideration property (unbind it). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindConsiderationProperty(const FString& AssetPath, const FString& StatePath,
 	                                        const FString& ConsiderationStructName, const FString& ConsiderationPropertyPath,
 	                                        int32 MatchIndex = -1);
 
 	/** Set whether a task's completion contributes to the owning state's completion. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTaskConsideredForCompletion(const FString& AssetPath, const FString& StatePath,
 	                                           const FString& TaskStructName, int32 TaskMatchIndex, bool bConsideredForCompletion);
 
 	// ---- Parameters ----
 
 	/** Get all root parameters with their name, type, and current default value. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreeParameterInfo> GetRootParameters(const FString& AssetPath);
 
 	/**
@@ -624,16 +624,16 @@ public:
 	 * @param Type  "Bool", "Int32", "Int64", "Float", "Double", "Name", "String", "Text"
 	 * @param DefaultValue  Initial/default value as a string (e.g. "3.14", "true", "Hello")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddOrUpdateRootParameter(const FString& AssetPath, const FString& Name,
 	                                     const FString& Type, const FString& DefaultValue = TEXT(""));
 
 	/** Remove a root parameter by name. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveRootParameter(const FString& AssetPath, const FString& Name);
 
 	/** Rename a root parameter without breaking existing bindings. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RenameRootParameter(const FString& AssetPath, const FString& OldName, const FString& NewName);
 
 	// ---- Level Actor Component Parameter Overrides ----
@@ -645,7 +645,7 @@ public:
 	 * @param ActorNameOrLabel  Name or label of the actor in the current level
 	 * @return Game path like "/Game/StateTrees/ST_Cube", or empty string if not found
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static FString GetComponentStateTreePath(const FString& ActorNameOrLabel);
 
 	/**
@@ -655,7 +655,7 @@ public:
 	 * @param ActorNameOrLabel  Name or label of the actor in the current level
 	 * @return List of parameters with name, type, and current override value. Empty if actor or component not found.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreeParameterInfo> GetComponentParameterOverrides(const FString& ActorNameOrLabel);
 
 	/**
@@ -669,7 +669,7 @@ public:
 	 * @param Value             New value as a string (e.g. "3.14", "true", "Hello")
 	 * @return true if the override was applied successfully
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetComponentParameterOverride(const FString& ActorNameOrLabel,
 	                                          const FString& ParameterName,
 	                                          const FString& Value);
@@ -693,7 +693,7 @@ public:
 	 * @param DelayDuration    Delay duration in seconds
 	 * @param DelayRandomVariance Random variance added to delay duration
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UpdateTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex,
 	                             const FString& Trigger = TEXT(""), const FString& TransitionType = TEXT(""),
 	                             const FString& TargetPath = TEXT(""), const FString& Priority = TEXT(""),
@@ -718,17 +718,17 @@ public:
 	 * @param DispatcherPropertyName Name of the FStateTreeDelegateDispatcher variable on the task
 	 * @param TaskMatchIndex         Which matching task to target (-1 = last match)
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTransitionToDelegate(const FString& AssetPath, const FString& StatePath,
 	                                     int32 TransitionIndex, const FString& TaskStructName,
 	                                     const FString& DispatcherPropertyName, int32 TaskMatchIndex = -1);
 
 	/** Remove a transition by index. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveTransition(const FString& AssetPath, const FString& StatePath, int32 TransitionIndex);
 
 	/** Reorder a transition within the state's Transitions array. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool MoveTransition(const FString& AssetPath, const FString& StatePath, int32 FromIndex, int32 ToIndex);
 
 	// ---- Task Management ----
@@ -742,7 +742,7 @@ public:
 	 *                       - Blueprint class object paths (e.g. "/Game/StateTree/STT_Rotate.STT_Rotate_C")
 	 *                       - Blueprint asset paths (e.g. "/Game/StateTree/STT_Rotate")
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddTask(const FString& AssetPath, const FString& StatePath,
 	                    const FString& TaskStructName);
 
@@ -753,7 +753,7 @@ public:
 	 * Use this to discover property names before calling set_task_property_value — never guess.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetTaskPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                           const FString& TaskStructName, int32 TaskMatchIndex = -1);
 
@@ -762,7 +762,7 @@ public:
 	 * Returns empty string if the property path is invalid.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static FString GetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                    const FString& TaskStructName, const FString& PropertyPath,
 	                                    int32 TaskMatchIndex = -1);
@@ -773,7 +773,7 @@ public:
 	 * Use set_task_property_value_detailed if you need the failure reason and readback value in Python.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTaskPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                 const FString& TaskStructName, const FString& PropertyPath,
 	                                 const FString& Value, int32 TaskMatchIndex = -1);
@@ -783,7 +783,7 @@ public:
 	 * Prefer this over the bool-only setter for agent-facing workflows.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static FStateTreeTaskPropertySetResult SetTaskPropertyValueDetailed(const FString& AssetPath, const FString& StatePath,
 	                                                                   const FString& TaskStructName, const FString& PropertyPath,
 	                                                                   const FString& Value, int32 TaskMatchIndex = -1);
@@ -792,7 +792,7 @@ public:
 	 * Bind a task property to a root parameter path (e.g. parameter "idling_time" -> task property "Duration").
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTaskPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
 	                                           const FString& TaskStructName, const FString& TaskPropertyPath,
 	                                           const FString& ParameterPath, int32 TaskMatchIndex = -1);
@@ -802,7 +802,7 @@ public:
 	 * Leave ContextPropertyPath empty to bind the whole context object.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTaskPropertyToContext(const FString& AssetPath, const FString& StatePath,
 	                                     const FString& TaskStructName, const FString& TaskPropertyPath,
 	                                     const FString& ContextName = TEXT("Actor"),
@@ -815,7 +815,7 @@ public:
 	 * @param TaskMatchIndex Which matching state task to target for the struct type. -1 means the last matching task.
 	 * @param GlobalTaskMatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTaskPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
 	                                                const FString& TaskStructName, const FString& TaskPropertyPath,
 	                                                const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
@@ -826,23 +826,23 @@ public:
 	 * After unbinding, the property reverts to its default/unbound value.
 	 * @param TaskMatchIndex Which matching task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindTaskProperty(const FString& AssetPath, const FString& StatePath,
 	                               const FString& TaskStructName, const FString& TaskPropertyPath,
 	                               int32 TaskMatchIndex = -1);
 
 	/** Remove a task from a state by struct type name. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveTask(const FString& AssetPath, const FString& StatePath,
 	                       const FString& TaskStructName, int32 TaskMatchIndex = -1);
 
 	/** Move a task to a different index within the state's Tasks array. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool MoveTask(const FString& AssetPath, const FString& StatePath,
 	                     const FString& TaskStructName, int32 TaskMatchIndex, int32 NewIndex);
 
 	/** Enable or disable a task without removing it. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTaskEnabled(const FString& AssetPath, const FString& StatePath,
 	                           const FString& TaskStructName, int32 TaskMatchIndex, bool bEnabled);
 
@@ -852,40 +852,40 @@ public:
 	 * Add a global evaluator to the StateTree by struct type name or Blueprint evaluator name/path.
 	 * @param EvaluatorStructName FStateTreeEvaluatorBase-derived struct name, or Blueprint evaluator name/path/class
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddEvaluator(const FString& AssetPath, const FString& EvaluatorStructName);
 
 	/**
 	 * Add a global task to the StateTree by struct type name or Blueprint task name/path.
 	 * @param TaskStructName FStateTreeTaskBase-derived struct name, or Blueprint task name/path/class
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddGlobalTask(const FString& AssetPath, const FString& TaskStructName);
 
 	/** Get all registered condition struct names discoverable from class iteration. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FString> GetAvailableConditionTypes();
 
 	/** Add an enter condition to a state. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddEnterCondition(const FString& AssetPath, const FString& StatePath, const FString& ConditionStructName);
 
 	/** Remove an enter condition by index. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveEnterCondition(const FString& AssetPath, const FString& StatePath, int32 ConditionIndex);
 
 	/** Set the And/Or operand on an enter condition. First condition should be "Copy", others "And" or "Or". */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetEnterConditionOperand(const FString& AssetPath, const FString& StatePath,
 	                                     int32 ConditionIndex, const FString& Operand);
 
 	/** Get all editable properties on an enter condition node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetEnterConditionPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                                      const FString& ConditionStructName, int32 ConditionMatchIndex = -1);
 
 	/** Set a property on an enter condition node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetEnterConditionPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                           const FString& ConditionStructName, const FString& PropertyPath,
 	                                           const FString& Value, int32 ConditionMatchIndex = -1);
@@ -895,7 +895,7 @@ public:
 	 * Leave ContextPropertyPath empty to bind the whole context object.
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindEnterConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
 	                                                const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	                                                const FString& ContextName = TEXT("Actor"),
@@ -908,7 +908,7 @@ public:
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 * @param GlobalTaskMatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindEnterConditionPropertyToGlobalTaskProperty(const FString& AssetPath, const FString& StatePath,
 	                                                          const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	                                                          const FString& GlobalTaskStructName, const FString& GlobalTaskPropertyPath,
@@ -918,46 +918,46 @@ public:
 	 * Bind an enter condition property to a root parameter (e.g. parameter "CanChase" -> condition property "bLeft").
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindEnterConditionPropertyToRootParameter(const FString& AssetPath, const FString& StatePath,
 	                                                      const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	                                                      const FString& ParameterPath,
 	                                                      int32 ConditionMatchIndex = -1);
 
 	/** Remove the property binding on an enter condition property (unbind it). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindEnterConditionProperty(const FString& AssetPath, const FString& StatePath,
 	                                        const FString& ConditionStructName, const FString& ConditionPropertyPath,
 	                                        int32 ConditionMatchIndex = -1);
 
 	/** Add a condition to an existing transition. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddTransitionCondition(const FString& AssetPath, const FString& StatePath,
 	                                   int32 TransitionIndex, const FString& ConditionStructName);
 
 	/** Remove a condition from a transition by condition index. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveTransitionCondition(const FString& AssetPath, const FString& StatePath,
 	                                      int32 TransitionIndex, int32 ConditionIndex);
 
 	/** Set the And/Or operand on a transition condition. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTransitionConditionOperand(const FString& AssetPath, const FString& StatePath,
 	                                          int32 TransitionIndex, int32 ConditionIndex, const FString& Operand);
 
 	/** Get all editable properties on a transition condition node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetTransitionConditionPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                                           int32 TransitionIndex, const FString& ConditionStructName,
 	                                                                           int32 ConditionMatchIndex = -1);
 
 	/** Get the bindable properties exposed by a transition's required event payload struct. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetTransitionEventPayloadPropertyNames(const FString& AssetPath, const FString& StatePath,
 	                                                                            int32 TransitionIndex);
 
 	/** Set a property on a transition condition node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetTransitionConditionPropertyValue(const FString& AssetPath, const FString& StatePath,
 	                                                int32 TransitionIndex, const FString& ConditionStructName,
 	                                                const FString& PropertyPath, const FString& Value,
@@ -968,7 +968,7 @@ public:
 	 * Leave ContextPropertyPath empty to bind the whole context object.
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTransitionConditionPropertyToContext(const FString& AssetPath, const FString& StatePath,
 	                                                     int32 TransitionIndex, const FString& ConditionStructName,
 	                                                     const FString& ConditionPropertyPath,
@@ -982,7 +982,7 @@ public:
 	 * @param PayloadPropertyPath Property path within the event payload struct (e.g. "TargetPawn"). The service resolves this against the payload struct and binds it through the transition event's Payload field.
 	 * @param ConditionMatchIndex Which matching condition to target. -1 means the last matching condition.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindTransitionConditionPropertyToEventPayload(const FString& AssetPath, const FString& StatePath,
 	                                                          int32 TransitionIndex, const FString& ConditionStructName,
 	                                                          const FString& ConditionPropertyPath,
@@ -990,23 +990,23 @@ public:
 	                                                          int32 ConditionMatchIndex = -1);
 
 	/** Remove the property binding on a transition condition property (unbind it). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindTransitionConditionProperty(const FString& AssetPath, const FString& StatePath,
 	                                             int32 TransitionIndex, const FString& ConditionStructName,
 	                                             const FString& ConditionPropertyPath,
 	                                             int32 ConditionMatchIndex = -1);
 
 	/** Remove an evaluator by struct type name. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveEvaluator(const FString& AssetPath, const FString& EvaluatorStructName, int32 MatchIndex = -1);
 
 	/** Get all editable properties on a global evaluator node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetEvaluatorPropertyNames(const FString& AssetPath,
 	                                                                  const FString& EvaluatorStructName, int32 MatchIndex = -1);
 
 	/** Set a property on a global evaluator node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetEvaluatorPropertyValue(const FString& AssetPath, const FString& EvaluatorStructName,
 	                                      const FString& PropertyPath, const FString& Value, int32 MatchIndex = -1);
 
@@ -1015,7 +1015,7 @@ public:
 	 * Evaluators are global — no StatePath is needed.
 	 * @param MatchIndex Which matching evaluator to target for the struct type. -1 means the last matching evaluator.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindEvaluatorPropertyToRootParameter(const FString& AssetPath, const FString& EvaluatorStructName,
 	                                                 const FString& EvaluatorPropertyPath, const FString& ParameterPath,
 	                                                 int32 MatchIndex = -1);
@@ -1026,7 +1026,7 @@ public:
 	 * Evaluators are global — no StatePath is needed.
 	 * @param MatchIndex Which matching evaluator to target for the struct type. -1 means the last matching evaluator.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindEvaluatorPropertyToContext(const FString& AssetPath, const FString& EvaluatorStructName,
 	                                           const FString& EvaluatorPropertyPath,
 	                                           const FString& ContextName = TEXT("Actor"),
@@ -1034,7 +1034,7 @@ public:
 	                                           int32 MatchIndex = -1);
 
 	/** Remove the property binding on an evaluator property (unbind it). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindEvaluatorProperty(const FString& AssetPath, const FString& EvaluatorStructName,
 	                                    const FString& EvaluatorPropertyPath, int32 MatchIndex = -1);
 
@@ -1043,7 +1043,7 @@ public:
 	 * Global tasks are global — no StatePath is needed.
 	 * @param MatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindGlobalTaskPropertyToRootParameter(const FString& AssetPath, const FString& TaskStructName,
 	                                                  const FString& TaskPropertyPath, const FString& ParameterPath,
 	                                                  int32 MatchIndex = -1);
@@ -1054,7 +1054,7 @@ public:
 	 * Global tasks are global — no StatePath is needed.
 	 * @param MatchIndex Which matching global task to target for the struct type. -1 means the last matching task.
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool BindGlobalTaskPropertyToContext(const FString& AssetPath, const FString& TaskStructName,
 	                                            const FString& TaskPropertyPath,
 	                                            const FString& ContextName = TEXT("Actor"),
@@ -1062,21 +1062,21 @@ public:
 	                                            int32 MatchIndex = -1);
 
 	/** Remove the property binding on a global task property (unbind it). */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool UnbindGlobalTaskProperty(const FString& AssetPath, const FString& TaskStructName,
 	                                     const FString& TaskPropertyPath, int32 MatchIndex = -1);
 
 	/** Remove a global task by struct type name. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool RemoveGlobalTask(const FString& AssetPath, const FString& TaskStructName, int32 MatchIndex = -1);
 
 	/** Get all editable properties on a global task node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static TArray<FStateTreePropertyInfo> GetGlobalTaskPropertyNames(const FString& AssetPath,
 	                                                                   const FString& TaskStructName, int32 MatchIndex = -1);
 
 	/** Set a property on a global task node. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SetGlobalTaskPropertyValue(const FString& AssetPath, const FString& TaskStructName,
 	                                       const FString& PropertyPath, const FString& Value, int32 MatchIndex = -1);
 
@@ -1091,7 +1091,7 @@ public:
 	 * @param Priority       "Low", "Normal", "Medium", "High", "Critical"
 	 * @param EventTag       Gameplay tag for OnEvent trigger (e.g. "AI.StartPatrol") — empty = none
 	 */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool AddTransition(const FString& AssetPath, const FString& StatePath,
 	                          const FString& Trigger, const FString& TransitionType,
 	                          const FString& TargetPath = TEXT(""),
@@ -1101,10 +1101,10 @@ public:
 	// ---- Compile / Save ----
 
 	/** Compile the StateTree asset. Must be called after structural changes. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static FStateTreeCompileResult CompileStateTree(const FString& AssetPath);
 
 	/** Save the StateTree asset to disk. */
-	UFUNCTION(BlueprintCallable, Category = "VibeUE|StateTree")
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|StateTree")
 	static bool SaveStateTree(const FString& AssetPath);
 };

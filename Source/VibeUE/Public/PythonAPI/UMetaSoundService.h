@@ -3,7 +3,7 @@
 #pragma once
 
 #include "CoreMinimal.h"
-#include "UObject/NoExportTypes.h"
+#include "ToolsetRegistry/ToolsetDefinition.h"
 #include "UMetaSoundService.generated.h"
 
 // Forward declarations (full headers are pulled in by the .cpp only)
@@ -169,7 +169,7 @@ struct FMetaSoundNodeInfo
  * (OnPlay output, OnFinished input, AudioOut inputs) created at asset creation.
  */
 UCLASS()
-class UMetaSoundService : public UObject
+class UMetaSoundService : public UToolsetDefinition
 {
 	GENERATED_BODY()
 

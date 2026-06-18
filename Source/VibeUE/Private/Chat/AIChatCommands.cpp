@@ -71,7 +71,7 @@ void FAIChatCommands::Initialize()
     }
     else
     {
-        FCoreDelegates::OnPostEngineInit.AddStatic(&FAIChatCommands::RegisterStatusBarPanelDrawer);
+        FCoreDelegates::GetOnPostEngineInit().AddStatic(&FAIChatCommands::RegisterStatusBarPanelDrawer);
     }
     
     UE_LOG(LogTemp, Log, TEXT("AI Chat commands initialized with panel drawer support"));

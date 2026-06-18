@@ -889,17 +889,17 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
         {
             if (Pair.Value->Type == EJson::String)
             {
-                Arguments.Add(Pair.Key, Pair.Value->AsString());
+                Arguments.Add(*Pair.Key, Pair.Value->AsString());
             }
             else if (Pair.Value->Type == EJson::Number)
             {
                 // Serialize numbers directly — FJsonSerializer::Serialize with an identifier
                 // requires an open object context and produces empty output otherwise.
-                Arguments.Add(Pair.Key, FString::Printf(TEXT("%.10g"), Pair.Value->AsNumber()));
+                Arguments.Add(*Pair.Key, FString::Printf(TEXT("%.10g"), Pair.Value->AsNumber()));
             }
             else if (Pair.Value->Type == EJson::Boolean)
             {
-                Arguments.Add(Pair.Key, Pair.Value->AsBool() ? TEXT("true") : TEXT("false"));
+                Arguments.Add(*Pair.Key, Pair.Value->AsBool() ? TEXT("true") : TEXT("false"));
             }
             else
             {
@@ -908,7 +908,7 @@ FString FMCPServer::HandleToolsCall(TSharedPtr<FJsonObject> Params, const FStrin
                 TSharedRef<TJsonWriter<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>> Writer =
                     TJsonWriterFactory<TCHAR, TCondensedJsonPrintPolicy<TCHAR>>::Create(&JsonStr);
                 FJsonSerializer::Serialize(Pair.Value->AsArray(), Writer);
-                Arguments.Add(Pair.Key, JsonStr);
+                Arguments.Add(*Pair.Key, JsonStr);
             }
         }
     }
