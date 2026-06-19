@@ -42,7 +42,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | materials/materials_tests.md | 31 | ⬜ | – | – | – | |
 | animation-blueprint/animation_blueprint.md | 74 | ❌ | – | #446 | – | **BLOCKS editor**: compile→fatal cast at KismetCompiler.cpp:5903 (`ReplaceConvertibleDelegates`, Epic CastChecked). The produced ABP is a *poison asset* (crashes on **load** too) — quarantined to `_crash_artifacts/`. Engine bug; binary-engine build means a source patch won't apply. Fix approach TBD (VibeUE pre-compile guard vs source-engine patch). |
 | animation-editing.md | 25 | 🟡 | 21/2/2 | #447 | sonnet | No crash (safe domain). Fixed: percentile5/95 doc naming. Filed: learn_from_animations sampling, preview_pose_delta None-on-fail, manual-constraint non-enforcement. Refuted Sonnet claim that BoneDelta(kwargs) fails — it works. |
-| animsequence/animsequence_tests.md | 88 | ⬜ | – | – | – | |
+| animsequence/animsequence_tests.md | 57 | 🟡 | 43/11/3 | #448 | sonnet | No crash. Verified: search_animations is exact-match-only (core bug). + notify_class empty, track-name not persisted, morph flag, sync-marker float match. 2 confirmed-known (frame_rate=60→30, list duration=0). |
 | montage/montage_tests.md | 10 | ⬜ | – | – | – | |
 | skeleton/skeleton_tests.md | 44 | ⬜ | – | – | – | |
 | state-trees/state_trees_tests.md | ? | ⬜ | – | – | – | header format differs (0 `##`) |
