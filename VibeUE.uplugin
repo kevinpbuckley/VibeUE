@@ -1,7 +1,7 @@
 {
 	"FileVersion": 3,
-	"Version": 4,
-	"VersionName": "4.0",
+	"Version": 5,
+	"VersionName": "5.0",
 	"EngineVersion": "5.8.0",
 	"FriendlyName": "VibeUE",
 	"Description": "In Editor AI Chat and Model Context Protocol server for Unreal Engine",
