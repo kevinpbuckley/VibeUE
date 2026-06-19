@@ -12,7 +12,8 @@ vibe_ue.log
 .cursorrules
 .cursorignore
 /.cursor/
-/.github/
+/.github/*
+!/.github/FUNDING.yml
 /CLAUDE.md
 Claude/*
 
