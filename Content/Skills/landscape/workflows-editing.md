@@ -288,7 +288,7 @@ offset = unreal.Vector(new_x - info.location.x, 0, 0)
 point_mapping = {}
 for pt in spline_info.control_points:
     res = unreal.LandscapeService.create_spline_point(
-        dst, location=pt.location + offset,
+        dst, world_location=pt.location + offset,
         width=pt.width, side_falloff=pt.side_falloff, end_falloff=pt.end_falloff,
         paint_layer_name=pt.layer_name if pt.layer_name else "",
         raise_terrain=pt.raise_terrain, lower_terrain=pt.lower_terrain)
@@ -311,7 +311,8 @@ for seg in spline_info.segments:
 for pt in spline_info.control_points:
     if pt.point_index in point_mapping:
         unreal.LandscapeService.modify_spline_point(
-            dst, point_mapping[pt.point_index], pt.location + offset,
+            dst, point_mapping[pt.point_index],
+            world_location=pt.location + offset,
             rotation=pt.rotation, auto_calc_rotation=False)
 
 # Set segment meshes
@@ -320,7 +321,7 @@ for seg in spline_info.segments:
         unreal.LandscapeService.set_spline_segment_meshes(
             dst, seg.segment_index, seg.spline_meshes)
 
-unreal.LandscapeService.apply_splines(dst)
+unreal.LandscapeService.apply_splines_to_landscape(dst)
 ```
 
 **Step 7: Procedural foliage will auto-generate**

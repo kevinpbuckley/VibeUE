@@ -24,14 +24,19 @@ keywords:
 
 ### 🚨 Connecting Function Call Inputs: Use Bare Names, Not Display Names
 
-`get_expression_pins(mat, expr_id)` returns input pins with **display labels including type suffixes** like `"TextureObject (T2d)"`, `"TextureSize (V3)"`, `"Use High Quality Normals (SB)"`. **Never pass these display labels to `connect_expressions`** — UE's connect API matches against the *bare* input name only:
+`get_expression_pins(mat, expr_id)` (MaterialNodeService) returns input pins with **display labels including type suffixes** like `"TextureObject (T2d)"`, `"TextureSize (V3)"`, `"Use High Quality Normals (SB)"`. Connections are made through the **engine** `MaterialTools.connect_expressions` call, and UE's connect API matches against the *bare* input name only — **never pass these display labels** as `to_input_name`:
 
 ```python
+MT = "editor_toolset.toolsets.material.MaterialTools"
 # ❌ WRONG — display label with type suffix; connection fails silently or gets ignored
-unreal.MaterialNodeService.connect_expressions(mp, src_id, "", fn_id, "TextureObject (T2d)")
+call_tool(tool_name="connect_expressions", toolset_name=MT,
+          arguments={"from_expression": src_id, "from_output_name": "",
+                     "to_expression": fn_id, "to_input_name": "TextureObject (T2d)"})
 
 # ✅ CORRECT — bare name
-unreal.MaterialNodeService.connect_expressions(mp, src_id, "", fn_id, "TextureObject")
+call_tool(tool_name="connect_expressions", toolset_name=MT,
+          arguments={"from_expression": src_id, "from_output_name": "",
+                     "to_expression": fn_id, "to_input_name": "TextureObject"})
 ```
 
 The authoritative source for input names is `get_function_info(function_path).inputs` — those are the bare names (`TextureObject`, `TextureSize`, `WorldPosition`, etc.). For built-in expressions, use `get_inputs_for_material_expression` from `unreal.MaterialEditingLibrary`.
@@ -65,16 +70,11 @@ Sample compile errors caught by this:
 
 `unreal.MaterialEditingLibrary.get_used_textures(mat)` is **unreliable** for multi-branch graphs (BC + Normal + ORM, or anything with ComponentMask after a function-call output). It returns `0` even when the material is sampling textures correctly. Don't use it as proof of broken wiring.
 
-Visual confirmation via the material editor preview is also useful but harder — see the next section.
-
-```python
-# One-shot: opens the asset editor, focuses it, captures.
-res = unreal.ScreenshotService.capture_asset_editor(
-    "/Game/Materials/M_Foo", "mat_preview")
-# Then attach_image(file_path=res.file_path) to inspect.
-```
-
-`ScreenshotService.capture_asset_editor` handles the open + focus + capture pipeline in one call.
+Visual confirmation via the material editor preview is also useful but harder. Asset-editor
+capture now goes through the **engine** `EditorAppToolset` (toolset_name
+`EditorToolset.EditorAppToolset` via `call_tool`) — it opens, focuses, and captures the asset
+editor. (The old `unreal.ScreenshotService` and its `capture_asset_editor` are gone.) After the
+capture, `attach_image(...)` the returned file to inspect it.
 
 > ⚠️ Best-effort focus: when many asset editors are already open as tabs, the editor tab may not switch reliably. Close other asset editors first if the screenshot keeps catching the wrong tab:
 >
@@ -90,12 +90,16 @@ For Megascans `M_MS_Srf` and similar surface materials with a `Tiling` scalar pa
 
 ```python
 # ✅ CORRECT pattern for "this disc shows brick too sparse / too dense"
-r = unreal.MaterialService.create_instance(
-    "/Game/Fab/Megascans/.../MI_xevtfjz",
-    "MI_xevtfjz_Disc", "/Game/Materials/")
-unreal.MaterialService.set_instance_scalar_parameter(r.asset_path, "Tiling", 4.0)
-unreal.MaterialService.save_instance(r.asset_path)
-# assign r.asset_path to the actor
+# Material instances are created and overridden through the engine MaterialInstanceTools toolset.
+MIT = "editor_toolset.toolsets.material_instance.MaterialInstanceTools"
+call_tool(tool_name="create_material_instance", toolset_name=MIT,
+          arguments={"parent_material": "/Game/Fab/Megascans/.../MI_xevtfjz",
+                     "asset_name": "MI_xevtfjz_Disc", "folder_path": "/Game/Materials/"})
+ip = "/Game/Materials/MI_xevtfjz_Disc"
+call_tool(tool_name="set_scalar_parameter", toolset_name=MIT,
+          arguments={"instance_path": ip, "parameter_name": "Tiling", "value": 4.0})
+unreal.EditorAssetLibrary.save_asset(ip)
+# assign ip to the actor
 ```
 
 For triplanar / world-aligned (where the same material works on cube, sphere, cylinder with no UV concerns), build a master material wrapping `WorldAlignedTexture` / `WorldAlignedNormal` (functions live under `/Engine/Functions/Engine_MaterialFunctions01/Texturing/`). Use `TextureObjectParameter` (not `TextureSampleParameter2D`) to feed the `TextureObject` input on those functions — the function brings its own sampler. Feed `TextureSize` from a `Constant3Vector` or `Multiply(Scalar, Constant3Vector(1,1,1))`; **a bare scalar will broadcast incorrectly to V3** in this input slot.
@@ -141,31 +145,36 @@ for oc in graph['output_connections']:
 5. **Reconnect** outputs to their correct sources
 6. **Compile** and save
 
-### 🚨 Return Types — Read `.asset_path` and `.id`, NOT the Raw Return Value
+### 🚨 Return Types — `create_parameter`/`create_function_call` Return `.id`, NOT the Raw Object
 
-All create methods return **result objects**, not raw strings. Always extract the field you need:
+Material/instance **creation** now goes through the engine toolsets (`MaterialTools.create_material`
+returns the **Material object** itself — not a result-with-`.asset_path`; `MaterialInstanceTools`
+creates the instance), so build the asset path yourself from `folder_path + asset_name`:
 
 ```python
-# create_material → MaterialCreateResult
-result = unreal.MaterialService.create_material("M_MyMat", "/Game/Materials/")
-if not result.success:
-    print(f"FAILED: {result.error_message}")
-path = result.asset_path  # ← use this, NOT result itself
+# Engine: create_material returns the Material object (no .asset_path) — reference by path you chose.
+call_tool(tool_name="create_material",
+          toolset_name="editor_toolset.toolsets.material.MaterialTools",
+          arguments={"folder_path": "/Game/Materials/", "asset_name": "M_MyMat"})
+path = "/Game/Materials/M_MyMat"
 
-# create_instance → MaterialCreateResult  (same pattern)
-result = unreal.MaterialService.create_instance("/Game/Materials/M_Base", "MI_Red", "/Game/Materials/")
-instance_path = result.asset_path
-
-# create_parameter / create_expression / create_function_call → MaterialExpressionInfo
-expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "1,0,0,1", -400, 0)
-node_id = expr.id  # ← use .id, NOT expr itself
-
-expr2 = unreal.MaterialNodeService.create_expression(path, "Multiply", -200, 0)
-mult_id = expr2.id
+# Engine: create the instance via MaterialInstanceTools, then reference the path you chose.
+call_tool(tool_name="create_material_instance",
+          toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
+          arguments={"parent_material": "/Game/Materials/M_Base",
+                     "asset_name": "MI_Red", "folder_path": "/Game/Materials/"})
+instance_path = "/Game/Materials/MI_Red"
 ```
 
-> ⚠️ Passing a result object where a string is expected gives:
-> `TypeError: Nativize: Cannot nativize 'MaterialCreateResult' as 'String'`
+The surviving VibeUE graph-authoring calls **still** return **result objects** — extract the field:
+
+```python
+# create_parameter / create_function_call → MaterialExpressionInfo
+expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", "Surface", "1,0,0,1", -400, 0)
+node_id = expr.id  # ← use .id, NOT expr itself
+```
+
+> ⚠️ Passing a `MaterialExpressionInfo` where a string is expected gives:
 > `TypeError: Nativize: Cannot nativize 'MaterialExpressionInfo' as 'String'`
 
 ### ⚠️ Two Services
@@ -177,7 +186,10 @@ mult_id = expr2.id
 
 ```python
 expr = unreal.MaterialNodeService.create_parameter(path, "Vector", "BaseColor", ...)
-unreal.MaterialNodeService.connect_to_output(path, expr.id, "", "BaseColor")  # use expr.id
+# Engine: connect_to_output lives on MaterialTools; property is the MP_* name.
+call_tool(tool_name="connect_to_output",
+          toolset_name="editor_toolset.toolsets.material.MaterialTools",
+          arguments={"expression": expr.id, "output_name": "", "material_property": "MP_BaseColor"})  # use expr.id
 unreal.MaterialService.compile_material(path)  # REQUIRED
 unreal.EditorAssetLibrary.save_asset(path)
 ```
@@ -214,8 +226,9 @@ types = unreal.MaterialNodeService.discover_types(category="", search_term="Add"
 ```
 
 To create a node, pass the bare class name minus the `MaterialExpression` prefix
-(`"Add"`, `"Multiply"`, `"Constant3Vector"`, `"OneMinus"`, `"LinearInterpolate"`/`"Lerp"`) to
-`create_expression` / `batch_create_expressions`.
+(`"Add"`, `"Multiply"`, `"Constant3Vector"`, `"OneMinus"`, `"LinearInterpolate"`/`"Lerp"`) as
+`expression_class` to the engine `MaterialTools.add_expression` call (single node), or to the
+surviving `MaterialNodeService.batch_create_expressions` (many nodes in one transaction).
 
 ### ⚠️ Check Node Existence
 

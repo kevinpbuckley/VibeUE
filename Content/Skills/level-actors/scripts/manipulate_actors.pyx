@@ -1,17 +1,22 @@
-# manipulate_actors.pyx — List actors in the level and move/rotate one (ActorService).
+# manipulate_actors.pyx — List actors in the level and move/rotate one.
 #
 # Sample script for the level-actors skill. Run via execute_python_code.
+# NOTE: list/find/spawn/move/transform/select moved to the engine ActorTools/SceneTools/
+# EditorAppToolset (call_tool) or unreal.EditorActorSubsystem (used here). VibeUE's ActorService
+# keeps only transform-lock, absolute-transform, preserve-scale, camera framing, get_all_properties.
 import unreal
-acs = unreal.ActorService
 
-# List actors (optionally filter by class)
-for a in acs.list_level_actors("", False, 20):
-    print(a)
+actor_subsys = unreal.get_editor_subsystem(unreal.EditorActorSubsystem)
 
-# Find by class
-lights = acs.find_actors_by_class("PointLight")
-print("point lights:", [str(l) for l in lights][:5])
+# List actors (filter by class with isinstance — there is no get_all_level_actors_of_class)
+all_actors = actor_subsys.get_all_level_actors()
+for a in all_actors[:20]:
+    loc = a.get_actor_location()
+    print(a.get_actor_label(), "at", (loc.x, loc.y, loc.z))
 
-# Move/rotate by name or label
-# acs.set_location("BP_Player_1", unreal.Vector(0, 0, 200))
-# acs.set_rotation("BP_Player_1", unreal.Rotator(yaw=90))  # kwargs: positional order is (Roll, Pitch, Yaw)
+lights = [a for a in all_actors if isinstance(a, unreal.PointLight)]
+print("point lights:", [l.get_actor_label() for l in lights][:5])
+
+# Move/rotate (kwargs for Rotator: positional order is (Roll, Pitch, Yaw))
+# actor.set_actor_location(unreal.Vector(0, 0, 200), False, False)
+# actor.set_actor_rotation(unreal.Rotator(yaw=90), False)

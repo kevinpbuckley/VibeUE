@@ -58,12 +58,13 @@ result = S.materialize_fields_as_paint(
    via `ULandscapeMaterialService.create_layer_info_object()` and adds it with
    `ULandscapeService.add_layer()`.
 2. Walks `fields.field_mask`: for every cell == 1, computes the world XY and
-   calls `ULandscapeService.paint_layer()`.
+   calls `ULandscapeService.paint_layer_at_location()`.
 
-**Performance note:** cell-by-cell `paint_layer` is slow for large maps. The
-intended optimization is a bulk-paint API (`paint_layer_from_mask`) on
-`ULandscapeService` — separate ticket; the contributor can either rely on the
-slow path during the skeleton phase or add the bulk method while porting.
+**Performance note:** cell-by-cell `paint_layer_at_location` is slow for large
+maps. `ULandscapeService` already exposes bulk writers —
+`paint_layer_in_region` (vertex-index rect) and `paint_layer_in_world_rect`
+(world-space rect) — which a porting contributor should prefer over the per-cell
+path.
 
 ---
 
@@ -88,8 +89,12 @@ result = S.materialize_pois_as_actors(
    to the parent so the POI zone is visible in the editor.
 
 **Replacement workflow:** the placeholders are **blockout markers**. The
-contributor swaps them for finished prefabs later (e.g. by reading the actor
-labels and bulk-replacing meshes via `ActorService`).
+contributor swaps them for finished prefabs later — e.g. read the actor labels
+with the engine `ActorTools` / `SceneTools` toolsets (or
+`unreal.EditorActorSubsystem.get_all_level_actors()`) and bulk-replace the
+meshes. (VibeUE's `ActorService` no longer lists/spawns/transforms actors —
+those moved to Epic's native `ActorTools` / `SceneTools`. It now only covers
+transform locks, camera framing, and property dumps.)
 
 ---
 
@@ -107,8 +112,8 @@ result = S.materialize_forest_as_foliage(
 **What it does:**
 1. For each mask (`forest_mask`, `treeline_mask`, `scrub_mask`), samples Poisson-disk
    positions inside the `1` cells (denser for forest, sparser for scrub).
-2. Calls `UFoliageService.add_instances()` for each foliage type at the sampled
-   positions.
+2. Calls `UFoliageService.add_foliage_instances()` for each foliage type at the
+   sampled positions.
 
 **Foliage type assets:** must already exist. If not, create them via the
 [foliage](../foliage/SKILL.md) skill first, or pass empty paths to skip a tier.
@@ -155,9 +160,9 @@ debugging** in the editor, prefer this order:
 The materializers are **not idempotent** — running them twice creates duplicate
 splines / actors / instances. Before re-running on the same landscape:
 
-- Splines: `ULandscapeService.clear_splines(landscape_label)` (or selectively remove).
-- POI actors: select the `/MapBlockout/POIs/` folder in the World Outliner, delete.
-- Foliage: `UFoliageService.remove_foliage_in_radius()` (or `remove_all_foliage_of_type()` for the specific types you added).
-- Painted layers: `ULandscapeService.fill_layer(landscape_label, "Crop", 0.0)` resets the layer to zero before re-painting.
+- Splines: `unreal.LandscapeService.delete_all_splines(landscape_label)` (or selectively remove).
+- POI actors: select the `/MapBlockout/POIs/` folder in the World Outliner and delete, or enumerate + destroy via `unreal.EditorActorSubsystem.get_all_level_actors()`.
+- Foliage: `unreal.FoliageService.remove_foliage_in_radius()` (or `remove_all_foliage_of_type()` for the specific types you added).
+- Painted layers: re-paint the affected region to weight 0 with `unreal.LandscapeService.paint_layer_in_world_rect(landscape_label, "Crop", min_x, min_y, max_x, max_y, 0.0)` before re-painting (there is no single-call layer-fill).
 
 The skeleton implementations all return `success=false` with `"not yet implemented"`. The contributor wires in the actual calls when porting.

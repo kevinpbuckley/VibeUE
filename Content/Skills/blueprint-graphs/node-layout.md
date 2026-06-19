@@ -24,11 +24,14 @@ EXEC_ROW = 0     # Main execution row
 
 ### Data Flow (Above Execution)
 
+Position is supplied per node. With `build_graph`, set `auto_layout=False` and place nodes with
+explicit pixel coordinates in a follow-up `set_node_position` pass (build_graph node descriptors
+don't carry coordinates); the intent is getters above the exec row:
+
 ```python
 # Getters at Y=-150, math at Y=-75, execution at Y=0
-get_health = add_get_variable_node(bp_path, func, "Health", 200, -150)
-subtract = add_math_node(bp_path, func, "Subtract", "Float", 200, -75)
-branch = add_branch_node(bp_path, func, 200, 0)
+# build_graph node types: variable_get @ (200,-150), math @ (200,-75), branch @ (200,0)
+# Create them in one batch, then set_node_position each to the coordinates above.
 ```
 
 ### Branch Layout (True/False Paths)
@@ -36,8 +39,8 @@ branch = add_branch_node(bp_path, func, 200, 0)
 ```python
 # True path: Y=0 (same row)
 # False path: Y=150 (offset down)
-set_armor = add_set_variable_node(bp_path, func, "Armor", 400, 0)    # True
-set_health = add_set_variable_node(bp_path, func, "Health", 400, 150)  # False
+# Two variable_set nodes (build_graph) — Armor @ (400,0) "True", Health @ (400,150) "False" —
+# placed via set_node_position after creation.
 ```
 
 ### Reposition Entry/Result (CRITICAL)

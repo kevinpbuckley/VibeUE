@@ -2,8 +2,8 @@
 name: profiling
 display_name: Profiling & Performance
 description: Diagnose frame-rate bottlenecks (CPU vs GPU bound FIRST), control Unreal Insights traces, sample live frame times, and annotate performance captures. Use when FPS is low/bad, the game is slow, or you need to find what is limiting the frame rate.
-unreal_classes:
-  - TraceUtilLibrary
+vibeue_classes:
+  - PerformanceService
 keywords:
   - profiling
   - performance
@@ -35,9 +35,28 @@ keywords:
 
 # Profiling Skill
 
-Full Unreal Insights integration and live frame time sampling are available from Python
-with no C++ required. `TraceUtilLibrary` gives complete trace control;
-`register_ticker_callback` delivers real frame deltas every engine tick.
+Unreal 5.8's native toolsets have **no** performance or tracing tools, so this is VibeUE's net-new
+capability: `unreal.PerformanceService` answers "are we CPU- or GPU-bound?" and drives Unreal
+Insights captures from Python with no C++ required. Run everything here through `execute_python_code`.
+
+The whole API is small — read the live signatures once with
+`discover_python_class(class_name="unreal.PerformanceService")`:
+
+| Method | Purpose |
+|--------|---------|
+| `frame_timing()` | Game/Render/GPU/RHI thread ms + a CPU-vs-GPU `bound` verdict + a `hint`. **Run FIRST.** |
+| `start_trace(name="mcp_capture", channels="")` | Start an Insights trace to file (default channel set if `channels` empty). |
+| `stop_trace()` | Stop the active trace; returns the trace file path + size. |
+| `get_trace_status()` | Whether a trace is active and which channels are enabled. |
+| `bookmark(name)` | Drop a point-in-time bookmark in the active trace. |
+| `region_start(name)` / `region_end(name)` | Begin / end a named region span in the active trace. |
+| `analyse(source="both", file="")` | Read back trace and/or log → frame stats, worst frames, hitches, notable log lines. |
+| `start_standalone(name="standalone_capture", channels="")` | Launch the game as a separate standalone process with a trace attached (representative readings the editor viewport can't give). |
+| `stop_standalone()` | Stop the standalone process and finalise its trace/log. |
+| `get_standalone_status()` | Whether a standalone session is running and which trace/log it writes. |
+
+All methods return a JSON string. For a representative reading, profile under PIE or a standalone
+session (`start_standalone`), not the bare editor viewport.
 
 ## 🚦 STEP 0 — Is it CPU-bound or GPU-bound? (DO THIS FIRST, ALWAYS)
 
@@ -46,6 +65,20 @@ roughly `max(GameThread, RenderThread, GPU)` — these run in parallel, so only 
 one sets your FPS. Cutting GPU cost (shadows, Lumen, post-process) does **nothing** if the
 frame is actually game-thread or render-thread bound, and vice-versa. Getting this wrong
 wastes the whole session.
+
+### Fastest check — one call
+
+```python
+import unreal, json
+result = json.loads(unreal.PerformanceService.frame_timing())
+print(result)  # game_thread_ms, render_thread_ms, gpu_ms, rhi_thread_ms, frame_ms, bound, hint
+```
+
+Start PIE first (see the `pie-testing` skill) and park in a representative/worst spot, then call it.
+It returns `game_thread_ms`, `render_thread_ms`, `gpu_ms`, `rhi_thread_ms`, the `frame_ms`, a `bound`
+verdict (`GameThread` / `RenderThread` / `GPU`), and a `hint` with what to do next. This is the same
+data the `stat unit` overlay shows, read straight from engine globals — no screenshots, no trace
+parsing.
 
 ## ⏱️ Frame-time budgets — what a target FPS actually costs
 
@@ -62,7 +95,7 @@ still get ~40 FPS.
 | **240 FPS** | **4.16 ms**  | Maximum allowable time per frame |
 | **360 FPS** | **2.77 ms**  | Maximum allowable time per frame |
 
-Read `frame_timing` against this table: if `game_thread_ms = 25`, you are hard-capped at
+Read `frame_timing()` against this table: if `game_thread_ms = 25`, you are hard-capped at
 ~40 FPS **no matter what you do to the GPU**. To hit 60 FPS the game thread must drop under
 16.66 ms; to hit 120 FPS, under 8.33 ms. Always state the bottleneck thread's ms next to the
 target budget so the gap is explicit (e.g. "game thread 25 ms vs 16.66 ms for 60 FPS → must
@@ -87,26 +120,14 @@ So the workflow for a game-thread bottleneck is: **profile → read the offendin
 edit the code/Blueprint that owns it → rebuild → re-profile to confirm.** Reaching for CVars
 here is a category error; they will not move the number.
 
-### Fastest check — one tool call
-```
-editor_control(action="frame_timing")   # alias: action="bound"
-```
-Start PIE first and park in a representative/worst spot, then call it. It returns
-`game_thread_ms`, `render_thread_ms`, `gpu_ms`, `rhi_thread_ms`, the `frame_ms`, a `bound`
-verdict (`GameThread` / `RenderThread` / `GPU`), and a `hint` with what to do next. This is
-the same data the `stat unit` overlay shows, read straight from engine globals — no
-screenshots, no trace parsing.
-
-> If `frame_timing` is unavailable (older plugin build), use the fallbacks below.
-
 ### Decision tree
 | `bound` | Meaning | Where to look next |
 |---|---|---|
-| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` → read_logs. **Fix is code/Blueprint, not CVars** (see "CVars do NOT fix the game thread" above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
+| **GameThread** | CPU, game thread | Tick / Blueprint / AI / animation. Run `stat dumpframe -ms=0.5 -root=gamethread` then read the log (`LogsToolset`). **Fix is code/Blueprint, not CVars** (see "CVars do NOT fix the game thread" above): throttle ticks, enable anim URO, event-drive logic. Compare the ms to the budget table. |
 | **RenderThread** | CPU, render thread | Draw calls & primitives, **dynamic shadow-casting lights**. Check `stat scenerendering`. Instance/merge meshes, enable Nanite, cut dynamic lights. |
 | **GPU** | GPU | *Now* run ProfileGPU (below). Shadows (VSM), Lumen, translucency, resolution. |
 
-### Confirm / fallback methods (no new tool needed)
+### Confirm / fallback methods
 1. **Numeric thread split via log** — reliable, works headless:
    ```python
    import unreal
@@ -114,289 +135,204 @@ screenshots, no trace parsing.
    unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=gamethread")
    unreal.SystemLibrary.execute_console_command(w, "stat dumpframe -ms=0.5 -root=renderthread")
    ```
-   Then read the dump with `read_logs(action="tail", file="main", lines=150)` — it prints the
-   full thread hierarchy in ms (e.g. `World Tick Time`, `FTickFunctionTask`, individual
+   Then read the dump with the engine **`LogsToolset`** (tail the main log, ~150 lines) — it prints
+   the full thread hierarchy in ms (e.g. `World Tick Time`, `FTickFunctionTask`, individual
    Blueprint `ReceiveTick` costs). This is the single most useful CPU drill-down.
-2. **Resolution-scaling test** (decisive GPU-bound proof) — sample frame time at full res,
-   then `r.ScreenPercentage 50`, and compare with the live ticker sampler (see Live Frame
-   Time Sampling below). FPS jumps a lot → **GPU-bound**. FPS barely moves → **CPU-bound**.
+2. **Resolution-scaling test** (decisive GPU-bound proof) — sample frame time at full res via
+   `frame_timing()`, then `r.ScreenPercentage 50`, and compare. FPS jumps a lot → **GPU-bound**.
+   FPS barely moves → **CPU-bound**.
 3. **`stat unit`** is the canonical overlay, but its numbers do **not** go to the log, and
-   PIE often runs in a separate window so screenshots are unreliable. Prefer methods 1–2 or
-   `frame_timing` over trying to OCR `stat unit`.
+   PIE often runs in a separate window so screenshots are unreliable. Prefer `frame_timing()`
+   or methods 1–2 over trying to OCR `stat unit`.
 
 ## ⚠️ Gotchas — read before writing any code
 
 0. **`ProfileGPU` tells you WHERE GPU time goes, not WHETHER you are GPU-bound.** It always
    produces a GPU breakdown even on a CPU-bound frame — so reading it first will happily send
-   you optimising shadows on a frame whose real cost is the game thread. Run STEP 0 first;
-   only reach for `ProfileGPU` once `bound == GPU`.
+   you optimising shadows on a frame whose real cost is the game thread. Run STEP 0
+   (`frame_timing()`) first; only reach for `ProfileGPU` once `bound == GPU`.
 
-0b. **Never run `ProfileGPU` (or `stat dumpframe`) *during* a frame-time trace you intend to
-   average.** Each `ProfileGPU` stalls the GPU for a full readback (hundreds of ms to
-   seconds), and those stall frames poison `avg_frame_ms`/`p95`. Capture clean frame-time
-   traces separately from GPU/CPU drill-downs.
+0b. **Never run `ProfileGPU` (or `stat dumpframe`) *during* a trace you intend to average.**
+   Each `ProfileGPU` stalls the GPU for a full readback (hundreds of ms to seconds), and those
+   stall frames poison the frame-time stats. Capture clean frame-time traces separately from
+   GPU/CPU drill-downs.
 
-0c. **`editor_control analyse` reports frame time only** (avg/p95/worst frames), **not** the
-   CPU/GPU split. Use `frame_timing` for the split.
+0c. **`analyse()` reports frame-time aggregates** (avg/p95/worst frames, hitches, notable log
+   lines), **not** the live CPU/GPU split. Use `frame_timing()` for the per-thread split.
 
-1. **`AutomationPerformaceHelper` crashes** — it requires a FunctionalTest outer world.
-   Do NOT instantiate it. Use the patterns in this skill instead.
+1. **Profile under PIE or standalone, not the bare editor viewport.** The empty editor viewport
+   is not representative. Start PIE (`pie-testing` skill) or use `start_standalone()`.
 
-2. **Channel names use the `*Channel` suffix for `start_trace_to_file`** — pass
-   `'CpuChannel'` not `'Cpu'`. `get_enabled_channels()` returns short names (`'Cpu'`);
-   `get_all_channels()` returns full names (`'CpuChannel'`). They are the same channel,
-   just different representations.
+2. **Trace files are large** — a ~10 second trace with default channels is 30–50 MB.
+   Traces land under `Saved/Profiling/` (already excluded from source control).
 
-3. **`start_trace_to_file` adds default channels automatically** — even if you only
-   request `['FrameChannel']`, UE will also enable Gpu, Screenshot, Region, Bookmark,
-   Log, etc. You get more than you asked for; that's fine.
-
-4. **Trace files are large** — a ~10 second trace with default channels is 30–50 MB.
-   Store in `Saved/Profiling/` (already excluded from source control).
-
-5. **Ticker callback handle must stay in scope** — if the variable holding the handle
-   is garbage collected, the callback silently stops firing. Store in a module-level
-   variable or a list when doing multi-step sampling.
-
-6. **`is_tracing()` may return `True` briefly after `stop_tracing()`** — there is a
-   small flush delay. The `.utrace` file is valid and complete once stop returns `True`.
+3. **A trace must be active before you bookmark / mark regions.** `bookmark()` and
+   `region_start()/region_end()` only do something while `get_trace_status()` reports a live
+   trace. Call `start_trace()` first.
 
 ---
 
 ## Trace Control
 
-### Start a trace
+### Start / stop a trace
 ```python
-import unreal
+import unreal, json
 
-saved = unreal.Paths.project_saved_dir()  # relative, resolves to Saved/
-trace_path = saved + 'Profiling/my_capture'  # no extension — .utrace added automatically
+# Default channel set (frame, cpu, gpu, log, ...) — pass channels="" or omit
+res = json.loads(unreal.PerformanceService.start_trace("combat_encounter"))
+print(res)  # includes the trace file path
 
-channels = ['FrameChannel', 'CpuChannel', 'GpuChannel', 'StatsChannel']
-ok = unreal.TraceUtilLibrary.start_trace_to_file(trace_path, channels)
-print('started:', ok)  # True on success
-print('is_tracing:', unreal.TraceUtilLibrary.is_tracing())
+# ... reproduce the workload ...
+
+stopped = json.loads(unreal.PerformanceService.stop_trace())
+print(stopped)  # trace file path + size
 ```
 
-### Stop a trace
+### Custom channels
 ```python
-import unreal
-ok = unreal.TraceUtilLibrary.stop_tracing()
-print('stopped:', ok)
-# File is at: <project>/Saved/Profiling/my_capture.utrace
+# Comma-separated channel list (short names accepted by the service)
+unreal.PerformanceService.start_trace("mem_capture", "frame,cpu,memalloc,memtag,object,loadtime")
 ```
 
-### Pause / resume (keep file open, stop writing temporarily)
+### Check status
 ```python
-unreal.TraceUtilLibrary.pause_tracing()
-# ... do something you don't want in the trace ...
-unreal.TraceUtilLibrary.resume_tracing()
-```
-
-### Check status and active channels
-```python
-import unreal
-print('tracing:', unreal.TraceUtilLibrary.is_tracing())
-enabled = [str(c) for c in unreal.TraceUtilLibrary.get_enabled_channels()]
-print('enabled:', enabled)
-```
-
-### Toggle a specific channel mid-trace
-```python
-unreal.TraceUtilLibrary.toggle_channel('MemAllocChannel', True)   # enable
-unreal.TraceUtilLibrary.toggle_channel('NiagaraChannel', False)  # disable
+import unreal, json
+print(json.loads(unreal.PerformanceService.get_trace_status()))  # active? which channels?
 ```
 
 ---
 
 ## Annotations — Mark Regions and Bookmarks
 
-Use these **while tracing** to label interesting moments in the Unreal Insights timeline.
+Use these **while a trace is active** to label interesting moments in the Unreal Insights timeline.
 
 ```python
 import unreal
 
-# Single point-in-time bookmark (shows as a vertical line in Insights)
-unreal.TraceUtilLibrary.trace_bookmark('spawn_wave_3')
+# Single point-in-time bookmark (vertical line in Insights)
+unreal.PerformanceService.bookmark("spawn_wave_3")
 
-# Named region (shows as a coloured span)
-unreal.TraceUtilLibrary.trace_mark_region_start('loading_level')
+# Named region (coloured span)
+unreal.PerformanceService.region_start("loading_level")
 # ... trigger the thing you want to measure ...
-unreal.TraceUtilLibrary.trace_mark_region_end('loading_level')
-
-# Screenshot embedded in the trace
-unreal.TraceUtilLibrary.trace_screenshot('before_explosion', show_ui=False)
+unreal.PerformanceService.region_end("loading_level")
 ```
 
 ---
 
-## Live Frame Time Sampling
+## Reading a capture back — `analyse()`
 
-Use `register_ticker_callback` to collect real frame deltas over a duration.
-This is a **two-step pattern** because the callback fires asynchronously on engine ticks
-between Python requests.
+`analyse()` reads a finished trace and/or the log and returns a perf summary (frame stats, worst
+frames, hitches, notable log lines) without opening Unreal Insights:
 
-### Step 1 — Start sampling (call this first)
 ```python
-import unreal
+import unreal, json
 
-_ft_samples = []
-_ft_handle = None
+summary = json.loads(unreal.PerformanceService.analyse("both"))   # "trace", "logs", or "both"
+print(summary)  # avg/p95/worst frame ms, hitches, notable log lines
 
-def _frame_sampler(dt):
-    _ft_samples.append(dt)
-    return True  # keep ticking — stop by calling unregister or returning False
-
-_ft_handle = unreal.register_ticker_callback(_frame_sampler)
-print('sampling started, handle:', _ft_handle)
+# Analyse a specific file instead of the last trace started/stopped
+unreal.PerformanceService.analyse("trace", "Saved/Profiling/combat_encounter.utrace")
 ```
 
-### Step 2 — Collect results (call after waiting N seconds)
+Remember: `analyse()` is frame-time aggregates only — use `frame_timing()` for the CPU/GPU split.
+
+---
+
+## Standalone capture — representative readings
+
+The editor viewport (and even PIE) is not always representative of a packaged run. `start_standalone()`
+launches the game as a **separate standalone process** with a trace attached, connecting back to the
+editor's Unreal Trace Server:
+
 ```python
-import unreal, statistics
+import unreal, json
 
-samples = _ft_samples[:]  # snapshot
-if _ft_handle:
-    unreal.unregister_ticker_callback(_ft_handle)
+unreal.PerformanceService.start_standalone("standalone_capture")
+print(json.loads(unreal.PerformanceService.get_standalone_status()))  # running? trace/log path
 
-if not samples:
-    print('no samples collected — did you wait long enough?')
-else:
-    ms = [s * 1000 for s in samples]
-    print(f'frames:  {len(ms)}')
-    print(f'avg:     {statistics.mean(ms):.2f} ms  ({1000/statistics.mean(ms):.1f} fps)')
-    print(f'median:  {statistics.median(ms):.2f} ms')
-    print(f'p95:     {sorted(ms)[int(len(ms)*0.95)]:.2f} ms')
-    print(f'max:     {max(ms):.2f} ms  (worst hitch)')
-    print(f'min:     {min(ms):.2f} ms')
+# ... let it run / drive the workload ...
+
+unreal.PerformanceService.stop_standalone()  # finalises the trace + log
 ```
 
-### Single-call version (auto-stops after N frames)
+Once stopped, point `analyse()` at the standalone trace/log to summarise it.
+
+---
+
+## Recommended flow
+
 ```python
-import unreal, statistics
+import unreal, json
 
-_samples = []
-_handle_ref = [None]
+# 1. CPU vs GPU verdict FIRST (PIE running, parked in a representative spot)
+print(json.loads(unreal.PerformanceService.frame_timing()))
 
-def _sampler(dt):
-    _samples.append(dt * 1000)
-    if len(_samples) >= 300:  # ~5 sec at 60fps
-        return False  # unregisters automatically
-    return True
+# 2. Capture a clean trace around the workload
+unreal.PerformanceService.start_trace("combat_encounter")
+unreal.PerformanceService.region_start("wave_spawn")
+# (trigger the gameplay here)
+unreal.PerformanceService.region_end("wave_spawn")
+res = json.loads(unreal.PerformanceService.stop_trace())
+print("trace:", res)
 
-_handle_ref[0] = unreal.register_ticker_callback(_sampler)
-print(f'collecting 300 frames... check _samples list when done')
-# In a follow-up call: analyse _samples
+# 3. Summarise without leaving Python
+print(json.loads(unreal.PerformanceService.analyse("both")))
 ```
 
 ---
 
 ## Channel Reference
 
+`start_trace` / `start_standalone` accept a comma-separated `channels` string; empty uses the
+default set (frame, cpu, gpu, log, …). Common channels:
+
 | Channel | What it captures | Use for |
 |---|---|---|
-| `FrameChannel` | Frame boundaries, wall time | Always include — baseline for everything |
-| `CpuChannel` | CPU named scopes (TRACE_CPUPROFILER_EVENT_SCOPE) | CPU hotspots, Blueprint tick |
-| `GpuChannel` | GPU pass timings | GPU bound? Where are draw calls going? |
-| `StatsChannel` | UE stat counters (stat unit values etc.) | Actor/component counts, frame budget |
-| `LogChannel` | Log output embedded in trace | Correlate log spam with frame spikes |
-| `MemAllocChannel` | Per-allocation callstacks | Memory churn, GC pressure |
-| `MemTagChannel` | High-level memory category totals | Which system is eating RAM? |
-| `ObjectChannel` | UObject create/destroy | Asset streaming, actor spawning |
-| `NiagaraChannel` | Niagara system tick | Particle perf |
-| `AnimationChannel` | Animation graph evaluation | Anim Blueprint cost |
-| `NetChannel` | Replication, RPC timing | Multiplayer performance |
-| `SlateChannel` | UI widget tick and paint | UI overhead |
-| `TaskChannel` | Task Graph threads | Async task scheduling |
-| `LoadTimeChannel` | Asset streaming / load events | Load hitches |
-| `BookmarkChannel` | `trace_bookmark()` calls | Always included when annotating |
-| `RegionChannel` | `trace_mark_region_*()` calls | Always included when annotating |
-| `ScreenshotChannel` | `trace_screenshot()` captures | Visual reference in Insights |
+| `frame` | Frame boundaries, wall time | Always include — baseline for everything |
+| `cpu` | CPU named scopes | CPU hotspots, Blueprint tick |
+| `gpu` | GPU pass timings | GPU bound? Where are draw calls going? |
+| `stats` | UE stat counters | Actor/component counts, frame budget |
+| `log` | Log output embedded in trace | Correlate log spam with frame spikes |
+| `memalloc` | Per-allocation callstacks | Memory churn, GC pressure |
+| `memtag` | High-level memory category totals | Which system is eating RAM? |
+| `object` | UObject create/destroy | Asset streaming, actor spawning |
+| `niagara` | Niagara system tick | Particle perf |
+| `animation` | Animation graph evaluation | Anim Blueprint cost |
+| `net` | Replication, RPC timing | Multiplayer performance |
+| `slate` | UI widget tick and paint | UI overhead |
+| `loadtime` | Asset streaming / load events | Load hitches |
+
+> Channel naming may vary slightly by build; call `get_trace_status()` after `start_trace()` to see
+> the channels actually enabled.
+
+### Common channel presets
+| Investigation | `channels` string |
+|---|---|
+| General (balanced) | `frame,cpu,gpu,stats,log` |
+| Memory | `frame,memalloc,memtag,object,loadtime` |
+| Animation / character | `frame,cpu,animation,stats` |
+| UI / Slate | `frame,cpu,slate,stats` |
+| Niagara / VFX | `frame,cpu,gpu,niagara` |
+| Multiplayer | `frame,cpu,net,stats` |
+| Load / streaming | `frame,loadtime,object,log` |
 
 ---
 
-## Common Presets
+## Opening Traces in Unreal Insights
 
-### General performance capture (balanced)
-```python
-channels = ['FrameChannel', 'CpuChannel', 'GpuChannel', 'StatsChannel', 'LogChannel']
-```
+`analyse()` covers most needs from Python, but you can open a `.utrace` for the full timeline UI:
 
-### Memory investigation
-```python
-channels = ['FrameChannel', 'MemAllocChannel', 'MemTagChannel', 'ObjectChannel', 'LoadTimeChannel']
-```
-
-### Animation / character perf
-```python
-channels = ['FrameChannel', 'CpuChannel', 'AnimationChannel', 'StatsChannel']
-```
-
-### UI / Slate overhead
-```python
-channels = ['FrameChannel', 'CpuChannel', 'SlateChannel', 'StatsChannel']
-```
-
-### Niagara / VFX
-```python
-channels = ['FrameChannel', 'CpuChannel', 'GpuChannel', 'NiagaraChannel']
-```
-
-### Multiplayer / networking
-```python
-channels = ['FrameChannel', 'CpuChannel', 'NetChannel', 'StatsChannel']
-```
-
-### Load time / streaming hitches
-```python
-channels = ['FrameChannel', 'LoadTimeChannel', 'ObjectChannel', 'LogChannel']
-```
-
----
-
-## Full Workflow Example
-
-```python
-import unreal, time
-
-saved = unreal.Paths.project_saved_dir()
-trace_path = saved + 'Profiling/combat_encounter'
-
-# Start
-channels = ['FrameChannel', 'CpuChannel', 'GpuChannel', 'StatsChannel', 'LogChannel']
-unreal.TraceUtilLibrary.start_trace_to_file(trace_path, channels)
-unreal.TraceUtilLibrary.trace_bookmark('capture_start')
-
-# Mark a region around the thing you care about
-unreal.TraceUtilLibrary.trace_mark_region_start('wave_spawn')
-# (trigger the gameplay here)
-unreal.TraceUtilLibrary.trace_mark_region_end('wave_spawn')
-
-unreal.TraceUtilLibrary.trace_bookmark('capture_end')
-unreal.TraceUtilLibrary.stop_tracing()
-
-import os
-abs_path = os.path.abspath(trace_path + '.utrace')
-size_mb = os.path.getsize(abs_path) / 1024 / 1024
-print(f'Trace saved: {abs_path}  ({size_mb:.1f} MB)')
-print('Open with: UnrealInsights.exe or from Editor > Tools > Run Unreal Insights')
-```
-
----
-
-## Opening Traces
-
-Traces can be opened from within the editor:
 ```
 Editor menu: Tools → Run Unreal Insights
 ```
 
 Or from the command line:
 ```
-"<UE install>/Engine/Binaries/Win64/UnrealInsights.exe" "<path>/my_capture.utrace"
+"<UE install>/Engine/Binaries/Win64/UnrealInsights.exe" "<path>/combat_encounter.utrace"
 ```
 
-The trace file path is always:
+Trace files are written under:
 ```
 <project root>/Saved/Profiling/<name>.utrace
 ```

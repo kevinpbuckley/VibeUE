@@ -1,27 +1,37 @@
 # build_event_graph.pyx — Wire Event BeginPlay -> Print String, then verify + compile.
 #
 # Sample script for the blueprint-graphs skill. Run via execute_python_code.
-# Demonstrates: find an existing event node by title, add a function-call node, connect, verify.
+# Demonstrates: build the whole graph in one build_graph batch (the VibeUE delta), then verify.
+# The standalone add_function_call_node / add_event_node / compile_blueprint methods are gone —
+# build_graph creates the event + function_call nodes, wires them, and compiles in a single call.
 import unreal
 bs = unreal.BlueprintService
 
 BP = "/Game/Blueprints/BP_GraphTest"   # must already exist (Actor-based)
 GRAPH = "EventGraph"
 
-# 1. Add the Print String node
-ps = bs.add_function_call_node(BP, GRAPH, "KismetSystemLibrary", "PrintString", 400, 0)
-assert ps, "PrintString node not created"
+# 1. Build BeginPlay -> Print String in one batch (auto-layout + compile = the last two flags)
+result = bs.build_graph(BP, GRAPH,
+    [
+        {"ref": "Begin", "type": "event", "params": {"event": "ReceiveBeginPlay"}},
+        {"ref": "Print", "type": "print_string", "params": {}},
+    ],
+    [
+        {"from_": "Begin.then", "to": "Print.execute"},
+    ],
+    [
+        {"node_ref": "Print", "pin_name": "InString", "value": "Hello World!"},
+    ],
+    True,  # auto-layout
+    True,  # compile after
+)
+print("build_graph success:", result.b_success)
+print("nodes:", result.nodes_created, "connections:", result.connections_made)
+for e in result.errors:
+    print("  ERROR:", e)
 
-# 2. Find the BeginPlay event by its DISPLAY title (event-style overrides live in EventGraph)
-begin = next((n for n in bs.get_nodes_in_graph(BP, GRAPH) if n.node_title == "Event BeginPlay"), None)
-assert begin, "Event BeginPlay not found"
-
-# 3. Connect exec: BeginPlay.then -> PrintString.execute
-assert bs.connect_nodes(BP, GRAPH, begin.node_id, "then", ps, "execute")
-
-# 4. Verify the connection exists, then compile
+# 2. Verify the connection exists in the live graph
 for c in bs.get_connections(BP, GRAPH):
     print(f"{c.source_node_title}.{c.source_pin_name} -> {c.target_node_title}.{c.target_pin_name}")
-r = bs.compile_blueprint(BP)
-print("compile:", r.success, "errors:", r.num_errors)
+
 unreal.EditorAssetLibrary.save_asset(BP)

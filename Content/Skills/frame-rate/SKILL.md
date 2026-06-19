@@ -30,6 +30,12 @@ clear them all, in this order, before declaring it fixed.
 coming from somewhere else (usually VSync to a 60 Hz monitor, or the smoothed frame-rate
 range). Read every source below before changing anything.
 
+> 🩺 **"Capped" vs "slow" are different problems.** If the frame rate is *low* rather than *pinned*
+> at a round number, it's not a cap — it's a workload. Run `unreal.PerformanceService.frame_timing()`
+> first (NEW service that replaced the removed `editor_control` tool) for a CPU-vs-GPU-bound verdict
+> before touching any cap below. The caps here only matter when something is artificially holding FPS
+> down. (Cvar/INI reads/writes in this skill stay on `EngineSettingsService`.)
+
 | # | Setting | Where | "Uncapped" value |
 |---|---------|-------|------------------|
 | 1 | `t.MaxFPS` | cvar | `0` (or a high target like `240`) |

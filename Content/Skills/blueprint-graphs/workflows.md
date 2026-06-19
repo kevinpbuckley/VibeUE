@@ -36,8 +36,10 @@ result_node = next((n for n in nodes if "Result" in n.node_type), None)
 if result_node:
     unreal.BlueprintService.set_node_pin_value(bp_path, "GetStaticDescription", result_node.node_id, "ReturnValue", "Rotate Cube")
 
-# Step 5: Compile and save
-unreal.BlueprintService.compile_blueprint(bp_path)
+# Step 5: Compile and save (compile via the engine BlueprintTools toolset)
+call_tool(tool_name="compile_blueprint",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": bp_path})
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
@@ -50,7 +52,7 @@ unreal.EditorAssetLibrary.save_asset(bp_path)
 | `True` (void/latent: EnterState, Tick, StateCompleted…) | Event node added to **EventGraph** | `get_nodes_in_graph(bp, "EventGraph")` |
 | `False` (returns a value: GetDescription…) | **Function graph** with entry + result | `get_nodes_in_graph(bp, function_name)` |
 
-Never call `add_event_node` manually for override functions — `override_function` handles it.
+Never create the event node yourself (via `build_graph` `event` or engine `create_node`) for override functions — `override_function` handles it.
 
 For event-style overrides, the visible node title is usually the friendly event name Unreal shows in the graph, such as `Event EnterState`, not the raw function name like `ReceiveLatentEnterState`.
 
@@ -66,31 +68,43 @@ Always call `list_overridable_functions` when the user asks "what functions can 
 
 ### Create Function with Logic
 
+The function graph itself is an engine basic (`BlueprintTools.add_function_graph` via `call_tool`).
+The body nodes (`variable_get`, `math`, `variable_set`) are all `build_graph` node types, so the
+whole body is one batch call — note node IDs are GUIDs, not `0`/`1`, so resolve them via refs
+(use `get_nodes_in_graph` to find the Entry node when you need to wire it).
+
 ```python
 import unreal
 
 bp_path = "/Game/BP_Player"
 
-# Create function with parameters
-unreal.BlueprintService.create_function(bp_path, "TakeDamage", is_pure=False)
-unreal.BlueprintService.add_function_input(bp_path, "TakeDamage", "Amount", "float", "0.0")
-unreal.BlueprintService.add_function_output(bp_path, "TakeDamage", "NewHealth", "float")
-unreal.BlueprintService.compile_blueprint(bp_path)
+# Create the function graph + its parameters (engine BlueprintTools toolset)
+call_tool(tool_name="add_function_graph",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": bp_path, "name": "TakeDamage", "is_pure": False})
+unreal.BlueprintService.add_function_parameter(bp_path, "TakeDamage", "Amount", "float", "0.0")  # input
+# (use add_function_parameter / the engine toolset for the NewHealth output too)
+call_tool(tool_name="compile_blueprint",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": bp_path})
 
-# Add nodes (entry=0, result=1)
-get_health = unreal.BlueprintService.add_get_variable_node(bp_path, "TakeDamage", "Health", -400, -100)
-subtract = unreal.BlueprintService.add_math_node(bp_path, "TakeDamage", "Subtract", "Float", -200, 0)
-set_health = unreal.BlueprintService.add_set_variable_node(bp_path, "TakeDamage", "Health", 200, 0)
-
-# Connect nodes
-unreal.BlueprintService.connect_nodes(bp_path, "TakeDamage", 0, "then", set_health, "execute")
-unreal.BlueprintService.compile_blueprint(bp_path)
+# Body nodes via build_graph (variable_get / math / variable_set are build_graph types)
+r = unreal.BlueprintService.build_graph(bp_path, "TakeDamage",
+    [
+        {"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health"}},
+        {"ref": "Sub",   "type": "math", "params": {"operation": "Subtract", "operand_type": "Double"}},
+        {"ref": "SetHP", "type": "variable_set", "params": {"variable": "Health"}},
+    ],
+    [],  # add data/exec connections here (find the Entry node GUID via get_nodes_in_graph)
+    [], True, True)
 unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
 ### Add Enhanced Input Action Node
 
-Use `add_input_action_node()` to create an Enhanced Input Action event node in a Blueprint:
+The Enhanced Input Action event node is the `build_graph` node type **`input_action`** (`params`:
+`action` = the IA asset path). Pair it with a `function_call` node in the same batch — its output
+pins are `Started`, `Ongoing`, `Triggered`, `Completed`, `Canceled`:
 
 ```python
 import unreal
@@ -98,16 +112,17 @@ import unreal
 bp_path = "/Game/BP_ThirdPersonCharacter"
 ia_path = "/Game/Input/IA_Ragdoll"
 
-# Create the Enhanced Input Action node
-node_id = unreal.BlueprintService.add_input_action_node(bp_path, "EventGraph", ia_path, -800, 2500)
-
-if node_id:
-    # Connect to other nodes - Output pins are: Started, Ongoing, Triggered, Completed, Canceled
-    set_physics = unreal.BlueprintService.add_function_call_node(bp_path, "EventGraph", "PrimitiveComponent", "SetSimulatePhysics", -400, 2500)
-    unreal.BlueprintService.connect_nodes(bp_path, "EventGraph", node_id, "Started", set_physics, "execute")
-    
-    unreal.BlueprintService.compile_blueprint(bp_path)
-    unreal.EditorAssetLibrary.save_asset(bp_path)
+unreal.BlueprintService.build_graph(bp_path, "EventGraph",
+    [
+        {"ref": "IA", "type": "input_action", "params": {"action": ia_path}},
+        {"ref": "Physics", "type": "function_call",
+         "params": {"class": "PrimitiveComponent", "function": "SetSimulatePhysics"}},
+    ],
+    [
+        {"from_": "IA.Started", "to": "Physics.execute"},
+    ],
+    [], True, True)  # auto_layout, compile
+unreal.EditorAssetLibrary.save_asset(bp_path)
 ```
 
 **Important**: The Input Action asset must exist first. Create it with `InputService.create_action()` if needed.

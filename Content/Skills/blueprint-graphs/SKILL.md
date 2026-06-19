@@ -40,13 +40,43 @@ related_skills:
 | WRONG | CORRECT |
 |-------|---------|
 | `list_nodes()` | `get_nodes_in_graph()` |
-| `add_node()` | `add_function_call_node()` or `add_event_node()` etc. |
+| `add_node()` / `add_function_call_node()` / `add_event_node()` | **batch:** VibeUE `build_graph()`; **single node:** engine `BlueprintTools.create_node` via `call_tool`; **editor-style spawner:** `create_node_by_key()` |
 | `disconnect_nodes()` | `disconnect_pin()` |
 | `get_node_connections()` | `get_connections()` |
 | `get_graphs()` | `list_graphs()` |
 | `get_functions()` | `list_functions()` |
 | `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
 | `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
+
+> **Node creation moved to the engine toolset.** The old per-node convenience creators
+> (`add_function_call_node`, `add_event_node`, `add_get_variable_node`, `add_set_variable_node`,
+> `add_member_get_node`, `add_validated_get_node`) and the basics (`create_blueprint`,
+> `compile_blueprint`, `add_variable`, `create_function`) are **gone** from `unreal.BlueprintService`.
+> Create nodes one of three ways:
+>
+> 1. **Batch (preferred for 2+ nodes):** `unreal.BlueprintService.build_graph(...)` — the VibeUE
+>    delta. Node `type` values (`function_call`, `event`, `variable_get`, `variable_set`, `branch`,
+>    `print_string`, `member_get`, `validated_get`, …) live inside `build_graph`. See `build-graph.md`.
+> 2. **Single node:** the engine `BlueprintTools.create_node` tool via `call_tool` (args `graph`,
+>    `type_id`, `pos`):
+>    ```python
+>    call_tool(
+>        tool_name="create_node",
+>        toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+>        arguments={"blueprint": bp_path, "graph": "EventGraph",
+>                   "type_id": "Development|PrintString", "pos": [400, 0]})
+>    ```
+>    `type_id` examples: `'Development|PrintString'`, `'AddEvent|EventBeginPlay'`,
+>    `'AddEvent|Custom|MyEvent'`, a function `'Utilities|...'`, a macro
+>    `'Utilities|FlowControl|ForLoop'`, a dispatcher handler `'Default|EventDispatcherOnDamaged'`.
+> 3. **Editor-style spawner key:** `create_node_by_key()` still works for deterministic creation
+>    after `discover_nodes()`.
+>
+> The surviving wiring/inspection methods (`connect_nodes`, `disconnect_pin`, `get_connections`,
+> `get_node_pins`, `set_node_pin_value`, `add_custom_event_node`, `add_macro_instance_node`,
+> the timeline + custom-event-input CRUD, `build_graph`, `auto_layout_*`, etc.) are the VibeUE
+> focus and remain unchanged. Engine basics — `BlueprintTools.create`, `.compile_blueprint`,
+> `.add_variable`, `.add_function_graph` — also go through `call_tool` against that same toolset.
 
 ### ⚠️ `disconnect_pin()` Signature — 4 Args Only
 
@@ -183,14 +213,27 @@ connect_nodes(path, func, branch_id, "else", target_id, "execute")
 | `Add_FloatFloat` | `Add_DoubleDouble` |
 | `MakeLiteralFloat` | `MakeLiteralDouble` |
 
-The editor still *displays* "Make Literal Float", but its spawner is `FUNC KismetSystemLibrary::MakeLiteralDouble`. `add_function_call_node(..., "KismetSystemLibrary", "MakeLiteralFloat", ...)` returns `""` silently — use `MakeLiteralDouble`, or `discover_nodes(bp, "Make Literal Float")` and spawn via the returned `spawner_key`.
+The editor still *displays* "Make Literal Float", but its spawner is `FUNC KismetSystemLibrary::MakeLiteralDouble`. A `build_graph` `function_call` node (or engine `create_node`) targeting `"KismetSystemLibrary", "MakeLiteralFloat"` resolves to nothing silently — use `MakeLiteralDouble`, or `discover_nodes(bp, "Make Literal Float")` and spawn via the returned `spawner_key`.
 
 ### ⚠️ Compile Before Using Variables in Nodes
 
+The variable must exist on the compiled skeleton class before a getter/setter can resolve it.
+Add the variable and compile through the engine `BlueprintTools` toolset, then create the
+`variable_get` node (here via `build_graph`):
+
 ```python
-unreal.BlueprintService.add_variable(path, "Health", "float", "100.0")
-unreal.BlueprintService.compile_blueprint(path)  # REQUIRED before adding nodes
-unreal.BlueprintService.add_get_variable_node(path, func, "Health", x, y)
+# Engine basics go through call_tool / BlueprintTools
+call_tool(tool_name="add_variable",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": path, "name": "Health", "type": "float", "default": "100.0"})
+call_tool(tool_name="compile_blueprint",
+          toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+          arguments={"blueprint": path})  # REQUIRED before adding nodes
+
+# Now the getter resolves — VibeUE build_graph
+unreal.BlueprintService.build_graph(path, func,
+    [{"ref": "GetHP", "type": "variable_get", "params": {"variable": "Health"}}],
+    [], [], True, True)
 ```
 
 ### ⚠️ Verify Pins Immediately After Adding Variable Get/Set Nodes
@@ -198,15 +241,24 @@ unreal.BlueprintService.add_get_variable_node(path, func, "Health", x, y)
 A variable Get/Set node can occasionally be created with **zero pins** (the variable property
 failed to resolve on the skeleton class at spawn time). The create call still returns a GUID, so
 you won't notice until every `connect_nodes` against it returns `False`. After creating a
-variable node, check its pins before wiring anything:
+variable node, check its pins before wiring anything (create it via `build_graph`'s
+`variable_get`; `ref_to_node_id` maps your ref back to the GUID):
 
 ```python
-gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+r = unreal.BlueprintService.build_graph(bp_path, graph,
+    [{"ref": "Get", "type": "variable_get", "params": {"variable": "Armor"}}],
+    [], [], False, False)
+gid = r.ref_to_node_id["Get"]
 pins = unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
 if not pins:  # corrupt node — recover
     unreal.BlueprintService.delete_node(bp_path, graph, gid)
-    unreal.BlueprintService.compile_blueprint(bp_path)
-    gid = unreal.BlueprintService.add_get_variable_node(bp_path, graph, "Armor", 500, -200)
+    call_tool(tool_name="compile_blueprint",
+              toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+              arguments={"blueprint": bp_path})
+    r = unreal.BlueprintService.build_graph(bp_path, graph,
+        [{"ref": "Get", "type": "variable_get", "params": {"variable": "Armor"}}],
+        [], [], False, False)
+    gid = r.ref_to_node_id["Get"]
     assert unreal.BlueprintService.get_node_pins(bp_path, graph, gid)
 ```
 
@@ -260,11 +312,14 @@ Do **NOT** use the function name as the graph name — that graph doesn't exist.
 ```python
 # WRONG — returns 0 nodes, creates nothing
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "ReceiveTreeStart")
-node_id = unreal.BlueprintService.add_function_call_node(bp_path, "ReceiveTreeStart", ...)
+# ...and creating into "ReceiveTreeStart" (build_graph or create_node) goes nowhere
 
 # CORRECT — event-style overrides are in EventGraph
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, "EventGraph")
-node_id = unreal.BlueprintService.add_function_call_node(bp_path, "EventGraph", ...)
+unreal.BlueprintService.build_graph(bp_path, "EventGraph",
+    [{"ref": "Call", "type": "function_call",
+      "params": {"class": "KismetSystemLibrary", "function": "PrintString"}}],
+    [], [], True, True)
 ```
 
 Common event-style overrides and their **graph name → node title**:
@@ -295,7 +350,7 @@ Common examples:
 If you do not already know the exact callable name, do **not** guess and do **not** batch multiple node creations into one shot. Use one of these two patterns:
 
 1. `discover_nodes()` + `create_node_by_key()` for deterministic editor-style creation.
-2. `add_function_call_node()` only after discovery, or when you already know the exact function name.
+2. A `build_graph` `function_call` node (or engine `BlueprintTools.create_node`) only after discovery, or when you already know the exact function name.
 
 ```python
 import unreal
@@ -346,7 +401,7 @@ A full `AssetPath:GraphName` string is also accepted for user-defined macro libr
 Notes:
 - `IsValid` places **one** node exposing both `Is Valid` and `Is Not Valid` exec outputs — there is no separate `IsNotValid` macro.
 - `MultiGate` is `K2Node_MultiGate` (a distinct node type), not a StandardMacro — it is not in this list.
-- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (`create_function` asserts on MacroLibrary BPs).
+- To create a macro graph on a `MacroLibrary` Blueprint, use `create_macro_graph(lib_path, "MacroName")` (the engine `BlueprintTools.add_function_graph` path asserts on MacroLibrary BPs).
 
 ### ⚠️ Complex Graphs: Create and Verify One Node at a Time
 
@@ -400,9 +455,12 @@ import unreal
 bp_path = "/Game/MyBlueprint"
 graph = "EventGraph"
 
-# 1. Add Set Timer by Event node
-timer_id = unreal.BlueprintService.add_function_call_node(
-    bp_path, graph, "KismetSystemLibrary", "K2_SetTimerDelegate", 300, 0)
+# 1. Add Set Timer by Event node (build_graph function_call; ref_to_node_id gives the GUID)
+r = unreal.BlueprintService.build_graph(bp_path, graph,
+    [{"ref": "Timer", "type": "function_call",
+      "params": {"class": "KismetSystemLibrary", "function": "K2_SetTimerDelegate"}}],
+    [], [], False, False)
+timer_id = r.ref_to_node_id["Timer"]
 
 # 2. Set the Time pin
 unreal.BlueprintService.set_node_pin_value(bp_path, graph, timer_id, "Time", "1.0")
@@ -455,12 +513,18 @@ graph = "EventGraph"
 
 unreal.BlueprintService.override_function(bp_path, "ReceiveLatentEnterState")
 
-timer_id = unreal.BlueprintService.add_function_call_node(
-    bp_path, graph, "KismetSystemLibrary", "K2_SetTimerDelegate", 520, 0)
+# Timer + Finish Task are function_call nodes — create them via build_graph;
+# the Custom Event callback uses the surviving add_custom_event_node.
+r = unreal.BlueprintService.build_graph(bp_path, graph,
+    [{"ref": "Timer", "type": "function_call",
+      "params": {"class": "KismetSystemLibrary", "function": "K2_SetTimerDelegate"}},
+     {"ref": "Finish", "type": "function_call",
+      "params": {"class": "StateTreeTaskBlueprintBase", "function": "FinishTask"}}],
+    [], [], False, False)
+timer_id = r.ref_to_node_id["Timer"]
+finish_id = r.ref_to_node_id["Finish"]
 custom_id = unreal.BlueprintService.add_custom_event_node(
     bp_path, graph, "OnTimerFinished", 0, 420)
-finish_id = unreal.BlueprintService.add_function_call_node(
-    bp_path, graph, "StateTreeTaskBlueprintBase", "FinishTask", 520, 420)
 
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
 enter_node = next((n for n in nodes if n.node_title == "Event EnterState"), None)
@@ -491,7 +555,7 @@ After any graph edit, verify all three layers:
 
 1. **Connections**: call `get_connections()` and confirm the exact expected wiring.
 2. **Pins**: if a connection fails, call `get_node_pins()` and use the real pin names.
-3. **Compile**: inspect `compile_blueprint(...).success`, `num_errors`, and `errors`.
+3. **Compile**: inspect the engine `BlueprintTools.compile_blueprint` result's `success`, `num_errors`, and `errors`.
 
 For any node you claim you created, also re-read the graph with `get_nodes_in_graph()` and confirm that node actually exists in the graph after the edit. A returned node ID from a create call is not enough.
 
@@ -503,8 +567,11 @@ For `Custom Event` timer callbacks, verify both of these before wiring:
 Also verify that the node type is the expected custom event form rather than `K2Node_CreateDelegate`.
 
 ```python
-result = unreal.BlueprintService.compile_blueprint(bp_path)
-assert result.success, result.errors
+# compile goes through the engine BlueprintTools toolset
+result = call_tool(tool_name="compile_blueprint",
+                   toolset_name="editor_toolset.toolsets.blueprint.BlueprintTools",
+                   arguments={"blueprint": bp_path})
+assert result["success"], result.get("errors")
 
 nodes = unreal.BlueprintService.get_nodes_in_graph(bp_path, graph)
 for node in nodes:
@@ -552,9 +619,9 @@ ticking during the wait period.
 
 This skill index contains the frontmatter, intro, and the **Critical Rules / gotchas** section. For everything else, load the matching sub-doc by reading its file under this same folder (`Plugins/VibeUE/Content/Skills/blueprint-graphs/`):
 
-- **`node-reference.md`** — Reference for specific node APIs that are part of Critical Rules but read as reference material: `add_member_get_node`, `add_validated_get_node`, Custom Event Input Pins CRUD (`*_custom_event_input`), and Timelines CRUD (`*_timeline*`).
+- **`node-reference.md`** — Reference for specific node APIs that are part of Critical Rules but read as reference material: the `member_get` / `validated_get` build_graph node types (pin tables), Custom Event Input Pins CRUD (`*_custom_event_input`), and Timelines CRUD (`*_timeline*`).
 - **`workflows.md`** — Step-by-step workflows: overriding a parent function (`override_function`), creating a function with logic, adding an Enhanced Input Action node.
 - **`node-layout.md`** — Node layout best practices: layout constants, execution flow, data flow above execution, branch layout, repositioning Entry/Result nodes.
-- **`function-classes.md`** — Quick reference for the common class names you pass to `add_function_call_node` (KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, etc.).
+- **`function-classes.md`** — Quick reference for the common class names you pass to a `build_graph` `function_call` node / engine `create_node` (KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, etc.).
 - **`array-operations.md`** — Array operations on wildcard pins: `Array_Random`, available array functions, `K2Node_GetArrayItem`, wildcard pin type propagation, common array mistakes.
 - **`build-graph.md`** — The batch `build_graph` API: when to use it, node types, connection format, examples (BeginPlay → PrintString, Branch with Math, StateTreeDelegate Broadcast), round-trip export/rebuild, auto-layout, Make Struct / Make Instanced Struct, error handling.

@@ -12,20 +12,32 @@ unreal_classes:
 
 # Engine Settings Skill
 
+> 🔀 **Registered settings moved to the engine.** Category-based registered-setting access
+> (`list_categories` / `list_settings` / `get_setting` / `set_setting`) is now Unreal 5.8's native
+> **`ConfigSettingsToolset`** — reach it with `call_tool` (run `describe_toolset` on
+> `ConfigSettingsToolset` for its actions/params). VibeUE's `EngineSettingsService` was trimmed to
+> the delta the engine doesn't cover: **console variables (cvars), scalability levels, raw engine
+> INI read/write, and config save**. Use those from `execute_python_code` as shown below.
+
 ## Critical Rules
 
-### ⚠️ CVars vs Settings
+### ⚠️ CVars (VibeUE) vs Registered Settings (engine toolset)
 
-- **CVars** (console variables) use `get_console_variable` / `set_console_variable`
-- **Settings** use `get_setting` / `set_setting` with category
+- **CVars** (console variables) → `unreal.EngineSettingsService.get_console_variable` /
+  `set_console_variable` (kept in VibeUE).
+- **Registered settings** (category + key, e.g. RendererSettings) → engine
+  **`ConfigSettingsToolset`** via `call_tool`. `EngineSettingsService.get_setting` /
+  `set_setting` / `list_categories` / `list_settings` were removed in the 5.8 consolidation.
 
 ```python
-# CVars (names like r.ReflectionMethod)
+# CVars (names like r.ReflectionMethod) — VibeUE
 value = unreal.EngineSettingsService.get_console_variable("r.ReflectionMethod")
 unreal.EngineSettingsService.set_console_variable("r.ReflectionMethod", "1")
 
-# Settings (category-based)
-value = unreal.EngineSettingsService.get_setting("rendering", "bEnableRayTracing")
+# Registered settings (category-based) — use the engine ConfigSettingsToolset via call_tool.
+# Raw INI is also still available in VibeUE when you know the section/key:
+value = unreal.EngineSettingsService.get_engine_ini_value(
+    "/Script/Engine.RendererSettings", "bEnableRayTracing", "Engine.ini")
 ```
 
 ### ⚠️ Check Read-Only Before Setting CVars
@@ -39,40 +51,23 @@ if unreal.EngineSettingsService.get_console_variable_info("r.MaxQualityMode", in
 
 ### ⚠️ Some Settings Require Restart
 
-Check `requires_restart` in `FEngineSettingInfo` before expecting immediate changes.
+`set_console_variable` / `set_engine_ini_value` return an `FEngineSettingResult` whose
+`requires_restart` flag tells you whether the change takes effect immediately. (Registered-setting
+results come from the engine `ConfigSettingsToolset` instead.)
 
 ---
 
-## Categories
+## Browsing registered settings
 
-| Category | Description |
-|----------|-------------|
-| `rendering` | Graphics, shaders, ray tracing |
-| `physics` | Physics simulation, collision |
-| `audio` | Sound, spatialization |
-| `gc` | Garbage collection, memory |
-| `network` | Networking, replication |
-| `collision` | Collision channels and profiles |
-| `ai` | AI module, navigation |
-| `input` | Input bindings |
+Listing categories and the settings inside them is now an engine **`ConfigSettingsToolset`** job —
+call it via `call_tool` and run `describe_toolset` for the available actions. These engine
+categories cover rendering, physics, audio, GC, networking, collision, AI, input, and the rest.
+
+For everything VibeUE still owns, see the cvar / INI / scalability workflows below.
 
 ---
 
 ## Workflows
-
-### List Categories and Settings
-
-```python
-import unreal
-
-categories = unreal.EngineSettingsService.list_categories()
-for cat in categories:
-    print(f"{cat.category_id}: {cat.display_name}")
-
-settings = unreal.EngineSettingsService.list_settings("rendering")
-for s in settings:
-    print(f"{s.key} = {s.value}")
-```
 
 ### Enable Ray Tracing
 
@@ -136,23 +131,25 @@ result = unreal.EngineSettingsService.set_engine_ini_value(
 
 ## Data Structures
 
-> **Python Naming Convention**: C++ types like `FEngineSettingInfo` are exposed as `EngineSettingInfo` in Python (no `F` prefix).
+> **Python Naming Convention**: C++ types like `FEngineSettingResult` are exposed as `EngineSettingResult` in Python (no `F` prefix).
 
-### EngineSettingInfo
-- `key`, `display_name`, `description`
-- `type`, `value`, `default_value`
-- `requires_restart`, `read_only`, `is_console_variable`
+### EngineSettingResult (returned by set_* and INI write methods)
+- `success`, `error_message`
+- `modified_settings`, `failed_settings`
+- `requires_restart`
 
 ### ConsoleVariableInfo
 - `name`, `value`, `default_value`, `description`
 - `type`, `flags`, `is_read_only`
 
+VibeUE `EngineSettingsService` covers:
 - **Rendering optimization**: Adjust r.* cvars, ray tracing, shadows
-- **Physics tuning**: Configure collision profiles, physics simulation
-- **Audio configuration**: Sample rates, channels, spatialization
-- **Performance profiling**: GC settings, streaming, scalability
-- **Platform settings**: Windows graphics API, shader formats
+- **Performance profiling**: GC cvars (gc.*), streaming, scalability
 - **Quality presets**: Apply overall or per-group scalability levels
+- **Raw engine INI**: read/write sections directly when you know the key
+
+For browsing/editing *registered* settings by category (physics, audio, collision, AI, input
+classes, etc.), use the engine **`ConfigSettingsToolset`** via `call_tool`.
 
 ## Sample scripts (run via `execute_python_code`)
 

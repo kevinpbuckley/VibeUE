@@ -1,20 +1,30 @@
 ---
 name: vibeue
-description: Unreal Engine 5 development using the VibeUE Python API. Use when working in Unreal Engine — blueprints, state trees, materials, actors, landscapes, animation, niagara, widgets, sound, foliage, data tables, gameplay tags, enhanced input, skeletons, PCG (procedural content generation), and more. Requires the VibeUE MCP server to be connected.
-compatibility: Requires VibeUE MCP server
+description: Unreal Engine 5 development using the VibeUE Python API. Use when working in Unreal Engine — blueprints, state trees, materials, actors, landscapes, animation, niagara, widgets, sound, foliage, gameplay tags, enhanced input, skeletons, PCG (procedural content generation), and more. VibeUE is an extension of Unreal's native MCP endpoint.
 ---
 
-VibeUE exposes its own skills system via MCP. Use it instead of this file for all tasks.
+VibeUE is an **extension on Unreal Engine's native MCP endpoint** (`http://localhost:8000/mcp`).
+There is no separate VibeUE server, no API key, and no in-editor chat — VibeUE simply registers
+extra Python services (`unreal.<Service>`) and skill packs on top of the engine's own toolsets.
 
-## Discover available skills
+Skill packs (this file and its siblings) are loaded through the engine's `AgentSkillToolset`.
+Each skill carries exact API patterns and gotchas; **load the relevant skill before writing any
+code** in a domain, or you will guess wrong property names and spiral into discovery loops.
+
+## Discover and load skills
+
+Skills are discovered and read through the engine `AgentSkillToolset`, invoked with `call_tool`:
 
 ```
-vibeue-skills-manager(action="list")
+# List every available skill (name + description)
+call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="ListSkills")
+
+# Read one or more skills (returns their SKILL.md content + sub-doc list)
+call_tool(toolset="ToolsetRegistry.AgentSkillToolset", tool="GetSkills", args={"skills": ["pcg", "materials"]})
 ```
 
-## Load a skill before working in a domain
-
-Always load the relevant skill **before writing any code**. The skill contains exact API patterns and gotchas — without it you will guess wrong property names and spiral into discovery loops.
+> Run `describe_toolset` on `ToolsetRegistry.AgentSkillToolset` for the exact tool/argument names
+> if the call signature differs in your build. The old `vibeue-skills-manager` tool no longer exists.
 
 | Task | Load this skill |
 |---|---|
@@ -23,20 +33,16 @@ Always load the relevant skill **before writing any code**. The skill contains e
 | Materials | `materials` |
 | State Trees | `state-trees` |
 | Play / test / run / PIE | `pie-testing` |
+| Profiling / FPS / Insights traces | `profiling` |
 
-```
-vibeue-skills-manager(action="load", skill_name="pcg")
-vibeue-skills-manager(action="load", skill_name="blueprints")
-vibeue-skills-manager(action="load", skill_name="materials")
-```
+A loaded skill gives you:
+- workflows, gotchas, and property formats for the domain
+- `vibeue_classes` / `unreal_classes` — class names to feed into `discover_python_class` for live method signatures
+- sub-doc references (`<skill>/<section>`) you can fetch via `GetSkills` for deeper detail
 
-The loaded skill returns:
-- `content` — workflows, gotchas, and property formats for the domain
-- `vibeue_classes` / `unreal_classes` — class names to feed into `discover_python_class` to get live method signatures
-- `COMMON_MISTAKES` — extracted "common mistakes" section (when the skill has one)
-- `available_sections` — sibling sub-docs you can load via `skill_name="<skill>/<section>"` for deeper reference material
-
-Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never guess method names from the skill content alone. **Batch the discovery into ONE call** instead of one call per class or per keyword:
+Always call `discover_python_class` on the classes in `vibeue_classes` before writing code — never
+guess method names from the skill content alone. **Batch the discovery into ONE call** instead of
+one call per class:
 
 ```
 # ONE call covers all classes and all topics:
@@ -47,28 +53,48 @@ discover_python_class(
 # WRONG — three separate calls for three classes wastes round-trips and repeats boilerplate
 ```
 
-`class_name` accepts a comma-separated list (response gains a `classes` array, one entry per class); `method_filter` ORs keywords with `|`.
+`class_name` accepts a comma-separated list (response gains a `classes` array, one entry per class);
+`method_filter` ORs keywords with `|`.
 
-## MCP tools — what each is for
+## How work gets done — `execute_python_code` is the workhorse
 
-These tools are invoked directly (no skill needed), but each domain skill assumes them:
+VibeUE services are plain Python on the editor's `unreal` module. Run everything through
+`execute_python_code`:
 
-| Tool | Use it for | Validated by |
-|------|-----------|--------------|
-| `execute_python_code` | Run `unreal.*` Python in the editor (the workhorse for every service) | every skill |
-| `vibeue-skills-manager` | `list` / `suggest` / `load` skills + sub-docs | this skill |
-| `manage_asset` | Search/find/list/open/save/duplicate/move/delete/import assets (prefer over raw Python) | `asset-management`, `test_prompts/asset_management`, `test_prompts/assets` |
-| `read_logs` | List/read/filter/tail UE logs (main/chat/llm) | `test_prompts/logs` |
-| `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code | every skill |
-| `list_python_subsystems` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` | `level-actors` |
-| `terrain_data` | Real-world heightmaps + water splines | `terrain-data`, `test_prompts/terrain-data` |
-| `deep_research` | Web research / page fetch / geocoding | `test_prompts/deep-research` |
+```python
+import unreal
+widgets = unreal.WidgetService.list_widget_blueprints()
+unreal.StateTreeService.create_state_tree("/Game/AI/MyBehavior")
+```
 
-## Tool-level test prompts (no single domain skill — exercised directly)
+You get the full `unreal.*` API plus every `unreal.<Service>` VibeUE adds. Reserve `call_tool` for
+**engine toolsets and skills** (e.g. `AgentSkillToolset`, `EditorToolset.EditorAppToolset`,
+`LogsToolset`, `GameplayTagsToolset`, `AssetTools`).
 
-- `test_prompts/logs` → `read_logs`
-- `test_prompts/transactions` → editor undo/redo via `execute_python_code` (`unreal` transaction APIs)
-- `test_prompts/utilities` → connectivity/help (`vibeue_status`)
-- `test_prompts/deep-research` → `deep_research`
-- `test_prompts/Smoke_Test.md`, `demo_prompts.md`, `markdown_rendering_test.md` → general smoke/UX checks
+## Tools — what each is for
 
+| Tool | Use it for |
+|------|-----------|
+| `execute_python_code` | Run `unreal.*` Python in the editor — the workhorse for every VibeUE service |
+| `call_tool` | Invoke engine toolsets and skills (skills, PIE control, logs, assets, gameplay tags) |
+| `describe_toolset` / `list_toolsets` | Discover engine toolsets and their actions/args |
+| `discover_python_class` / `discover_python_function` / `discover_python_module` | Get live signatures before writing code |
+| `list_python_subsystems` | Enumerate editor subsystems for `unreal.get_editor_subsystem(...)` |
+| `terrain_data` | Real-world heightmaps + water splines (see `terrain-data` skill) |
+| `deep_research` | Web research / page fetch / geocoding |
+
+## Engine toolsets replace the old VibeUE tools
+
+Several capabilities that used to be VibeUE-specific MCP tools are now the engine's native toolsets,
+called via `call_tool` (run `describe_toolset` for action names/params):
+
+| Need | Engine toolset (via `call_tool`) |
+|------|----------------------------------|
+| Start / stop / query PIE | `EditorToolset.EditorAppToolset` → `StartPIE` / `StopPIE` / `IsPIERunning` |
+| Capture a viewport screenshot | `EditorToolset.EditorAppToolset` → `CaptureViewport` |
+| List / read / filter / tail UE logs | `LogsToolset` |
+| Search / open / save / move / import assets | `AssetTools` |
+| Single-tag gameplay-tag CRUD | `GameplayTagsToolset` (see `gameplay-tags` skill) |
+
+Performance/Insights tracing is the one net-new VibeUE service — `unreal.PerformanceService.*` (see
+the `profiling` skill) — because Unreal 5.8 ships no performance toolset.

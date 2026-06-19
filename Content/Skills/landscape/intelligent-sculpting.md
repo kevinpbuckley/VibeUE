@@ -227,16 +227,19 @@ print(f"Modified {result.vertices_modified} vertices")
 
 #### Project Multiple Meshes
 
+There is no batch projector — call `project_mesh_to_landscape` once per mesh actor:
+
 ```python
 import unreal
 
-results = unreal.LandscapeService.project_meshes_to_landscape(
-    "MyTerrain",
-    mesh_actor_labels=["SM_Rock01", "SM_Rock02", "SM_Cliff"],
-    blend_weight=0.9
-)
-for r in results:
-    print(f"{'OK' if r.b_success else 'FAIL'}: {r.vertices_modified} verts")
+for label in ["SM_Rock01", "SM_Rock02", "SM_Cliff"]:
+    r = unreal.LandscapeService.project_mesh_to_landscape(
+        "MyTerrain",
+        mesh_actor_label=label,
+        blend_weight=0.9,
+        b_additive=False
+    )
+    print(f"{'OK' if r.success else 'FAIL'} ({label}): {r.vertices_modified} verts")
 ```
 
 #### Sample Mesh Heights (preview without modifying)

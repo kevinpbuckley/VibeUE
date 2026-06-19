@@ -1,7 +1,7 @@
 ---
 name: niagara-systems
 display_name: Niagara Systems
-description: Create and manage Niagara particle systems — system lifecycle, add/copy emitters, user parameters, and system script settings (NiagaraService). Use when the user asks to create a Niagara system, add or copy emitters into a system, add user/exposed parameters, or compile a system. For emitter internals, load niagara-emitters.
+description: Rapid-iteration parameter tuning, diagnostics, and Custom-HLSL scratch-pad authoring for Niagara systems (VibeUE NiagaraService + NiagaraScratchPadService). System/emitter/parameter CRUD is owned by the engine NiagaraToolsets. Use when the user asks to tune emitter rapid-iteration params, compare/diagnose systems, or build scratch-pad/Custom HLSL modules. For emitter color/module work, load niagara-emitters.
 vibeue_classes:
   - NiagaraService
   - NiagaraScratchPadService
@@ -13,154 +13,138 @@ keywords:
   - NS_
   - particle system
   - vfx system
-  - create system
-  - copy system
-  - system parameter
+  - rapid iteration
+  - System.Color
+  - compare systems
+  - debug activation
+  - emitter lifecycle
   - NiagaraService
   - NiagaraScratchPadService
   - scratch pad
   - custom hlsl
-  - create_system
-  - copy_system
-  - System.Color
-  - get_all_editable_settings
 ---
 
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "niagara-vfx"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
 ## Niagara Systems Skill
 
-**NiagaraService** handles system-level operations:
-- Create, save, compile systems
-- Add/copy/remove emitters to systems
-- Manage user-exposed parameters
-- Read/write System script settings (SystemSpawn/SystemUpdate)
-- Discover ALL editable settings across entire system
-- System info and diagnostics
+> **Architecture (read first):** VibeUE extends Unreal's native MCP endpoint. System / emitter /
+> parameter **create / add / copy / remove / list / compile** are owned by the **engine** toolset
+> `NiagaraToolsets.NiagaraToolset_System` (plus `…_Assets`, `…_Component`, `…_Blueprint`, `…_Info`),
+> called through `call_tool`. VibeUE's `NiagaraService` was trimmed to the rapid-iteration-parameter
+> tuning + diagnostics that the engine toolset does not cover, and `NiagaraScratchPadService`
+> (Custom-HLSL graph authoring) which is unique to VibeUE.
 
-For **emitter-level module work** (built-in modules, renderers, rapid iteration params) load
-`niagara-emitters`. For **building scratch-pad module graphs** (Custom HLSL, Map Get/Set, Op,
-typed pins, wiring), use **`NiagaraScratchPadService`** — also documented in the `niagara-emitters` skill.
+**VibeUE `NiagaraService` (this skill) keeps ONLY:**
+- Rapid-iteration parameter read/write — `list_rapid_iteration_params`, `set_rapid_iteration_param`, `set_rapid_iteration_param_by_stage`
+- Diagnostics — `compare_systems`, `get_emitter_lifecycle`, `debug_activation`
+
+For **system/emitter/parameter CRUD and compile** → engine `NiagaraToolsets.*` via `call_tool`.
+For **emitter color/curve authoring** → load `niagara-emitters`.
+For **scratch-pad module graphs** (Custom HLSL, Map Get/Set, Op, typed pins, wiring) →
+**`NiagaraScratchPadService`** — also documented in the `niagara-emitters` skill.
 
 ---
 
-## ⚠️ Parameter Discovery Order
+## Loading skills
 
-When looking for a parameter (e.g., color), check in this order:
+Skills load through the engine's `AgentSkillToolset` (`ListSkills` / `GetSkills`) — there is no
+`vibeue-skills-manager` tool. The workhorse for all VibeUE services is `execute_python_code`
+(call `unreal.<Service>.<method>()` plus the full `unreal.*` Python API). Engine toolsets are
+reached with `call_tool` (discover them with `list_toolsets` / `describe_toolset`).
 
-1. **User Parameters** - System-level exposed parameters (User.Color, User.SpawnRate)
-2. **System Script Settings** - SystemSpawn/SystemUpdate rapid iteration params (System.Color)
-3. **Emitter Script Settings** - Per-emitter rapid iteration params
+---
 
-Use `get_all_editable_settings()` to discover ALL settings at once:
+## ⚠️ System / emitter / parameter CRUD → engine NiagaraToolsets
+
+Creating a system, adding/copying/removing emitters, adding user parameters, listing emitters,
+compiling — these moved to the engine. Discover and call them like this:
+
+```python
+# Discover the engine Niagara toolsets and their exact tool names + schemas:
+#   list_toolsets()
+#   describe_toolset("NiagaraToolsets.NiagaraToolset_System")
+#   describe_toolset("NiagaraToolsets.NiagaraToolset_Assets")
+#
+# Then invoke a tool, e.g. create a system / add an emitter / add a user parameter:
+#   call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#             tool_name="<tool from describe_toolset>",
+#             arguments={ ... })
+```
+
+Always inspect existing systems before creating a new one (use the engine `…_Info` / `…_Assets`
+toolset to search/summarize), and ask the user before duplicating an effect as a template.
+
+---
+
+## ⚠️ Parameter Discovery Order (rapid-iteration tuning)
+
+When tuning a parameter (e.g., color), VibeUE's `NiagaraService` covers the **rapid-iteration
+parameters** on emitter scripts. User-exposed (`User.*`) and system-script (`System.*`) parameters
+are read/written through the engine `NiagaraToolsets` parameter tools.
+
+1. **User Parameters** (`User.Color`, `User.SpawnRate`) → engine `NiagaraToolsets`
+2. **System Script Settings** (`System.Color`, SystemSpawn/Update) → engine `NiagaraToolsets`
+3. **Emitter Script Settings** (per-emitter rapid-iteration params) → VibeUE `NiagaraService` below
 
 ```python
 import unreal
 
 path = "/Game/VFX/NS_TeslaCoil"
-settings = unreal.NiagaraService.get_all_editable_settings(path)
 
-print(f"Total settings: {settings.total_settings_count}")
-
-# User Parameters (system-level)
-for p in settings.user_parameters:
-    print(f"[User] {p.setting_path} ({p.value_type}): {p.current_value}")
-
-# System & Emitter rapid iteration parameters  
-for p in settings.rapid_iteration_parameters:
-    print(f"[{p.emitter_name}/{p.script_stage}] {p.setting_path}: {p.current_value}")
+# Emitter rapid-iteration params (VibeUE):
+params = unreal.NiagaraService.list_rapid_iteration_params(path, "Sparks")
+for p in params:
+    print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
 ```
 
 ---
 
-## ⚠️ MANDATORY: Search Before Creating
+## Quick Reference (VibeUE NiagaraService — kept methods)
 
 ```python
 import unreal
 
-# ALWAYS search first
-systems = unreal.NiagaraService.search_systems("/Game", "")
+path = "/Game/VFX/NS_Fire"
 
-if len(systems) > 0:
-    for s in systems:
-        summary = unreal.NiagaraService.summarize(s)
-        print(f"  - {summary.system_name}: {summary.emitter_names}")
-    # STOP - Ask user: "Found {N} systems. Use one as template?"
+# === RAPID ITERATION PARAMETERS (emitter script settings) ===
+# Discover the exact param names:
+params = unreal.NiagaraService.list_rapid_iteration_params(path, "Flames")
+for p in params:
+    print(f"[{p.script_type}] {p.parameter_name}: {p.value}")
+
+# Set ALL matching stages at once (recommended for color):
+unreal.NiagaraService.set_rapid_iteration_param(
+    path, "Flames", "Constants.flames.Color.Scale Color", "(0.0, 3.0, 0.0)")
+
+# Set one specific stage when the param exists in several:
+unreal.NiagaraService.set_rapid_iteration_param_by_stage(
+    path, "Flames", "ParticleUpdate", "Constants.flames.Color.Scale Color", "(0.0, 3.0, 0.0)")
+
+# === DIAGNOSTICS ===
+cmp = unreal.NiagaraService.compare_systems("/Game/VFX/NS_Fire", "/Game/VFX/NS_Fire_Copy")
+print(f"Differences: {cmp.difference_count}")
+for d in cmp.differences:
+    print(f"  {d.property_name}: {d.source_value} vs {d.target_value}")
+
+info = unreal.NiagaraService.get_emitter_lifecycle(path, "Flames")  # struct or None
+print(info.loop_behavior, info.life_cycle_mode)
+
+print(unreal.NiagaraService.debug_activation(path))  # why isn't this system playing?
 ```
+
+System lifecycle, user parameters, and compile are NOT on `NiagaraService` anymore — use the
+engine `NiagaraToolsets.*` tools shown above. After tuning, compile via the engine toolset (or
+`unreal.EditorAssetLibrary.save_asset(path)` to persist).
 
 ---
 
-## Quick Reference
+## ⚠️ User Parameter Types (engine `NiagaraToolsets` — reference)
 
-```python
-import unreal
-
-# === LIFECYCLE ===
-result = unreal.NiagaraService.create_system("NS_Fire", "/Game/VFX")
-path = result.asset_path
-
-unreal.NiagaraService.compile_system(path)
-unreal.NiagaraService.save_system(path)
-unreal.NiagaraService.open_in_editor(path)
-
-# === EMITTER MANAGEMENT ===
-# Add from template
-templates = unreal.NiagaraService.list_emitter_templates("", "Fountain")
-unreal.NiagaraService.add_emitter(path, templates[0], "Flames")
-
-# Add minimal empty emitter
-unreal.NiagaraService.add_emitter(path, "minimal", "Sparks")
-
-# Copy from another system
-unreal.NiagaraService.copy_emitter("/Game/VFX/NS_Source", "Flames", path, "Fire")
-
-# Duplicate within system
-unreal.NiagaraService.duplicate_emitter(path, "Fire", "Fire2")
-
-# Enable/disable
-unreal.NiagaraService.enable_emitter(path, "Flames", True)
-
-# Rename/remove
-unreal.NiagaraService.rename_emitter(path, "Flames", "BigFlames")
-unreal.NiagaraService.remove_emitter(path, "BigFlames")
-
-# List emitters
-emitters = unreal.NiagaraService.list_emitters(path)
-for e in emitters:
-    print(f"{e.emitter_name}: enabled={e.is_enabled}")
-
-# === DISCOVER ALL SETTINGS (check this first!) ===
-settings = unreal.NiagaraService.get_all_editable_settings(path)
-# settings.user_parameters - User.Color, User.SpawnRate, etc.
-# settings.rapid_iteration_parameters - System + Emitter script params
-# Each param has: setting_path, value_type, current_value, emitter_name, script_stage
-
-# === USER PARAMETERS (top priority) ===
-params = unreal.NiagaraService.list_parameters(path)
-unreal.NiagaraService.get_parameter(path, "User.SpawnRate")
-unreal.NiagaraService.set_parameter(path, "User.SpawnRate", "100")
-unreal.NiagaraService.add_user_parameter(path, "Color", "Color", "(R=1,G=0,B=0,A=1)")
-unreal.NiagaraService.remove_user_parameter(path, "Color")
-
-# === SYSTEM SCRIPT SETTINGS (check before emitters!) ===
-# get_parameter and set_parameter now search: User → System scripts → Emitter scripts
-param = unreal.NiagaraService.get_parameter(path, "System.Color")  # SystemSpawn color
-unreal.NiagaraService.set_parameter(path, "System.Color", "(R=0,G=5,B=0,A=1)")
-
-# === INFO & DIAGNOSTICS ===
-summary = unreal.NiagaraService.summarize(path)
-info = unreal.NiagaraService.get_system_info(path)
-exists = unreal.NiagaraService.system_exists(path)
-```
-
----
-
-## ⚠️ User Parameter Types (`add_user_parameter`)
-
-`add_user_parameter(path, name, type, default)` returns `True`/`False`. **The `type` string must
-be one of the names below** — anything else returns `False` and logs a warning (check
-`read_logs` if a call returns `False`). Do **not** guess type strings like `"array(float3)"`,
-`"PositionArray"`, or `"NiagaraDataInterfaceArray"` — use the exact names/aliases here.
+Adding a user-exposed parameter is now an engine `NiagaraToolsets` operation (run
+`describe_toolset` for its exact argument schema). The type names below are the canonical Niagara
+types — keep them as a reference when supplying a type argument; do **not** guess strings like
+`"array(float3)"` or `"NiagaraDataInterfaceArray"`.
 
 **Scalar / struct types** (default value is parsed from the string):
 
@@ -191,24 +175,13 @@ grids, render targets). Pass the alias or the full `NiagaraDataInterface…` cla
 | `RenderTarget2D` / `TextureRenderTarget` | `NiagaraDataInterfaceRenderTarget2D`     |
 
 Any other concrete `UNiagaraDataInterface` subclass also works if you pass its exact class name
-(with or without the `NiagaraDataInterface` prefix).
-
-```python
-import unreal
-path = "/Game/VFX/NS_TrackPainter"
-
-# Scalars
-unreal.NiagaraService.add_user_parameter(path, "DecayRate", "Float", "0.997")
-unreal.NiagaraService.add_user_parameter(path, "VolumeMin", "Vector", "(X=-5000,Y=-5000,Z=-500)")
-
-# Data interfaces (default arg ignored)
-unreal.NiagaraService.add_user_parameter(path, "StartPositions", "ArrayFloat3", "")
-unreal.NiagaraService.add_user_parameter(path, "TracksGrid",     "Grid2D",      "")
-unreal.NiagaraService.add_user_parameter(path, "DynamicRT",      "RenderTarget2D", "")
-```
+(with or without the `NiagaraDataInterface` prefix). Supply the type/default arguments to the
+engine `NiagaraToolsets` "add user parameter" tool (see `describe_toolset` for the exact field
+names); data-interface types ignore the default value (a default DI instance is allocated).
 
 ---
 
-## Sample scripts (run via `execute_python_code`)
+## Related
 
-- **`scripts/create_system.pyx`** — create a Niagara system, add a user parameter, compile.
+- **niagara-emitters** — color/curve authoring + scratch-pad Custom HLSL.
+- Engine `NiagaraToolsets.*` (via `call_tool`) — system/emitter/parameter/renderer CRUD and compile.

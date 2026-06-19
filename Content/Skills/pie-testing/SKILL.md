@@ -7,6 +7,8 @@ vibeue_classes:
 unreal_classes:
   - UEditorEngine
   - FRequestPlaySessionParams
+engine_toolsets:
+  - EditorToolset.EditorAppToolset
 keywords:
   - pie
   - play in editor
@@ -28,38 +30,69 @@ keywords:
 
 PIE is the only way to validate runtime behavior — Blueprint logic, AI ticking, animation, input, widget interaction, gameplay events. Without starting PIE, your "fix" is unverified.
 
-## Methods
+## PIE control — engine `EditorAppToolset`
 
-PIE control lives on `WidgetService` for historical reasons (it grew out of widget testing) but **applies to ALL runtime testing**, not just widgets.
+Generic PIE start/stop/status is owned by Unreal 5.8's native **`EditorToolset.EditorAppToolset`**,
+invoked through `call_tool` (run `describe_toolset` on it for exact action names/params):
 
-| Method | Description |
+| Action | Description |
 |--------|-------------|
-| `unreal.WidgetService.start_pie()` | Start PIE if not already running. Returns `True` on success or if already running. |
-| `unreal.WidgetService.stop_pie()` | End the current PIE session. Returns `True` if stopped or already stopped. |
-| `unreal.WidgetService.is_pie_running()` | `True` if PIE or Simulate-In-Editor is active. |
+| `StartPIE` | Start PIE if not already running. Succeeds (no-op) if already running. |
+| `StopPIE` | End the current PIE session. Succeeds if stopped or already stopped. |
+| `IsPIERunning` | `True` if PIE or Simulate-In-Editor is active. |
+| `CaptureViewport` | Screenshot the active viewport (use to visually verify runtime state). |
+
+```
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="IsPIERunning")
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
+```
+
+> PIE start/stop/query is **not** on `WidgetService` anymore for general testing — use the engine
+> toolset above. `WidgetService` still owns the widget-in-PIE validation helpers below.
 
 ## Standard Test Loop
 
-```python
+```
 # 1. Make sure you're starting from a clean state
-if unreal.WidgetService.is_pie_running():
-    unreal.WidgetService.stop_pie()
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")   # no-op if not running
 
 # 2. Start the session (uses the editor's current PIE settings — default map, viewport)
-unreal.WidgetService.start_pie()
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="StartPIE")
 
-# 3. Let the test run / inspect log output / interact via other services
+# 3. Let the test run / inspect log output (LogsToolset) / interact via other services
 # 4. Stop when done
-unreal.WidgetService.stop_pie()
+call_tool(toolset="EditorToolset.EditorAppToolset", tool="StopPIE")
 ```
+
+## Validating widgets in PIE — `WidgetService`
+
+VibeUE keeps a small set of widget-in-PIE helpers on `unreal.WidgetService` (run them via
+`execute_python_code`). These spawn and inspect live widget instances once PIE is running:
+
+```python
+import unreal
+
+# After StartPIE, spawn a widget instance into the running viewport
+handle = unreal.WidgetService.spawn_widget_in_pie("/Game/UI/WBP_HUD", 0)
+
+# Read a live property off the running instance
+val = unreal.WidgetService.get_live_property(handle, "HealthText", "Text")
+
+# Tear it down before stopping PIE
+unreal.WidgetService.remove_widget_from_pie(handle)
+```
+
+`unreal.WidgetService.is_pie_running()` also still exists and is handy from inside Python; for
+tool-level control prefer the engine `EditorAppToolset` actions above.
 
 ## Gotchas
 
-- **PIE start is asynchronous.** `start_pie()` returns immediately after `RequestPlaySession` is queued. The world isn't actually playing until the editor processes the request on its next tick. If you need to act inside the running world, give it a tick or poll `is_pie_running()`.
-- **Already-running is treated as success.** `start_pie()` returns `True` if a PIE session already exists — it does NOT restart. Stop first if you need a fresh session.
-- **`stop_pie()` cleans up tracked PIE widgets** (those spawned via `WidgetService.spawn_widget_in_pie`). Other widgets/actors are torn down by the engine as part of `RequestEndPlayMap`.
+- **PIE start is asynchronous.** `StartPIE` returns immediately after `RequestPlaySession` is queued. The world isn't actually playing until the editor processes the request on its next tick. If you need to act inside the running world, give it a tick or poll `IsPIERunning`.
+- **Already-running is treated as success.** `StartPIE` succeeds if a PIE session already exists — it does NOT restart. Stop first if you need a fresh session.
+- **`StopPIE` tears down the world** via `RequestEndPlayMap`. Spawned PIE widget instances should be removed with `WidgetService.remove_widget_from_pie(handle)` before stopping.
 - **Save before starting.** Dirty asset changes are NOT picked up by PIE unless saved/compiled. Always `compile_blueprint(...)` before launching PIE to test Blueprint changes.
-- **Don't leave PIE running between tasks.** Subsequent edits (recompiles, asset moves, hot reload) can fail or behave oddly while a PIE world is alive. Call `stop_pie()` before returning control to the user.
+- **Don't leave PIE running between tasks.** Subsequent edits (recompiles, asset moves, hot reload) can fail or behave oddly while a PIE world is alive. Call `StopPIE` before returning control to the user.
 
 ## When to use PIE
 

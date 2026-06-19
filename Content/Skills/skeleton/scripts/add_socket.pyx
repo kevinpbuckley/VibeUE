@@ -1,22 +1,29 @@
-# add_socket.pyx — Add a socket to a skeletal mesh (optionally to the skeleton) and verify.
+# add_socket.pyx — Add a socket to a skeletal mesh and verify (ENGINE SkeletalMeshTools).
 #
 # Sample script for the skeleton skill. Run via execute_python_code.
-# add_socket(skeletal_mesh_path, socket_name, bone_name, rel_loc, rel_rot, rel_scale, add_to_skeleton=False)
+#
+# ARCHITECTURE: socket CRUD and bone enumeration are owned by the ENGINE toolset
+# editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools — call with call_tool. VibeUE's
+# SkeletonService keeps bone transform/hierarchy edits, retargeting, curves, blend profiles,
+# and constraints (not sockets). Discover exact schemas with
+# describe_toolset("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools").
 import unreal
-sks = unreal.SkeletonService
 
-MESH = "/Game/Characters/SK_Mannequin"   # skeletal mesh asset
+TS = "editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools"
+MESH = {"refPath": "/Game/Characters/SKM_Mannequin"}   # skeletal mesh asset
 SOCKET = "WeaponSocket"
 BONE = "hand_r"
 
-ok = sks.add_socket(
-    MESH, SOCKET, BONE,
-    unreal.Vector(0, 0, 0),       # relative location
-    unreal.Rotator(0, 0, 0),      # relative rotation
-    unreal.Vector(1, 1, 1),       # relative scale
-    True,                          # add_to_skeleton (shared across meshes)
-)
-print("add_socket:", ok)
+# Add the socket (always attached to the skeletal mesh; there is no add-to-skeleton flag):
+call_tool(TS, "add_socket", {"mesh": MESH, "socket_name": SOCKET, "bone_name": BONE})
 
-for s in sks.list_sockets(MESH):
-    print("socket:", s)
+# Set its offset transform relative to the bone:
+call_tool(TS, "set_socket_transform", {
+    "mesh": MESH, "socket_name": SOCKET,
+    "transform": {"location": {"x": 10, "y": 0, "z": 0},
+                  "rotation": {"pitch": 0, "yaw": 90, "roll": 0},
+                  "scale": {"x": 1, "y": 1, "z": 1}},
+})
+
+# Verify:
+print("sockets:", call_tool(TS, "get_socket_names", {"mesh": MESH}))

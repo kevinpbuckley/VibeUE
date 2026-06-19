@@ -21,16 +21,34 @@ keywords:
 
 # Gameplay Tags Skill
 
-Manage Unreal Engine Gameplay Tags programmatically via `unreal.GameplayTagService`.
+Manage Unreal Engine Gameplay Tags. Core CRUD (add / remove / rename / list) is now owned by
+Unreal 5.8's native **`GameplayTagsToolset`** (call it via `call_tool`). VibeUE keeps only the
+delta the engine toolset does NOT provide — runtime hierarchy queries and bulk registration:
+`unreal.GameplayTagService.has_tag` / `get_tag_info` / `get_children` / `add_tags`.
+
 Tags are written to INI config **and** registered at runtime — they appear immediately in the editor tag picker without restart.
 
 ## Critical Rules
+
+### 🔀 Where each operation lives
+
+| Operation | Use |
+|-----------|-----|
+| Add / remove / rename a single tag, list all tags | engine **`GameplayTagsToolset`** via `call_tool` (run `describe_toolset` for its action names/params) |
+| Bulk-register many tags at once | `unreal.GameplayTagService.add_tags([...], comment, source)` |
+| Check existence | `unreal.GameplayTagService.has_tag(name)` |
+| Detailed info (comment/source/redirect/child count) | `unreal.GameplayTagService.get_tag_info(name)` |
+| Direct children of a tag | `unreal.GameplayTagService.get_children(parent)` |
+
+> The single-tag `add_tag` / `remove_tag` / `rename_tag` / `list_tags` helpers were removed from
+> `GameplayTagService` in the 5.8 consolidation — use the engine `GameplayTagsToolset` for those.
+> VibeUE's `add_tags` remains for registering several tags in one call.
 
 ### ⚠️ Do NOT Use ProjectSettingsService for Gameplay Tags
 
 `ProjectSettingsService.set_ini_value()` writes to GConfig memory but does **NOT** register tags with `UGameplayTagsManager`. Tags created this way will not appear in tag pickers or dropdowns.
 
-**Always use `GameplayTagService`** for gameplay tag operations.
+Use the engine **`GameplayTagsToolset`** (single-tag CRUD) or `unreal.GameplayTagService.add_tags` (bulk) for gameplay tag operations.
 
 ### ⚠️ Tag Names Use Dot Hierarchy
 
@@ -38,11 +56,11 @@ Tags use dot-separated hierarchy: `Category.Subcategory.TagName`
 
 ```python
 # ✅ CORRECT
-unreal.GameplayTagService.add_tag("Cube.StartChasing")
-unreal.GameplayTagService.add_tag("Ability.Fireball.Cast")
+unreal.GameplayTagService.add_tags(["Cube.StartChasing"])
+unreal.GameplayTagService.add_tags(["Ability.Fireball.Cast"])
 
 # ❌ WRONG - don't use spaces or special characters
-unreal.GameplayTagService.add_tag("Cube Start Chasing")
+unreal.GameplayTagService.add_tags(["Cube Start Chasing"])
 ```
 
 ### ⚠️ Default Source is DefaultGameplayTags.ini
@@ -52,21 +70,21 @@ Tags default to `DefaultGameplayTags.ini` source. This is the standard project-l
 ### ⚠️ Check Results
 
 ```python
-result = unreal.GameplayTagService.add_tag("Cube.StartChasing", "Event to start chasing")
+result = unreal.GameplayTagService.add_tags(["Cube.StartChasing"], "Event to start chasing")
 if not result.success:
     print(f"Failed: {result.error_message}")
 ```
 
 ### ⚠️ Renames Register a Redirect — has_tag(old_name) Stays True
 
-`rename_tag` updates the INI **and registers a tag redirect** so existing assets keep
-resolving the old name. Consequences:
+Renaming a tag (via the engine `GameplayTagsToolset`) updates the INI **and registers a tag
+redirect** so existing assets keep resolving the old name. Consequences:
 
 - `has_tag(old_name)` returns **True** after a rename — that is the redirect, not a failed rename.
 - `get_tag_info(old_name)` describes the redirect **target**; check its `redirected_to` field
   (non-empty = the requested name is a redirect, the value is the new canonical name).
-- Verify a rename with `list_tags(prefix)` or `get_children(parent)` — the old name will be
-  gone from those listings — or check `get_tag_info(old_name).redirected_to`.
+- Verify a rename with the engine toolset's list action or `get_children(parent)` — the old name
+  will be gone from those listings — or check `get_tag_info(old_name).redirected_to`.
 
 ### ⚠️ get_tag_info Returns a Struct or None — NOT a Tuple
 
@@ -103,11 +121,15 @@ print(f"Added {len(result.tags_modified)} tags: {result.tags_modified}")
 
 ### Add a Single Tag
 
+Single-tag add lives in the engine **`GameplayTagsToolset`** — call it with `call_tool`
+(run `describe_toolset` on it for the exact action name and parameters). For one-or-many in a
+single call from Python, `add_tags` also accepts a single-element list:
+
 ```python
 import unreal
 
-result = unreal.GameplayTagService.add_tag(
-    "Ability.Fireball.Cast",
+result = unreal.GameplayTagService.add_tags(
+    ["Ability.Fireball.Cast"],
     "Triggered when player casts fireball"
 )
 if result.success:
@@ -116,16 +138,15 @@ if result.success:
 
 ### List All Tags (with Filter)
 
+Listing/filtering all tags is an engine `GameplayTagsToolset` action (via `call_tool`). To walk
+a specific subtree from Python, use `get_children`:
+
 ```python
 import unreal
 
-# All tags
-all_tags = unreal.GameplayTagService.list_tags()
-for t in all_tags:
+# Direct children under "Cube"
+for t in unreal.GameplayTagService.get_children("Cube"):
     print(f"{t.tag_name} (source={t.source}, children={t.child_count})")
-
-# Only tags starting with "Cube"
-cube_tags = unreal.GameplayTagService.list_tags("Cube")
 ```
 
 ### Check Tag Existence Before Use
@@ -137,8 +158,8 @@ tag_name = "Cube.StartChasing"
 if unreal.GameplayTagService.has_tag(tag_name):
     print(f"Tag '{tag_name}' exists")
 else:
-    # Create it
-    unreal.GameplayTagService.add_tag(tag_name)
+    # Register it (bulk-capable VibeUE helper; or use the engine GameplayTagsToolset)
+    unreal.GameplayTagService.add_tags([tag_name])
 ```
 
 ### Inspect Tag Hierarchy
@@ -154,42 +175,37 @@ for child in children:
 
 ### Rename a Tag
 
+Renaming is an engine **`GameplayTagsToolset`** action — call it via `call_tool`. Then verify the
+redirect from Python (the old name still resolves through the redirect, so `has_tag` stays True):
+
 ```python
 import unreal
 
-result = unreal.GameplayTagService.rename_tag("Cube.StartChasing", "Cube.BeginChase")
-if result.success:
-    print(f"Renamed: {result.tags_modified}")
-
-# Verify via redirect info — NOT via has_tag (the old name still resolves through a redirect)
+# (rename Cube.StartChasing -> Cube.BeginChase via the engine GameplayTagsToolset, then:)
 info = unreal.GameplayTagService.get_tag_info("Cube.StartChasing")
 print(f"Old name now redirects to: {info.redirected_to}")  # 'Cube.BeginChase'
 ```
 
 ### Remove a Tag
 
-```python
-import unreal
-
-result = unreal.GameplayTagService.remove_tag("Cube.StopChasing")
-if not result.success:
-    print(f"Cannot remove: {result.error_message}")
-```
+Removing a single tag is an engine **`GameplayTagsToolset`** action (via `call_tool`). Confirm it
+is gone from Python with `has_tag` / `get_children` on the parent.
 
 ---
 
 ## API Reference
 
+VibeUE delta (call as `unreal.GameplayTagService.<method>` via `execute_python_code`):
+
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `list_tags(filter="")` | `[FGameplayTagInfo]` | List tags, optionally filtered by prefix |
 | `has_tag(tag_name)` | `bool` | Check if tag exists (also True for redirected old names of renamed tags) |
 | `get_tag_info(tag_name)` | `FGameplayTagInfo` or `None` | Get detailed tag info (struct or None — NOT a tuple) |
 | `get_children(parent_tag)` | `[FGameplayTagInfo]` | Get direct children of a tag |
-| `add_tag(tag_name, comment, source)` | `FGameplayTagResult` | Add a single tag |
-| `add_tags(tag_names, comment, source)` | `FGameplayTagResult` | Add multiple tags |
-| `remove_tag(tag_name)` | `FGameplayTagResult` | Remove a tag |
-| `rename_tag(old_name, new_name)` | `FGameplayTagResult` | Rename a tag |
+| `add_tags(tag_names, comment, source)` | `FGameplayTagResult` | Bulk-register multiple tags (also works for one) |
+
+Single-tag **add / remove / rename** and **list-all** are provided by Unreal 5.8's native
+**`GameplayTagsToolset`** — reach it with `call_tool`; run `describe_toolset` for its actions.
 
 ### FGameplayTagInfo Fields
 

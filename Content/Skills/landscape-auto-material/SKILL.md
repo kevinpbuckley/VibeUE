@@ -32,7 +32,7 @@ keywords:
   - biome
   - landscape material
   - layer function
-    - production landscape workflow
+  - production landscape workflow
   - parametric material
   - function input
   - function output
@@ -50,10 +50,7 @@ Use this skill when you need **production-quality** landscape materials with:
 - Runtime Virtual Textures for scalable landscape rendering
 - Biome configuration through material instances (swap textures/thresholds, same master)
 
-For **simple prototyping** with 2-5 painted layers, use `landscape-materials` instead:
-```python
-vibeue-skills-manager(action="load", skill_name="landscape-materials")
-```
+For **simple prototyping** with 2-5 painted layers, load the **landscape-materials** skill instead (the engine's AgentSkillToolset `GetSkills` exposes it).
 
 ## Architecture Overview
 
@@ -129,7 +126,7 @@ Split into steps:
 
 If using RVT, you MUST set `bUsedWithVirtualTexturing = true` on the master material:
 ```python
-unreal.MaterialService.set_material_property(mat_path, "bUsedWithVirtualTexturing", "true")
+unreal.MaterialService.set_property(mat_path, "bUsedWithVirtualTexturing", "true")
 ```
 
 ### ⚠️ Material Functions Must Be Saved Before Use
@@ -152,7 +149,7 @@ unreal.MaterialNodeService.add_function_input(func_path, "Roughness", "Scalar", 
 
 ## Sub-docs available
 
-Load these via `vibeue-skills-manager(action="load", skill_name="landscape-auto-material")` reads the index; for the deeper docs, open the sibling files directly:
+Read these sibling files directly (the engine AgentSkillToolset `GetSkills` is the loader; this `SKILL.md` is the index, the deeper docs live alongside it):
 
 | Sub-doc | What's inside |
 |---------|---------------|

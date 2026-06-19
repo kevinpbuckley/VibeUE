@@ -1,13 +1,13 @@
 ---
 name: function-classes
-description: Common class names for add_function_call_node - KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, and other UE library classes
+description: Common class names for a build_graph function_call node / engine create_node - KismetMathLibrary, KismetSystemLibrary, KismetArrayLibrary, GameplayStatics, and other UE library classes
 ---
 
 This sub-doc continues from skill.md → "Common Function Call Classes".
 
 ## Common Function Call Classes
 
-For `add_function_call_node(path, graph, class, func, x, y)`:
+For a `build_graph` `function_call` node (`params: {"class": ..., "function": ...}`) — or the engine `BlueprintTools.create_node` equivalent:
 
 - **KismetMathLibrary** — Math (Add_DoubleDouble, Multiply_DoubleDouble, Sin, Sqrt)
 - **KismetSystemLibrary** — System (PrintString, Delay, K2_SetTimerDelegate)

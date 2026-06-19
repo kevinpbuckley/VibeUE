@@ -161,7 +161,7 @@ keywords:
 Use `AnimSequenceService` for animation sequence operations.
 
 > **Related Skills:**
-> - **skeleton** - For skeleton structure, sockets, and retargeting configuration
+> - **skeleton** - For skeleton bone transforms/hierarchy and retargeting configuration (sockets/bone listing are engine `SkeletalMeshTools`)
 > - **animation-blueprint** - For state machines and AnimGraph navigation
 
 ## Quick Reference - Python API (Creation, Helpers, Query)

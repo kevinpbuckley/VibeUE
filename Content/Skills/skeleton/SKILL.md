@@ -1,25 +1,22 @@
 ---
 name: skeleton
 display_name: Skeleton & Skeletal Mesh Management
-description: Manipulate skeletons, bones, sockets, retargeting, curve metadata, blend profiles, and bone constraints. Use when the user asks to add/inspect a socket, add or query bones, set retargeting modes, manage blend profiles or curves, or work with skeleton/skeletal-mesh structure (SkeletonService). For animation bone edits, also load animation-editing.
+description: Edit skeleton bone transforms/hierarchy, retargeting modes, curve metadata, blend profiles, bone constraints, and learn constraints from animations (VibeUE SkeletonService). Socket CRUD, bone enumeration, physics-asset, and material/LOD inspection are owned by the engine SkeletalMeshTools. Use when the user asks to add/transform bones, set retargeting, manage blend profiles or curves, or set bone constraints. For animation bone edits, also load animation-editing.
 vibeue_classes:
   - SkeletonService
 unreal_classes:
   - Skeleton
   - SkeletalMesh
-  - SkeletalMeshSocket
   - SkeletonModifier
   - BlendProfile
 keywords:
   - skeleton
   - skeletal mesh
   - bone
-  - socket
+  - bone transform
   - retarget
   - curve
   - blend profile
-  - morph target
-  - physics asset
   - skeleton profile
   - bone constraint
   - joint limit
@@ -30,12 +27,58 @@ keywords:
 
 # Skeleton & Skeletal Mesh Skill
 
+> **Architecture (read first):** VibeUE extends Unreal's native MCP endpoint. **Socket CRUD, bone
+> enumeration, physics-asset assignment, and material/LOD/morph inspection** are owned by the **engine**
+> toolset `editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools` (called via `call_tool`). VibeUE's
+> `SkeletonService` was trimmed to what the engine doesn't cover: **bone transform/hierarchy editing,
+> retargeting config, curve metadata, blend profiles, bone constraints, and learn-from-animations**.
+>
+> **Loading skills:** skills load through the engine's `AgentSkillToolset` (`ListSkills`/`GetSkills`) —
+> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python_code`
+> (`unreal.SkeletonService.<method>()`); reach engine tools with `call_tool` (discover with
+> `list_toolsets` / `describe_toolset`).
+>
 > **Related Skills:**
-> - **animsequence** - For editing animations with constraint validation (uses skeleton profiles)
-> - **animsequence** - For creating new animations with keyframes
+> - **animsequence / animation-editing** - For editing animations with constraint validation (uses skeleton profiles) and keyframes
 > - **animation-blueprint** - For AnimBP state machines and navigation
 >
-> **Use this skill when:** Modifying skeleton structure (bones, sockets), retargeting modes, blend profiles, or curve metadata
+> **Use this skill when:** Editing bone transforms/hierarchy, retargeting modes, blend profiles, curve metadata, or bone constraints. For **sockets / bone listing / physics asset / materials / LODs**, use engine `SkeletalMeshTools` (see below).
+
+## Sockets, bone enumeration, inspection → engine SkeletalMeshTools
+
+These moved to the engine. Discover the exact schemas with
+`describe_toolset("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools")` and call via `call_tool`
+(the `mesh` argument is a `{"refPath": "<SkeletalMesh asset path>"}` object):
+
+| Task | Engine tool (`SkeletalMeshTools.*`) |
+|------|--------------------------------------|
+| List sockets | `get_socket_names` |
+| Add / remove / rename socket | `add_socket`, `remove_socket`, `rename_socket` |
+| Get / set socket transform, get socket bone | `get_socket_transform`, `set_socket_transform`, `get_socket_bone` |
+| List bones / parent / children | `get_bone_names`, `get_bone_parent`, `get_bone_children` |
+| Material slots / get / set | `get_material_slots`, `get_material`, `set_material` |
+| Physics asset get / assign | `get_physics_asset`, `assign_physics_asset` |
+| LODs / vertices / sections / bounds | `get_lod_count`, `get_vertex_count`, `get_section_count`, `get_bounds` |
+| Morph target names | `get_morph_target_names` |
+
+```python
+# Example: add a socket on the hand_r bone, then list sockets
+call_tool(toolset_name="editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools",
+          tool_name="add_socket",
+          arguments={"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"},
+                     "socket_name": "Weapon_R", "bone_name": "hand_r"})
+call_tool(toolset_name="editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools",
+          tool_name="set_socket_transform",
+          arguments={"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"},
+                     "socket_name": "Weapon_R",
+                     "transform": {"location": {"x":10,"y":0,"z":0},
+                                   "rotation": {"pitch":0,"yaw":90,"roll":0},
+                                   "scale": {"x":1,"y":1,"z":1}}})
+```
+
+> Note: the engine `add_socket` always adds the socket to the **skeletal mesh**. VibeUE's old
+> `bAddToSkeleton` (skeleton-wide socket) flag is gone — to share a socket across all meshes on a
+> skeleton, add it on each mesh, or add it on the skeleton via `unreal.*` directly.
 
 ## Critical Rules
 
@@ -62,48 +105,25 @@ unreal.SkeletonService.commit_bone_changes("/Game/SKM_Character")
 > safe; reparenting is not. If a user needs a different hierarchy, add a new bone at the desired
 > parent and remove the old one rather than reparenting in place.
 
-### Socket Types: Mesh vs Skeleton
+### Sockets are now an engine operation
 
-- **Mesh Socket** (`bAddToSkeleton=False`): Specific to one skeletal mesh
-- **Skeleton Socket** (`bAddToSkeleton=True`): Shared across ALL meshes using that skeleton
-
-```python
-# Mesh-specific socket (only on this mesh)
-unreal.SkeletonService.add_socket(
-    "/Game/SKM_Mannequin",
-    "Helmet_Attach",
-    "head",
-    unreal.Vector(0, 0, 20),
-    unreal.Rotator(0, 0, 0),
-    unreal.Vector(1, 1, 1),
-    False  # Mesh-only
-)
-
-# Skeleton-wide socket (shared with all meshes)
-unreal.SkeletonService.add_socket(
-    "/Game/SKM_Mannequin",
-    "Weapon_R",
-    "hand_r",
-    unreal.Vector(10, 0, 0),
-    unreal.Rotator(0, 0, 90),
-    unreal.Vector(1, 1, 1),
-    True  # Add to skeleton
-)
-```
+Socket CRUD is on `SkeletalMeshTools` (see the table at the top). The engine `add_socket` attaches to
+the skeletal mesh; set its offset with `set_socket_transform`. There is no `bAddToSkeleton` flag.
 
 ### Skeleton vs SkeletalMesh Paths
 
-- **Skeleton** operations (retargeting, curves, blend profiles) use `SK_` assets
-- **SkeletalMesh** operations (sockets, bone modification) use `SKM_` assets
+- **Skeleton** operations (retargeting, curves, blend profiles, constraints) use `SK_` assets → VibeUE `SkeletonService`
+- **SkeletalMesh** bone *transform/hierarchy edits* use `SKM_` assets → VibeUE `SkeletonService`
+- **SkeletalMesh** sockets / bone listing / inspection use `SKM_` assets → engine `SkeletalMeshTools`
 
 ```python
-# Skeleton operations - use SK_ path
+# Skeleton operations (VibeUE) - use SK_ path
 unreal.SkeletonService.get_skeleton_info("/Game/Characters/SK_Mannequin")
 unreal.SkeletonService.set_bone_retargeting_mode("/Game/Characters/SK_Mannequin", "pelvis", "Skeleton")
 
-# SkeletalMesh operations - use SKM_ path
-unreal.SkeletonService.list_sockets("/Game/Characters/SKM_Mannequin")
-unreal.SkeletonService.add_socket("/Game/Characters/SKM_Mannequin", ...)
+# Sockets / bone listing (engine) - use SKM_ path via call_tool, e.g.:
+# call_tool("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools", "get_socket_names",
+#           {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
 ```
 
 ### Retargeting Mode Reference
@@ -155,17 +175,21 @@ if not result.is_valid:
 
 ## Workflows
 
-### List All Bones with Hierarchy
+### List All Bones (engine SkeletalMeshTools)
+
+Bone enumeration moved to the engine. Use `get_bone_names` (hierarchy order, root first) and walk
+parent/children with `get_bone_parent` / `get_bone_children`:
 
 ```python
-import unreal
-
-bones = unreal.SkeletonService.list_bones("/Game/Characters/SKM_Mannequin")
-for bone in bones:
-    indent = "  " * bone.depth
-    children = f" [{bone.child_count} children]" if bone.child_count > 0 else ""
-    print(f"{indent}{bone.bone_name}{children}")
+# names = call_tool("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools",
+#                   "get_bone_names", {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
+# for n in names:
+#     children = call_tool(... "get_bone_children",
+#                          {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}, "bone_name": n})
 ```
+
+For a richer hierarchy with transforms/depth/retarget mode, VibeUE's
+`create_skeleton_profile(skeleton_path)` returns `bone_hierarchy` (Array[BoneNodeInfo]) — see below.
 
 ### Add Twist Bones for Better Skinning
 
@@ -209,47 +233,25 @@ unreal.SkeletonService.commit_bone_changes(mesh_path)
 unreal.SkeletonService.save_asset(mesh_path)
 ```
 
-### Set Up Weapon Sockets
+### Set Up Weapon Sockets (engine SkeletalMeshTools)
+
+Socket CRUD is on the engine toolset. Add the socket, then set its offset transform:
 
 ```python
-import unreal
+mesh = {"refPath": "/Game/Characters/SKM_Character"}
+TS = "editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools"
 
-mesh_path = "/Game/Characters/SKM_Character"
+call_tool(TS, "add_socket", {"mesh": mesh, "socket_name": "Weapon_R", "bone_name": "hand_r"})
+call_tool(TS, "set_socket_transform", {"mesh": mesh, "socket_name": "Weapon_R",
+          "transform": {"location": {"x":10,"y":0,"z":0},
+                        "rotation": {"pitch":0,"yaw":90,"roll":0},
+                        "scale": {"x":1,"y":1,"z":1}}})
 
-# Right hand weapon socket
-unreal.SkeletonService.add_socket(
-    mesh_path,
-    "Weapon_R",
-    "hand_r",
-    unreal.Vector(10.0, 0.0, 0.0),
-    unreal.Rotator(0.0, 0.0, 90.0),
-    unreal.Vector(1.0, 1.0, 1.0),
-    True  # Add to skeleton for sharing
-)
-
-# Left hand weapon socket
-unreal.SkeletonService.add_socket(
-    mesh_path,
-    "Weapon_L",
-    "hand_l",
-    unreal.Vector(10.0, 0.0, 0.0),
-    unreal.Rotator(0.0, 0.0, -90.0),
-    unreal.Vector(1.0, 1.0, 1.0),
-    True
-)
-
-# Back holster
-unreal.SkeletonService.add_socket(
-    mesh_path,
-    "Holster_Back",
-    "spine_03",
-    unreal.Vector(0.0, -20.0, 0.0),
-    unreal.Rotator(0.0, 90.0, 0.0),
-    unreal.Vector(1.0, 1.0, 1.0),
-    True
-)
-
-unreal.SkeletonService.save_asset(mesh_path)
+call_tool(TS, "add_socket", {"mesh": mesh, "socket_name": "Holster_Back", "bone_name": "spine_03"})
+call_tool(TS, "set_socket_transform", {"mesh": mesh, "socket_name": "Holster_Back",
+          "transform": {"location": {"x":0,"y":-20,"z":0},
+                        "rotation": {"pitch":0,"yaw":0,"roll":90},
+                        "scale": {"x":1,"y":1,"z":1}}})
 ```
 
 ### Configure Retargeting for Animation Sharing
@@ -321,24 +323,16 @@ for curve in material_curves:
 unreal.SkeletonService.save_asset(skeleton_path)
 ```
 
-### Find Bones by Pattern
+### Find Bones by Pattern (filter engine bone list)
+
+There is no `find_bones` — get the full list from the engine `get_bone_names` and filter in Python:
 
 ```python
-import unreal
-
-mesh_path = "/Game/Characters/SKM_Mannequin"
-
-# Find all hand-related bones
-hand_bones = unreal.SkeletonService.find_bones(mesh_path, "hand")
-print(f"Hand bones: {hand_bones}")
-
-# Find all twist bones
-twist_bones = unreal.SkeletonService.find_bones(mesh_path, "twist")
-print(f"Twist bones: {twist_bones}")
-
-# Find all IK bones
-ik_bones = unreal.SkeletonService.find_bones(mesh_path, "ik_")
-print(f"IK bones: {ik_bones}")
+names = call_tool("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools",
+                  "get_bone_names", {"mesh": {"refPath": "/Game/Characters/SKM_Mannequin"}})
+hand_bones  = [n for n in names if "hand"  in n.lower()]
+twist_bones = [n for n in names if "twist" in n.lower()]
+ik_bones    = [n for n in names if n.lower().startswith("ik_")]
 ```
 
 ### Get Full Skeleton Info
@@ -375,16 +369,6 @@ if info.blend_profile_names:
 | `global_transform` | Transform | World-space transform |
 | `retargeting_mode` | string | Translation retarget mode |
 | `children` | array[string] | Names of child bones |
-
-### MeshSocketInfo
-| Property | Type | Description |
-|----------|------|-------------|
-| `socket_name` | string | Socket identifier |
-| `bone_name` | string | Attached bone |
-| `relative_location` | Vector | Offset from bone |
-| `relative_rotation` | Rotator | Rotation from bone |
-| `relative_scale` | Vector | Scale factor |
-| `force_always_animated` | bool | Force bone LOD |
 
 ### SkeletonAssetInfo
 | Property | Type | Description |
@@ -426,28 +410,27 @@ unreal.SkeletonService.add_bone(path, "new_bone", "parent", transform)
 unreal.SkeletonService.commit_bone_changes(path)  # NOW it's applied
 ```
 
-### ❌ WRONG: Using Skeleton path for socket operations
+### ❌ WRONG: Calling `unreal.SkeletonService.add_socket(...)`
+That method was cut — sockets are now engine `SkeletalMeshTools`:
 ```python
-unreal.SkeletonService.add_socket("/Game/SK_Character", ...)  # FAILS!
+# WRONG: unreal.SkeletonService.add_socket(...)               # no longer exists
+# RIGHT: call_tool("editor_toolset.toolsets.skeletal_mesh.SkeletalMeshTools",
+#                  "add_socket", {"mesh": {"refPath": "/Game/SKM_Character"}, ...})
 ```
 
-### ✅ RIGHT: Use SkeletalMesh path for sockets
+### ❌ WRONG: Not saving after VibeUE modifications
 ```python
-unreal.SkeletonService.add_socket("/Game/SKM_Character", ...)  # Correct
-```
-
-### ❌ WRONG: Not saving after modifications
-```python
-unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
+unreal.SkeletonService.set_bone_retargeting_mode(path, "pelvis", "Skeleton")
 # Changes in memory only - lost on editor close!
 ```
 
 ### ✅ RIGHT: Save after modifications
 ```python
-unreal.SkeletonService.add_socket(path, "Socket", "bone", ...)
+unreal.SkeletonService.set_bone_retargeting_mode(path, "pelvis", "Skeleton")
 unreal.SkeletonService.save_asset(path)
 ```
 
-## Sample scripts (run via `execute_python_code`)
+## Related
 
-- **`scripts/add_socket.pyx`** — add a socket to a skeletal mesh/skeleton and list sockets.
+- Engine `SkeletalMeshTools` (via `call_tool`) — sockets, bone enumeration, physics asset, materials, LODs, morph targets.
+- **animation-editing / animsequence** — bone-rotation editing on animations using skeleton profiles.

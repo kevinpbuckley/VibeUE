@@ -35,8 +35,7 @@ related_skills:
 
 > 🧠 **Brains complement:** IF an `unreal-engine-skills-manager` tool (external MCP) exists in this session, call it with `{action: "load", skill: "audio-and-metasounds"}` for UE domain knowledge on this topic — correct APIs, architecture, best practices — and treat it as the rubric for any review / "best practices" question. If no such tool is available (e.g. running under Claude Code or Codex without that MCP), skip this line entirely and proceed with this skill alone — do NOT attempt the call.
 
-> **Wrong skill for MetaSound assets?** If the user asked about `MetaSound`, `MS_` assets, or `UMetaSoundSource`, unload this skill and load the `metasounds` skill instead:
-> `vibeue-skills-manager(action="load", skill_name="metasounds")`
+> **Wrong skill for MetaSound assets?** If the user asked about `MetaSound`, `MS_` assets, or `UMetaSoundSource`, load the `metasounds` skill instead (via `GetSkills` / AgentSkillToolset).
 > SoundCue and MetaSound are completely separate systems — do not use `SoundCueService` for MetaSound tasks.
 
 # Sound Cue Editor Skill

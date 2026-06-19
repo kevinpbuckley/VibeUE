@@ -73,13 +73,17 @@ unreal.MaterialService.compile_material("/Game/Materials/M_Terrain_Auto")
 ```python
 import unreal
 
-# Create instance from master material
-inst = unreal.MaterialService.create_material_instance(
-    "MI_Landscape_Tropical",
-    "/Game/Materials",
-    "/Game/Materials/M_Landscape_Master"
+# Create instance from master material via the engine MaterialInstanceTools
+inst = call_tool(
+    tool_name="create_material_instance",
+    toolset_name="editor_toolset.toolsets.material_instance.MaterialInstanceTools",
+    arguments={
+        "name": "MI_Landscape_Tropical",
+        "directory": "/Game/Materials",
+        "parent_material": "/Game/Materials/M_Landscape_Master",
+    },
 )
-inst_path = inst.asset_path
+inst_path = inst["asset_path"]
 
 # Set all biome parameters at once using bulk set
 count = unreal.MaterialService.set_instance_parameters_bulk(
@@ -164,18 +168,20 @@ import unreal
 mat_path = "/Game/Materials/M_Landscape_Master"
 func_path = "/Game/Materials/Functions/MF_Layer_Tropical"
 
-# Create function call node in the material
-call_id = unreal.MaterialNodeService.create_expression(
-    mat_path, "MaterialExpressionMaterialFunctionCall", -600, 0)
+# Create the function-call node directly (resolves the function reference for you)
+call_id = unreal.MaterialNodeService.create_function_call(
+    mat_path, func_path, -600, 0)
 
-# Set the function reference
-unreal.MaterialNodeService.set_expression_property(
-    mat_path, call_id, "MaterialFunction",
-    f"MaterialFunction'{func_path}.MF_Layer_Tropical'")
-
-# Connect function output to material
-unreal.MaterialNodeService.connect_to_output(
-    mat_path, call_id, "BlendedColor", "BaseColor")
+# Connect function output to the material output via the engine MaterialTools
+call_tool(
+    tool_name="connect_to_output",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={
+        "expression": call_id,
+        "output_name": "BlendedColor",
+        "material_property": "MP_BaseColor",
+    },
+)
 
 unreal.MaterialService.compile_material(mat_path)
 ```
@@ -251,20 +257,37 @@ import unreal
 mat_path = "/Game/Materials/M_Landscape_Master"
 
 # Enable virtual texturing on the material
-unreal.MaterialService.set_material_property(mat_path, "bUsedWithVirtualTexturing", "true")
+unreal.MaterialService.set_property(mat_path, "bUsedWithVirtualTexturing", "true")
 
-# Create RVT output node
-rvt_out = unreal.MaterialNodeService.create_expression(
-    mat_path, "MaterialExpressionRuntimeVirtualTextureOutput", 400, 0)
+# Create RVT output node via the engine MaterialTools
+rvt_out = call_tool(
+    tool_name="add_expression",
+    toolset_name="editor_toolset.toolsets.material.MaterialTools",
+    arguments={
+        "material_or_function": mat_path,
+        "expression_class": "MaterialExpressionRuntimeVirtualTextureOutput",
+        "x": 400,
+        "y": 0,
+    },
+)
 
-# Connect BaseColor to RVT output
+# Connect BaseColor/Normal/Roughness to the RVT output via the engine MaterialTools
 # (Assumes blend_id is the output of your layer blending chain)
-unreal.MaterialNodeService.connect_expressions(
-    mat_path, blend_id, "RGB", rvt_out, "BaseColor")
-unreal.MaterialNodeService.connect_expressions(
-    mat_path, normal_id, "RGB", rvt_out, "Normal")
-unreal.MaterialNodeService.connect_expressions(
-    mat_path, roughness_id, "", rvt_out, "Roughness")
+for from_expr, from_out, to_in in [
+    (blend_id, "RGB", "BaseColor"),
+    (normal_id, "RGB", "Normal"),
+    (roughness_id, "", "Roughness"),
+]:
+    call_tool(
+        tool_name="connect_expressions",
+        toolset_name="editor_toolset.toolsets.material.MaterialTools",
+        arguments={
+            "from_expression": from_expr,
+            "from_output_name": from_out,
+            "to_expression": rvt_out,
+            "to_input_name": to_in,
+        },
+    )
 
 unreal.MaterialService.compile_material(mat_path)
 ```

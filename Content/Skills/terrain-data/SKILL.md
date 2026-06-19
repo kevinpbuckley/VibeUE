@@ -40,13 +40,15 @@ keywords:
 
 # Real-World Terrain Skill
 
-Generates heightmaps and water feature splines from real geographic coordinates via the VibeUE terrain API. Requires an active VibeUE API key configured in chat settings.
+Generates heightmaps and water feature splines from real geographic coordinates via the `terrain_data`
+MCP tool. The tool downloads Mapbox tiles server-side and writes UE5-compatible heightmaps + landscape
+splines into the project's `Saved/Terrain/` folder — no API key or chat configuration is required.
 
 ## Workflow
 
 ### Heightmap (always run first)
 
-1. `preview_elevation` — fetch elevation stats + suggested settings (costs 1 API call). Returns `suggestedZScale`, `suggestedXYScales` (resolution → XY scale), height range.
+1. `preview_elevation` — fetch elevation stats + suggested settings. Returns `suggestedZScale`, `suggestedXYScales` (resolution → XY scale), height range.
 2. `generate_heightmap` — generate the 16-bit PNG using suggested settings
 3. *(optional)* `get_map_image` — satellite/topo reference image for the same area
 4. **`attach_image`** — attach the satellite image so you can **see** the terrain colors and features for material/painting decisions
@@ -158,7 +160,7 @@ Response:
 attach_image(file_path="E:/Project/Saved/Terrain/map_satellite_v9_35.3606_138.7274.png")
 ```
 
-`attach_image` is a **tool call** (like `terrain_data` or `vibeue-skills-manager`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool.
+`attach_image` is a **tool call** (like `terrain_data`), NOT a Python function. Do NOT put it inside `execute_python_code`. Call it directly as a tool. If no `attach_image` tool is available in your session, skip this step and proceed using the saved file path returned by `get_map_image`.
 
 After attaching, you will see the satellite image in your next response. Use it to:
 - Identify terrain features (rock, grassland, water, sand, forest, urban)
@@ -350,8 +352,7 @@ The **saved JSON file** contains the full data with:
 
 | Issue | Fix |
 |-------|-----|
-| `NO_API_KEY` | Set your VibeUE API key in chat settings |
-| `429` rate limit | 100 requests/day (free), 1000/day (paid) |
+| `429` rate limit | The Mapbox tile source is rate-limited — wait and retry, or reduce request frequency |
 | Flat heightmap | `height_range` < 50m — use `height_scale: 250` for detail |
 | Clipped mountains | Lower `height_scale` or increase `base_level` |
 | Jagged/spiky terrain | Increase `blur_passes` (20–40 for smooth terrain) and check Z scale formula |

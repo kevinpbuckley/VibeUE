@@ -1,7 +1,7 @@
 ---
 name: niagara-emitters
 display_name: Niagara Emitters
-description: Configure Niagara emitter internals — modules, renderers, rapid-iteration parameters, color/curve editing, graph positioning, and Custom-HLSL scratch-pad authoring. Use when the user asks to add modules/renderers to a Niagara emitter, recolor or hue-shift particles, set emitter parameters, build an emitter from scratch, or author a scratch-pad/Custom HLSL module. For system-level lifecycle, load niagara-systems.
+description: Niagara emitter color/curve authoring (tint, hue-shift, ColorFromCurve keys), rapid-iteration parameter tuning, and Custom-HLSL scratch-pad authoring (NiagaraEmitterService + NiagaraScratchPadService). Module/renderer CRUD is owned by the engine NiagaraToolsets. Use when the user asks to recolor or hue-shift particles, edit color curves, tune emitter params, or build a scratch-pad/Custom HLSL module. For system-level lifecycle, load niagara-systems.
 vibeue_classes:
   - NiagaraEmitterService
   - NiagaraScratchPadService
@@ -11,17 +11,16 @@ unreal_classes:
   - NiagaraScript
 keywords:
   - niagara emitter
-  - niagara module
-  - add module
-  - add renderer
   - rapid iteration
   - particle spawn
   - particle update
   - emitter update
-  - spawn rate
   - niagara color
   - color from curve
   - ColorFromCurve
+  - color tint
+  - hue shift
+  - color curve keys
   - NiagaraEmitterService
   - NiagaraScratchPadService
   - scratch pad
@@ -33,9 +32,9 @@ keywords:
   - splat
   - grid 2d
   - render target
-  - add_module
-  - add_renderer
-  - list_modules
+  - set_color_tint
+  - shift_color_hue
+  - get_color_curve_keys
   - set_rapid_iteration_param
   - create_scratch_module
   - add_custom_hlsl_node
@@ -47,11 +46,17 @@ keywords:
 
 ## Niagara Emitters Skill
 
-**NiagaraEmitterService** handles emitter-level operations:
-- Add/configure modules (spawn, update, render)
-- Add/configure renderers (sprite, ribbon, mesh)
-- Read/write rapid iteration parameters
-- Graph positioning for emitters
+> **Architecture (read first):** VibeUE extends Unreal's native MCP endpoint. Emitter **module and
+> renderer CRUD** (add/remove/enable/reorder modules, add/remove renderers, set module/renderer
+> inputs, search module scripts) are owned by the **engine** `NiagaraToolsets.*` toolsets, called
+> through `call_tool`. VibeUE's `NiagaraEmitterService` was trimmed to the **color/curve authoring**
+> the engine doesn't provide, plus a rapid-iteration-parameter reader.
+
+**VibeUE `NiagaraEmitterService` (this skill) keeps ONLY color/curve authoring + a param reader:**
+- `set_color_tint` — add/set a ScaleColor tint (handles ColorFromCurve automatically)
+- `get_color_curve_keys` / `set_color_curve_keys` — read/replace ColorFromCurve keyframes
+- `shift_color_hue` — hue-rotate a ColorFromCurve while preserving detail (best for recolors)
+- `get_rapid_iteration_parameters` — read an emitter's rapid-iteration params
 
 **NiagaraScratchPadService** authors scratch-pad module **graphs**:
 - Create empty scratch modules on any stage
@@ -59,7 +64,14 @@ keywords:
 - Add typed pins, connect pins, declare module inputs/outputs
 - Apply + recompile in one call
 
-For **system-level** operations (create, add emitters, user params), load the `niagara-systems` skill.
+For **module / renderer CRUD** → engine `NiagaraToolsets.*` via `call_tool` (discover with
+`list_toolsets` / `describe_toolset`). For **system-level** operations (create system, add emitters,
+user params, compile) → engine `NiagaraToolsets.*` and the `niagara-systems` skill. Rapid-iteration
+param **writes** (`set_rapid_iteration_param*`) live on **`NiagaraService`** (niagara-systems skill).
+
+> **Loading skills:** skills load through the engine's `AgentSkillToolset` (`ListSkills`/`GetSkills`) —
+> there is no `vibeue-skills-manager` tool. Run VibeUE services with `execute_python_code`
+> (`unreal.<Service>.<method>()`); reach engine toolsets with `call_tool`.
 
 ---
 
@@ -71,13 +83,19 @@ Niagara modules exist in different **script stages**:
 - `ParticleSpawn` - Runs once when each particle spawns  
 - `ParticleUpdate` - Runs every frame for each particle
 
-### ⚠️ `add_module` stage string must be EXACT — and matters which stage
+### ⚠️ Adding modules/renderers is an engine `NiagaraToolsets` operation — stage still matters
 
-`add_module` takes exactly **4 args** — `add_module(system_path, emitter_name, module_script_path, stage)`. There is **no 5th "name" argument** (passing one raises `TypeError: takes at most 4 arguments`).
+Adding modules and renderers moved to the **engine** toolsets. Discover the exact tool + schema with
+`describe_toolset` and invoke via `call_tool`:
 
-The `stage` must be **one of the four strings above, spelled exactly** (case-insensitive): `ParticleSpawn`, `ParticleUpdate`, `EmitterSpawn`, `EmitterUpdate`. Anything else — `"Spawn"`, `"Update"`, `"Emitter Update"`, `""` — is rejected and `add_module` returns **`False`** without adding anything. (Older builds silently dumped the module into `ParticleUpdate` instead; check the return value.)
+```python
+# describe_toolset("NiagaraToolsets.NiagaraToolset_System")   # (find the add-module / add-renderer tools)
+# call_tool(toolset_name="NiagaraToolsets.NiagaraToolset_System",
+#           tool_name="<add module tool>", arguments={ ... })
+```
 
-**Put each module in its correct stage** — this is the #1 cause of a system that "compiles" but is invalid:
+Whatever the engine tool's signature, **which stage a module goes in still matters** — this is the
+#1 cause of a system that "compiles" but is invalid:
 
 | Module | Correct stage |
 |--------|---------------|
@@ -85,18 +103,14 @@ The `stage` must be **one of the four strings above, spelled exactly** (case-ins
 | `SpawnRate`, `SpawnBurstInstantaneous`, `EmitterState` | `EmitterUpdate` |
 | `ParticleState`, `SolveForcesAndVelocity`, `ScaleColor`, color/size/velocity update modules | `ParticleUpdate` |
 
-`SpawnRate` is an **emitter** module — putting it in `ParticleUpdate` makes the system invalid, and `compile_with_results` reports only the generic `"System is invalid after compilation"` with no pointer to the culprit. If a compile is "invalid" after you added modules, **first suspect a mis-staged module** (run `list_modules` and check each `module_type`).
+`SpawnRate` is an **emitter** module — putting it in `ParticleUpdate` makes the system invalid, and
+a compile reports only the generic `"System is invalid after compilation"` with no pointer to the
+culprit. If a compile is "invalid" after you added modules, **first suspect a mis-staged module**
+(list the emitter's modules via the engine toolset and check each module's stage). Stage strings are
+`ParticleSpawn` / `ParticleUpdate` / `EmitterSpawn` / `EmitterUpdate`.
 
-```python
-# ✅ Minimal emitter built from scratch — note each stage:
-unreal.NiagaraService.add_emitter(S, "minimal", "Sparks")
-unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Spawn/Initialization/V2/InitializeParticle.InitializeParticle", "ParticleSpawn")
-unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Emitter/SpawnRate.SpawnRate", "EmitterUpdate")   # NOT ParticleUpdate
-unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Update/Lifetime/ParticleState.ParticleState", "ParticleUpdate")
-unreal.NiagaraEmitterService.add_module(S, "Sparks", "/Niagara/Modules/Solvers/SolveForcesAndVelocity.SolveForcesAndVelocity", "ParticleUpdate")
-unreal.NiagaraEmitterService.add_renderer(S, "Sparks", "SpriteRenderer", "Sprite", {})
-unreal.NiagaraService.compile_with_results(S)   # expect errors=0
-```
+> For building an emitter entirely from a **scratch-pad / Custom HLSL** module (which IS a VibeUE
+> operation), see `scratch-pad.md`.
 
 ### ⚠️ IMPORTANT: Parameters Exist in MULTIPLE Stages
 
@@ -133,22 +147,25 @@ unreal.NiagaraService.set_rapid_iteration_param_by_stage(
 
 ## Task Index
 
-| Task | Sub-doc | Sample script |
-|------|---------|---------------|
-| Add modules / renderers to an emitter | `reference.md` | `scripts/build_emitter.pyx` |
-| Set rapid-iteration params (all stages) | `reference.md` | `scripts/build_emitter.pyx` |
-| Recolor an emitter (hue shift / tint / scale) | `color.md` | `scripts/recolor_emitter.pyx` |
-| Manage ColorFromCurve modules | `color.md` | — |
-| Build an emitter from scratch | `scratch-pad.md` | `scripts/build_emitter.pyx` |
-| Author a Custom-HLSL scratch module | `scratch-pad.md` | — |
+| Task | Sub-doc / where |
+|------|-----------------|
+| Recolor an emitter (hue shift / tint / scale) | `color.md` (VibeUE) |
+| Manage ColorFromCurve modules / curve keys | `color.md` (VibeUE) |
+| Read rapid-iteration params | `reference.md` (VibeUE) |
+| Set rapid-iteration params (all stages) | `reference.md` → `NiagaraService` (niagara-systems) |
+| Add modules / renderers to an emitter | engine `NiagaraToolsets.*` via `call_tool` (see `reference.md`) |
+| Build an emitter from scratch / Custom-HLSL scratch module | `scratch-pad.md` (VibeUE) |
 
 ## Sub-docs
 
 - **`color.md`** — all color editing: ColorFromCurve detection, choosing the right method
   (shift_color_hue vs tint vs scale), curve keys, per-stage color, managing ColorFromCurve.
-- **`reference.md`** — module/renderer/rapid-iteration-param/graph-positioning APIs + property names.
+- **`reference.md`** — VibeUE color/curve + rapid-iteration-param readers, plus where module/renderer
+  CRUD lives (engine `NiagaraToolsets`) and common property names.
 - **`scratch-pad.md`** — building emitters from scratch and Custom-HLSL Scratch-Pad authoring.
 
 ## Verification
-Compile and save after changes (`NiagaraService.compile_*` / `save`). For color edits, re-read the
-curve keys or rapid-iteration params to confirm the change landed in every stage where the param exists.
+Compile and save after changes (compile via the engine `NiagaraToolsets` tool;
+`unreal.EditorAssetLibrary.save_asset(path)` to persist). For color edits, re-read the curve keys
+(`get_color_curve_keys`) or rapid-iteration params to confirm the change landed in every stage where
+the param exists.
