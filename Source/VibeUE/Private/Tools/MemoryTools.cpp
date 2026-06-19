@@ -15,8 +15,8 @@
  * they are resolved against the memory root and validated to prevent directory
  * traversal outside that root.
  *
- * Writes are gated by prompt policy (see vibeue.instructions.md): the model must
- * only create/edit/delete memory when the user explicitly asks it to.
+ * Writes are gated by prompt policy: the model should only create/edit/delete
+ * memory when the user explicitly asks it to.
  */
 
 #include "Core/ToolRegistry.h"
