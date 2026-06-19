@@ -4,21 +4,24 @@
 
 https://www.vibeue.com/
 
-[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8-orange)](https://www.unrealengine.com)
+[![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%2B-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-blue)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
-**VibeUE extends Unreal Engine 5.8's native AI toolset system.** It registers a deep library of
-editor capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio,
-StateTree, gameplay tags, input, UVs, performance tracing, and more — into the engine's own
-`ToolsetRegistry` and `ModelContextProtocol` server, and serves rich domain **skills** through
+**VibeUE is an Expansion of Unreal Engine 5.8+'s native AI toolset system.** Unreal 5.8 added a
+built-in MCP server and AI toolsets; VibeUE plugs straight into them and adds a deep library of editor
+capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
+gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
+`ToolsetRegistry` and `ModelContextProtocol` server, plus rich domain **skills** served through
 Unreal's native `AgentSkill` system. Any MCP-capable agent (Claude Code, Cursor, Copilot, …) drives
 your editor through Unreal's standard MCP endpoint.
 
-> **No separate server, no API key, no in-editor chat.** VibeUE is a pure extension: everything shows
-> up on Unreal's MCP endpoint alongside the engine's own tools.
+> ⚠️ **VibeUE requires Unreal's native MCP to be set up first** — enable the **Unreal MCP** plugin
+> (which auto-enables **Toolset Registry**) and the **Editor Tools** plugin, then start the MCP server.
+> Follow Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)**.
+> VibeUE then expands that endpoint — **no separate server, no API key, no in-editor chat.**
 
 ---
 
@@ -36,8 +39,7 @@ VibeUE **complements** them — it focuses on the domains and depth the engine d
 - **UI** — UMG widgets with MVVM bindings, animation authoring, and preview/PIE validation.
 - **Higher-order Blueprint authoring** — timelines, event dispatchers, delegates, custom-event pins,
   comment boxes, and a batch `build_graph` builder.
-- **Performance & tracing** — frame-timing (CPU-vs-GPU verdict), Unreal Insights capture, and trace
-  analysis. *(The engine has no perf tooling — this is net-new.)*
+- **⚡ Performance & profiling** — VibeUE's standout: see the dedicated section below.
 - **Python-first access** — run any `unreal.*` Python in the editor and introspect the whole API.
 - **Web research** — search / fetch / geocode for in-context research and terrain workflows.
 
@@ -46,9 +48,37 @@ CRUD, screenshots, logs, PIE) — agents use Unreal's native toolsets for those.
 
 ---
 
+## ⚡ Performance & Profiling (flagship)
+
+**Unreal's native AI toolsets have *zero* performance tooling** — they can start PIE/Simulate but can't
+measure anything. VibeUE's `PerformanceService` fills that gap so an agent can actually *diagnose and
+fix* frame rate:
+
+- **`frame_timing()`** — Game/Render/GPU/RHI thread split + a **CPU-vs-GPU-bound verdict** and a
+  concrete next-step hint. *Run this first* — optimising the GPU does nothing on a CPU-bound frame.
+- **Unreal Insights capture** — `start_trace` / `stop_trace` / `get_trace_status`, with `bookmark`
+  and `region_start` / `region_end` markers.
+- **`analyse()`** — reads the trace **and** log back and returns a perf summary (frame stats, worst
+  frames, hitches, notable log lines).
+- **Trace-attached `start_standalone`** — profile a representative standalone build, not just the
+  editor viewport.
+
+```python
+import unreal
+print(unreal.PerformanceService.frame_timing())   # CPU vs GPU bound — diagnose FIRST
+unreal.PerformanceService.start_trace("cap", "")   # Insights trace
+# … reproduce the workload (ideally under PIE / standalone) …
+unreal.PerformanceService.stop_trace()
+print(unreal.PerformanceService.analyse("both", ""))
+```
+
+Pair with the `profiling` and `frame-rate` skills for the full CPU/GPU drill-down.
+
+---
+
 ## 🏗️ Architecture
 
-VibeUE plugs into three native UE 5.8 systems:
+VibeUE plugs into three native UE 5.8+ systems:
 
 1. **Toolsets** (`ToolsetRegistry`) — VibeUE's services register as `UToolsetDefinition`s, so their
    methods become AICallable tools on the MCP endpoint. They're also `BlueprintCallable`, so the same
@@ -66,57 +96,54 @@ multi-step task into one round-trip and reaches every VibeUE service plus the fu
 
 ---
 
-## 🚀 Installation
+## 🚀 Installation & setup
 
-### Prerequisites
-- Unreal Engine **5.8**
-- Git
+**Requirements:** Unreal Engine **5.8+** · Git
 
-### 1. Clone into your project's Plugins folder
+### Step 1 — Set up Unreal's native MCP (do this FIRST)
+
+VibeUE is an **expansion** of Unreal's built-in MCP support, so enable that first. Full details in
+Epic's guide: **[Unreal MCP in the Unreal Editor](https://dev.epicgames.com/documentation/unreal-engine/unreal-mcp-in-unreal-editor)**.
+
+1. **Edit → Plugins** → enable **Unreal MCP** (this auto-enables **Toolset Registry**) and **Editor
+   Tools** (the engine's own AI toolsets, so agents get both). These are Experimental. Restart when prompted.
+2. **Edit → Editor Preferences → General → Model Context Protocol** → enable **Auto Start Server**
+   (or run the console command `ModelContextProtocol.StartServer`). Default endpoint
+   `http://127.0.0.1:8000/mcp` (port/path configurable). Enabling **Tool Search** keeps an agent's
+   context small — it sees `list_toolsets` / `describe_toolset` / `call_tool` and loads tools on demand.
+
+### Step 2 — Install VibeUE
+
 ```bash
 cd /path/to/YourProject/Plugins
 git clone https://github.com/kevinpbuckley/VibeUE.git
 ```
-
-### 2. Build
+Build with the project script (don't run `Build.bat` directly):
 ```
 Plugins/VibeUE/BuildAndLaunchGame.ps1                  # builds + launches the editor
 Plugins/VibeUE/BuildAndLaunchGame.ps1 -StrictRebuild   # full recompile (warnings-as-errors)
 ```
+Then **Edit → Plugins** → enable **VibeUE** and restart. Its services, tools, and skills now register
+onto the same endpoint, alongside the engine's own.
 
-### 3. Enable the required plugins
-In your `.uproject` (or **Edit → Plugins**), enable:
-- **VibeUE**
-- **ModelContextProtocol** (the MCP server) and **ToolsetRegistry** (the toolset framework)
-- **EditorToolset** (the engine's own AI toolsets, so agents can use both)
+### Step 3 — Connect your agent
 
-Restart the editor.
-
-### 4. Turn on the MCP server
-In **Project Settings → Plugins → Model Context Protocol**, enable **Auto Start Server** (or run the
-console command `ModelContextProtocol.StartServer 8000`). The endpoint is then served at
-`http://localhost:8000/mcp` (port/path configurable in those settings). Enabling **Tool Search** keeps
-the agent's context small — it sees `list_toolsets`/`describe_toolset`/`call_tool` and loads tools on
-demand.
-
----
-
-## 🧠 Using with external AI agents
-
-Point your MCP client at Unreal's endpoint (`http://localhost:8000/mcp`) and include VibeUE's agent
-guide so the assistant knows the efficient patterns.
-
-> See [`Content/samples/README.md`](Content/samples/README.md) for per-tool setup. Quick version:
-
-**Claude Code** — create `CLAUDE.md` at your project root:
+Generate a client config from the editor console — this writes `.mcp.json` at the project root:
+```
+ModelContextProtocol.GenerateClientConfig ClaudeCode
+```
+(supports `ClaudeCode`, `Cursor`, `VSCode`, `Gemini`, `Codex`, or `All`.) Then add VibeUE's agent
+guide so the assistant uses the efficient patterns. **Claude Code** — `CLAUDE.md` at the project root:
 ```markdown
 # My Unreal Project
 
 @Plugins/VibeUE/Content/samples/AGENTS.md.sample
 ```
-
 **Cursor / Copilot / Codex / others** — copy `Plugins/VibeUE/Content/samples/AGENTS.md.sample` to that
-tool's rules file (`.cursor/rules/vibeue.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, …).
+tool's rules file (`.cursor/rules/vibeue.mdc`, `.github/copilot-instructions.md`, `AGENTS.md`, …). See
+[`Content/samples/README.md`](Content/samples/README.md).
+
+> The MCP server is loopback-only with no authentication — same-machine use only (per Epic's docs).
 
 The guide teaches: discover before you call (`discover_python_class`), batch with `execute_python_code`,
 load skills via `ListSkills`/`GetSkills`, and when to reach for `deep_research` / `terrain_data`.
@@ -145,15 +172,19 @@ for exact signatures before writing code.
 
 ## 🔧 Plugin dependencies
 
-VibeUE enables these automatically:
+**Native engine prerequisites (enable in Step 1 — Epic's MCP stack):**
 
 | Plugin | Purpose |
 |--------|---------|
-| **ToolsetRegistry** | Native AI toolset registration + skills |
-| **ModelContextProtocol** | The MCP server endpoint |
-| **PythonScriptPlugin** | Python runtime + the `unreal.*` API |
-| **EditorScriptingUtilities** | Blueprint & asset manipulation |
-| **Niagara**, **MetaSound**, **EnhancedInput**, **ModelViewViewModel**, **StateTree**, **MeshModelingToolset** | Domain support for the services |
+| **Unreal MCP** (`ModelContextProtocol`) | The native MCP server endpoint |
+| **Toolset Registry** (`ToolsetRegistry`) | Native AI toolset + `AgentSkill` registration (auto-enabled by Unreal MCP) |
+| **Editor Tools** (`EditorToolset`) | The engine's own AI toolsets — VibeUE complements these |
+
+**Enabled automatically by VibeUE:** `PythonScriptPlugin` (the `unreal.*` API),
+`EditorScriptingUtilities`, and the domain plugins its services need — `Niagara`, `MetaSound`,
+`EnhancedInput`, `ModelViewViewModel`, `StateTree`, `MeshModelingToolset`. (VibeUE also depends on
+`ToolsetRegistry` + `ModelContextProtocol`, so enabling VibeUE pulls them in — but you still enable
+**Editor Tools** and start the server per Step 1.)
 
 ---
 
