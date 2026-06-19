@@ -9,6 +9,8 @@ https://www.vibeue.com/
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%2B-orange)](https://www.unrealengine.com)
 [![MCP](https://img.shields.io/badge/MCP-Model%20Context%20Protocol-blue)](https://modelcontextprotocol.io)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Discord](https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white)](https://discord.gg/hZs73ST59a)
+[![Donate](https://img.shields.io/badge/Donate-vibeue.com-ff5e5b?logo=githubsponsors&logoColor=white)](https://www.vibeue.com/donate)
 
 </div>
 
