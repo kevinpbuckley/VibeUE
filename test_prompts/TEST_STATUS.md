@@ -26,7 +26,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 |---|---:|:--:|:--:|---|---|---|
 | Smoke_Test.md | 19 | 🟡 | 17/2/0 | #444✏️ #445✏️ | sonnet | pilot. #444/#445 **fixed** in canonical skill indexes (refPath rule + helper; param keyword). 2 of Sonnet's 5 proposals were hallucinated. Candidates pending verify: build_graph None on partial fail; compile return shape vs `result["success"]` |
 | utilities/check_unreal_connection.md | 4 | ⬜ | – | – | – | |
-| asset_management/Test_Open_And_Selected_Assets.md | 3 | ⬜ | – | – | – | exercises new get_focused_graph_context? |
+| asset_management/Test_Open_And_Selected_Assets.md | 6 | ✅ | 6/0/0 | – | opus | Tested directly. Passes via Epic+VibeUE mix. VibeUE: is_asset_open, get_primary_content_browser_selection. Epic EditorAppToolset (call_tool): GetOpenAssets, GetSelectedAssets, OpenEditorForAsset. Added skill doc for the Epic complement. |
 | assets/manage_asset.md | 7 | ⬜ | – | – | – | |
 | blueprint/blueprint_tests.md | 67 | ⬜ | – | – | – | 6 sub-suites |
 | enhanced_input/enhanced_input_test.md | 7 | ⬜ | – | – | – | |

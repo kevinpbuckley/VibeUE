@@ -60,11 +60,35 @@ if asset:
 | Move / rename / duplicate / delete | `unreal.EditorAssetLibrary.rename_asset` (move), `duplicate_asset`, `delete_asset`, or `AssetTools` |
 | Existence check | `unreal.EditorAssetLibrary.does_asset_exist(path)` |
 | Referencers / dependencies | `unreal.AssetRegistryHelpers.get_asset_registry().get_referencers(...)` |
-| Open an asset / list open editors | engine `AssetTools` / `unreal.AssetEditorSubsystem` |
+| Open an asset / list ALL open editors | Epic `EditorAppToolset` via `call_tool` (see below) |
 | Import image from disk (crash-safe) | `unreal.AssetDiscoveryService.import_asset` / `import_texture` (**stay on VibeUE — see below**) |
 | Export a texture to disk | `unreal.AssetDiscoveryService.export_texture` |
 | Primary Content Browser selection | `unreal.AssetDiscoveryService.get_primary_content_browser_selection()` |
 | Is an asset open in an editor | `unreal.AssetDiscoveryService.is_asset_open(path)` |
+
+### 🔀 ALL open assets / ALL selections / open an asset — use Epic's `EditorAppToolset`
+
+VibeUE covers the **single/primary** queries above; the **list-all** and **open** operations live on
+Epic's native `EditorToolset.EditorAppToolset` (call via `call_tool`; returns `{"returnValue": [...]}`
+of package-path strings). These are NOT Python-bound — they only work through `call_tool`:
+
+| Need | Call |
+|---|---|
+| All assets open in editors | `call_tool("GetOpenAssets", "EditorToolset.EditorAppToolset")` |
+| All Content Browser selections | `call_tool("GetSelectedAssets", "EditorToolset.EditorAppToolset")` |
+| Open an asset in its editor | `call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset", {"assetPath": "/Game/.../BP_X"})` |
+
+```python
+# "Show me all open Blueprints" = Epic GetOpenAssets + a type filter
+opens = call_tool("GetOpenAssets", "EditorToolset.EditorAppToolset")["returnValue"]
+bps = [p for p in opens if isinstance(unreal.load_asset(p), unreal.Blueprint)]
+
+# "Open the selected asset" = VibeUE primary-selection + Epic OpenEditorForAsset
+sel = unreal.AssetDiscoveryService.get_primary_content_browser_selection()
+if sel:
+    call_tool("OpenEditorForAsset", "EditorToolset.EditorAppToolset",
+              {"assetPath": str(sel.package_name)})
+```
 
 ### 🚨 Never list broad paths — a `/Game` listing can return 30,000+ assets
 
