@@ -20,7 +20,7 @@
  *   (empty if no redirect). All other fields describe the redirect target in that case.
  */
 USTRUCT(BlueprintType)
-struct FGameplayTagInfo
+struct FVibeGameplayTagInfo
 {
 	GENERATED_BODY()
 
@@ -131,7 +131,7 @@ public:
 	 * @return Array of tag information
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static TArray<FGameplayTagInfo> ListTags(const FString& Filter = TEXT(""));
+	static TArray<FVibeGameplayTagInfo> ListTags(const FString& Filter = TEXT(""));
 
 	/**
 	 * Check if a gameplay tag exists.
@@ -152,7 +152,7 @@ public:
 	 * @return True if tag was found
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static bool GetTagInfo(const FString& TagName, FGameplayTagInfo& OutInfo);
+	static bool GetTagInfo(const FString& TagName, FVibeGameplayTagInfo& OutInfo);
 
 	/**
 	 * Get direct children of a tag.
@@ -161,7 +161,7 @@ public:
 	 * @return Array of child tag information
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static TArray<FGameplayTagInfo> GetChildren(const FString& ParentTag);
+	static TArray<FVibeGameplayTagInfo> GetChildren(const FString& ParentTag);
 
 #if WITH_EDITOR
 	// =================================================================
@@ -218,6 +218,6 @@ public:
 #endif // WITH_EDITOR
 
 private:
-	/** Helper to populate FGameplayTagInfo from the tag manager */
-	static FGameplayTagInfo BuildTagInfo(const FString& TagName);
+	/** Helper to populate FVibeGameplayTagInfo from the tag manager */
+	static FVibeGameplayTagInfo BuildTagInfo(const FString& TagName);
 };

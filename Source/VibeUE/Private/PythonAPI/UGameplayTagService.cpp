@@ -15,9 +15,9 @@ DEFINE_LOG_CATEGORY_STATIC(LogGameplayTagService, Log, All);
 // Internal Helpers
 // =================================================================
 
-FGameplayTagInfo UGameplayTagService::BuildTagInfo(const FString& TagName)
+FVibeGameplayTagInfo UGameplayTagService::BuildTagInfo(const FString& TagName)
 {
-	FGameplayTagInfo Info;
+	FVibeGameplayTagInfo Info;
 	Info.TagName = TagName;
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
@@ -54,9 +54,9 @@ FGameplayTagInfo UGameplayTagService::BuildTagInfo(const FString& TagName)
 // Query Operations
 // =================================================================
 
-TArray<FGameplayTagInfo> UGameplayTagService::ListTags(const FString& Filter)
+TArray<FVibeGameplayTagInfo> UGameplayTagService::ListTags(const FString& Filter)
 {
-	TArray<FGameplayTagInfo> Result;
+	TArray<FVibeGameplayTagInfo> Result;
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 
@@ -77,7 +77,7 @@ TArray<FGameplayTagInfo> UGameplayTagService::ListTags(const FString& Filter)
 	}
 
 	// Sort alphabetically
-	Result.Sort([](const FGameplayTagInfo& A, const FGameplayTagInfo& B)
+	Result.Sort([](const FVibeGameplayTagInfo& A, const FVibeGameplayTagInfo& B)
 	{
 		return A.TagName < B.TagName;
 	});
@@ -92,7 +92,7 @@ bool UGameplayTagService::HasTag(const FString& TagName)
 	return Tag.IsValid();
 }
 
-bool UGameplayTagService::GetTagInfo(const FString& TagName, FGameplayTagInfo& OutInfo)
+bool UGameplayTagService::GetTagInfo(const FString& TagName, FVibeGameplayTagInfo& OutInfo)
 {
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 	FGameplayTag Tag = Manager.RequestGameplayTag(FName(*TagName), false);
@@ -106,9 +106,9 @@ bool UGameplayTagService::GetTagInfo(const FString& TagName, FGameplayTagInfo& O
 	return true;
 }
 
-TArray<FGameplayTagInfo> UGameplayTagService::GetChildren(const FString& ParentTag)
+TArray<FVibeGameplayTagInfo> UGameplayTagService::GetChildren(const FString& ParentTag)
 {
-	TArray<FGameplayTagInfo> Result;
+	TArray<FVibeGameplayTagInfo> Result;
 
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
 
@@ -137,7 +137,7 @@ TArray<FGameplayTagInfo> UGameplayTagService::GetChildren(const FString& ParentT
 	}
 
 	// Sort alphabetically
-	Result.Sort([](const FGameplayTagInfo& A, const FGameplayTagInfo& B)
+	Result.Sort([](const FVibeGameplayTagInfo& A, const FVibeGameplayTagInfo& B)
 	{
 		return A.TagName < B.TagName;
 	});
