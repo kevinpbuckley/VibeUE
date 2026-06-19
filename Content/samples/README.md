@@ -8,10 +8,11 @@ This folder contains a project-generic template for AI coding assistant instruct
 
 ## What's Included
 
-- **VibeUE MCP Integration** - MCP tool guidance and discovery workflow
-- **Skills System** - Index + on-demand sub-doc loading pattern (`skill_name="<skill>/<section>"`)
-- **Skill Response Usage** - How to read the load response (`vibeue_classes`, `available_sections`, `COMMON_MISTAKES`) and chain into `discover_python_class` for real method signatures
-- **Log Reading** - How to read Unreal and VibeUE logs via MCP
+- **Efficient interaction model** - `execute_python_code` as the batched workhorse; `call_tool` only
+  for skills and engine-only toolsets; keep tool-search on
+- **Skills System** - Unreal's native `AgentSkillToolset` (`ListSkills` / `GetSkills`), loaded lazily
+- **Discovery workflow** - chain a loaded skill into `discover_python_class` for real method signatures
+- **deep_research / terrain_data** - when to research and how to build real-world terrain
 
 ---
 
