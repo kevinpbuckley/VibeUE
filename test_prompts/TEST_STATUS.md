@@ -28,7 +28,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | utilities/check_unreal_connection.md | 4 | ⬜ | – | – | – | |
 | asset_management/Test_Open_And_Selected_Assets.md | 6 | ✅ | 6/0/0 | – | opus | Tested directly. Passes via Epic+VibeUE mix. VibeUE: is_asset_open, get_primary_content_browser_selection. Epic EditorAppToolset (call_tool): GetOpenAssets, GetSelectedAssets, OpenEditorForAsset. Added skill doc for the Epic complement. |
 | assets/manage_asset.md | 22 | ✅ | 22/0/0 | – | sonnet | All green. Confirms #444 refPath guidance works (`asset_type:{refPath}` succeeded). find_assets("")=list-all; save_assets([])=save-dirty. |
-| blueprint/blueprint_tests.md | 67 | ⬜ | – | – | – | 6 sub-suites |
+| blueprint/blueprint_tests.md | 67 | 🟡 | 5/1/0 suites | – | sonnet | Sub-suites 1–5 (lifecycle/variables/components/functions-nodes/interfaces) PASS — **validates #444 refPath fix end-to-end**. Suite 6 (macros) incomplete: agent hit a transient MCP disconnect, wrongly self-relaunched the editor (NO crash dump — false alarm), looped. Re-run suite 6 + verify observations (int vs int32, object_class param, root-component order, discover_nodes gaps for macros/IA/self-call) once MCP restored. |
 | enhanced_input/enhanced_input_test.md | 7 | ⬜ | – | – | – | |
 | enum_struct/enum_struct_tests.md | 18 | ⬜ | – | – | – | |
 | data_asset/data_asset_test.md | 20 | ⬜ | – | – | – | |
@@ -76,3 +76,4 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 
 - **Sonnet diagnoses are unreliable (~50%).** In the pilot, 2 of 5 proposed issues were hallucinated skill content and 1 was wrong about an API that actually exists. **Opus must verify every proposed issue against the live editor / actual skill files before filing.** "Fix with Opus" really means "verify + file + fix with Opus."
 - **#444 is the dominant failure mode** and will recur across all Blueprint-related domains — high leverage to fix early so domain sweeps produce clean signal instead of re-discovering it.
+- **Test agents must NEVER relaunch the editor / run BuildAndLaunch / kill processes.** On the blueprint run, an agent hit a transient MCP disconnect, assumed a crash, ran the relaunch script, and broke the MCP client connection for the whole session. Harness rule added: if MCP becomes unreachable, STOP and report — never relaunch, never retry-loop.
