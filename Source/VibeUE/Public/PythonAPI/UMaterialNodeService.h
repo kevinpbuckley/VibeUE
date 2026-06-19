@@ -1075,6 +1075,33 @@ public:
 		const FString& PropertyName,
 		const FString& PropertyValue);
 
+	/**
+	 * Remove every expression not reachable from the asset's outputs — the scriptable
+	 * equivalent of the Material Editor's "Clean Graph -> Clean Up".
+	 * Maps to action="cleanup_unused_expressions"
+	 *
+	 * Fills the gap Epic leaves: its native MaterialTools.delete_unused_expressions only
+	 * accepts a UMaterial, so this is the only way to clean unused nodes out of a
+	 * UMaterialFunction. (Single-node deletion is left to Epic's delete_expression, which
+	 * already handles both Material and MaterialFunction graphs.)
+	 *
+	 * Works on both UMaterial and UMaterialFunction assets. Roots match the engine's own
+	 * UMaterialGraph::GetUnusedExpressions: for a function, every FunctionOutput; for a
+	 * material, every expression wired to a material property input plus all CustomOutput
+	 * nodes. A depth-first walk back through every connected input marks the reachable set
+	 * (following NamedRerouteUsage declarations, which have no input pins), and everything
+	 * else is removed. Unreachable nodes only reference each other, so no reachable node is
+	 * ever orphaned.
+	 *
+	 * @param AssetPath Full asset path to a UMaterial or UMaterialFunction
+	 * @return Number of expressions removed
+	 *
+	 * Example:
+	 *   removed = unreal.MaterialNodeService.cleanup_unused_expressions("/Game/MF_MyLayer")
+	 */
+	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
+	static int32 CleanupUnusedExpressions(const FString& AssetPath);
+
 private:
 	// Helper methods
 	static UMaterial* LoadMaterialAsset(const FString& MaterialPath);
