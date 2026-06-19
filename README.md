@@ -2,6 +2,8 @@
 
 # VibeUE — AI-Powered Unreal Engine Development
 
+### 🧩 MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+
+
 https://www.vibeue.com/
 
 [![Unreal Engine](https://img.shields.io/badge/Unreal%20Engine-5.8%2B-orange)](https://www.unrealengine.com)
@@ -10,9 +12,9 @@ https://www.vibeue.com/
 
 </div>
 
-**VibeUE is an Expansion of Unreal Engine 5.8+'s native AI toolset system.** Unreal 5.8 added a
-built-in MCP server and AI toolsets; VibeUE plugs straight into them and adds a deep library of editor
-capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
+**VibeUE is the MCP Expansion + AI Editor Toolset for Unreal Engine 5.8+.** Unreal 5.8 added a
+built-in MCP server and AI toolsets; VibeUE is an **MCP Expansion** that plugs straight into them and
+adds a deep **AI Editor Toolset** — a library of editor capabilities — Blueprints, materials, landscape, foliage, animation, Niagara, UMG, audio, StateTree,
 gameplay tags, input, UVs, **performance/profiling**, and more — registered into the engine's own
 `ToolsetRegistry` and `ModelContextProtocol` server, plus rich domain **skills** served through
 Unreal's native `AgentSkill` system. Any MCP-capable agent (Claude Code, Cursor, Copilot, …) drives
