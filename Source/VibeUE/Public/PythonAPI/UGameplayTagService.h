@@ -125,15 +125,6 @@ public:
 	// =================================================================
 
 	/**
-	 * List all registered gameplay tags, optionally filtered by prefix.
-	 *
-	 * @param Filter - Optional prefix filter (e.g., "Cube" returns "Cube.StartChasing", "Cube.StopChasing")
-	 * @return Array of tag information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static TArray<FVibeGameplayTagInfo> ListTags(const FString& Filter = TEXT(""));
-
-	/**
 	 * Check if a gameplay tag exists.
 	 *
 	 * @param TagName - Full tag name (e.g., "Cube.StartChasing")
@@ -169,17 +160,6 @@ public:
 	// =================================================================
 
 	/**
-	 * Add a new gameplay tag. Writes to config and registers at runtime.
-	 *
-	 * @param TagName - Full tag name (e.g., "Cube.StartChasing")
-	 * @param Comment - Optional developer comment
-	 * @param TagSource - Config file source (default: "DefaultGameplayTags.ini")
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static FGameplayTagResult AddTag(const FString& TagName, const FString& Comment = TEXT(""), const FString& TagSource = TEXT("DefaultGameplayTags.ini"));
-
-	/**
 	 * Add multiple gameplay tags at once.
 	 *
 	 * @param TagNames - Array of full tag names
@@ -189,32 +169,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
 	static FGameplayTagResult AddTags(const TArray<FString>& TagNames, const FString& Comment = TEXT(""), const FString& TagSource = TEXT("DefaultGameplayTags.ini"));
-
-	// =================================================================
-	// Modify Operations
-	// =================================================================
-
-	/**
-	 * Remove a gameplay tag from the config and runtime registry.
-	 *
-	 * @param TagName - Full tag name to remove
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static FGameplayTagResult RemoveTag(const FString& TagName);
-
-	/**
-	 * Rename a gameplay tag. Updates all references in the config and registers a redirect
-	 * from the old name, so has_tag(old_name) stays True and assets keep resolving. Verify a
-	 * rename with list_tags()/get_children() or get_tag_info(old_name).redirected_to — NOT
-	 * with has_tag(old_name).
-	 *
-	 * @param OldTagName - Current tag name
-	 * @param NewTagName - New tag name
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|GameplayTags")
-	static FGameplayTagResult RenameTag(const FString& OldTagName, const FString& NewTagName);
 #endif // WITH_EDITOR
 
 private:

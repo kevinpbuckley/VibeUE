@@ -397,40 +397,8 @@ bool UViewportService::SetRealtime(bool bRealtime)
 }
 
 // =================================================================
-// Camera Position & Speed
+// Camera Speed
 // =================================================================
-
-bool UViewportService::SetCameraLocation(FVector NewLocation)
-{
-	FLevelEditorViewportClient* Client = GetActiveViewportClient();
-	if (!Client)
-	{
-		UE_LOG(LogViewportService, Warning, TEXT("SetCameraLocation: No active viewport client"));
-		return false;
-	}
-
-	Client->SetViewLocation(NewLocation);
-	ForceViewportRedraw();
-	UE_LOG(LogViewportService, Log, TEXT("SetCameraLocation: (%.1f, %.1f, %.1f)"),
-		NewLocation.X, NewLocation.Y, NewLocation.Z);
-	return true;
-}
-
-bool UViewportService::SetCameraRotation(FRotator NewRotation)
-{
-	FLevelEditorViewportClient* Client = GetActiveViewportClient();
-	if (!Client)
-	{
-		UE_LOG(LogViewportService, Warning, TEXT("SetCameraRotation: No active viewport client"));
-		return false;
-	}
-
-	Client->SetViewRotation(NewRotation);
-	ForceViewportRedraw();
-	UE_LOG(LogViewportService, Log, TEXT("SetCameraRotation: (P=%.1f, Y=%.1f, R=%.1f)"),
-		NewRotation.Pitch, NewRotation.Yaw, NewRotation.Roll);
-	return true;
-}
 
 bool UViewportService::SetCameraSpeed(int32 SpeedSetting)
 {

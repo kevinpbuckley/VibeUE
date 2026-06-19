@@ -289,26 +289,8 @@ public:
 	static bool SetRealtime(bool bRealtime);
 
 	// =================================================================
-	// Camera Position & Speed
+	// Camera Speed
 	// =================================================================
-
-	/**
-	 * Set the viewport camera world location.
-	 *
-	 * @param NewLocation - World space location
-	 * @return True if set successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static bool SetCameraLocation(FVector NewLocation);
-
-	/**
-	 * Set the viewport camera world rotation.
-	 *
-	 * @param NewRotation - World space rotation
-	 * @return True if set successfully
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Viewport")
-	static bool SetCameraRotation(FRotator NewRotation);
 
 	/**
 	 * Set the camera movement speed index.

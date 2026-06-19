@@ -7,98 +7,6 @@
 #include "UEngineSettingsService.generated.h"
 
 /**
- * Information about a single engine setting.
- * Python access: info = unreal.EngineSettingsService.get_setting_info(category, key)
- *
- * Properties:
- * - key (str): Setting key name (e.g., "r.ReflectionMethod", "gc.TimeBetweenPurgingPendingKillObjects")
- * - display_name (str): Human-readable display name
- * - description (str): Tooltip/description text
- * - type (str): Setting type: "string", "int", "float", "bool", "array", "object"
- * - value (str): Current value as string (JSON-encoded for complex types)
- * - default_value (str): Default value as string
- * - config_section (str): INI section path (e.g., "/Script/Engine.RendererSettings")
- * - config_file (str): INI file name (e.g., "DefaultEngine.ini")
- * - requires_restart (bool): Whether this setting requires editor restart
- * - read_only (bool): Whether this setting cannot be modified
- * - is_console_variable (bool): Whether this is a console variable (cvar)
- */
-USTRUCT(BlueprintType)
-struct FEngineSettingInfo
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Key;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString DisplayName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Description;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Type;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Value;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString DefaultValue;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString ConfigSection;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString ConfigFile;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bRequiresRestart = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bReadOnly = false;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	bool bIsConsoleVariable = false;
-};
-
-/**
- * Information about an engine settings category.
- * Python access: categories = unreal.EngineSettingsService.list_categories()
- *
- * Properties:
- * - category_id (str): Category identifier (e.g., "rendering", "physics", "audio", "gc")
- * - display_name (str): Human-readable category name
- * - description (str): Category description
- * - setting_count (int): Number of settings in this category
- * - settings_class_name (str): Associated UObject settings class path
- * - config_file (str): Primary config file for this category
- */
-USTRUCT(BlueprintType)
-struct FEngineSettingCategory
-{
-	GENERATED_BODY()
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString CategoryId;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString DisplayName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString Description;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	int32 SettingCount = 0;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString SettingsClassName;
-
-	UPROPERTY(BlueprintReadWrite, Category = "EngineSettings")
-	FString ConfigFile;
-};
-
-/**
  * Result of an engine settings operation.
  * Python access: result = unreal.EngineSettingsService.set_setting(category, key, value)
  *
@@ -213,67 +121,6 @@ class VIBEUE_API UEngineSettingsService : public UToolsetDefinition
 	GENERATED_BODY()
 
 public:
-	// =================================================================
-	// Category Operations
-	// =================================================================
-
-	/**
-	 * List all available engine settings categories.
-	 * Includes rendering, physics, audio, GC, networking, platform settings, etc.
-	 *
-	 * @return Array of category information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FEngineSettingCategory> ListCategories();
-
-	// =================================================================
-	// Settings Discovery
-	// =================================================================
-
-	/**
-	 * List all settings within a category with their current values.
-	 *
-	 * @param CategoryId - Category identifier (e.g., "rendering", "physics", "audio")
-	 * @return Array of setting information
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static TArray<FEngineSettingInfo> ListSettings(const FString& CategoryId);
-
-	/**
-	 * Get detailed information about a specific setting.
-	 *
-	 * @param CategoryId - Category identifier
-	 * @param Key - Setting key name
-	 * @param OutInfo - Output structure with setting details
-	 * @return True if setting was found
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static bool GetSettingInfo(const FString& CategoryId, const FString& Key, FEngineSettingInfo& OutInfo);
-
-	// =================================================================
-	// Get/Set Individual Settings
-	// =================================================================
-
-	/**
-	 * Get a single engine setting value.
-	 *
-	 * @param CategoryId - Category identifier
-	 * @param Key - Setting key name
-	 * @return Setting value as string (empty if not found)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FString GetSetting(const FString& CategoryId, const FString& Key);
-
-	/**
-	 * Set a single engine setting value.
-	 *
-	 * @param CategoryId - Category identifier
-	 * @param Key - Setting key name
-	 * @param Value - New value as string
-	 * @return Operation result
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetSetting(const FString& CategoryId, const FString& Key, const FString& Value);
 
 	// =================================================================
 	// Console Variables (CVars)
@@ -332,25 +179,6 @@ public:
 	// =================================================================
 	// Batch Operations
 	// =================================================================
-
-	/**
-	 * Get all settings in a category as a JSON object.
-	 *
-	 * @param CategoryId - Category identifier
-	 * @return JSON object string with all key-value pairs
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FString GetCategorySettingsAsJson(const FString& CategoryId);
-
-	/**
-	 * Set multiple settings in a category from a JSON object.
-	 *
-	 * @param CategoryId - Category identifier
-	 * @param SettingsJson - JSON object string with key-value pairs
-	 * @return Operation result with success/failure lists
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category ="VibeUE|EngineSettings")
-	static FEngineSettingResult SetCategorySettingsFromJson(const FString& CategoryId, const FString& SettingsJson);
 
 	/**
 	 * Set multiple console variables from a JSON object.
@@ -475,26 +303,6 @@ public:
 	static bool SaveEngineConfig(const FString& ConfigFile);
 
 private:
-	/** Get the settings object for a category (may return nullptr) */
-	static UObject* GetSettingsObjectForCategory(const FString& CategoryId);
-
-	/** Get the config section for a category */
-	static FString GetConfigSectionForCategory(const FString& CategoryId);
-
-	/** Get the config file for a category */
-	static FString GetConfigFileForCategory(const FString& CategoryId);
-
-	/** Convert a property value to string */
-	static FString PropertyToString(FProperty* Property, const void* Container);
-
-	/** Set a property value from string */
-	static bool StringToProperty(FProperty* Property, void* Container, const FString& Value, FString& OutError);
-
-	/** Get the type name for a property */
-	static FString GetPropertyType(FProperty* Property);
-
-	/** Validate category ID */
-	static bool ValidateCategoryId(const FString& CategoryId, FString& OutError);
 
 	/** Get console variable flags as string */
 	static FString GetCVarFlagsString(IConsoleVariable* CVar);

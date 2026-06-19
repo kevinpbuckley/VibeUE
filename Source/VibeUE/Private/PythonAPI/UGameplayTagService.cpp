@@ -54,37 +54,6 @@ FVibeGameplayTagInfo UGameplayTagService::BuildTagInfo(const FString& TagName)
 // Query Operations
 // =================================================================
 
-TArray<FVibeGameplayTagInfo> UGameplayTagService::ListTags(const FString& Filter)
-{
-	TArray<FVibeGameplayTagInfo> Result;
-
-	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
-
-	FGameplayTagContainer AllTags;
-	Manager.RequestAllGameplayTags(AllTags, false);
-
-	for (const FGameplayTag& Tag : AllTags)
-	{
-		FString TagName = Tag.GetTagName().ToString();
-
-		// Apply prefix filter
-		if (!Filter.IsEmpty() && !TagName.StartsWith(Filter))
-		{
-			continue;
-		}
-
-		Result.Add(BuildTagInfo(TagName));
-	}
-
-	// Sort alphabetically
-	Result.Sort([](const FVibeGameplayTagInfo& A, const FVibeGameplayTagInfo& B)
-	{
-		return A.TagName < B.TagName;
-	});
-
-	return Result;
-}
-
 bool UGameplayTagService::HasTag(const FString& TagName)
 {
 	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
@@ -151,43 +120,6 @@ TArray<FVibeGameplayTagInfo> UGameplayTagService::GetChildren(const FString& Par
 
 #if WITH_EDITOR
 
-FGameplayTagResult UGameplayTagService::AddTag(const FString& TagName, const FString& Comment, const FString& TagSource)
-{
-	FGameplayTagResult Result;
-
-	if (TagName.IsEmpty())
-	{
-		Result.ErrorMessage = TEXT("Tag name cannot be empty");
-		return Result;
-	}
-
-	// Check if tag already exists
-	if (HasTag(TagName))
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Tag '%s' already exists"), *TagName);
-		return Result;
-	}
-
-	// Use the GameplayTags editor module to properly add the tag
-	IGameplayTagsEditorModule& EditorModule = IGameplayTagsEditorModule::Get();
-
-	bool bAdded = EditorModule.AddNewGameplayTagToINI(TagName, Comment, FName(*TagSource));
-
-	if (bAdded)
-	{
-		Result.bSuccess = true;
-		Result.TagsModified.Add(TagName);
-		UE_LOG(LogGameplayTagService, Log, TEXT("Added gameplay tag: %s (source: %s)"), *TagName, *TagSource);
-	}
-	else
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Failed to add tag '%s' - editor module rejected the operation"), *TagName);
-		UE_LOG(LogGameplayTagService, Error, TEXT("Failed to add gameplay tag: %s"), *TagName);
-	}
-
-	return Result;
-}
-
 FGameplayTagResult UGameplayTagService::AddTags(const TArray<FString>& TagNames, const FString& Comment, const FString& TagSource)
 {
 	FGameplayTagResult Result;
@@ -237,95 +169,6 @@ FGameplayTagResult UGameplayTagService::AddTags(const TArray<FString>& TagNames,
 	else
 	{
 		Result.bSuccess = true;
-	}
-
-	return Result;
-}
-
-// =================================================================
-// Modify Operations
-// =================================================================
-
-FGameplayTagResult UGameplayTagService::RemoveTag(const FString& TagName)
-{
-	FGameplayTagResult Result;
-
-	if (TagName.IsEmpty())
-	{
-		Result.ErrorMessage = TEXT("Tag name cannot be empty");
-		return Result;
-	}
-
-	UGameplayTagsManager& Manager = UGameplayTagsManager::Get();
-	FGameplayTag Tag = Manager.RequestGameplayTag(FName(*TagName), false);
-
-	if (!Tag.IsValid())
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Tag '%s' does not exist"), *TagName);
-		return Result;
-	}
-
-	TSharedPtr<FGameplayTagNode> Node = Manager.FindTagNode(Tag);
-	if (!Node.IsValid())
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Tag node not found for '%s'"), *TagName);
-		return Result;
-	}
-
-	IGameplayTagsEditorModule& EditorModule = IGameplayTagsEditorModule::Get();
-	bool bRemoved = EditorModule.DeleteTagFromINI(Node);
-
-	if (bRemoved)
-	{
-		Result.bSuccess = true;
-		Result.TagsModified.Add(TagName);
-		UE_LOG(LogGameplayTagService, Log, TEXT("Removed gameplay tag: %s"), *TagName);
-	}
-	else
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Failed to remove tag '%s' - it may be referenced by assets or be a native tag"), *TagName);
-		UE_LOG(LogGameplayTagService, Error, TEXT("Failed to remove gameplay tag: %s"), *TagName);
-	}
-
-	return Result;
-}
-
-FGameplayTagResult UGameplayTagService::RenameTag(const FString& OldTagName, const FString& NewTagName)
-{
-	FGameplayTagResult Result;
-
-	if (OldTagName.IsEmpty() || NewTagName.IsEmpty())
-	{
-		Result.ErrorMessage = TEXT("Both old and new tag names must be provided");
-		return Result;
-	}
-
-	if (!HasTag(OldTagName))
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Tag '%s' does not exist"), *OldTagName);
-		return Result;
-	}
-
-	if (HasTag(NewTagName))
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Target tag '%s' already exists"), *NewTagName);
-		return Result;
-	}
-
-	IGameplayTagsEditorModule& EditorModule = IGameplayTagsEditorModule::Get();
-	bool bRenamed = EditorModule.RenameTagInINI(OldTagName, NewTagName);
-
-	if (bRenamed)
-	{
-		Result.bSuccess = true;
-		Result.TagsModified.Add(OldTagName);
-		Result.TagsModified.Add(NewTagName);
-		UE_LOG(LogGameplayTagService, Log, TEXT("Renamed gameplay tag: %s -> %s"), *OldTagName, *NewTagName);
-	}
-	else
-	{
-		Result.ErrorMessage = FString::Printf(TEXT("Failed to rename tag '%s' to '%s'"), *OldTagName, *NewTagName);
-		UE_LOG(LogGameplayTagService, Error, TEXT("Failed to rename gameplay tag: %s -> %s"), *OldTagName, *NewTagName);
 	}
 
 	return Result;

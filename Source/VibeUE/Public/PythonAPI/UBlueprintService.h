@@ -1300,40 +1300,6 @@ public:
 	// ============================================================================
 
 	/**
-	 * Add a new variable to a blueprint.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param VariableName - Name of the variable
-	 * @param VariableType - Type string. Supported formats:
-	 *   - Primitives: "float", "bool", "int", "FString", "FVector", "FRotator", "FTransform"
-	 *   - UE objects:  "AActor", "UStaticMeshComponent" (U/A prefix required for C++ classes)
-	 *   - Subclass:    "TSubclassOf<AActor>"
-	 *   - Enum:        "EMyEnum" (E prefix)
-	 *   - Struct:      "FMyStruct" (F prefix)
-	 *   - Blueprint:   "BP_Cube" or "BP_Cube_C" or "/Game/Path/BP_Cube" (asset path)
-	 *                  Blueprint class references are resolved automatically via asset search.
-	 * @param DefaultValue - Default value as a string (optional)
-	 * @param bIsArray - Whether this is an array type
-	 * @param ContainerType - Container type: "Array", "Set", "Map", or empty
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Health", "float", "100.0")
-	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Location", "FVector", "(X=0,Y=0,Z=100)")
-	 *   unreal.BlueprintService.add_variable("/Game/BP_Player", "Items", "AActor", "", bIsArray=True, ContainerType="Array")
-	 *   unreal.BlueprintService.add_variable("/Game/STT_Rotate", "Cube", "BP_Cube")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static bool AddVariable(
-		const FString& BlueprintPath,
-		const FString& VariableName,
-		const FString& VariableType,
-		const FString& DefaultValue = TEXT(""),
-		bool bIsArray = false,
-		const FString& ContainerType = TEXT("")
-	);
-
-	/**
 	 * Set the default value of an existing variable.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -1349,22 +1315,6 @@ public:
 		const FString& BlueprintPath,
 		const FString& VariableName,
 		const FString& DefaultValue
-	);
-
-	/**
-	 * Remove a variable from a blueprint.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param VariableName - Name of the variable to remove
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.remove_variable("/Game/BP_Player", "OldVariable")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static bool RemoveVariable(
-		const FString& BlueprintPath,
-		const FString& VariableName
 	);
 
 	/**
@@ -1387,49 +1337,6 @@ public:
 		const FString& BlueprintPath,
 		const FString& VariableName,
 		FBlueprintVariableDetailedInfo& OutInfo
-	);
-
-	/**
-	 * Modify properties of an existing variable.
-	 * All fields returned by GetVariableInfo can be modified. Pass empty string to keep current value.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param VariableName - Name of the variable to modify
-	 * @param NewName - New name for the variable (empty to keep current)
-	 * @param NewCategory - New category (empty to keep current)
-	 * @param NewTooltip - New tooltip (empty to keep current)
-	 * @param NewDefaultValue - New default value (empty to keep current)
-	 * @param bSetInstanceEditable - If >= 0, sets instance editable flag (0=false, 1=true, -1=unchanged)
-	 * @param bSetExposeOnSpawn - If >= 0, sets expose on spawn flag
-	 * @param bSetPrivate - If >= 0, sets private flag
-	 * @param bSetBlueprintReadOnly - If >= 0, sets read-only flag
-	 * @param NewReplicationCondition - "None", "Replicated", "RepNotify", or empty to keep current
-	 * @return True if successful
-	 *
-	 * Example - Rename variable:
-	 *   unreal.BlueprintService.modify_variable("/Game/BP_Player", "HP", NewName="Health")
-	 *
-	 * Example - Make instance editable with category:
-	 *   unreal.BlueprintService.modify_variable("/Game/BP_Enemy", "Damage",
-	 *       NewCategory="Combat", bSetInstanceEditable=1, NewTooltip="Base damage value")
-	 *
-	 * Example - Enable replication:
-	 *   unreal.BlueprintService.modify_variable("/Game/BP_Player", "Score",
-	 *       NewReplicationCondition="Replicated")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static bool ModifyVariable(
-		const FString& BlueprintPath,
-		const FString& VariableName,
-		const FString& NewName = TEXT(""),
-		const FString& NewCategory = TEXT(""),
-		const FString& NewTooltip = TEXT(""),
-		const FString& NewDefaultValue = TEXT(""),
-		int32 bSetInstanceEditable = -1,
-		int32 bSetExposeOnSpawn = -1,
-		int32 bSetPrivate = -1,
-		int32 bSetBlueprintReadOnly = -1,
-		const FString& NewReplicationCondition = TEXT("")
 	);
 
 	/**
@@ -1561,24 +1468,6 @@ public:
 	// ============================================================================
 
 	/**
-	 * Create a new function in a blueprint (idempotent - won't create duplicates).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param FunctionName - Name of the function
-	 * @param bIsPure - Whether this is a pure function (no exec pins)
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.create_function("/Game/BP_Player", "ApplyDamage")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static bool CreateFunction(
-		const FString& BlueprintPath,
-		const FString& FunctionName,
-		bool bIsPure = false
-	);
-
-	/**
 	 * Add a macro graph to a Blueprint (typically a Macro Library Blueprint).
 	 *
 	 * Macro graphs are referenced by K2Node_MacroInstance nodes via add_macro_instance_node.
@@ -1679,22 +1568,6 @@ public:
 	);
 
 	/**
-	 * Delete a function from a blueprint.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param FunctionName - Name of the function to delete
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.delete_function("/Game/BP_Player", "OldFunction")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Functions")
-	static bool DeleteFunction(
-		const FString& BlueprintPath,
-		const FString& FunctionName
-	);
-
-	/**
 	 * Get detailed information about a specific function.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -1714,46 +1587,6 @@ public:
 		const FString& BlueprintPath,
 		const FString& FunctionName,
 		FBlueprintFunctionDetailedInfo& OutInfo
-	);
-
-	/**
-	 * Add an input parameter to a function (convenience method for add_input action).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param FunctionName - Name of the function
-	 * @param ParameterName - Name of the parameter
-	 * @param ParameterType - Type string (e.g., "float", "FVector", "AActor")
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.add_function_input("/Game/BP_Player", "ApplyDamage", "Amount", "float")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Functions")
-	static bool AddFunctionInput(
-		const FString& BlueprintPath,
-		const FString& FunctionName,
-		const FString& ParameterName,
-		const FString& ParameterType
-	);
-
-	/**
-	 * Add an output parameter to a function (convenience method for add_output action).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param FunctionName - Name of the function
-	 * @param ParameterName - Name of the parameter
-	 * @param ParameterType - Type string (e.g., "float", "bool", "FVector")
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.add_function_output("/Game/BP_Player", "ApplyDamage", "WasKilled", "bool")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints|Functions")
-	static bool AddFunctionOutput(
-		const FString& BlueprintPath,
-		const FString& FunctionName,
-		const FString& ParameterName,
-		const FString& ParameterType
 	);
 
 	/**
@@ -1843,163 +1676,6 @@ public:
 	// ============================================================================
 	// NODE MANAGEMENT (Phase 3)
 	// ============================================================================
-
-	/**
-	 * Add a variable getter node to a graph.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph ("EventGraph", function name, etc.)
-	 * @param VariableName - Name of the variable to get
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_get_variable_node("/Game/BP_Player", "ApplyDamage", "Health", 200, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddGetVariableNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& VariableName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a member variable getter node to a graph — reads a property or component
-	 * of another class (not self). Creates a UK2Node_VariableGet with a Target input pin.
-	 *
-	 * Use this when you have a variable of type BP_Foo and want to access a property
-	 * or component declared on BP_Foo (e.g. get the StaticMeshComponent named "CubeMesh"
-	 * from a variable of type BP_Cube).
-	 *
-	 * The resulting node pins:
-	 *   - "self"       (input)  — the object to read from (the outer variable)
-	 *   - MemberName   (output) — the value of the member property
-	 *
-	 * @param BlueprintPath  - Full path to the blueprint that contains the graph
-	 * @param GraphName      - Name of the graph
-	 * @param TargetClass    - Short class name that owns the member (e.g. "BP_Cube_C",
-	 *                         "StaticMeshActor"). Resolved the same way as create_blueprint.
-	 * @param MemberName     - Name of the property/component to access (e.g. "CubeMesh")
-	 * @param PosX           - X position in the graph
-	 * @param PosY           - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   # Get the CubeMesh component from a "Cube" variable of type BP_Cube
-	 *   node_id = unreal.BlueprintService.add_member_get_node("/Game/STT_Rotate", "EventGraph", "BP_Cube_C", "CubeMesh", 400, 0)
-	 *   # Target input pin name: "self"   — connect from the Cube getter output
-	 *   # Data output pin name:  "CubeMesh" — connect to whatever needs the component
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddMemberGetNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& TargetClass,
-		const FString& MemberName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a validated get variable node to a graph.
-	 * Unlike add_get_variable_node (pure), this node has execution pins:
-	 *   - Input exec: "execute"
-	 *   - Output exec (object valid): "then"  (labeled "Is Valid" in editor)
-	 *   - Output exec (object null): "else"   (labeled "Is Not Valid" in editor)
-	 *   - Data output: variable name (e.g., "Cube")
-	 *
-	 * Only supported for Object/Actor reference variables. The variable must be
-	 * an object reference type (UObject subclass) — primitives (int, float, bool)
-	 * don't support validated get and will fall back to a branch-style impure node.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param VariableName - Name of the variable to get with validation
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_validated_get_node("/Game/STT_Rotate", "EventGraph", "Cube", 200, 0)
-	 *   # Connecting the exec flow
-	 *   connect_nodes(bp, graph, tick_id, "then", node_id, "execute")
-	 *   connect_nodes(bp, graph, node_id, "then", next_id, "execute")  # Is Valid path
-	 *   # Connecting the data output
-	 *   connect_nodes(bp, graph, node_id, "Cube", target_id, "self")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddValidatedGetNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& VariableName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a variable setter node to a graph.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph ("EventGraph", function name, etc.)
-	 * @param VariableName - Name of the variable to set
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_set_variable_node("/Game/BP_Player", "ApplyDamage", "Health", 400, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddSetVariableNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& VariableName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a branch node to a graph.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_branch_node("/Game/BP_Player", "ApplyDamage", 300, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddBranchNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a print string node to a graph.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_print_string_node("/Game/BP_Player", "EventGraph", 100, 100)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddPrintStringNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
 
 	/**
 	 * Add a Comment box (UEdGraphNode_Comment) to a graph at an explicit position and size.
@@ -2146,64 +1822,6 @@ public:
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
 	static TArray<FBlueprintNodeInfo> GetSelectedNodes(
 		const FString& BlueprintPath = TEXT("")
-	);
-
-	/**
-	 * Add a cast node to a graph.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param TargetClass - Class to cast to (e.g., "Character", "Pawn", "Actor")
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_cast_node("/Game/ABP_Character", "EventGraph", "Character", 200, 0)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddCastNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& TargetClass,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add an event node to a graph (e.g., Event BeginPlay, Event Tick).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param EventName - Name of the event function in the parent class.
-	 *                    For Actor blueprints: "ReceiveBeginPlay", "ReceiveActorBeginOverlap", etc.
-	 *                    For AnimBlueprints: "BlueprintInitializeAnimation"
-	 *
-	 *                    STATETREE TASK BLUEPRINTS (StateTreeTaskBlueprintBase):
-	 *                      "ReceiveLatentTick"        — Tick (new, use this)
-	 *                      "ReceiveLatentEnterState"  — Enter State (new, use this)
-	 *                      "ReceiveExitState"         — Exit State
-	 *                      "ReceiveStateCompleted"    — State Completed
-	 *                    NEVER use "ReceiveTick" or "ReceiveEnterState" — those are deprecated
-	 *                    on StateTreeTaskBlueprintBase and will cause compile errors.
-	 *
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example (Actor Blueprint):
-	 *   node_id = unreal.BlueprintService.add_event_node("/Game/BP_Player", "EventGraph", "ReceiveBeginPlay", 0, 0)
-	 * Example (StateTree Task Blueprint):
-	 *   node_id = unreal.BlueprintService.add_event_node("/Game/STT_MyTask", "EventGraph", "ReceiveLatentTick", 0, 0)
-	 *   node_id = unreal.BlueprintService.add_event_node("/Game/STT_MyTask", "EventGraph", "ReceiveLatentEnterState", 0, 200)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddEventNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& EventName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
 	);
 
 	/**
@@ -2670,87 +2288,9 @@ public:
 		float PosY = 0.0f
 	);
 
-	/**
-	 * Add an Enhanced Input Action event node to a graph.
-	 * This creates a node that responds to an Enhanced Input Action asset (IA_*).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph (typically "EventGraph")
-	 * @param InputActionPath - Full path to the Input Action asset (e.g., "/Game/Input/IA_Jump")
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_input_action_node("/Game/BP_Player", "EventGraph", "/Game/Input/IA_Jump", 0, 0)
-	 *   node_id = unreal.BlueprintService.add_input_action_node("/Game/BP_Player", "EventGraph", "/Game/Input/IA_Ragdoll", -800, 2500)
-	 *
-	 * Note: The Input Action asset must exist. Create it first with InputService.create_action() if needed.
-	 * The node will have output pins for Started, Ongoing, Triggered, Completed, and Canceled events.
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddInputActionNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& InputActionPath,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
 	// ============================================================================
 	// ADVANCED NODE OPERATIONS (Phase 4)
 	// ============================================================================
-
-	/**
-	 * Add a function call node to a graph. This is the most versatile node creation method.
-	 * Use this to add any blueprint-callable function including math operations.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param FunctionOwnerClass - Class that owns the function (e.g., "KismetMathLibrary", "KismetSystemLibrary")
-	 * @param FunctionName - Name of the function (e.g., "Greater_FloatFloat", "Clamp", "Add_FloatFloat")
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * This method first tries an exact UFunction lookup. If that fails, it falls back to the
-	 * Blueprint action database and attempts to resolve a matching callable node by display name,
-	 * compact title, keywords, and common K2 naming variants (for example "GetActorLocation"
-	 * resolving to the Blueprint node backed by "K2_GetActorLocation").
-	 *
-	 * For complex graph work, prefer this rule:
-	 *   1. discover_nodes() to see the exact node that exists in the current Blueprint context
-	 *   2. create the node
-	 *   3. re-read the graph and pins before creating or wiring the next node
-	 *
-	 * Example - Add Greater Than comparison:
-	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "ApplyDamage", "KismetMathLibrary", "Greater_FloatFloat", 200, 100)
-	 *
-	 * Example - Use a Blueprint display-style name and let the fallback resolve the callable node:
-	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "EventGraph", "Actor", "GetActorLocation", 300, 100)
-	 *
-	 * Example - Add Clamp node:
-	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "ApplyDamage", "KismetMathLibrary", "Clamp", 400, 100)
-	 *
-	 * Example - Add Subtract node:
-	 *   node_id = unreal.BlueprintService.add_function_call_node("/Game/BP_Player", "ApplyDamage", "KismetMathLibrary", "Subtract_FloatFloat", 300, 100)
-	 *
-	 * Common Classes:
-	 *   - KismetMathLibrary: Math operations (Add, Subtract, Multiply, Divide, Clamp, Greater, Less, etc.)
-	 *   - KismetSystemLibrary: System functions (PrintString, Delay, etc.)
-	 *   - KismetStringLibrary: String operations
-	 *   - KismetArrayLibrary: Array operations
-	 *   - GameplayStatics: Game functions (GetPlayerController, SpawnActor, etc.)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddFunctionCallNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& FunctionOwnerClass,
-		const FString& FunctionName,
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
 
 	/**
 	 * Add a macro instance node to a Blueprint graph.
@@ -2927,57 +2467,6 @@ public:
 	);
 
 	/**
-	 * Add a comparison node to a graph (convenience method).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param ComparisonType - Type of comparison: "Greater", "Less", "GreaterEqual", "LessEqual", "Equal", "NotEqual"
-	 * @param ValueType - Type to compare: "Float", "Int", "Double" (default: "Float")
-	 *                    Note: UE 5.7 normalizes "Float" to "Double" internally
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_comparison_node("/Game/BP_Player", "ApplyDamage", "Greater", "Float", 200, 100)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddComparisonNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& ComparisonType,
-		const FString& ValueType = TEXT("Float"),
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
-	 * Add a math operation node to a graph (convenience method).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param GraphName - Name of the graph
-	 * @param MathOperation - Operation: "Add", "Subtract", "Multiply", "Divide", "Clamp", "Min", "Max", "Abs"
-	 * @param ValueType - Type for operation: "Float", "Int", "Double", "Vector" (default: "Float")
-	 *                    Note: UE 5.7 normalizes "Float" to "Double" internally
-	 * @param PosX - X position in the graph
-	 * @param PosY - Y position in the graph
-	 * @return Node ID (GUID) if successful, empty string otherwise
-	 *
-	 * Example:
-	 *   node_id = unreal.BlueprintService.add_math_node("/Game/BP_Player", "ApplyDamage", "Subtract", "Float", 300, 100)
-	 *   node_id = unreal.BlueprintService.add_math_node("/Game/BP_Player", "ApplyDamage", "Clamp", "Float", 400, 100)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString AddMathNode(
-		const FString& BlueprintPath,
-		const FString& GraphName,
-		const FString& MathOperation,
-		const FString& ValueType = TEXT("Float"),
-		float PosX = 0.0f,
-		float PosY = 0.0f
-	);
-
-	/**
 	 * Get all connections in a graph.
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -3089,44 +2578,6 @@ public:
 	// ============================================================================
 
 	/**
-	 * Create a new blueprint from a parent class.
-	 *
-	 * @param BlueprintName - Name of the blueprint to create
-	 * @param ParentClass - Parent class name or path (e.g., "Actor", "Character", "StateTreeTaskBlueprintBase", "/Script/Engine.Actor")
-	 *                      Short names like "StateTreeTaskBlueprintBase" are resolved via object search across all loaded modules.
-	 *                      UserWidget-derived parents create a WidgetBlueprint (UMG factory) automatically.
-	 *                      Returns empty string (error) if the class cannot be found.
-	 * @param BlueprintPath - Directory path where blueprint will be created (e.g., "/Game/Blueprints")
-	 * @return Full path to created blueprint, or empty string on failure
-	 *
-	 * Example:
-	 *   path = unreal.BlueprintService.create_blueprint("BP_MyActor", "Actor", "/Game/Blueprints")
-	 *   path = unreal.BlueprintService.create_blueprint("STT_MyTask", "StateTreeTaskBlueprintBase", "/Game/StateTree")
-	 *   path = unreal.BlueprintService.create_blueprint("WBP_MyWidget", "UserWidget", "/Game/UI")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FString CreateBlueprint(
-		const FString& BlueprintName,
-		const FString& ParentClass,
-		const FString& BlueprintPath
-	);
-
-	/**
-	 * Compile a blueprint and return detailed results including any errors and warnings.
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @return FBlueprintCompileResult with success status, error count, warning count, and message strings
-	 *
-	 * Example:
-	 *   result = unreal.BlueprintService.compile_blueprint("/Game/BP_Player")
-	 *   print(f"Success: {result.success}, Errors: {result.num_errors}")
-	 *   for err in result.errors:
-	 *       print(f"  ERROR: {err}")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static FBlueprintCompileResult CompileBlueprint(const FString& BlueprintPath);
-
-	/**
 	 * Get a property value from a blueprint's Class Default Object (CDO).
 	 *
 	 * @param BlueprintPath - Full path to the blueprint
@@ -3163,22 +2614,6 @@ public:
 		const FString& BlueprintPath,
 		const FString& PropertyName,
 		const FString& PropertyValue
-	);
-
-	/**
-	 * Change the parent class of a blueprint (reparent).
-	 *
-	 * @param BlueprintPath - Full path to the blueprint
-	 * @param NewParentClass - New parent class name or path
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.BlueprintService.reparent_blueprint("/Game/BP_Player", "Character")
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "VibeUE|Blueprints")
-	static bool ReparentBlueprint(
-		const FString& BlueprintPath,
-		const FString& NewParentClass
 	);
 
 	/**

@@ -464,52 +464,6 @@ public:
 	static TArray<FString> GetCategories();
 
 	// =================================================================
-	// Lifecycle Actions
-	// =================================================================
-
-	/**
-	 * Create a new material expression.
-	 * Maps to action="create"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionClass Class name (e.g., "Constant3Vector", "MaterialExpressionAdd")
-	 * @param PosX X position in graph
-	 * @param PosY Y position in graph
-	 * @return Created expression info (empty if failed)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static FMaterialExpressionInfo CreateExpression(
-		const FString& MaterialPath,
-		const FString& ExpressionClass,
-		int32 PosX = 0,
-		int32 PosY = 0);
-
-	/**
-	 * Delete a material expression.
-	 * Maps to action="delete"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression to delete
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool DeleteExpression(const FString& MaterialPath, const FString& ExpressionId);
-
-	/**
-	 * Move a material expression to a new position.
-	 * Maps to action="move"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId ID of expression to move
-	 * @param PosX New X position
-	 * @param PosY New Y position
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool MoveExpression(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		int32 PosX,
-		int32 PosY);
-
-	// =================================================================
 	// Specialized Creation Actions
 	// =================================================================
 
@@ -628,38 +582,6 @@ public:
 	// =================================================================
 
 	/**
-	 * Connect two material expressions.
-	 * Maps to action="connect"
-	 * @param MaterialPath Full path to the material
-	 * @param SourceExpressionId Source expression ID
-	 * @param SourceOutput Output name (empty for first output)
-	 * @param TargetExpressionId Target expression ID
-	 * @param TargetInput Input name on target
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool ConnectExpressions(
-		const FString& MaterialPath,
-		const FString& SourceExpressionId,
-		const FString& SourceOutput,
-		const FString& TargetExpressionId,
-		const FString& TargetInput);
-
-	/**
-	 * Disconnect an input on an expression.
-	 * Maps to action="disconnect"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId Expression with the input
-	 * @param InputName Input to disconnect
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool DisconnectInput(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& InputName);
-
-	/**
 	 * List all connections in a material.
 	 * Maps to action="list_connections"
 	 * @param MaterialPath Full path to the material
@@ -667,34 +589,6 @@ public:
 	 */
 	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
 	static TArray<FMaterialNodeConnectionInfo> ListConnections(const FString& MaterialPath);
-
-	/**
-	 * Connect an expression output to a material property (BaseColor, Roughness, etc.).
-	 * Maps to action="connect_to_output"
-	 * @param MaterialPath Full path to the material
-	 * @param ExpressionId Source expression ID
-	 * @param OutputName Output name (empty for first output)
-	 * @param MaterialProperty Property name (BaseColor, Metallic, Roughness, etc.)
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool ConnectToOutput(
-		const FString& MaterialPath,
-		const FString& ExpressionId,
-		const FString& OutputName,
-		const FString& MaterialProperty);
-
-	/**
-	 * Disconnect a material output property.
-	 * Maps to action="disconnect_output"
-	 * @param MaterialPath Full path to the material
-	 * @param MaterialProperty Property name to disconnect
-	 * @return True if successful
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool DisconnectOutput(
-		const FString& MaterialPath,
-		const FString& MaterialProperty);
 
 	// =================================================================
 	// Property Actions
@@ -997,30 +891,6 @@ public:
 	static FString CompareMaterialGraphs(
 		const FString& MaterialPathA,
 		const FString& MaterialPathB);
-
-	// =================================================================
-	// Layout Actions
-	// =================================================================
-
-	/**
-	 * Auto-arrange all material expressions into a clean left-to-right layout.
-	 * Walks the connection graph from material outputs back through inputs,
-	 * positions nodes in columns by depth, and stacks vertically within columns.
-	 * Maps to action="layout_expressions"
-	 * @param MaterialPath Full path to the material
-	 * @param ColumnSpacing Horizontal spacing between columns (default 300)
-	 * @param RowSpacing Vertical spacing between nodes in same column (default 180)
-	 * @return True if successful
-	 *
-	 * Example:
-	 *   unreal.MaterialNodeService.layout_expressions("/Game/Materials/M_Terrain")
-	 *   unreal.MaterialNodeService.layout_expressions("/Game/Materials/M_Terrain", 400, 200)
-	 */
-	UFUNCTION(BlueprintCallable, meta = (AICallable), Category = "MaterialNode")
-	static bool LayoutExpressions(
-		const FString& MaterialPath,
-		int32 ColumnSpacing = 300,
-		int32 RowSpacing = 180);
 
 	// =================================================================
 	// Material Function Actions
