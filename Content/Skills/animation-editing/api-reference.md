@@ -67,7 +67,7 @@ SkeletonService.list_skeletons(search_path) -> Array
 **BoneConstraint**: `bone_name`, `min_rotation`, `max_rotation`, `is_hinge`, `hinge_axis` (0=X,1=Y,2=Z),
 `rotation_order` (default "YXZ").
 
-**LearnedBoneRange**: `bone_name`, `min_rotation`, `max_rotation`, `percentile_5`, `percentile_95`,
+**LearnedBoneRange**: `bone_name`, `min_rotation`, `max_rotation`, `percentile5`, `percentile95`,
 `sample_count`.
 
 **AnimationEditResult**: `success`, `modified_bones`, `start_frame`, `end_frame`, `was_clamped`,

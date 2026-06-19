@@ -35,8 +35,8 @@ constraint.rotation_order   # str - Euler order (default "YXZ")
 range.bone_name             # str - Bone name
 range.min_rotation          # Rotator - Observed minimum
 range.max_rotation          # Rotator - Observed maximum
-range.percentile_5          # Rotator - 5th percentile (safe min)
-range.percentile_95         # Rotator - 95th percentile (safe max)
+range.percentile5          # Rotator - 5th percentile (safe min)
+range.percentile95         # Rotator - 95th percentile (safe max)
 range.sample_count          # int - Number of samples
 ```
 

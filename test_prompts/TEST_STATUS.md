@@ -40,8 +40,8 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 | transactions/transactions.md | 11 | ⬜ | – | – | – | |
 | logs/log_reader_tests.md | 28 | ⬜ | – | – | – | |
 | materials/materials_tests.md | 31 | ⬜ | – | – | – | |
-| animation-blueprint/animation_blueprint.md | 74 | ⬜ | – | – | – | user opened; state-machine suite |
-| animation-editing.md | 85 | ⬜ | – | – | – | |
+| animation-blueprint/animation_blueprint.md | 74 | ❌ | – | #446 | – | **BLOCKS editor**: compile→fatal cast at KismetCompiler.cpp:5903 (`ReplaceConvertibleDelegates`, Epic CastChecked). The produced ABP is a *poison asset* (crashes on **load** too) — quarantined to `_crash_artifacts/`. Engine bug; binary-engine build means a source patch won't apply. Fix approach TBD (VibeUE pre-compile guard vs source-engine patch). |
+| animation-editing.md | 25 | 🟡 | 21/2/2 | #447 | sonnet | No crash (safe domain). Fixed: percentile5/95 doc naming. Filed: learn_from_animations sampling, preview_pose_delta None-on-fail, manual-constraint non-enforcement. Refuted Sonnet claim that BoneDelta(kwargs) fails — it works. |
 | animsequence/animsequence_tests.md | 88 | ⬜ | – | – | – | |
 | montage/montage_tests.md | 10 | ⬜ | – | – | – | |
 | skeleton/skeleton_tests.md | 44 | ⬜ | – | – | – | |
@@ -70,6 +70,7 @@ Where something is broken or inefficient, we file a GitHub issue and move on.
 
 - [#444](https://github.com/kevinpbuckley/VibeUE/issues/444) — Blueprints skill shows string args for engine `BlueprintTools`; 5.8 schema requires `{refPath}` objects. **Cross-cutting** (recurs in every Blueprint domain).
 - [#445](https://github.com/kevinpbuckley/VibeUE/issues/445) — `add_function_parameter` skill example passes default value into the `is_output` positional slot.
+- [#446](https://github.com/kevinpbuckley/VibeUE/issues/446) — 🔴 **CRASH**: compiling an Anim Blueprint with a state machine via `BlueprintTools.compile_blueprint` → fatal `AnimationStateMachineSchema → EdGraphSchema_K2` cast. Blocks all anim domains until a crash-safe compile exists.
 
 ## Process notes (learned from pilot)
 

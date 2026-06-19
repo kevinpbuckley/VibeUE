@@ -167,7 +167,7 @@ for bone_range in constraints.bone_ranges:
     if "arm" in bone_range.bone_name.lower():
         print(f"\n{bone_range.bone_name}:")
         print(f"  Range: {bone_range.min_rotation} to {bone_range.max_rotation}")
-        print(f"  Safe (5%-95%): {bone_range.percentile_5} to {bone_range.percentile_95}")
+        print(f"  Safe (5%-95%): {bone_range.percentile5} to {bone_range.percentile95}")
         print(f"  Samples: {bone_range.sample_count}")
 ```
 

@@ -90,7 +90,7 @@ c = unreal.SkeletonService.learn_from_animations("/Game/Characters/SK_Mannequin"
 print(c.animation_count, c.total_samples)
 for r in c.bone_ranges:
     if "arm" in r.bone_name.lower():
-        print(r.bone_name, r.percentile_5, "->", r.percentile_95)
+        print(r.bone_name, r.percentile5, "->", r.percentile95)
 ```
 
 Runnable: `scripts/learn_constraints.pyx`.
