@@ -48,6 +48,12 @@ related_skills:
 | `get_connected_nodes()` | `get_node_details()` (pins include connections) or `get_node_pins()` + `pin.is_connected` |
 | `unreal.find_class()` | `unreal.load_class(None, "/Script/Module.ClassName")` |
 
+> ⚠️ **Engine `BlueprintTools` `call_tool` args are `{refPath}` objects, not strings.** Every
+> `arguments={"blueprint": path, ...}` / `{"blueprint": bp_path}` below is shorthand — the engine
+> toolset needs `{"refPath": "/Game/Dir/BP.BP"}` (full object path, `.AssetName` suffix required) and
+> returns `{"returnValue": null}` on success. See the **blueprints** skill for the `bp_ref_of()` helper.
+> VibeUE's own `unreal.BlueprintService.*` methods are unaffected — they take plain string paths.
+
 > **Node creation moved to the engine toolset.** The old per-node convenience creators
 > (`add_function_call_node`, `add_event_node`, `add_get_variable_node`, `add_set_variable_node`,
 > `add_member_get_node`, `add_validated_get_node`) and the basics (`create_blueprint`,
